@@ -17,8 +17,12 @@ export function createAttachmentsHost(blobs: AttachmentBlobs = new AttachmentBlo
     resolver: (spaceId) => blobs.resolver(spaceId),
     watch(root) {
       const waiting = new Map<Element, { ref: ReturnType<typeof refOf>; cb: (u: string | null) => void }>()
+      // The attachment of each image, read from its placeholder when the body is first scanned: later its src is a blob
+      // URL that may be revoked, which would make it unrecognizable.
+      const refs = new WeakMap<Element, NonNullable<ReturnType<typeof blobs.refOf>>>()
+      const imgs: HTMLImageElement[] = []
       function refOf(img: HTMLImageElement) {
-        return blobs.refOf(img.getAttribute('src') ?? '')
+        return refs.get(img) ?? blobs.refOf(img.getAttribute('src') ?? '')
       }
       const show = (img: HTMLImageElement, url: string | null) => {
         if (url && img.isConnected && img.getAttribute('src') !== url) img.setAttribute('src', url)
@@ -26,6 +30,8 @@ export function createAttachmentsHost(blobs: AttachmentBlobs = new AttachmentBlo
       const start = (img: HTMLImageElement) => {
         const ref = refOf(img)
         if (!ref) return
+        const old = waiting.get(img)
+        if (old?.ref) blobs.cancel(old.ref, old.cb)
         const cb = (u: string | null) => show(img, u)
         waiting.set(img, { ref, cb })
         void blobs.load(ref).then(cb)
@@ -47,8 +53,23 @@ export function createAttachmentsHost(blobs: AttachmentBlobs = new AttachmentBlo
               },
               { rootMargin: MARGIN },
             )
+      const unevict = blobs.onEvict((ref) => {
+        for (const img of imgs) {
+          const r = refs.get(img)
+          if (!img.isConnected || r?.spaceId !== ref.spaceId || r.id !== ref.id) continue
+          // Back to the placeholder; it loads again when it is next visible.
+          img.setAttribute('src', blobs.resolver(ref.spaceId)(ref.id))
+          if (io) {
+            io.unobserve(img)
+            io.observe(img)
+          }
+        }
+      })
       for (const img of Array.from(root.querySelectorAll('img'))) {
-        if (!refOf(img)) continue
+        const r = refOf(img)
+        if (!r) continue
+        refs.set(img, r)
+        imgs.push(img)
         if (io) io.observe(img)
         else start(img)
       }
@@ -71,6 +92,7 @@ export function createAttachmentsHost(blobs: AttachmentBlobs = new AttachmentBlo
       root.addEventListener('click', onClick)
       return () => {
         io?.disconnect()
+        unevict()
         root.removeEventListener('click', onClick)
         for (const w of waiting.values()) if (w.ref) blobs.cancel(w.ref, w.cb)
         waiting.clear()

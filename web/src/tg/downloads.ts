@@ -10,7 +10,11 @@ import { webApp } from './webapp'
  * capability: it is never logged or shown.
  */
 export async function downloadAttachment(ref: AttachmentRef, fileName?: string): Promise<void> {
-  const res = await api.POST('/telegram/download-links', { body: { space_id: ref.spaceId, attachment_id: ref.id } })
+  const res = await api.POST('/telegram/download-links', { body: { space_id: ref.spaceId, attachment_id: ref.id } }).catch(() => null)
+  if (!res) {
+    notifications.show({ color: 'red', message: 'Could not reach SpaceMan. Try again.' })
+    return
+  }
   if (res.response.status === 429) {
     const wait = Number(res.response.headers.get('Retry-After'))
     notifications.show({ color: 'yellow', message: `Too many downloads at once. Try again${wait > 0 ? ` in ${Math.min(wait, 60)} s` : ' shortly'}.` })

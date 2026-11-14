@@ -19,7 +19,12 @@ export function TgShell() {
   useBackButton()
   useDeepLink()
   const host = useMemo(() => createAttachmentsHost(), [])
-  useEffect(() => () => host.blobs.dispose(), [host])
+  // The host lives as long as the page (StrictMode's mount-cleanup-mount must not tear it down): blob URLs go with it.
+  useEffect(() => {
+    const free = () => host.blobs.dispose()
+    window.addEventListener('pagehide', free)
+    return () => window.removeEventListener('pagehide', free)
+  }, [host])
   return (
     <AttachmentsHostProvider value={host}>
       <Box p="sm">

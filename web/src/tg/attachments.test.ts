@@ -143,3 +143,17 @@ describe('createAttachmentsHost.watch', () => {
     root.remove()
   })
 })
+
+describe('eviction', () => {
+  it('keeps the newest, revokes the oldest and tells listeners so a displayed image can reload', async () => {
+    const b = new AttachmentBlobs((async () => img()) as unknown as typeof fetch, { maxCached: 2 })
+    const evicted: string[] = []
+    b.onEvict((r) => evicted.push(r.id))
+    const urls = []
+    for (const id of ['att_a', 'att_b', 'att_c']) urls.push(await b.load(A(id)))
+    expect(evicted).toEqual(['att_a'])
+    expect(b.resolver('spc_1')('att_c')).toBe(urls[2])
+    expect(b.resolver('spc_1')('att_a')).not.toBe(urls[0])
+    expect(await b.load(A('att_a'))).toMatch(/^blob:/)
+  })
+})

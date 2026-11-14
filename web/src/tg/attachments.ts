@@ -41,6 +41,7 @@ export class AttachmentBlobs {
   private readonly queue: Entry[] = []
   private active = 0
   private readonly resolvers = new Map<string, AttachmentResolver>()
+  private readonly evictListeners = new Set<(ref: AttachmentRef) => void>()
   private readonly o: Required<BlobOptions>
 
   constructor(
@@ -149,6 +150,9 @@ export class AttachmentBlobs {
     if (url) {
       e.blob = url
       e.state = 'done'
+      const key = `${e.ref.spaceId}/${e.ref.id}`
+      this.entries.delete(key)
+      this.entries.set(key, e)
       this.evict()
     } else {
       e.state = 'failed'
@@ -158,12 +162,24 @@ export class AttachmentBlobs {
     e.waiters.clear()
   }
 
+  /** Told when a loaded image's blob is revoked, so a displayed one goes back to its placeholder and reloads when seen. */
+  onEvict(cb: (ref: AttachmentRef) => void): () => void {
+    this.evictListeners.add(cb)
+    return () => this.evictListeners.delete(cb)
+  }
+
+  /** Revokes the least recently loaded blobs beyond the cap (never the one that just loaded: it is the last). */
   private evict() {
     const loaded = [...this.entries.values()].filter((x) => x.blob)
     for (const x of loaded.slice(0, Math.max(0, loaded.length - this.o.maxCached))) {
       URL.revokeObjectURL(x.blob!)
       x.blob = undefined
       x.state = 'idle'
+      // Re-insert so a later load counts as the newest.
+      const key = `${x.ref.spaceId}/${x.ref.id}`
+      this.entries.delete(key)
+      this.entries.set(key, x)
+      for (const l of this.evictListeners) l(x.ref)
     }
   }
 
