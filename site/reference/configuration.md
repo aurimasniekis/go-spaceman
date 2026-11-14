@@ -51,6 +51,8 @@ Configures the web/API listener and the separate management listener (SM-OBS-002
 | `http.max_upload_bytes` | `26214400` | `SPACEMAN_HTTP_MAX_UPLOAD_BYTES` | Bounds one attachment upload (SM-ATT-002). |
 | `http.read_header_timeout` | `10s` | `SPACEMAN_HTTP_READ_HEADER_TIMEOUT` | Bounds how long a client may take to send request headers. |
 | `http.write_idle_timeout` | `1m0s` | `SPACEMAN_HTTP_WRITE_IDLE_TIMEOUT` | Bounds how long one piece (32 KiB) of a response may wait for the client to read it (1s to 10m). It bounds progress, not the whole response: a slow download that keeps moving is never cut off, but a client that stops reading is disconnected instead of holding the response in central's memory. WebSocket connections (nodes, terminals) keep their own timeouts. |
+| `http.read_idle_timeout` | `30s` | `SPACEMAN_HTTP_READ_IDLE_TIMEOUT` | Bounds how long one read of a request body may wait for the client to send data (1s to 10m). It bounds progress, not the whole request: a large upload that keeps moving is never cut off, but a client that declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request refused before its body is read closes its connection instead of draining the body. Requests without a body (event streams) and WebSocket connections are unaffected. |
+| `http.idle_timeout` | `2m0s` | `SPACEMAN_HTTP_IDLE_TIMEOUT` | Bounds how long a kept-alive connection may wait for its next request (1s to 1h). |
 
 ### `log`
 

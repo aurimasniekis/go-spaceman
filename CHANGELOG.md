@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Security
+
+- Central's public listener no longer lets a client hold a connection by declaring a request body and not sending it.
+  A handler that refused such a request without reading the body (a 401, a POST to a UI path) made the server wait,
+  with no deadline, for up to 256 KiB that never came, and a handler reading a body the client stopped sending waited
+  forever. Every read of a request body must now bring data within **`http.read_idle_timeout`** (new, default `30s`,
+  1s to 10m): a large upload that keeps moving is never cut off. A response sent before the body was read to its end
+  closes the connection instead of draining the body. Requests without a body (event streams) and WebSocket
+  connections are unaffected.
+- A kept-alive connection waiting for its next request is closed after **`http.idle_timeout`** (new, default `2m`, 1s
+  to 1h); before, it could wait forever.
+
 ## [0.1.4] - 2026-11-14
 
 Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:
