@@ -21,6 +21,8 @@ export function limitValue(value: number, unit: string, zeroMeansNone = false): 
       return `${value.toLocaleString('en-US')} / min`
     case 'minutes':
       return duration(value)
+    case 'hours':
+      return duration(value * 60)
     case 'percent':
       return `${value} %`
     case 'tokens':

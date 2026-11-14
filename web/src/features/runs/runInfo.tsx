@@ -68,6 +68,9 @@ export function runDuration(r: Run, now = Date.now()): string | null {
   return formatDuration(end - Date.parse(r.started_at!))
 }
 
+/** An end reason in words where the code reads badly: usage_limit → "usage limit". */
+export const endReasonText = (reason: string) => (reason === 'usage_limit' ? 'usage limit' : reason)
+
 /** The state in words, for tabs and lists: "working · 12m", "idle", "waiting for a person", "exited 3m ago". */
 export function runStateText(r: Run, now = Date.now()): string {
   const tone = runTone(r)
@@ -79,13 +82,15 @@ export function runStateText(r: Run, now = Date.now()): string {
     case 'ended':
     case 'failed': {
       const at = isSet(r.ended_at) ? ` ${formatDuration(now - Date.parse(r.ended_at!))} ago` : ''
-      return `${r.observed === 'exited' ? 'exited' : r.observed}${at}${r.end_reason ? ` · ${r.end_reason}` : ''}`
+      return `${r.observed === 'exited' ? 'exited' : r.observed}${at}${r.end_reason ? ` · ${endReasonText(r.end_reason)}` : ''}`
     }
     case 'attention':
       return r.status_kind === 'permission' ? 'waiting for permission' : r.status_kind === 'auth' ? 'needs sign-in' : 'waiting for input'
     default: {
       if (r.takeover) return 'taken over'
       if (r.desired === 'stopped') return 'stopping…'
+      // Waiting for its usage limit to reset (ADR-0079): idle, but not for want of work.
+      if (r.limit) return 'at usage limit'
       const d = runDuration(r, now)
       return tone === 'working' ? `working${d ? ` · ${d}` : ''}` : 'idle'
     }
