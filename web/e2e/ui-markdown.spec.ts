@@ -1,9 +1,9 @@
-import { expect, test, type Page } from '@playwright/test'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { expect, test } from '@playwright/test'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { overflowProblems, realScrollbars } from './overflow'
-import { Api, env } from './stack'
+import { open, seedItem } from './markdown'
 
 /**
  * Rich Markdown in an inbox item, through the real UI and its CSP: a wide table, highlighted code with a copy button, a
@@ -13,9 +13,6 @@ import { Api, env } from './stack'
  */
 
 test.use({ launchOptions: realScrollbars })
-
-// A 4×4 PNG.
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC', 'base64')
 
 const shots = process.env.SM_SHOTS ?? join(process.cwd(), 'test-results', 'shots')
 
@@ -48,35 +45,11 @@ function body(attachment: string): string {
   ].join('\n')
 }
 
-async function open(page: Page, url: string, theme: 'light' | 'dark') {
-  await page.addInitScript((t) => window.localStorage.setItem('mantine-color-scheme-value', t), theme)
-  await page.goto(url)
-  await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', theme)
-}
-
 test('an inbox item renders tables, code, a diagram and an image in both themes without overflow', async ({ browser }) => {
   test.setTimeout(180_000)
   mkdirSync(shots, { recursive: true })
-  const base = env('SM_URL')
-  const id = Date.now().toString(36)
-  const password = 'markdown journey password'
-  const email = `markdown-${id}@example.com`
-
   // Seed through the API in one context, then reuse its cookies in a context per width and theme.
-  const seedCtx = await browser.newContext({ baseURL: base })
-  const seed = await seedCtx.newPage()
-  await new Api(seed.request, base, readFileSync(env('SM_ROOT_TOKEN_FILE'), 'utf8').trim())
-    .call('POST', '/users', { display_name: 'Mona Markdown', email, password, grants: [{ role: 'admin', domain: '*' }] })
-  const api = new Api(seed.request, base)
-  await api.signIn(email, password)
-  const nodes = await api.call<{ items: { id: string }[] }>('GET', '/nodes')
-  const nodeId = nodes.items[0]?.id ?? (await api.call<{ node: { id: string } }>('POST', '/nodes', { name: `markdown-${id}` })).node.id
-  const sp = await api.call<{ id: string }>('POST', '/spaces', { slug: `markdown-${id}`, name: 'Markdown rendering', node_id: nodeId })
-  const att = await api.upload(sp.id, 'chart.png', 'image/png', PNG)
-  const item = await api.call<{ id: string }>('POST', `/spaces/${sp.id}/inbox`, { title: 'Settlement retries exhaust the budget', urgency: 'high',
-    content_type: 'text/markdown', body: body(att.id) })
-  const state = await seedCtx.storageState()
-  await seedCtx.close()
+  const { base, state, sp, att, item } = await seedItem(browser, 'markdown', 'Settlement retries exhaust the budget', body)
 
   const failures: string[] = []
   for (const width of [390, 1280]) {
@@ -110,6 +83,15 @@ test('an inbox item renders tables, code, a diagram and an image in both themes 
       // Highlighted code with a copy button.
       await expect(md.locator('code[data-lang="go"] .th-keyword').first()).toHaveText('func')
       await expect(md.getByRole('button', { name: 'Copy code' })).toBeVisible()
+      // The copy button never covers code: the first line starts below it.
+      const overlap = await md.locator('.sm-codeblock').first().evaluate((block) => {
+        const btn = block.querySelector('.sm-copy')!.getBoundingClientRect()
+        const range = document.createRange()
+        range.selectNodeContents(block.querySelector('code')!)
+        const first = range.getClientRects()[0]
+        return first.top < btn.bottom && first.left < btn.right && first.right > btn.left
+      })
+      expect(overlap).toBe(false)
       const color = await md.locator('code[data-lang="go"] .th-keyword').first().evaluate((e) => getComputedStyle(e).color)
       expect(color).toBe(theme === 'dark' ? 'rgb(199, 146, 234)' : 'rgb(153, 76, 195)')
 
@@ -133,3 +115,4 @@ test('an inbox item renders tables, code, a diagram and an image in both themes 
   }
   expect(failures).toEqual([])
 })
+

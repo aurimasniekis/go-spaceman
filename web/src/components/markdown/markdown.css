@@ -70,7 +70,7 @@
   overflow-wrap: normal;
 }
 
-/* Code blocks: scroll inside the block (both ways for very long ones), copy button in the corner. */
+/* Code blocks: scroll inside the block (both ways for very long ones), copy button in the corner above the code. */
 .sm-markdown .sm-codeblock {
   position: relative;
   max-width: 100%;
@@ -86,8 +86,9 @@
   color: var(--sm-code-token);
 }
 
+/* The first line starts below the copy button, so the button never covers code (a long line scrolls under it). */
 .sm-markdown .sm-codeblock > pre {
-  padding-right: 64px;
+  padding-top: 34px;
   border: 1px solid var(--mantine-color-default-border);
 }
 

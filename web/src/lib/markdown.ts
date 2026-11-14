@@ -46,6 +46,18 @@ export const MARKDOWN_LIMITS = {
   diagramSource: 10_000,
   /** Edges of one diagram (mermaid's maxEdges). */
   diagramEdges: 500,
+  /**
+   * Statements of one diagram (lines, `;` and `&` separated parts): mermaid's layout work grows with the nodes, and
+   * 4,000 bare node IDs fit in 10,000 characters (7 seconds in one task). Longer diagrams show their source.
+   */
+  diagramStatements: 500,
+  /** Characters of diagram source per body; diagrams past the budget show their source. */
+  diagramBudget: 25_000,
+  /**
+   * Diagrams up to this size render on their own, near the viewport (at most about 1 second of main-thread work in
+   * Chromium, whatever the diagram type: mind maps are the slowest); larger ones wait for a "Render diagram" click.
+   */
+  diagramAuto: { statements: 50, characters: 2_500 },
   /** Highlighted code blocks per body; later ones stay plain. */
   codeBlocks: 50,
   /** Characters of one highlighted code block; longer ones stay plain. */
@@ -60,6 +72,36 @@ export const MARKDOWN_LIMITS = {
    */
   delimiters: 256,
 } as const
+
+/** The statements of a diagram's source, as counted against the limits (lines and `;` or `&` separated parts). */
+export function diagramStatements(source: string): number {
+  let n = 0
+  for (const part of source.split(/[\n;&]/)) if (part.trim()) n++
+  return n
+}
+
+export type DiagramPlan =
+  | { render: 'auto' | 'click' }
+  | { render: 'never'; reason: string }
+
+/**
+ * Decides how a body's diagrams render, in order: on their own (small), after a click (large) or not at all (over a
+ * hard limit or past the body's budget of diagram source). Rendering runs on the main thread, so this bounds the work a
+ * hostile body can cause.
+ */
+export function planDiagrams(sources: string[]): DiagramPlan[] {
+  const L = MARKDOWN_LIMITS
+  let budget = L.diagramBudget
+  return sources.map((src, i): DiagramPlan => {
+    if (i >= L.diagrams) return { render: 'never', reason: `This body has more than ${L.diagrams} diagrams.` }
+    if (src.length > L.diagramSource) return { render: 'never', reason: `The diagram is longer than ${L.diagramSource} characters.` }
+    const statements = diagramStatements(src)
+    if (statements > L.diagramStatements) return { render: 'never', reason: `The diagram has more than ${L.diagramStatements} statements.` }
+    if (src.length > budget) return { render: 'never', reason: `This body's diagrams are longer than ${L.diagramBudget} characters in all.` }
+    budget -= src.length
+    return { render: statements <= L.diagramAuto.statements && src.length <= L.diagramAuto.characters ? 'auto' : 'click' }
+  })
+}
 
 const MARKER = '[ \\t]*(?:>[ \\t]?|(?:[-*+]|\\d{1,9}[.)])[ \\t]+)'
 const EXCESS_MARKERS = new RegExp(`^((?:${MARKER}){${MARKDOWN_LIMITS.markers}})(?:${MARKER})+`)
@@ -183,6 +225,11 @@ function purify(): Purifier {
       }
     }
   })
+  p.addHook('uponSanitizeAttribute', (_node, data) => {
+    // A resolver may return blob: URLs (another transport's attachments), which DOMPurify's URI allow-list drops. Keep
+    // exactly the URLs the resolver produced for this body; a blob: URL written in the body is still removed.
+    if ((data.attrName === 'src' || data.attrName === 'href') && /^blob:/i.test(data.attrValue) && current.resolved.has(data.attrValue)) data.forceKeepAttr = true
+  })
   p.addHook('afterSanitizeAttributes', (node) => {
     if (node.tagName === 'A') {
       const href = node.getAttribute('href') ?? ''
@@ -248,5 +295,5 @@ export function renderMarkdown(md: string, spaceId: string, opts: RenderOptions 
     // A pathological body (for example nesting deep enough to exhaust the parser's stack) shows as plain text.
     html = `<pre tabindex="0">${escapeHTML(md)}</pre>`
   }
-  return purify().sanitize(html, { FORBID_TAGS, FORBID_ATTR: ['style'] })
+  return purify().sanitize(html, { FORBID_TAGS, FORBID_ATTR: ['style', 'srcset', 'sizes'] })
 }

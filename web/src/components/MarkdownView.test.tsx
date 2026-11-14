@@ -42,7 +42,7 @@ describe('MarkdownView', () => {
     renderMermaid.mockResolvedValue('<svg data-testid="diagram"><g><text>A</text></g></svg>')
     wrap(<MarkdownView source={`Before\n\n${fence('mermaid', 'graph TD; A-->B')}\n\nAfter`} spaceId="spc_1" />)
     await waitFor(() => expect(screen.getByTestId('diagram')).toBeInTheDocument())
-    expect(renderMermaid).toHaveBeenCalledWith('graph TD; A-->B', 'light')
+    expect(renderMermaid).toHaveBeenCalledWith('graph TD; A-->B', 'light', expect.any(AbortSignal))
     expect(screen.getByRole('img', { name: /Diagram/ })).toContainElement(screen.getByTestId('diagram'))
     expect(screen.getByText('Diagram source')).toBeInTheDocument()
     expect(screen.getByText('graph TD; A-->B', { selector: 'details code' })).toBeInTheDocument()
@@ -64,6 +64,62 @@ describe('MarkdownView', () => {
     await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(20))
     expect(container.querySelectorAll('[data-sm-mermaid][data-sm-mounted]')).toHaveLength(20)
     expect(container.querySelectorAll('[data-sm-mermaid]:not([data-sm-mounted]) > pre')).toHaveLength(5)
+  })
+
+  it('renders a large diagram only after a click, and none past the body budget', async () => {
+    renderMermaid.mockResolvedValue('<svg data-testid="big"></svg>')
+    const big = 'graph TD\n' + Array.from({ length: 200 }, (_, i) => `N${i}`).join('\n')
+    const huge = 'graph TD\n' + Array.from({ length: 480 }, (_, i) => `Node${i}-->Node${i + 1}`).join('\n')
+    // 0.9k + 8.4k + 8.4k + 8.4k characters: the last is past the 25,000-character budget.
+    wrap(<MarkdownView source={[big, huge, huge, huge].map((d) => fence('mermaid', d)).join('\n\n')} spaceId="spc_1" />)
+    const buttons = await screen.findAllByRole('button', { name: 'Render diagram' })
+    expect(buttons).toHaveLength(3)
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(screen.getAllByRole('status')[0]).toHaveTextContent("diagrams are longer than 25000 characters in all, so it isn't rendered")
+    await act(async () => {})
+    expect(renderMermaid).not.toHaveBeenCalled()
+    fireEvent.click(buttons[0])
+    await waitFor(() => expect(screen.getByTestId('big')).toBeInTheDocument())
+    expect(renderMermaid).toHaveBeenCalledTimes(1)
+    expect(renderMermaid).toHaveBeenCalledWith(big, 'light', expect.any(AbortSignal))
+  })
+
+  it('aborts a pending diagram render when the view unmounts', async () => {
+    renderMermaid.mockReturnValue(new Promise(() => {}))
+    const { unmount } = wrap(<MarkdownView source={fence('mermaid', 'graph TD; A-->B')} spaceId="spc_1" />)
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalled())
+    const signal = renderMermaid.mock.calls[0][2] as AbortSignal
+    expect(signal.aborted).toBe(false)
+    unmount()
+    expect(signal.aborted).toBe(true)
+  })
+
+  it('scrolls to a heading the address links to once the body renders', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const id = 'user-content-y7ysg-title'
+    window.location.hash = `#${id}`
+    try {
+      const { container } = wrap(<MarkdownView source={'# Title'} spaceId="spc_1" />)
+      const h1 = container.querySelector('h1')!
+      expect(h1.id).toBe(id)
+      expect(scroll).toHaveBeenCalledTimes(1)
+      expect(scroll.mock.contexts[0]).toBe(h1)
+    } finally {
+      window.location.hash = ''
+    }
+  })
+
+  it('gives anchors a prefix from the body that stays the same across loads, unique per view', async () => {
+    const first = wrap(<MarkdownView source={'# Title'} spaceId="spc_1" />)
+    const id = first.container.querySelector('h1')!.id
+    expect(id).toMatch(/^user-content-[0-9a-z]+-title$/)
+    first.unmount()
+    const again = wrap(<><MarkdownView source={'# Title'} spaceId="spc_1" /><MarkdownView source={'# Title'} spaceId="spc_1" /></>)
+    await act(async () => {})
+    const ids = Array.from(again.container.querySelectorAll('h1')).map((h) => h.id)
+    expect(ids[0]).toBe(id)
+    expect(ids[1]).toBe(id.replace(/-title$/, '-1-title'))
   })
 
   it('updates when the body changes', async () => {
@@ -88,6 +144,6 @@ describe('MermaidDiagram', () => {
   it('uses the dark theme in dark mode', async () => {
     renderMermaid.mockResolvedValue('<svg></svg>')
     render(<MantineProvider forceColorScheme="dark"><MermaidDiagram source="graph TD; A-->B" /></MantineProvider>)
-    await waitFor(() => expect(renderMermaid).toHaveBeenCalledWith('graph TD; A-->B', 'dark'))
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledWith('graph TD; A-->B', 'dark', expect.any(AbortSignal)))
   })
 })

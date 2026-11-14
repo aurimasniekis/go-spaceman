@@ -1,4 +1,4 @@
-import { limitNesting, referenceAttachments, referencedAttachments, renderMarkdown, resolveAttachments } from './markdown'
+import { diagramStatements, limitNesting, planDiagrams, referenceAttachments, referencedAttachments, renderMarkdown, resolveAttachments } from './markdown'
 
 const id = 'att_01m6e3fshfe1d8efqs2sd4hyma'
 
@@ -80,6 +80,19 @@ describe('GFM features', () => {
     expect(html).toContain(`href="/mini/${id}"`)
   })
 
+  it('keeps blob: URLs the resolver produced, and only those', () => {
+    const blob = 'blob:https://app.example/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'
+    const html = renderMarkdown(`![shot](spaceman://attachment/${id}) [file](spaceman://attachment/${id}) <img src="blob:https://app.example/other"> [x](blob:https://app.example/other)`, 'spc_1', {
+      resolveAttachment: () => blob,
+    })
+    const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+    const imgs = Array.from(doc.querySelectorAll('img'))
+    expect(imgs.map((i) => i.getAttribute('src'))).toEqual([blob])
+    const links = Array.from(doc.querySelectorAll('a'))
+    expect(links.map((a) => a.getAttribute('href'))).toEqual([blob, null])
+    expect(html).not.toContain('blob:https://app.example/other')
+  })
+
   it('leaves attachment references inside code alone', () => {
     expect(renderMarkdown(`\`spaceman://attachment/${id}\``, 'spc_1')).toContain(`<code>spaceman://attachment/${id}</code>`)
   })
@@ -116,6 +129,7 @@ describe('hostile input', () => {
     '<a href="https://example.com" target="_self" rel="opener">x</a>',
     '<img src="/api/v1/spaces/spc_1/../../auth/logout">',
     '<noscript><p title="</noscript><img src=x onerror=alert(1)>"></noscript>',
+    `<img src="spaceman://attachment/${id}" srcset="https://evil.example/p.gif 1x" sizes="1px">`,
   ]
   it.each(vectors)('neutralizes %s', (v) => {
     const html = renderMarkdown(v, 'spc_1')
@@ -124,7 +138,7 @@ describe('hostile input', () => {
       expect(['SCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'BUTTON', 'TEXTAREA', 'STYLE', 'LINK', 'META', 'BASE', 'SVG', 'MATH']).not.toContain(el.tagName.toUpperCase())
       for (const a of Array.from(el.attributes)) {
         expect(a.name).not.toMatch(/^on/i)
-        expect(a.name).not.toBe('style')
+        expect(a.name).not.toMatch(/^(style|srcset|sizes)$/)
         if (['href', 'src', 'action', 'formaction', 'xlink:href'].includes(a.name)) expect(a.value.trim()).not.toMatch(/^(javascript|vbscript|data):/i)
       }
       if (el.tagName === 'IMG') expect(el.getAttribute('src')).toMatch(/^\/api\/v1\/spaces\/spc_1\/attachments\/att_[0-9a-z]{26}\/content$/)
@@ -166,6 +180,20 @@ describe('hostile input', () => {
     expect(limited[0]).toBe('**bold**')
     expect(limited[1]).toBe('\\*a '.repeat(300) + '`x*y` \\*')
     expect(renderMarkdown(many, 'spc_1')).toContain('*a *a')
+  })
+
+  it('plans diagrams: small ones render on their own, large ones on a click, none over the limits or the budget', () => {
+    const nodes = (n: number, sep = '\n') => 'graph TD' + sep + Array.from({ length: n }, (_, i) => `N${i}`).join(sep)
+    expect(diagramStatements('graph TD; A-->B\n  C & D --> E\n\n')).toBe(4)
+    expect(planDiagrams([nodes(40), nodes(49, ';')])).toEqual([{ render: 'auto' }, { render: 'auto' }])
+    expect(planDiagrams([nodes(60)])).toEqual([{ render: 'click' }])
+    expect(planDiagrams(['graph TD\nA["' + 'x'.repeat(3000) + '"]'])).toEqual([{ render: 'click' }])
+    expect(planDiagrams([nodes(600)])[0]).toMatchObject({ render: 'never', reason: expect.stringMatching(/500 statements/) })
+    expect(planDiagrams(['graph TD\n' + 'A-->B\n'.repeat(2000)])[0]).toMatchObject({ render: 'never', reason: expect.stringMatching(/10000 characters/) })
+    // The budget: 3 × 9,000 characters is over 25,000, so the third doesn't render; a later small one still fits.
+    const long = 'graph TD\nA["' + 'x'.repeat(9000) + '"]'
+    expect(planDiagrams([long, long, long, nodes(3)]).map((p) => p.render)).toEqual(['click', 'click', 'never', 'auto'])
+    expect(planDiagrams(Array.from({ length: 21 }, () => nodes(2)))[20]).toMatchObject({ render: 'never' })
   })
 
   it('renders a huge body and a huge diagram as text', () => {

@@ -6,10 +6,13 @@
  */
 import DOMPurify from 'dompurify'
 import mermaid, { type MermaidConfig } from 'mermaid'
-import { MARKDOWN_LIMITS } from '@/lib/markdown'
+import { diagramStatements, MARKDOWN_LIMITS } from '@/lib/markdown'
 import { lightOwl, nightOwl } from '@/theme/nightowl'
 
 export type Scheme = 'light' | 'dark'
+
+/** mermaid's default secure keys (11.17.2), kept when the list is replaced. */
+const SECURE_DEFAULTS = ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges']
 
 const FONT = "'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif"
 
@@ -22,6 +25,9 @@ export function mermaidConfig(scheme: Scheme): MermaidConfig {
     suppressErrorRendering: true,
     maxTextSize: MARKDOWN_LIMITS.diagramSource,
     maxEdges: MARKDOWN_LIMITS.diagramEdges,
+    // Keys a diagram's %%{init}%% directive or front matter can't change: mermaid's own, plus the theme (a diagram keeps
+    // the app's colors and can't bring its own CSS).
+    secure: [...SECURE_DEFAULTS, 'theme', 'themeVariables', 'themeCSS', 'darkMode', 'fontFamily', 'altFontFamily'],
     fontFamily: FONT,
     theme: 'base',
     darkMode: scheme === 'dark',
@@ -53,12 +59,16 @@ function sanitizeSVG(svg: string): string {
     ADD_TAGS: ['foreignobject'],
     ADD_ATTR: ['dominant-baseline'],
     HTML_INTEGRATION_POINTS: { foreignobject: true },
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'a', 'animate', 'set', 'image'],
+    // <img> in an HTML label would load any URL (with the session cookie on the same origin); images in bodies render
+    // only from attachments, and diagrams have none.
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'a', 'animate', 'set', 'image', 'img'],
+    FORBID_ATTR: ['srcset', 'sizes'],
   })
 }
 
 async function render(source: string, scheme: Scheme): Promise<string> {
   if (source.length > MARKDOWN_LIMITS.diagramSource) throw new Error(`The diagram is longer than ${MARKDOWN_LIMITS.diagramSource} characters.`)
+  if (diagramStatements(source) > MARKDOWN_LIMITS.diagramStatements) throw new Error(`The diagram has more than ${MARKDOWN_LIMITS.diagramStatements} statements.`)
   const id = `sm-mermaid-${++seq}`
   mermaid.initialize(mermaidConfig(scheme))
   try {
@@ -73,10 +83,14 @@ async function render(source: string, scheme: Scheme): Promise<string> {
 
 /**
  * Renders one diagram to sanitized SVG markup. Renders run one at a time (mermaid's configuration is global, and the
- * theme is set per render).
+ * theme is set per render). A render whose signal is aborted before its turn (its view is gone) is skipped and rejects
+ * with an AbortError.
  */
-export function renderMermaid(source: string, scheme: Scheme): Promise<string> {
-  const p = queue.then(() => render(source, scheme))
+export function renderMermaid(source: string, scheme: Scheme, signal?: AbortSignal): Promise<string> {
+  const p = queue.then(() => {
+    if (signal?.aborted) throw new DOMException('The diagram is no longer shown.', 'AbortError')
+    return render(source, scheme)
+  })
   queue = p.catch(() => undefined)
   return p
 }
