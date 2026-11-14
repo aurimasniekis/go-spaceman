@@ -57,7 +57,7 @@ func TestCapRole(t *testing.T) {
 // are linking steps.
 func TestPromptTextAndClaims(t *testing.T) {
 	t.Parallel()
-	if got := clean("Jane\n‮Doe\t  x\x00", 64); got != "Jane Doe x" {
+	if got := clean("Jane\n\u202eDoe\t  x\x00", 64); got != "Jane Doe x" {
 		t.Fatalf("clean: %q", got)
 	}
 	if got := clean(strings.Repeat("é", 100), 64); len([]rune(got)) != 64 {
