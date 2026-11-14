@@ -2737,6 +2737,34 @@
         ],
         "type": "object"
       },
+      "Clear-account-usage-limitsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Clear-account-usage-limitsRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "kind": {
+            "description": "Only holds of this kind; every kind when absent",
+            "enum": [
+              "five_hour",
+              "seven_day",
+              "seven_day_opus",
+              "seven_day_sonnet",
+              "seven_day_overage_included",
+              "overage",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "CodeInBody": {
         "additionalProperties": false,
         "properties": {
@@ -5911,6 +5939,39 @@
           "kind",
           "source",
           "seen_at"
+        ],
+        "type": "object"
+      },
+      "FleetUsageLimitClear": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetUsageLimitClear.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "cleared": {
+            "description": "The holds this request cleared",
+            "items": {
+              "$ref": "#/components/schemas/FleetUsageLimit"
+            },
+            "type": "array"
+          },
+          "held_elsewhere": {
+            "description": "Other spaces still hold the account or gateway reference, so launches here may still be refused",
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cleared",
+          "held_elsewhere"
         ],
         "type": "object"
       },
@@ -18284,6 +18345,59 @@
           }
         },
         "summary": "An account's open usage-limit holds in every space",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/accounts/{account_id}/usage-limits/clear": {
+      "post": {
+        "description": "Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose hold was cleared has its control told once.",
+        "operationId": "clear-account-usage-limits",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Clear-account-usage-limitsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetUsageLimitClear"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Clear an account's usage-limit holds in every space now",
         "tags": [
           "accounts"
         ]
@@ -32055,6 +32169,58 @@
           }
         },
         "summary": "A space's usage-limit holds",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/usage-limits/{limit_id}/clear": {
+      "post": {
+        "description": "Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write (clear-account-usage-limits).",
+        "operationId": "clear-space-usage-limit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "limit_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetUsageLimitClear"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Clear one of the space's usage-limit holds now",
         "tags": [
           "runs"
         ]

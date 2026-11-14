@@ -4333,9 +4333,28 @@
        - A report that changes nothing writes nothing.
        - A space's listing shows other spaces' open holds as one shared row per account (or gateway reference) and
          kind, so it doesn't reveal how many spaces hit the limit.
+     - **At launch** (amended 2026-11-13, UL-6). A hold whose reset has passed no longer refuses, whether or not the
+       deadline job has cleared it yet. A hold due for its probe lets the launch through and is claimed in the same
+       transaction: an unknown reset's `check_at` moves on by the time since the hold was seen, at least 1 h and at most
+       `keep_alive_max` (so 1 h, 2 h, 4 h … from the first probe); a known reset's `check_at` is set to none (one probe,
+       then the reset decides). Any hold that is neither refuses, and the refusal writes nothing. Its text names the
+       account (or the Harbor Pilot connection or project) and the time the last hold lets a launch through, never
+       another space. Until UL-7 adds resumes, the probe goes to the first launch.
+     - **Control** (UL-6). A control restart or auto-start refused by a hold defers auto-start until that time; later
+       sweeps only read the hold, so a clear (operator or evidence) lets control start at the next sweep. Nobody is asked
+       to look.
+     - **Clear now** (UL-6). The space-level clear needs `run:control` in the space (the permission that launches runs
+       there; operators and admins) and returns `held_elsewhere`; the account-level clear needs `account:write` and takes
+       an optional kind (none: every kind, as the opus/sonnet holds hold the whole account). Control is told with dedup
+       key `usage-limit-cleared:<usage_limits id>`, the key decision 11's clear message uses, so one hold is announced
+       once.
   8. **Failover is opt-in.** With the space setting `usage_limit.failover = true` (default **false**), `Resolve` picks
      the next bound account for the same harness without an open limit, for launches and resumes. SpaceMan never falls
-     back from a gateway binding to a direct account (Q1).
+     back from a gateway binding to a direct account (Q1). (UL-6: the settings `failover` and `keep_alive_max` are the
+     space limits `usage_limit_failover`, a switch, and `usage_limit_keep_alive_max_minutes`, 1–1,440, default 360, so
+     they get installation defaults, per-space overrides, audit and the limits API with no new table. Failover avoids an
+     account with any open hold whose reset hasn't passed, a probe-due one included; the default comes first, then
+     binding order; with every account held the usual choice stands and is refused.)
   9. **Gateway waits.** The reset is an **estimate**: the earliest `until` among the quota board's unavailable
      accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
      cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9). The

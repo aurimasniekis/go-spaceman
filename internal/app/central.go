@@ -336,7 +336,23 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return c.Notifier.OnCommandAck(ctx, tx, commandID, result)
 		},
-		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines})
+		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines,
+		// ADR-0079: failover and the probe backoff cap are space limits.
+		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
+			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax}
+			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
+				out.Failover = v.Get(limits.UsageLimitFailover) != 0
+				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
+					out.KeepAliveMax = time.Duration(m) * time.Minute
+				}
+			}
+			return out
+		},
+		OnHoldsCleared: func(hs []fleet.ClearedHold) {
+			if c.Supervisor != nil {
+				c.Supervisor.OnHoldsCleared(hs)
+			}
+		}})
 	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
 	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
 		if run.Launch.AccountRef == "" {

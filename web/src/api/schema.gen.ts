@@ -81,6 +81,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}/usage-limits/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear an account's usage-limit holds in every space now
+         * @description Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose hold was cleared has its control told once.
+         */
+        post: operations["clear-account-usage-limits"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/break-glass": {
         parameters: {
             query?: never;
@@ -3813,6 +3833,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/usage-limits/{limit_id}/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear one of the space's usage-limit holds now
+         * @description Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write (clear-account-usage-limits).
+         */
+        post: operations["clear-space-usage-limit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/xspace/peers": {
         parameters: {
             query?: never;
@@ -5381,6 +5421,19 @@ export interface components {
             current: string;
             new: string;
         };
+        "Clear-account-usage-limitsRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Clear-account-usage-limitsRequest.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Only holds of this kind; every kind when absent
+             * @enum {string}
+             */
+            kind?: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "unknown";
+        };
         CodeInBody: {
             /**
              * Format: uri
@@ -6596,6 +6649,19 @@ export interface components {
             space_id?: string;
             /** Format: int64 */
             version?: number;
+        };
+        FleetUsageLimitClear: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetUsageLimitClear.json
+             */
+            readonly $schema?: string;
+            /** @description The holds this request cleared */
+            cleared: components["schemas"]["FleetUsageLimit"][];
+            /** @description Other spaces still hold the account or gateway reference, so launches here may still be refused */
+            held_elsewhere: boolean;
+            note?: string;
         };
         "Fork-promptRequest": {
             /**
@@ -11402,6 +11468,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-account-usage-limitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-account-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Clear-account-usage-limitsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetUsageLimitClear"];
                 };
             };
             /** @description Error */
@@ -20239,6 +20340,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-space-usage-limitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-space-usage-limit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                limit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetUsageLimitClear"];
                 };
             };
             /** @description Error */

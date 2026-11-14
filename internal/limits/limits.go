@@ -61,6 +61,10 @@ const (
 	// A new run's terminal size (ADR-0075).
 	TerminalCols = "terminal_cols"
 	TerminalRows = "terminal_rows"
+	// Usage limits (ADR-0079): failover to another account of the harness, and how long a run waits for a reset with
+	// its process kept alive (also the cap of the probe backoff of a hold whose reset is unknown).
+	UsageLimitFailover     = "usage_limit_failover"
+	UsageLimitKeepAliveMax = "usage_limit_keep_alive_max_minutes"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -159,6 +163,12 @@ var Defs = []Def{
 	{Key: TerminalRows, Label: "Terminal rows", Unit: "rows",
 		Scope: "the height new runs' terminals are held at (10-200; 0: the node's default size); applies only with terminal columns set too", ZeroNone: true,
 		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},
+	{Key: UsageLimitFailover, Label: "Usage-limit failover", Unit: "switch",
+		Scope:    "when the account a launch or resume would use is held at a usage limit, use another account bound to the space for the same harness that is not held (a space routed through an LLM gateway never falls back to a direct account)",
+		Enforced: "run launch (account resolution)", OnLower: "Turning it off never stops a run; later launches on a held account are refused until its reset.", Overridable: true},
+	{Key: UsageLimitKeepAliveMax, Label: "Usage-limit keep-alive", Unit: "minutes",
+		Scope:    "how long a run at a usage limit waits for the reset with its process kept alive; also the longest gap between checks of a hold whose reset time is unknown",
+		Enforced: "usage-limit holds (probe backoff)", OnLower: "Applies from the next check of a hold.", Overridable: true},
 }
 
 const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."
