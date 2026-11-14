@@ -1,0 +1,218 @@
+/*
+ * Rendered Markdown (MarkdownView) beyond the rules it shares with the editor (composer.css): long words, wide tables,
+ * code and diagrams stay inside the body (no page overflow at 390 px; they scroll in their own block), highlighted code
+ * uses the app's token colors (--sm-code-*, theme.ts), and Mermaid diagrams follow the light and dark theme.
+ */
+.sm-markdown {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.sm-markdown h1,
+.sm-markdown h2,
+.sm-markdown h3,
+.sm-markdown h4,
+.sm-markdown h5,
+.sm-markdown h6 {
+  scroll-margin-top: 72px;
+}
+
+.sm-markdown .sm-anchor {
+  margin-left: 6px;
+  color: var(--mantine-color-dimmed);
+  text-decoration: none;
+  opacity: 0;
+}
+
+.sm-markdown :is(h1, h2, h3, h4, h5, h6):hover > .sm-anchor,
+.sm-markdown .sm-anchor:focus-visible {
+  opacity: 1;
+}
+
+.sm-markdown .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sm-markdown .footnotes {
+  margin-top: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--mantine-color-default-border);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.sm-markdown :target {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 2px;
+}
+
+/* Wide tables scroll inside their block. */
+.sm-markdown .sm-table {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.sm-markdown .sm-table > table {
+  margin: 0;
+}
+
+/* Cells keep whole words: a wide table scrolls rather than breaking words letter by letter. */
+.sm-markdown .sm-table :is(th, td) {
+  overflow-wrap: normal;
+}
+
+/* Code blocks: scroll inside the block (both ways for very long ones), copy button in the corner. */
+.sm-markdown .sm-codeblock {
+  position: relative;
+  max-width: 100%;
+  margin: 8px 0;
+}
+
+.sm-markdown .sm-codeblock > pre,
+.sm-markdown .sm-mermaid > pre {
+  margin: 0;
+  max-height: 32rem;
+  overflow: auto;
+  overflow-wrap: normal;
+  color: var(--sm-code-token);
+}
+
+.sm-markdown .sm-codeblock > pre {
+  padding-right: 64px;
+  border: 1px solid var(--mantine-color-default-border);
+}
+
+.sm-markdown pre:focus-visible,
+.sm-markdown .sm-table:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 1px;
+}
+
+.sm-markdown .sm-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sm-markdown .sm-copy:hover,
+.sm-markdown .sm-copy:focus-visible {
+  color: var(--mantine-color-text);
+  border-color: var(--mantine-primary-color-filled);
+}
+
+/* @tanstack/highlight token classes. */
+.sm-markdown .th-comment,
+.sm-markdown .th-meta {
+  color: var(--sm-code-comment);
+  font-style: italic;
+}
+.sm-markdown .th-keyword,
+.sm-markdown .th-selector {
+  color: var(--sm-code-keyword);
+}
+.sm-markdown .th-string,
+.sm-markdown .th-inserted {
+  color: var(--sm-code-string);
+}
+.sm-markdown .th-number,
+.sm-markdown .th-literal {
+  color: var(--sm-code-number);
+}
+.sm-markdown .th-function,
+.sm-markdown .th-command,
+.sm-markdown .th-heading {
+  color: var(--sm-code-function);
+}
+.sm-markdown .th-heading {
+  font-weight: 600;
+}
+.sm-markdown .th-type,
+.sm-markdown .th-code-inline {
+  color: var(--sm-code-type);
+}
+.sm-markdown .th-property,
+.sm-markdown .th-attr,
+.sm-markdown .th-tag,
+.sm-markdown .th-link {
+  color: var(--sm-code-property);
+}
+.sm-markdown .th-link {
+  text-decoration: underline;
+}
+.sm-markdown .th-operator {
+  color: var(--sm-code-operator);
+}
+.sm-markdown .th-variable {
+  color: var(--sm-code-token);
+}
+.sm-markdown .th-deleted {
+  color: var(--sm-code-deleted);
+}
+
+/* Mermaid: the placeholder's source hides once the diagram component mounts (it shows the source itself). */
+.sm-markdown .sm-mermaid {
+  margin: 8px 0;
+}
+
+.sm-markdown .sm-mermaid[data-sm-mounted] > pre {
+  display: none;
+}
+
+.sm-mermaid-figure {
+  margin: 0;
+  max-width: 100%;
+}
+
+.sm-mermaid-svg {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 8px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 4px;
+  background: var(--sm-surface);
+}
+
+.sm-mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.sm-mermaid-source {
+  margin-top: 4px;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.sm-mermaid-source > summary {
+  cursor: pointer;
+  color: var(--mantine-color-dimmed);
+}
+
+.sm-mermaid-source > pre {
+  margin: 4px 0 0;
+  max-height: 20rem;
+  overflow: auto;
+  overflow-wrap: normal;
+  background: var(--sm-surface);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: var(--sm-mono);
+}
