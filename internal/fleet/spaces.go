@@ -422,7 +422,7 @@ func markRestorePauseResumed(ctx context.Context, tx *store.Tx, spaceID string) 
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(s.Value), &doc); err != nil {
-		return nil // an unreadable notice is not this transition's problem
+		return nil //nolint:nilerr // an unreadable notice is not this transition's problem
 	}
 	var paused, resumed []string
 	_ = json.Unmarshal(doc["paused_spaces"], &paused)
