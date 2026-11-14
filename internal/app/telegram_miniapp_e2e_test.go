@@ -279,12 +279,22 @@ func TestMiniAppHostSeparation(t *testing.T) {
 		t.Errorf("X-Forwarded-Host let a cookie in on the Mini App host: %d", r.status)
 	}
 
-	// Host matching: case and port don't matter; anything else is not the Mini App host.
-	for host, mini := range map[string]bool{"TG.Example.COM": true, miniHost + ":443": true, miniHost: true, "x." + miniHost: false,
-		miniHost + ".": false, "tg.example.co": false} {
+	// Host matching: case, port and one trailing dot don't matter (a host that differs only by them never reaches the
+	// main host's routes under the Mini App name); anything else is not the Mini App host.
+	for host, mini := range map[string]bool{"TG.Example.COM": true, "tg.EXAMPLE.com:8443": true, miniHost + ":443": true, miniHost: true,
+		miniHost + ".": true, "TG.example.com.:80": true, miniHost + "..": false, "x." + miniHost: false, "tg.example.co": false,
+		"tg-example.com": false} {
 		r := e.send(t, host, "GET", "/", "")
 		if got := r.status == 404; got != mini {
 			t.Errorf("Host %q: status %d, Mini App host %v", host, r.status, mini)
+		}
+		if mini {
+			if r := e.send(t, host, "POST", api.Prefix+"/auth/login", `{"email":"mini@example.com","password":"correct horse battery staple"}`); r.status != 404 {
+				t.Errorf("Host %q: sign-in reachable (%d)", host, r.status)
+			}
+			if r := e.send(t, host, "GET", api.Prefix+"/spaces", "", "Cookie", cookie); r.status != 401 {
+				t.Errorf("Host %q: cookie accepted (%d)", host, r.status)
+			}
 		}
 	}
 

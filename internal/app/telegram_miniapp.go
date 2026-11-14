@@ -59,12 +59,13 @@ func (c *Central) newTelegramMiniApp() {
 	})
 }
 
-// hostOf is a Host header's host name: lower case, without the port.
+// hostOf is a Host header's host name: lower case, without the port and one trailing dot. "tg.example.com." is the
+// same host to DNS, so it must get the Mini App host's allowlist, never the main host's routes under the Mini App name.
 func hostOf(hostport string) string {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		hostport = h
 	}
-	return strings.ToLower(hostport)
+	return strings.ToLower(strings.TrimSuffix(hostport, "."))
 }
 
 // isMiniAppHost reports whether a request's Host (r.Host, never X-Forwarded-Host) is the running bot's Mini App host.

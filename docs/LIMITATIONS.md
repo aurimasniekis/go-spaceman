@@ -710,6 +710,17 @@
   NATS) and MCP upstream transports (`gateway.Transport`). Adapters are compiled in. The gateway speaks only streamable
   HTTP to upstream servers (no stdio or SSE-only transport), and Pulse is the only inbound event system.
 
+## Telegram Mini App
+
+- **Sessions live in memory.** Mini App sessions (ADR-0083 §3.4.2) are held by central only: a restart, a bot change
+  or turning the Mini App off ends them all, and the user reopens the app. Unsaved form input is lost.
+- **Session capacity can run out.** Central holds at most 20,000 Mini App sessions (5 per link, the oldest of a link
+  dropped). When every slot holds a live session, new exchanges are refused with 429 until sessions expire (idle 15
+  min, absolute 1 h by default). Only valid initData of linked users opens a session, so only linked Telegram accounts
+  can use the capacity up, at 10 exchanges a minute each (SM-TG-005).
+- **Replay memory is bounded.** Used initData is remembered for an hour (the largest allowed max age), at most 10,000
+  entries; under a flood of distinct valid initData the oldest are forgotten first (SM-TG-005).
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned
