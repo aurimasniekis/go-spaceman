@@ -210,7 +210,7 @@ func runCmd(g *globals) *cobra.Command {
 				DataDir: cfg.DataDir, CentralURL: cfg.Central.URL, Credential: strings.TrimSpace(string(cred)), HTTPClient: hcl, Runner: rn,
 				RunnerInfo:      proto.RunnerInfo{Kind: "herdr-core", Version: client.Hello().Version, CoreID: client.Hello().Core.ID},
 				HarnessBinaries: map[string]string{harness.KindClaude: cfg.Harness.ClaudeBinary, harness.KindCodex: cfg.Harness.CodexBinary},
-				AgentBinary:     self, BridgeSocket: filepath.Join(filepath.Dir(cfg.Runner.Socket), "bridge.sock"), Capacity: cfg.Capacity,
+				AgentBinary:     self, BridgeSocket: filepath.Join(filepath.Dir(cfg.Runner.Socket), "bridge.sock"), Capacity: cfg.Capacity, JournalRetention: cfg.JournalRetention.D(),
 				ReconnectMax: cfg.Central.ReconnectMax.D(), Log: log, DefaultCols: defCols, DefaultRows: defRows, Claude: claude,
 			})
 			log.Info("spaceman-agent starting", slog.String("central", cfg.Central.URL), slog.String("hc_core", client.Hello().Core.ID),

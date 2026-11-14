@@ -62,6 +62,9 @@ type Options struct {
 	RecordingCreate func(path string) (recording.File, error)
 	// Claude configures node-managed Claude Code (ADR-0077); the zero value keeps runs on HarnessBinaries.
 	Claude ClaudeOptions
+	// JournalRetention is how long the journal keeps an ended run (prune.go); 0 and anything below the Claude Code pin window
+	// (30 days) mean that window.
+	JournalRetention time.Duration
 	// DefaultCols and DefaultRows are the size the runner starts programs at (runner.terminal_size); a takeover open
 	// when a run's held size is cleared is resized back to it (ADR-0075). 0: left as it is.
 	DefaultCols, DefaultRows int
@@ -115,7 +118,10 @@ type Agent struct {
 	catchUpConn  *websocket.Conn
 	catchUpCtx   context.Context
 	caughtUp     map[string]bool
-	connCtx      context.Context
+	// finalSent and finalAcked are, per ended run, the journal update time of the final state this process sent to central
+	// and the one central acknowledged (prune.go); memory only.
+	finalSent, finalAcked map[string]int64
+	connCtx               context.Context
 	// minor is the negotiated protocol minor version of the current connection.
 	minor int
 	// toolCalls are the agent tool calls waiting for central's result, by call ID.
@@ -376,7 +382,7 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 	conn.SetReadLimit(proto.MaxMessage)
 	defer func() { _ = conn.CloseNow() }()
-	runs, err := a.j.runs(ctx, false)
+	runs, follow, err := a.helloRuns(ctx)
 	if err != nil {
 		return err
 	}
@@ -395,6 +401,7 @@ func (a *Agent) session(ctx context.Context) error {
 	if err := a.send(ctx, proto.TypeHello, hello); err != nil {
 		return err
 	}
+	a.noteSent(runs)
 	defer func() {
 		a.mu.Lock()
 		a.conn, a.connected, a.lostAt = nil, false, a.now()
@@ -440,6 +447,9 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.capsAfterHello(hbCtx, helloCaps)
+			if len(follow) > 0 {
+				go a.sendFollowUp(hbCtx, conn, follow)
+			}
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant
@@ -465,6 +475,7 @@ func (a *Agent) session(ctx context.Context) error {
 				return err
 			}
 			a.reconcileDesired(ctx, rec)
+			a.finalAck(ctx, rec)
 		case proto.TypeRecordingAck:
 			var ack proto.RecordingAck
 			if err := env.Decode(&ack); err == nil {
