@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
@@ -101,6 +102,16 @@ type runtime struct {
 
 // MiniAppHost is the Mini App host of the running bot, or "" when the bot is off or has none. It is read per request.
 func (svc *Service) MiniAppHost() string { return *svc.miniAppHost.Load() }
+
+// MiniAppBot is the running bot's ID with the key its Mini App initData is signed with (miniapp.SecretKey of its
+// token; the token itself stays here), or false while no bot runs or it has no Mini App host.
+func (svc *Service) MiniAppBot() (miniapp.Bot, bool) {
+	b := svc.miniAppBot.Load()
+	if b == nil || *svc.miniAppHost.Load() == "" {
+		return miniapp.Bot{}, false
+	}
+	return *b, true
+}
 
 // Start brings the configured bot up (getMe, commands, menu button, then setWebhook or polling) and keeps ctx for the
 // poller. It returns once the first attempt is done; an attempt that fails for a reason other than the token is
@@ -202,6 +213,7 @@ func (svc *Service) offLocked() {
 	svc.stopSender()
 	empty := ""
 	svc.miniAppHost.Store(&empty)
+	svc.miniAppBot.Store(nil)
 }
 
 // applyLocked makes the live bot match row (nil: no bot). drop drops the updates Telegram holds (a new token). It
@@ -270,6 +282,12 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 	svc.startSender(c) //nolint:contextcheck // the sender runs on central's serving context, like the poller
 	host := row.MiniappHost
 	svc.miniAppHost.Store(&host)
+	if c.BotID() == strconv.FormatInt(row.BotID, 10) {
+		// Only the configured bot's own token signs initData its links accept.
+		svc.miniAppBot.Store(&miniapp.Bot{ID: row.BotID, Secret: miniapp.SecretKey(string(token))})
+	} else {
+		svc.miniAppBot.Store(nil)
+	}
 	svc.setState(func(rt *runtime) { rt.infoClient = c })
 
 	var allowed []netip.Prefix

@@ -16,6 +16,8 @@ var Excluded = map[string]string{ //nolint:gosec // G101 false positive: operati
 	"oidc-callback":   "the identity provider's browser redirect back to central",
 	"reset-password": "public and token-less: central accepts an anonymous state-changing request only from its own web origin " +
 		"(cross-site protection), so the user redeems the reset token on the sign-in page; `spaceman user reset-token` issues it",
+	"create-telegram-session": "the Telegram Mini App's session exchange: served only on the Mini App host, from the Mini App's origin, " +
+		"with initData Telegram signs for the app (ADR-0083)",
 }
 
 // ExcludedIDs returns the excluded operation IDs, sorted.

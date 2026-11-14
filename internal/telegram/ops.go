@@ -46,6 +46,8 @@ var Ops = map[string]api.TelegramClass{
 	"reply-message":   api.TelegramBoth,
 	"ack-message":     api.TelegramBoth,
 	"resolve-message": api.TelegramBoth,
+	// The Mini App's session exchange: public, on the Mini App host only.
+	"create-telegram-session": api.TelegramExchange,
 	// Runs (Q3: stop, never launch).
 	"list-runs": api.TelegramBoth,
 	"get-run":   api.TelegramBoth,

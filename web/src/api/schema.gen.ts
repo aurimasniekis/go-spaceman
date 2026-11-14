@@ -4116,6 +4116,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/telegram/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange Telegram Mini App initData for a session
+         * @description Served only on the Mini App host (miniapp_host; 404 elsewhere). The initData must carry a valid signature of the configured bot, be at most init_data_max_age_seconds old and not used before (each initData opens one session); its Telegram user needs an active link. Refused initData is 401 whatever the reason. Rate limited per address and per Telegram user. The session lives in memory only and ends on idle, absolute expiry, unlink, user disable, a bot change or a restart; the Mini App then asks to be reopened.
+         */
+        post: operations["create-telegram-session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/telegram/settings": {
         parameters: {
             query?: never;
@@ -11138,6 +11158,36 @@ export interface components {
             status?: "backlog" | "ready";
             title: string;
             workspace?: string;
+        };
+        TelegramSessionInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSessionInBody.json
+             */
+            readonly $schema?: string;
+            /** @description The raw Telegram.WebApp.initData string, as the Mini App received it */
+            init_data: string;
+        };
+        TelegramSessionOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSessionOut.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description When the session ends whatever its use
+             */
+            expires_at: string;
+            /**
+             * Format: int64
+             * @description The session ends after this long without a request
+             */
+            idle_timeout_seconds: number;
+            /** @description The session token, sent as "Authorization: Telegram <token>" on the Mini App host only; never in a URL or a cookie */
+            token: string;
         };
         TemplateDefinition: {
             body: string;
@@ -21402,6 +21452,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-telegram-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramSessionInBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSessionOut"];
+                };
             };
             /** @description Error */
             default: {

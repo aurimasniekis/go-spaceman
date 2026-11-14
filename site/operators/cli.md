@@ -163,6 +163,7 @@ flows. A test fails when a new operation has neither a command nor an entry here
 | `recovery-login` | break-glass sign-in that creates a browser session; use the recovery token on the sign-in page |
 | `start-oidc`, `oidc-callback` | browser redirects to and from the identity provider (sign-in, step-up, link, test login) |
 | `reset-password` | anonymous: central accepts it only from its own web origin, so the user redeems the token from `spaceman user reset-token` on the sign-in page |
+| `create-telegram-session` | the Telegram Mini App's session exchange: served only on the Mini App host, from its origin, with initData Telegram signs for the app (ADR-0083) |
 
 The live terminal stream (`…/runs/{run_id}/terminal`) has no command either: it replays a program's terminal output
 with its escape sequences, which belongs in the web UI's terminal viewer. `spaceman run recording download` saves the

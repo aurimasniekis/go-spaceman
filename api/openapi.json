@@ -17360,6 +17360,64 @@
         ],
         "type": "object"
       },
+      "TelegramSessionInBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TelegramSessionInBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "init_data": {
+            "description": "The raw Telegram.WebApp.initData string, as the Mini App received it",
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "init_data"
+        ],
+        "type": "object"
+      },
+      "TelegramSessionOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TelegramSessionOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "When the session ends whatever its use",
+            "format": "date-time",
+            "type": "string"
+          },
+          "idle_timeout_seconds": {
+            "description": "The session ends after this long without a request",
+            "format": "int64",
+            "type": "integer"
+          },
+          "token": {
+            "description": "The session token, sent as \"Authorization: Telegram \u003ctoken\u003e\" on the Mini App host only; never in a URL or a cookie",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expires_at",
+          "idle_timeout_seconds"
+        ],
+        "type": "object"
+      },
       "TemplateDefinition": {
         "additionalProperties": false,
         "properties": {
@@ -33767,6 +33825,49 @@
           }
         },
         "summary": "Configure the Telegram bot, or replace its configuration",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/telegram/session": {
+      "post": {
+        "description": "Served only on the Mini App host (miniapp_host; 404 elsewhere). The initData must carry a valid signature of the configured bot, be at most init_data_max_age_seconds old and not used before (each initData opens one session); its Telegram user needs an active link. Refused initData is 401 whatever the reason. Rate limited per address and per Telegram user. The session lives in memory only and ends on idle, absolute expiry, unlink, user disable, a bot change or a restart; the Mini App then asks to be reopened.",
+        "operationId": "create-telegram-session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramSessionInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSessionOut"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [],
+        "summary": "Exchange Telegram Mini App initData for a session",
         "tags": [
           "telegram"
         ]

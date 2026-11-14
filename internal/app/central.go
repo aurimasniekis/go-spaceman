@@ -64,6 +64,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
@@ -168,6 +169,8 @@ type Central struct {
 	// from an SSO session acts with the user's SSO grants until that session's absolute expiry. Nil: off, so every
 	// Telegram principal acts with the user's local grants only.
 	TelegramSSOGrants func() bool
+	// TelegramMiniApp exchanges Mini App initData for sessions and resolves them (ADR-0083 §3.4.2).
+	TelegramMiniApp *miniapp.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -395,6 +398,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
 	c.newTelegram(ctx)
 	c.TelegramBot = c.newTelegramBot()
+	c.newTelegramMiniApp()
 	// Once: the settings keep their listeners, and the bot carries the limits to every sender it makes.
 	c.TelegramSettings.BindSender(c.TelegramBot)
 	c.Queue.Workers = c.Fleet
@@ -612,9 +616,9 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramMiniApp(c.TelegramMiniApp)},
 		Raw:      rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
-		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch}}
+		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch, Sessions: c.TelegramMiniApp, MiniAppOrigin: c.miniAppOrigin}}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
 		d.MCP = c.mcpEndpoint
@@ -691,14 +695,33 @@ func (c *Central) systemSources() *api.SystemSources {
 }
 
 // Handler is the public listener's handler: the API under /api/ and the web UI elsewhere.
+//
+// It routes on the request's Host (ADR-0083 §3.4.1): the Mini App host (miniapp_host of the running bot) gets the Mini
+// App handler, every other host the main one. Only r.Host counts; X-Forwarded-Host is never trusted for routing.
 func (c *Central) Handler(d *api.Deps) http.Handler {
+	main := c.mainHandler(d)
+	mini := c.miniAppHandler(d)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c.isMiniAppHost(r.Host) {
+			mini.ServeHTTP(w, r)
+			return
+		}
+		main.ServeHTTP(w, r)
+	})
+	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
+	// reads, with central keeping every response): writes must make progress.
+	return httpguard.WriteProgress(h, c.Cfg.HTTP.WriteIdleTimeout.D())
+}
+
+// mainHandler serves the main host: the API, the node protocol, the Telegram webhook and the web UI.
+func (c *Central) mainHandler(d *api.Deps) http.Handler {
 	mux := http.NewServeMux()
 	apiH := d.Handler()
 	mux.Handle("/api/", apiH)
 	mux.Handle("/agent/", c.Fleet.AgentHandler())
 	// The Telegram webhook (ADR-0083, SM-TG-004): its own route group outside the API handler and its middleware, with
 	// the webhook's own checks (secret token before the body, body limit, dedupe, bounded queue). Main host only: the
-	// Mini App host, once it exists, must not route here.
+	// Mini App host never routes here (miniAppHandler).
 	mux.Handle(updates.WebhookPath, c.TelegramUpdates.Webhook)
 	ui := c.UI
 	if ui == nil {
@@ -708,9 +731,7 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 		})
 	}
 	mux.Handle("/", ui)
-	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
-	// reads, with central keeping every response): writes must make progress.
-	return httpguard.WriteProgress(mux, c.Cfg.HTTP.WriteIdleTimeout.D())
+	return mux
 }
 
 // ManagementHandler serves /healthz, /readyz and /metrics (SM-OBS-002). Bind it to a private address.
@@ -866,7 +887,7 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil), api.RegisterTelegramBot(nil), api.RegisterTelegramSettings(nil)},
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil), api.RegisterTelegramBot(nil), api.RegisterTelegramSettings(nil), api.RegisterTelegramMiniApp(nil)},
 		Raw: rawRoutes(nil, nil, nil, nil)}
 }
 
@@ -879,7 +900,7 @@ func rawRoutes(f *fleet.Service, att *attachments.Service, us *usage.Service, ex
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules, api.TelegramBotRules, api.TelegramSettingsRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules, api.TelegramBotRules, api.TelegramSettingsRules, api.TelegramMiniAppRules} {
 		for k, v := range m {
 			out[k] = v
 		}
