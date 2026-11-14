@@ -176,6 +176,15 @@ func TestLiveShipmentsWaitForTheCatchUp(t *testing.T) {
 		}
 	}
 	receive(10) // the first pass after connecting: the run was unknown
+	eventually := func(what string, ok func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); !ok(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+	eventually("the first pass to end", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.catchUps == 0 })
 
 	// Records 11-20 were lost (a failed send marks the run); a live shipment of 21 must wait.
 	add(10)
