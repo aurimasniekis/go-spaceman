@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
@@ -46,6 +47,25 @@ func systemToControl(t *testing.T, e *fleetEnv, spaceID, s string) int {
 		}
 	}
 	return n
+}
+
+// bindAnotherClaude binds a second, non-default Claude account to the space and returns its ID.
+func bindAnotherClaude(t *testing.T, e *fleetEnv, spaceID string) string {
+	t.Helper()
+	ctx := context.Background()
+	acc, err := e.c.Accounts.Create(ctx, admin, accounts.Input{Name: "second-claude-" + spaceID[len(spaceID)-6:], Kind: "claude_oauth_token",
+		Secret: "stub-claude-token-2", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs, err := e.c.Accounts.Bindings(ctx, spaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Accounts.SetBindings(ctx, admin, spaceID, append(bs, accounts.Binding{AccountID: acc.ID})); err != nil {
+		t.Fatal(err)
+	}
+	return acc.ID
 }
 
 func inputCommands(t *testing.T, e *fleetEnv, runID string) int {
@@ -94,8 +114,10 @@ func TestUsageLimitKeepAlive(t *testing.T) {
 	}
 	eventually(t, "reclassified", func() bool { return e.run1(w1.ID).Limit.Kind == proto.LimitFiveHour })
 
-	// The slot is free: a second worker launches while the first waits.
-	w2, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, worker)
+	// The slot is free: a second worker launches while the first waits (on another account: the first's is held).
+	other := worker
+	other.AccountRef = bindAnotherClaude(t, e, sp.ID)
+	w2, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, other)
 	if err != nil {
 		t.Fatalf("a limit-waiting worker held the space slot: %v", err)
 	}
