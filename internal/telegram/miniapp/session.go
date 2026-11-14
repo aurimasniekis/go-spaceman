@@ -38,10 +38,15 @@ const (
 	// refusedWindow is the most often refused exchanges from one address are reported (OnRefused).
 	refusedWindow = time.Minute
 	// refusedLimit caps the per-address refusal counters (the oldest is dropped); refusedRowsPerMinute caps the audit
-	// rows OnRefused is called for across all addresses (the rest roll into the next aggregate).
+	// rows OnRefused is called for across all addresses; what the cap withholds, and what an evicted counter held, is
+	// reported as one overflow row a minute (OverflowKey) that the cap does not block.
 	refusedLimit         = 10000
 	refusedRowsPerMinute = 60
 )
+
+// OverflowKey is the clientIP OnRefused gets for the overflow row: the refusals that no per-address row reported
+// (withheld by the rows-a-minute cap or lost with an evicted counter), over all addresses.
+const OverflowKey = "*"
 
 // Bot is the running bot as the Mini App needs it: its ID (links belong to one bot) and the key its initData is
 // signed with (SecretKey of its token). The token itself never reaches this package.
@@ -115,10 +120,13 @@ type Service struct {
 	sessions map[[sha256.Size]byte]*session
 	refused  map[string]*refusedCount
 	// refusedOrder is refused's insertion order (for dropping the oldest); rowsStart/rows count the audit rows reported
-	// in the current minute.
+	// in the current minute. suppressed counts refusals no row has reported yet; overflowAt is when the last overflow
+	// row was reported.
 	refusedOrder []string
 	rowsStart    time.Time
 	rows         int
+	suppressed   int64
+	overflowAt   time.Time
 }
 
 // New returns the service.
@@ -256,11 +264,9 @@ func (svc *Service) refuse(ctx context.Context, ip string, now time.Time) {
 	r := svc.refused[key]
 	if r == nil {
 		for len(svc.refused) >= refusedLimit && len(svc.refusedOrder) > 0 {
+			svc.suppressed += svc.refused[svc.refusedOrder[0]].pending // an evicted counter's held-back refusals
 			delete(svc.refused, svc.refusedOrder[0])
 			svc.refusedOrder = svc.refusedOrder[1:]
-		}
-		if len(svc.refusedOrder) > 2*refusedLimit {
-			svc.refusedOrder = append([]string(nil), svc.refusedOrder...)
 		}
 		r = &refusedCount{}
 		svc.refused[key] = r
@@ -275,11 +281,24 @@ func (svc *Service) refuse(ctx context.Context, ip string, now time.Time) {
 		if svc.rows < refusedRowsPerMinute {
 			svc.rows++
 			report, r.pending, r.reported = r.pending, 0, now
+		} else {
+			// The cap refuses this key a row: its refusals move to the overflow count.
+			svc.suppressed += r.pending
+			r.pending = 0
 		}
 	}
+	var overflow int64
+	if svc.suppressed > 0 && (svc.overflowAt.IsZero() || now.Sub(svc.overflowAt) >= refusedWindow) {
+		overflow, svc.suppressed, svc.overflowAt = svc.suppressed, 0, now
+	}
 	svc.mu.Unlock()
-	if report > 0 && svc.o.OnRefused != nil {
-		svc.o.OnRefused(ctx, key, report)
+	if svc.o.OnRefused != nil {
+		if report > 0 {
+			svc.o.OnRefused(ctx, key, report)
+		}
+		if overflow > 0 {
+			svc.o.OnRefused(ctx, OverflowKey, overflow)
+		}
 	}
 }
 

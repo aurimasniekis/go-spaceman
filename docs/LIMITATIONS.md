@@ -723,8 +723,14 @@
   not expired raises an auth_date watermark: initData issued at or before it is refused, so a flush can't revive a used
   one, and a user whose initData is that old reopens the app for fresh data.
 - **Refused-exchange audit is aggregated.** Refusals are counted per address (an IPv6 /64 is one address), at most one
-  audit row per address a minute and 60 rows a minute in all; the rest roll into the next row. At most 10,000 addresses
-  are tracked, the oldest dropped first, so a flood from very many addresses can lose counts.
+  audit row per address a minute and 60 rows a minute in all. Refusals the cap withholds, and those an evicted counter
+  still held, are added to one global count that is reported as a single overflow row a minute (source address `*`, outside
+  the 60-row cap), so the rows add up to every refusal; the overflow row appears with the next refusal after its minute,
+  so the latest count can wait for it. At most 10,000 addresses are tracked, the oldest dropped first, so a flood from very
+  many addresses costs per-address detail (an address's refusals then show only in the overflow row), not counts.
+- **Unlinked Telegram users can fill the replay cache.** Valid initData from any Telegram user is remembered before the
+  link check, so users without a link can push entries through the 10,000-entry cache like linked ones (the watermark above
+  still keeps a flushed initData from being reused).
 - **A token rotation ends Mini App sessions.** Each session is bound to a hash of the bot's signing key; a new bot token
   (same bot ID) refuses the sessions opened under the old one.
 

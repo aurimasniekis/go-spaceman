@@ -443,6 +443,41 @@ func TestRefusedAuditPer64AndBounded(t *testing.T) {
 	}
 }
 
+// Every refusal is accounted for: the per-minute row cap and the eviction of a full refused map must not hide one
+// address's refusals; what the cap withholds is reported in one overflow row a minute.
+func TestRefusedAuditConserved(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	var recorded, refused int64
+	f.svc.o.OnRefused = func(_ context.Context, _ string, n int64) { f.mu.Lock(); recorded += n; f.mu.Unlock() }
+	refuse := func(ip string) {
+		refused++
+		_, _ = f.svc.Exchange(context.Background(), "hash=bad", ip)
+	}
+	for i := range refusedRowsPerMinute { // a probe uses up the minute's budget with junk /64s
+		refuse(fmt.Sprintf("2001:db8:%x::1", i+1))
+	}
+	for range 20 { // then an address refuses 20 times, all over the budget
+		refuse("192.0.2.7")
+	}
+	for i := range refusedLimit + 1 { // and is evicted by a flood of other addresses
+		refuse(fmt.Sprintf("2001:db8:ffff:%x::1", i))
+	}
+	f.svc.mu.Lock()
+	_, held := f.svc.refused["192.0.2.7"]
+	f.svc.mu.Unlock()
+	if held {
+		t.Fatal("the address was not evicted; the test does not exercise eviction")
+	}
+	f.clk.Advance(refusedWindow + time.Second)
+	refuse("192.0.2.8") // the next minute: its row carries the overflow row with it
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if recorded != refused {
+		t.Fatalf("%d refusals, %d recorded", refused, recorded)
+	}
+}
+
 // A new key for the same bot ID (a token rotation) ends the sessions the old key opened.
 func TestSessionEndsOnKeyRotation(t *testing.T) {
 	t.Parallel()
