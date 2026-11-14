@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A message typed into "Message the agent" (for example to control) while the agent was busy was lost.** The box sent
+  safe, idle-gated input; the node refused it while the program worked, and nothing tried again. The text is now typed
+  into the running session at once (Claude Code and Codex queue typed input until they can act on it). The placeholder
+  and the guides say so (ADR-0084). Messages from the Messages page and agents are unchanged: stored, then announced
+  by the terminal notice when the program is idle.
+- Resuming a paused space now starts control when work was waiting. The resume did not wake the control notifier, so
+  work that arrived while the space was paused started control only at the next slow sweep. Resuming kicks the
+  notifier; auto-start settings, limits and dedupe apply as before.
+
 ## [0.1.4] - 2026-11-14
 
 Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:
