@@ -126,6 +126,7 @@ const DIALOGS: Dialog[] = [
   { name: 'Send a message', path: (w) => `${space(w)}/messages`, open: [button('Send message')] },
   { name: 'Message drawer', path: (w) => `${space(w)}/messages`, open: [text(/Hold deploys until the bank window/)] },
   { name: 'Take over a terminal', path: (w) => `${space(w)}/terminals`, open: [button('Take over')] },
+  { name: 'New inbox item from a terminal', path: (w) => `${space(w)}/terminals`, open: [button('New inbox item')] },
   { name: 'Terminals drawer', path: (w) => `/terminals?space=${w.space}`, open: [button(/^Space: /)], widths: [390] },
   { name: 'Add repository', path: (w) => `${space(w)}/repositories`, open: [button('Add repository')] },
   { name: 'Repository drawer', path: (w) => `${space(w)}/repositories`, open: [text(/^settlement$/)] },
