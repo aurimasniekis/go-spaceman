@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   before their position. Central streams catch-ups and recording pages instead of reading whole recordings into memory
   for each viewer. The API adds optional `tail` parameters to the terminal stream and the recording endpoint; older
   clients and servers keep working (ADR-0081).
+- Central reads at most `http.catch_up_concurrency` stored recordings at once (new setting, default 8). A terminal
+  catch-up or recording page waits up to `http.catch_up_wait` (default 5 s) for a slot, then gets 503 with
+  `Retry-After`; the web UI retries. A recording page's `gaps` now cover the records up to the end of the page.
 
 ### Fixed
 - A burst of terminal output larger than the protocol message limit (4 MiB, e.g. megabytes printed within a second)

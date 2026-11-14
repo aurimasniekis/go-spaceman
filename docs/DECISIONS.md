@@ -4288,8 +4288,18 @@
       an `event: tail` with `{from, skipped_bytes, cols, rows, modes[], gaps, truncated}` (what the output before the
       tail left), then the tail's records, then live output. Reconnects resume after the last record, as before.
     - `GET …/recording?tail=<bytes>` returns the same tail as one page, with `tail` set.
-    - Catch-ups without a tail, gap re-reads and plain pages now stream: a page keeps only its own records.
-      `httpguard` (ADR-0078) still bounds writes to a client that stops reading.
+    - **A tail starts at a character.** The tracker follows every CSI and string sequence (OSC, DCS, APC, PM, SOS) to
+      its end. When the cut falls inside one, the rest of it goes through the tracker (a mode it completes counts)
+      and is cut from the tail, and so are UTF-8 continuation bytes of a character that began before it. Replay does
+      the same (`ReplayIndex.tail`).
+    - Catch-ups without a tail, gap re-reads and plain pages now stream: a page keeps only its own records, and its
+      read stops after the page (its `gaps` cover the range read). `httpguard` (ADR-0078) still bounds writes to a
+      client that stops reading.
+    - **Bounded concurrency.** Every read of a stored recording (a terminal's catch-up or gap re-read, a recording
+      page or tail) takes one of `http.catch_up_concurrency` slots (default 8). It waits up to `http.catch_up_wait`
+      (default 5 s), then gets 503 with `Retry-After`; it never waits without bound. The live terminal reopens a
+      refused stream with back-off (a browser never retries an `EventSource` that got an error status), and replay
+      asks again for a refused page.
   - **Live terminal** (`web/src/features/terminal`):
     - Asks for a 1 MiB tail (`TAIL_BYTES`). It applies the `tail` event as records with seq 0 (size, the mode prelude,
       gaps), then the tail, still in #37's slices.
@@ -4343,8 +4353,9 @@
 - **Consequences:**
   - The current screen of a long run appears after about 1 MiB of output, whatever the run's length. Central holds
     about one tail per viewer in memory: 3.9 MiB of heap while scanning a 50 MiB recording (`TestTailMemoryBounded`).
-  - Each catch-up still decompresses the whole recording on central, which costs CPU (under a second for 50 MiB in the test)
-    but not memory. An index of checkpoints per segment would remove that; it is not needed yet.
+  - Each catch-up still decompresses the whole recording on central, which costs CPU (under a second for 50 MiB in the
+    test) but not memory. The catch-up slots bound how many run at once. An index of checkpoints per segment would
+    remove the cost; it is not needed yet.
   - The full-screen renderer's never-repainted rows can be missing from a tail until the viewer loads earlier output.
     The fix is option (a), a follow-up.
   - Colours are not part of the prelude: a tail that starts inside coloured text draws its first characters
