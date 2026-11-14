@@ -10,7 +10,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - A burst of terminal output larger than the protocol message limit (4 MiB, e.g. megabytes printed within a second)
   no longer goes missing from central's copy of a recording. The node sent it as one message, central closed the
   connection, and the records in it were never sent again; the reconnect catch-up's batches could do the same. The node
-  now splits recording shipments into messages of at most 1 MiB.
+  now splits recording shipments into messages of at most 1 MiB. After a reconnect, a live shipment no longer goes
+  ahead of the records the catch-up still has to send (central keeps only records above the last one it stored, so
+  the older ones were lost), and the catch-up stops at the first failed send.
 
 ## [0.1.3] - 2026-11-13
 

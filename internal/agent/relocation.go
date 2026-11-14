@@ -244,6 +244,7 @@ func (a *Agent) relocCheck(ctx context.Context, g *projectGit, spaceID string, p
 // waits (bounded) until central acknowledged all of it.
 func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Duration) bool {
 	a.flushSpaceMemory(ctx, spaceID, "relocation")
+	a.beginCatchUp()
 	go a.catchUpRecordings(ctx)
 	if ids, err := a.j.pendingUploads(ctx); err == nil {
 		for _, id := range ids {
