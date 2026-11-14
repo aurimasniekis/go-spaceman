@@ -125,12 +125,14 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			return
 		}
 		a.ack(ctx, c, proto.AckAccepted, "")
-		go a.launch(context.WithoutCancel(ctx), c, p)
+		a.goTrack(func() { a.launch(context.WithoutCancel(ctx), c, p) })
 	case proto.CmdStop:
 		var p proto.StopPayload
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
-		go a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+		a.goTrack(func() {
+			a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+		})
 	case proto.CmdReposSync:
 		a.handleReposSync(ctx, c)
 		return // the sync journals its own outcome (its report) when it finishes
@@ -626,7 +628,7 @@ func (a *Agent) stopSpaceRuns(ctx context.Context, spaceID string, match func(ru
 	}
 	for _, r := range runs {
 		if r.SpaceID == spaceID && match(r) {
-			go a.stop(context.WithoutCancel(ctx), r.RunID, mode, 15*time.Second, reason)
+			a.goTrack(func() { a.stop(context.WithoutCancel(ctx), r.RunID, mode, 15*time.Second, reason) })
 		}
 	}
 }
@@ -648,7 +650,7 @@ func (a *Agent) reconcileDesired(ctx context.Context, rec proto.Reconcile) {
 			// Unknown to central (or already ended there): report; central fences and stops it if needed.
 			a.report(ctx, r)
 		case d.Desired == "stopped" || d.Generation != r.Generation:
-			go a.stop(context.WithoutCancel(ctx), r.RunID, "interrupt", 15*time.Second, "central reconcile")
+			a.goTrack(func() { a.stop(context.WithoutCancel(ctx), r.RunID, "interrupt", 15*time.Second, "central reconcile") })
 		default:
 			a.report(ctx, r)
 		}

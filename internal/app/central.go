@@ -563,6 +563,10 @@ const (
 // mintShutdownGrace is how long Close lets background gateway mints finish before it cancels them.
 const mintShutdownGrace = 5 * time.Second
 
+// nodeWorkShutdownGrace bounds how long Close waits for node connections and the work they started (memory syncs,
+// usage, transcripts, tool calls) to finish before it closes the store.
+const nodeWorkShutdownGrace = 10 * time.Second
+
 // Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
 	if c.Backups != nil {
@@ -572,7 +576,7 @@ func (c *Central) Close() error {
 		c.Retention.Wait()
 	}
 	if c.Fleet != nil {
-		c.Fleet.Hub().CloseAll("central shutting down")
+		c.Fleet.Hub().Shutdown("central shutting down", nodeWorkShutdownGrace)
 		c.Fleet.Hub().StopMints(mintShutdownGrace)
 		c.Fleet.Recordings().Close()
 	}
