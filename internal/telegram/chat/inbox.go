@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,11 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
+
+// maxLimit is the API's largest page; a list asks for (page+1)*size+1 items.
+const maxLimit = 200
+
+var itemIDRe = regexp.MustCompile(`^inb_[0-9a-z]{26}$`)
 
 type inboxItem struct {
 	ID          string    `json:"id"`
@@ -101,8 +107,9 @@ func (h *Handler) cmdInbox(ctx context.Context, l updates.Link, arg string) {
 
 func (h *Handler) inboxList(ctx context.Context, c caller, s spaceRef, filter string, page int) reply {
 	status, _ := filterStatus(filter)
-	page = max(0, min(page, 24))
 	size := h.o.PageSize
+	lastPage := (maxLimit-1)/size - 1 // the API caps limit at maxLimit
+	page = max(0, min(page, lastPage))
 	var pg inboxPage
 	r := c.get(ctx, fmt.Sprintf("/spaces/%s/inbox?status=%s&limit=%d", s.ID, url.QueryEscape(status), (page+1)*size+1), &pg)
 	if !r.ok() {
@@ -124,7 +131,7 @@ func (h *Handler) inboxList(ctx context.Context, c caller, s spaceRef, filter st
 	if page > 0 {
 		nav = append(nav, button("◀ Prev", listData(s.ID, filter, page-1)))
 	}
-	if more && page < 24 {
+	if more && page < lastPage {
 		nav = append(nav, button("Next ▶", listData(s.ID, filter, page+1)))
 	}
 	rows = append(rows, nav)
@@ -259,6 +266,9 @@ func (h *Handler) inboxCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 		if len(f) != 3 {
 			break
 		}
+		if !itemIDRe.MatchString("inb_" + f[2]) {
+			break
+		}
 		h.readItem(ctx, c, l, q, s, "inb_"+f[2])
 		return
 	case "is":
@@ -266,7 +276,7 @@ func (h *Handler) inboxCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 			break
 		}
 		v, err := strconv.ParseInt(f[4], 10, 64)
-		if err != nil || v <= 0 {
+		if err != nil || v <= 0 || !itemIDRe.MatchString("inb_"+f[2]) {
 			break
 		}
 		h.statusAction(ctx, c, l, q, s, "inb_"+f[2], f[3], v)
@@ -359,15 +369,37 @@ func (h *Handler) applyStatus(ctx context.Context, c caller, l updates.Link, q *
 type rej struct {
 	linkID, spaceID, itemID string
 	version                 int64
+	at                      time.Time
 }
 
-const maxPending = 500
+const (
+	maxPendingPerLink = 5
+	pendingTTL        = 30 * time.Minute
+)
 
 func (h *Handler) addPending(k pendingKey, r rej) {
+	now := h.o.Clock.Now()
+	r.at = now
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.pending) >= maxPending {
-		clear(h.pending)
+	// Expired prompts go; one link holds at most maxPendingPerLink and its oldest makes room, so one user can't evict
+	// another's.
+	var oldest pendingKey
+	var oldestAt time.Time
+	n := 0
+	for pk, p := range h.pending {
+		switch {
+		case now.Sub(p.at) > pendingTTL:
+			delete(h.pending, pk)
+		case p.linkID == r.linkID:
+			n++
+			if oldestAt.IsZero() || p.at.Before(oldestAt) {
+				oldest, oldestAt = pk, p.at
+			}
+		}
+	}
+	if n >= maxPendingPerLink {
+		delete(h.pending, oldest)
 	}
 	h.pending[k] = r
 }
@@ -377,7 +409,7 @@ func (h *Handler) rejectReply(ctx context.Context, m *botapi.Message, l updates.
 	k := pendingKey{m.Chat.ID, m.ReplyToMessage.MessageID}
 	h.mu.Lock()
 	p, ok := h.pending[k]
-	if ok && p.linkID == l.ID {
+	if ok && p.linkID == l.ID && h.o.Clock.Now().Sub(p.at) <= pendingTTL {
 		delete(h.pending, k)
 	} else {
 		ok = false

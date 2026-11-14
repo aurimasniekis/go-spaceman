@@ -613,3 +613,66 @@ func TestCleanAndParts(t *testing.T) {
 }
 
 var _ updates.Handler = (*Handler)(nil)
+
+// A forged item ID in callback data (path pieces, a query) is refused before any API call.
+func TestForgedItemIDs(t *testing.T) {
+	e := newEnv(t)
+	on := botapi.Message{MessageID: 1, Chat: botapi.Chat{ID: chatID}}
+	a := strings.Repeat("a", 26)
+	for _, bad := range []string{"x/../../../" + spB + "/inbox/" + iid('3'), strings.Repeat("1", 25) + "?", "A" + strings.Repeat("1", 25), strings.Repeat("1", 27)} {
+		e.tapData("ir:"+a+":"+bad, on)
+		e.tapData("is:"+a+":"+bad+":x:3", on)
+	}
+	for _, r := range e.api.seen() {
+		if strings.Contains(r, "/inbox/") {
+			t.Fatalf("a forged item ID reached the API: %s", r)
+		}
+	}
+}
+
+// The last page the API can serve is the last page offered: no request asks for more than its largest limit.
+func TestPageCap(t *testing.T) {
+	e := newEnv(t)
+	e.h.o.PageSize = 8
+	e.say("/inbox alpha")
+	e.tapData(listData(spA, "n", 24), e.last())
+	e.tapData(listData(spA, "n", 500), e.last())
+	saw := false
+	for _, r := range e.api.seen() {
+		if i := strings.Index(r, "limit="); i >= 0 {
+			var n int
+			if _, err := fmt.Sscanf(r[i:], "limit=%d", &n); err != nil || n > maxLimit {
+				t.Fatalf("request %s asks for too many", r)
+			}
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatal("no list request seen")
+	}
+}
+
+// One link's reject prompts never evict another's, and an old prompt expires.
+func TestPendingBounds(t *testing.T) {
+	e := newEnv(t)
+	clk := e.h.o.Clock.(*clock.Fake)
+	e.h.addPending(pendingKey{1, 1}, rej{linkID: "tgl_other", spaceID: spA, itemID: iid('1'), version: 3})
+	for i := 0; i < 50; i++ {
+		e.h.addPending(pendingKey{2, i}, rej{linkID: "tgl_1", spaceID: spA, itemID: iid('1'), version: 3})
+	}
+	e.h.mu.Lock()
+	n := len(e.h.pending)
+	_, other := e.h.pending[pendingKey{1, 1}]
+	e.h.mu.Unlock()
+	if !other || n != maxPendingPerLink+1 {
+		t.Fatalf("other kept %v, %d entries", other, n)
+	}
+	clk.Advance(pendingTTL + time.Minute)
+	e.h.addPending(pendingKey{3, 1}, rej{linkID: "tgl_1"})
+	e.h.mu.Lock()
+	n = len(e.h.pending)
+	e.h.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("%d entries after expiry", n)
+	}
+}
