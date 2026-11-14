@@ -8,6 +8,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -32,6 +33,13 @@ func (c *Central) newTelegramUpdates() *updates.Service {
 			OnUnauthorized: c.auditTelegramUnauthorized},
 		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log},
 	})
+}
+
+// newTelegramBot builds the bot's connection service (ADR-0083). It configures TelegramUpdates (webhook route,
+// dispatcher client, poller) whenever the bot is written and at start (Serve calls Start).
+func (c *Central) newTelegramBot() *tgbot.Service {
+	return tgbot.New(c.Store, c.Audit, c.Keyring, tgbot.Options{BaseURL: c.Cfg.Telegram.APIBaseURL, PublicURL: c.Cfg.PublicURL,
+		Updates: c.TelegramUpdates, Bus: c.Bus, Log: obs.Component(c.Log, "telegram")})
 }
 
 // auditTelegramUnauthorized records webhook requests refused for their secret token (at most once a minute, with the

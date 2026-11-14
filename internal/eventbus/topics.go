@@ -11,4 +11,6 @@ const (
 	TopicRunChanged    = "run.changed"
 	TopicAudit         = "audit.appended"
 	TopicSystemStatus  = "system.status"
+	// TopicTelegramLink: Telegram links changed (Key = link ID, or "*" for many); link caches re-read (ADR-0083).
+	TopicTelegramLink = "telegram.link"
 )

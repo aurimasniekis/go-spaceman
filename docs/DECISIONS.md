@@ -4626,6 +4626,36 @@
     it without any read; in a private chat it goes to the linked user's handler (TG-2/TG-4b mark a link `blocked`), and
     for an unlinked user it is dropped without a reply. Unlinked users' `/start <code>` is not handled yet: linking
     (TG-4b) adds that path with its own rate limits.
+- **Implementation notes (TG-3b, 2026-11-14):**
+  - **Operations:** `get-telegram-bot` (system:read), `put-telegram-bot` and `delete-telegram-bot` (system:write with a
+    step-up) on `/api/v1/telegram/bot`, with If-Match versions like the Harbor Pilot connection. A put replaces every
+    field; an empty `bot_token` keeps the stored one. Audit actions `telegram.bot.created`, `.updated` and `.deleted`
+    record the settings, `token_changed`, `token_version`, the bot ID and username, `bot_changed` and `links_revoked`,
+    never the token or the secret. The bot row writes no change-feed entry (the 0051 rule for Telegram state).
+  - **Token and secret:** a new token is checked with getMe before anything is stored (401 → field error, other
+    failures → unavailable), then sealed with the credential purpose and associated data naming its column, so a sealed
+    value opens only where it was written. The webhook secret is 32 random bytes as base64url and rotates with every
+    token write. The hook id (the webhook path) is generated once and kept; a new path needs delete and create.
+  - **Validation beyond the plan, none weakening anything:** webhook mode with `enabled` needs an https `public_url`
+    (Telegram calls only HTTPS webhooks); polling has no such need. `miniapp_host` must already be lower case (it is
+    refused, not folded, so a Terraform value never drifts) and have two or more labels (`tg.localhost` works for
+    development, `localhost` doesn't). `webhook_ip_allowlist` takes at most 32 CIDRs in canonical form, stored sorted
+    (the Terraform attribute is a set).
+  - **Different bot:** when a written token's bot ID differs, every live link of any other bot is revoked in the same
+    transaction (`revoked_by = telegram:bot_changed`), and `telegram.link` is published after commit for link caches.
+    Link-subject grants don't exist yet: TG-4b must drop or ignore a revoked link's `telegram:<link_id>` grants.
+  - **Live bot:** brought up at start (Serve) and after every write, outside transactions and serialized with the
+    writes: getMe (the stored bot ID must match), setMyCommands for private chats (the plan §2.0 list, although the
+    chat surfaces arrive with TG-7/TG-8), setChatMenuButton (the Mini App at `https://<miniapp_host>/` when set,
+    otherwise commands), then the local webhook configuration first and `setWebhook` (allowed updates, max_connections
+    10, pending updates dropped only for a new token), or `deleteWebhook` and the poller. A failure doesn't fail the
+    write; it shows in health, and a failed start is retried from 30 s doubling to 10 min unless Telegram refused the
+    token (401). Disabling or deleting calls `deleteWebhook` and turns the route off (404).
+  - **Health:** `webhook_status` is `off`, `starting` (polling before central serves), `polling`, `ok`, `error` (a failed
+    start, another webhook URL registered for the bot, or a delivery error dated at or after central's setWebhook,
+    compared in whole seconds) or `unknown` (getWebhookInfo failed). getWebhookInfo is reused for 30 s and bounded to
+    5 s. It is in `get-telegram-bot`, the `telegram` section of `get-system` and a card on the System page; none of them
+    carries the token, the secret or the webhook path.
 
 ## 2. Open items and unresolved contracts
 
