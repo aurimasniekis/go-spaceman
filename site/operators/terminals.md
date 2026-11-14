@@ -27,10 +27,15 @@ The status dot means:
 
 ## Watching a run
 
-The header of an agent's terminal shows its role, kind, harness, turn and state, with Live/Replay, **Take over** and
-**Stop**. While the run is active, the **Live** view shows the stored output and then streams new output as it happens.
-It is **watch-only**: key presses in the browser are never sent to the run. To give an agent input, use the message box
-below the terminal, which delivers the text the next time the agent is idle, or stop it.
+The header of an agent's terminal shows its role, kind, harness, turn and state, with Live/Replay, **Take over**,
+**New inbox item** and **Stop**. While the run is active, the **Live** view shows the stored output and then streams new
+output as it happens. It is **watch-only**: key presses in the browser are never sent to the run. To give an agent
+input, use the message box below the terminal, which delivers the text the next time the agent is idle, or stop it.
+
+**New inbox item** opens the space's [inbox](/guide/inbox#adding-an-item) dialog. Next to **Send**, **Send as inbox
+item** opens the same dialog with the message box's text and a link to the run, so control triages it instead of the
+agent getting it: nothing is sent to the terminal, and the message box clears once the item is added. Both are there
+for anyone who may add inbox items to the space (operators and admins) and need no takeover.
 
 The **inspector** beside the terminal (the panel button toggles it) shows:
 - **Now:** the state, turn, how long the run has run, and human actions it is waiting on.

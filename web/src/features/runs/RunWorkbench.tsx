@@ -1,13 +1,16 @@
 import { Accordion, ActionIcon, Alert, Badge, Box, Button, CopyButton, Group, Menu, ScrollArea, SegmentedControl, Stack, Text, Title, Tooltip } from '@mantine/core'
 import {
-  IconCheck, IconChevronDown, IconCopy, IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconPlayerStop, IconSend,
+  IconCheck, IconChevronDown, IconCopy, IconInbox, IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand,
+  IconPlayerStop, IconSend,
 } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useRouter } from '@tanstack/react-router'
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, check, unwrap, type Run } from '@/api/client'
 import { keys, useHumanActions, useMe, useNodes, useQueue, useSpaceAccounts } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { useAppForm } from '@/components/form/appForm'
+import { useCanCreateInboxItem, useNewInboxItem } from '@/features/inbox/useNewInboxItem'
 import { holderRef, TakeoverPanel, useTakeoverInput } from '@/features/terminal/Takeover'
 import { resizeBlocker } from '@/features/terminal/TerminalSize'
 import { TerminalView } from '@/features/terminal/TerminalView'
@@ -91,6 +94,19 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
       }
     },
   })
+  // "New inbox item" and "Send as inbox item" (operator request, 2026-11-13): the Inbox page's permission, no takeover.
+  const canAddItem = useCanCreateInboxItem(spaceId)
+  const newItem = useNewInboxItem(spaceId)
+  const router = useRouter()
+  const sendAsItem = () => {
+    const text = inputForm.state.values.text.trim()
+    if (!text) return
+    // The dialog opens prefilled (nothing is added by accident; a title, urgency or files can still be added), and the
+    // message box clears only once the item is added. Nothing goes to the terminal.
+    const href = router.buildLocation({ to: '/spaces/$spaceId/runs/$runId', params: { spaceId, runId: r.id } }).href
+    const url = new URL(href, window.location.origin).href
+    newItem.open({ body: `${text}\n\nFrom the terminal of [${r.role}](${url}) (run \`${r.id}\`).` }, { onCreated: () => inputForm.reset() })
+  }
   const duration = runDuration(r, now)
 
   return (
@@ -111,6 +127,15 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
           <SegmentedControl value={mode} onChange={(v) => onMode(v as 'live' | 'replay')} aria-label="Terminal view"
             data={[{ value: 'live', label: 'Live', disabled: ended }, { value: 'replay', label: 'Replay' }]} />
           <TakeoverPanel spaceId={spaceId} runId={r.id} run={r} me={me} canTakeOver={canTakeOver} ended={ended} part="button" compact={narrow} />
+          {canAddItem && (narrow ? (
+            <Tooltip label="New inbox item">
+              <ActionIcon variant="default" aria-label="New inbox item" onClick={() => newItem.open()}><IconInbox size={16} /></ActionIcon>
+            </Tooltip>
+          ) : (
+            <Tooltip label="Add an item to this space's inbox for control to triage">
+              <Button size="xs" variant="default" leftSection={<IconInbox size={14} />} onClick={() => newItem.open()}>New inbox item</Button>
+            </Tooltip>
+          ))}
           {operator && !ended && (
             <Menu position="bottom-end">
               <Menu.Target>
@@ -157,7 +182,22 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
                   {(f) => <f.TextField flex={1} placeholder={`Message ${r.role} (delivered at its next idle point)`} aria-label="Message the agent" />}
                 </inputForm.AppField>
                 <inputForm.Subscribe selector={(st) => st.values.text.trim() !== ''}>
-                  {(has) => <Button type="submit" leftSection={<IconSend size={14} />} disabled={!has}>Send</Button>}
+                  {(has) => (
+                    <>
+                      {canAddItem && (
+                        <Tooltip label="Add this text to the space's inbox instead of sending it to the agent">
+                          {narrow ? (
+                            <ActionIcon type="button" size="input-sm" variant="default" aria-label="Send as inbox item" disabled={!has} onClick={sendAsItem}>
+                              <IconInbox size={16} />
+                            </ActionIcon>
+                          ) : (
+                            <Button type="button" variant="default" leftSection={<IconInbox size={14} />} disabled={!has} onClick={sendAsItem}>Send as inbox item</Button>
+                          )}
+                        </Tooltip>
+                      )}
+                      <Button type="submit" leftSection={<IconSend size={14} />} disabled={!has}>Send</Button>
+                    </>
+                  )}
                 </inputForm.Subscribe>
               </Group>
             </form>
@@ -165,6 +205,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
         </Stack>
         {inspector && <Inspector spaceId={spaceId} run={r} now={now} />}
       </Box>
+      {canAddItem && newItem.modal}
     </Stack>
   )
 }

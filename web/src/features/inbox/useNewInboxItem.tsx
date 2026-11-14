@@ -1,7 +1,7 @@
 import { Anchor, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useNavigate, useRouter } from '@tanstack/react-router'
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import type { InboxItem } from '@/api/client'
 import { useMe } from '@/api/queries'
 import { atLeast, roleIn } from '@/lib/access'
@@ -18,19 +18,29 @@ export function useCanCreateInboxItem(spaceId: string): boolean {
  * page): `open()` shows it, `open({ body })` shows it prefilled. Render `modal` once. After an item is added, a toast
  * confirms it with a link to the item, and the user stays where they were.
  *
- * A plain `open()` keeps an unsent draft from an earlier opening; a prefilled one replaces its text.
+ * A plain `open()` keeps an unsent draft from an earlier opening; a prefilled one replaces its text. `onCreated` runs
+ * after the item from that opening is added (the terminal's "Send as inbox item" clears its message box then); closing
+ * the dialog without adding runs nothing.
  */
-export function useNewInboxItem(spaceId: string): { open: (prefill?: NewItemPrefill) => void; modal: ReactNode } {
+export function useNewInboxItem(spaceId: string): {
+  open: (prefill?: NewItemPrefill, opts?: { onCreated?: (it: InboxItem) => void }) => void
+  modal: ReactNode
+} {
   const navigate = useNavigate()
   const router = useRouter()
   const [opened, setOpened] = useState(false)
   const [prefill, setPrefill] = useState<NewItemPrefill>()
-  const open = useCallback((value?: NewItemPrefill) => {
+  const after = useRef<((it: InboxItem) => void) | undefined>(undefined)
+  const open = useCallback((value?: NewItemPrefill, opts?: { onCreated?: (it: InboxItem) => void }) => {
     // A new object each time, so opening twice with the same text still replaces an edited draft.
     if (value) setPrefill({ ...value })
+    after.current = opts?.onCreated
     setOpened(true)
   }, [])
   const onCreated = (it: InboxItem) => {
+    const then = after.current
+    after.current = undefined
+    then?.(it)
     const to = { to: '/spaces/$spaceId/inbox/$itemId', params: { spaceId, itemId: it.id } } as const
     // The toast container sits outside the router, so the link navigates through the router captured here.
     notifications.show({

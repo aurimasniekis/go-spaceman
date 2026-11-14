@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Web: a space's overview has a **New inbox item** action next to **Launch run**, for users who may add inbox items
   (operators and admins of the space). It opens the Inbox page's dialog, and a toast confirms the new item with a link
   to it. On a phone the action is an icon. An unsent draft now survives closing and reopening the dialog.
+- Web: a run's terminal view (the run page and the Terminals views) has **New inbox item** next to **Take over**, and
+  **Send as inbox item** next to the message box's **Send**. The latter opens the same dialog prefilled with the text
+  and a link to the run, sends nothing to the terminal and clears the message box once the item is added. Both use the
+  same permission as the Inbox page and need no takeover; on a phone they are icons.
 
 ## [0.1.3] - 2026-11-13
 
