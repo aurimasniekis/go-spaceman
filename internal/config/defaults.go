@@ -20,6 +20,8 @@ func Default() *Config {
 			MaxUploadBytes:    25 << 20,
 			ReadHeaderTimeout: Duration(10 * time.Second),
 			WriteIdleTimeout:  Duration(time.Minute),
+			ReadIdleTimeout:   Duration(30 * time.Second),
+			IdleTimeout:       Duration(2 * time.Minute),
 		},
 		Log: defaultLog(),
 		Auth: AuthConfig{
