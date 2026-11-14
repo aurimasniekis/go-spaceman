@@ -19,7 +19,9 @@ import (
 
 // NotificationPrefs are a user's notification preferences (SM-HUI-006). They decide which human-action changes the
 // web UI announces to the user while it is open, and whether it also shows a desktop notification. SpaceMan sends no
-// e-mail or chat notifications; external systems subscribe to the outbound lifecycle events instead.
+// e-mail; external systems subscribe to the outbound lifecycle events instead. Chat notifications through a Telegram
+// bot are proposed in ADR-0083 (SM-TG-009) and not implemented: they will have their own per-link preferences, and
+// this type gains only the user's timezone for the digest and quiet hours.
 type NotificationPrefs struct {
 	Enabled        bool     `json:"enabled" doc:"Announce human-action changes in the web UI"`
 	Desktop        bool     `json:"desktop" doc:"Also show a desktop notification (the browser asks for permission)"`

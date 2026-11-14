@@ -134,6 +134,35 @@ The node resolves, downloads, verifies and launches Claude Code itself: the prof
 | CC-4 | Protocol minor 11, migration 0048, profile `harness_version` through API, web and Terraform, run-row version, manifest change | SM-HARN-005, SM-HARN-007 | todo |
 | CC-5 | Periodic `node.capabilities` and the node UI for cached and resolved versions | SM-HARN-008 | implemented (simulated); branch `feat/cc-rereport`, stacked on #43 |
 
+### TG — Telegram bot and Mini App (operator request 2026-11-13; ADR-0083, Proposed)
+A linked person works from Telegram as their own SpaceMan user: chat-native "needs you" forms, inbox capture, queue,
+runs, spaces and notifications without fan-out, plus a Mini App on its own cookieless host `tg.<central host>`. Every
+setting through the API and terraform-provider-spaceman. One PR per WP; central migration 0051 (or the next free
+number) in TG-3a; no agent migration and no protocol change. TG-12a/b/c are in terraform-provider-spaceman.
+
+| WP | Scope | Requirements | Status |
+|---|---|---|---|
+| TG-0 | ADR-0083, SM-TG-001…014, `docs/contracts/telegram.md` (Bot API 10.4), TRACEABILITY rows, the "no chat notifications" statements | SM-TG-001…014 (design) | implemented (docs) |
+| TG-1 | Fake Bot API server `internal/telegram/tgtest` and the `botapi` client | SM-TG-004, SM-TG-009 | todo |
+| TG-2 | Outbound sender: buckets, priorities, coalescing, bounds, 429/403 | SM-TG-009 | todo |
+| TG-3a | Migration with every Telegram table; webhook route group; polling; dispatcher | SM-TG-004 | todo |
+| TG-3b | Bot operations (write-only token, `miniapp_host`, IP allowlist), startup, bot change revokes links | SM-TG-001, SM-TG-014 | todo |
+| TG-3c | Settings operations (global and per space), limits wiring, `timezone` in `NotificationPrefs` | SM-TG-009, SM-TG-010, SM-TG-014 | todo |
+| TG-4a | Security core: Telegram principal, B1/B2/B4 changes, classification test, audit | SM-TG-002, SM-TG-003, SM-TG-012, SM-TG-013 | todo |
+| TG-4b | Linking: codes, both confirmations, unlink, link-cap grants, reconfirmation | SM-TG-001, SM-TG-002 | todo |
+| TG-5 | Renderer: Markdown AST → entities and rich blocks, inbound entities → Markdown | SM-TG-010 | todo |
+| TG-6 | Notifier: change-feed consumer, recipients, card edits, digest in each user's timezone | SM-TG-009 | todo |
+| TG-7 | Needs-you chat forms for every type | SM-TG-003, SM-TG-006 | todo |
+| TG-8a | Spaces and inbox in chat, inbox capture | SM-TG-007, SM-TG-008 | todo |
+| TG-8b | Queue, runs, messages to operators, talk to control | SM-TG-008 | todo |
+| TG-9a | Mini App server: host routing, Telegram mode, session exchange, signed downloads | SM-TG-005, SM-TG-013 | todo |
+| TG-9b | Mini App client shell and transports | SM-TG-011 | todo |
+| TG-10 | Mini App pages (after the ADR-0082 renderer merges) | SM-TG-011 | todo |
+| TG-11 | Topics mode | SM-TG-008 | todo |
+| TG-12a/b/c | Provider: `spaceman_telegram_bot`, `spaceman_telegram_settings`, `spaceman_space_telegram` (+ `group_chat_id`) | SM-TG-014 | todo |
+| TG-13 | Group mode | SM-TG-002, SM-TG-008 | todo |
+| TG-14 | Docs, site, screenshots, LIMITATIONS/SECURITY, threat model; real verification (gated on deployment items and a test bot) | SM-TG-001…014 | todo |
+
 ## 2. Phase checklist (run at the start and end of each WP)
 
 1. Reread the relevant GOAL.md requirements and the contracts each one touches.
@@ -307,6 +336,7 @@ The node resolves, downloads, verifies and launches Claude Code itself: the prof
 | 2026-11-13 | Migrator: missing lower migrations | goose (no allow-missing) skipped a migration numbered below the database version silently when no newer one was pending, and failed the next upgrade with "missing (out-of-order) migration". `store.migrate` (central and the agent journal) now compares the applied versions (one query on `goose_db_version`) with the embedded sources before any snapshot or `Up`, and refuses with `ErrMissingMigrations` naming each missing file and the fix (restore below it, or renumber). Applying out of order was rejected: a lower migration may assume the schema before a higher one. Restored older schemas have no gap and still migrate forward | this branch (`fix/migrator-missing-lower`) | `TestMissingLowerMigrationRefused`, `TestRestoredOlderSchemaMigratesForward`, `TestEmbeddedMigrationsRestoredAndMissing`, `TestJournalMissingLowerMigrationRefused`; `make check` |
 | 2026-11-13 | Terminal scrollback unit | ghostty-web's `scrollback` is a byte limit (ghostty's `scrollback-limit`) in 0.4.0's JavaScript and in both WebAssembly modules, measured: `scrollback: 10_000` kept 290-470 rows at 160 columns. Now `SCROLLBACK_BYTES` = 24 MiB in `web/src/features/terminal/scrollback.ts` (one place, with `scrollbackRows(cols)` for the tail-first catch-up): 10,900-12,380 rows at 160 columns, about 30 MiB of WebAssembly memory per full plain-text terminal (ADR-0080). | see branch `fix/terminal-scrollback-unit` | `scrollback.test.ts` (real module: unit, rows at 80/160/200 columns, memory); `e2e/terminal-scrollback.spec.ts` (Chromium, Linux: 11,141 rows, 49.1 MiB; 485 rows with the old value) |
 | 2026-11-14 | v0.1.4 release prep | Docs and version only, no behaviour change. One release branch from `main` (v0.1.3) merges PR #51 (missing lower migrations), PR #53 (terminal scrollback unit, ADR-0080) and PR #56 (recording shipments under the message limit, reconnect catch-up); their CHANGELOG and PLAN conflicts kept every entry. CHANGELOG `[Unreleased]` became `[0.1.4] - 2026-11-14` with a release summary and upgrade notes: no migration, protocol or setting change since v0.1.3; upgrade central first and check that it starts, because a database with a missing lower migration now refuses to start (#51). RELEASE_READINESS §18 records the release; `web/package.json` is 0.1.4. | branch `release/v0.1.4` | `GOFLAGS=-p=2 SM_TEST_TX_MAX=500ms make check`, `make check-fast`, `make web-check`, `make site-check`, `go test -race -count=3 -run 'Ship\|CatchUp\|LiveShipment' ./internal/agent/` |
+| 2026-11-14 | TG-0 Telegram design docs | Docs only, no behaviour change. ADR-0083 (Proposed, security-relevant change): Telegram bot and Mini App as a person's channel, with the link flow, the link subject intersected with the user's grants, the exact `internal/api` changes (B2), the classification over huma operations, raw routes and `/watch` (B1), the cookieless Mini App host with both route lists and no CORS (B4), header transports (B3), webhook hardening, the write-only token and the config-file-only Bot API base URL, the per-user timezone and the operator answers Q1–Q14. GOAL SM-TG-001…014 and a §9 row; `docs/contracts/telegram.md` (Bot API 10.4, read 2026-11-14, every fact with its URL); TRACEABILITY rows (todo); the "no chat notifications" statements note the proposal | branch `docs/telegram-adr` | `make check-fast`, `make site-check` |
 
 ### Open issues
 - **Intermittent e2e launch stall.** `make e2e` occasionally waits past 20 s for a launched run to show `running`

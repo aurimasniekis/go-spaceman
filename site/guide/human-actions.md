@@ -57,7 +57,8 @@ spaces, actions assigned to you, escalations, reminders, and clarification reque
 to announce (assignments to you always are); spaces to mute; and whether to also show desktop notifications (the
 browser asks for permission). Preferences are stored per user (`GET`/`PUT /api/v1/auth/me/notification-preferences`,
 `spaceman notifications set`). SpaceMan itself sends no e-mail or chat notifications; the outbound lifecycle events
-(`human.action.*`) can feed such a system.
+(`human.action.*`) can feed such a system. A Telegram bot for linked users is proposed (ADR-0083 in the
+[decision log](/security/decisions)) and not implemented yet.
 
 <Shot name="account-notifications" alt="The notification preferences on the Account page: new actions, assignments, escalations and clarifications announced, high priority and above, the infrastructure space muted" caption="Notification preferences" />
 
