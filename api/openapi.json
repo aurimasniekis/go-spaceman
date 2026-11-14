@@ -1827,6 +1827,12 @@
             "format": "date-time",
             "type": "string"
           },
+          "resumed_spaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "run_credentials_revoked": {
             "format": "int64",
             "type": "integer"
@@ -1846,6 +1852,7 @@
           "restored_at",
           "applied_at",
           "paused_spaces",
+          "resumed_spaces",
           "leases_renewed",
           "runs_unknown",
           "commands_cancelled",

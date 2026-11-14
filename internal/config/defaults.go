@@ -22,6 +22,8 @@ func Default() *Config {
 			WriteIdleTimeout:   Duration(time.Minute),
 			CatchUpConcurrency: 8,
 			CatchUpWait:        Duration(5 * time.Second),
+			ReadIdleTimeout:    Duration(30 * time.Second),
+			IdleTimeout:        Duration(2 * time.Minute),
 		},
 		Log: defaultLog(),
 		Auth: AuthConfig{
@@ -81,7 +83,8 @@ func DefaultAgent() *AgentConfig {
 				DownloadTimeout: Duration(dist.DefaultDownloadTimeout),
 			},
 		},
-		Log:      defaultLog(),
-		Capacity: 4,
+		Log:              defaultLog(),
+		Capacity:         4,
+		JournalRetention: Duration(30 * 24 * time.Hour),
 	}
 }

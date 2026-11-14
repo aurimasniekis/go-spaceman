@@ -5013,6 +5013,7 @@ export interface components {
             pending_approvals: number;
             /** Format: date-time */
             restored_at: string;
+            resumed_spaces: string[];
             /** Format: int64 */
             run_credentials_revoked: number;
             /** Format: int64 */
