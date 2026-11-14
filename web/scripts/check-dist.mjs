@@ -19,6 +19,22 @@ const walk = (d) => {
   }
 }
 walk(dist)
+// The Mini App shell (ADR-0083 §4.6): its only cross-origin script is Telegram's loader, by the exact URL the Mini App
+// CSP pins (web/handler.go MiniAppScriptURL); every other script is same-origin ('self'). The web UI's page never loads it.
+const goSrc = readFileSync(new URL('../handler.go', import.meta.url), 'utf8')
+const pinned = /const MiniAppScriptURL = "([^"]+)"/.exec(goSrc)?.[1]
+if (!pinned) bad.push('web/handler.go: MiniAppScriptURL not found')
+const scriptSrcs = (html) => [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/g)].map((m) => m[1])
+try {
+  const tg = scriptSrcs(readFileSync(join(dist, 'tg.html'), 'utf8'))
+  const foreign = tg.filter((u) => !u.startsWith('/'))
+  if (foreign.length !== 1 || foreign[0] !== pinned) bad.push(`dist/tg.html: cross-origin scripts ${JSON.stringify(foreign)}, want exactly [${pinned}]`)
+  if (!tg.some((u) => u.startsWith('/assets/'))) bad.push('dist/tg.html: no hashed entry script')
+  if (/<link\b[^>]*\bhref=["']https?:/.test(readFileSync(join(dist, 'tg.html'), 'utf8'))) bad.push('dist/tg.html: cross-origin <link> (CSP default-src)')
+} catch {
+  bad.push('dist/tg.html missing: the Mini App entry was not built')
+}
+if (scriptSrcs(readFileSync(join(dist, 'index.html'), 'utf8')).some((u) => !u.startsWith('/'))) bad.push('dist/index.html: the web UI must not load a cross-origin script')
 // The terminal's WebAssembly module is a hashed asset, fetched under the CSP's connect-src 'self' (ADR-0076).
 if (!readdirSync(join(dist, 'assets')).some((f) => /^ghostty-vt-.*\.wasm$/.test(f))) bad.push(`${dist}/assets: no ghostty-vt-*.wasm`)
 if (bad.length) {

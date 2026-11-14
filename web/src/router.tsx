@@ -17,7 +17,9 @@ export const queryClient = new QueryClient({
   },
 })
 
-export const router = createRouter({ routeTree, context: { queryClient }, defaultPreload: 'intent', defaultErrorComponent: RouteError })
+export const routerOptions = { routeTree, defaultPreload: 'intent', defaultErrorComponent: RouteError } as const
+
+export const router = createRouter({ ...routerOptions, context: { queryClient } })
 
 declare module '@tanstack/react-router' {
   interface Register {
