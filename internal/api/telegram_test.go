@@ -386,6 +386,8 @@ func TestTelegramModeSameOrigin(t *testing.T) {
 		"sec-fetch same":       {map[string]string{"Sec-Fetch-Site": "same-origin"}, 204},
 		"public url origin":    {map[string]string{"Origin": "https://central.example.com"}, 403},
 		"foreign origin":       {map[string]string{"Origin": "https://evil.example"}, 403},
+		"origin prefix":        {map[string]string{"Origin": "https://tg.example.com.evil.com"}, 403},
+		"origin suffix":        {map[string]string{"Origin": "https://evil.tg.example.com"}, 403},
 		"http mini app origin": {map[string]string{"Origin": "http://tg.example.com"}, 403},
 		"sec-fetch cross":      {map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
 		"nothing":              {nil, 403},
@@ -644,5 +646,50 @@ func TestTelegramGate(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: %d, want %d", name, got, tc.want)
 		}
+	}
+}
+
+// Guard: a flushed streaming response on the Mini App host has Set-Cookie stripped before the headers go out, even when
+// the handler flushes before it writes (the change feed and the terminal do). The recorder snapshots the headers at
+// the flush, as a real server sends them.
+func TestTelegramModeFlushStripsCookies(t *testing.T) {
+	t.Parallel()
+	d := tgDeps(t, &fakeSessions{p: map[string]*auth.Principal{"good": tgPrincipal()}})
+	d.Raw = []RawRoute{{Pattern: "GET " + Prefix + "/spaces/{space_id}/stream", Perm: authz.InboxRead, Telegram: TelegramMiniApp,
+		Handler: func(*Deps) http.HandlerFunc {
+			return func(w http.ResponseWriter, _ *http.Request) {
+				http.SetCookie(w, &http.Cookie{Name: "planted", Value: "1"})
+				w.(http.Flusher).Flush()
+				_, _ = w.Write([]byte("data"))
+			}
+		}}}
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/spaces/"+tgSpace+"/stream", nil)
+	req.Header.Set("Authorization", "Telegram good")
+	rec := httptest.NewRecorder()
+	d.TelegramHandler().ServeHTTP(rec, req)
+	if rec.Code != 200 || !rec.Flushed {
+		t.Fatalf("stream: %d flushed %v", rec.Code, rec.Flushed)
+	}
+	if got := rec.Result().Header.Values("Set-Cookie"); len(got) != 0 {
+		t.Fatalf("flushed response carries Set-Cookie: %q", got)
+	}
+}
+
+// Guard: huma's anonymous documentation routes (OpenAPI documents, JSON schemas) are not served on the Mini App host,
+// so an anonymous request reaches only the session exchange; the main host still serves them.
+func TestTelegramModeHidesSpec(t *testing.T) {
+	t.Parallel()
+	d := tgDeps(t, &fakeSessions{p: map[string]*auth.Principal{"good": tgPrincipal()}})
+	mini, main := d.TelegramHandler(), d.Handler()
+	for _, path := range []string{"/openapi.json", "/openapi.yaml", "/openapi-3.0.json", "/openapi-3.0.yaml", "/schemas/Problem.json"} {
+		if rec := miniApp(mini, http.MethodGet, Prefix+path); rec.Code != http.StatusNotFound {
+			t.Errorf("mini app %s anonymous: %d", path, rec.Code)
+		}
+		if rec := miniApp(mini, http.MethodGet, Prefix+path, "Telegram good"); rec.Code != http.StatusNotFound {
+			t.Errorf("mini app %s signed in: %d", path, rec.Code)
+		}
+	}
+	if rec := miniApp(main, http.MethodGet, Prefix+"/openapi.json"); rec.Code != http.StatusOK {
+		t.Errorf("main host openapi.json: %d", rec.Code)
 	}
 }

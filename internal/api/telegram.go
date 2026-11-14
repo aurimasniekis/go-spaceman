@@ -159,7 +159,7 @@ func (d *Deps) telegramFeature(ctx context.Context, spaceID, feature string) boo
 //   - The Cookie request header is deleted before authentication, and no response carries Set-Cookie.
 //   - Only "Authorization: Telegram <token>" authenticates; any other Authorization (Bearer API or root tokens
 //     included), several Authorization headers, or a session that doesn't resolve is 401. No header is anonymous,
-//     which reaches only the session exchange.
+//     which reaches only the session exchange (the OpenAPI documents and JSON schemas are 404 there).
 //   - Mutations must come from the Mini App origin (TelegramPolicy.MiniAppOrigin), not the public URL.
 //   - The external MCP endpoint is not served.
 func (d *Deps) TelegramHandler() http.Handler {
@@ -169,10 +169,22 @@ func (d *Deps) TelegramHandler() http.Handler {
 // telegramMode marks a request as the Mini App's, drops its cookies and keeps Set-Cookie off its response.
 func (d *Deps) telegramMode(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isSpecPath(r.URL.Path) {
+			// huma serves its OpenAPI documents and JSON schemas without authentication; the Mini App host serves no
+			// anonymous request but the session exchange, so they are not found there (the site publishes the spec).
+			writeProblem(w, newProblem(http.StatusNotFound, "not_found", "not found", nil))
+			return
+		}
 		r.Header.Del("Cookie")
 		ctx := context.WithValue(r.Context(), telegramChannelKey{}, channelMiniApp)
 		next.ServeHTTP(&noCookieWriter{ResponseWriter: w, d: d}, r.WithContext(ctx))
 	})
+}
+
+// isSpecPath reports whether a path is one of huma's anonymous documentation routes: the OpenAPI documents
+// ("/openapi.json", ".yaml", "-3.0.json", "-3.0.yaml", see OpenAPIPath) and the JSON schemas.
+func isSpecPath(path string) bool {
+	return strings.HasPrefix(path, Prefix+"/openapi") || strings.HasPrefix(path, Prefix+"/schemas/")
 }
 
 // noCookieWriter drops Set-Cookie from a Mini App response. Nothing on that host sets a cookie; a drop is a bug and

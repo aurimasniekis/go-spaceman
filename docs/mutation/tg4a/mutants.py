@@ -96,6 +96,13 @@ M = [
  # Approvals from Telegram: fail closed until TG-7
  ("approval-refusal", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {', 'if false && cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {'),
  ("approval-refusal-type", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {', 'if PrincipalFrom(ctx).ViaTelegram() {'),
+ ("cancel-approval-refusal", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling', 'if false && cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling'),
+ ("cancel-approval-refusal-type", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling', 'if cur.Type != "" && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling'),
+ # Review of PR #77: the three surviving mutants, pinned
+ ("tg-origin-prefix", "internal/api/telegram.go", 'return strings.EqualFold(o, want)', 'return len(o) >= len(want) && strings.EqualFold(o[:len(want)], want)'),
+ ("appr-sso-grants", "internal/app/central.go", 'auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})\n\t\t\tif err != nil || p.User.ID', 'auth.TelegramOptions{SSOGrants: true})\n\t\t\tif err != nil || p.User.ID'),
+ ("tg-flush-strip", "internal/api/telegram.go", 'func (w *noCookieWriter) Flush() {\n\tw.strip()', 'func (w *noCookieWriter) Flush() {'),
+ ("tg-spec-served", "internal/api/telegram.go", 'if isSpecPath(r.URL.Path) {', 'if false && isSpecPath(r.URL.Path) {'),
  # Classification table
  ("ops-memory-allowed", "internal/telegram/ops.go", '"list-memory":                   api.TelegramExcluded,', '"list-memory": api.TelegramBoth,'),
  ("ops-drop-entry", "internal/telegram/ops.go", '\t"accept-kb-proposal":            api.TelegramExcluded,\n', ''),

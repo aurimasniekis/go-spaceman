@@ -133,6 +133,17 @@ func TestApproverRecheckTelegram(t *testing.T) {
 	check("user must still enroll MFA (Limited)", by, false)
 	exec(`UPDATE users SET mfa_required = 0 WHERE id = ?`, u.ID)
 
+	// SSO-sourced grants count only while the link policy has them on (link_sso_grants, off here): a link confirmed from
+	// an SSO session whose user holds the role only through SSO grants isn't an approver.
+	exec(`UPDATE telegram_links SET via_sso = 1, sso_until = ? WHERE id = 'tgl_a'`, time.Now().Add(time.Hour).UnixMicro())
+	exec(`DELETE FROM role_grants WHERE subject = ?`, auth.UserSubject(u.ID))
+	exec(`INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'sso', 0, 't')`, auth.SSOSubject(u.ID), space)
+	check("SSO-only grants with the link policy off", by, false)
+	exec(`DELETE FROM role_grants WHERE subject = ?`, auth.SSOSubject(u.ID))
+	exec(`UPDATE telegram_links SET via_sso = 0, sso_until = NULL WHERE id = 'tgl_a'`)
+	exec(`INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'manual', 0, 't')`, auth.UserSubject(u.ID), space)
+	check("grants restored", by, true)
+
 	exec(`UPDATE telegram_links SET state = 'suspended' WHERE id = 'tgl_a'`)
 	check("suspended link", by, false)
 	exec(`UPDATE telegram_links SET state = 'active' WHERE id = 'tgl_a'`)

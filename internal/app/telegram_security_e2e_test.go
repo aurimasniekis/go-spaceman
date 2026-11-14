@@ -434,7 +434,7 @@ func enrolledSession(t *testing.T, h *harness, email string) *client {
 }
 
 // Fail closed until TG-7 (control's ruling on the TG-4a review): a Telegram principal is refused on
-// respond-human-action for any approval, enforced or advisory, whatever the space's setting; the same user decides it
+// respond-human-action (and, in TestTelegramRefusesApprovalCancel, cancel-human-action) for any approval, enforced or advisory, whatever the space's setting; the same user decides it
 // on the web, and a question is answered from Telegram as before.
 func TestTelegramRefusesApprovalResponses(t *testing.T) {
 	t.Parallel()
@@ -474,4 +474,94 @@ func TestTelegramRefusesApprovalResponses(t *testing.T) {
 	expect(t, s.ui.do("POST", base+"/human-actions/"+ap.ID+"/respond", map[string]any{"outcome": "approved"}, "If-Match", `"1"`), 200)
 	expect(t, s.mini(t, "POST", base+"/human-actions/"+q.ID+"/respond", `{"outcome":"answered","answer":"eu-west"}`,
 		"Authorization", "Telegram good", "If-Match", `"1"`), 200)
+}
+
+// Cancelling an approval finalizes it (approvals.onFinalized turns it into Revoked, ending an enforced approval), so
+// cancel-human-action is refused from Telegram like respond, for enforced and advisory approvals, from the Mini App and
+// the bot; the same user withdraws it on the web. The approval stays pending after a refusal.
+func TestTelegramRefusesApprovalCancel(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	base := "/spaces/" + s.space
+	p, err := s.h.c.Auth.TelegramPrincipal(context.Background(), s.linkID, auth.TelegramOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newApproval := func(enforced bool) string {
+		var ap struct {
+			ID string `json:"id"`
+		}
+		s.root.do("POST", base+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"}}).json(t, &ap)
+		if ap.ID == "" {
+			t.Fatal("approval not created")
+		}
+		if enforced {
+			// An enforced approval (ADR-0024) is one with an approvals row behind its human action.
+			s.exec(t, `INSERT INTO approvals (id, space_id, policy_id, operation, resource, args_digest, args_preview, requester_run, requester_role,
+				human_action_id, state, uses_allowed, uses_left, valid_seconds, request_expires_at, created_at, updated_at)
+				VALUES (?, ?, 'pol', 'mcp.x.y', '', 'd', '', 'run_x', 'control', ?, 'pending', 1, 1, 60, 9000000000000000, 0, 0)`, "apr_"+ap.ID, s.space, ap.ID)
+		}
+		return ap.ID
+	}
+	approvalState := func(actionID string) string {
+		var st string
+		if err := s.h.c.Store.ReadDB().QueryRowContext(context.Background(), `SELECT state FROM approvals WHERE human_action_id = ?`, actionID).Scan(&st); err != nil {
+			return ""
+		}
+		return st
+	}
+	// Only approvals are refused: a question is withdrawn from Telegram as before.
+	var q struct {
+		ID string `json:"id"`
+	}
+	s.root.do("POST", base+"/human-actions", map[string]any{"type": "question", "title": "Which region?"}).json(t, &q)
+	expect(t, s.mini(t, "POST", base+"/human-actions/"+q.ID+"/cancel", `{"reason":"moot"}`, "Authorization", "Telegram good", "If-Match", `"1"`), 200)
+	for _, enforced := range []bool{true, false} {
+		mini, bot, web := newApproval(enforced), newApproval(enforced), newApproval(enforced)
+		r := s.mini(t, "POST", base+"/human-actions/"+mini+"/cancel", `{"reason":"no"}`, "Authorization", "Telegram good", "If-Match", `"1"`)
+		expect(t, r, http.StatusForbidden)
+		if !strings.Contains(string(r.body), "decided on the web") {
+			t.Fatalf("refusal reason: %s", r.body)
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, api.Prefix+base+"/human-actions/"+bot+"/cancel", strings.NewReader(`{"reason":"no"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"1"`)
+		s.deps.InProcessHandler().ServeHTTP(rec, req.WithContext(api.WithInProcessPrincipal(context.Background(), p)))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "decided on the web") {
+			t.Fatalf("enforced=%v bot cancel: %d %s", enforced, rec.Code, rec.Body.String())
+		}
+		if enforced {
+			for _, id := range []string{mini, bot} {
+				if st := approvalState(id); st != "pending" {
+					t.Fatalf("approval after a refused cancel: %q", st)
+				}
+			}
+		}
+		expect(t, s.ui.do("POST", base+"/human-actions/"+web+"/cancel", map[string]any{"reason": "no"}, "If-Match", `"1"`), 200)
+		if enforced {
+			if st := approvalState(web); st != "revoked" {
+				t.Fatalf("web cancel of an enforced approval: %q", st)
+			}
+		}
+	}
+}
+
+// TelegramSelf lifts the personal-operation refusal only, never step-up: no rule of the real table may set it together
+// with Reauth or MFA (none sets it today, so the walk is a guard for rules added later).
+func TestTelegramSelfRules(t *testing.T) {
+	t.Parallel()
+	d := app.SpecDeps()
+	for _, op := range specOps(t, d) {
+		r, _ := d.RuleFor(op.OperationID)
+		if !r.TelegramSelf {
+			continue
+		}
+		if r.Reauth || r.MFA {
+			t.Errorf("%s sets TelegramSelf on a step-up rule", op.OperationID)
+		}
+		if r.Public {
+			t.Errorf("%s sets TelegramSelf on a public rule", op.OperationID)
+		}
+	}
 }
