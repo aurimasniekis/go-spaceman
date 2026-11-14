@@ -641,3 +641,135 @@ func TestLiveShipmentKeptBackIsBounded(t *testing.T) {
 	e.connect()
 	e.whole("run_x", 1, 20000)
 }
+
+// Across a reconnect: the old pass takes a kept-back close record (no local copy) and its send fails on the dead
+// connection; the record goes out on the new connection after the run's local records.
+func TestCatchUpPutBackAcrossAReconnect(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 300) // two batches: 256 and 44 records
+	code := 0
+	var dropped atomic.Bool
+	e.drop = func(env proto.Envelope) bool {
+		if env.Type != proto.TypeRecording {
+			return false
+		}
+		var c proto.RecordingChunk
+		_ = env.Decode(&c)
+		return len(c.Records) == 44 && dropped.CompareAndSwap(false, true) // the second batch, lost with the connection
+	}
+	var held, waited atomic.Bool
+	shipBatchHook = func(id string, batch int) {
+		if batch == 1 && held.CompareAndSwap(false, true) {
+			e.live(id, []recording.Record{{Seq: 301, Kind: recording.KindClose, ExitCode: &code, Reason: "exited"}})
+			return
+		}
+		if batch == 2 && waited.CompareAndSwap(false, true) {
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+				e.a.mu.Lock()
+				again := e.a.catchUpAgain
+				e.a.mu.Unlock()
+				if again {
+					return
+				}
+			}
+			t.Error("the agent did not reconnect")
+		}
+	}
+	e.connect()
+	e.whole("run_x", 1, 301)
+	e.idle()
+}
+
+// The overflow path: records kept back past the bound (lost) and a close record; the send that re-reads the local
+// recording fails, and the close record still reaches central.
+func TestCatchUpPutBackOnTheOverflowPath(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 300)
+	code := 0
+	once := false
+	shipBatchHook = func(id string, batch int) {
+		if batch == 2 && !once {
+			once = true
+			recs := e.addSized(id, 24, 64<<10) // past the bound
+			recs = append(recs, recording.Record{Seq: 325, Kind: recording.KindClose, ExitCode: &code, Reason: "exited"})
+			e.live(id, recs)
+		}
+	}
+	var sends atomic.Int32
+	sendRecordingHook = func(string) error {
+		if sends.Add(1) == 3 { // the first send of the re-read
+			return errors.New("write failed")
+		}
+		return nil
+	}
+	e.connect()
+	e.whole("run_x", 1, 325)
+	e.idle()
+}
+
+// A put-back stays within the bound: each failed send of kept-back records, with more kept back meanwhile, must not
+// add another heldMaxBytes; close and trunc records are always kept.
+func TestCatchUpPutBackKeepsTheBound(t *testing.T) {
+	a := &Agent{}
+	mk := func(from, n int) []recording.Record {
+		var out []recording.Record
+		for i := range n {
+			out = append(out, recording.Record{Seq: uint64(from + i), Kind: recording.KindOut, Data: make([]byte, 4096)})
+		}
+		return out
+	}
+	seq := 1
+	for cycle := range 5 {
+		a.mu.Lock()
+		a.holdLocked("r", mk(seq, 300)) // about 1.2 MB offered
+		seq += 300
+		a.holdLocked("r", []recording.Record{{Seq: uint64(seq), Kind: recording.KindTrunc, Why: "disk"}})
+		seq++
+		h := a.held["r"]
+		delete(a.held, "r")             // the pass takes them
+		a.holdLocked("r", mk(seq, 300)) // kept back since
+		seq += 300
+		a.mu.Unlock()
+		a.putBack("r", h.recs, 0, false) // the send failed before any record went out
+		a.mu.Lock()
+		got := a.held["r"]
+		truncs := 0
+		for _, r := range got.recs {
+			if r.Kind == recording.KindTrunc {
+				truncs++
+			}
+		}
+		a.mu.Unlock()
+		if got.bytes > heldMaxBytes || !got.lost || truncs != cycle+1 {
+			t.Fatalf("cycle %d: %d bytes kept back (bound %d), lost %v, %d trunc records", cycle, got.bytes, heldMaxBytes, got.lost, truncs)
+		}
+	}
+}
+
+// Order: a put-back trunc record (no local copy) goes before a close record kept back while it was on its way.
+func TestCatchUpPutBackKeepsTheOrder(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 300)
+	code := 0
+	once := false
+	shipBatchHook = func(id string, batch int) {
+		if batch == 1 && !once {
+			once = true
+			e.live(id, []recording.Record{{Seq: 301, Kind: recording.KindTrunc, Why: "disk"}})
+		}
+	}
+	var sends atomic.Int32
+	sendRecordingHook = func(id string) error {
+		if sends.Add(1) == 3 {
+			e.live(id, []recording.Record{{Seq: 302, Kind: recording.KindClose, ExitCode: &code, Reason: "exited"}})
+			return errors.New("write failed")
+		}
+		return nil
+	}
+	e.connect()
+	e.whole("run_x", 1, 302)
+	e.idle()
+}

@@ -333,9 +333,15 @@ func (a *Agent) holdLocked(runID string, recs []recording.Record) {
 		h = &heldRecords{}
 		a.held[runID] = h
 	}
+	h.add(recs)
+}
+
+// add keeps records back within heldMaxBytes: close and trunc records always (possibly the only copy, SM-REC-004),
+// other output while it fits; past that, lost is set and the catch-up reads the local recording again.
+func (h *heldRecords) add(recs []recording.Record) {
 	for _, r := range recs {
 		if r.Kind == recording.KindClose || r.Kind == recording.KindTrunc {
-			h.recs = append(h.recs, r) // possibly the only copy (SM-REC-004)
+			h.recs = append(h.recs, r)
 			continue
 		}
 		size := len(r.Data) + heldRecordOverhead
@@ -574,20 +580,21 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 }
 
 // putBack keeps a run's records above from back again, in front of any kept back since (they are older), after a
-// catch-up could not send them; lost carries over that some output was not kept back.
+// catch-up could not send them, within the same bound as holdLocked; lost carries over that some output was not
+// kept back.
 func (a *Agent) putBack(runID string, recs []recording.Record, from uint64, lost bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	back := &heldRecords{lost: lost}
+	var older []recording.Record
 	for _, r := range recs {
 		if r.Seq > from {
-			back.recs = append(back.recs, r)
-			back.bytes += len(r.Data) + heldRecordOverhead
+			older = append(older, r)
 		}
 	}
+	back.add(older)
 	if since := a.held[runID]; since != nil {
-		back.recs = append(back.recs, since.recs...)
-		back.bytes += since.bytes
+		back.add(since.recs)
 		back.lost = back.lost || since.lost
 	}
 	if len(back.recs) > 0 || back.lost {
