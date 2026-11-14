@@ -29,8 +29,10 @@ One installation has one connection. Under **Integrations → Harbor Pilot**, an
 - **Parent token**: a Harbor Pilot gateway credential (`hpk_…`) with `gateway:invoke`, `gateway:models` and
   `tokens:mint`, issued on the client binding SpaceMan's runs should use. SpaceMan uses it to mint run tokens.
 - **Service-principal token** (optional): an `hpa_…` token with `usage.read` and `config.read`. SpaceMan uses it to
-  check projects, read budget status for the Limits page and early launch refusals, and read back per-run usage. Without
-  it, budget status is unavailable and runs' usage isn't read back.
+  check projects, read budget status for the Limits page and early launch refusals, read back per-run usage, and read
+  the quota board to estimate when runs waiting on exhausted accounts can resume
+  ([Runs through Harbor Pilot](../guide/usage-limits.md#runs-through-harbor-pilot)). Without it, budget status is unavailable, runs' usage isn't read
+  back, and gateway waits have no estimated reset.
 - **Allow plain HTTP**: for tests and trusted local networks only. Every token then crosses the network in clear text,
   and the page says so.
 

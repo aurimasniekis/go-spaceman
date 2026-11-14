@@ -4166,7 +4166,7 @@
 
 ### ADR-0078 — Changes must not fan out: no-op run reports, lean run lists, a live change feed, coalesced and cached UI queries, progress-bounded responses
 - **Status:** Accepted, 2026-11-13 (incident: nodes lost their connection every 15 s after central restarted while a
-  web UI tab was open; the operator stayed on v0.1.1 until the fix).
+  web UI tab was open; the operator stayed on v0.1.1 until the fix). Shipped in v0.1.3 (2026-11-13).
 - **Context (code, at v0.1.2; v0.1.1 behaves the same):**
   - A node's hello reports every run in its journal, ended ones included; the journal is never pruned. Central applied
     each report in its own write transaction, always bumping the run's version and writing a change-feed entry, so a
@@ -4208,8 +4208,11 @@
 - **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
-- **Status:** Proposed, 2026-11-13. The operator answered the design's questions Q1–Q9 on 2026-11-13 by accepting
-  every proposed default (decision 10, K-15). Not implemented: SM-RUN-004..006 are `todo`. Labelled
+- **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
+  on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code
+  runs, direct and through Harbor Pilot; Codex runs are not covered, and the Terraform attributes (UL-11) remain.
+  Tested with simulated evidence only: no live subscription limit has been observed on a SpaceMan run (K-16); the
+  gateway side also ran against a real Harbor Pilot demo with a scripted node (TRACEABILITY SM-RUN-004..006). Labelled
   security-relevant not because it relaxes a requirement but because **content of a run's own transcript (untrusted)
   now drives central scheduling**: it can park the run and hold an account.
 - **Context:**
@@ -4446,6 +4449,48 @@
      accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
      cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9). The
      re-check is scheduled by the hold's `usage_limits.check_at`, as is the probe of decision 7.
+     - **Amended 2026-11-14 (UL-8).**
+       - **The job.** `gateway_waits` runs on central's shared deadline timer. It reads every open gateway hold of every
+         space (indexed, at most 200). A hold without an estimate yet is read at once; an estimated one at its
+         `check_at`. One board read serves the quota hold of every space, and one budget read serves each project.
+         Reads use the connection's service-principal token outside any transaction. The board is cached for 60 s;
+         budget status keeps its own 30 s cache, shared with the launch check.
+       - **The estimate.** Quota: the earliest future `until` among the board's unavailable accounts. Budget: the
+         latest `period_end` among the covering blocking budgets. It is stored as the hold's `resets_at`, with
+         `source` `quota_board` or `budget_status` and `check_at = now + 15 min`. Waits parked under the hold are
+         re-timed to the estimate plus the 2-minute slack. A gateway wait put off as `account_held` is moved only
+         earlier. An estimate the hold already has writes nothing (no version, `check_at` or change event); the job
+         keeps the next re-read in memory.
+       - **An estimated hold's `check_at` is the re-read, never a probe.** The hold refuses launches until its
+         reset, and the refusal says "until about `<time>` (estimated from Harbor Pilot's quota board …)" or "until
+         `<time>`, when the budget's period ends". The probe of decision 7 stays in charge while Harbor Pilot names no
+         reset: the board lists no account at all (an empty, missing or renamed `account_health` is no evidence, never
+         a recovery), every unavailable account has a null or past `until`, a blocking one-time budget has no end, a
+         blocking budget's `period_end` has passed (Harbor Pilot hasn't rolled the period yet), or Harbor Pilot can't
+         be read. Such a hold is read again after 15 minutes, or after 2 minutes when a read failed or a period end
+         has passed. A
+         node's evidence from another space sets `check_at = now` as before. On an estimated hold that means "read
+         again now".
+       - **Recovery.** The board lists every account of the installation, including ones the space's plan never
+         routes to. For example, the demo's local model has no monitor and is always available. So "any account
+         available" is no signal. With each board estimate the job remembers the accounts behind it (those whose
+         `until` is the estimate), in memory, for the hold's id and version. A quota hold clears when no account is
+         unavailable any more, or when one of those accounts is available again. An account behind the estimate that
+         is still out with a moved `until` re-times the hold to the new earliest `until`; it never clears it. When the
+         job doesn't know the accounts (after a restart, or the hold changed meanwhile), it only re-estimates. A newly
+         exhausted account with an earlier `until` moves the estimate earlier. A budget hold clears when no covering
+         budget blocks any more. The clear has `cleared_by` `quota_board` or `budget_status` and wakes the waits, as
+         other clears do.
+       - **Kick.** `events.Options.OnAccepted` is called after an event becomes a new item. When the subscription
+         uses the built-in `harbor-pilot-quota` template and the subject is
+         `evt.harborpilot.quota.window.recovered`, central drops the cached board and makes every quota hold due.
+         A board read already in flight when the kick arrives is neither cached nor used: it is read again. The
+         event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
+         alone applies.
+       - **A gateway run parked after its hold cleared** resumes at once, not after the 1-hour backoff. The gateway hold
+         opens with the limit, so a missing hold means Harbor Pilot recovered, or the hold was cleared. A run still
+         kept alive when the hold clears is parked only at its 30-minute keep-alive (not changed here).
+       - **No migration.** `usage_limits.source` already allowed both sources (0050). The protocol is unchanged.
   10. **Operator answers (2026-11-13, all proposed defaults accepted).**
       - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.
       - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.
@@ -4473,6 +4518,15 @@
         the run-ended notice of a parked run. A re-park, and later resumes of the same chain (an unknown reset probed
         again), aren't announced again; a fresh-session resume always is. Control's own wait isn't announced to it. A
         per-account-window summary isn't sent.
+      - **Amended 2026-11-14 (UL-9):** the people notice of Q5 is one human action (type `message`, priority `normal`,
+        not blocking, requester `system` "Usage limits") per **hold row**: per space and account (or gateway reference)
+        window, deduplicated on `usage-limit-human:<usage_limits id>`, and recorded in `usage_limits.notified_humans_at`.
+        It is raised for an open hold whose known reset is further away than the space's
+        `usage_limit_notify_after_hours` (default 12), by a job on the shared deadline timer (a limit report wakes it);
+        not for an unknown reset, and not in an archived space. A hold whose reset later moves past the threshold is
+        announced then. The action is created first and the hold marked after, so a crash in between raises it once.
+        "The space's operators" are the people who see the space's human actions; no message to the operators' inbox is
+        sent in addition. A space that has too many open human actions gets it on a later round.
   12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind` without a CHECK,
       so a new kind never needs a runs-table rebuild, `limit_resets_at`, `limit_since`; tables `usage_limits`, with
       `check_at` and the kind CHECK, and `limit_waits`); agent
@@ -4482,6 +4536,8 @@
       **Amended 2026-11-14 (UL-6, UL-7):** these are space limits, not a settings object: `usage_limit_failover`
       (switch, default off), `usage_limit_keep_alive_max_minutes` (1–1,440, default 360) and
       `usage_limit_max_wait_hours` (1–720, default 168: Q2's 7 days). `notify_humans_after` comes with UL-9.
+      **Amended 2026-11-14 (UL-9):** `notify_humans_after` is the space limit `usage_limit_notify_after_hours` (0–720,
+      default 12; 0: never). These four keys are the names the Terraform provider uses (T11).
 - **Alternatives:**
   - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and
     dateless under 24 h, and server-overridable wording.
@@ -4525,4 +4581,4 @@
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
 | K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
-| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run (T12). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |
+| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run. None had been observed when the work was documented (UL-12, 2026-11-14). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |

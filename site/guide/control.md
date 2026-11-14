@@ -59,7 +59,7 @@ notices (messages to it wait until the clear) and doesn't count against the spac
 told about its own limit; it can't act on it before the reset.
 
 When a run is **parked** at its usage limit instead (its wait is longer than the keep-alive, or it ended at its limit; see
-[Parked runs](./limits#parked-runs)), control gets one message saying when it resumes and when its task would be given
+[Long waits: parked](./usage-limits#long-waits-parked)), control gets one message saying when it resumes and when its task would be given
 back, in place of the run-ended notice. It gets one more when the run resumes (saying when it started a fresh session
 because the space moved node), or when SpaceMan gave up on it and its task is back in the queue. Don't relaunch or
 reassign a parked run's task: its wait brings it back. A parked control is not started for new work either; its wait

@@ -1,5 +1,5 @@
 // Package hpfake is a test double of the Harbor Pilot 0.1.3 endpoints SpaceMan calls (mint, revoke, budget status,
-// projects, usage summary; docs/contracts/harbor-pilot.md), and, when Version is set, of 0.1.4's (GET /api/v1/system
+// projects, usage summary, quota board; docs/contracts/harbor-pilot.md), and, when Version is set, of 0.1.4's (GET /api/v1/system
 // and budget status filtered by project). It is never evidence of a working integration: the real gateway is
 // exercised by the opt-in hptest tests.
 package hpfake
@@ -61,6 +61,11 @@ type HP struct {
 	Usage        map[string]string
 	FailUsage    int
 	UsageQueries []string
+	// Board is the body of GET /api/v1/quota/board (usage.read); "" serves one available account. FailBoard, when
+	// non-zero, makes it answer that status. BoardReads counts its reads.
+	Board      string
+	FailBoard  int
+	BoardReads int
 	// Workspace is the workspace every project belongs to (default wsp_1). ProjectReads counts project lookups.
 	Workspace    string
 	ProjectReads int
@@ -162,6 +167,22 @@ func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"version": f.Version, "commit": "0123456789abcdef0123456789abcdef01234567",
 			"started_at": "2026-11-08T10:00:00Z", "schema_version": 20261108100000000})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/quota/board":
+		if !f.authAPI(w, r, "usage.read") {
+			return
+		}
+		f.BoardReads++
+		if f.FailBoard != 0 {
+			problem(w, f.FailBoard, "quota board failed")
+			return
+		}
+		body := f.Board
+		if body == "" {
+			body = `{"monitors":[],"observed_accounts":[],"account_health":[{"account_id":"acc_1","name":"one","billing":"metered_api",` +
+				`"available":true,"reason":"","until":null,"remaining":null,"reset_at":null,"stale":false}],"dropped_observations":0}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body) //nolint:gosec // a test double serving the JSON the test configured
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/usage/summary":
 		if !f.authAPI(w, r, "usage.read") {
 			return

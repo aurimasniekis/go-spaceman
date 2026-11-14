@@ -158,3 +158,26 @@ func TestHarborPilotOneTimeBudgetAndUpgradeResend(t *testing.T) {
 		t.Fatalf("correlations %v", corr)
 	}
 }
+
+// ADR-0079 decision 9 (UL-8): an accepted event reaches the OnAccepted hook with its subscription's template slug, so
+// central can read Harbor Pilot's quota board again on quota.window.recovered; a duplicate doesn't call it again, and
+// neither does an event the subscription filters out.
+func TestOnAcceptedHook(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	var got []string
+	f.svc.o.OnAccepted = func(slug string, e template.Event) { got = append(got, slug+" "+e.Subject) }
+	q := f.subscribeSlug("spc_a", "quota", "harbor-pilot-quota", map[string]string{"exhausted_only": "true"})
+	all := f.subscribeSlug("spc_b", "quota", "harbor-pilot-quota", nil)
+	data, id, name, typ := hpEnvelope(t, "quota-window-recovered")
+	ev := template.Event{ID: id, Subject: "evt.harborpilot." + name, Type: typ, Data: data}
+	must(t, f.svc.Process(f.ctx, q.ID, ev, 1, Origin{}))
+	if len(got) != 0 {
+		t.Fatalf("a filtered event called the hook: %v", got)
+	}
+	must(t, f.svc.Process(f.ctx, all.ID, ev, 1, Origin{}))
+	must(t, f.svc.Process(f.ctx, all.ID, ev, 2, Origin{}))
+	if len(got) != 1 || got[0] != "harbor-pilot-quota evt.harborpilot.quota.window.recovered" {
+		t.Fatalf("hook calls %v", got)
+	}
+}

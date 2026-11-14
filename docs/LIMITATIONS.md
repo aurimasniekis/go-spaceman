@@ -238,6 +238,38 @@
   `spaceman_schedule`, ADR-0041); the queue policy has no `If-Match` in the API (see Terraform provider below).
 - **Transcripts are uploaded after a run ends**, up to 64 MiB (longer ones keep their start).
 
+## Usage limits
+Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004..006):
+- **No live subscription limit has been observed.** A real claude.ai limit can't be forced, and none has been seen
+  on a SpaceMan run yet. Every test of the feature is simulated: scripted node reports, fake transcript records in
+  the shapes the contract recorded (placeholder values), a fake clock and hpfake. Real evidence covers only the gateway side: the
+  quota board and the all-exhausted 429 of a real `harbor-pilot serve --demo` (v0.1.6 and v0.1.4, 2026-11-14), with a
+  scripted node and harness. TRACEABILITY's real-evidence column for SM-RUN-004..006 stays empty until a live limit
+  is observed (K-16).
+- **Not verified with real accounts (K-16):** `--resume` of a real parked session, and `--resume` under a different
+  real claude.ai account (failover; only different tokens against a fake API were tried); how a real `--resume` fails
+  when its session is missing; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports an
+  `error` status when a turn ends at its limit (the node scans on idle, error and end, so detection doesn't depend on
+  it).
+- **A gateway reset is an estimate.** Harbor Pilot's 429 names no reset, so SpaceMan takes the earliest `until` on
+  the quota board, which covers every account of the Harbor Pilot installation, not only those the space's plan routes
+  to (it has no project filter), or a blocking budget's period end. A run may resume early, hit the limit again and be
+  parked again (no new notice), or resume up to 15 minutes late. Without the service-principal token, or while Harbor
+  Pilot names no reset, the hold is probed like any unknown reset.
+- **Codex isn't covered.** Only Claude Code transcripts are scanned. A Codex run at its limit is neither kept alive nor
+  parked and opens no hold; it behaves as before (control may stop or relaunch it). A Codex launch through a Harbor
+  Pilot connection that a Claude Code run found exhausted is refused while that hold is open.
+- **Detection follows an undocumented format.** It reads typed fields of Claude Code's transcript records, recorded
+  for 2.1.317–2.1.323 (`docs/contracts/harnesses.md`). A renamed field silently stops detection, and runs then behave
+  as they did before ADR-0079. Node agents below protocol minor 12 never report limits.
+- **More than half of subscription waits have no reset time.** Claude Code's wrap-up path names neither the reset nor
+  the kind, so such a hold is probed (one launch after 1 h, then 2 h, 4 h …, at most every keep-alive) and a parked run
+  is resumed by that probe, possibly hours after the real reset.
+- **A run's transcript can hold its account.** The transcript is untrusted. A forged record can hold an account for at
+  most 8 days (the clamp), in every space bound to it; any progress on the account and an operator's clear end it.
+- **Model-specific weekly limits hold the whole account**, for every model, not only the exhausted one.
+- **KB support and dreamer runs aren't parked**; their schedulers start them again when needed.
+
 ## Dreams
 - **Token budgets are advisory.** The dreamer is told its token budget; SpaceMan enforces only the time budget (by
   stopping the run) and the evidence budget.
@@ -717,6 +749,7 @@
   installed in the Linux container the systemd suite uses (ADR-0034).
 - **External integrations still without real evidence** (SM-VER-002, re-checked 2026-11-03):
   - a real Codex run: no Codex or OpenAI credential on the development machine;
+  - a real Claude usage limit on a SpaceMan run (ADR-0079, K-16): none observed; the usage-limit tests are simulated;
   - AWS S3 and Cloudflare R2: no account (MinIO only);
   - a physical or cloud Linux host, and linux/amd64 under systemd (Docker Desktop's amd64 emulation breaks systemd);
   - Google behind Porch and the GitHub API behind go-pulse-github: no accounts (Porch's fake Google fixture and a local

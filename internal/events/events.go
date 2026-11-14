@@ -20,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
@@ -46,6 +47,10 @@ type Options struct {
 	Metrics *metrics.Metrics
 	// Log receives the service's warnings. Nil: discarded.
 	Log *slog.Logger
+	// OnAccepted, when set, is called after a live or redelivered event became a new inbox item, with the slug of the
+	// built-in template its subscription uses ("" for a custom one). The event is untrusted: a hook may only use it as
+	// a hint (the gateway re-check reads Harbor Pilot again on quota.window.recovered, ADR-0079 decision 9).
+	OnAccepted func(templateSlug string, e template.Event)
 }
 
 // Service manages connections, templates and subscriptions, and processes delivered events.

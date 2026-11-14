@@ -270,6 +270,23 @@ v0.1.4: `:267`):
   for this day (<spent> of <limit> USD)` (above). **live** (v0.1.6, a new tiny budget on the binding).
 - How Claude Code records either refusal in its transcript: `harnesses.md`, "Gateway runs: Harbor Pilot's 429".
 
+**What SpaceMan reads (UL-8, ADR-0079 decision 9).** `Client.QuotaBoard` decodes only `account_health[]`
+(`account_id, name, billing, available, reason, until, remaining, reset_at, stale`). It never stores or shows `reason`.
+The estimate uses `available` and `until`.
+- **Fixtures** `internal/harborpilot/testdata/quota_board_v016_{exhausted,recovered}.json`: the whole board body from
+  `serve --demo` v0.1.6 (hptest provisioning), recorded 2026-11-14 with every quota monitor's `exhausted_below` at 0.99
+  and then back at 0 (`PUT /api/v1/quota-monitors/{id}` as the demo administrator; `hptest.Gateway.SetQuotaExhaustedBelow`).
+  **live**:
+  - exhausted: the three monitored accounts are `available: false` ("quota exhausted: <bucket label>", `until` = that
+    bucket's `reset_at`, also for the OpenAI-shaped account). The local model `workstation-gpu` (billing `local`, no
+    monitor) stays `available: true`;
+  - recovered: every account `available: true` with `until: null`, and `reset_at` unchanged.
+  - The change shows on the board within about 3 s of the PUT, without a poll.
+- **The all-exhausted 429 on a SpaceMan run token.** With every monitor at 0.99, a run's child token got the 429
+  `no eligible account is available for model claude-opus-5-5` on `POST /v1/messages`. **live** (v0.1.6 and v0.1.4,
+  `internal/app` `TestRealHarborPilotQuotaWait`, 2026-11-14).
+- **Board versions.** The board and these fields answered the same on the pinned v0.1.4. **live** (same test).
+
 **Recovery signals.** `quota.window.recovered` (`events/catalog.go:30`, above in Events) when a monitored global window
 recovers, and `provider.account.recovered` (`events/catalog.go:36`, subjects `account_id, provider_id`, no data) when
 a cooldown ends; the gateway emits the latter when it next reads the account's health after the cooldown, not on a

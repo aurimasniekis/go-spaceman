@@ -813,6 +813,53 @@ func (q *Queries) ListLimitedLiveRuns(ctx context.Context, limit int64) ([]Run, 
 	return items, nil
 }
 
+const listOpenGatewayUsageLimits = `-- name: ListOpenGatewayUsageLimits :many
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'gateway' AND cleared_at IS NULL ORDER BY seen_at, id LIMIT ?1
+`
+
+// Every open gateway hold, in every space: the gateway re-check reads it on each round (ADR-0079 decision 9).
+func (q *Queries) ListOpenGatewayUsageLimits(ctx context.Context, lim int64) ([]UsageLimit, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenGatewayUsageLimits, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageLimit{}
+	for rows.Next() {
+		var i UsageLimit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.AccountID,
+			&i.GatewayRef,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.CheckAt,
+			&i.Source,
+			&i.FirstRunID,
+			&i.SeenAt,
+			&i.ClearedAt,
+			&i.ClearedBy,
+			&i.NotifiedControlAt,
+			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenUsageLimitsByAccount = `-- name: ListOpenUsageLimitsByAccount :many
 SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `
@@ -1155,6 +1202,71 @@ func (q *Queries) ListUsageLimitsToCheck(ctx context.Context, checkAt sql.NullIn
 	return items, nil
 }
 
+const listUsageLimitsToTellPeople = `-- name: ListUsageLimitsToTellPeople :many
+SELECT u.id, u.space_id, u.scope, u.account_id, u.gateway_ref, u.kind, u.resets_at, u.check_at, u.source, u.first_run_id, u.seen_at, u.cleared_at, u.cleared_by, u.notified_control_at, u.notified_humans_at, u.version, u.created_at, u.updated_at FROM usage_limits u JOIN spaces s ON s.id = u.space_id
+WHERE u.cleared_at IS NULL AND u.notified_humans_at IS NULL AND u.resets_at > ?1
+  AND (u.resets_at < ?2 OR (u.resets_at = ?2 AND u.id < ?3))
+  AND s.state <> 'archived'
+ORDER BY u.resets_at DESC, u.id DESC LIMIT ?4
+`
+
+type ListUsageLimitsToTellPeopleParams struct {
+	After       sql.NullInt64
+	CursorReset sql.NullInt64
+	CursorID    string
+	Lim         int64
+}
+
+// Open holds with a known reset later than the given time whose space's people were not told yet, in spaces that
+// aren't archived (ADR-0079 Q5). The space's own threshold is applied by the caller. A keyset page, furthest reset
+// first, after the cursor (resets_at, id): the caller reads every page, so holds it skips can't starve later ones.
+func (q *Queries) ListUsageLimitsToTellPeople(ctx context.Context, arg ListUsageLimitsToTellPeopleParams) ([]UsageLimit, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageLimitsToTellPeople,
+		arg.After,
+		arg.CursorReset,
+		arg.CursorID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageLimit{}
+	for rows.Next() {
+		var i UsageLimit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.AccountID,
+			&i.GatewayRef,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.CheckAt,
+			&i.Source,
+			&i.FirstRunID,
+			&i.SeenAt,
+			&i.ClearedAt,
+			&i.ClearedBy,
+			&i.NotifiedControlAt,
+			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markUsageLimitControlNotified = `-- name: MarkUsageLimitControlNotified :execrows
 UPDATE usage_limits SET updated_at = ?1, notified_control_at = ?1, version = version + 1
 WHERE id = ?2 AND notified_control_at IS NULL
@@ -1284,6 +1396,37 @@ type SetUsageLimitCheckParams struct {
 func (q *Queries) SetUsageLimitCheck(ctx context.Context, arg SetUsageLimitCheckParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setUsageLimitCheck,
 		arg.CheckAt,
+		arg.Now,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setUsageLimitEstimate = `-- name: SetUsageLimitEstimate :execrows
+UPDATE usage_limits SET resets_at = ?1, check_at = ?2, source = ?3, version = version + 1,
+  updated_at = ?4
+WHERE id = ?5 AND version = ?6 AND cleared_at IS NULL
+`
+
+type SetUsageLimitEstimateParams struct {
+	ResetsAt sql.NullInt64
+	CheckAt  sql.NullInt64
+	Source   string
+	Now      int64
+	ID       string
+	Version  int64
+}
+
+// A gateway hold's estimate from Harbor Pilot (quota board or budget status) and its next re-check.
+func (q *Queries) SetUsageLimitEstimate(ctx context.Context, arg SetUsageLimitEstimateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setUsageLimitEstimate,
+		arg.ResetsAt,
+		arg.CheckAt,
+		arg.Source,
 		arg.Now,
 		arg.ID,
 		arg.Version,

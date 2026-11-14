@@ -11,6 +11,7 @@ import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { HarborPilotLimitsCard } from '@/features/harborpilot/HarborPilotLimitsCard'
 import { limitValue, usd } from '@/features/limits/format'
+import { UsageLimitsCard } from '@/features/limits/UsageLimitsCard'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago } from '@/lib/format'
 import { notifyOk } from '@/lib/notify'
@@ -43,8 +44,10 @@ function LimitsPage() {
       <SectionHeader title="Limits" description="Limits and budgets in force in this space, and where each comes from"
         actions={canWrite && l && <Button leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>Edit limits</Button>} />
       <ErrorAlert error={limits.error} />
-      {l && (
-        <Stack gap="md">
+      <Stack gap="md">
+        {/* Usage limits come from their own queries, so they show even when this space's limits fail to load. */}
+        <UsageLimitsCard spaceId={spaceId} />
+        {l && (<>
           <HarborPilotLimitsCard spaceId={spaceId} />
           <BudgetCard l={l} />
           <Card p={0}>
@@ -105,8 +108,8 @@ function LimitsPage() {
               </Table.Tbody>
             </Table>
           </Card>
-        </Stack>
-      )}
+        </>)}
+      </Stack>
       {editing && l && <EditLimits spaceId={spaceId} l={l} canRetain={atLeast(roleIn(me, spaceId), 'admin')} onClose={() => setEditing(false)} />}
     </>
   )
@@ -179,7 +182,7 @@ function EditLimits({ spaceId, l, canRetain, onClose }: { spaceId: string; l: Li
           data={[{ value: '', label: `Default (${limitValue(x.default, x.unit)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }]}
           onChange={(v) => f.handleChange(v === '1' ? 1 : v === '0' ? 0 : '')} />
       ) : <NumberInput label={x.label} disabled={isRetention(x) && !canRetain}
-        description={`${x.scope}${x.zero_means_none && !isTerminal(x) ? (isRetention(x) ? ' (0: keep)' : x.unit === 'minutes' ? ' (0: never)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
+        description={`${x.scope}${x.zero_means_none && !isTerminal(x) ? (isRetention(x) ? ' (0: keep)' : x.unit === 'minutes' || x.unit === 'hours' ? ' (0: never)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
         min={x.min} max={x.max} allowDecimal={false}
         thousandSeparator="," placeholder={`Default: ${limitValue(x.default, x.unit, x.zero_means_none)}`} value={f.state.value ?? ''}
         onChange={(v) => f.handleChange(typeof v === 'number' ? v : '')} />}

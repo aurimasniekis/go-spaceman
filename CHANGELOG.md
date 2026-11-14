@@ -7,11 +7,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- Usage limits, groundwork (ADR-0079, Proposed): central migration 0050 (a run's reported limit, the `usage_limits` and
+- **Runs survive Claude usage limits** (ADR-0079, Accepted; SM-RUN-004..006). When a Claude Code run reaches its
+  subscription's 5-hour or weekly limit, or a Harbor Pilot gateway runs out of accounts or budget, SpaceMan holds the
+  account until the reset, keeps a short wait alive, parks a long one with its session and task, resumes it at the
+  reset with `--resume`, and tells control and (for waits over 12 hours) the space's people once. The entries below
+  give the details. New guide page "When an account runs out", and a "Usage limits" section in Known limitations.
+  Read it before you rely on this: no live subscription limit has been observed on a SpaceMan run, so the tests are
+  simulated (scripted node, fake transcript records, fake clock, fake Harbor Pilot; the gateway side also ran against a
+  real Harbor Pilot demo, still with a scripted node); a gateway reset is an estimate from Harbor Pilot's quota board;
+  and Codex runs are not covered.
+- Usage limits, groundwork (ADR-0079): central migration 0050 (a run's reported limit, the `usage_limits` and
   `limit_waits` tables), the agent's journal migration 0008, and node protocol 1.12, whose run reports may carry the
-  limit a node detected. Nothing detects or acts on limits yet. Both migrations are forward-only in production: take a
-  backup first. Upgrade central first, then the node agents; a node agent below 1.12 keeps working as before.
-- Usage-limit detection on the node (ADR-0079, Proposed): when a Claude Code run's turn ends, and when it ends, the
+  limit a node detected. Both migrations are forward-only in production: take a backup first. Upgrade central first,
+  then the node agents; a node agent below 1.12 keeps working as before.
+- Usage-limit detection on the node (ADR-0079): when a Claude Code run's turn ends, and when it ends, the
   node agent reads the typed usage-limit fields of the run's transcript (from where it stopped last time) and reports
   the limit (kind, reset time, since) or its clear with the run, once per change. No transcript text is logged or
   sent.
@@ -53,6 +62,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   audited. A hold that clears lets the runs parked under it resume on the next round. A resume whose `--resume` fails
   before the first turn starts once more in a fresh session. A released task in review stays in review, with only its
   assignee cleared.
+- Harbor Pilot runs waiting on an exhausted gateway now know roughly when to come back (ADR-0079 decision 9). Central
+  estimates a gateway hold's reset from Harbor Pilot. For a quota exhaustion it takes the earliest reset among the
+  quota board's exhausted accounts (`GET /api/v1/quota/board`, which the service-principal token's `usage.read`
+  already allows). For a blocking budget it takes the budget's period end. It reads Harbor Pilot again every 15
+  minutes, or at once when a subscription on the Harbor Pilot quota template receives `quota.window.recovered`. When
+  the accounts recover or the budget no longer blocks, the hold clears and the parked runs resume. Launches refused
+  meanwhile name the estimate. The board covers every account of the Harbor Pilot installation, not only the ones the
+  space's plan uses, so the time is an estimate: a run may resume early, hit the limit again and be parked again.
+- People are told about long usage-limit waits (ADR-0079 Q5): when an account (or the Harbor Pilot gateway) is held
+  until a reset more than 12 hours away, the space gets one informational human action naming the account, the reset
+  and what waits on it, once per space and limit window. New space limit `usage_limit_notify_after_hours` (0–720,
+  default 12; 0 turns it off). The `usage_limit_*` limits are validated like every limit, and the limits API now lists
+  `hours` among the units.
+- Usage limits in the web UI (ADR-0079): a run at its usage limit shows the limit and its reset time (and "at usage
+  limit" as its state), and a run parked at one says so. The Limits page lists the accounts and gateway references held
+  at a usage limit (other spaces' holds on the same account as "shared", without their details) and the runs waiting
+  for a reset, each with until when, plus "Resume now", "Release" and "Clear" for operators and "Clear in every space"
+  for account admins. Times are shown in the viewer's time zone, with UTC in the tooltip. The usage-limit maximum wait
+  now reads in days and hours on the Limits page.
 
 ## [0.1.3] - 2026-11-13
 

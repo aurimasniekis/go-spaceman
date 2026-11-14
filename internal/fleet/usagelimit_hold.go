@@ -37,6 +37,9 @@ type UsageLimitSettings struct {
 	KeepAliveMax time.Duration
 	// MaxWait is how long a parked worker waits before its task is released (0: DefaultLimitMaxWait).
 	MaxWait time.Duration
+	// NotifyAfter is how far away a hold's reset must be for the space's people to be told once (Q5); 0: never. With
+	// no Options.UsageLimitSettings it is DefaultLimitNotifyAfter.
+	NotifyAfter time.Duration
 }
 
 // HoldTarget is what a launch would use that a usage-limit hold can hold: an account, or the gateway references of a
@@ -98,12 +101,13 @@ func openHolds(ctx context.Context, q *db.Queries, t HoldTarget) ([]db.UsageLimi
 
 // holdState sorts open holds at now: those that still refuse a launch, and those due for their probe. A hold whose
 // reset has passed is neither. Any kind holds the whole account, seven_day_opus and seven_day_sonnet included (ADR-0079
-// decision 7): a launch can't promise which model it will use.
+// decision 7): a launch can't promise which model it will use. A gateway hold Harbor Pilot estimated is never a probe:
+// its check_at is the next re-read (decision 9).
 func holdState(rows []db.UsageLimit, now int64) (blocking, probes []db.UsageLimit) {
 	for _, u := range rows {
 		switch {
 		case u.ResetsAt.Valid && u.ResetsAt.Int64 <= now:
-		case u.CheckAt.Valid && u.CheckAt.Int64 <= now:
+		case u.CheckAt.Valid && u.CheckAt.Int64 <= now && !estimated(u):
 			probes = append(probes, u)
 		default:
 			blocking = append(blocking, u)
@@ -116,7 +120,7 @@ func holdState(rows []db.UsageLimit, now int64) (blocking, probes []db.UsageLimi
 // false when it waits for a probe (the reset is unknown, or a probe was asked for before it).
 func freeAt(u db.UsageLimit) (at int64, known bool) {
 	switch {
-	case u.CheckAt.Valid && (!u.ResetsAt.Valid || u.CheckAt.Int64 < u.ResetsAt.Int64):
+	case u.CheckAt.Valid && !estimated(u) && (!u.ResetsAt.Valid || u.CheckAt.Int64 < u.ResetsAt.Int64):
 		return u.CheckAt.Int64, false
 	case u.ResetsAt.Valid:
 		return u.ResetsAt.Int64, true
@@ -146,6 +150,12 @@ func holdError(ctx context.Context, q *db.Queries, t HoldTarget, blocking []db.U
 	switch {
 	case at == 0:
 		msg = what + " (reset time unknown); launches on it are refused until the hold is cleared"
+	case known && last.Source == SourceQuotaBoard:
+		msg = fmt.Sprintf("%s until about %s (estimated from Harbor Pilot's quota board: the earliest reset among its exhausted accounts, re-checked every 15 minutes); launches on it are refused until then",
+			what, until.Format(holdTimeLayout))
+	case known && last.Source == SourceBudgetStatus:
+		msg = fmt.Sprintf("%s until %s, when the budget's period ends (Harbor Pilot budget status, re-checked every 15 minutes); launches on it are refused until then",
+			what, until.Format(holdTimeLayout))
 	case known:
 		msg = fmt.Sprintf("%s until %s; launches on it are refused until then", what, until.Format(holdTimeLayout))
 	default:
@@ -169,7 +179,10 @@ func holdSubject(ctx context.Context, q *db.Queries, t HoldTarget, u db.UsageLim
 	if a, err := q.GetAccount(ctx, t.AccountID); err == nil {
 		name = a.Name
 	}
-	return fmt.Sprintf("account %q is at its %s usage limit", name, limitKindLabel(u.Kind))
+	if label := limitKindLabel(u.Kind); label != "" {
+		return fmt.Sprintf("account %q is at its %s usage limit", name, label)
+	}
+	return fmt.Sprintf("account %q is at a usage limit", name)
 }
 
 func limitKindLabel(kind string) string {
@@ -187,7 +200,7 @@ func limitKindLabel(kind string) string {
 	case proto.LimitOverage:
 		return "overage"
 	}
-	return "a"
+	return ""
 }
 
 // probeBackoff is the time to the next probe of a hold whose reset is unknown, after a probe at now: it doubles from
