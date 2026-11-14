@@ -48,5 +48,9 @@ func BenchmarkHelloRuns(b *testing.B) {
 		for _, r := range runs {
 			out = append(out, r.report(now))
 		}
+		benchReports = out
 	}
 }
+
+// benchReports keeps the benchmark's result alive, so the compiler can't drop the work.
+var benchReports []proto.RunReport
