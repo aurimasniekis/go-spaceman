@@ -530,6 +530,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `POST` | `/me/telegram/link-codes` | `create-telegram-link-code` | Start linking your Telegram account |
+| `GET` | `/me/telegram/link-codes/{code_id}` | `get-telegram-link-code` | One of your Telegram link codes |
+| `POST` | `/me/telegram/link-codes/{code_id}/cancel` | `cancel-telegram-link-code` | Cancel one of your Telegram link codes |
+| `POST` | `/me/telegram/link-codes/{code_id}/confirm` | `confirm-telegram-link` | Link the Telegram account that confirmed your code |
 | `DELETE` | `/spaces/{space_id}/telegram` | `delete-space-telegram` | Remove a space's Telegram settings (Telegram is off for it again) |
 | `GET` | `/spaces/{space_id}/telegram` | `get-space-telegram` | A space's Telegram settings |
 | `PUT` | `/spaces/{space_id}/telegram` | `put-space-telegram` | Set a space's Telegram settings |

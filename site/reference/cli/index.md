@@ -89,6 +89,10 @@ Every other operation of the API has a command. These belong to the browser's si
 
 | Operation | Why |
 |---|---|
+| `cancel-telegram-link-code` | Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused |
+| `confirm-telegram-link` | Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused |
+| `create-telegram-link-code` | Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused |
+| `get-telegram-link-code` | Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused |
 | `login` | interactive sign-in: it creates a browser session (cookie and CSRF token); the CLI authenticates with an API token |
 | `logout` | ends the browser session it is called from; an API token has none (revoke tokens with `spaceman token revoke`) |
 | `oidc-callback` | the identity provider's browser redirect back to central |

@@ -153,7 +153,7 @@ spaceman space relocate start payments --to build-02 --source-unavailable --ackn
 ## Operations without a command
 
 Every operation of the [HTTP API](/reference/api) has a command except these, which belong to the browser's sign-in
-flows. A test fails when a new operation has neither a command nor an entry here (ADR-0040).
+flows or to linking a Telegram account from the browser. A test fails when a new operation has neither a command nor an entry here (ADR-0040).
 
 | Operation | Why |
 |---|---|
@@ -162,6 +162,7 @@ flows. A test fails when a new operation has neither a command nor an entry here
 | `reauth-password`, `reauth-totp` | step-up of a browser session; API tokens are not subject to re-authentication |
 | `recovery-login` | break-glass sign-in that creates a browser session; use the recovery token on the sign-in page |
 | `start-oidc`, `oidc-callback` | browser redirects to and from the identity provider (sign-in, step-up, link, test login) |
+| `create-telegram-link-code`, `get-telegram-link-code`, `cancel-telegram-link-code`, `confirm-telegram-link` | linking a Telegram account (ADR-0083) happens on the Account page: only the browser session that created the code may use it, and API tokens are refused |
 | `reset-password` | anonymous: central accepts it only from its own web origin, so the user redeems the token from `spaceman user reset-token` on the sign-in page |
 
 The live terminal stream (`…/runs/{run_id}/terminal`) has no command either: it replays a program's terminal output
