@@ -474,26 +474,72 @@ func TestZeroIdleDisablesReadGuard(t *testing.T) {
 	}
 }
 
-// An upgrade request that carries a body gets no read deadline from the guard, even though a handler reads part of it.
-func TestUpgradeWithBodyGetsNoDeadline(t *testing.T) {
-	srv, done := readServer(t, idle, func(w http.ResponseWriter, r *http.Request) error {
-		if _, err := io.ReadFull(r.Body, make([]byte, 2)); err != nil {
-			return err
-		}
-		time.Sleep(3 * idle)
-		// A deadline left by the guard has expired by now: reading the rest of the body would fail.
+// Upgrade headers exempt nothing: a request that carries a body is guarded however it is dressed (review: Connection:
+// Upgrade + Upgrade: websocket on a POST with a Content-Length let a client hold any route forever).
+func TestUpgradeHeadersWithBodyAreStillGuarded(t *testing.T) {
+	srv, done := readServer(t, idle, func(_ http.ResponseWriter, r *http.Request) error {
 		_, err := io.ReadAll(r.Body)
 		return err
 	})
 	c := dial(t, srv, "POST /agent/ HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nContent-Length: 4\r\n", "ab")
-	time.Sleep(4 * idle)
-	_, _ = io.WriteString(c, "cd")
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatalf("an upgrade's body read was cut off: %v", err)
+		if err == nil {
+			t.Fatal("the stalled body was read to its end")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("handler did not finish")
+	case <-time.After(5 * idle):
+		t.Fatal("the stalled body of an upgrade-headed POST was never cut off")
 	}
+	awaitClose(t, c, 2*time.Second)
+}
+
+// The deadline a handler sets (huma's BodyReadTimeout) is a total bound: a body trickled inside every idle bound is
+// still cut off when it passes, and a bound that is longer than the idle one never extends it.
+func TestHandlerDeadlineIsATotalBound(t *testing.T) {
+	trickle := func(t *testing.T, srv *httptest.Server, every time.Duration, for_ time.Duration) {
+		c := dial(t, srv, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n", "")
+		end := time.Now().Add(for_)
+		for time.Now().Before(end) {
+			time.Sleep(every)
+			if _, err := io.WriteString(c, "x"); err != nil {
+				return
+			}
+		}
+	}
+	t.Run("trickle past the bound", func(t *testing.T) {
+		const bound = 6 * idle
+		srv, done := readServer(t, 4*idle, func(w http.ResponseWriter, r *http.Request) error {
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bound))
+			start := time.Now()
+			_, err := io.ReadAll(r.Body)
+			if took := time.Since(start); err == nil || took < bound-idle || took > bound+3*idle {
+				return fmt.Errorf("read ended after %v with %w, want an error near %v", took, err, bound)
+			}
+			return nil
+		})
+		go trickle(t, srv, idle/2, 3*bound)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(3 * bound):
+			t.Fatal("the trickled body was never cut off")
+		}
+	})
+	t.Run("longer bound does not extend idle", func(t *testing.T) {
+		srv, done := readServer(t, idle, func(w http.ResponseWriter, r *http.Request) error {
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(time.Minute))
+			start := time.Now()
+			_, err := io.ReadAll(r.Body)
+			if took := time.Since(start); err == nil || took > 4*idle {
+				return fmt.Errorf("read ended after %v with %w, want an idle cut-off", took, err)
+			}
+			return nil
+		})
+		_ = dial(t, srv, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n", "")
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
 }

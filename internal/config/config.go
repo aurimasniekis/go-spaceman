@@ -246,7 +246,9 @@ type HTTPConfig struct {
 	// connections (nodes, terminals) keep their own timeouts.
 	WriteIdleTimeout Duration `yaml:"write_idle_timeout"`
 	// ReadIdleTimeout bounds how long one read of a request body may wait for the client to send data (1s to 10m). It
-	// bounds progress, not the whole request: a large upload that keeps moving is never cut off, but a client that
+	// bounds progress, not the whole request: the whole body must also arrive within its operation's bound (5 s for
+	// JSON operations, 10 minutes for an attachment upload); within that bound a large upload that keeps moving is
+	// never cut off, but a client that
 	// declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request
 	// refused before its body is read closes its connection instead of draining the body. Requests without a body
 	// (event streams) and WebSocket connections are unaffected.

@@ -4244,6 +4244,39 @@
   with the old value: 485 rows).
 - **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
 
+### ADR-0081 — Central bounds request bodies by progress and by a total (security-relevant change)
+- **Status:** Accepted, 2026-11-14. **Security-relevant change:** it adds limits to central's public listener, and the
+  security review of the first version (`httpguard.ReadProgress`, PR #78) found that version weakened one and bypassed
+  another; both are corrected here.
+- **Context:** the listener had no `ReadTimeout`: a client that declared a body and sent none, or trickled it, held a
+  connection and goroutine (T-43). A whole-request `ReadTimeout` would cut event streams, the agent WebSocket and
+  slow uploads. The first version gave every body read `http.read_idle_timeout` (30 s). The review found two defects:
+  - **Upgrade bypass (high).** It skipped any request whose headers said `Connection: Upgrade` and `Upgrade:
+    websocket`. A client adding those to `POST /api/v1/spaces` or `POST /` with a `Content-Length` and no body held the
+    connection indefinitely, on any route. `WriteProgress` had the same header-only skip.
+  - **Lost total bound (high).** huma gives every operation `BodyReadTimeout` (5 s total unless set) and applies it
+    as a read deadline; the guard reset the deadline to now+30 s on every read and so overrode it. A login body sent
+    one byte per 29 s was held for up to 1 MiB × 29 s (`http.max_body_bytes` is 1 MiB), where main answered 408 at
+    5.7 s.
+- **Decision:**
+  - Only a real WebSocket handshake is passed through (`websocketHandshake`): a body-less HTTP/1.1 `GET` with the
+    upgrade headers and no `Transfer-Encoding`. `ReadProgress` guards every request that has a body, whatever its
+    headers; `WriteProgress` skips only a real handshake.
+  - Progress and total are both enforced. The guard's response writer implements `SetReadDeadline`, which huma
+    finds by unwrapping: the deadline is recorded as the total cap, and each read waits for the sooner of now+idle and
+    the cap. JSON operations keep huma's 5 s. `upload-attachment` sets `BodyReadTimeout` to 10 minutes
+    (`api.UploadBodyReadTimeout`): 25 MiB (`http.max_upload_bytes`) at a floor of about 43 KiB/s, with the idle bound still
+    applying to every read.
+  - No new setting: the total is the operation's own bound.
+- **Consequences (numbers per connection):** a JSON operation: at most 5 s, ≤ 1 MiB buffered. An upload (it requires an
+  authenticated caller; the body is read after authentication): at most 10 min, ≤ 25 MiB. A stalled client is cut at
+  30 s regardless. There is **no per-IP or global connection cap**: N connections hold N goroutines for up to those
+  bounds, which is the residual in T-43. A client slower than 43 KiB/s can't upload 25 MiB, and gets a 408; a slower link
+  needs smaller files.
+- **Evidence:** `TestSlowOrEmptyBodyCannotHoldConnection` (upgrade-header rows), `TestTrickledBodyMeetsTotalBound` (408 at
+  about 5 s), `TestBodyGuardKeepsStreamsAndUploads`, and in `internal/httpguard` `TestUpgradeHeadersWithBodyAreStillGuarded`,
+  `TestHandlerDeadlineIsATotalBound`, `TestOnlyWebSocketUpgradesPassThrough`. The bypass and trickle probes fail on 80a7f5f.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
