@@ -109,6 +109,7 @@ const DIALOGS: Dialog[] = [
   { name: 'Space accounts', path: space, open: [button('Choose accounts')] },
   { name: 'Space Harbor Pilot', path: space, open: [(page) => page.getByTestId('space-harbor-pilot').getByRole('button', { name: 'Settings' }).click(T)] },
   { name: 'New inbox item', path: (w) => `${space(w)}/inbox`, open: [button('New item')] },
+  { name: 'New inbox item from the overview', path: space, open: [button('New inbox item')] },
   { name: 'Create task from item', path: (w) => `${space(w)}/inbox/${w.item}`, open: [button('Create task')] },
   { name: 'Defer item', path: (w) => `${space(w)}/inbox/${w.item}`, open: [menu(/^More$/, 'Defer…')] },
   { name: 'Reject item', path: (w) => `${space(w)}/inbox/${w.item}`, open: [menu(/^More$/, 'Reject…')] },

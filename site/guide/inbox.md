@@ -8,7 +8,8 @@ reply, associate it with something already in progress, defer it or reject it.
 
 ## Adding an item
 
-Operators add items with **New item**. Write in the editor (bold, lists, task lists, tables, code blocks and links all
+Operators add items with **New item** on the Inbox page, or with **New inbox item** next to **Launch run** on the
+space's overview (a toast then links to the new item). Write in the editor (bold, lists, task lists, tables, code blocks and links all
 work), or switch the format to **JSON** for machine-readable input such as an alert payload. Paste or drop images and
 files into the editor, or use the paperclip: images are placed inline, other files become links and are listed under the
 editor. Press ⌘/Ctrl + Enter to add.

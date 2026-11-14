@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Rich Markdown in every rendered body (inbox items, tasks, human actions, messages and the rest): footnotes, heading
   anchors, highlighted code blocks with a copy button, and Mermaid diagrams in the app's light and dark theme. The
   highlighter and mermaid load only when a body needs them (ADR-0082).
+- Web: a space's overview has a **New inbox item** action next to **Launch run**, for users who may add inbox items
+  (operators and admins of the space). It opens the Inbox page's dialog, and a toast confirms the new item with a link
+  to it. On a phone the action is an icon. An unsent draft now survives closing and reopening the dialog.
 
 ### Fixed
 - Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
