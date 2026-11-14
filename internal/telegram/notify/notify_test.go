@@ -598,3 +598,5 @@ func TestContentLevel(t *testing.T) {
 		})
 	}
 }
+
+func notifyDefaults() settings.NotificationDefaults { return settings.Defaults().NotificationDefaults }
