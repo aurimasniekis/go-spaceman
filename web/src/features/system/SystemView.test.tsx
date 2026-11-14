@@ -16,6 +16,7 @@ function status(extra: Partial<SystemStatus> = {}): SystemStatus {
     storage: { readiness: 'ready', checks: [{ name: 'store', status: 'ok' }, { name: 'store.writable', status: 'ok' }], store_state: 'ok', disk_total_bytes: 100 * 2 ** 30,
       disk_available_bytes: 40 * 2 ** 30, disk_used_percent: 60, disk_reserve_bytes: 2 ** 30, below_reserve: false, problem: false, db_bytes: 3 * 2 ** 20, wal_bytes: 2 ** 20 },
     counts: { spaces: 3, nodes_active: 2, nodes_connected: 1, runs_running: 4, human_pending: 5, live_streams: 6 },
+    telegram: { configured: false, enabled: false, webhook_status: 'off', pending_update_count: 0 },
     ...extra,
   } as SystemStatus
 }
@@ -69,6 +70,27 @@ describe('System page', () => {
     expect(counts).toHaveTextContent('Pending human actionsunavailable')
     expect(counts).toHaveTextContent('Live streams6')
     expect(screen.getByTestId('system-status')).toHaveTextContent('v0.1.0')
+  })
+
+  it('shows the Telegram bot and what Telegram reports about its webhook', () => {
+    wrap(status())
+    expect(screen.getByTestId('system-telegram')).toHaveTextContent('No Telegram bot is configured.')
+  })
+
+  it('shows a working webhook and a failing one', () => {
+    const tg = { configured: true, enabled: true, mode: 'webhook' as const, bot_id: 42, username: 'spaceman_bot', webhook_status: 'ok' as const, pending_update_count: 3 }
+    const { unmount } = wrap(status({ telegram: tg }))
+    const card = screen.getByTestId('system-telegram')
+    expect(card).toHaveTextContent('@spaceman_bot')
+    expect(card).toHaveTextContent('webhook: ok')
+    expect(card).toHaveTextContent('Pending updates3')
+    unmount()
+    wrap(status({ telegram: { ...tg, webhook_status: 'error', error: "Telegram can't deliver to the webhook: Wrong response from the webhook: 502 Bad Gateway",
+      last_error_at: '2026-11-14T09:00:00Z', last_error_message: 'Wrong response from the webhook: 502 Bad Gateway' } }))
+    const failing = screen.getByTestId('system-telegram')
+    expect(failing).toHaveTextContent('error')
+    expect(failing).toHaveTextContent("Telegram can't deliver to the webhook")
+    expect(failing).toHaveTextContent('Last delivery error')
   })
 
   it('formats uptime and reads the writable check', () => {
