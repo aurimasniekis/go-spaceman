@@ -30,6 +30,7 @@ type gwEnv struct {
 	s       *store.Store
 	clk     *clock.Fake
 	svc     *Service
+	bus     *eventbus.Bus
 	woken   atomic.Int32
 	ended   atomic.Int32
 	endedID chan string
@@ -40,7 +41,8 @@ func newGWEnv(t *testing.T) *gwEnv {
 	e := &gwEnv{t: t, clk: clock.NewFake(time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)), endedID: make(chan string, 16)}
 	e.s = storetest.Open(t, storetest.WithClock(e.clk))
 	kr := keyringtest.Load(t, e.s)
-	e.svc = New(e.s, kr, audit.NewWriter(kr), eventbus.New(), changefeed.New(nil), Options{Clock: e.clk, Metrics: metrics.New(),
+	e.bus = eventbus.New()
+	e.svc = New(e.s, kr, audit.NewWriter(kr), e.bus, changefeed.New(nil), Options{Clock: e.clk, Metrics: metrics.New(),
 		DisconnectGrace: 10 * time.Second, Outbox: outbox.New(e.s, outbox.Options{Enabled: true, Source: "spaceman-test", Clock: e.clk}),
 		OnGatewayRevocation: func() { e.woken.Add(1) },
 		OnRunEnded:          func(id string) { e.ended.Add(1); e.endedID <- id }})
@@ -536,4 +538,64 @@ func TestStopMintsWaitsForBackgroundMints(t *testing.T) {
 	if _, err := h.gatewayToken(ctx, "nod_1", run, "run_1"); !errors.Is(err, errMintPending) || g.calls.Load() != 1 {
 		t.Fatalf("after shutdown: %v, %d mints", err, g.calls.Load())
 	}
+}
+
+// Archiving, restoring and purging a space publish a Telegram settings event, so the settings cache drops or restores
+// the space at once; a transition that fails publishes nothing.
+func TestSpaceChangesPublishTelegramSettingsEvents(t *testing.T) {
+	// Not parallel: the purge is a cascade delete that holds the write lock for 100+ ms (HP-DB-004).
+	e := newGWEnv(t)
+	ctx := context.Background()
+	sub := e.bus.Subscribe(8, eventbus.TopicTelegramSettings)
+	defer sub.Close()
+	expect := func(what string, want bool) {
+		t.Helper()
+		select {
+		case ev := <-sub.C:
+			if !want {
+				t.Fatalf("%s: unexpected event %+v", what, ev)
+			}
+			if ev.Key != "spc_a" {
+				t.Fatalf("%s: event key %q, want spc_a", what, ev.Key)
+			}
+		case <-time.After(time.Second):
+			if want {
+				t.Fatalf("%s: no Telegram settings event", what)
+			}
+		}
+	}
+	version := func() int64 {
+		t.Helper()
+		sp, err := e.svc.GetSpace(ctx, "spc_a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sp.Version
+	}
+
+	// A failed archive (an active run) publishes nothing.
+	e.run("run_1", proto.RunRunning)
+	if _, err := e.svc.SetSpaceState(ctx, audit.System, "spc_a", version(), "archived", ""); err == nil {
+		t.Fatal("archiving with an active run succeeded")
+	}
+	expect("failed archive", false)
+
+	e.exec(`UPDATE runs SET observed = ?, desired = 'stopped'`, proto.RunExited)
+	if _, err := e.svc.SetSpaceState(ctx, audit.System, "spc_a", version(), "archived", ""); err != nil {
+		t.Fatal(err)
+	}
+	expect("archive", true)
+	if _, err := e.svc.SetSpaceState(ctx, audit.System, "spc_a", version(), "active", ""); err != nil {
+		t.Fatal(err)
+	}
+	expect("restore", true)
+
+	if _, err := e.svc.SetSpaceState(ctx, audit.System, "spc_a", version(), "archived", ""); err != nil {
+		t.Fatal(err)
+	}
+	expect("archive again", true)
+	if err := e.svc.PurgeSpace(ctx, audit.System, "spc_a"); err != nil {
+		t.Fatal(err)
+	}
+	expect("purge", true)
 }

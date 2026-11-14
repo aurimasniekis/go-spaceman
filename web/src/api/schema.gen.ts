@@ -3739,6 +3739,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's Telegram settings
+         * @description The defaults (enabled false, version 0) when the space has none: it is then invisible to Telegram.
+         */
+        get: operations["get-space-telegram"];
+        /**
+         * Set a space's Telegram settings
+         * @description Without If-Match this creates the settings (409 if the space has some); with it, it replaces them. A field left out takes its default. Needs space_config:write in the space and a step-up.
+         */
+        put: operations["put-space-telegram"];
+        post?: never;
+        /**
+         * Remove a space's Telegram settings (Telegram is off for it again)
+         * @description Needs space_config:write in the space and a step-up.
+         */
+        delete: operations["delete-space-telegram"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/usage": {
         parameters: {
             query?: never;
@@ -4054,6 +4082,54 @@ export interface paths {
          * @description Records that an administrator has seen the restore. Spaces stay paused until each is resumed.
          */
         post: operations["acknowledge-restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Telegram bot's policy and defaults
+         * @description The effective values: built-in defaults for everything never set (version 0 and stored false while nothing is stored).
+         */
+        get: operations["get-telegram-settings"];
+        /**
+         * Set the Telegram bot's policy and defaults
+         * @description Without If-Match this stores the settings for the first time (409 if some are stored); with it, it replaces them. The body replaces everything stored: a field left out takes its built-in default, and only the fields sent are stored, so a later release's new default reaches every field nobody set. Out-of-range values are refused with 422. Changes reach the bot (send and inbound limits, link policy) without a restart. The Bot API base URL is not here: it is set only in central's configuration file. Needs system:write and a step-up.
+         */
+        put: operations["put-telegram-settings"];
+        post?: never;
+        /**
+         * Reset the Telegram bot's policy and defaults
+         * @description Every value goes back to its built-in default. Needs system:write and a step-up.
+         */
+        delete: operations["delete-telegram-settings"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spaces' Telegram settings
+         * @description Every space with stored Telegram settings whose configuration you can read; a space not listed is off for Telegram.
+         */
+        get: operations["list-space-telegram"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8604,6 +8680,8 @@ export interface components {
             new_actions: boolean;
             /** @description A reminder for a pending action */
             reminders: boolean;
+            /** @description Your IANA time zone, such as Europe/Vilnius (empty: unset). The Telegram digest and quiet hours use it, and are off while it is unset */
+            timezone?: string;
         };
         NotificationPrefsOut: {
             /**
@@ -8633,6 +8711,8 @@ export interface components {
             new_actions: boolean;
             /** @description A reminder for a pending action */
             reminders: boolean;
+            /** @description Your IANA time zone, such as Europe/Vilnius (empty: unset). The Telegram digest and quiet hours use it, and are off while it is unset */
+            timezone?: string;
             /** Format: date-time */
             updated_at?: string;
             /** Format: int64 */
@@ -10321,6 +10401,394 @@ export interface components {
             readonly $schema?: string;
             grants: components["schemas"]["AuthGrantInput"][];
         };
+        SettingsInboundLimits: {
+            /**
+             * Format: int64
+             * @description Updates one link may send in a burst (1-100)
+             */
+            actions_burst: number;
+            /**
+             * Format: int64
+             * @description Updates (messages and button taps) one link may send per minute (1-600)
+             */
+            actions_per_minute: number;
+            /**
+             * Format: int64
+             * @description Attachment downloads one link may make per hour (1-1000)
+             */
+            downloads_per_hour: number;
+            /**
+             * Format: int64
+             * @description Inbox items one link may create per hour (1-1000)
+             */
+            inbox_items_per_hour: number;
+            /**
+             * Format: int64
+             * @description Updates central handles per second over every chat (1-100)
+             */
+            updates_per_second: number;
+        };
+        SettingsInboundLimitsInput: {
+            /**
+             * Format: int64
+             * @description Default 10
+             */
+            actions_burst?: number;
+            /**
+             * Format: int64
+             * @description Default 30
+             */
+            actions_per_minute?: number;
+            /**
+             * Format: int64
+             * @description Default 50
+             */
+            downloads_per_hour?: number;
+            /**
+             * Format: int64
+             * @description Default 60
+             */
+            inbox_items_per_hour?: number;
+            /**
+             * Format: int64
+             * @description Default 20
+             */
+            updates_per_second?: number;
+        };
+        SettingsInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsInput.json
+             */
+            readonly $schema?: string;
+            inbound_limits?: components["schemas"]["SettingsInboundLimitsInput"];
+            /**
+             * Format: int64
+             * @description Default 300
+             */
+            init_data_max_age_seconds?: number;
+            /** @description Default false */
+            link_allow_admin_cap?: boolean;
+            /**
+             * Format: int64
+             * @description Default 600
+             */
+            link_code_ttl_seconds?: number;
+            /**
+             * @description Default operator
+             * @enum {string}
+             */
+            link_default_max_role?: "viewer" | "operator";
+            /**
+             * Format: int64
+             * @description Default 90
+             */
+            link_reconfirm_days?: number;
+            /** @description Default false */
+            link_sso_grants?: boolean;
+            /**
+             * Format: int64
+             * @description Default 1
+             */
+            links_per_user?: number;
+            /**
+             * Format: int64
+             * @description Default 3600; at least the idle timeout
+             */
+            miniapp_session_absolute_seconds?: number;
+            /**
+             * Format: int64
+             * @description Default 900
+             */
+            miniapp_session_idle_seconds?: number;
+            notification_defaults?: components["schemas"]["SettingsNotificationDefaultsInput"];
+            send_limits?: components["schemas"]["SettingsSendLimitsInput"];
+            /** @description Default false */
+            topics_mode_default?: boolean;
+        };
+        SettingsNotificationDefaults: {
+            /** @description An action was assigned to the user */
+            assigned_to_me: boolean;
+            /** @description Clarification requests and replies */
+            clarifications: boolean;
+            /** @description Send a daily digest */
+            digest: boolean;
+            /** @description When the digest is sent, as HH:MM in the user's time zone */
+            digest_time: string;
+            /** @description An action escalated */
+            escalations: boolean;
+            /**
+             * @description Failed or lost runs
+             * @enum {string}
+             */
+            failed_runs: "push" | "digest" | "off";
+            /**
+             * @description New inbox items
+             * @enum {string}
+             */
+            inbox_items: "push" | "digest" | "off";
+            /**
+             * @description Only new actions of at least this priority (assignments always count)
+             * @enum {string}
+             */
+            min_priority: "low" | "normal" | "high" | "urgent";
+            /** @description New human actions in spaces the link can read */
+            new_actions: boolean;
+            /** @description Agent messages to operators */
+            operator_messages: boolean;
+            /** @description Send silently (no sound) during quiet hours */
+            quiet_hours: boolean;
+            /** @description Quiet hours end, as HH:MM in the user's time zone (before the start: they run past midnight) */
+            quiet_hours_end: string;
+            /** @description Quiet hours start, as HH:MM in the user's time zone */
+            quiet_hours_start: string;
+            /**
+             * @description Reminders of pending actions
+             * @enum {string}
+             */
+            reminders: "push" | "digest" | "off";
+            /**
+             * @description Tasks entering review
+             * @enum {string}
+             */
+            tasks_in_review: "push" | "digest" | "off";
+        };
+        SettingsNotificationDefaultsInput: {
+            /** @description Default true */
+            assigned_to_me?: boolean;
+            /** @description Default true */
+            clarifications?: boolean;
+            /** @description Default true */
+            digest?: boolean;
+            /** @description HH:MM, default 09:00 */
+            digest_time?: string;
+            /** @description Default true */
+            escalations?: boolean;
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            failed_runs?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            inbox_items?: "push" | "digest" | "off";
+            /**
+             * @description Default normal
+             * @enum {string}
+             */
+            min_priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Default true */
+            new_actions?: boolean;
+            /** @description Default true */
+            operator_messages?: boolean;
+            /** @description Default true */
+            quiet_hours?: boolean;
+            /** @description HH:MM, default 08:00 */
+            quiet_hours_end?: string;
+            /** @description HH:MM, default 23:00 */
+            quiet_hours_start?: string;
+            /**
+             * @description Default push
+             * @enum {string}
+             */
+            reminders?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            tasks_in_review?: "push" | "digest" | "off";
+        };
+        SettingsOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsOut.json
+             */
+            readonly $schema?: string;
+            /** @description Inbound abuse limits */
+            inbound_limits: components["schemas"]["SettingsInboundLimits"];
+            /**
+             * Format: int64
+             * @description Oldest Mini App initData accepted for a session exchange (60-3600 s)
+             */
+            init_data_max_age_seconds: number;
+            /** @description Whether a link may be given the admin cap at all */
+            link_allow_admin_cap: boolean;
+            /**
+             * Format: int64
+             * @description Lifetime of a link code (120-1800 s)
+             */
+            link_code_ttl_seconds: number;
+            /**
+             * @description The cap a new link gets: its Telegram session never has more than this role in any space, whatever the user's grants
+             * @enum {string}
+             */
+            link_default_max_role: "viewer" | "operator";
+            /**
+             * Format: int64
+             * @description Days after which a link must be confirmed again from the web (7-365)
+             */
+            link_reconfirm_days: number;
+            /** @description Whether a link confirmed from an SSO session also carries the user's SSO-mapped grants, until that session's absolute expiry */
+            link_sso_grants: boolean;
+            /**
+             * Format: int64
+             * @description Telegram accounts one SpaceMan user may link (1-3)
+             */
+            links_per_user: number;
+            /**
+             * Format: int64
+             * @description A Mini App session ends this long after the exchange, whatever its use (900-43200 s, at least the idle timeout)
+             */
+            miniapp_session_absolute_seconds: number;
+            /**
+             * Format: int64
+             * @description A Mini App session ends after this long without a request (300-3600 s)
+             */
+            miniapp_session_idle_seconds: number;
+            /** @description Each link's notification preferences, unless its user changed them */
+            notification_defaults: components["schemas"]["SettingsNotificationDefaults"];
+            /** @description Outbound rate limits and queue bounds */
+            send_limits: components["schemas"]["SettingsSendLimits"];
+            /** @description false: nothing was ever set (or it was reset), every value is the built-in default */
+            stored: boolean;
+            /** @description Whether a new link starts in topics mode (a topic per space in the private chat) */
+            topics_mode_default: boolean;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /**
+             * Format: int64
+             * @description 0 while nothing is stored
+             */
+            version: number;
+        };
+        SettingsSendLimits: {
+            /**
+             * Format: int64
+             * @description Messages one private chat may get in a burst (1-3)
+             */
+            chat_burst: number;
+            /**
+             * Format: double
+             * @description Messages per second to one private chat (above 0, at most 1)
+             */
+            chat_per_second: number;
+            /**
+             * Format: double
+             * @description Messages per second over every chat (above 0, at most 30)
+             */
+            global_per_second: number;
+            /**
+             * Format: int64
+             * @description Messages per minute to one group (1-20)
+             */
+            group_per_minute: number;
+            /**
+             * Format: int64
+             * @description Messages waiting for one chat (1-1000, at most queue_total); beyond it the chat gets one "N updates" notice
+             */
+            queue_per_chat: number;
+            /**
+             * Format: int64
+             * @description Messages waiting over every chat (1-50000); beyond it the least urgent are dropped
+             */
+            queue_total: number;
+        };
+        SettingsSendLimitsInput: {
+            /**
+             * Format: int64
+             * @description Default 3
+             */
+            chat_burst?: number;
+            /**
+             * Format: double
+             * @description Default 1
+             */
+            chat_per_second?: number;
+            /**
+             * Format: double
+             * @description Default 25
+             */
+            global_per_second?: number;
+            /**
+             * Format: int64
+             * @description Default 20
+             */
+            group_per_minute?: number;
+            /**
+             * Format: int64
+             * @description Default 50; at most queue_total
+             */
+            queue_per_chat?: number;
+            /**
+             * Format: int64
+             * @description Default 5000
+             */
+            queue_total?: number;
+        };
+        SettingsSpace: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsSpace.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description full: bodies in chat; summary: bodies only in the Mini App; off: the space stays hidden
+             * @enum {string}
+             */
+            content_level: "full" | "summary" | "off";
+            /** Format: date-time */
+            created_at?: string;
+            created_by?: string;
+            /** @description The space is visible through Telegram */
+            enabled: boolean;
+            /**
+             * @description Whether enforced approvals can be decided in chat with a second confirmation, or only on the web
+             * @enum {string}
+             */
+            enforced_approvals: "web_only" | "confirm";
+            space_id: string;
+            /** @description false: the defaults (Telegram off for the space) */
+            stored: boolean;
+            /** @description Run terminals can be watched (read-only) from the Mini App */
+            terminal_watch: boolean;
+            /** @description The space gets its own topic for users in topics mode */
+            topics: boolean;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /** Format: int64 */
+            version: number;
+        };
+        SettingsSpaceInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsSpaceInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Default full (bodies are only sent once the space is enabled)
+             * @enum {string}
+             */
+            content_level?: "full" | "summary" | "off";
+            /** @description Default false */
+            enabled?: boolean;
+            /**
+             * @description Default web_only
+             * @enum {string}
+             */
+            enforced_approvals?: "web_only" | "confirm";
+            /** @description Default false */
+            terminal_watch?: boolean;
+            /** @description Default false */
+            topics?: boolean;
+        };
         SignInProviders: {
             /**
              * Format: uri
@@ -10357,6 +10825,15 @@ export interface components {
             /** @description Added to the template's skills; a pin here wins */
             skills?: components["schemas"]["CatalogSkillRef"][];
             template_id: string;
+        };
+        SpaceTelegramList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceTelegramList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["SettingsSpace"][];
         };
         SpaceexportCounts: {
             /** Format: int64 */
@@ -19961,6 +20438,109 @@ export interface operations {
             };
         };
     };
+    "get-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsSpace"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsSpaceInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsSpace"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-space-usage": {
         parameters: {
             query?: never;
@@ -20591,6 +21171,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RestoreNotice"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-telegram-settings": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-telegram-settings": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceTelegramList"];
                 };
             };
             /** @description Error */

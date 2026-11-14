@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Group, MultiSelect, SimpleGrid, Stack, Text, Title } from '@mantine/core'
+import { Alert, Button, Card, Group, MultiSelect, Select, SimpleGrid, Stack, Text, Title } from '@mantine/core'
 import { IconBellRinging } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
@@ -7,6 +7,7 @@ import { keys, useNotificationPrefs, useSpaces } from '@/api/queries'
 import { ErrorAlert, errorMessage } from '@/components/ErrorAlert'
 import { useAppForm } from '@/components/form/appForm'
 import { notifyOk } from '@/lib/notify'
+import { browserZone, knownZones, zoneOptions } from './timezone'
 
 export type NotificationPrefs = Schemas['NotificationPrefs']
 
@@ -14,8 +15,9 @@ const desktopSupported = () => typeof window !== 'undefined' && 'Notification' i
 
 /**
  * Your notification preferences (SM-HUI-006): which human-action changes this web UI announces to you while it is open,
- * and whether it also shows desktop notifications. They are stored per user on the server; SpaceMan sends no e-mail
- * or chat notifications (a Telegram bot is proposed in ADR-0083, not implemented).
+ * and whether it also shows desktop notifications. They are stored per user on the server; SpaceMan sends no e-mail.
+ * The time zone is the user's own (ADR-0083): the Telegram bot's digest and quiet hours use it and are off while it is
+ * unset, so it is never filled in without the user choosing it.
  */
 export function NotificationPrefsCard() {
   const prefs = useNotificationPrefs()
@@ -26,7 +28,7 @@ export function NotificationPrefsCard() {
   const form = useAppForm({
     defaultValues: {
       enabled: true, desktop: false, new_actions: true, assigned_to_me: true, escalations: true, reminders: false, clarifications: true,
-      min_priority: 'low', muted_spaces: [] as string[],
+      min_priority: 'low', muted_spaces: [] as string[], timezone: '',
     } as NotificationPrefs,
     onSubmit: async ({ value }) => {
       setError('')
@@ -44,9 +46,12 @@ export function NotificationPrefsCard() {
     if (!prefs.data) return
     const d = prefs.data
     form.reset({ enabled: d.enabled, desktop: d.desktop, new_actions: d.new_actions, assigned_to_me: d.assigned_to_me, escalations: d.escalations,
-      reminders: d.reminders, clarifications: d.clarifications, min_priority: d.min_priority, muted_spaces: d.muted_spaces ?? [] })
+      reminders: d.reminders, clarifications: d.clarifications, min_priority: d.min_priority, muted_spaces: d.muted_spaces ?? [],
+      timezone: d.timezone ?? '' })
   }, [prefs.data?.version]) // the server copy replaces the form when it changes
   const ask = async () => setPermission(await Notification.requestPermission())
+  const browser = browserZone()
+  const zones = zoneOptions(knownZones(), prefs.data?.timezone ?? '', browser)
   return (
     <div>
       <Title order={5} mb="xs">Notifications</Title>
@@ -89,6 +94,18 @@ export function NotificationPrefsCard() {
                 </Alert>
               ) : null}
             </form.Subscribe>
+            <form.Field name="timezone">
+              {(f) => (
+                <Group align="flex-end" gap="xs">
+                  <Select label="Time zone" style={{ flex: 1 }} searchable clearable placeholder="Not set" data={zones}
+                    description="Your own time zone. The Telegram digest and quiet hours use it; they are off while it is not set."
+                    value={f.state.value || null} onChange={(v) => f.handleChange(v ?? '')} />
+                  {browser && f.state.value !== browser && (
+                    <Button variant="light" onClick={() => f.handleChange(browser)}>Use {browser}</Button>
+                  )}
+                </Group>
+              )}
+            </form.Field>
             {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
             <Group justify="flex-end"><form.AppForm><form.SubmitButton>Save</form.SubmitButton></form.AppForm></Group>
           </Stack>

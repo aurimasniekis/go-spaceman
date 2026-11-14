@@ -4626,6 +4626,48 @@
     it without any read; in a private chat it goes to the linked user's handler (TG-2/TG-4b mark a link `blocked`), and
     for an unlinked user it is dropped without a reply. Unlinked users' `/start <code>` is not handled yet: linking
     (TG-4b) adds that path with its own rate limits.
+- **Implementation notes (TG-3c, 2026-11-14):**
+  - **Operations:** `get/put/delete-telegram-settings` (`/telegram/settings`; read `system:read`, writes
+    `StepUp(system:write)`), `get/put/delete-space-telegram` (`/spaces/{space_id}/telegram`; read `space_config:read`,
+    writes `space_config:write` in the space plus a step-up) and `list-space-telegram` (`/telegram/spaces`, a filtered
+    read: only spaces whose configuration the caller can read). Writes are `If-Match`-checked (create without it, as
+    the Harbor Pilot connection does) and audited (`telegram.settings.*`, `telegram.space.*`). Through the SpaceMan MCP
+    the reads are read tools and the writes are excluded (a person's decision). Input schemas refuse unknown fields, so
+    `api_base_url` (or a token) is a 422, and a schema test checks that no Telegram settings schema has a URL or token
+    field.
+  - **Only what was set is stored.** A global settings body is a full replacement whose fields are all optional: a
+    field left out takes its built-in default, and `settings_json` holds only the fields sent, so a later release's
+    default reaches every field nobody set (the provider maps them to Optional + Computed attributes). Responses
+    always carry every effective value, `stored` and `version` (0 while nothing is stored). A space's body works the
+    same way over its columns. A stored row that no longer validates (bounds tightened later, a hand edit) falls back
+    to the defaults with a log line instead of stopping Telegram.
+  - **Bounds the plan left open,** chosen here: `inbound_limits` `actions_per_minute` 1–600, `actions_burst` 1–100,
+    `inbox_items_per_hour` and `downloads_per_hour` 1–1000, `updates_per_second` 1–100; `send_limits` use the sender's
+    bounds (global above 0 and at most 30/s, private chat at most 1/s with a burst of 1–3, group 1–20/min, queues
+    1–50000 in total and 1–1000 per chat, the per-chat one at most the total). The Q9 set is `new_actions` and
+    `min_priority` (`normal`), `assigned_to_me`, `escalations`, `clarifications`, `operator_messages` (on);
+    `reminders` push (Q9 didn't name reminders; the web default is off, but in chat they are replies to the card, plan
+    §2.4.3); `inbox_items`, `tasks_in_review`, `failed_runs` digest; `digest` on at `09:00`; `quiet_hours` on,
+    `23:00`–`08:00` (start and end must differ). Raising a limit is an administrator's step-up decision, bounded at or
+    below Telegram's own limits on the send side.
+  - **Cache:** the settings service keeps the effective global settings and every space's row in memory. Each write
+    reloads it after commit and publishes `telegram.settings` on the in-process event bus (never the change feed), and
+    the service's `Run` reloads on that event. Listeners registered with `OnChange` get every change of the global
+    settings in order: central applies `updates_per_second` to the Intake's rate and the per-link limits to the new
+    in-memory limiter at once; `BindSender` applies `send_limits` to an outbound sender (TG-3b binds the sender it
+    builds with the bot). Content level `off` hides a space like `enabled = false` (decision 13).
+  - **Inbound limiter:** per link, in memory, token buckets for actions (every linked update in the dispatcher),
+    inbox items and downloads (for the capture and download paths of TG-8a/TG-9a); idle links are forgotten after
+    2 h, when their buckets would be full anyway. A throttled update isn't handled; the user is told to slow down once
+    until an action is allowed again (a button tap is always answered, with the text only that once). New outcome
+    `throttled` on `spaceman_telegram_updates_total`.
+  - **Link preferences** (`telegram_links.prefs_json`) use the same optional shape plus `muted_spaces`, stored as the
+    user's overrides only; effective preferences are the defaults with them applied (`settings.LinkPrefs`), for TG-4b,
+    TG-6 and TG-10.
+  - **Timezone:** `NotificationPrefs.timezone` is optional in the schema (older clients still save), trimmed, at most
+    64 characters, an IANA name from the embedded zone database (`Local` refused) or empty. The web Account page shows
+    it with a "Use (browser zone)" button and never fills it in by itself; the audit row records only whether one is
+    set.
 
 ## 2. Open items and unresolved contracts
 

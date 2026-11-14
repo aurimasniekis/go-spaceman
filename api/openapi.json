@@ -11189,6 +11189,11 @@
           "reminders": {
             "description": "A reminder for a pending action",
             "type": "boolean"
+          },
+          "timezone": {
+            "description": "Your IANA time zone, such as Europe/Vilnius (empty: unset). The Telegram digest and quiet hours use it, and are off while it is unset",
+            "maxLength": 64,
+            "type": "string"
           }
         },
         "required": [
@@ -11261,6 +11266,11 @@
           "reminders": {
             "description": "A reminder for a pending action",
             "type": "boolean"
+          },
+          "timezone": {
+            "description": "Your IANA time zone, such as Europe/Vilnius (empty: unset). The Telegram digest and quiet hours use it, and are off while it is unset",
+            "maxLength": 64,
+            "type": "string"
           },
           "updated_at": {
             "format": "date-time",
@@ -15807,6 +15817,700 @@
         ],
         "type": "object"
       },
+      "SettingsInboundLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "actions_burst": {
+            "description": "Updates one link may send in a burst (1-100)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "actions_per_minute": {
+            "description": "Updates (messages and button taps) one link may send per minute (1-600)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "downloads_per_hour": {
+            "description": "Attachment downloads one link may make per hour (1-1000)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "inbox_items_per_hour": {
+            "description": "Inbox items one link may create per hour (1-1000)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updates_per_second": {
+            "description": "Updates central handles per second over every chat (1-100)",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "actions_per_minute",
+          "actions_burst",
+          "inbox_items_per_hour",
+          "downloads_per_hour",
+          "updates_per_second"
+        ],
+        "type": "object"
+      },
+      "SettingsInboundLimitsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "actions_burst": {
+            "description": "Default 10",
+            "format": "int64",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "actions_per_minute": {
+            "description": "Default 30",
+            "format": "int64",
+            "maximum": 600,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "downloads_per_hour": {
+            "description": "Default 50",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "inbox_items_per_hour": {
+            "description": "Default 60",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "updates_per_second": {
+            "description": "Default 20",
+            "format": "int64",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "SettingsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SettingsInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "inbound_limits": {
+            "$ref": "#/components/schemas/SettingsInboundLimitsInput"
+          },
+          "init_data_max_age_seconds": {
+            "description": "Default 300",
+            "format": "int64",
+            "maximum": 3600,
+            "minimum": 60,
+            "type": "integer"
+          },
+          "link_allow_admin_cap": {
+            "description": "Default false",
+            "type": "boolean"
+          },
+          "link_code_ttl_seconds": {
+            "description": "Default 600",
+            "format": "int64",
+            "maximum": 1800,
+            "minimum": 120,
+            "type": "integer"
+          },
+          "link_default_max_role": {
+            "description": "Default operator",
+            "enum": [
+              "viewer",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "link_reconfirm_days": {
+            "description": "Default 90",
+            "format": "int64",
+            "maximum": 365,
+            "minimum": 7,
+            "type": "integer"
+          },
+          "link_sso_grants": {
+            "description": "Default false",
+            "type": "boolean"
+          },
+          "links_per_user": {
+            "description": "Default 1",
+            "format": "int64",
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "miniapp_session_absolute_seconds": {
+            "description": "Default 3600; at least the idle timeout",
+            "format": "int64",
+            "maximum": 43200,
+            "minimum": 900,
+            "type": "integer"
+          },
+          "miniapp_session_idle_seconds": {
+            "description": "Default 900",
+            "format": "int64",
+            "maximum": 3600,
+            "minimum": 300,
+            "type": "integer"
+          },
+          "notification_defaults": {
+            "$ref": "#/components/schemas/SettingsNotificationDefaultsInput"
+          },
+          "send_limits": {
+            "$ref": "#/components/schemas/SettingsSendLimitsInput"
+          },
+          "topics_mode_default": {
+            "description": "Default false",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "SettingsNotificationDefaults": {
+        "additionalProperties": false,
+        "properties": {
+          "assigned_to_me": {
+            "description": "An action was assigned to the user",
+            "type": "boolean"
+          },
+          "clarifications": {
+            "description": "Clarification requests and replies",
+            "type": "boolean"
+          },
+          "digest": {
+            "description": "Send a daily digest",
+            "type": "boolean"
+          },
+          "digest_time": {
+            "description": "When the digest is sent, as HH:MM in the user's time zone",
+            "type": "string"
+          },
+          "escalations": {
+            "description": "An action escalated",
+            "type": "boolean"
+          },
+          "failed_runs": {
+            "description": "Failed or lost runs",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          },
+          "inbox_items": {
+            "description": "New inbox items",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          },
+          "min_priority": {
+            "description": "Only new actions of at least this priority (assignments always count)",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "new_actions": {
+            "description": "New human actions in spaces the link can read",
+            "type": "boolean"
+          },
+          "operator_messages": {
+            "description": "Agent messages to operators",
+            "type": "boolean"
+          },
+          "quiet_hours": {
+            "description": "Send silently (no sound) during quiet hours",
+            "type": "boolean"
+          },
+          "quiet_hours_end": {
+            "description": "Quiet hours end, as HH:MM in the user's time zone (before the start: they run past midnight)",
+            "type": "string"
+          },
+          "quiet_hours_start": {
+            "description": "Quiet hours start, as HH:MM in the user's time zone",
+            "type": "string"
+          },
+          "reminders": {
+            "description": "Reminders of pending actions",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          },
+          "tasks_in_review": {
+            "description": "Tasks entering review",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_actions",
+          "min_priority",
+          "assigned_to_me",
+          "escalations",
+          "reminders",
+          "clarifications",
+          "operator_messages",
+          "inbox_items",
+          "tasks_in_review",
+          "failed_runs",
+          "digest",
+          "digest_time",
+          "quiet_hours",
+          "quiet_hours_start",
+          "quiet_hours_end"
+        ],
+        "type": "object"
+      },
+      "SettingsNotificationDefaultsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "assigned_to_me": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "clarifications": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "digest": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "digest_time": {
+            "description": "HH:MM, default 09:00",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          },
+          "escalations": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "failed_runs": {
+            "description": "Default digest",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          },
+          "inbox_items": {
+            "description": "Default digest",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          },
+          "min_priority": {
+            "description": "Default normal",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "new_actions": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "operator_messages": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "quiet_hours": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "quiet_hours_end": {
+            "description": "HH:MM, default 08:00",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          },
+          "quiet_hours_start": {
+            "description": "HH:MM, default 23:00",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          },
+          "reminders": {
+            "description": "Default push",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          },
+          "tasks_in_review": {
+            "description": "Default digest",
+            "enum": [
+              "push",
+              "digest",
+              "off"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "SettingsOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SettingsOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "inbound_limits": {
+            "$ref": "#/components/schemas/SettingsInboundLimits",
+            "description": "Inbound abuse limits"
+          },
+          "init_data_max_age_seconds": {
+            "description": "Oldest Mini App initData accepted for a session exchange (60-3600 s)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "link_allow_admin_cap": {
+            "description": "Whether a link may be given the admin cap at all",
+            "type": "boolean"
+          },
+          "link_code_ttl_seconds": {
+            "description": "Lifetime of a link code (120-1800 s)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "link_default_max_role": {
+            "description": "The cap a new link gets: its Telegram session never has more than this role in any space, whatever the user's grants",
+            "enum": [
+              "viewer",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "link_reconfirm_days": {
+            "description": "Days after which a link must be confirmed again from the web (7-365)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "link_sso_grants": {
+            "description": "Whether a link confirmed from an SSO session also carries the user's SSO-mapped grants, until that session's absolute expiry",
+            "type": "boolean"
+          },
+          "links_per_user": {
+            "description": "Telegram accounts one SpaceMan user may link (1-3)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "miniapp_session_absolute_seconds": {
+            "description": "A Mini App session ends this long after the exchange, whatever its use (900-43200 s, at least the idle timeout)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "miniapp_session_idle_seconds": {
+            "description": "A Mini App session ends after this long without a request (300-3600 s)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "notification_defaults": {
+            "$ref": "#/components/schemas/SettingsNotificationDefaults",
+            "description": "Each link's notification preferences, unless its user changed them"
+          },
+          "send_limits": {
+            "$ref": "#/components/schemas/SettingsSendLimits",
+            "description": "Outbound rate limits and queue bounds"
+          },
+          "stored": {
+            "description": "false: nothing was ever set (or it was reset), every value is the built-in default",
+            "type": "boolean"
+          },
+          "topics_mode_default": {
+            "description": "Whether a new link starts in topics mode (a topic per space in the private chat)",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "description": "0 while nothing is stored",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stored",
+          "version",
+          "link_default_max_role",
+          "link_allow_admin_cap",
+          "link_sso_grants",
+          "link_reconfirm_days",
+          "links_per_user",
+          "link_code_ttl_seconds",
+          "init_data_max_age_seconds",
+          "miniapp_session_idle_seconds",
+          "miniapp_session_absolute_seconds",
+          "send_limits",
+          "inbound_limits",
+          "notification_defaults",
+          "topics_mode_default"
+        ],
+        "type": "object"
+      },
+      "SettingsSendLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "chat_burst": {
+            "description": "Messages one private chat may get in a burst (1-3)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "chat_per_second": {
+            "description": "Messages per second to one private chat (above 0, at most 1)",
+            "format": "double",
+            "type": "number"
+          },
+          "global_per_second": {
+            "description": "Messages per second over every chat (above 0, at most 30)",
+            "format": "double",
+            "type": "number"
+          },
+          "group_per_minute": {
+            "description": "Messages per minute to one group (1-20)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "queue_per_chat": {
+            "description": "Messages waiting for one chat (1-1000, at most queue_total); beyond it the chat gets one \"N updates\" notice",
+            "format": "int64",
+            "type": "integer"
+          },
+          "queue_total": {
+            "description": "Messages waiting over every chat (1-50000); beyond it the least urgent are dropped",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "global_per_second",
+          "chat_per_second",
+          "chat_burst",
+          "group_per_minute",
+          "queue_total",
+          "queue_per_chat"
+        ],
+        "type": "object"
+      },
+      "SettingsSendLimitsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "chat_burst": {
+            "description": "Default 3",
+            "format": "int64",
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "chat_per_second": {
+            "description": "Default 1",
+            "exclusiveMinimum": 0,
+            "format": "double",
+            "maximum": 1,
+            "type": "number"
+          },
+          "global_per_second": {
+            "description": "Default 25",
+            "exclusiveMinimum": 0,
+            "format": "double",
+            "maximum": 30,
+            "type": "number"
+          },
+          "group_per_minute": {
+            "description": "Default 20",
+            "format": "int64",
+            "maximum": 20,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "queue_per_chat": {
+            "description": "Default 50; at most queue_total",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "queue_total": {
+            "description": "Default 5000",
+            "format": "int64",
+            "maximum": 50000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "SettingsSpace": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SettingsSpace.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "content_level": {
+            "description": "full: bodies in chat; summary: bodies only in the Mini App; off: the space stays hidden",
+            "enum": [
+              "full",
+              "summary",
+              "off"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "enabled": {
+            "description": "The space is visible through Telegram",
+            "type": "boolean"
+          },
+          "enforced_approvals": {
+            "description": "Whether enforced approvals can be decided in chat with a second confirmation, or only on the web",
+            "enum": [
+              "web_only",
+              "confirm"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "stored": {
+            "description": "false: the defaults (Telegram off for the space)",
+            "type": "boolean"
+          },
+          "terminal_watch": {
+            "description": "Run terminals can be watched (read-only) from the Mini App",
+            "type": "boolean"
+          },
+          "topics": {
+            "description": "The space gets its own topic for users in topics mode",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "space_id",
+          "stored",
+          "enabled",
+          "content_level",
+          "enforced_approvals",
+          "topics",
+          "terminal_watch",
+          "version"
+        ],
+        "type": "object"
+      },
+      "SettingsSpaceInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SettingsSpaceInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "content_level": {
+            "description": "Default full (bodies are only sent once the space is enabled)",
+            "enum": [
+              "full",
+              "summary",
+              "off"
+            ],
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Default false",
+            "type": "boolean"
+          },
+          "enforced_approvals": {
+            "description": "Default web_only",
+            "enum": [
+              "web_only",
+              "confirm"
+            ],
+            "type": "string"
+          },
+          "terminal_watch": {
+            "description": "Default false",
+            "type": "boolean"
+          },
+          "topics": {
+            "description": "Default false",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "SignInProviders": {
         "additionalProperties": false,
         "properties": {
@@ -15908,6 +16612,30 @@
         },
         "required": [
           "template_id"
+        ],
+        "type": "object"
+      },
+      "SpaceTelegramList": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SpaceTelegramList.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SettingsSpace"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -31584,6 +32312,166 @@
         ]
       }
     },
+    "/spaces/{space_id}/telegram": {
+      "delete": {
+        "description": "Needs space_config:write in the space and a step-up.",
+        "operationId": "delete-space-telegram",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove a space's Telegram settings (Telegram is off for it again)",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "get": {
+        "description": "The defaults (enabled false, version 0) when the space has none: it is then invisible to Telegram.",
+        "operationId": "get-space-telegram",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSpace"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's Telegram settings",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "put": {
+        "description": "Without If-Match this creates the settings (409 if the space has some); with it, it replaces them. A field left out takes its default. Needs space_config:write in the space and a step-up.",
+        "operationId": "put-space-telegram",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsSpaceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSpace"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set a space's Telegram settings",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
     "/spaces/{space_id}/usage": {
       "get": {
         "description": "Totals cover runs with known usage only; runs with unknown usage are counted separately.",
@@ -32516,6 +33404,169 @@
         "summary": "Dismiss the restore notice",
         "tags": [
           "backups"
+        ]
+      }
+    },
+    "/telegram/settings": {
+      "delete": {
+        "description": "Every value goes back to its built-in default. Needs system:write and a step-up.",
+        "operationId": "delete-telegram-settings",
+        "parameters": [
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reset the Telegram bot's policy and defaults",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "get": {
+        "description": "The effective values: built-in defaults for everything never set (version 0 and stored false while nothing is stored).",
+        "operationId": "get-telegram-settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The Telegram bot's policy and defaults",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "put": {
+        "description": "Without If-Match this stores the settings for the first time (409 if some are stored); with it, it replaces them. The body replaces everything stored: a field left out takes its built-in default, and only the fields sent are stored, so a later release's new default reaches every field nobody set. Out-of-range values are refused with 422. Changes reach the bot (send and inbound limits, link policy) without a restart. The Bot API base URL is not here: it is set only in central's configuration file. Needs system:write and a step-up.",
+        "operationId": "put-telegram-settings",
+        "parameters": [
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set the Telegram bot's policy and defaults",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/telegram/spaces": {
+      "get": {
+        "description": "Every space with stored Telegram settings whose configuration you can read; a space not listed is off for Telegram.",
+        "operationId": "list-space-telegram",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceTelegramList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Spaces' Telegram settings",
+        "tags": [
+          "telegram"
         ]
       }
     },
