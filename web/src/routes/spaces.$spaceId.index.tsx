@@ -10,6 +10,7 @@ import { SpaceAttentionCard } from '@/features/attention/SpaceAttentionCard'
 import { SpaceRolesCard } from '@/features/catalog/SpaceRolesCard'
 import { SpaceHarborPilotCard } from '@/features/harborpilot/SpaceHarborPilotCard'
 import { SpaceMcpCard } from '@/features/mcp/SpaceMcpCard'
+import { RunLimitBadge } from '@/features/limits/LimitTime'
 import { harnessLabel, isEnded, kindLabel, RunDot, runStateText, runTitle, sortRuns } from '@/features/runs/runInfo'
 import { RelocationCard } from '@/features/spaces/RelocationCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
@@ -71,7 +72,9 @@ function SpacePage() {
                     </Group>
                   </Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text></Table.Td>
-                  <Table.Td><Text size="sm">{runStateText(r)}</Text></Table.Td>
+                  <Table.Td>
+                    <Group gap={6} wrap="wrap"><Text size="sm">{runStateText(r)}</Text><RunLimitBadge run={r} /></Group>
+                  </Table.Td>
                   <Table.Td><Tooltip label={datetime(r.started_at ?? r.created_at)}><Text size="sm" c="dimmed">{ago(isSet(r.started_at) ? r.started_at : r.created_at)}</Text></Tooltip></Table.Td>
                 </Table.Tr>
               ))}

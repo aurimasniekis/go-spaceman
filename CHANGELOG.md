@@ -66,6 +66,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and what waits on it, once per space and limit window. New space limit `usage_limit_notify_after_hours` (0–720,
   default 12; 0 turns it off). The `usage_limit_*` limits are validated like every limit, and the limits API now lists
   `hours` among the units.
+- Usage limits in the web UI (ADR-0079): a run at its usage limit shows the limit and its reset time (and "at usage
+  limit" as its state), and a run parked at one says so. The Limits page lists the accounts and gateway references held
+  at a usage limit (other spaces' holds on the same account as "shared", without their details) and the runs waiting
+  for a reset, each with until when, plus "Resume now", "Release" and "Clear" for operators and "Clear in every space"
+  for account admins. Times are shown in the viewer's time zone, with UTC in the tooltip. The usage-limit maximum wait
+  now reads in days and hours on the Limits page.
 
 ## [0.1.3] - 2026-11-13
 
