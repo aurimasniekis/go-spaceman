@@ -43,6 +43,25 @@ describe('BackButton', () => {
     })
     await vi.waitFor(() => expect(router.state.location.pathname).toBe('/'))
   })
+
+  it('unregisters its click handler and hides the button when the page goes', async () => {
+    const back = button()
+    ;(window as unknown as { Telegram: unknown }).Telegram = { WebApp: { BackButton: back } }
+    const Probe = () => {
+      useBackButton()
+      return null
+    }
+    const root = createRootRoute({ component: Probe })
+    const home = createRoute({ getParentRoute: () => root, path: '/' })
+    const router = createRouter({ routeTree: root.addChildren([home]), history: createMemoryHistory({ initialEntries: ['/'] }) })
+    await router.load()
+    const { unmount } = render(<RouterProvider router={router} />)
+    await vi.waitFor(() => expect(back.handlers.size).toBe(1))
+    back.hide.mockClear()
+    unmount()
+    expect(back.handlers.size).toBe(0)
+    expect(back.hide).toHaveBeenCalled()
+  })
 })
 
 describe('MainButton', () => {

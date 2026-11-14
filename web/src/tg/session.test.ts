@@ -77,6 +77,23 @@ describe('Mini App session', () => {
     expect(MFA_PENDING_MESSAGE).toContain('browser')
   })
 
+  it("shows the server's detail only for a 403 from the exchange", async () => {
+    const { renderHook } = await import('@testing-library/react')
+    const detail = 'a server-side detail naming the browser'
+    const reason = async (status: number) => {
+      const a = await load('q=1', () => Promise.resolve(json(status, { code: 'x', detail })))
+      await a.tg.startSession()
+      const { result } = renderHook(() => a.tg.useTgSession())
+      return result.current.status === 'ended' ? result.current.reason : ''
+    }
+    expect(await reason(403)).toBe(detail)
+    for (const status of [401, 429, 500]) {
+      const r = await reason(status)
+      expect(r).not.toContain(detail)
+      expect(r).toBe('Session ended. Close and reopen the app.')
+    }
+  })
+
   it('reads its identity from /telegram/me, not /auth/me, and sends no CSRF token', async () => {
     const { tg, f } = await load('q=1', () => Promise.resolve(json(201, { token: 't', expires_at: 'x', idle_timeout_seconds: 1 })))
     await tg.startSession()

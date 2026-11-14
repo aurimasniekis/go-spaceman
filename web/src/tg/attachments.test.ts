@@ -44,6 +44,30 @@ describe('AttachmentBlobs', () => {
     expect(peak).toBe(2)
   })
 
+  it('fetches at most 3 at a time by default', async () => {
+    const gates: Array<() => void> = []
+    let running = 0
+    let peak = 0
+    const f = vi.fn(async () => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise<void>((r) => gates.push(r))
+      running--
+      return img()
+    })
+    const b = new AttachmentBlobs(f as unknown as typeof fetch)
+    const all = ['a', 'b', 'c', 'd', 'e'].map((id) => b.load(A(`att_${id}`)))
+    await vi.waitFor(() => expect(gates.length).toBe(3))
+    await new Promise((r) => setTimeout(r))
+    expect(f).toHaveBeenCalledTimes(3)
+    while (gates.length) {
+      gates.shift()!()
+      await new Promise((r) => setTimeout(r))
+    }
+    await Promise.all(all)
+    expect(peak).toBe(3)
+  })
+
   it('resolves to a placeholder until loaded, then to the blob', async () => {
     const b = new AttachmentBlobs((async () => img()) as unknown as typeof fetch)
     const r = b.resolver('spc_1')
@@ -96,6 +120,7 @@ describe('AttachmentBlobs', () => {
 describe('createAttachmentsHost.watch', () => {
   it('loads an image only once it is visible, and swaps in the blob', async () => {
     const observers: Array<{ cb: IntersectionObserverCallback; els: Element[] }> = []
+    const disconnect = vi.fn()
     vi.stubGlobal(
       'IntersectionObserver',
       class {
@@ -106,7 +131,7 @@ describe('createAttachmentsHost.watch', () => {
         observe(e: Element) {
           this.els.push(e)
         }
-        disconnect() {}
+        disconnect = disconnect
       },
     )
     const f = vi.fn(async () => img())
@@ -122,7 +147,9 @@ describe('createAttachmentsHost.watch', () => {
     observers[0].cb([{ target: el, isIntersecting: true } as unknown as IntersectionObserverEntry], observers[0] as unknown as IntersectionObserver)
     await vi.waitFor(() => expect(el.getAttribute('src')).not.toBe(src))
     expect(el.getAttribute('src')).toMatch(/^blob:/)
+    expect(disconnect).not.toHaveBeenCalled()
     stop()
+    expect(disconnect).toHaveBeenCalledOnce()
     root.remove()
   })
 
@@ -152,6 +179,10 @@ describe('eviction', () => {
     const urls = []
     for (const id of ['att_a', 'att_b', 'att_c']) urls.push(await b.load(A(id)))
     expect(evicted).toEqual(['att_a'])
+    // The evicted blob is released, and only it.
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(urls[0])
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(urls[1])
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(urls[2])
     expect(b.resolver('spc_1')('att_c')).toBe(urls[2])
     expect(b.resolver('spc_1')('att_a')).not.toBe(urls[0])
     expect(await b.load(A('att_a'))).toMatch(/^blob:/)
