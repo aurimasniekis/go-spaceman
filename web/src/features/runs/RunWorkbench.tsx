@@ -13,7 +13,7 @@ import { TerminalView } from '@/features/terminal/TerminalView'
 import { atLeast, roleIn } from '@/lib/access'
 import { datetime, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
-import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText } from './runInfo'
+import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText, agentMessageBody } from './runInfo'
 
 /** A clock that ticks every second, for live durations. */
 export function useNow(ms = 1000): number {
@@ -79,9 +79,9 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
     defaultValues: { text: '' },
     onSubmit: async ({ value }) => {
       try {
-        check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: r.id } }, body: { text: value.text } }))
+        check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: r.id } }, body: agentMessageBody(value.text) }))
         inputForm.reset()
-        notifyOk('Delivered when the agent is idle')
+        notifyOk('Sent to the agent')
       } catch (e) {
         notifyError(e, 'Could not send input')
       }
@@ -142,7 +142,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
             <form onSubmit={(e) => { e.preventDefault(); if (inputForm.state.values.text.trim()) void inputForm.handleSubmit() }}>
               <Group gap="xs" wrap="nowrap">
                 <inputForm.AppField name="text">
-                  {(f) => <f.TextField flex={1} placeholder={`Message ${r.role} (delivered at its next idle point)`} aria-label="Message the agent" />}
+                  {(f) => <f.TextField flex={1} placeholder={`Message ${r.role} (typed into its session at once; the agent acts on it when it can)`} aria-label="Message the agent" />}
                 </inputForm.AppField>
                 <inputForm.Subscribe selector={(st) => st.values.text.trim() !== ''}>
                   {(has) => <Button type="submit" leftSection={<IconSend size={14} />} disabled={!has}>Send</Button>}

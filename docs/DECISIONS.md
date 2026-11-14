@@ -2252,6 +2252,18 @@
   - Terraform manages keys as `spaceman_git_ssh_key`, with `public_key` exposed for the account's SSH key resource, and
     repositories reference them with `git_key_id`.
 
+### ADR-0059 — "Message the agent" is typed into the running session at once
+- **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
+- **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while
+  the program works (`ErrBusy`) and acknowledges it as rejected; central does not retry a rejected `run.input`. A message
+  sent while control was busy was therefore lost. The durable message path (Messages page, agent tools) is not affected:
+  its terminal notice is refused while busy but the item stays stored and is announced at the next idle report.
+- **Decision:** The box sends `force: true`: the text is typed into the session immediately and the harness decides when to
+  act on it (Claude Code and Codex queue typed input). Safe input stays the rule for automated input (notices). Takeover
+  still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
+- **Consequences:** The text may sit in the harness's own queue while it works, and a program at a permission prompt or other
+  modal may take it as an answer; operators who want a safe, announced message use the Messages page.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

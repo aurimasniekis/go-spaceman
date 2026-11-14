@@ -522,7 +522,7 @@ Overview  Terminals 4  Inbox 6  Queue  Human actions 6  Messages  Repositories  
 │                                                                            │  collapsed by   │
 │                                                                            │  default here)  │
 └────────────────────────────────────────────────────────────────────────────┴─────────────────┘
- [ Message control (delivered at its next idle point)                                ] [Send]
+ [ Message control (typed into its session at once)                                    ] [Send]
 ```
 
 **Each tab** (Mantine `Tabs` with a custom two-line `Tabs.Tab`, horizontally scrollable via `ScrollArea`):

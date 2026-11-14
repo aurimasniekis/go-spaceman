@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Run } from '@/api/client'
-import { formatDuration, runLabels, runStateText, runTitle, runTone, sortRuns } from './runInfo'
+import { agentMessageBody, formatDuration, runLabels, runStateText, runTitle, runTone, sortRuns } from './runInfo'
 
 const base = { id: 'run_1', role: 'control', kind: 'control', harness: 'claude-code', observed: 'running', desired: 'running', turn: 0,
   created_at: '2026-11-06T10:00:00Z', started_at: '2026-11-06T10:00:00Z' } as unknown as Run
@@ -38,5 +38,11 @@ describe('run display', () => {
     expect([...runLabels([a, b, c]).values()]).toEqual(['kb-support (1)', 'kb-support (2)', 'control'])
     const ended = run({ id: 'e', observed: 'exited', role: 'old' })
     expect(sortRuns([ended, a, c]).map((r) => r.id)).toEqual(['c', 'a', 'e'])
+  })
+})
+
+describe('message the agent', () => {
+  it('forces delivery so a busy program still receives the message', () => {
+    expect(agentMessageBody('stop and read the plan')).toEqual({ text: 'stop and read the plan', force: true })
   })
 })

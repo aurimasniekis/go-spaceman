@@ -50,7 +50,8 @@ attention:
   proposed an incident, and an incident that ended with the preempted tasks that wait or were resumed (see
   [Incidents](./queue#incidents)).
 
-When control's program is idle it is told that messages are waiting. A control run started later is told about them
+To talk to a running control at once, use the message box under its terminal: the text is typed into the session
+immediately, and control acts on it when it can. When control's program is idle it is told that messages are waiting. A control run started later is told about them
 too, including ones an earlier control was told about but never acknowledged.
 
 ## Starting and stopping on its own

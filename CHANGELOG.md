@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- **A message typed into "Message the agent" (for example to control) while the agent was busy was lost.** The box sent
+  safe, idle-gated input; the node refused it while the program worked, and nothing tried again. The text is now typed
+  into the running session at once (Claude Code and Codex queue typed input until they can act on it). The placeholder
+  and the guides say so (ADR-0059). Messages from the Messages page and agents are unchanged: stored, then announced
+  by the terminal notice when the program is idle.
+
 ## [0.1.0-rc.8] - 2026-11-06
 
 Eighth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): shared Git SSH keys, so one
