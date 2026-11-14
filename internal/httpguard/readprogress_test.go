@@ -82,15 +82,18 @@ func TestRefusalWithUnreadBodyClosesAtOnce(t *testing.T) {
 	}
 }
 
-// A refusal whose header the handler writes itself, after a partial read, also closes at once.
+// A refusal whose header the handler writes and flushes itself, after a partial read, also closes at once.
 func TestRefusalAfterPartialReadClosesAtOnce(t *testing.T) {
 	srv, done := readServer(t, time.Minute, func(w http.ResponseWriter, r *http.Request) error {
 		if _, err := io.ReadFull(r.Body, make([]byte, 5)); err != nil {
 			return err
 		}
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
-		_, err := w.Write([]byte("too large"))
-		return err
+		if _, err := w.Write([]byte("too large")); err != nil {
+			return err
+		}
+		// Flushing sends the header while the handler runs: net/http would drain the body first unless it closes.
+		return http.NewResponseController(w).Flush()
 	})
 	c := dial(t, srv, "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n", "hello")
 	if got := awaitClose(t, c, 3*time.Second); !strings.HasPrefix(got, "HTTP/1.1 413") {
@@ -227,11 +230,11 @@ func TestStreamAfterBodyIsNotCut(t *testing.T) {
 // takes longer than the idle bound to answer a GET is not cut (it has no body to wait for).
 func TestKeepAliveAfterReadBody(t *testing.T) {
 	srv, done := readServer(t, idle, func(w http.ResponseWriter, r *http.Request) error {
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
-			return err
-		}
 		if r.Method == http.MethodGet {
+			// No body to read, and the handler doesn't try: the connection must stay alive all the same.
 			time.Sleep(2 * idle)
+		} else if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			return err
 		}
 		_, err := w.Write([]byte("ok"))
 		return err

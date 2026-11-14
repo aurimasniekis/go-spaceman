@@ -56,9 +56,9 @@ func TestSlowOrEmptyBodyCannotHoldConnection(t *testing.T) {
 	origin := "Origin: " + h.srv.URL + "\r\n"
 	for _, p := range []struct{ name, req, body, status string }{
 		{"ui post, body never sent", "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n", "", "200"},
-		{"api refusal, body never sent", "POST /api/v1/spaces HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"+origin+"Content-Length: 1000\r\n\r\n", "", "401"},
-		{"api refusal, chunked body never sent", "POST /api/v1/spaces HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"+origin+"Transfer-Encoding: chunked\r\n\r\n", "", "401"},
-		{"sign-in reading a stalled body", "POST /api/v1/auth/login HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"+origin+"Content-Length: 1000\r\n\r\n", `{"email":`, ""},
+		{"api refusal, body never sent", "POST /api/v1/spaces HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n" + origin + "Content-Length: 1000\r\n\r\n", "", "401"},
+		{"api refusal, chunked body never sent", "POST /api/v1/spaces HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n" + origin + "Transfer-Encoding: chunked\r\n\r\n", "", "401"},
+		{"sign-in reading a stalled body", "POST /api/v1/auth/login HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n" + origin + "Content-Length: 1000\r\n\r\n", `{"email":`, ""},
 		{"agent endpoint without upgrade", "POST /agent/ HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n", "", ""},
 		{"kept-alive connection gone quiet", "GET /api/v1/system/info HTTP/1.1\r\nHost: x\r\n\r\n", "", "200"},
 	} {
@@ -185,4 +185,3 @@ func TestBodyGuardKeepsStreamsAndUploads(t *testing.T) {
 		}
 	})
 }
-

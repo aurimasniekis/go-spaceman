@@ -32,14 +32,15 @@ func ReadProgress(next http.Handler, idle time.Duration) http.Handler {
 		b := &progressBody{ReadCloser: r.Body, rc: rc, idle: idle}
 		r.Body = b
 		if r.ProtoMajor != 1 {
+			// Defensive: HTTP/2 has no drain to stop, Connection is not an HTTP/2 header, and a read deadline of now
+			// would reset the stream, so the HTTP/1 handling is kept off it.
 			next.ServeHTTP(w, r)
 			return
 		}
 		next.ServeHTTP(&unreadGuardWriter{ResponseWriter: w, body: b}, r)
 		if !b.eof.Load() {
-			// The response is complete (net/http writes a missing header after this returns, with Connection: close);
-			// whatever remains of the body is not worth waiting for.
-			w.Header().Set("Connection", "close")
+			// The response is complete; whatever remains of the body is not worth waiting for. net/http's drain fails at
+			// once, so it closes the connection (and marks a header it has yet to write Connection: close).
 			_ = rc.SetReadDeadline(time.Now())
 		}
 	})
@@ -54,14 +55,12 @@ type progressBody struct {
 }
 
 func (b *progressBody) Read(p []byte) (int, error) {
-	if b.eof.Load() {
-		// No deadline after the end: net/http now reads the connection in the background to notice a client that goes
-		// away, and a deadline firing there would cancel the request's context.
-		return b.ReadCloser.Read(p)
-	}
 	_ = b.rc.SetReadDeadline(time.Now().Add(b.idle))
 	n, err := b.ReadCloser.Read(p)
 	if errors.Is(err, io.EOF) {
+		// No deadline after the end: net/http now reads the connection in the background to notice a client that goes
+		// away, and a deadline firing there would cancel the request's context. net/http clears the deadline when that
+		// read starts, but a read past the end (a decoder checking for more) would set it again.
 		b.eof.Store(true)
 		_ = b.rc.SetReadDeadline(time.Time{})
 	}
