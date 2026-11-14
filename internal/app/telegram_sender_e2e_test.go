@@ -2,9 +2,11 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/config"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 )
@@ -63,6 +65,11 @@ func TestTelegramSendLimitsReachTheSender(t *testing.T) {
 	// 4. A reconfiguration replaces the sender; the new one has the newest limits.
 	expect(t, root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": "tg.example.com"}, "If-Match", `"1"`), 200)
 	second := h.c.TelegramBot.Sender()
+	// The first sender was stopped, not just dropped: its Run returned, so it refuses work.
+	late := sender.Message{ChatID: 1, Priority: sender.Interactive, Send: func(context.Context, *botapi.Client) error { return nil }}
+	if err := first.Enqueue(late); !errors.Is(err, sender.ErrClosed) {
+		t.Fatalf("the replaced sender still accepts work (enqueue: %v)", err)
+	}
 	if second == nil || second == first || second.Limits() != want(5, 30) {
 		t.Fatalf("the replacement sender has %+v (same as before: %v)", second, second == first)
 	}

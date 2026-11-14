@@ -45,6 +45,8 @@ func (c *Central) newTelegram(ctx context.Context) {
 			OnUnauthorized: c.auditTelegramUnauthorized},
 		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter},
 	})
+	// link_sso_grants (ADR-0083 Q8) is read per use, so a change applies to the next principal without a restart.
+	c.TelegramSSOGrants = func() bool { return c.TelegramSettings.Current().LinkSSOGrants }
 	c.TelegramSettings.OnChange(func(s tgsettings.Settings) {
 		c.TelegramUpdates.Intake.SetRate(float64(s.InboundLimits.UpdatesPerSecond))
 		c.TelegramLimiter.SetLimits(s.InboundLimits.Updates())
