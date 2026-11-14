@@ -211,6 +211,7 @@ var Ops = map[string]api.TelegramClass{
 	"list-xspace-peers":             api.TelegramExcluded,
 	"list-xspace-requests":          api.TelegramExcluded,
 	"list-space-telegram":           api.TelegramExcluded,
+	"list-telegram-links":           api.TelegramExcluded,
 	"memory-history":                api.TelegramExcluded,
 	"preview-event-template":        api.TelegramExcluded,
 	"preview-schedule":              api.TelegramExcluded,

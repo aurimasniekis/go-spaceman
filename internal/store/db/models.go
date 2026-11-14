@@ -1560,6 +1560,9 @@ type TelegramLinkCode struct {
 	RedeemedTgUsername   string
 	RedeemedTgName       string
 	RedeemedAt           sql.NullInt64
+	TgConfirmedAt        sql.NullInt64
+	CreatedSessionID     string
+	ReuseAttemptedAt     sql.NullInt64
 }
 
 type TelegramMessage struct {

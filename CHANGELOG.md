@@ -43,6 +43,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Telegram mode of the API accepts only that scheme, drops cookies and never sets one. Approvals can't be decided
   from Telegram. Migration 0051 also rebuilds
   `role_grants` (rows kept) to allow link grants.
+- Telegram linking, protocol core (ADR-0083 decision 2, not usable yet: no chat surfaces): the Account page's
+  operations `create-telegram-link-code`, `get-telegram-link-code`, `cancel-telegram-link-code` and
+  `confirm-telegram-link` (`/api/v1/me/telegram/link-codes`). A browser session with a recent re-authentication (never
+  an API token) creates a single-use code (only its SHA-256 stored, `link_code_ttl_seconds`); `/start <code>` in a
+  private chat with the bot binds it to that Telegram account and asks it to confirm, naming the server's host and the
+  account's display name and masked e-mail ("This wasn't me" cancels and is audited); only then, and only from the
+  session that created the code (a re-authentication carries it, a logout or new sign-in doesn't), does the web
+  confirmation make the link. Its grants are the user's grants at that moment capped by the link policy
+  (`link_default_max_role` as a ceiling, admin only with `link_allow_admin_cap`, SSO grants only from an SSO session
+  with `link_sso_grants`). Migration 0052 adds `tg_confirmed_at` and `created_session_id` to link codes. New outcome
+  `link` on `spaceman_telegram_updates_total`.
 - Telegram Mini App page and downloads (ADR-0083, not usable yet): the Mini App host serves `tg.html` and the build's
   assets with their own headers (`script-src` pinned to Telegram's loader by its exact URL, `frame-ancestors
   https://web.telegram.org`, no `X-Frame-Options`); the main host never serves `tg.html` and its headers are

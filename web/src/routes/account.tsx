@@ -9,6 +9,7 @@ import { ErrorAlert, errorMessage } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { SecretModal } from '@/components/SecretModal'
 import { Identities } from '@/features/auth/Identities'
+import { TelegramLinkCard } from '@/features/telegram/TelegramLink'
 import { NotificationPrefsCard } from '@/features/notifications/NotificationPrefs'
 import { hasGlobal } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
@@ -30,6 +31,7 @@ function AccountPage() {
         {me?.user && <Sessions />}
         {me?.user && <Identities ssoError={sso_error} />}
         {me?.user && <NotificationPrefsCard />}
+        {me?.user && me.method !== 'token' && <TelegramLinkCard />}
         {me?.user?.has_password && <ChangePassword />}
         {me?.user?.mfa_enrolled && <RecoveryCodes />}
         {hasGlobal(me, 'admin') && <RootToken />}

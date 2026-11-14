@@ -1402,7 +1402,9 @@
     browser session), `start-oidc` and `oidc-callback` (browser redirects to and from the identity provider), and
     `reset-password` (public and token-less; central accepts an anonymous state-changing request only from its own web
     origin, and the CLI does not forge an `Origin` header to pass that check, so the user redeems the token that
-    `user reset-token` issues on the sign-in page). ADR-0083 adds a tenth, not a sign-in flow of the web but of the
+    `user reset-token` issues on the sign-in page). Added with ADR-0083 (TG-4b): `create-telegram-link-code`,
+    `get-telegram-link-code`, `cancel-telegram-link-code` and `confirm-telegram-link`, because linking a Telegram account
+    works only in the browser session that created the code and refuses API tokens. ADR-0083 (TG-9a) also adds `create-telegram-session`, not a sign-in flow of the web but of the
     Telegram Mini App: `create-telegram-session` (served only on the Mini App host, from its origin, with initData
     Telegram signs for the app). Of the raw routes, the live terminal stream has no command: it
     replays terminal output with its escape sequences, which belongs in the web terminal viewer

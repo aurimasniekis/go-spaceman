@@ -193,11 +193,13 @@ var Table = map[string]Entry{
 	"delete-telegram-settings":      {Excluded, rTelegram},
 	"put-space-telegram":            {Excluded, rTelegram},
 	"delete-space-telegram":         {Excluded, rTelegram},
-	"create-telegram-download-link": {Excluded, rTelegramMiniApp},
-	"get-telegram-me":               {Excluded, rTelegramMiniApp},
 	"get-telegram-settings":         {Read, rRead},
 	"list-space-telegram":           {Read, rRead},
 	"get-space-telegram":            {Read, rRead},
+	"list-telegram-links":           {Excluded, rTelegram},
+	"delete-telegram-link":          {Excluded, rTelegram},
+	"create-telegram-download-link": {Excluded, rTelegramMiniApp},
+	"get-telegram-me":               {Excluded, rTelegramMiniApp},
 
 	// Human-action policies.
 	"delete-human-policy":       {Dangerous, rPolicy},

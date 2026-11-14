@@ -8,6 +8,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
@@ -38,12 +41,15 @@ func (c *Central) newTelegram(ctx context.Context) {
 	if err := c.TelegramSettings.Load(ctx); err != nil {
 		log.Warn("telegram: loading the settings failed; using the defaults until they load", slog.String("error", err.Error()))
 	}
+	c.TelegramLink = c.newTelegramLink()
 	c.TelegramLimiter = updates.NewLimiter(updates.InboundLimits{}, c.Clock)
+	c.TelegramLinks = tglink.NewCache(c.Store, c.Bus, log, 0)
+	c.TelegramLinks.OnRemove = c.TelegramLimiter.Forget
 	c.TelegramUpdates = updates.New(updates.Options{
 		Intake: updates.IntakeOptions{Metrics: c.Metrics, Log: log},
 		Webhook: updates.WebhookOptions{TrustedProxies: c.trustedProxies(), Clock: c.Clock, Log: log,
 			OnUnauthorized: c.auditTelegramUnauthorized},
-		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter},
+		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter, Links: c.TelegramLinks, Linker: c.TelegramLink, Unlinker: c.TelegramLink},
 	})
 	// link_sso_grants (ADR-0083 Q8) is read per use, so a change applies to the next principal without a restart.
 	c.TelegramSSOGrants = func() bool { return c.TelegramSettings.Current().LinkSSOGrants }
@@ -58,6 +64,29 @@ func (c *Central) newTelegram(ctx context.Context) {
 func (c *Central) newTelegramBot() *tgbot.Service {
 	return tgbot.New(c.Store, c.Audit, c.Keyring, tgbot.Options{BaseURL: c.Cfg.Telegram.APIBaseURL, PublicURL: c.Cfg.PublicURL,
 		Updates: c.TelegramUpdates, Metrics: c.Metrics, Bus: c.Bus, Log: obs.Component(c.Log, "telegram")})
+}
+
+// newTelegramLink builds the linking protocol (ADR-0083 decision 2); newTelegram hands the dispatcher its bot-side
+// steps. The
+// "Linked" message goes through the live bot's outbound sender; without a running bot it is skipped (the web page
+// already shows the link).
+func (c *Central) newTelegramLink() *tglink.Service {
+	log := obs.Component(c.Log, "telegram")
+	svc := tglink.New(tglink.Options{Store: c.Store, Auth: c.Auth, Audit: c.Audit, Settings: c.TelegramSettings.Current,
+		PublicURL: c.Cfg.PublicURL, Bus: c.Bus, Clock: c.Clock, Log: log, Notify: func(chatID int64, text string) {
+			snd := c.TelegramBot.Sender()
+			if snd == nil {
+				return
+			}
+			err := snd.Enqueue(sender.Message{ChatID: chatID, Priority: sender.Interactive, Send: func(ctx context.Context, cl *botapi.Client) error {
+				_, err := cl.SendMessage(ctx, botapi.SendMessageParams{ChatID: chatID, Text: text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}})
+				return err
+			}})
+			if err != nil {
+				log.Debug("telegram: the linked notice was not queued", slog.String("error", err.Error()))
+			}
+		}})
+	return svc
 }
 
 // auditTelegramUnauthorized records webhook requests refused for their secret token (at most once a minute, with the
