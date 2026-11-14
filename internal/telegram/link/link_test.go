@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
@@ -86,5 +87,37 @@ func TestPromptTextAndClaims(t *testing.T) {
 	}
 	if !s.Claims(&botapi.Update{CallbackQuery: &botapi.CallbackQuery{Data: "tglink:c:x"}}) || s.Claims(&botapi.Update{CallbackQuery: &botapi.CallbackQuery{Data: "hum:1"}}) {
 		t.Fatal("Claims on callbacks")
+	}
+}
+
+// SM-TG-001 (PR #86 review): clean turns the invisible filler characters into spaces, so a name made of them is empty
+// and one padded with them shows no gap, and keeps at most two combining marks in a row, so stacked marks can't smear
+// over the lines around the name. Ordinary stacked marks (Vietnamese, Devanagari) survive.
+func TestCleanHardening(t *testing.T) {
+	t.Parallel()
+	zalgo := "e" + strings.Repeat("\u0301\u0316\u0489", 40) // a run of combining marks (U+0489 is Me: marks of every kind count)
+	cases := []struct{ in, want string }{
+		{"\u2800\u3164\u115F\u1160\uFFA0", ""},
+		{"Jane\u2800\u2800Doe", "Jane Doe"},
+		{"\u3164Jane\u115F\u1160\uFFA0 Doe\u2800", "Jane Doe"},
+		{"a\u0300\u0301b", "a\u0300\u0301b"},
+		{"a\u0300\u0301\u0302\u0303\u0304b", "a\u0300\u0301b"},
+		{"x" + strings.Repeat("\u0301", 500), "x\u0301\u0301"},
+		{"a\u0301\u0301\u0301 b\u0301\u0301\u0301", "a\u0301\u0301 b\u0301\u0301"},
+		{"a\u0301\u0301\u0301b\u0301", "a\u0301\u0301b\u0301"},
+		{"ệ", "ệ"},
+		{"\u0915\u094D\u0937", "\u0915\u094D\u0937"},
+	}
+	for _, c := range cases {
+		if got := clean(c.in, 64); got != c.want {
+			t.Fatalf("clean(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if got := clean(zalgo, 64); len([]rune(got)) > 8 {
+		t.Fatalf("zalgo kept %d runes: %q", len([]rune(got)), got)
+	}
+	// An all-filler name falls back to the account's ID in the bot's prompt, never to blank.
+	if n := displayName(&auth.User{ID: "usr_1", DisplayName: "\u2800\u3164"}); n != "usr_1" {
+		t.Fatalf("displayName of a filler name: %q", n)
 	}
 }

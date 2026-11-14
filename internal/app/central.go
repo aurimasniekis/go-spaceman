@@ -167,6 +167,9 @@ type Central struct {
 	TelegramLimiter *updates.Limiter
 	// TelegramLink runs the linking protocol (ADR-0083 decision 2): web codes, /start and both confirmations.
 	TelegramLink *tglink.Service
+	// TelegramLinks is the dispatcher's in-memory view of the active links, kept current by the telegram.link eventbus
+	// topic (no change-feed rows): a revoked or re-confirmed link applies to the next update.
+	TelegramLinks *tglink.Cache
 	// TelegramSSOGrants reports the link_sso_grants setting (ADR-0083 Q8; TG-3c wires it): whether a link confirmed
 	// from an SSO session acts with the user's SSO grants until that session's absolute expiry. Nil: off, so every
 	// Telegram principal acts with the user's local grants only.
@@ -785,6 +788,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
 		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
 	go c.Notifier.Run(ctx)
+	// Telegram links: the cache loads before the dispatcher's workers run, so the first update already sees them.
+	c.TelegramLinks.Start(ctx)
 	// Telegram updates: the dispatcher's workers (the webhook answers 503 until they run).
 	go c.TelegramUpdates.Run(ctx)
 	// The configured bot comes up (getMe, commands, menu button, setWebhook or polling) outside any transaction.

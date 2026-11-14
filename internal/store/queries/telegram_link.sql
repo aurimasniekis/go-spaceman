@@ -52,3 +52,28 @@ SELECT * FROM telegram_links WHERE id = ?;
 UPDATE telegram_link_codes SET created_session_id = sqlc.arg(new_session_id)
 WHERE created_session_id = sqlc.arg(old_session_id) AND sqlc.arg(old_session_id) <> '' AND user_id = sqlc.arg(user_id)
   AND state IN ('new', 'redeemed');
+
+-- name: MarkTelegramLinkCodeReused :execrows
+-- A different Telegram account presented a redeemed, unexpired code: it leaked. The code is cancelled and flagged so
+-- the owner's page warns.
+UPDATE telegram_link_codes SET state = 'cancelled', reuse_attempted_at = sqlc.arg(now)
+WHERE code_hash = sqlc.arg(code_hash) AND state = 'redeemed' AND redeemed_tg_user_id <> sqlc.arg(tg_user_id) AND expires_at > sqlc.arg(now);
+
+-- name: ListActiveTelegramLinks :many
+-- What the dispatcher's in-memory cache holds.
+SELECT id, user_id, tg_user_id, chat_id, reconfirm_due_at FROM telegram_links WHERE state = 'active';
+
+-- name: ListLiveTelegramLinksByUser :many
+SELECT * FROM telegram_links WHERE user_id = ? AND state <> 'revoked' ORDER BY created_at, id;
+
+-- name: ListLiveTelegramLinks :many
+SELECT * FROM telegram_links WHERE state <> 'revoked' ORDER BY created_at, id;
+
+-- name: RevokeTelegramLink :execrows
+UPDATE telegram_links SET state = 'revoked', revoked_at = sqlc.arg(now), revoked_by = sqlc.arg(revoked_by), updated_at = sqlc.arg(now),
+  version = version + 1
+WHERE id = sqlc.arg(id) AND state <> 'revoked';
+
+-- name: ReconfirmTelegramLink :execrows
+UPDATE telegram_links SET reconfirm_due_at = sqlc.arg(reconfirm_due_at), updated_at = sqlc.arg(now), version = version + 1
+WHERE id = sqlc.arg(id) AND state = 'active';

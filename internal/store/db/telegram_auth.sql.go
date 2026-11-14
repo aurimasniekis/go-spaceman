@@ -11,15 +11,16 @@ import (
 )
 
 const getTelegramLinkAuth = `-- name: GetTelegramLinkAuth :one
-SELECT id, user_id, state, via_sso, sso_until FROM telegram_links WHERE id = ?
+SELECT id, user_id, state, via_sso, sso_until, reconfirm_due_at FROM telegram_links WHERE id = ?
 `
 
 type GetTelegramLinkAuthRow struct {
-	ID       string
-	UserID   string
-	State    string
-	ViaSso   int64
-	SsoUntil sql.NullInt64
+	ID             string
+	UserID         string
+	State          string
+	ViaSso         int64
+	SsoUntil       sql.NullInt64
+	ReconfirmDueAt sql.NullInt64
 }
 
 func (q *Queries) GetTelegramLinkAuth(ctx context.Context, id string) (GetTelegramLinkAuthRow, error) {
@@ -31,6 +32,7 @@ func (q *Queries) GetTelegramLinkAuth(ctx context.Context, id string) (GetTelegr
 		&i.State,
 		&i.ViaSso,
 		&i.SsoUntil,
+		&i.ReconfirmDueAt,
 	)
 	return i, err
 }

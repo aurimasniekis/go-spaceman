@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 )
 
@@ -19,6 +20,18 @@ var TelegramLinkRules = map[string]Rule{
 	"get-telegram-link-code":    {Session: true, UserOnly: true},
 	"cancel-telegram-link-code": {Session: true, UserOnly: true},
 	"confirm-telegram-link":     {Session: true, UserOnly: true, Reauth: true},
+	// Your own links: list, unlink (from the web), re-confirm every link_reconfirm_days (needs a fresh login).
+	"list-my-telegram-links":  {Session: true, UserOnly: true},
+	"delete-my-telegram-link": {Session: true, UserOnly: true},
+	"reconfirm-telegram-link": {Session: true, UserOnly: true, Reauth: true},
+	// An administrator's view and unlink of anyone's link.
+	"list-telegram-links":  Global(authz.UserRead),
+	"delete-telegram-link": StepUp(authz.UserWrite),
+}
+
+// TelegramLinkPath names a link by its ID.
+type TelegramLinkPath struct {
+	ID string `path:"link_id" maxLength:"64" doc:"The link's ID"`
 }
 
 // TelegramLinkCodePath names a link code by its ID.
@@ -27,7 +40,8 @@ type TelegramLinkCodePath struct {
 }
 
 type telegramLinkConfirmIn struct {
-	MaxRole string `json:"max_role,omitempty" enum:"viewer,operator,admin," doc:"The link's cap; empty takes the policy default. viewer and operator are allowed up to the default; admin (same as your grants) only when the policy allows the admin cap"`
+	MaxRole  string `json:"max_role,omitempty" enum:"viewer,operator,admin," doc:"The link's cap; empty takes the policy default. viewer and operator are allowed up to the default; admin (same as your grants) only when the policy allows the admin cap"`
+	Timezone string `json:"timezone,omitempty" maxLength:"64" doc:"The browser's IANA time zone, such as Europe/Vilnius. It is saved as your time zone only if you have none (it never overwrites one you chose); an invalid zone is ignored"`
 }
 
 // RegisterTelegramLink registers the linking operations of the Account page.
@@ -79,15 +93,67 @@ func RegisterTelegramLink(svc *link.Service) func(api huma.API, d *Deps) {
 				TelegramLinkCodePath
 				Body *telegramLinkConfirmIn `required:"false"`
 			}) (*struct{ Body *link.Link }, error) {
-				var maxRole string
+				var maxRole, tz string
 				if in.Body != nil {
-					maxRole = in.Body.MaxRole
+					maxRole, tz = in.Body.MaxRole, in.Body.Timezone
 				}
-				l, err := svc.Confirm(ctx, PrincipalFrom(ctx), in.ID, maxRole)
+				l, err := svc.Confirm(ctx, PrincipalFrom(ctx), in.ID, maxRole, tz)
 				if err != nil {
 					return nil, d.fail(ctx, "telegram.link.confirm", err)
 				}
 				return &struct{ Body *link.Link }{Body: l}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-my-telegram-links", Method: http.MethodGet, Path: "/me/telegram/links",
+			Summary: "Your linked Telegram accounts", Tags: tags},
+			func(ctx context.Context, _ *struct{}) (*struct{ Body []*link.Link }, error) {
+				ls, err := svc.ListMine(ctx, PrincipalFrom(ctx))
+				if err != nil {
+					return nil, d.fail(ctx, "telegram.link.list", err)
+				}
+				return &struct{ Body []*link.Link }{Body: ls}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "delete-my-telegram-link", Method: http.MethodDelete, Path: "/me/telegram/links/{link_id}",
+			Summary: "Unlink your Telegram account",
+			Description: "Ends the link at once: the account's next message is refused and its grants are removed. " +
+				"Unlinking an already unlinked link changes nothing. To link again, start from the Account page.",
+			Tags: tags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *TelegramLinkPath) (*struct{}, error) {
+				if err := svc.UnlinkMine(ctx, PrincipalFrom(ctx), in.ID); err != nil {
+					return nil, d.fail(ctx, "telegram.link.unlink", err)
+				}
+				return nil, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "reconfirm-telegram-link", Method: http.MethodPost, Path: "/me/telegram/links/{link_id}/reconfirm",
+			Summary: "Re-confirm your Telegram link",
+			Description: "A link must be re-confirmed from the web every link_reconfirm_days (default 90) or it does nothing. " +
+				"Needs a browser session with a recent re-authentication.",
+			Tags: tags},
+			func(ctx context.Context, in *TelegramLinkPath) (*struct{ Body *link.Link }, error) {
+				l, err := svc.Reconfirm(ctx, PrincipalFrom(ctx), in.ID)
+				if err != nil {
+					return nil, d.fail(ctx, "telegram.link.reconfirm", err)
+				}
+				return &struct{ Body *link.Link }{Body: l}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-telegram-links", Method: http.MethodGet, Path: "/telegram/links",
+			Summary: "Every linked Telegram account", Description: "Needs user:read. Revoked links are not listed.", Tags: tags},
+			func(ctx context.Context, _ *struct{}) (*struct{ Body []*link.Link }, error) {
+				ls, err := svc.List(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "telegram.link.list_all", err)
+				}
+				return &struct{ Body []*link.Link }{Body: ls}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "delete-telegram-link", Method: http.MethodDelete, Path: "/telegram/links/{link_id}",
+			Summary: "Unlink anyone's Telegram account",
+			Description: "An administrator ends a link at once (a lost phone, a departed colleague). Needs user:write and a recent " +
+				"re-authentication with a second factor.",
+			Tags: tags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *TelegramLinkPath) (*struct{}, error) {
+				if err := svc.UnlinkAny(ctx, Actor(ctx), in.ID); err != nil {
+					return nil, d.fail(ctx, "telegram.link.admin_unlink", err)
+				}
+				return nil, nil
 			})
 	}
 }

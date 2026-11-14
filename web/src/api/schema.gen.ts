@@ -1314,6 +1314,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/telegram/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your linked Telegram accounts */
+        get: operations["list-my-telegram-links"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink your Telegram account
+         * @description Ends the link at once: the account's next message is refused and its grants are removed. Unlinking an already unlinked link changes nothing. To link again, start from the Account page.
+         */
+        delete: operations["delete-my-telegram-link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/links/{link_id}/reconfirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-confirm your Telegram link
+         * @description A link must be re-confirmed from the web every link_reconfirm_days (default 90) or it does nothing. Needs a browser session with a recent re-authentication.
+         */
+        post: operations["reconfirm-telegram-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -4191,6 +4248,46 @@ export interface paths {
          * @description Removes the webhook and the stored token: Telegram is off. Links stay, and resume if the same bot is configured again. Needs system:write and a step-up.
          */
         delete: operations["delete-telegram-bot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every linked Telegram account
+         * @description Needs user:read. Revoked links are not listed.
+         */
+        get: operations["list-telegram-links"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink anyone's Telegram account
+         * @description An administrator ends a link at once (a lost phone, a departed colleague). Needs user:write and a recent re-authentication with a second factor.
+         */
+        delete: operations["delete-telegram-link"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8208,7 +8305,12 @@ export interface components {
              * @enum {string}
              */
             max_role: "viewer" | "operator" | "admin";
-            /** Format: date-time */
+            /** @description The re-confirmation is overdue: the link does nothing until it is re-confirmed */
+            needs_reconfirm: boolean;
+            /**
+             * Format: date-time
+             * @description The link stops working at this time until it is re-confirmed from the web
+             */
             reconfirm_due_at?: string;
             /**
              * Format: date-time
@@ -8218,6 +8320,8 @@ export interface components {
             /** @enum {string} */
             state: "active" | "suspended" | "blocked" | "revoked";
             telegram: components["schemas"]["LinkTelegramUser"];
+            /** @description The time zone sent with the confirmation was saved because you had none */
+            timezone_saved?: boolean;
             user_id: string;
             /** @description Confirmed from an SSO session with SSO grants allowed through Telegram */
             via_sso: boolean;
@@ -8247,6 +8351,8 @@ export interface components {
             expires_at: string;
             /** @description The code's ID (not the code): use it to read, cancel or confirm */
             id: string;
+            /** @description Another Telegram account presented this code after one had redeemed it: it leaked and was cancelled. Create a new code, and treat the old one as seen by someone else */
+            reuse_attempted?: boolean;
             /** @enum {string} */
             state: "new" | "redeemed" | "telegram_confirmed" | "confirmed" | "cancelled" | "expired";
             /** @description The Telegram account that wants to link, once it confirmed in the bot */
@@ -11293,6 +11399,8 @@ export interface components {
              * @enum {string}
              */
             max_role?: "viewer" | "operator" | "admin" | "";
+            /** @description The browser's IANA time zone, such as Europe/Vilnius. It is saved as your time zone only if you have none (it never overwrites one you chose); an invalid zone is ignored */
+            timezone?: string;
         };
         TemplateDefinition: {
             body: string;
@@ -14787,6 +14895,97 @@ export interface operations {
         responses: {
             /** @description Created */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-my-telegram-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-my-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The link's ID */
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reconfirm-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The link's ID */
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21676,6 +21875,65 @@ export interface operations {
                 "If-Match"?: string;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-telegram-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The link's ID */
+                link_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;

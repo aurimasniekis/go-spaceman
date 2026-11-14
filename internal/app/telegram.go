@@ -43,11 +43,13 @@ func (c *Central) newTelegram(ctx context.Context) {
 	}
 	c.TelegramLink = c.newTelegramLink()
 	c.TelegramLimiter = updates.NewLimiter(updates.InboundLimits{}, c.Clock)
+	c.TelegramLinks = tglink.NewCache(c.Store, c.Bus, log, 0)
+	c.TelegramLinks.OnRemove = c.TelegramLimiter.Forget
 	c.TelegramUpdates = updates.New(updates.Options{
 		Intake: updates.IntakeOptions{Metrics: c.Metrics, Log: log},
 		Webhook: updates.WebhookOptions{TrustedProxies: c.trustedProxies(), Clock: c.Clock, Log: log,
 			OnUnauthorized: c.auditTelegramUnauthorized},
-		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter, Linker: c.TelegramLink},
+		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter, Links: c.TelegramLinks, Linker: c.TelegramLink, Unlinker: c.TelegramLink},
 	})
 	// link_sso_grants (ADR-0083 Q8) is read per use, so a change applies to the next principal without a restart.
 	c.TelegramSSOGrants = func() bool { return c.TelegramSettings.Current().LinkSSOGrants }
@@ -71,7 +73,7 @@ func (c *Central) newTelegramBot() *tgbot.Service {
 func (c *Central) newTelegramLink() *tglink.Service {
 	log := obs.Component(c.Log, "telegram")
 	svc := tglink.New(tglink.Options{Store: c.Store, Auth: c.Auth, Audit: c.Audit, Settings: c.TelegramSettings.Current,
-		PublicURL: c.Cfg.PublicURL, Clock: c.Clock, Log: log, Notify: func(chatID int64, text string) {
+		PublicURL: c.Cfg.PublicURL, Bus: c.Bus, Clock: c.Clock, Log: log, Notify: func(chatID int64, text string) {
 			snd := c.TelegramBot.Sender()
 			if snd == nil {
 				return

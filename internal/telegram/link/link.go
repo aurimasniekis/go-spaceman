@@ -44,6 +44,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -85,6 +86,10 @@ const (
 	textStale           = "This link request is no longer valid."
 	textTelegramConfirm = "Confirmed. Now finish in the browser where you started: it shows this Telegram account and asks you to confirm once more."
 	textRefused         = "Cancelled: nothing was linked. If you didn't start this, someone sent you their own link: ignore it."
+	textUsed            = "This link code was already used, so it is cancelled now. If you didn't link it yourself, don't use it."
+	textReused          = "A link request for this Telegram account was cancelled: another Telegram account presented the same code. If you didn't share it, nobody was linked."
+	textUnlinked        = "Unlinked. This Telegram account no longer acts on SpaceMan."
+	textUnlinkedOther   = "This Telegram account was unlinked from SpaceMan."
 )
 
 // Options configure the service.
@@ -98,8 +103,11 @@ type Options struct {
 	PublicURL string
 	// Notify sends a text to a private chat once a link is confirmed (the bot's outbound sender); nil sends nothing.
 	Notify func(chatID int64, text string)
-	Clock  clock.Clock
-	Log    *slog.Logger
+	// Bus receives telegram.link events when a link is created, revoked or re-confirmed, so the dispatcher's cache
+	// (Cache) re-reads it. Nil publishes nothing.
+	Bus   *eventbus.Bus
+	Clock clock.Clock
+	Log   *slog.Logger
 }
 
 // Service runs the linking protocol.
@@ -145,6 +153,8 @@ type Code struct {
 	DeepLink string `json:"deep_link,omitempty" doc:"t.me link that sends /start <code> to the bot, returned only when the code is created"`
 	// Telegram is the account waiting for the web confirmation (only once it confirmed in the bot).
 	Telegram *TelegramUser `json:"telegram,omitempty" doc:"The Telegram account that wants to link, once it confirmed in the bot"`
+	// ReuseAttempted marks a code that leaked: another Telegram account presented it after one had redeemed it.
+	ReuseAttempted bool `json:"reuse_attempted,omitempty" doc:"Another Telegram account presented this code after one had redeemed it: it leaked and was cancelled. Create a new code, and treat the old one as seen by someone else"`
 }
 
 // Link is a confirmed link.
@@ -158,7 +168,11 @@ type Link struct {
 	ViaSSO         bool          `json:"via_sso" doc:"Confirmed from an SSO session with SSO grants allowed through Telegram"`
 	SSOUntil       *time.Time    `json:"sso_until,omitempty" doc:"Until when the user's SSO grants count for the link"`
 	ConfirmedAt    time.Time     `json:"confirmed_at"`
-	ReconfirmDueAt *time.Time    `json:"reconfirm_due_at,omitempty"`
+	ReconfirmDueAt *time.Time    `json:"reconfirm_due_at,omitempty" doc:"The link stops working at this time until it is re-confirmed from the web"`
+	// NeedsReconfirm is set once reconfirm_due_at has passed.
+	NeedsReconfirm bool `json:"needs_reconfirm" doc:"The re-confirmation is overdue: the link does nothing until it is re-confirmed"`
+	// TimezoneSaved is set only by the confirmation: the browser's zone was saved because the user had none.
+	TimezoneSaved bool `json:"timezone_saved,omitempty" doc:"The time zone sent with the confirmation was saved because you had none"`
 }
 
 func errNotFound() error { return apperr.New(apperr.CodeNotFound, "link code not found") }
@@ -194,7 +208,7 @@ func parseID(id string) ([]byte, error) {
 
 // view shows a stored code at now.
 func view(r db.TelegramLinkCode, now time.Time) *Code {
-	c := &Code{ID: codeID(r.CodeHash), State: r.State, ExpiresAt: time.UnixMicro(r.ExpiresAt).UTC()}
+	c := &Code{ID: codeID(r.CodeHash), State: r.State, ExpiresAt: time.UnixMicro(r.ExpiresAt).UTC(), ReuseAttempted: r.ReuseAttemptedAt.Valid}
 	open := r.State == StateNew || r.State == StateRedeemed
 	switch {
 	case open && !now.Before(time.UnixMicro(r.ExpiresAt)):
@@ -351,8 +365,10 @@ func capRole(requested string, pol settings.Settings) (authz.Role, error) {
 // Confirm activates a link from the web: the code must belong to the caller, have been created by this browser
 // session (or the session it was rotated from), have been redeemed with /start and confirmed in the bot, and not have expired. The Telegram account must
 // not have another live link, and the user must be under links_per_user. maxRole is the cap the user picked (empty:
-// the policy default). Once it commits, the bot tells the chat it is linked.
-func (s *Service) Confirm(ctx context.Context, p *auth.Principal, id, maxRole string) (*Link, error) {
+// the policy default). timezone is the browser's IANA zone: it is saved as the user's zone only if they have none
+// (plan §2.5), and an invalid one is ignored. Once it commits, the bot tells the chat it is linked and the dispatcher's
+// cache learns the link.
+func (s *Service) Confirm(ctx context.Context, p *auth.Principal, id, maxRole, timezone string) (*Link, error) {
 	if err := webSession(p); err != nil {
 		return nil, err
 	}
@@ -429,7 +445,11 @@ func (s *Service) Confirm(ctx context.Context, p *auth.Principal, id, maxRole st
 		if err != nil {
 			return err
 		}
-		out = linkOut(l, grants)
+		out = linkOut(l, grants, tx.Now)
+		if out.TimezoneSaved, err = saveTimezoneIfUnset(ctx, tx, p.User.ID, timezone); err != nil {
+			return err
+		}
+		s.publishAfterCommit(tx, linkID)
 		if s.o.Notify != nil {
 			text := "Linked: this Telegram account now acts as " + displayName(p.User) + " on SpaceMan at " + s.host + "."
 			tx.AfterCommit(func() { s.o.Notify(tgUser, text) })
@@ -442,7 +462,7 @@ func (s *Service) Confirm(ctx context.Context, p *auth.Principal, id, maxRole st
 	return out, nil
 }
 
-func linkOut(l db.TelegramLink, grants []authz.Grant) *Link {
+func linkOut(l db.TelegramLink, grants []authz.Grant, now time.Time) *Link {
 	out := &Link{ID: l.ID, UserID: l.UserID, Telegram: TelegramUser{ID: l.TgUserID, Username: l.TgUsername, Name: l.TgName}, State: l.State,
 		MaxRole: l.MaxRole, Grants: grants, ViaSSO: l.ViaSso == 1}
 	if out.Grants == nil {
@@ -458,6 +478,7 @@ func linkOut(l db.TelegramLink, grants []authz.Grant) *Link {
 	if l.ReconfirmDueAt.Valid {
 		v := time.UnixMicro(l.ReconfirmDueAt.Int64).UTC()
 		out.ReconfirmDueAt = &v
+		out.NeedsReconfirm = l.State == "active" && !now.Before(v)
 	}
 	return out
 }
@@ -541,8 +562,8 @@ func (s *Service) redeem(ctx context.Context, code string, from botapi.User) upd
 			return err
 		}
 		if n != 1 {
-			reply = refusal(textInvalid)
-			return nil
+			reply, err = s.reused(ctx, tx, hash, from)
+			return err
 		}
 		r, err := tx.Q.GetTelegramLinkCode(ctx, hash)
 		if err != nil {
@@ -568,6 +589,43 @@ func (s *Service) redeem(ctx context.Context, code string, from botapi.User) upd
 		return refusal(textInvalid)
 	}
 	return reply
+}
+
+// reused handles a /start whose code could not be redeemed. A code another Telegram account already redeemed, and
+// that is still within its lifetime, has been seen by someone besides its owner: it is cancelled and flagged (the
+// owner's confirm page warns, a code still waiting for the web confirmation can no longer be confirmed), the account
+// that redeemed it is told, the sender is told the code was used, and the attempt is audited. Anything else is the
+// same vague refusal as a code that never existed.
+func (s *Service) reused(ctx context.Context, tx *store.Tx, hash []byte, from botapi.User) (updates.LinkReply, error) {
+	r, err := tx.Q.GetTelegramLinkCode(ctx, hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return refusal(textInvalid), nil
+	} else if err != nil {
+		return updates.LinkReply{}, err
+	}
+	if !r.RedeemedTgUserID.Valid || r.RedeemedTgUserID.Int64 == from.ID || !tx.Now.Before(time.UnixMicro(r.ExpiresAt)) ||
+		r.State != StateRedeemed && r.State != StateConfirmed {
+		return refusal(textInvalid), nil
+	}
+	cancelled := false
+	if r.State == StateRedeemed {
+		n, err := tx.Q.MarkTelegramLinkCodeReused(ctx, db.MarkTelegramLinkCodeReusedParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
+			CodeHash: hash, TgUserID: sql.NullInt64{Int64: from.ID, Valid: true}})
+		if err != nil {
+			return updates.LinkReply{}, err
+		}
+		cancelled = n == 1
+	}
+	if _, err := s.o.Audit.Append(ctx, tx, audit.Event{Actor: botActor, Action: "telegram.link_code.reused", Outcome: audit.OutcomeDenied,
+		Target: audit.Target{Type: "telegram_link_code", ID: codeID(hash)}, Details: map[string]any{"user_id": r.UserID, "tg_user_id": from.ID,
+			"redeemed_by_tg_user_id": r.RedeemedTgUserID.Int64, "cancelled": cancelled}}); err != nil {
+		return updates.LinkReply{}, err
+	}
+	if cancelled && s.o.Notify != nil {
+		redeemer := r.RedeemedTgUserID.Int64
+		tx.AfterCommit(func() { s.o.Notify(redeemer, textReused) })
+	}
+	return refusal(textUsed), nil
 }
 
 // prompt is the bot's confirmation: central's host and the account the code belongs to, in bold, with the buttons.
@@ -688,16 +746,40 @@ func maskEmail(e string) string {
 	return string(r) + "***@" + domain
 }
 
-// clean makes untrusted text safe to show on one line: control and format characters become spaces, runs of spaces
-// collapse, and it is cut to max runes.
+// maxMarks is how many combining marks may follow one another: real scripts stack two or three, and a longer run
+// ("zalgo") only smears over the lines around it.
+const maxMarks = 2
+
+// fillers are the characters that draw as empty space but are not spaces (Braille blank, Hangul fillers), which
+// would otherwise let a name pass as blank or push the real text out of view.
+func isFiller(r rune) bool {
+	switch r {
+	case 0x2800, 0x3164, 0x115F, 0x1160, 0xFFA0:
+		return true
+	}
+	return false
+}
+
+// clean makes untrusted text safe to show on one line: control and format characters and invisible fillers become
+// spaces, a run of combining marks keeps its first maxMarks, runs of spaces collapse, and it is cut to max runes.
 func clean(s string, maxRunes int) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError {
-			return ' '
+	var b strings.Builder
+	marks := 0
+	for _, r := range s {
+		switch {
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError || isFiller(r):
+			r = ' '
+		case unicode.Is(unicode.M, r): // Mn, Mc and Me: interleaving the kinds must not reset the count
+			if marks++; marks > maxMarks {
+				continue
+			}
+			b.WriteRune(r)
+			continue
 		}
-		return r
-	}, s)
-	s = strings.Join(strings.Fields(s), " ")
+		marks = 0
+		b.WriteRune(r)
+	}
+	s = strings.Join(strings.Fields(b.String()), " ")
 	if utf8.RuneCountInString(s) > maxRunes {
 		s = string([]rune(s)[:maxRunes])
 	}

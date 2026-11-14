@@ -10,6 +10,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // TelegramSubject is the authorization subject of a Telegram link ("telegram:<link id>", ADR-0083 §3.1). It holds the
@@ -47,6 +48,10 @@ func (svc *Service) TelegramPrincipal(ctx context.Context, linkID string, o Tele
 		return nil, err
 	}
 	if l.State != TelegramLinkActive {
+		return nil, ErrUnauthorized
+	}
+	// A link that was not re-confirmed from the web within its interval acts for nobody until it is (TG-4b).
+	if l.ReconfirmDueAt.Valid && !svc.opts.Clock.Now().Before(time.UnixMicro(l.ReconfirmDueAt.Int64)) {
 		return nil, ErrUnauthorized
 	}
 	u, err := svc.Get(ctx, l.UserID)
@@ -105,4 +110,20 @@ func (svc *Service) GrantTelegramLinkTx(ctx context.Context, tx *store.Tx, linkI
 		capped[i].Subject, capped[i].Source = subject, "telegram"
 	}
 	return capped, nil
+}
+
+// RevokeTelegramLinkTx ends a Telegram link inside the caller's transaction: the link is revoked, its capped grants
+// are deleted, and after commit the authorization engine reloads and the link's open streams re-check (Mini App
+// sessions end at once). It reports whether the link was live; revoking a revoked or unknown link changes nothing.
+func (svc *Service) RevokeTelegramLinkTx(ctx context.Context, tx *store.Tx, linkID, revokedBy string) (bool, error) {
+	n, err := tx.Q.RevokeTelegramLink(ctx, db.RevokeTelegramLinkParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RevokedBy: revokedBy, ID: linkID})
+	if err != nil || n == 0 {
+		return false, err
+	}
+	if err := tx.Q.DeleteRoleGrantsBySubject(ctx, TelegramSubject(linkID)); err != nil {
+		return false, err
+	}
+	svc.TelegramLinkChangedAfterCommit(tx, linkID)
+	svc.reloadAfterCommit(ctx, tx)
+	return true, nil
 }

@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,17 @@ type Link struct {
 	ID     string // tgl_…
 	UserID string
 	ChatID int64
+	// ReconfirmDueAt is when the link must be re-confirmed from the web (zero: never). Past it the link is treated as
+	// suspended: the user gets ReconfirmText and nothing else.
+	ReconfirmDueAt time.Time
+}
+
+// ReconfirmText is what a user whose link needs its periodic web re-confirmation is sent.
+const ReconfirmText = "Your SpaceMan link needs to be re-confirmed. Open SpaceMan's web UI: Account → Telegram → Re-confirm."
+
+// Unlinker ends a linked user's own link when they send /unlink in the bot (ADR-0083). The reply is the bot's text.
+type Unlinker interface {
+	Unlink(ctx context.Context, l Link) string
 }
 
 // Links finds the active link of a Telegram user. It must answer from memory: it runs for every update, including
@@ -88,6 +100,8 @@ type DispatcherOptions struct {
 	Handler Handler
 	// Linker handles the linking steps of users without a link (nil: they only ever get UnlinkedText).
 	Linker Linker
+	// Unlinker handles /unlink from a linked user (nil: /unlink goes to the Handler like any message).
+	Unlinker Unlinker
 	// Limiter enforces the per-link inbound limits (nil: none). Every linked user's update costs one KindAction.
 	Limiter *Limiter
 	// Bot sends the dispatcher's own replies; SetBot replaces it when the bot is (re)configured. Without one, nothing
@@ -115,6 +129,7 @@ type Dispatcher struct {
 	links   Links
 	handler Handler
 	linker  Linker
+	unlink  Unlinker
 	limiter *Limiter
 	bot     atomic.Pointer[botRef]
 	clock   clock.Clock
@@ -145,7 +160,7 @@ func NewDispatcher(o DispatcherOptions) *Dispatcher {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	d := &Dispatcher{links: o.Links, handler: o.Handler, linker: o.Linker, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
+	d := &Dispatcher{links: o.Links, handler: o.Handler, linker: o.Linker, unlink: o.Unlinker, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
 		perUser: o.UnlinkedPerUser, global: o.UnlinkedGlobal, replied: newLRU(o.UnlinkedUsers)}
 	d.SetBot(o.Bot)
 	return d
@@ -210,6 +225,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 	}
 	if d.links != nil {
 		if l, ok := d.links.Lookup(from.ID); ok {
+			if !l.ReconfirmDueAt.IsZero() && !d.clock.Now().Before(l.ReconfirmDueAt) {
+				d.reconfirm(ctx, &u, from.ID)
+				return
+			}
 			if d.limiter != nil {
 				if ok, warn := d.limiter.allow(l.ID, KindAction); !ok {
 					d.throttled(ctx, &u, l, warn)
@@ -217,6 +236,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 				}
 			}
 			d.metrics.TelegramUpdate(metrics.TelegramUpdateLinked)
+			if d.unlink != nil && isUnlink(&u) {
+				d.send(ctx, from.ID, d.unlink.Unlink(ctx, l))
+				return
+			}
 			if d.handler != nil {
 				d.handler.Handle(ctx, u, l)
 			}
@@ -228,6 +251,43 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 		return
 	}
 	d.unlinked(ctx, &u, from.ID)
+}
+
+// isUnlink reports whether a message is the /unlink command (alone, or addressed to a bot: /unlink@name).
+func isUnlink(u *botapi.Update) bool {
+	if u.Message == nil {
+		return false
+	}
+	t := strings.TrimSpace(u.Message.Text)
+	return t == "/unlink" || strings.HasPrefix(t, "/unlink@") && !strings.ContainsAny(t, " \t\n")
+}
+
+// send sends a plain text to a user's private chat; a failure is only logged.
+func (d *Dispatcher) send(ctx context.Context, chatID int64, text string) {
+	bot := d.client()
+	if bot == nil || text == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	if _, err := bot.SendMessage(ctx, botapi.SendMessageParams{ChatID: chatID, Text: text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}}); err != nil {
+		d.log.Debug("telegram: a reply was not sent", slog.String("error", err.Error()))
+		d.metrics.TelegramUpdate(metrics.TelegramUpdateFailed)
+	}
+}
+
+// reconfirm answers a linked user whose periodic web re-confirmation is overdue: the link does nothing until then, so
+// the update goes nowhere and the user gets the instructions, within the same bounds as an unlinked user's.
+func (d *Dispatcher) reconfirm(ctx context.Context, u *botapi.Update, tgUserID int64) {
+	if bot := d.client(); bot != nil && u.CallbackQuery != nil {
+		d.answerCallback(ctx, bot, u.CallbackQuery.ID)
+	}
+	if u.MyChatMember != nil || d.client() == nil || !d.allowReply(tgUserID) {
+		d.metrics.TelegramUpdate(metrics.TelegramUpdateUnlinkedDropped)
+		return
+	}
+	d.send(ctx, tgUserID, ReconfirmText)
+	d.metrics.TelegramUpdate(metrics.TelegramUpdateUnlinkedReplied)
 }
 
 // link runs a linking step of a user without a link and sends its reply: the tap's answer always, the keyboard

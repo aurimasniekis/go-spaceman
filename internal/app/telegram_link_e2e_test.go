@@ -258,16 +258,12 @@ func TestTelegramLinkLeakedCodeIsRefused(t *testing.T) {
 	e := newLinkEnv(t)
 	victim := e.user(t, "vera@example.com", "Vera", []map[string]string{{"role": "operator", "domain": e.space}})
 	other := e.user(t, "otto@example.com", "Otto", []map[string]string{{"role": "operator", "domain": e.space}})
-	attackerTG, victimTG := tgPerson(666, "Eve"), tgPerson(42, "Vera")
+	attackerTG := tgPerson(666, "Eve")
 
 	code := victim.createCode(t)
 	ok, _ := buttons(t, e.start(attackerTG, code.Code))
 	if r := e.tap(attackerTG, ok); !strings.Contains(r.Text, "finish in the browser") || !r.ClearKeyboard {
 		t.Fatalf("Telegram confirmation reply %+v", r)
-	}
-	// Single use: the victim's own /start comes too late.
-	if r := e.start(victimTG, code.Code); !r.Bounded || r.Markup != nil {
-		t.Fatalf("a redeemed code was redeemed again: %+v", r)
 	}
 	// Another user can't see or confirm it.
 	expect(t, other.ui.do("GET", "/me/telegram/link-codes/"+code.ID, nil), 404)
@@ -314,10 +310,10 @@ func TestTelegramLinkCodesAreSingleUseAndExpire(t *testing.T) {
 		t.Fatal("the code itself is stored")
 	}
 	ok, _ := buttons(t, e.start(me, code.Code))
-	for _, who := range []botapi.User{me, tgPerson(5, "Other")} {
-		if r := e.start(who, code.Code); !r.Bounded || r.Markup != nil {
-			t.Fatalf("replayed /start by %d: %+v", who.ID, r)
-		}
+	// The redeeming account's own replay is refused and changes nothing (another account's would cancel the code:
+	// TestTelegramLinkReusedCodeWarnsItsOwner).
+	if r := e.start(me, code.Code); !r.Bounded || r.Markup != nil {
+		t.Fatalf("replayed /start: %+v", r)
 	}
 	if r := e.tap(me, ok); r.Text == "" {
 		t.Fatalf("[Confirm]: %+v", r)

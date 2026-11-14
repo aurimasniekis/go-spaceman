@@ -83,3 +83,61 @@ func TestDispatcherLinkSteps(t *testing.T) {
 		t.Fatalf("linker calls %v", lk.calls)
 	}
 }
+
+type fakeUnlinker struct {
+	mu    sync.Mutex
+	links []Link
+}
+
+func (f *fakeUnlinker) Unlink(_ context.Context, l Link) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.links = append(f.links, l)
+	return "Unlinked."
+}
+
+// SM-TG-001 (TG-4b): /unlink from a linked user goes to the Unlinker, not the Handler (also addressed to the bot,
+// /unlink@name); text that merely starts with it, from an unlinked user or with arguments, doesn't. A linked user's
+// link that is past its re-confirmation time acts for nobody: the Handler and the Unlinker don't run and the user
+// gets the re-confirmation instructions, at most once within the unlinked-user bounds.
+func TestDispatcherUnlinkAndReconfirm(t *testing.T) {
+	srv, bot := fakeBot(t)
+	clk := clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
+	due := clk.Now().Add(time.Hour)
+	rec := &recorder{linked: map[int64]Link{5: {ID: "tgl_1", UserID: "usr_1", ChatID: 5, ReconfirmDueAt: due}}}
+	ul := &fakeUnlinker{}
+	d := NewDispatcher(DispatcherOptions{Links: rec, Handler: rec, Unlinker: ul, Bot: bot, Clock: clk})
+	ctx := context.Background()
+
+	d.Dispatch(ctx, privateMsg(1, 5, "/unlink"))
+	d.Dispatch(ctx, privateMsg(2, 5, "/unlink@spaceman_bot"))
+	d.Dispatch(ctx, privateMsg(3, 5, "/unlink now")) // arguments: not the command
+	d.Dispatch(ctx, privateMsg(4, 5, "/unlinked"))
+	if len(ul.links) != 2 || ul.links[0].ID != "tgl_1" || ul.links[0].UserID != "usr_1" {
+		t.Fatalf("unlinks %+v", ul.links)
+	}
+	if got := rec.ids(); len(got) != 2 || got[0] != 3 || got[1] != 4 {
+		t.Fatalf("handled %v", got)
+	}
+	if msgs := srv.Messages(5); len(msgs) != 2 || msgs[0].Text != "Unlinked." {
+		t.Fatalf("replies %+v", msgs)
+	}
+	d.Dispatch(ctx, privateMsg(5, 6, "/unlink")) // not linked: nobody's link ends
+	if len(ul.links) != 2 {
+		t.Fatalf("an unlinked user's /unlink reached the Unlinker: %+v", ul.links)
+	}
+
+	clk.Advance(2 * time.Hour) // past the re-confirmation time
+	d.Dispatch(ctx, privateMsg(6, 5, "hello"))
+	d.Dispatch(ctx, privateMsg(7, 5, "/unlink"))
+	if got := rec.ids(); len(got) != 2 {
+		t.Fatalf("an overdue link's update reached the Handler: %v", got)
+	}
+	if len(ul.links) != 2 {
+		t.Fatalf("an overdue link unlinked: %+v", ul.links)
+	}
+	msgs := srv.Messages(5)
+	if len(msgs) != 3 || msgs[2].Text != ReconfirmText {
+		t.Fatalf("overdue replies %+v", msgs)
+	}
+}

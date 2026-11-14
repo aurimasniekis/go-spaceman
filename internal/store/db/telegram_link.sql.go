@@ -139,7 +139,7 @@ func (q *Queries) GetTelegramLink(ctx context.Context, id string) (TelegramLink,
 }
 
 const getTelegramLinkCode = `-- name: GetTelegramLinkCode :one
-SELECT code_hash, user_id, created_session_method, created_at, expires_at, state, redeemed_tg_user_id, redeemed_tg_username, redeemed_tg_name, redeemed_at, tg_confirmed_at, created_session_id FROM telegram_link_codes WHERE code_hash = ?
+SELECT code_hash, user_id, created_session_method, created_at, expires_at, state, redeemed_tg_user_id, redeemed_tg_username, redeemed_tg_name, redeemed_at, tg_confirmed_at, created_session_id, reuse_attempted_at FROM telegram_link_codes WHERE code_hash = ?
 `
 
 func (q *Queries) GetTelegramLinkCode(ctx context.Context, codeHash []byte) (TelegramLinkCode, error) {
@@ -158,6 +158,7 @@ func (q *Queries) GetTelegramLinkCode(ctx context.Context, codeHash []byte) (Tel
 		&i.RedeemedAt,
 		&i.TgConfirmedAt,
 		&i.CreatedSessionID,
+		&i.ReuseAttemptedAt,
 	)
 	return i, err
 }
@@ -229,6 +230,169 @@ func (q *Queries) InsertTelegramLinkCode(ctx context.Context, arg InsertTelegram
 	return err
 }
 
+const listActiveTelegramLinks = `-- name: ListActiveTelegramLinks :many
+SELECT id, user_id, tg_user_id, chat_id, reconfirm_due_at FROM telegram_links WHERE state = 'active'
+`
+
+type ListActiveTelegramLinksRow struct {
+	ID             string
+	UserID         string
+	TgUserID       int64
+	ChatID         int64
+	ReconfirmDueAt sql.NullInt64
+}
+
+// What the dispatcher's in-memory cache holds.
+func (q *Queries) ListActiveTelegramLinks(ctx context.Context) ([]ListActiveTelegramLinksRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveTelegramLinks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveTelegramLinksRow{}
+	for rows.Next() {
+		var i ListActiveTelegramLinksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TgUserID,
+			&i.ChatID,
+			&i.ReconfirmDueAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveTelegramLinks = `-- name: ListLiveTelegramLinks :many
+SELECT id, user_id, bot_id, tg_user_id, tg_username, tg_name, chat_id, state, via_sso, sso_until, max_role, spaces_json, current_space_id, topics_json, prefs_json, created_at, confirmed_at, reconfirm_due_at, revoked_at, revoked_by, updated_at, version FROM telegram_links WHERE state <> 'revoked' ORDER BY created_at, id
+`
+
+func (q *Queries) ListLiveTelegramLinks(ctx context.Context) ([]TelegramLink, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveTelegramLinks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TelegramLink{}
+	for rows.Next() {
+		var i TelegramLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.BotID,
+			&i.TgUserID,
+			&i.TgUsername,
+			&i.TgName,
+			&i.ChatID,
+			&i.State,
+			&i.ViaSso,
+			&i.SsoUntil,
+			&i.MaxRole,
+			&i.SpacesJson,
+			&i.CurrentSpaceID,
+			&i.TopicsJson,
+			&i.PrefsJson,
+			&i.CreatedAt,
+			&i.ConfirmedAt,
+			&i.ReconfirmDueAt,
+			&i.RevokedAt,
+			&i.RevokedBy,
+			&i.UpdatedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveTelegramLinksByUser = `-- name: ListLiveTelegramLinksByUser :many
+SELECT id, user_id, bot_id, tg_user_id, tg_username, tg_name, chat_id, state, via_sso, sso_until, max_role, spaces_json, current_space_id, topics_json, prefs_json, created_at, confirmed_at, reconfirm_due_at, revoked_at, revoked_by, updated_at, version FROM telegram_links WHERE user_id = ? AND state <> 'revoked' ORDER BY created_at, id
+`
+
+func (q *Queries) ListLiveTelegramLinksByUser(ctx context.Context, userID string) ([]TelegramLink, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveTelegramLinksByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TelegramLink{}
+	for rows.Next() {
+		var i TelegramLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.BotID,
+			&i.TgUserID,
+			&i.TgUsername,
+			&i.TgName,
+			&i.ChatID,
+			&i.State,
+			&i.ViaSso,
+			&i.SsoUntil,
+			&i.MaxRole,
+			&i.SpacesJson,
+			&i.CurrentSpaceID,
+			&i.TopicsJson,
+			&i.PrefsJson,
+			&i.CreatedAt,
+			&i.ConfirmedAt,
+			&i.ReconfirmDueAt,
+			&i.RevokedAt,
+			&i.RevokedBy,
+			&i.UpdatedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markTelegramLinkCodeReused = `-- name: MarkTelegramLinkCodeReused :execrows
+UPDATE telegram_link_codes SET state = 'cancelled', reuse_attempted_at = ?1
+WHERE code_hash = ?2 AND state = 'redeemed' AND redeemed_tg_user_id <> ?3 AND expires_at > ?1
+`
+
+type MarkTelegramLinkCodeReusedParams struct {
+	Now      sql.NullInt64
+	CodeHash []byte
+	TgUserID sql.NullInt64
+}
+
+// A different Telegram account presented a redeemed, unexpired code: it leaked. The code is cancelled and flagged so
+// the owner's page warns.
+func (q *Queries) MarkTelegramLinkCodeReused(ctx context.Context, arg MarkTelegramLinkCodeReusedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markTelegramLinkCodeReused, arg.Now, arg.CodeHash, arg.TgUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const moveTelegramLinkCodeSession = `-- name: MoveTelegramLinkCodeSession :exec
 UPDATE telegram_link_codes SET created_session_id = ?1
 WHERE created_session_id = ?2 AND ?2 <> '' AND user_id = ?3
@@ -245,6 +409,25 @@ type MoveTelegramLinkCodeSessionParams struct {
 func (q *Queries) MoveTelegramLinkCodeSession(ctx context.Context, arg MoveTelegramLinkCodeSessionParams) error {
 	_, err := q.db.ExecContext(ctx, moveTelegramLinkCodeSession, arg.NewSessionID, arg.OldSessionID, arg.UserID)
 	return err
+}
+
+const reconfirmTelegramLink = `-- name: ReconfirmTelegramLink :execrows
+UPDATE telegram_links SET reconfirm_due_at = ?1, updated_at = ?2, version = version + 1
+WHERE id = ?3 AND state = 'active'
+`
+
+type ReconfirmTelegramLinkParams struct {
+	ReconfirmDueAt sql.NullInt64
+	Now            int64
+	ID             string
+}
+
+func (q *Queries) ReconfirmTelegramLink(ctx context.Context, arg ReconfirmTelegramLinkParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reconfirmTelegramLink, arg.ReconfirmDueAt, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const redeemTelegramLinkCode = `-- name: RedeemTelegramLinkCode :execrows
@@ -270,6 +453,26 @@ func (q *Queries) RedeemTelegramLinkCode(ctx context.Context, arg RedeemTelegram
 		arg.Now,
 		arg.CodeHash,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeTelegramLink = `-- name: RevokeTelegramLink :execrows
+UPDATE telegram_links SET state = 'revoked', revoked_at = ?1, revoked_by = ?2, updated_at = ?1,
+  version = version + 1
+WHERE id = ?3 AND state <> 'revoked'
+`
+
+type RevokeTelegramLinkParams struct {
+	Now       sql.NullInt64
+	RevokedBy string
+	ID        string
+}
+
+func (q *Queries) RevokeTelegramLink(ctx context.Context, arg RevokeTelegramLinkParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeTelegramLink, arg.Now, arg.RevokedBy, arg.ID)
 	if err != nil {
 		return 0, err
 	}

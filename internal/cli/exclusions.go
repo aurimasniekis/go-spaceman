@@ -17,6 +17,9 @@ var Excluded = map[string]string{ //nolint:gosec // G101 false positive: operati
 	"create-telegram-link-code": "Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused",
 	"get-telegram-link-code":    "Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused",
 	"cancel-telegram-link-code": "Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused",
+	"list-my-telegram-links":    "Telegram linking (ADR-0083): a person's own browser session on the Account page",
+	"delete-my-telegram-link":   "Telegram linking (ADR-0083): a person's own browser session on the Account page",
+	"reconfirm-telegram-link":   "Telegram linking (ADR-0083): a person's own browser session on the Account page",
 	"confirm-telegram-link":     "Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused",
 	"reset-password": "public and token-less: central accepts an anonymous state-changing request only from its own web origin " +
 		"(cross-site protection), so the user redeems the reset token on the sign-in page; `spaceman user reset-token` issues it",
