@@ -35,7 +35,15 @@ describe('RestoreBanner', () => {
     // Restore paused three; all were resumed; the operator then paused one: the server reports 0 still paused.
     show({ restored: true, still_paused: 0, state: state({ resumed_spaces: ['spc_a', 'spc_b', 'spc_c'], acknowledged_at: '2026-11-13T19:00:00Z' }) })
     await waitFor(() => expect(api.GET).toHaveBeenCalled())
-    await waitFor(() => expect(screen.queryByText(/Restored from a backup/)).not.toBeInTheDocument())
+    await new Promise((r) => setTimeout(r, 50)) // let the resolved query render
+    expect(screen.queryByText(/Restored from a backup/)).not.toBeInTheDocument()
+  })
+
+  it('hides the banner at 0 still paused even when nobody dismissed it', async () => {
+    show({ restored: true, still_paused: 0, state: state({ resumed_spaces: ['spc_a', 'spc_b', 'spc_c'] }) })
+    await waitFor(() => expect(api.GET).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 50)) // let the resolved query render
+    expect(screen.queryByText(/Restored from a backup/)).not.toBeInTheDocument()
   })
 
   it('shows nothing when the installation was never restored', async () => {

@@ -84,12 +84,15 @@ func RegisterBackups(svc *backup.Service) func(api huma.API, d *Deps) {
 					p := PrincipalFrom(ctx)
 					global := p != nil && d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), authz.Global, authz.SystemRead)
 					cp := *rs
-					cp.PausedSpaces = []string{}
+					cp.PausedSpaces, cp.ResumedSpaces = []string{}, []string{}
 					for _, id := range rs.PausedSpaces {
 						if !global && (p == nil || d.Authz == nil || !d.Authz.AllowedAll(p.Subjects(), id, authz.SpaceRead)) {
 							continue
 						}
 						cp.PausedSpaces = append(cp.PausedSpaces, id)
+						if slices.Contains(rs.ResumedSpaces, id) {
+							cp.ResumedSpaces = append(cp.ResumedSpaces, id)
+						}
 						if sp, err := d.Store.R().GetSpace(ctx, id); err == nil && sp.State == "paused" && !slices.Contains(rs.ResumedSpaces, id) {
 							out.Body.StillPaused++
 						}

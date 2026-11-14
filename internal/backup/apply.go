@@ -198,6 +198,12 @@ func LoadRestoreState(ctx context.Context, q *db.Queries) (*RestoreState, error)
 	if err := json.Unmarshal([]byte(s.Value), &rs); err != nil {
 		return nil, err
 	}
+	if rs.PausedSpaces == nil {
+		rs.PausedSpaces = []string{}
+	}
+	if rs.ResumedSpaces == nil {
+		rs.ResumedSpaces = []string{}
+	}
 	return &rs, nil
 }
 

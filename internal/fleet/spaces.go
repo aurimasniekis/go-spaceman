@@ -269,7 +269,7 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 		if err := svc.record(ctx, tx, id, "space", id, "updated", version+1); err != nil {
 			return err
 		}
-		if state == "active" && sp.State == "paused" {
+		if sp.State == "paused" && state != "paused" {
 			if err := markRestorePauseResumed(ctx, tx, id); err != nil {
 				return err
 			}

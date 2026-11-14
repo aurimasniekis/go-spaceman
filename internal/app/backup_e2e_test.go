@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -306,6 +307,37 @@ func TestBackupsOverHTTP(t *testing.T) {
 	expect(t, spaceAdmin.do("POST", "/system/backups/"+created.ID+"/verify", nil), 403)
 	expect(t, spaceAdmin.do("POST", "/system/restore/acknowledge", nil), 403)
 	expect(t, spaceAdmin.do("GET", "/system/restore", nil), 200)
+
+	// A space-scoped caller sees only their own space IDs, in both lists; a notice written before resumed_spaces existed
+	// reads as [] rather than null.
+	other, err := h.c.Fleet.CreateSpace(ctx, actor, fleet.CreateSpaceInput{Slug: "beta", Name: "Beta", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := func(v string) {
+		if err := h.c.Store.W().TxNamed(ctx, "test.seed_restore", func(tx *store.Tx) error {
+			return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: backup.SettingRestored, Value: v, UpdatedAt: tx.NowMicros()})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type lists struct {
+		State struct {
+			Paused  []string `json:"paused_spaces"`
+			Resumed []string `json:"resumed_spaces"`
+		} `json:"state"`
+	}
+	ids := func(a ...string) string { b, _ := json.Marshal(a); return string(b) }
+	seed(`{"backup_id":"bkp_x","paused_spaces":` + ids(sp.ID, other.ID) + `,"resumed_spaces":` + ids(sp.ID, other.ID) + `}`)
+	var l lists
+	spaceAdmin.do("GET", "/system/restore", nil).json(t, &l)
+	if !slices.Equal(l.State.Paused, []string{sp.ID}) || !slices.Equal(l.State.Resumed, []string{sp.ID}) {
+		t.Fatalf("space admin sees paused %v resumed %v, want only %s", l.State.Paused, l.State.Resumed, sp.ID)
+	}
+	seed(`{"backup_id":"bkp_x","paused_spaces":` + ids(sp.ID) + `}`)
+	if body := string(spaceAdmin.do("GET", "/system/restore", nil).body); !strings.Contains(body, `"resumed_spaces":[]`) {
+		t.Fatalf("legacy notice: resumed_spaces not []: %s", body)
+	}
 }
 
 // A restore's notice counts only the spaces the restore paused and that have not been resumed since: resuming one and
@@ -377,5 +409,24 @@ func TestRestoreNoticeIgnoresLaterPauses(t *testing.T) {
 	set(c, "paused", fleet.PauseInterrupt)
 	if got := still(); got != 0 {
 		t.Fatalf("after later operator pauses: %d still paused after the restore, want 0", got)
+	}
+	// paused -> archived -> active -> paused: leaving paused by any route counts as the resume.
+	d := mk("rst-d")
+	set(d, "paused", fleet.PauseHold)
+	rs2, _ := json.Marshal(backup.RestoreState{BackupID: "bkp_y", PausedSpaces: []string{d.ID}})
+	if err := h.c.Store.W().TxNamed(ctx, "test.seed_restore2", func(tx *store.Tx) error {
+		return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: backup.SettingRestored, Value: string(rs2), UpdatedAt: tx.NowMicros()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	set(d, "archived", "")
+	set(d, "active", "")
+	set(d, "paused", fleet.PauseHold)
+	var n2 struct {
+		StillPaused int `json:"still_paused"`
+	}
+	root.do("GET", "/system/restore", nil).json(t, &n2)
+	if n2.StillPaused != 0 {
+		t.Fatalf("paused->archived->active->paused: %d still paused, want 0", n2.StillPaused)
 	}
 }
