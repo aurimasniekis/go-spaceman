@@ -8160,7 +8160,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "hours" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** @description 0 means no limit */
             zero_means_none: boolean;
         };
@@ -8245,7 +8245,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "hours" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** Format: int64 */
             value: number;
             /** @description 0 means no limit */

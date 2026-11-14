@@ -4515,6 +4515,15 @@
         the run-ended notice of a parked run. A re-park, and later resumes of the same chain (an unknown reset probed
         again), aren't announced again; a fresh-session resume always is. Control's own wait isn't announced to it. A
         per-account-window summary isn't sent.
+      - **Amended 2026-11-14 (UL-9):** the people notice of Q5 is one human action (type `message`, priority `normal`,
+        not blocking, requester `system` "Usage limits") per **hold row**: per space and account (or gateway reference)
+        window, deduplicated on `usage-limit-human:<usage_limits id>`, and recorded in `usage_limits.notified_humans_at`.
+        It is raised for an open hold whose known reset is further away than the space's
+        `usage_limit_notify_after_hours` (default 12), by a job on the shared deadline timer (a limit report wakes it);
+        not for an unknown reset, and not in an archived space. A hold whose reset later moves past the threshold is
+        announced then. The action is created first and the hold marked after, so a crash in between raises it once.
+        "The space's operators" are the people who see the space's human actions; no message to the operators' inbox is
+        sent in addition. A space that has too many open human actions gets it on a later round.
   12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind` without a CHECK,
       so a new kind never needs a runs-table rebuild, `limit_resets_at`, `limit_since`; tables `usage_limits`, with
       `check_at` and the kind CHECK, and `limit_waits`); agent
@@ -4524,6 +4533,8 @@
       **Amended 2026-11-14 (UL-6, UL-7):** these are space limits, not a settings object: `usage_limit_failover`
       (switch, default off), `usage_limit_keep_alive_max_minutes` (1–1,440, default 360) and
       `usage_limit_max_wait_hours` (1–720, default 168: Q2's 7 days). `notify_humans_after` comes with UL-9.
+      **Amended 2026-11-14 (UL-9):** `notify_humans_after` is the space limit `usage_limit_notify_after_hours` (0–720,
+      default 12; 0: never). These four keys are the names the Terraform provider uses (T11).
 - **Alternatives:**
   - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and
     dateless under 24 h, and server-overridable wording.
