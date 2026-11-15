@@ -3,9 +3,14 @@ package app_test
 import (
 	"context"
 	"log/slog"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/app"
@@ -309,5 +314,97 @@ func TestMiniAppServeRefusesWhenTheStoredHostCannotBeRead(t *testing.T) {
 	err := e.h.c.Serve(ctx)
 	if err == nil || !strings.Contains(err.Error(), "miniapp_host") {
 		t.Fatalf("Serve with an unreadable bot row: %v", err)
+	}
+}
+
+// L-a: the stored host is loaded before the listener accepts a connection. The hook holds LoadStoredHost while a client
+// hammers the real port with Host: <mini host>; Serve is not yet listening, so no request is answered (each is refused).
+// Once the load is released, every answer from the first one on is the Mini App host's 404. A Serve that loads the host
+// after the listener goroutine has started answers the hammering with the main UI while the load is held.
+func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	e := newMiniAppEnvStart(t, slog.New(slog.DiscardHandler), func(c *config.Config) {
+		c.Telegram.MiniAppHost = ""
+		c.HTTP.Listen = addr
+	}, func(c *app.Central) {
+		c.UI = webui.Handler(dlFiles)
+		c.MiniAppUI = webui.MiniAppHandler(dlFiles)
+	}, false)
+	seedLegacyHost(t, e, false) // disabled: a started bot would legitimately serve the Mini App itself
+
+	const heldAttempts = 150
+	var attempts atomic.Int64
+	release := make(chan struct{})
+	var once sync.Once
+	e.h.c.TelegramBot.SetLoadStoredHostHook(func(ctx context.Context) {
+		// Hold until the client has tried enough times while the load is pending (or give up after a bound).
+		deadline := time.After(10 * time.Second)
+		for attempts.Load() < heldAttempts {
+			select {
+			case <-deadline:
+				return
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+		once.Do(func() { close(release) })
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	served := make(chan error, 1)
+	go func() { served <- e.h.c.Serve(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-served:
+		case <-time.After(20 * time.Second):
+			t.Error("Serve did not stop")
+		}
+	}()
+
+	hc := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	type answer struct {
+		status int
+		body   string
+	}
+	var answers []answer
+	var firstRefused int
+	deadline := time.Now().Add(15 * time.Second)
+	for len(answers) < 20 && time.Now().Before(deadline) {
+		req, _ := http.NewRequestWithContext(t.Context(), "GET", "http://"+addr+"/", nil)
+		req.Host = miniHost
+		resp, err := hc.Do(req)
+		attempts.Add(1)
+		if err != nil { // not listening yet
+			if len(answers) == 0 {
+				firstRefused++
+			}
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		b := make([]byte, 512)
+		n, _ := resp.Body.Read(b)
+		_ = resp.Body.Close()
+		answers = append(answers, answer{resp.StatusCode, string(b[:n])})
+	}
+	if len(answers) == 0 {
+		t.Fatalf("Serve never answered (%d refused)", firstRefused)
+	}
+	select {
+	case <-release:
+	default:
+		t.Error("a request was answered before the held load was released: the listener is up before the stored host is loaded")
+	}
+	for i, a := range answers {
+		if a.status != 404 || a.body != "not found\n" {
+			t.Errorf("answer %d on Host %q: %d %q, want the Mini App host's 404", i, miniHost, a.status, a.body)
+		}
 	}
 }

@@ -17,6 +17,37 @@ func TestTelegramNeedsYouAppButton(t *testing.T) {
 	e := newMiniAppEnv(t)
 	_ = enrolledSession(t, e.h, "mini@example.com") // operators must enroll MFA; until then the link is Limited too
 	e.startBot(t)
+	f, act := needsYouBrowserCard(t, e)
+	if !strings.Contains(f.Text, "decided in the browser") || f.ReplyMarkup == nil || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
+		t.Fatalf("approval card: %q %+v", f.Text, f.ReplyMarkup)
+	}
+	want := e.origin() + "/spaces/" + e.space + "/human?action=" + act
+	if got := f.ReplyMarkup.InlineKeyboard[0][0].WebApp.URL; got != want {
+		t.Fatalf("Mini App URL %q, want %q", got, want)
+	}
+}
+
+// With no telegram.miniapp_host and a bot that stores no host (the only kind a keyless central accepts), the same card
+// keeps its text and has no button: nothing builds a Mini App link from a missing host.
+func TestTelegramNeedsYouNoAppButtonWithoutHost(t *testing.T) {
+	t.Parallel()
+	e := noKeyEnv(t, true)
+	_ = enrolledSession(t, e.h, "mini@example.com")
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"bot_token": e.tg.Token(), "enabled": true, "mode": "polling"}), 200)
+	if e.h.c.TelegramBot.MiniAppHost() != "" {
+		t.Fatal("a Mini App host with no key and no stored host")
+	}
+	e.startBotLinks(t)
+	f, _ := needsYouBrowserCard(t, e)
+	if !strings.Contains(f.Text, "decided in the browser") || f.ReplyMarkup != nil {
+		t.Fatalf("no host: %q %+v", f.Text, f.ReplyMarkup)
+	}
+}
+
+// needsYouBrowserCard opens the /needsyou card of an enforced approval (decided only in the browser) for the linked
+// Telegram user 42 of a started bot, and returns the card and the action's ID.
+func needsYouBrowserCard(t *testing.T, e *miniAppEnv) (botapi.Message, string) {
+	t.Helper()
 	ctx := context.Background()
 	e.h.c.TelegramLinks.Start(t.Context()) // the link was inserted after central started
 	on := true
@@ -62,12 +93,5 @@ func TestTelegramNeedsYouAppButton(t *testing.T) {
 		push(nil, &botapi.CallbackQuery{ID: "q" + strings.Repeat("x", int(n+1)), From: from, Message: &list, Data: list.ReplyMarkup.InlineKeyboard[0][0].CallbackData})
 		return last()
 	}
-	f := open()
-	if !strings.Contains(f.Text, "decided in the browser") || f.ReplyMarkup == nil || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
-		t.Fatalf("approval card: %q %+v", f.Text, f.ReplyMarkup)
-	}
-	want := e.origin() + "/spaces/" + e.space + "/human?action=" + act.ID
-	if got := f.ReplyMarkup.InlineKeyboard[0][0].WebApp.URL; got != want {
-		t.Fatalf("Mini App URL %q, want %q", got, want)
-	}
+	return open(), act.ID
 }

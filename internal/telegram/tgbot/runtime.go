@@ -155,10 +155,17 @@ func (svc *Service) setStored(row *db.TelegramBot) string {
 // hostNeedsKey is true when a bot stores a miniapp_host while telegram.miniapp_host is not set.
 func (svc *Service) hostNeedsKey(stored string) bool { return stored != "" && svc.o.MiniAppHost == "" }
 
+// SetLoadStoredHostHook installs a hook LoadStoredHost calls before it reads the bot row; the hook may block. It exists
+// so a test can pin that central loads the host before its listener accepts a connection. Production code never calls it.
+func (svc *Service) SetLoadStoredHostHook(f func(context.Context)) { svc.onLoadStoredHost = f }
+
 // LoadStoredHost reads the stored bot row and makes its miniapp_host known to the router. Central calls it before it
 // listens, so the stored host reaches the Mini App handler (and its 404 gate) from the first request, whatever the
 // bot's state or how long the bot takes to start. A failed read is an error: central must not serve without knowing.
 func (svc *Service) LoadStoredHost(ctx context.Context) error {
+	if svc.onLoadStoredHost != nil {
+		svc.onLoadStoredHost(ctx)
+	}
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 	r, err := svc.s.R().GetTelegramBot(ctx)
