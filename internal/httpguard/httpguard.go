@@ -3,6 +3,7 @@ package httpguard
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -13,14 +14,16 @@ const chunk = 32 << 10
 // WriteProgress wraps next so every response write must make progress: each piece of at most 32 KiB gets idle to
 // reach the client's connection, and a write that can't (the client stopped reading) fails, so the handler ends and the
 // connection is closed instead of holding the response in memory. It bounds progress, not the total time, so slow
-// transfers that keep moving are unaffected. A WebSocket handshake (see websocketHandshake) is passed through untouched: it
-// hijacks the connection and keeps its own timeouts. Upgrade headers on anything else get no bypass.
-func WriteProgress(next http.Handler, idle time.Duration) http.Handler {
+// transfers that keep moving are unaffected. A WebSocket handshake (see websocketHandshake) on one of hijackPaths (the
+// routes that hijack the connection and keep their own timeouts) is passed through untouched. Upgrade headers on any
+// other route, or on a request that isn't a real handshake, get no bypass: a download or an event stream that carries
+// them is guarded like any other.
+func WriteProgress(next http.Handler, idle time.Duration, hijackPaths ...string) http.Handler {
 	if idle <= 0 {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if websocketHandshake(r) {
+		if slices.Contains(hijackPaths, r.URL.Path) && websocketHandshake(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
