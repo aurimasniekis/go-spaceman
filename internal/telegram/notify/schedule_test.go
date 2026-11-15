@@ -343,3 +343,100 @@ func TestDigestRespectsVisibility(t *testing.T) {
 		t.Errorf("%d sends: a hidden space's items must not be sent", n)
 	}
 }
+
+// An item that waited more than 48 hours for the digest is left out of it.
+func TestDigestLeavesOutOldItems(t *testing.T) {
+	e := newEnv(t, 1)
+	e.setZones(t, "UTC")
+	e.clk.Set(time.Date(2026, 11, 14, 8, 0, 0, 0, time.UTC))
+	stop := e.run(nil)
+	defer stop()
+	ctx := context.Background()
+	_, _ = e.n.NextDigest(ctx)
+	add := func(id, title string) {
+		before := e.feed.reads.Load()
+		e.rd.set(inboxItem(id, title))
+		e.feed.add("spc_1", notify.TypeInboxItem, id, changefeed.Created, 1)
+		e.ring()
+		e.endWindow()
+		e.settle(before)
+	}
+	add("inb_1", "Stale item")
+	e.clk.Set(time.Date(2026, 11, 14, 8, 0, 0, 0, time.UTC).Add(47 * time.Hour))
+	add("inb_2", "Fresh item")
+	e.clk.Set(time.Date(2026, 11, 14, 8, 0, 0, 0, time.UTC).Add(49 * time.Hour)) // 49 h after the first, 2 h after the second
+	if n, _ := e.n.DigestDue(ctx); n != 1 {
+		t.Fatalf("digest not enqueued")
+	}
+	c := e.waitCalls("sendMessage", 1)
+	if strings.Contains(c[0].Params["text"], "Stale item") || !strings.Contains(c[0].Params["text"], "Fresh item") {
+		t.Errorf("digest text %q: want the fresh item only", c[0].Params["text"])
+	}
+}
+
+// The final update of an action edits the card and announces nothing, even when it carries a newer reminder or
+// escalation time.
+func TestFinalActionAnnouncesNothing(t *testing.T) {
+	for _, field := range []string{"reminded", "escalated"} {
+		t.Run(field, func(t *testing.T) {
+			e := newEnv(t, 1)
+			stop := e.run(nil)
+			defer stop()
+			e.newAction("hum_1", 1)
+			e.waitCalls("sendMessage", 1)
+			time.Sleep(100 * time.Millisecond)
+			r := action("hum_1", 2, true)
+			if field == "reminded" {
+				r.RemindedAt = e.clk.Now().Add(time.Hour).UnixMicro()
+			} else {
+				r.EscalatedAt = e.clk.Now().Add(time.Hour).UnixMicro()
+			}
+			e.update(r, 2)
+			e.waitCalls("editMessageText", 1)
+			time.Sleep(100 * time.Millisecond)
+			if n := len(e.fake.Calls("sendMessage")); n != 1 {
+				t.Errorf("%d sends, want the card only: a final action announces nothing", n)
+			}
+		})
+	}
+}
+
+// A reminder, an escalation or an assignment alert that waited in the sender is dropped when the access ended
+// meanwhile (the alert's send-time check, like a card's).
+func TestAlertSendTimeRecheck(t *testing.T) {
+	alerts := map[string]func(e *env, a *notify.Resource){
+		"reminder":   func(e *env, a *notify.Resource) { a.RemindedAt = e.clk.Now().Add(time.Hour).UnixMicro() },
+		"escalation": func(e *env, a *notify.Resource) { a.EscalatedAt = e.clk.Now().Add(time.Hour).UnixMicro() },
+		"assignment": func(e *env, a *notify.Resource) { a.Assignee = "usr_1" },
+	}
+	revokes := map[string]func(e *env){
+		"grants revoked": func(e *env) {
+			e.az.mu.Lock()
+			delete(e.az.space["telegram:tgl_1"], "spc_1")
+			e.az.mu.Unlock()
+		},
+		"space hidden": func(e *env) { e.pol.hide("spc_1") },
+	}
+	for an, change := range alerts {
+		for rn, revoke := range revokes {
+			t.Run(an+"/"+rn, func(t *testing.T) {
+				e := newEnv(t, 1)
+				stop := e.run(nil)
+				defer stop()
+				e.newAction("hum_1", 1)
+				e.waitCalls("sendMessage", 1)
+				time.Sleep(100 * time.Millisecond)
+				release := e.holdChat(1001)
+				a := action("hum_1", 1, false)
+				change(e, &a)
+				e.update(a, 1) // the alert is queued behind the held slot
+				revoke(e)
+				release()
+				time.Sleep(300 * time.Millisecond)
+				if n := len(e.fake.Calls("sendMessage")); n != 1 {
+					t.Errorf("%d sends, want the card only: the alert must not go out after the access ended", n)
+				}
+			})
+		}
+	}
+}

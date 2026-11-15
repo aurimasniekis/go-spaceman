@@ -391,3 +391,22 @@ func TestPassPrunesTelegramMessages(t *testing.T) {
 		t.Fatalf("%d mappings left, want the 2 newer ones", n)
 	}
 }
+
+// The 30-day boundary: a mapping an hour past it is pruned, one an hour inside it stays.
+func TestPassPrunesTelegramMessagesAtTheBoundary(t *testing.T) {
+	f := newFx(t, 0)
+	now := f.clk.Now()
+	day := 24 * time.Hour
+	ins := func(msg int64, age time.Duration) string {
+		return fmt.Sprintf(`INSERT INTO telegram_messages (chat_id, message_id, kind, created_at) VALUES (1, %d, 'card', %d)`, msg, now.Add(-age).UnixMicro())
+	}
+	f.exec(ins(1, 30*day+time.Hour), ins(2, 30*day-time.Hour))
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if p.Deleted[KindTelegram] != 1 {
+		t.Fatalf("pruned %d, want only the one past 30 days", p.Deleted[KindTelegram])
+	}
+	if n := f.count(`SELECT count(*) FROM telegram_messages WHERE message_id = 2`); n != 1 {
+		t.Fatal("the mapping an hour inside the window was pruned")
+	}
+}

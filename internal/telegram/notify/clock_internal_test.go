@@ -45,6 +45,8 @@ func TestQuietHoursBoundariesAcrossZones(t *testing.T) {
 		{"Auckland (+13 in November) 08:00 local is 19:00Z", "Pacific/Auckland", "23:00", "08:00", utc(19, 0, 0), false},
 		{"Auckland 07:59 local", "Pacific/Auckland", "23:00", "08:00", utc(18, 59, 0), true},
 		{"a window inside one day", "Europe/Vilnius", "13:00", "14:00", utc(11, 30, 0), true},
+		{"the same window, start minute", "Europe/Vilnius", "13:00", "14:00", utc(11, 0, 0), true},
+		{"the same window, a minute before", "Europe/Vilnius", "13:00", "14:00", utc(10, 59, 0), false},
 		{"the same window, end", "Europe/Vilnius", "13:00", "14:00", utc(12, 0, 0), false},
 	}
 	for _, c := range cases {

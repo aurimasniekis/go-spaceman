@@ -35,9 +35,8 @@ func quiet(p settings.EffectivePrefs, loc *time.Location, now time.Time) bool {
 	return m >= s || m < e
 }
 
-// nextClock returns the first instant after `after` at which the wall clock in loc reads hh:mm. A time that doesn't
-// exist on a daylight-saving day (the clock skips it) reads as the first instant after the gap, and one that exists
-// twice as its first occurrence; neither repeats within a day.
+// nextClock returns the first instant after `after` at which the wall clock in loc reads hh:mm. Go resolves a missing
+// or ambiguous wall time to one instant that day; at most ±1 h on transition days, never a duplicate or missed digest.
 func nextClock(loc *time.Location, clock string, after time.Time) (time.Time, bool) {
 	mins, err := settings.ParseClock(clock)
 	if err != nil {
