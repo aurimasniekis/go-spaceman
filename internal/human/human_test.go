@@ -407,3 +407,26 @@ func TestLifecycleEventsCarrySafeMetadataOnly(t *testing.T) {
 		t.Fatalf("events %v", types)
 	}
 }
+
+// A top-N view must hold the most urgent items, not the oldest ones: sorting happens before the limit cuts the list.
+func TestListPendingSortsBeforeLimit(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	person := Requester{Kind: "operator", ID: "usr_op"} // no per-run limit for a person's own requests
+	for range 201 {                                     // more than the default page of 200
+		f.create(CreateInput{Type: TypeTodo, Title: "old", Priority: "normal", Requester: person})
+		f.clk.Advance(time.Minute)
+	}
+	f.create(CreateInput{Type: TypeTodo, Title: "urgent", Priority: "urgent", Requester: person})
+	g, err := f.svc.ListPending(f.ctx, nil, ListFilter{Sort: SortPriority, Limit: 5})
+	must(t, err)
+	if len(g) != 5 || g[0].Title != "urgent" {
+		t.Fatalf("top 5 by priority: len=%d first=%q", len(g), g[0].Title)
+	}
+	// The same listing without a sort keeps its oldest-first default.
+	g, err = f.svc.ListPending(f.ctx, nil, ListFilter{Limit: 5})
+	must(t, err)
+	if g[0].Title != "old" {
+		t.Fatalf("default order first = %q", g[0].Title)
+	}
+}

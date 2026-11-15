@@ -543,8 +543,8 @@ func sortActions(l []*Action, by string) {
 	}
 }
 
-// List returns a space's actions: pending first in rank order, then the most recent final ones. Filters apply
-// before the limit, so a search finds matches beyond the first page of the unfiltered list.
+// List returns a space's actions: pending first in rank order, then the most recent final ones. Filters and sorting apply
+// before the limit, so a search finds matches beyond the first page and a top-N view holds the first N in its order.
 func (svc *Service) List(ctx context.Context, spaceID string, f ListFilter) ([]*Action, error) {
 	if err := f.Validate(); err != nil {
 		return nil, err
@@ -556,12 +556,12 @@ func (svc *Service) List(ctx context.Context, spaceID string, f ListFilter) ([]*
 	now := svc.clock.Now().UnixMicro()
 	out := []*Action{}
 	for _, r := range rows {
-		if f.keep(r, now) && len(out) < f.limit() {
+		if f.keep(r, now) {
 			out = append(out, fromRow(r))
 		}
 	}
 	sortActions(out, f.Sort)
-	return out, nil
+	return out[:min(len(out), f.limit())], nil
 }
 
 // ListPending returns pending actions across the given spaces (the caller's authorized spaces), oldest first, for the
@@ -577,12 +577,13 @@ func (svc *Service) ListPending(ctx context.Context, allowed func(spaceID string
 	now := svc.clock.Now().UnixMicro()
 	out := []*Action{}
 	for _, r := range rows {
-		if (allowed == nil || allowed(r.SpaceID)) && f.keep(r, now) && len(out) < f.limit() {
+		if (allowed == nil || allowed(r.SpaceID)) && f.keep(r, now) {
 			out = append(out, fromRow(r))
 		}
 	}
+	// Sort before the limit cuts the list, so a top-N view holds the first N in the requested order, not the oldest N.
 	sortActions(out, f.Sort)
-	return out, nil
+	return out[:min(len(out), f.limit())], nil
 }
 
 // PendingCountsVisible returns the number of pending actions per space that visible keeps (type permissions).
