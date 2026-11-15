@@ -334,6 +334,20 @@ export function skipBlankCells(proto: object = CanvasRenderer.prototype) {
   }
 }
 
+/** Erases the screen and the scrollback and homes the cursor: what a terminal created in a reused instance is cleaned with. */
+export const ERASE_ALL = '\x1b[2J\x1b[3J\x1b[H'
+
+/**
+ * Terminal.reset() frees the terminal and creates another one in the same WebAssembly instance, and a new terminal
+ * starts out with the freed one's cells (wasm.test.ts): rows the new output has not drawn yet showed the old screen,
+ * sometimes (a seek or a "load earlier" drew the lines it wrote and, below them, what the screen showed before). Erasing
+ * the new terminal's screen first leaves it empty.
+ */
+export function resetTerminal(term: Terminal) {
+  term.reset()
+  term.write(ERASE_ALL)
+}
+
 /** The parts of a ghostty-web 0.4.0 Terminal that holdDrawing reaches (private in its typings). */
 interface Drawn {
   renderer?: { render(buffer: unknown, forceAll: boolean, viewportY: number, terminal: unknown, scrollbarOpacity?: number): void }

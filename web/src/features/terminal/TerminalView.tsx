@@ -7,7 +7,7 @@ import { API_PREFIX, isMiniApp } from '@/api/session'
 import { endReasonOf } from '@/api/streams'
 import { watchTransport } from '@/api/transport'
 import { clock } from '@/lib/format'
-import { createTerminal, disposeTerminal, fitFont, followCursor, holdDrawing, regularCell, rowHeight, scrollWithWheelAndTouch, setInputMode } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, followCursor, holdDrawing, regularCell, resetTerminal, rowHeight, scrollWithWheelAndTouch, setInputMode } from './ghostty'
 import { jumpToLive, keepingPosition, scrolledAway } from './scroll'
 import {
   apply,
@@ -251,11 +251,14 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
   const [earlier, setEarlier] = useState(0)
   // Set while earlier output loads: the viewer's lines from the bottom, restored once it is drawn.
   const reload = useRef<number | null>(null)
+  // The last record the screen had when earlier output was asked for: the reload is drawn once the new catch-up reaches it.
+  const reloadUntil = useRef(0)
   const [reloads, setReloads] = useState(0)
   const [reloading, setReloading] = useState(false)
   const loadEarlier = useCallback(() => {
     if (!term || reload.current !== null) return
     reload.current = Math.round(term.viewportY)
+    reloadUntil.current = drawn.current.lastSeq
     tailBytes.current = nextTail(tailBytes.current)
     setReloading(true)
     setReloads((n) => n + 1)
@@ -268,7 +271,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     if (reload.current !== null) {
       // Earlier output: draw the larger tail on a clean terminal, keeping the old picture until it is done.
       catchUp(1)
-      term.reset()
+      resetTerminal(term)
       drawn.current = emptySummary()
     }
     const after = drawn.current.lastSeq
@@ -278,7 +281,10 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     const fed = feed(term, drawn.current, (s, backlog) => {
       drawn.current = s
       catchUp(backlog)
-      if (backlog === 0 && reload.current !== null) {
+      // The tail event's own records (the size and modes, seq 0) can drain on their own before the output after them has
+      // arrived: restoring the viewer's lines then finds no scrollback to scroll into and leaves them at the bottom. So
+      // it waits until the catch-up has reached the record the screen ended on before.
+      if (backlog === 0 && reload.current !== null && s.lastSeq >= reloadUntil.current) {
         // Back to the lines the viewer was reading, now with earlier output above them.
         term.scrollToBottom()
         term.scrollLines(-reload.current)
@@ -488,7 +494,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
     (tail: RecordingTail, recs: readonly RecordingRecord[], done?: () => void) => {
       if (!term) return
       stopFeed()
-      term.reset()
+      resetTerminal(term)
       setRendering(true)
       const catchUp = catchingUp(term)
       catchUp(1)
@@ -514,7 +520,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
       posRef.current = end
       setPos(end)
       if (end === 0) {
-        term.reset()
+        resetTerminal(term)
         sumRef.current = emptySummary()
         setSum(sumRef.current)
         setRendering(false)
