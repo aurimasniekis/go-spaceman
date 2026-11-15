@@ -217,12 +217,12 @@ func TestCaptureForwardPlacement(t *testing.T) {
 	})
 	e.msg(func(m *botapi.Message) {
 		m.Text = "hidden"
-		m.ForwardOrigin = raw(map[string]any{"type": "hidden_user", "sender_user_name": "Ghost"})
+		m.ForwardOrigin = raw(map[string]any{"type": "hidden_user", "sender_user_name": "Ghost", "date": 1700000000})
 	})
 	if e.createdN() != 3 {
 		t.Fatalf("created %d", e.createdN())
 	}
-	want := []string{"> Forwarded from Eve clickhttp://x Mal lory\n\nlook at this", "> Forwarded from News (Ed)\n\nchannel post", "> Forwarded from Ghost\n\nhidden"}
+	want := []string{"> Forwarded from Eve clickhttp://x Mal lory\n\nlook at this", "> Forwarded from News (Ed)\n\nchannel post", "> Forwarded from Ghost (2023-11-14)\n\nhidden"}
 	for i, w := range want {
 		c := e.api.created[i]
 		if c["body"] != w {

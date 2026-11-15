@@ -124,6 +124,7 @@ func originLine(raw json.RawMessage) string {
 	}
 	var o struct {
 		Type       string `json:"type"`
+		Date       int64  `json:"date"`
 		SenderUser *struct {
 			FirstName string `json:"first_name"`
 			LastName  string `json:"last_name"`
@@ -163,6 +164,9 @@ func originLine(raw json.RawMessage) string {
 	}
 	if sig := markupFree(clean(o.AuthorSignature, nameRunes)); sig != "" && o.Type == "channel" {
 		name += " (" + sig + ")"
+	}
+	if o.Date > 0 {
+		name += " (" + time.Unix(o.Date, 0).UTC().Format("2006-01-02") + ")"
 	}
 	return "Forwarded from " + name
 }
