@@ -172,14 +172,7 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			return m.SpaceID, m.Key.ID, m.LinkID, true
 		},
 		// Approvals and forms too complex for the chat open in the Mini App; without its host there is no button.
-		AppURL: func(spaceID, actionID string) string {
-			o := c.miniAppOrigin()
-			if o == "" {
-				return ""
-			}
-			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
-			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
-		},
+		AppURL: func(spaceID, actionID string) string { return miniAppActionLink(c.miniAppOrigin(), spaceID, actionID) },
 		// A page of the Mini App (the /settings command); without its host there is none.
 		AppPage: func(path string) string {
 			if o := c.miniAppOrigin(); o != "" {
@@ -211,6 +204,24 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 		Clock: c.Clock,
 		Log:   obs.Component(c.Log, "telegram"),
 	}))
+}
+
+// miniAppActionLink is the Mini App page of one human action on the Mini App origin: the shell's route (the web's
+// /spaces/$spaceId/human?action=, which the deep link human-<space>-<action> opens too). It is "" without an origin.
+func miniAppActionLink(origin, spaceID, actionID string) string {
+	if origin == "" {
+		return ""
+	}
+	return origin + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
+}
+
+// cardAppURL is the Mini App link a notifier card's cut body continues in. Only a human action has a page of its own
+// here, so the other cards offer no button.
+func (c *Central) cardAppURL(r notify.Resource) string {
+	if r.Type != notify.TypeHumanAction {
+		return ""
+	}
+	return miniAppActionLink(c.miniAppOrigin(), r.SpaceID, r.ID)
 }
 
 // topicSpaces lists the spaces whose Telegram settings turn topics mode on and that Telegram may see, sorted.
