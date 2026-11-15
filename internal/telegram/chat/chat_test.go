@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
@@ -53,6 +54,10 @@ type fakeAPI struct {
 	human    map[string]*humanAction
 	responds []map[string]any
 	respHdr  []string
+	// enforced action IDs have an enforced approval behind them (get-action-approval); respTok records the
+	// confirmation token each respond carried.
+	enforced map[string]bool
+	respTok  []string
 
 	// capture: uploads and created items.
 	atts     map[string]*storedAtt
@@ -189,6 +194,14 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out(200, a)
+	case len(seg) == 5 && seg[2] == "human-actions" && seg[4] == "approval" && r.Method == http.MethodGet:
+		a := f.human[seg[3]]
+		if a == nil || a.SpaceID != seg[1] || !f.enforced[a.ID] {
+			out(404, map[string]any{"status": 404})
+			return
+		}
+		out(200, map[string]any{"id": "apr_1", "human_action_id": a.ID, "operation": "mcp.github.merge", "resource": "repo/x",
+			"args_digest": "sha256:abc", "args_preview": "SECRET-ARGS", "uses_allowed": 1, "state": "pending", "request_expires_at": "2026-11-14T10:00:00Z"})
 	case len(seg) == 5 && seg[4] == "respond" && r.Method == http.MethodPost:
 		a := f.human[seg[3]]
 		if a == nil || a.SpaceID != seg[1] {
@@ -199,6 +212,7 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.responds = append(f.responds, body)
 		f.respHdr = append(f.respHdr, r.Header.Get("If-Match"))
+		f.respTok = append(f.respTok, api.ApprovalConfirmationFrom(r.Context()))
 		switch {
 		case r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, a.Version):
 			out(412, map[string]any{"status": 412, "detail": "changed"})
@@ -287,6 +301,8 @@ type env struct {
 	files        []sentFile
 	allow        func(string, updates.Kind) bool
 	hideA        atomic.Bool // spA stops being visible to Telegram
+	apConfirm    atomic.Bool // spA allows enforced approvals in chat (enforced_approvals = confirm)
+	arms         []string    // ArmApproval calls: "link space action outcome version"
 	dlNow, dlMax atomic.Int32
 	dlDelay      time.Duration // each download takes this long (to overlap them)
 }
@@ -360,7 +376,8 @@ func newEnv(t *testing.T) *env {
 	}
 	e := &env{t: t, srv: srv, l: updates.Link{ID: "tgl_1", UserID: "usr_1", ChatID: chatID}}
 	e.clk = clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
-	e.api = &fakeAPI{hdrs: map[string]string{}, items: map[string]*inboxItem{}, human: map[string]*humanAction{}, atts: map[string]*storedAtt{}}
+	e.api = &fakeAPI{hdrs: map[string]string{}, items: map[string]*inboxItem{}, human: map[string]*humanAction{}, atts: map[string]*storedAtt{},
+		enforced: map[string]bool{}}
 	e.addItem(spA, iid('1'), "First item", "new", "# hello\nbody text")
 	e.addItem(spS, iid('2'), "Summary item", "new", "SECRET BODY")
 	e.addItem(spB, iid('3'), "Hidden item", "new", "nope")
@@ -376,6 +393,9 @@ func newEnv(t *testing.T) *env {
 			s := settings.DefaultSpace(id)
 			if id == spA && e.hideA.Load() {
 				return s
+			}
+			if id == spA && e.apConfirm.Load() {
+				s.EnforcedApprovals = settings.ApprovalsConfirm
 			}
 			switch id {
 			case spA, spD, spViewer:
@@ -397,6 +417,10 @@ func newEnv(t *testing.T) *env {
 				return nil, errors.New("gone")
 			}
 			return nopSeekCloser{bytes.NewReader(a.content)}, nil
+		},
+		ArmApproval: func(link, space, action, outcome string, version int64) string {
+			e.arms = append(e.arms, fmt.Sprintf("%s %s %s %s %d", link, space, action, outcome, version))
+			return fmt.Sprintf("tok-%d", len(e.arms))
 		},
 		AlbumQuiet: 30 * time.Millisecond,
 		PageSize:   2,

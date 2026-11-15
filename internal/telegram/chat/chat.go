@@ -80,6 +80,9 @@ type Options struct {
 	ResolveMessage func(ctx context.Context, chatID int64, messageID int) (spaceID, msgID, linkID string, ok bool)
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
+	// ArmApproval arms the server's confirmation of an enforced approval for the first step of deciding it in chat
+	// (api.ApprovalConfirmations.Arm); "" or nil: enforced approvals can't be decided in chat.
+	ArmApproval func(linkID, spaceID, actionID, outcome string, version int64) string
 
 	// Allow takes one unit of a link's inbound limit of that kind (updates.Limiter.Allow); nil: no limit. Capture costs
 	// one KindInboxItem per item and one KindDownload per file moved in either direction.

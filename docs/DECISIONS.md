@@ -4532,7 +4532,8 @@
       AST (goldmark), so Telegram's MarkdownV2/HTML parsers never see untrusted text; links are http, https or mailto
       only; Mermaid is a code block plus a Mini App button (no server-side rendering).
   14. **Enforced approvals are web-only by default (Q2).** Advisory approvals can be decided in chat (Approve →
-      Confirm; Deny needs a note). An enforced approval (ADR-0024) shows operation, resource, scope, expiry, uses and the
+      Confirm; Deny needs a note). Implementation detail (TG-7-2): see "Approvals from Telegram" under the
+      implementation notes below. An enforced approval (ADR-0024) shows operation, resource, scope, expiry, uses and the
       argument digest (never arguments or secrets, SM-APPR-005) with "Decide in browser"; a space may set
       `enforced_approvals = confirm` to allow a two-step confirmation in chat. Authorization is rechecked at response
       time either way (SM-APPR-003), with change 5 of decision 4 for Telegram actors. Never in bulk (SM-HUI-005). Every response
@@ -4755,6 +4756,37 @@
     principal on every `approval` action (enforced ones are always that type, ADR-0024), whatever the space's
     `enforced_approvals` setting; questions, todos, messages and custom types stay open. TG-7 relaxes this guard to the
     per-space `confirm` opt-in for enforced approvals.
+  - **Approvals from Telegram (TG-7-2, security-relevant change: relaxes the TG-4a guard above).** The rule is the
+    server's, in `respond-human-action` (`internal/api/telegram_approvals.go`), and the chat only renders it:
+    - *Advisory* approvals (no `approvals` row behind the action) are decided from the bot or the Mini App like on the
+      web: `approval:decide` on the link's subjects, and a denial needs a note (the human service). The chat asks
+      Approve → "Approve: <action>? [Confirm approve] [Back]", and Deny → a ForceReply note that it asks for again
+      when empty; both act on the form's version (`If-Match`) within the 15 min form TTL.
+    - *Enforced* approvals: an action counts as enforced when an `approvals` row points at it or its dedup key starts
+      with `approval:` (the approvals package asks before it links its row), and a lookup error refuses. Refused from
+      Telegram unless the **action's own space** has `enforced_approvals = confirm` and is visible to Telegram, read
+      from the store (not the settings cache) on every request, so turning the opt-in off applies to the next request.
+      With the opt-in, the decision must come from the bot in process (never the Mini App over HTTP) and carry a
+      confirmation token armed by the chat's first step (Approve, or Deny) for the same link, space, action, outcome
+      and version: random 128-bit, single use (any attempt uses it up), 15 min TTL, at most 10 per link and 10 000 in
+      all, in memory only (`api.ApprovalConfirmations`; a restart means "tap again"). Only code inside central can arm
+      one; a context value never crosses HTTP. The first step answers Approve with the Confirm step and Deny with the
+      note prompt, so an enforced approve takes two taps and an enforced deny a tap and a note.
+    - The enforced card shows operation, resource, space, uses, request expiry and argument digest, never the action
+      body (it carries the redacted arguments) or the arguments (SM-APPR-005); without the opt-in it says it is decided
+      in the browser and has only "Decide in browser" (the Mini App link). The chat counts an action with the
+      `approval:` dedup key as enforced too, like the server. Notifier cards (TG-6) carry no detail text for an
+      enforced approval (same test: a row or the dedup key; a lookup error counts as enforced).
+    - *Cancel* stays refused from Telegram for every approval, whatever the setting: it finalizes the action (an
+      enforced approval becomes revoked) and the chat has no two-step withdrawal.
+    - The approver recheck before an approved operation runs (SM-APPR-003, decision 4 change 5) applies to decisions
+      made in chat, and for a `telegram:` decision it also requires the space's opt-in (visible, `confirm`) at
+      execution: withdrawing it, or hiding the space, ends approvals already decided in chat.
+    - Invariant (documented on `approvals.ask`): an approvals row is only linked to an action created by `ask` with the
+      `approval:<id>` dedup key, so an action read as advisory can't become enforced before it is finalized.
+    - Known, not changed here: `human.Create` returns any existing action with the same dedup key, so an action planted
+      under `approval:<id>` before `ask` runs would be linked; the chat's enforced card shows the approval row's fields,
+      not that action's body. Tracked as an open item for the human/approvals owners.
   - **Inbox capture (TG-8a-2).** A linked user's non-command message becomes an inbox item in the link's current space
     (or its only visible one), created as the link's Telegram principal through the in-process API, so the web's
     authorization (`inbox:write`, `attachment:write`), size cap, content sniffing, quota and audit apply; a space hidden

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -45,6 +46,7 @@ func (c *Central) trustedProxies() []netip.Prefix {
 func (c *Central) newTelegram(ctx context.Context) {
 	log := obs.Component(c.Log, "telegram")
 	c.TelegramSettings = tgsettings.New(c.Store, c.Audit, c.Bus, log)
+	c.TelegramConfirmations = api.NewApprovalConfirmations(c.Clock.Now)
 	if err := c.TelegramSettings.Load(ctx); err != nil {
 		log.Warn("telegram: loading the settings failed; using the defaults until they load", slog.String("error", err.Error()))
 	}
@@ -151,7 +153,9 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
 			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
 		},
-		Allow: c.TelegramLimiter.Allow,
+		// The first step of deciding an enforced approval in chat arms the respond rule's confirmation (ADR-0083 decision 14).
+		ArmApproval: c.TelegramConfirmations.Arm,
+		Allow:       c.TelegramLimiter.Allow,
 		Content: func(ctx context.Context, spaceID, attachmentID string) (io.ReadSeekCloser, error) {
 			_, rc, err := c.Attachments.Open(ctx, spaceID, attachmentID)
 			return rc, err

@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Telegram needs-you forms (ADR-0083, TG-7-1, not usable until the bot ships): `/needsyou` lists what waits for you; questions
   (options and free text), todos (steps), messages and custom types with a simple response schema (a step-by-step wizard)
   are answered in chat as you, with the same checks as the web. Approvals stay in the app.
+- Telegram approvals (ADR-0083, TG-7-2, not usable until the bot ships): an advisory approval is decided in chat with
+  Approve → Confirm, and a denial asks for a note. An enforced approval stays in the browser unless its space sets
+  `enforced_approvals = confirm`; then it takes a second confirmation in chat, checked by the server. Withdrawing an
+  approval from Telegram stays refused.
 - Telegram inbox capture (ADR-0083, TG-8a-2; the bot isn't usable yet): a message to the bot becomes an inbox item in
   the chosen space. Text or a caption is the body, photos and files become attachments (up to 20 MB, through the API's
   upload checks), a forward adds a "Forwarded from" line to the body, and an album becomes one item. Every capture is

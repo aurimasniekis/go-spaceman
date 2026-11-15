@@ -277,11 +277,12 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "human.respond", err)
 				}
-				if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {
-					// Fail closed (ADR-0083 §2.4, Q2): an approval, enforced (ADR-0024) or advisory, is decided on the web,
-					// never from Telegram, whatever the space's enforced_approvals setting. TG-7 relaxes this to the
-					// per-space "confirm" opt-in for enforced approvals.
-					return nil, d.fail(ctx, "human.respond", apperr.New(apperr.CodeForbidden, "approvals are decided on the web, not from Telegram"))
+				if p := PrincipalFrom(ctx); cur.Type == human.TypeApproval && p.ViaTelegram() {
+					// From Telegram (ADR-0083 decision 14): advisory approvals as on the web; enforced ones only where the
+					// space opted in, from the chat, with its second confirmation (telegram_approvals.go).
+					if err := d.telegramApproval(ctx, p, cur, in.Body.Outcome, v); err != nil {
+						return nil, d.fail(ctx, "human.respond", err)
+					}
 				}
 				if cur.Type == human.TypeApproval {
 					p := PrincipalFrom(ctx)
@@ -337,8 +338,9 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				}
 				if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {
 					// Cancelling finalizes an approval too (approvals.onFinalized turns it into Revoked, which ends an
-					// enforced approval), so it is refused from Telegram exactly like a decision (see respond above).
-					// Assign, move, clarify and comment finalize nothing and stay allowed.
+					// enforced approval), and the chat has no two-step withdrawal, so it stays refused from Telegram for
+					// every approval, whatever the space's enforced_approvals setting (ADR-0083 decision 14). Assign, move,
+					// clarify and comment finalize nothing and stay allowed.
 					return nil, d.fail(ctx, "human.cancel", apperr.New(apperr.CodeForbidden, "approvals are decided on the web, not from Telegram"))
 				}
 				a, err := svc.Cancel(ctx, Actor(ctx), in.SpaceID, in.ActionID, v, in.Body.Reason)

@@ -591,6 +591,10 @@ func (svc *Service) request(ctx context.Context, p Requester, pol *db.ApprovalPo
 
 // ask creates the human action for a pending approval. The dedup key makes it safe to repeat after a crash between
 // storing the approval and asking.
+//
+// Invariant the Telegram respond rule relies on (ADR-0083 decision 14): an approvals row is only ever linked to an
+// action created here, whose dedup key is "approval:<id>", so an action that looks advisory (no row, no such key) can
+// never become enforced between that check and its finalization. Code that links a row to any other action breaks it.
 func (svc *Service) ask(ctx context.Context, p Requester, a db.Approval, pol *db.ApprovalPolicy) error {
 	exp := time.UnixMicro(a.RequestExpiresAt).UTC()
 	who := fmt.Sprintf("run `%s` (%s)", a.RequesterRun, a.RequesterRole)
@@ -774,6 +778,15 @@ func (svc *Service) ForAction(ctx context.Context, spaceID, actionID string) (*A
 		return nil, apperr.New(apperr.CodeNotFound, "no enforced approval for this action")
 	}
 	return svc.Get(ctx, spaceID, a.ID)
+}
+
+// Enforced reports whether an enforced approval stands behind a human action, in any space.
+func (svc *Service) Enforced(ctx context.Context, actionID string) (bool, error) {
+	_, err := svc.s.R().GetApprovalByAction(ctx, actionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // List returns a space's most recent approvals.

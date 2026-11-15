@@ -9,9 +9,11 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
+	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
 
 // The approver re-check (SM-APPR-003) never counts a SpaceMan MCP call as an approver (ADR-0063): not by its "via",
@@ -61,7 +63,7 @@ func TestApproverRecheckRefusesSpacemanMCP(t *testing.T) {
 
 // The approver re-check of a decision made through Telegram (ADR-0083 §3.2 change 5): it holds while the link is
 // active, for the same user, who is enabled and not Limited, and the link's capped subject and the user's grants both
-// allow approval:decide. A revoked or suspended link, a link capped to viewer, a removed user grant, a disabled user, a
+// allow approval:decide, and the space still has the enforced-approval opt-in (TG-7-2). A revoked or suspended link, a link capped to viewer, a removed user grant, a disabled user, a
 // link of another user, or a missing link each fail it.
 func TestApproverRecheckTelegram(t *testing.T) {
 	t.Parallel()
@@ -106,7 +108,15 @@ func TestApproverRecheckTelegram(t *testing.T) {
 		exec(`INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES ('telegram:tgl_a', ?, ?, 'telegram', 0, 't')`, role, space)
 	}
 	setCap("operator")
-	c := &Central{Store: s, Authz: e, Auth: svc}
+	// The space, visible to Telegram with the enforced-approval opt-in (TG-7-2: the recheck requires it too).
+	exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_r', 'r', 'active', 0, 't', 0)`)
+	exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES (?, 'r', 'R', 'nod_r', 'active', 'w', 0, 't', 0)`, space)
+	setOptIn := func(enabled int, mode string) {
+		exec(`INSERT INTO space_telegram_settings (space_id, enabled, content_level, enforced_approvals, topics, terminal_watch, created_at, created_by, updated_at, updated_by, version)
+			VALUES (?, ?, 'full', ?, 0, 0, 0, 't', 0, 't', 1) ON CONFLICT (space_id) DO UPDATE SET enabled = excluded.enabled, enforced_approvals = excluded.enforced_approvals`, space, enabled, mode)
+	}
+	setOptIn(1, "confirm")
+	c := &Central{Store: s, Authz: e, Auth: svc, TelegramSettings: tgsettings.New(s, audit.NewWriter(kr), eventbus.New(), nil)}
 	by := audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "telegram:tgl_a", Channel: audit.ChannelTelegram}
 	check := func(what string, by audit.Actor, want bool) {
 		t.Helper()
@@ -115,6 +125,12 @@ func TestApproverRecheckTelegram(t *testing.T) {
 		}
 	}
 	check("active link", by, true)
+	setOptIn(1, "web_only")
+	check("space opt-in withdrawn", by, false)
+	setOptIn(0, "confirm")
+	check("space hidden from Telegram", by, false)
+	setOptIn(1, "confirm")
+	check("opt-in restored", by, true)
 	check("another user's actor on the link", audit.Actor{Type: audit.ActorUser, ID: other.ID, Via: "telegram:tgl_a"}, false)
 	check("missing link", audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "telegram:tgl_none"}, false)
 	check("empty link id", audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "telegram:"}, false)
@@ -160,4 +176,14 @@ func TestApproverRecheckTelegram(t *testing.T) {
 
 	exec(`UPDATE telegram_links SET state = 'revoked', revoked_at = 1 WHERE id = 'tgl_a'`)
 	check("revoked link", by, false)
+}
+
+// Without an approvals service the Telegram respond rule counts every approval as enforced (never advisory).
+func TestEnforcedApprovalWithoutApprovalsService(t *testing.T) {
+	t.Parallel()
+	c := &Central{}
+	ok, err := c.enforcedApproval(context.Background(), &human.Action{ID: "hum_1"})
+	if err != nil || !ok {
+		t.Fatalf("enforcedApproval with no approvals service = %v, %v; want true", ok, err)
+	}
 }
