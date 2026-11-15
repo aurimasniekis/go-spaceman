@@ -12,7 +12,7 @@ export function TgSpaceHeader({ spaceId }: { spaceId: string }) {
   const space = useSpace(spaceId)
   if (!space.data) return <Group mb="sm"><Skeleton h={28} w={200} /></Group>
   return (
-    <Group justify="space-between" mb="xs" wrap="nowrap" gap="xs">
+    <Group justify="space-between" mb="xs" wrap="nowrap" gap="xs" data-testid="space-header">
       <Box style={{ minWidth: 0 }}>
         <AnchorLink to="/" size="xs">‹ All spaces</AnchorLink>
         <Title order={4} lineClamp={1}>{space.data.name}</Title>
