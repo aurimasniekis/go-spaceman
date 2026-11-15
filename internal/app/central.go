@@ -604,6 +604,7 @@ func (c *Central) APIDeps() *api.Deps {
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
+		CatchUps: make(chan struct{}, max(1, c.Cfg.HTTP.CatchUpConcurrency)), CatchUpWait: c.Cfg.HTTP.CatchUpWait.D(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources())},
@@ -697,8 +698,9 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 	}
 	mux.Handle("/", ui)
 	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
-	// reads, with central keeping every response): writes must make progress.
-	return httpguard.WriteProgress(mux, c.Cfg.HTTP.WriteIdleTimeout.D())
+	// reads, with central keeping every response): writes must make progress. A client that declares a body and doesn't
+	// send it must not hold a connection either: body reads must make progress, and a refusal doesn't drain the body.
+	return httpguard.WriteProgress(httpguard.ReadProgress(mux, c.Cfg.HTTP.ReadIdleTimeout.D()), c.Cfg.HTTP.WriteIdleTimeout.D())
 }
 
 // ManagementHandler serves /healthz, /readyz and /metrics (SM-OBS-002). Bind it to a private address.
@@ -710,14 +712,21 @@ func (c *Central) ManagementHandler() http.Handler {
 	return mux
 }
 
-// Serve runs every listener until ctx ends, then shuts down gracefully within the configured timeout.
-func (c *Central) Serve(ctx context.Context) error {
-	d := c.APIDeps()
-	srv := &http.Server{Addr: c.Cfg.HTTP.Listen, Handler: c.Handler(d), ReadHeaderTimeout: c.Cfg.HTTP.ReadHeaderTimeout.D(), //nolint:contextcheck // handlers take their context from each request
+// publicServer is the public listener's server. It has no whole-request ReadTimeout or WriteTimeout, which would cut
+// event streams: the handler bounds body reads and response writes by progress instead (httpguard), and IdleTimeout
+// bounds a kept-alive connection waiting for its next request.
+func (c *Central) publicServer(ctx context.Context) *http.Server {
+	srv := &http.Server{Addr: c.Cfg.HTTP.Listen, Handler: c.Handler(c.APIDeps()), ReadHeaderTimeout: c.Cfg.HTTP.ReadHeaderTimeout.D(), IdleTimeout: c.Cfg.HTTP.IdleTimeout.D(), //nolint:contextcheck // handlers take their context from each request
 		ErrorLog: slog.NewLogLogger(obs.Component(c.Log, "http").Handler(), slog.LevelWarn), BaseContext: func(net.Listener) context.Context { return ctx }}
 	if c.Cfg.HTTP.TLSCertFile != "" {
 		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
+	return srv
+}
+
+// Serve runs every listener until ctx ends, then shuts down gracefully within the configured timeout.
+func (c *Central) Serve(ctx context.Context) error {
+	srv := c.publicServer(ctx)
 	errc := make(chan error, 2)
 	go func() {
 		var err error

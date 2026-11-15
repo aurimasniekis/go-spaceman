@@ -4207,6 +4207,28 @@
   runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
   reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
 - **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
+- **Follow-up (journal prune and hello slicing, 2026-11-14):**
+  - No protocol minor bump and no journal migration. Central already answers a hello with a reconcile that lists the
+    node's runs it still considers active, after it applied the hello's reports. The agent treats an ended run it sent
+    and that central no longer lists as acknowledged (memory only; after a restart nothing is acknowledged until the
+    next connection went through the exchange).
+  - The hello carries live and adoptable runs, plus ended runs not yet acknowledged that ended within 24 hours. Older
+    unacknowledged ended runs follow the welcome as `run.report` in slices of 100 every 250 ms, outside the connect
+    deadline. Acknowledged ended runs are not sent at all, so the hello is bounded by live and recent runs.
+  - The journal deletes an ended run after `journal_retention` (default 30 days, never below the 30-day pin window of
+    ADR-0077, at most 1 year) only when central acknowledged its final state, its recording is fully acknowledged and no
+    recorder or kept-back records remain, no transcript upload is unfinished and no dream's evidence positions refer to
+    it. Live and adoptable runs are never deleted. A run's recording files stay on disk.
+  - Not covered: central's apply of a hello still costs one read per reported run, so the hello of a node that was offline
+    with many unacknowledged runs is as large as before once, then small.
+  - An ended run that central's reconcile lists as active is unacknowledged again (the agent forgets that it sent it) and
+    its final state is reported at once, whatever the agent counted before: a central restored from a backup, a
+    follow-up report lost with the connection or one central failed to apply would otherwise never be resent, and the
+    stale sweeper (ADR-0074) would end the run `lost` two minutes after the reconcile and fence its real final state.
+  - Consequences: restoring central from a backup older than the retention loses the runs pruned since: they are swept
+    `lost` if central still lists them, and their recordings are not shipped again. Every agent restart resends all
+    ended runs once as follow-up (acknowledgements are memory only). Pruning runs only on the reconcile, once per
+    connection, not on a timer. Recording directories of pruned runs are not garbage-collected yet (backlog).
 
 ### ADR-0080 — The web terminal's scrollback is a byte limit: 24 MiB, at least 10,000 rows at 160 columns
 - **Status:** Accepted, 2026-11-13 (follow-up to ADR-0076's side finding).
@@ -4244,6 +4266,197 @@
   with the old value: 485 rows).
 - **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
 
+### ADR-0081 — A terminal shows the end of its recording first: tail catch-up with a mode prelude, earlier output on demand
+- **Status:** Accepted, 2026-11-13 (follows ADR-0076 and ADR-0080). No recording format change, no node protocol
+  change, no migration.
+- **Context (code, at v0.1.3 plus ADR-0080):**
+  - A live terminal's catch-up streamed the run's whole stored recording from seq 0, and the page applied it in slices
+    (ADR-0076). The tab stayed responsive, but a long run (tens of MB) downloaded and replayed everything before the
+    current screen was right: slow on a phone, and wasted bandwidth.
+  - Central read the whole recording into memory for each viewer's catch-up (`Recordings.Read`), and once per replay
+    page.
+  - Terminal output can't be read from the middle without the state before it. So the question was whether
+    recordings have natural checkpoints. Five real Claude Code recordings on a node (8 to 16 MB of output each) were
+    replayed in a reference emulator (xterm headless), and each final screen was compared with one drawn from only
+    the tail, at 25, 50, 75, 90 and 100% of each recording:
+    - **No usable clears.** One ED2 at the start, no ED3, no RIS.
+    - **Sync frames don't help.** Nearly every record opens a synchronized update (`CSI ? 2026 h`), but the classic
+      renderer repaints only its prompt area: a tail of quiet stretches holds the spinner and none of the text above
+      it.
+    - **The one exact checkpoint is rare.** The repaint after each recorder reattach (herdr-core's first paint, a
+      `gap` record followed by a reset of modes and the visible screen).
+  - Results of the comparison:
+    - **Classic renderer** (which SpaceMan sets with `tui: "default"`, ADR-0064): **1 MiB of tail drew the same 48 rows
+      as the whole recording at every point**. 256 KiB was wrong at about a third of them; 64 KiB at nearly all.
+    - **Modes matter.** A run that left the alternate screen at its end was drawn wrong from the tail, until the
+      DEC private modes in effect before it were restored.
+    - **The full-screen renderer** (alternate screen, differential repaint): 43–45 of 48 rows. Rows it never repaints,
+      such as the prompt's borders and the status line, are in no tail.
+- **Options considered:**
+  - (a) Snapshots in the recording (screen and modes, e.g. a periodic herdr-core first paint): exact for any program,
+    but a new record kind, a node change and a protocol minor. **Recorded as the follow-up for the full-screen
+    renderer; not built.**
+  - (b) **Tail catch-up with a mode prelude: chosen.** It needs no format or protocol change, and the measurements show
+    it is exact for the renderer SpaceMan runs.
+  - (c) Replay seeks use the same tail.
+- **Decision:**
+  - **Server** (`internal/recording`, `internal/api`):
+    - `ScanSegments` reads a recording one record at a time. `TailSegments` keeps only a window of the last N bytes of
+      output (at least one record, at most `MaxTailBytes` = 16 MiB). Records leaving the window pass through a
+      `ModeTracker`, which follows `CSI ? Pm h/l` (split across records too) and RIS for an allowlist: cursor keys (1),
+      origin (6), autowrap (7), cursor visibility (25), the alternate screens (47, 1047, 1049), mouse reporting
+      (1000–1006, 1015) and bracketed paste (2004).
+    - `GET …/terminal?tail=<bytes>` applies only to a fresh catch-up (no `after`, no `Last-Event-ID`). It first sends
+      an `event: tail` with `{from, skipped_bytes, cols, rows, modes[], gaps, truncated}` (what the output before the
+      tail left), then the tail's records, then live output. Reconnects resume after the last record, as before.
+    - `GET …/recording?tail=<bytes>` returns the same tail as one page, with `tail` set.
+    - **A tail starts at a character.** The tracker follows every CSI and string sequence (OSC, DCS, APC, PM, SOS) to
+      its end. When the cut falls inside one, the rest of it goes through the tracker (a mode it completes counts)
+      and is cut from the tail, and so are UTF-8 continuation bytes of a character that began before it. Replay does
+      the same (`ReplayIndex.tail`).
+    - Catch-ups without a tail, gap re-reads and plain pages now stream: a page keeps only its own records, and its
+      read stops after the page (its `gaps` cover the range read). `httpguard` (ADR-0078) still bounds writes to a
+      client that stops reading.
+    - **Bounded concurrency.** Every read of a stored recording (a terminal's catch-up or gap re-read, a recording
+      page or tail) takes one of `http.catch_up_concurrency` slots (default 8). It waits up to `http.catch_up_wait`
+      (default 5 s), then gets 503 with `Retry-After`; it never waits without bound. The live terminal reopens a
+      refused stream with back-off (a browser never retries an `EventSource` that got an error status), and replay
+      asks again for a refused page.
+  - **Live terminal** (`web/src/features/terminal`):
+    - Asks for a 1 MiB tail (`TAIL_BYTES`). It applies the `tail` event as records with seq 0 (size, the mode prelude,
+      gaps), then the tail, still in #37's slices.
+    - **Earlier output:** when the viewer is at the top of the scrollback (or the scrollback is empty) and output was
+      left out, it offers **Load earlier output**. That reconnects with 4× the tail: 1, then 4, then 16 MiB, and after
+      16 MiB the whole recording through the streamed, untailed path. It redraws on a clean terminal while the old
+      picture stays (`holdDrawing`), then returns the viewer to the lines they were reading.
+    - It stops offering once the scrollback holds `scrollbackRows(cols)` rows (ADR-0080): the terminal could not keep
+      earlier output anyway, and Replay has all of it.
+  - **Replay:**
+    - Fetches the tail first and draws the run's last screen from it. The full record list then loads page by page for
+      play and seeking, and isn't drawn again when it ends in the same record.
+    - A seek draws at most 1 MiB of output before its position, after the size and modes there (`ReplayIndex`: mode
+      checkpoints every 512 records, indexed a slice at a time), instead of everything from the start.
+  - **Compatibility:** only optional fields are added to the API.
+    - An older UI sends no `tail` and gets the whole recording as before.
+    - This UI against an older central gets no `tail` event or field, and draws the whole recording as before.
+    - Existing recordings are read unchanged.
+- **Measurements:** see the table below (`e2e/terminal-tail.spec.ts`, `SM_E2E_TAIL_MEASURE=1`).
+  The table shows time from navigation until the end of the output is on screen, and bytes received by then. It
+  covers a running run (live) and a finished one (replay). Each run is Claude-like output from the stub's `/redraw`:
+  about 5 MB and 22 MB, i.e. 7,000 and 31,000 repaints. Each measurement uses a fresh browser context in headless
+  Chromium on Linux, with central on the same machine, 2026-11-13. Before is the base of this change (ADR-0080) with
+  the shipping fix below applied, so that its central had the whole recording.
+
+  | Output | View | Device | Before: screen, received | After: screen, received |
+  |---|---|---|---|---|
+  | 5 MB | live | desktop 1× | 1.1 s, 6.7 MB | 0.9 s, 1.4 MB |
+  | 5 MB | live | desktop 4× CPU | 5.1 s, 6.7 MB | 3.6 s, 1.4 MB |
+  | 5 MB | live | phone 390 px, 4× | 5.2 s, 6.7 MB | 3.4 s, 1.4 MB |
+  | 5 MB | replay | desktop 1× | 1.0 s, 6.7 MB | 1.2 s, 8.1 MB¹ |
+  | 5 MB | replay | desktop 4× | 5.2 s, 6.7 MB | 4.0 s, 8.1 MB¹ |
+  | 5 MB | replay | phone 390 px, 4× | 5.1 s, 6.7 MB | 3.9 s, 8.1 MB¹ |
+  | 22 MB | live | desktop 1× | 3.2 s, 29.8 MB | 0.9 s, 1.4 MB |
+  | 22 MB | live | desktop 4× | 13.8 s, 29.8 MB | 3.3 s, 1.4 MB |
+  | 22 MB | live | phone 390 px, 4× | 13.7 s, 29.8 MB | 3.6 s, 1.4 MB |
+  | 22 MB | replay | desktop 1× | 2.8 s, 29.8 MB | 0.9 s, 21.6 MB¹ |
+  | 22 MB | replay | desktop 4× | 12.1 s, 29.8 MB | 3.5 s, 21.6 MB¹ |
+  | 22 MB | replay | phone 390 px, 4× | 12.0 s, 29.8 MB | 3.4 s, 21.6 MB¹ |
+
+  ¹ A replay draws its last screen from the 1.4 MB tail, but goes on to load the whole recording for play and seeking.
+  Over the local connection most of that arrived while the tail was being drawn. Everything was loaded after
+  4.9 s at 4×, against 12.2 s before; that is 31.2 MB, i.e. the 1.4 MB tail on top of the recording. A live
+  terminal stops at its tail.
+  - **What's left doesn't grow with the recording.** After the change, the 5 MB and 22 MB times are the same (3.3 to
+    3.6 s at 4×). What remains is the same for any length of output: the page, its chunks and the terminal starting,
+    plus drawing 1 MiB.
+  - **Found while measuring:** the node shipped a second's records to central as one message. A burst over the
+    protocol's 4 MiB message limit closed the connection, and those records never reached central's copy. The 22 MB
+    run kept only its last megabyte. Fixed separately: the node splits shipments into messages of at most 1 MiB.
+- **Consequences:**
+  - The current screen of a long run appears after about 1 MiB of output, whatever the run's length. Central holds
+    about one tail per viewer in memory: 3.9 MiB of heap while scanning a 50 MiB recording (`TestTailMemoryBounded`).
+  - Each catch-up still decompresses the whole recording on central, which costs CPU (under a second for 50 MiB in the
+    test) but not memory. The catch-up slots bound how many run at once. An index of checkpoints per segment would
+    remove the cost; it is not needed yet.
+  - The full-screen renderer's never-repainted rows can be missing from a tail until the viewer loads earlier output.
+    The fix is option (a), a follow-up.
+  - Colours are not part of the prelude: a tail that starts inside coloured text draws its first characters
+    uncoloured. This was invisible in every comparison.
+- **Not a security-relevant change:** nothing is relaxed. The same `terminal:watch` and `recording:read` checks apply,
+  and less output reaches the browser.
+
+### ADR-0082 — Rich Markdown rendering: GFM, lazily loaded code highlighting and Mermaid in strict mode (security-relevant change)
+- **Status:** Accepted, 2026-11-14 (operator request 2026-11-13: render Mermaid, highlighted code and all Markdown
+  features in the inbox, queue and needs-you views).
+- **Context:** `web/src/lib/markdown.ts` (marked + DOMPurify) renders every untrusted body: inbox items, task objectives,
+  acceptance criteria and results, human-action bodies, details, answers and comments, messages, cross-space requests,
+  knowledge answers, dreams, memory files, prompts and the event preview. It already did GFM tables and task lists. It
+  forbade `<svg>`, showed fenced code as plain text and had no bound on nesting: a body of 2,000 nested list levels kept
+  marked busy for minutes, 8,000 unmatched `*a ` for 15 s.
+- **Decision:**
+  - The shared renderer adds footnotes (`marked-footnote` 1.4.0), heading anchors (GitHub-style slugs, unique per body)
+    and per-view ID prefixes (`user-content-<hash>-`, from an FNV-1a hash of the body so a link to a heading still works
+    after a reload or in a new tab; a second view of the same body on the page gets `user-content-<hash>-1-` once
+    mounted), so two bodies on a page never share an ID and no ID can clobber a DOM property. A body scrolls to the
+    heading or footnote the address names once it renders. In-page links stay in the tab; every other link keeps
+    `target="_blank"` and `rel="noopener noreferrer nofollow"`.
+  - Sanitizing uses a DOMPurify instance of its own, so its hooks never touch mermaid's sanitizing (the shared
+    instance). Images render only when they are attachment content URLs (`/api/v1/spaces/<space>/attachments/att_…/content`,
+    exact pattern) or URLs the renderer's attachment resolver produced; any other image becomes a link (http/https) or
+    its alt text. Forbidden in addition to before: `frame`, `button`, `textarea`, `select`, `link`, `meta`, `base`, the
+    `srcset` and `sizes` attributes, and every `input` except task-list checkboxes. Attachment references are resolved
+    in the sanitizer hook (one function, `AttachmentResolver`, so another transport such as the Telegram Mini App can
+    supply blob: URLs), no longer by rewriting the source text. DOMPurify's URI allow-list has no `blob:`; a `blob:`
+    URL is kept only when it is exactly one the resolver produced for this body, so a `blob:` URL written in a body is
+    still removed.
+  - Bounds before parsing, outside fenced code: indentation at most 64 columns, at most 16 stacked block markers per
+    line, and a paragraph with more than 256 emphasis delimiters has them escaped (shown literally). A parser failure
+    renders the body as escaped text.
+  - Code: fences with a language are highlighted after mount with **@tanstack/highlight 1.2.12** (MIT; class-based,
+    synchronous, about 15 kB for core plus the module, each of its 78 grammars a separate lazy chunk). Tokens are built
+    as text nodes, never parsed as HTML. At most 50 blocks of at most 20,000 characters each, one at a time, yielding
+    between blocks. Colors are app tokens (`--sm-code-*`, Night Owl / Light Owl like the docs site, each checked at
+    4.5:1 in `contrast.test.ts`). Every block gets a copy button (Clipboard API; on an insecure origin the text is
+    selected instead), and its `<pre>` is focusable for keyboard scrolling. Compared with Shiki (TextMate grammars plus a
+    regex engine, much larger, colors inlined per theme) and highlight.js or Prism (class-based too, but not
+    the package the operator asked for), TanStack Highlight is small, emits classes that follow both themes through
+    CSS, and is synchronous and SSR-safe.
+  - Mermaid: `mermaid` 11.17.2, the version the docs site uses (its configuration there is mermaid's defaults, so only
+    the version is shared), loaded only when a body has a diagram and only once the diagram is near the viewport.
+    `securityLevel: 'strict'`, `maxTextSize` 10,000 and `maxEdges` 500, at most 20 diagrams per body, renders serialized,
+    temporary render elements removed on failure, and a queued render whose view went away (unmounted, or its source or
+    theme changed) is skipped before mermaid starts. The returned SVG is sanitized again (DOMPurify SVG and HTML
+    profiles with mermaid's own `foreignobject` addition; scripts, `<a>`, `<image>`, `<img>`, `<animate>`, `<set>`,
+    `srcset` and handlers removed) before it reaches the DOM: an `<img>` in an HTML label would otherwise load any URL,
+    with the session cookie on the same origin, or a tracking pixel where no CSP applies. Theme: mermaid's `base`
+    theme with Night Owl or Light Owl colors, following the app's color scheme; `theme`, `themeVariables`, `themeCSS`,
+    `darkMode` and the font are added to mermaid's `secure` keys, so a diagram's `%%{init}%%` or front matter can't
+    change them.
+  - Main-thread work: the size limits alone don't bound it. 4,000 bare node IDs fit in 10,000 characters and took
+    7 seconds in one task; 21 such diagrams in one body, 66 seconds. Measured in Chromium (mermaid 11.17.2, node of
+    2026-11-14), a render costs about 2.5-5 ms per node for flowcharts, class, state, ER and block diagrams and more for
+    mind maps (50 nodes about 0.7 s, 100 about 1.4 s). So: a diagram has at most 500 statements (lines, `;` and `&`
+    separated parts) and a body's diagrams at most 25,000 characters of source in all; a diagram over either renders
+    as its source with the reason. A diagram of at most 50 statements and 2,500 characters renders on its own when
+    near the viewport; a larger one shows a "Render diagram" button and renders only when clicked.
+    `e2e/ui-markdown-diagrams.spec.ts` renders the slowest kinds at the automatic limit and checks that no long task
+    runs 1 s or more. A failed render shows a one-line message and the source; the source is always available under the
+    diagram as its text alternative. `MermaidDiagram` renders one diagram from source on its own (for a future "view
+    diagram" page).
+  - Bundle: the eager JS stays where it was (+2.0 kB raw, +1.1 kB gzip, from chunk reshuffling and the theme's token
+    variables); the MarkdownView chunks grow by 10.9 kB raw (4.7 kB gzip); the lazy highlighter is 14.8 kB (4.9 kB gzip) plus one small chunk per grammar, lazy mermaid 614 kB (148 kB gzip) plus its per-diagram-type chunks. `scripts/check-dist.mjs` fails the build when
+    mermaid or the highlighter appears in an eagerly loaded chunk, and prints the sizes.
+- **Security-relevant change:** SVG generated by mermaid from untrusted source now reaches the DOM (bodies still cannot
+  contain `<svg>`). It is bounded by mermaid's strict mode, a second sanitizing pass and the UI's CSP (`script-src 'self'`,
+  `img-src 'self' data: blob:`), which also stops a diagram's style from loading remote content. Everything else in
+  this decision tightens the sanitizer. Hostile inputs are tested in `markdown.test.ts` (XSS vectors, pathological
+  nesting and delimiters, huge bodies and diagrams, `blob:` URLs), `mermaid.test.ts` (configuration and secure keys,
+  SVG sanitizing including label images, statement limit, skipped renders) and `highlight.test.ts` (tokens as text).
+- **Consequences:** a body over the bounds still renders, just with less structure; pathological bodies take at most a
+  few seconds to render rather than minutes (raw HTML nesting has no separate depth limit). A diagram renders on the
+  main thread (mermaid needs the DOM): automatically up to about 1 s each, larger ones only on a click, and none over
+  the statement limit or the body's budget.
+
 ### ADR-0084 — "Message the agent" is typed into the running session at once
 - **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
 - **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while
@@ -4259,6 +4472,75 @@
   the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
   `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
 - **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.
+
+### ADR-0085 — Central bounds request bodies by progress and by a total (security-relevant change)
+- **Status:** Accepted, 2026-11-14. **Security-relevant change:** it adds limits to central's public listener, and the
+  security review of the first version (`httpguard.ReadProgress`, PR #78) found that version weakened one and bypassed
+  another; both are corrected here.
+- **Context:** the listener had no `ReadTimeout`: a client that declared a body and sent none, or trickled it, held a
+  connection and goroutine (T-43). A whole-request `ReadTimeout` would cut event streams, the agent WebSocket and
+  slow uploads. The first version gave every body read `http.read_idle_timeout` (30 s). The review found two defects:
+  - **Upgrade bypass (high).** It skipped any request whose headers said `Connection: Upgrade` and `Upgrade:
+    websocket`. A client adding those to `POST /api/v1/spaces` or `POST /` with a `Content-Length` and no body held the
+    connection indefinitely, on any route. `WriteProgress` had the same header-only skip.
+  - **Lost total bound (high).** huma gives every operation `BodyReadTimeout` (5 s total unless set) and applies it
+    as a read deadline; the guard reset the deadline to now+30 s on every read and so overrode it. A login body sent
+    one byte per 29 s was held for up to 1 MiB × 29 s (`http.max_body_bytes` is 1 MiB), where main answered 408 at
+    5.7 s.
+- **Decision:**
+  - Only a real WebSocket handshake is passed through (`websocketHandshake`): a body-less HTTP/1.1 `GET` with the
+    upgrade headers and no `Transfer-Encoding`. `ReadProgress` guards every request that has a body, whatever its
+    headers; `WriteProgress` skips only a real handshake.
+  - Progress and total are both enforced. The guard's response writer implements `SetReadDeadline`, which huma
+    finds by unwrapping: the deadline is recorded as the total cap, and each read waits for the sooner of now+idle and
+    the cap. JSON operations keep huma's 5 s. `upload-attachment` sets `BodyReadTimeout` to 10 minutes
+    (`api.UploadBodyReadTimeout`): 25 MiB (`http.max_upload_bytes`) at a floor of about 43 KiB/s, with the idle bound still
+    applying to every read.
+  - A body whose handler sets no deadline (routes outside huma: `/agent/v1/enroll`, unauthenticated, and the MCP endpoint's
+    batch check) gets `httpguard.DefaultBodyBound` (5 s, huma's default) from its first read; a handler raises or clears it
+    through `SetReadDeadline`. (Round 2 of the review: a 1-byte/400 ms trickle on enrolment was still held after 15 s.)
+  - No new setting: the total is the operation's own bound.
+- **Consequences (numbers per connection):** a JSON operation, the enrolment endpoint or the MCP endpoint: at most 5 s, ≤ 1 MiB buffered. An upload (it requires an
+  authenticated caller; the body is read after authentication): at most 10 min, ≤ 25 MiB. A stalled client is cut at
+  30 s regardless. There is **no per-IP or global connection cap**: N connections hold N goroutines for up to those
+  bounds, which is the residual in T-43. A client slower than 43 KiB/s can't upload 25 MiB, and gets a 408; a slower link
+  needs smaller files.
+- **Evidence:** `TestSlowOrEmptyBodyCannotHoldConnection` (upgrade-header rows), `TestTrickledBodyMeetsTotalBound` (408 at
+  about 5 s), `TestBodyGuardKeepsStreamsAndUploads`, and in `internal/httpguard` `TestUpgradeHeadersWithBodyAreStillGuarded`,
+  `TestHandlerDeadlineIsATotalBound`, `TestDefaultBodyBoundApplies`, `TestOnlyWebSocketUpgradesPassThrough`, and `TestTrickledEnrollBodyMeetsDefaultBound`. The bypass and trickle probes fail on 80a7f5f.
+
+### ADR-0086 — Central ignores a run report that is behind the recorded state
+- **Status:** Accepted, 2026-11-14. No migration, no node protocol change. Not a security-relevant change: no check,
+  limit or default is relaxed; central applies fewer reports.
+- **Context:** central re-sends an unacknowledged launch on every kick. The node acknowledges the repeat as a duplicate
+  and reports the run's journal row from its session goroutine (`agent.command`), while the launch goroutine moves the
+  row to `running` and reports that. The two reports are not ordered. A duplicate's `starting` report, read before the
+  launch finished, could reach central after `running`. `applyRunReport` only refused live reports for an ended run, so
+  it applied the stale one: the run went back to `starting` and `UpdateRunObserved` cleared its `terminal_id` while the
+  terminal was live (seen in CI as a HarborPilot node e2e flake). Two places could fix it: the node could order its
+  reports per run (re-read under the run's lock, or a sequence number), or central could refuse a report that goes
+  backwards.
+- **Decision:** central refuses it (`staleReport` in `internal/fleet/runs.go`). Within one run row the node's state
+  only moves forward: `pending`, `starting`, `running`, `stopping`, then an ended state, and a row's generation never
+  changes (a relaunch is a new run row). A live report whose state ranks below the recorded live state is ignored. So is
+  a live report without a terminal when central already has one, because no node path clears a live run's terminal.
+  Central's own `unknown` (node disconnected) ranks below every live state, so a reconnecting node's re-reported journal
+  replaces it. An ignored report is not fenced, since fencing sends a kill and the run is live. If central wants the run
+  stopped, the stop command is still queued, as for any live report.
+- **Why central, not the node:** the guard covers every path that can deliver an old row: the duplicate launch, a
+  hello's journal re-report racing a live report, and older agents in the fleet, which need no upgrade. Ordering on the
+  node would mean either blocking the session goroutine on the run's lock (held while the runner starts the program,
+  which stalls every other command for that node) or adding a per-run sequence to the protocol and the journal (a
+  protocol minor and a migration). Neither is minimal.
+- **Transitions checked:** the forward path, including a managed launch reporting `starting` twice; stopped before
+  start (`starting` to `exited` with no terminal); a reconnect after `unknown`; adoption after a node restart (`unknown`
+  to `running` with a new terminal); relaunch, which gets a new run and generation, so the existing generation fence
+  applies; the stale-run sweeper and node `exited`/`failed`/`lost`, which are ended states and keep their own guards
+  (ADR-0074).
+- **Consequences:** if a node ever needs a run to move backwards within a generation (for example, restarting a program
+  in place), that needs a new generation or an explicit protocol change, not a plain report.
+- **Evidence:** `TestStaleStartingReportDoesNotOverwriteRunning` (failed on main), `TestRunReportOrderGuard` and
+  `TestStaleReportStillStopsUnwantedRun` in `internal/fleet/run_report_order_test.go`.
 
 ## 2. Open items and unresolved contracts
 

@@ -51,6 +51,10 @@ Configures the web/API listener and the separate management listener (SM-OBS-002
 | `http.max_upload_bytes` | `26214400` | `SPACEMAN_HTTP_MAX_UPLOAD_BYTES` | Bounds one attachment upload (SM-ATT-002). |
 | `http.read_header_timeout` | `10s` | `SPACEMAN_HTTP_READ_HEADER_TIMEOUT` | Bounds how long a client may take to send request headers. |
 | `http.write_idle_timeout` | `1m0s` | `SPACEMAN_HTTP_WRITE_IDLE_TIMEOUT` | Bounds how long one piece (32 KiB) of a response may wait for the client to read it (1s to 10m). It bounds progress, not the whole response: a slow download that keeps moving is never cut off, but a client that stops reading is disconnected instead of holding the response in central's memory. WebSocket connections (nodes, terminals) keep their own timeouts. |
+| `http.catch_up_concurrency` | `8` | `SPACEMAN_HTTP_CATCH_UP_CONCURRENCY` | Bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused with 503 and Retry-After (ADR-0081). |
+| `http.catch_up_wait` | `5s` | `SPACEMAN_HTTP_CATCH_UP_WAIT` | Bounds how long a terminal catch-up or recording read waits for one of catch_up_concurrency's slots (0 to 1m; 0 refuses at once). |
+| `http.read_idle_timeout` | `30s` | `SPACEMAN_HTTP_READ_IDLE_TIMEOUT` | Bounds how long one read of a request body may wait for the client to send data (1s to 10m). It bounds progress, not the whole request: the whole body must also arrive within its operation's bound (5 s for JSON operations, 10 minutes for an attachment upload); within that bound a large upload that keeps moving is never cut off, but a client that declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request refused before its body is read closes its connection instead of draining the body. Requests without a body (event streams) and WebSocket connections are unaffected. |
+| `http.idle_timeout` | `2m0s` | `SPACEMAN_HTTP_IDLE_TIMEOUT` | Bounds how long a kept-alive connection may wait for its next request (1s to 1h). |
 
 ### `log`
 
@@ -206,6 +210,7 @@ Bounds graceful shutdown.
 | `data_dir` | `/var/lib/spaceman-agent` | `SPACEMAN_AGENT_DATA_DIR` | Holds the node journal, the agent's herdr-core home, space folders and memory (absolute). |
 | `management_listen` | (empty) | `SPACEMAN_AGENT_MANAGEMENT_LISTEN` | Validated (host:port) but not served by this build: the node agent has no management listener yet (docs/LIMITATIONS.md). |
 | `capacity` | `4` | `SPACEMAN_AGENT_CAPACITY` | The maximum number of concurrent runs this node accepts (SM-LIMIT-001; 1-256). |
+| `journal_retention` | `720h0m0s` | `SPACEMAN_AGENT_JOURNAL_RETENTION` | How long the journal keeps an ended run after its final state: older ended runs are deleted once central acknowledged their final state, their recording is fully shipped and their transcript upload is finished (30 days to 1 year; default 30 days, the harness pin window of ADR-0077). |
 
 ### `central`
 

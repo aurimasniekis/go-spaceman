@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"regexp"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -668,6 +670,24 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			fenced = true
 			return nil
 		}
+		// Within one run row the node's state only moves forward (pending, starting, running, stopping, then ended), and a
+		// row's generation never changes. A live report behind what central already has, or one without the terminal
+		// central already recorded, was read before the newer one and delivered after it (the duplicate-launch path
+		// reports from the session goroutine, outside the launch's ordering): applying it would lose the newer state and
+		// clear terminal_id (ADR-0086). It is ignored, not fenced: fencing would stop a live run. A run central wants
+		// stopped still gets its stop command.
+		if staleReport(r, rep) {
+			// Logged after commit: the write transaction does no I/O (AGENTS.md). Only ids and states are logged.
+			tx.AfterCommit(func() {
+				obs.Component(svc.opts.Log, "fleet").Debug("run report ignored: behind the recorded state",
+					slog.String(obs.FieldRunID, r.ID), slog.String("run.recorded_state", r.Observed), slog.String("run.reported_state", rep.State))
+			})
+			if r.Desired == "stopped" {
+				return svc.queueCommand(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdStop, "stop:"+r.ID+":reconcile",
+					proto.StopPayload{Mode: "interrupt", Grace: 15, Reason: "central wants this run stopped"})
+			}
+			return nil
+		}
 		// A run the stale-run sweeper ended stays exactly as it ended it (ADR-0074): a node that reconnects later and
 		// reports a final state from its journal would otherwise end the run a second time or replace the sweep's reason.
 		if (r.EndReason == EndStaleNotOnNode || r.EndReason == EndStaleLeaseLost) && ended(r.Observed) {
@@ -815,6 +835,35 @@ func reportUnchanged(r db.Run, rep proto.RunReport) bool {
 		}
 	}
 	return r.Desired != "stopped" || ended(rep.State)
+}
+
+// liveRank orders the live states a node reports for one run. Central's own RunUnknown ranks below them all (-1), so
+// a reconnecting node's re-reported journal replaces it.
+func liveRank(state string) int {
+	switch state {
+	case proto.RunPending:
+		return 0
+	case proto.RunStarting:
+		return 1
+	case proto.RunRunning:
+		return 2
+	case proto.RunStopping:
+		return 3
+	}
+	return -1
+}
+
+// staleReport reports whether a live report is older than the run's recorded live state: an earlier state, or the same
+// one without the terminal central already has (no node path clears a run's terminal while it is live). Ended runs and
+// ended reports are handled by applyRunReport's other guards.
+func staleReport(r db.Run, rep proto.RunReport) bool {
+	if ended(rep.State) || ended(r.Observed) {
+		return false
+	}
+	if rep.TerminalID == "" && r.TerminalID != "" {
+		return true
+	}
+	return liveRank(rep.State) < liveRank(r.Observed)
 }
 
 func outboxRun(r db.Run) outbox.Run {
