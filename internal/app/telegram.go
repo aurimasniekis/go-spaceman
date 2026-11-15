@@ -54,7 +54,10 @@ func (c *Central) newTelegram(ctx context.Context) {
 	c.TelegramLink = c.newTelegramLink()
 	c.TelegramLimiter = updates.NewLimiter(updates.InboundLimits{}, c.Clock)
 	c.TelegramLinks = tglink.NewCache(c.Store, c.Bus, log, 0)
-	c.TelegramLinks.OnRemove = c.TelegramLimiter.Forget
+	c.TelegramLinks.OnRemove = func(id string) {
+		c.TelegramLimiter.Forget(id)
+		c.TelegramTopics.Forget(id) // nil-safe: topics are built with the notifier, later
+	}
 	c.TelegramUpdates = updates.New(updates.Options{
 		Intake: updates.IntakeOptions{Metrics: c.Metrics, Log: log},
 		Webhook: updates.WebhookOptions{TrustedProxies: c.trustedProxies(), Clock: c.Clock, Log: log,
@@ -145,6 +148,10 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			return c.Auth.TelegramPrincipal(ctx, linkID, auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})
 		},
 		Space: c.TelegramSettings.Space,
+		// A message written in a space's topic acts on that space (the topics the bot made, never user input).
+		SpaceOfThread: func(ctx context.Context, linkID string, thread int) (string, bool) {
+			return c.TelegramTopics.SpaceOf(ctx, linkID, thread)
+		},
 		// A notifier card's button names no action: it comes from the card mapping, only for the link the card went to.
 		Resolve: func(ctx context.Context, chatID int64, messageID int) (string, string, string, bool) {
 			m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)

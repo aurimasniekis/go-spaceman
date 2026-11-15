@@ -95,13 +95,13 @@ func TestCaptureNeedsASpace(t *testing.T) {
 // A user who may not create inbox items in the space gets the API's refusal as one text, and nothing is created.
 func TestCaptureForbidden(t *testing.T) {
 	e := newEnv(t)
-	e.h.setCurrent(e.l.ID, spaceRef{ID: spViewer})
+	e.h.setCurrentNow(e.l.ID, spViewer)
 	e.msg(func(m *botapi.Message) { m.Text = "hello" })
 	if e.createdN() != 0 || e.last().Text != TextNoAccess {
 		t.Fatalf("created %d, last %q", e.createdN(), e.last().Text)
 	}
 	// A space hidden from Telegram can't be the target even if it was chosen before.
-	e.h.setCurrent(e.l.ID, spaceRef{ID: spB})
+	e.h.setCurrentNow(e.l.ID, spB)
 	e.msg(func(m *botapi.Message) { m.Text = "hello" })
 	if e.createdN() != 0 || e.api.touched("/spaces/"+spB+"/inbox") {
 		t.Fatal("captured into a space Telegram can't see")

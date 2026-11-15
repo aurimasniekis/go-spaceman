@@ -351,6 +351,8 @@ func (svc *Service) effective(r db.TelegramSetting) Settings {
 		var in Input
 		if err := json.Unmarshal([]byte(r.SettingsJson), &in); err == nil {
 			if s := Resolve(in); s.Validate() == nil {
+				// A stored null role decodes as unset (operator), but the field is present: it caps at viewer.
+				s.LinkDefaultMaxRole = storedRole(fields, s.LinkDefaultMaxRole)
 				return s
 			}
 		}

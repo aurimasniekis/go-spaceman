@@ -29,6 +29,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
 )
 
 // Bounds of the consumer (ADR-0078).
@@ -136,8 +137,10 @@ type Options struct {
 	Sender func() *sender.Sender
 	// Store records card mappings (nil: cards are not remembered across restarts).
 	Store Mappings
-	Bus   *eventbus.Bus
-	Log   *slog.Logger
+	// Topics routes messages to topics in topics mode (nil: everything goes to the main chat).
+	Topics *topics.Manager
+	Bus    *eventbus.Bus
+	Log    *slog.Logger
 	// Now is the clock (default time.Now); After waits (default time.After; tests pass one they control).
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
@@ -439,7 +442,7 @@ func (n *Notifier) enqueueAlert(snd *sender.Sender, l *Link, r *Resource, what s
 			}
 			head := what + ": " + res.Label
 			text := head + "\n" + clip(oneLine(res.Title), maxTitle)
-			_, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, DisableNotification: n.silent(cur, n.o.Now()),
+			_, err := n.sender(&res, linkID)(ctx, c, botapi.SendMessageParams{ChatID: chat, Text: text, DisableNotification: n.silent(cur, n.o.Now()),
 				Entities: []botapi.MessageEntity{{Type: "bold", Offset: 0, Length: len(utf16.Encode([]rune(head)))}}, ProtectContent: true})
 			if err == nil {
 				n.cards.touch(linkID, chat, &res, n.o.Now()) // the mapping's time carries the announcement across a restart
@@ -534,14 +537,26 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 			// after the space was lowered to "summary" while it waited. A group chat only ever gets the summary.
 			full := settings.Full(n.o.Policy.Space(res.SpaceID), settings.IsGroupChat(chat))
 			text, entities := renderCard(&res, full)
-			protect := full && res.Detail != ""                                                                               // plan 3.8: a card with a body can't be forwarded or saved
-			return n.cards.upsert(ctx, c, linkID, chat, &res, res.SpaceID, text, entities, protect, n.silent(cur, n.o.Now())) // quiet hours: no sound
+			protect := full && res.Detail != ""                                                                                                       // plan 3.8: a card with a body can't be forwarded or saved
+			return n.cards.upsert(ctx, c, n.sender(&res, linkID), linkID, chat, &res, res.SpaceID, text, entities, protect, n.silent(cur, n.o.Now())) // quiet hours: no sound
 		}})
 	if err != nil {
 		if done != nil {
 			done(err)
 		}
 		n.log.Debug("telegram notifier: enqueue refused", slog.String("error", err.Error()))
+	}
+}
+
+// sender is the send function for a resource's messages to a link: to the resource's topic when its space is in topics
+// mode (open actions go to Needs you, the rest to the space's topic) and otherwise to the main chat.
+func (n *Notifier) sender(r *Resource, linkID string) sendFunc {
+	key := n.o.Topics.Route(r.SpaceID, r.Kind == KindAction)
+	return func(ctx context.Context, c *botapi.Client, p botapi.SendMessageParams) (botapi.Message, error) {
+		if key == "" {
+			return c.SendMessage(ctx, p)
+		}
+		return n.o.Topics.Send(ctx, c, linkID, p.ChatID, key, p)
 	}
 }
 
