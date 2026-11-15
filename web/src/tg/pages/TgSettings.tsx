@@ -24,6 +24,30 @@ const FLAG_FIELDS = [
   ['escalations', 'Escalations'], ['operator_messages', 'Agent messages to operators'], ['digest', 'Daily digest'],
 ] as const
 
+type Topics = Prefs['topics']
+
+/** The read-only topics mode state: what it is, which of your spaces use it, and what to do on the Telegram side. */
+export function TopicsNote({ topics, names }: { topics: Topics; names: Map<string, string> }) {
+  if (!topics.available) return <Text size="sm" c="dimmed">Topics mode is not available: the Telegram bot is not running.</Text>
+  const label = (id: string) => names.get(id) ?? id
+  return (
+    <Stack gap={4} aria-label="Topics mode">
+      <Text size="sm" c="dimmed">
+        Topics mode is turned on per space, by someone with space settings access; it is not a setting of your link. A space with it on gets its own topic in this chat, and what needs you goes to a "Needs you" topic.
+      </Text>
+      {topics.spaces.length === 0
+        ? <Text size="sm">None of your spaces use topics mode.</Text>
+        : <Text size="sm">Topics are on for: {topics.spaces.map(label).join(', ')}.</Text>}
+      {topics.spaces.length > 0 && !topics.refused && (
+        <Text size="xs" c="dimmed">If you see no topics, enable topics for this bot in BotFather.</Text>
+      )}
+      {topics.refused && (
+        <Text size="sm" c="orange">Telegram refused to create a topic in your chat, so messages go to the main chat. Enable topics for this bot in BotFather; the bot asks again within 10 minutes.</Text>
+      )}
+    </Stack>
+  )
+}
+
 interface Form { eff: Effective; timezone: string }
 
 /**
@@ -170,10 +194,10 @@ function PrefsForm() {
           {form.eff.muted_spaces.filter((id) => !known.has(id)).map((id) => <Checkbox key={id} label={id} checked onChange={(e) => toggleMuted(id, e.currentTarget.checked)} />)}
         </Stack>
       </Stack></Card>
-      <Group justify="space-between" wrap="nowrap">
-        <Text size="sm">Topics mode</Text>
-        <Text size="sm" c="dimmed">{data.topics.available ? 'Available (set in the chat)' : 'Not available yet'}</Text>
-      </Group>
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>Topics mode</Text>
+        <TopicsNote topics={data.topics} names={new Map(spaces.map((x) => [x.id, x.name]))} />
+      </Stack>
       <Button type="submit" loading={saving} disabled={saving}>Save</Button>
     </Stack>
   )

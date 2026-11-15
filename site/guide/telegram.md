@@ -176,6 +176,10 @@ for your link. A message you write inside a space's topic works on that space wi
 back to the main chat, so a notification isn't lost. If Telegram refuses topics in your chat, the bot uses the main chat and
 asks again after 10 minutes. Topics only choose where a message appears, never whether you may see it.
 
+The per-space `topics` setting is the switch, turned on by someone with `space_config:write`. The Mini App's settings page
+shows it read-only: which of your spaces use topics, and a note to enable topics for the bot in BotFather when Telegram refused
+a topic in your chat.
+
 The per-space `topics` setting is the switch. The global `topics_mode_default` is stored with the settings, but nothing reads
 it yet, so it changes nothing.
 

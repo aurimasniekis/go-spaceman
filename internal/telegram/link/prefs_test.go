@@ -207,3 +207,25 @@ func TestSetTelegramLinkPrefsQueryGuards(t *testing.T) {
 		}
 	}
 }
+
+// Topics mode is reported read-only: available when wired, only the spaces the link may read, and the chat's refusal.
+func TestLinkPrefsTopicsState(t *testing.T) {
+	t.Parallel()
+	svc, _ := prefsEnv(t)
+	refused := false
+	svc.o.TopicSpaces = func() []string { return []string{"spc_a", "spc_hidden"} }
+	svc.o.TopicsRefused = func(chat int64) bool { return refused && chat == 11 }
+	svc.o.CanRead = func(_ []string, id string) bool { return id == "spc_a" }
+	ctx := context.Background()
+	p, err := svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1"))
+	if err != nil || !p.Topics.Available || len(p.Topics.Spaces) != 1 || p.Topics.Spaces[0] != "spc_a" || p.Topics.Refused {
+		t.Fatalf("topics %+v, %v", p.Topics, err)
+	}
+	refused = true
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || !p.Topics.Refused {
+		t.Fatalf("refused chat: %+v, %v", p.Topics, err)
+	}
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a2")); err != nil || p.Topics.Refused {
+		t.Fatalf("another chat: %+v, %v", p.Topics, err)
+	}
+}
