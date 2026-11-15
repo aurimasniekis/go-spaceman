@@ -4578,8 +4578,11 @@
 - **Checked, not affected:** inbox items are deduplicated per `(space, source_kind)` (`response:`, `undeliverable:`,
   `xspace:` items have their own source kinds), messages per sender, cross-space requests per requesting run.
 - **Consequences:** a caller that used a key starting with one of these prefixes for its own rows now gets
-  `validation_failed`. Rows planted before this change under a supervisor or usage-limit key are still reused (the
-  notice is suppressed once, for that window or hold); the approval path refuses them.
+  `validation_failed`. Rows stored before this change under a reserved key are only checked on the approval path,
+  which refuses them. Elsewhere they are still reused: a supervisor or usage-limit notice is suppressed once (for that
+  window or hold), a schedule occurrence is skipped, and accepting a cross-space request links the existing task. A
+  token requester's display name changing between a crash and the repair also makes the approval's own action differ;
+  it is revoked and asked again, which is harmless.
 - **Evidence:** `internal/approvals` `TestApprovalActionCannotBePlanted` (failed on main: the person deciding saw the
   planted body), `TestApprovalRefusesForeignActionUnderItsKey`; `internal/human` `TestReservedDedupNamespaces`;
   `internal/queue` `TestReservedTaskDedupNamespaces`; `internal/agenttools` `TestAttachmentsAndHuman`.

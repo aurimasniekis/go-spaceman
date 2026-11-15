@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
@@ -10,6 +11,9 @@ import (
 // created only by its service; an API or agent caller can't plant one that the service would then reuse.
 func TestReservedTaskDedupNamespaces(t *testing.T) {
 	f := newFx(t)
+	if strings.Join(reservedDedupPrefixes, ",") != "xspace:,schedule:" {
+		t.Fatalf("reserved prefixes %v", reservedDedupPrefixes)
+	}
 	for _, p := range reservedDedupPrefixes {
 		key := p + "x1"
 		_, _, err := f.svc.Create(f.ctx, op, "spc_a", CreateInput{Title: "Planted", DedupKey: key})

@@ -2,6 +2,7 @@ package human
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
@@ -18,6 +19,11 @@ func TestReservedDedupNamespaces(t *testing.T) {
 	}
 	system := Requester{Kind: "system", Label: "test"}
 	operator := Requester{Kind: "operator", ID: op.ID}
+	// The services' own keys, spelled out so the list can't lose one unnoticed.
+	want := []string{"approval:", "usage-limit-human:", "control-failing:", "control-autostart-limit:", "control-autostart-refused:"}
+	if strings.Join(reservedDedupPrefixes, ",") != strings.Join(want, ",") {
+		t.Fatalf("reserved prefixes %v, want %v", reservedDedupPrefixes, want)
+	}
 	for _, p := range reservedDedupPrefixes {
 		key := p + "x1"
 		for _, who := range []Requester{agent, operator, system} {
