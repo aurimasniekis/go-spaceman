@@ -136,6 +136,12 @@ func (p *policy) hide(id string) {
 	p.hidden[id] = true
 }
 
+func (p *policy) unhide(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.hidden, id)
+}
+
 func (p *policy) Space(id string) settings.Space {
 	p.mu.Lock()
 	defer p.mu.Unlock()

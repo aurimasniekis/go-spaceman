@@ -484,3 +484,63 @@ func TestAlertSendTimeRecheck(t *testing.T) {
 		}
 	}
 }
+
+// A send the recheck drops (the space was hidden when its turn came) leaves no baseline behind: once the space is
+// visible again an assignment is announced once, not twice.
+func TestDroppedFirstSendLeavesNoBaseline(t *testing.T) {
+	e := newEnv(t, 1)
+	stop := e.run(nil)
+	defer stop()
+	release := e.holdChat(1001)
+	before := e.feed.reads.Load()
+	e.newAction("hum_1", 1)
+	e.settle(before)
+	e.pol.hide("spc_1")
+	release()
+	time.Sleep(300 * time.Millisecond)
+	e.pol.unhide("spc_1")
+	a := action("hum_1", 2, false)
+	a.Assignee = "usr_1"
+	e.update(a, 2)
+	e.update(a, 2)
+	e.waitCalls("sendMessage", 1)
+	time.Sleep(300 * time.Millisecond)
+	if n := len(e.fake.Calls("sendMessage")); n != 1 {
+		t.Fatalf("%d sends, want exactly the card", n)
+	}
+}
+
+// A card queued behind another send, whose own first send is still open, announces an assignment once, and the
+// announcement doesn't change what the first send's mapping starts from.
+func TestReassignedWhileCardIsQueuedBehindAnother(t *testing.T) {
+	e := newEnv(t, 1)
+	stop := e.run(nil)
+	defer stop()
+	held, release := e.holdReplies()
+	e.newAction("hum_1", 1)
+	held(1)
+	before := e.feed.reads.Load()
+	e.newAction("hum_2", 1) // queued behind hum_1's open send
+	e.settle(before)
+	a := action("hum_2", 2, false)
+	a.Assignee = "usr_1"
+	e.update(a, 2)
+	release()
+	check := func() {
+		t.Helper()
+		time.Sleep(300 * time.Millisecond)
+		n := 0
+		for _, c := range e.fake.Calls("sendMessage") {
+			if strings.HasPrefix(c.Params["text"], "Assigned to you") {
+				n++
+			}
+		}
+		if got := len(e.fake.Calls("sendMessage")); got != 3 || n != 1 || len(e.fake.Calls("editMessageText")) != 0 {
+			t.Fatalf("sends %d, assigned %d, edits %d; want 3, 1, 0", got, n, len(e.fake.Calls("editMessageText")))
+		}
+	}
+	e.waitCalls("sendMessage", 3)
+	check()
+	e.update(a, 2)
+	check()
+}

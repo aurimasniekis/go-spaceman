@@ -301,11 +301,16 @@ func clip(s string, n int) string {
 	return string([]rune(s)[:n-1]) + "…"
 }
 
-// sendQueued reports whether a send of the card is waiting in the sender (its card doesn't exist yet).
-func (c *cards) sendQueued(chat int64, k Key) bool {
+// state returns, under one lock, the card (nil: none) and whether a send of the card is waiting in the sender. One
+// snapshot, so a send finishing between two reads can't make the card look absent and the send gone at once.
+func (c *cards) state(chat int64, k Key) (cd *card, queued bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.queued[cardKey{chat, k}] > 0
+	ck := cardKey{chat, k}
+	if v, ok := c.byCard[ck]; ok {
+		cd = &v
+	}
+	return cd, c.queued[ck] > 0
 }
 
 // queue counts a send in the sender; the returned function ends it (the sender's Done).
