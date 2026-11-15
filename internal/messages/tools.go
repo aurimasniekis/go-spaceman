@@ -151,7 +151,7 @@ func Tools(svc *Service) func(r *agenttools.Registry) {
 				if !sender && !isRecipient(m, p) {
 					return nil, apperr.New(apperr.CodeForbidden, "only the sender or a recipient may resolve a message")
 				}
-				return svc.Resolve(ctx, agentActor(p), p.SpaceID, in.MessageID, in.Resolution)
+				return svc.Resolve(ctx, agentActor(p), p.SpaceID, in.MessageID, in.Resolution, 0)
 			})
 	}
 }

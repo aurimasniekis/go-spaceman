@@ -27,7 +27,9 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 | `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, the login timing comparison, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
 
 Store-backed tests fail when a write transaction holds the write lock for longer than 100 ms (Hallpass HP-DB-004), or
-the value of `SM_TEST_TX_MAX`. Time spent waiting for the writer and retrying a busy database doesn't count
+the value of `SM_TEST_TX_MAX`. Under `-race` the default is 500 ms (a `race` build tag
+multiplies it by 5, because the race detector slows transactions several times); `SM_TEST_TX_MAX` still wins, unscaled.
+`make race`, `ci` and `release` set it themselves, so the scaled default only applies to a bare `go test -race`. Time spent waiting for the writer and retrying a busy database doesn't count
 (ADR-0070). GitHub's hosted runners are slower, so the coverage and race steps in `ci` and `release` use 1 s, and
 the login-timing and fuzz jobs 250 ms (ADR-0062).
 

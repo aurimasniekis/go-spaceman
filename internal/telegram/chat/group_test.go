@@ -493,3 +493,65 @@ func TestGroupIgnoresCommandsForOtherBots(t *testing.T) {
 		t.Fatal("a bare command got no answer")
 	}
 }
+
+// gsayIn is gsay in a forum topic of the group.
+func (e *env) gsayIn(l updates.Link, thread int, text string) {
+	e.upd++
+	e.ginject(l, botapi.Message{MessageID: int(e.upd), MessageThreadID: thread, From: &botapi.User{ID: 900},
+		Chat: botapi.Chat{ID: groupID, Type: botapi.ChatSupergroup, IsForum: true}, Text: text})
+}
+
+// Group mode composed with topics mode: a member writing in a forum topic of the bound group is answered in that
+// topic, the group's space comes from its binding only (the private chat's topic pin is never looked up, even for the
+// same thread number), and nothing done in the group changes the member's private current space or topic pin.
+// (Mutants: setCurrent without the group check; SpaceOfThread consulted before handleGroup; send ignoring threadOf
+// in a group, or applying both an explicit thread and threadOf.)
+func TestGroupForumTopicRepliesInTopicAndLeavesPrivateChatAlone(t *testing.T) {
+	e := newEnv(t)
+	e.threadSpace = map[int]string{7: spA} // the member's private topic 7 belongs to A
+	e.say("/space " + spS)                 // the private current space is S
+	asked := e.threadAsked.Load()
+
+	// The member's own link, in the group bound to the viewer space, in the group's forum topic 7.
+	m := member(e.l.ID, spViewer)
+	e.gsayIn(m, 7, "/inbox")
+	got := e.glast()
+	if got.MessageThreadID != 7 || !strings.HasPrefix(got.Text, "Inbox of Space vv") {
+		t.Fatalf("group /inbox answered %q in thread %d, want the bound space's inbox in thread 7", got.Text, got.MessageThreadID)
+	}
+	// A refused command is a reply to it in its topic: one thread source (the explicit one), with the reply target.
+	e.gsayIn(m, 9, "/spaces")
+	got = e.glast()
+	if got.MessageThreadID != 9 || got.Text != TextGroupFixed {
+		t.Fatalf("group /spaces answered %q in thread %d, want %q in thread 9", got.Text, got.MessageThreadID, TextGroupFixed)
+	}
+	e.mu.Lock()
+	lastSent := e.sent[len(e.sent)-1]
+	e.mu.Unlock()
+	if lastSent.ReplyParameters == nil || lastSent.ReplyParameters.MessageID != int(e.upd) || lastSent.MessageThreadID != 9 {
+		t.Fatalf("refusal sent with %+v", lastSent)
+	}
+	// An unrelated forum topic of the group: still the bound space, in that topic.
+	e.gsayIn(m, 11, "/inbox")
+	if got := e.glast(); got.MessageThreadID != 11 || !strings.HasPrefix(got.Text, "Inbox of Space vv") {
+		t.Fatalf("group /inbox in thread 11 answered %q in thread %d", got.Text, got.MessageThreadID)
+	}
+	if n := e.threadAsked.Load(); n != asked {
+		t.Fatalf("the private chat's topic pin was looked up %d times for group updates", n-asked)
+	}
+
+	// Back in the private chat: the current space is still S, and topic 7 still pins A.
+	if cur := e.h.currentSpace(e.l.ID); cur != spS {
+		t.Fatalf("the private current space is %q after the group, want S", cur)
+	}
+	e.sayIn(0, "topic note one")
+	e.sayIn(7, "topic note two")
+	if e.itemsIn(spS) != 1 || e.itemsIn(spA) != 1 || e.itemsIn(spViewer) != 0 {
+		t.Fatalf("S %d, A %d, group space %d; want 1, 1, 0: %q", e.itemsIn(spS), e.itemsIn(spA), e.itemsIn(spViewer), e.texts())
+	}
+	// And private replies are not dragged into a group thread: the main chat and topic 7 of the private chat.
+	e.sayIn(0, "/inbox")
+	if got := e.last(); got.MessageThreadID != 0 || !strings.HasPrefix(got.Text, "Inbox of Space ss") {
+		t.Fatalf("private /inbox answered %q in thread %d", got.Text, got.MessageThreadID)
+	}
+}
