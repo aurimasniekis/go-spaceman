@@ -510,3 +510,78 @@ func TestCrossFieldSendLimitsKeepStoredPair(t *testing.T) {
 		t.Fatalf("send_limits %+v: want queue_total 300 and queue_per_chat 200 kept", got.SendLimits)
 	}
 }
+
+// A malformed link cap (a nested object, an empty one, any non-role value) is read as viewer, never the operator default.
+func TestMalformedLinkCapFallsBackToViewer(t *testing.T) {
+	t.Parallel()
+	for _, js := range []string{
+		`{"link_default_max_role":{"a":"viewer"}}`,
+		`{"link_default_max_role":{}}`,
+		`{"link_default_max_role":7}`,
+		`{"link_default_max_role":["operator"]}`,
+		`{"LINK_DEFAULT_MAX_ROLE":{}}`,
+	} {
+		svc, s := newSvc(t, nil)
+		if got := seedRaw(t, svc, s, js); got.LinkDefaultMaxRole != RoleViewer {
+			t.Errorf("%s: cap %q, want viewer", js, got.LinkDefaultMaxRole)
+		}
+	}
+}
+
+// A row that is not a JSON object cannot widen the cap to the default operator.
+func TestNonObjectRowFallsBackToViewer(t *testing.T) {
+	t.Parallel()
+	for _, js := range []string{`[1]`, `"x"`, `3`, `null`} {
+		svc, s := newSvc(t, nil)
+		if got := seedRaw(t, svc, s, js); got.LinkDefaultMaxRole != RoleViewer {
+			t.Errorf("%s: cap %q, want viewer", js, got.LinkDefaultMaxRole)
+		}
+	}
+}
+
+// Keys that differ only in case resolve the same way on every load, the strictest cap winning, whatever their order.
+func TestCaseVariantDuplicateKeysResolveToStrictest(t *testing.T) {
+	t.Parallel()
+	for _, js := range []string{
+		`{"link_default_max_role":"operator","LINK_DEFAULT_MAX_ROLE":"viewer"}`,
+		`{"LINK_DEFAULT_MAX_ROLE":"viewer","link_default_max_role":"operator"}`,
+		`{"Link_Default_Max_Role":"operator","link_default_max_role":"guest"}`,
+	} {
+		svc, _ := newSvc(t, nil)
+		for range 50 {
+			if got := svc.effective(db.TelegramSetting{SettingsJson: js}); got.LinkDefaultMaxRole != RoleViewer {
+				t.Fatalf("%s: cap %q, want viewer", js, got.LinkDefaultMaxRole)
+			}
+		}
+	}
+	svc, s := newSvc(t, nil)
+	if got := seedRaw(t, svc, s, `{"link_default_max_role":"operator","LINK_DEFAULT_MAX_ROLE":"operator"}`); got.LinkDefaultMaxRole != RoleOperator {
+		t.Fatalf("two operator caps: %q", got.LinkDefaultMaxRole)
+	}
+}
+
+// Case-variant duplicates of a numeric field apply in a fixed order, so the result never changes between loads.
+func TestCaseVariantDuplicateLeavesAreDeterministic(t *testing.T) {
+	t.Parallel()
+	svc, _ := newSvc(t, nil)
+	first := int64(-1)
+	for range 100 {
+		got := svc.effective(db.TelegramSetting{SettingsJson: `{"links_per_user":2,"LINKS_PER_USER":3}`}).LinksPerUser
+		if first == -1 {
+			first = got
+		}
+		if got != first {
+			t.Fatalf("links_per_user flipped between loads: %d then %d", first, got)
+		}
+	}
+}
+
+// A queue_total below the default per-chat queue is clamped onto per_chat rather than dropped.
+func TestQueueTotalBelowDefaultPerChatClampsPerChat(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t, nil)
+	got := seedRaw(t, svc, s, `{"send_limits":{"queue_total":10,"chat_burst":9999}}`)
+	if got.SendLimits.QueueTotal != 10 || got.SendLimits.QueuePerChat != 10 {
+		t.Fatalf("send_limits %+v: want queue_total 10 kept and queue_per_chat clamped to 10", got.SendLimits)
+	}
+}

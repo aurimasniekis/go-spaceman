@@ -86,6 +86,7 @@ type Status struct {
 type runtime struct {
 	baseCtx    context.Context    // central's serving context (set by Start)
 	retryStop  context.CancelFunc // ends the running startup retry loop (owned by Service.mu)
+	retryDone  chan struct{}      // closed when that loop has returned (owned by Service.mu)
 	client     *botapi.Client
 	pollCancel context.CancelFunc
 	pollDone   chan struct{}
@@ -222,6 +223,14 @@ func (svc *Service) Start(ctx context.Context) {
 // startRetryLocked ends the running retry loop, a superseded one that would otherwise sleep up to retryMax before it
 // notices, and starts one for gen when gen is not 0. Must hold svc.mu.
 func (svc *Service) startRetryLocked(base context.Context, gen uint64) {
+	if gen != 0 {
+		svc.run.mu.Lock()
+		cur := svc.run.gen
+		svc.run.mu.Unlock()
+		if gen != cur {
+			return // a write reconfigured the bot since the attempt gen and owns the retry decision
+		}
+	}
 	if svc.run.retryStop != nil {
 		svc.run.retryStop()
 		svc.run.retryStop = nil
@@ -230,8 +239,12 @@ func (svc *Service) startRetryLocked(base context.Context, gen uint64) {
 		return
 	}
 	ctx, stop := context.WithCancel(base)
-	svc.run.retryStop = stop
-	go svc.retryLoop(ctx, gen)
+	done := make(chan struct{})
+	svc.run.retryStop, svc.run.retryDone = stop, done
+	go func() {
+		defer close(done)
+		svc.retryLoop(ctx, gen)
+	}()
 }
 
 // retryLoop repeats the startup with a backoff (retryMin doubling to retryMax) until it works, the bot is
