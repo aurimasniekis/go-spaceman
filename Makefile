@@ -163,6 +163,17 @@ web-check:
 e2e:
 	$(GATE) e2e scripts/e2e.sh --reporter=list
 
+.PHONY: e2e-up e2e-spec e2e-down
+# The fast loop (site/development/testing.md): a dev stack that stays up between runs and one spec per run, e.g.
+#   make e2e-spec SPEC=e2e/ui-overflow.spec.ts      make e2e-spec GREP='scrollbars'      make e2e-down
+# SPEC and GREP are both optional (neither runs the whole suite against the kept stack). No heavy-gate slot: it is one spec.
+e2e-up:
+	scripts/e2e-loop.sh up
+e2e-spec:
+	scripts/e2e-loop.sh test --reporter=list $(SPEC) $(if $(GREP),--grep '$(GREP)')
+e2e-down:
+	scripts/e2e-loop.sh down
+
 .PHONY: demo
 # The scripted end-to-end demonstration of the brief's §41 (SM-VER-003, docs/DEMO.md): a real central with the UI, two
 # real agents with their own herdr-core cores, devpulse and devmcp, driven through the browser, the API and the CLI.

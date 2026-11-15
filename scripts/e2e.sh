@@ -7,6 +7,12 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 command -v hc >/dev/null || { echo "e2e needs herdr-core (hc) on PATH" >&2; exit 2; }
+# The stack is stopped however this script ends: success, failure, Ctrl-C (INT) or a kill (TERM). `up` cleans up after
+# itself when it fails or is interrupted, so only a finished stack needs the trap. SPACEMAN_* variables of the
+# surrounding session are not passed on (dev-stack.sh and the tests drop them), and the ports are picked free when the
+# defaults are taken (see scripts/dev-stack.sh).
+trap 'exit 130' INT
+trap 'exit 143' TERM
 dir=$("$root/scripts/dev-stack.sh" up | tail -1)
 # On failure the stack's logs are kept in web/test-results/stack-logs (git-ignored) before the stack is removed.
 keep_logs() {

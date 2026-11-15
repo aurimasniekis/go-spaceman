@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+
+- Developer tooling: `make e2e-up`, `make e2e-spec SPEC=… GREP=…` and `make e2e-down` run one e2e spec against a stack that stays up; `make e2e` and `make screenshots` stop their stack on failure and Ctrl-C; the dev stack picks free ports when the defaults are taken and drops `SPACEMAN_*` variables; `ui-overflow.spec.ts` checks its three widths in parallel (12.3 to 5.1 minutes).
+
 ## [0.1.5] - 2026-11-15
 
 Release on top of v0.1.4. It adds the Telegram integration (ADR-0083): a bot you chat with, a Mini App that opens inside
