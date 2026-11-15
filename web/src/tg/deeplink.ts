@@ -4,7 +4,8 @@ import { webApp } from './webapp'
  * Deep links (plan §4.6): a Mini App opened as t.me/<bot>/<app>?startapp=<hint> carries the hint as initData's
  * start_param. It is a routing hint and authorizes nothing: the page it names still needs the session's grants. The
  * hint is `<kind>-<space>[-<id>]`, ASCII only (IDs are lower-case base-32 with underscores, so `-` never occurs in
- * one): `space-spc_x`, `inbox-spc_x-inb_y`, `task-spc_x-tsk_y`, `human-spc_x-hum_y`, `run-spc_x-run_y`, and `attention`.
+ * one): `space-spc_x`, `inbox-spc_x-inb_y`, `task-spc_x-tsk_y`, `human-spc_x-hum_y`, `run-spc_x-run_y`, and the spaceless
+ * `attention` and `needs` (the cross-space "Needs you" page).
  */
 const ID = /^[a-z]{2,5}_[0-9a-z]{1,40}$/
 
@@ -15,6 +16,7 @@ export function parseStartParam(raw: string | undefined | null): DeepLink | null
   const [kind, space, id, ...rest] = raw.split('-')
   if (rest.length > 0) return null
   if (kind === 'attention') return space === undefined ? { to: '/attention' } : null
+  if (kind === 'needs') return space === undefined ? { to: '/human' } : null
   if (!space || !ID.test(space)) return null
   const spaceId = space
   switch (kind) {

@@ -4240,8 +4240,9 @@
     stale sweeper (ADR-0074) would end the run `lost` two minutes after the reconcile and fence its real final state.
   - Consequences: restoring central from a backup older than the retention loses the runs pruned since: they are swept
     `lost` if central still lists them, and their recordings are not shipped again. Every agent restart resends all
-    ended runs once as follow-up (acknowledgements are memory only). Pruning runs only on the reconcile, once per
-    connection, not on a timer. Recording directories of pruned runs are not garbage-collected yet (backlog).
+    ended runs once (in the hello, or as follow-up when older than 24 h) (acknowledgements are memory only). The
+    reconcile does not report a run of that connection's follow-up a second time. Pruning runs only on the reconcile,
+    once per connection, not on a timer. Recording directories of pruned runs are not garbage-collected yet (backlog).
 
 ### ADR-0080 — The web terminal's scrollback is a byte limit: 24 MiB, at least 10,000 rows at 160 columns
 - **Status:** Accepted, 2026-11-13 (follow-up to ADR-0076's side finding).
@@ -5292,7 +5293,10 @@
 - **Decision:**
   - Only a real WebSocket handshake is passed through (`websocketHandshake`): a body-less HTTP/1.1 `GET` with the
     upgrade headers and no `Transfer-Encoding`. `ReadProgress` guards every request that has a body, whatever its
-    headers; `WriteProgress` skips only a real handshake.
+    headers; `WriteProgress` skips only a real handshake on a hijacking route (`/agent/v1/connect`, the node
+    WebSocket; the terminal stream is SSE and stays guarded): upgrade headers on a download or an event stream no
+    longer exempt it from the write bound (re-review finding C; probe: a stalled 64 MiB download with the headers was
+    still blocked after 5× the idle bound before the change).
   - Progress and total are both enforced. The guard's response writer implements `SetReadDeadline`, which huma
     finds by unwrapping: the deadline is recorded as the total cap, and each read waits for the sooner of now+idle and
     the cap. JSON operations keep huma's 5 s. `upload-attachment` sets `BodyReadTimeout` to 10 minutes
