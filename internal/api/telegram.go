@@ -9,6 +9,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 )
 
 // The Telegram channel (ADR-0083 §3.2–§3.4). A Telegram principal (auth.Principal.ViaTelegram) reaches the API two
@@ -66,6 +67,14 @@ type TelegramPolicy struct {
 	SpaceFeature func(ctx context.Context, spaceID, feature string) bool
 	// MiniAppOrigin is the Mini App's origin, "https://<miniapp_host>": Mini App mutations must come from it.
 	MiniAppOrigin func() string
+	// EnforcedApproval reports whether an enforced approval (ADR-0024) stands behind an approval action. Nil refuses
+	// every approval decision from Telegram; an error fails the request.
+	EnforcedApproval func(ctx context.Context, a *human.Action) (bool, error)
+	// ApprovalsInChat reports whether a space lets enforced approvals be decided in the chat with a second confirmation
+	// (its enforced_approvals = confirm), read at request time. Nil: never.
+	ApprovalsInChat func(ctx context.Context, spaceID string) bool
+	// Confirmations holds the chat's armed confirmations of enforced approvals (telegram_approvals.go). Nil: none.
+	Confirmations *ApprovalConfirmations
 }
 
 // telegramChannel is how the request reached the API: not through a Telegram entry point, from the bot in process,

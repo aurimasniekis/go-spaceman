@@ -17,7 +17,9 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/app"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram"
 )
@@ -433,52 +435,157 @@ func enrolledSession(t *testing.T, h *harness, email string) *client {
 	return ui
 }
 
-// Fail closed until TG-7 (control's ruling on the TG-4a review): a Telegram principal is refused on
-// respond-human-action (and, in TestTelegramRefusesApprovalCancel, cancel-human-action) for any approval, enforced or advisory, whatever the space's setting; the same user decides it
-// on the web, and a question is answered from Telegram as before.
-func TestTelegramRefusesApprovalResponses(t *testing.T) {
+// SM-TG-003, SM-TG-006 (TG-7-2, ADR-0083 decision 14): the server's rule for approvals decided from Telegram.
+//   - Advisory: decided from the Mini App or the bot like on the web (approval:decide; a denial needs a note).
+//   - Enforced, in a space without the opt-in: refused from the Mini App and the bot, even with a valid confirmation,
+//     while another space of the same user has the opt-in (the setting read is the action's space's).
+//   - Enforced, in a space with enforced_approvals = confirm: refused from the Mini App, refused from the bot without a
+//     confirmation or with one armed for another outcome, version, link or action; accepted with the confirmation armed
+//     for exactly this decision, once. Turning the opt-in off between the two steps refuses the second (read at request
+//     time).
+//   - The same user still decides an enforced approval on the web.
+func TestTelegramApprovalResponses(t *testing.T) {
 	t.Parallel()
 	s := newTelegramSetup(t)
-	base := "/spaces/" + s.space
-	var ap, q, ap2 struct {
-		ID string `json:"id"`
+	ctx := context.Background()
+	// A second space, without the opt-in; the user and the link are operators in both.
+	other := ids.New(ids.Space)
+	s.exec(t, `INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES (?, 'web-only', 'Web only', 'nod_oidc', 'active', 'w', 0, 't', 0)`, other)
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'manual', 0, 't')`, auth.UserSubject(s.userID), other)
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'telegram', 0, 't')`, auth.TelegramSubject(s.linkID), other)
+	if err := s.h.c.Authz.Reload(ctx); err != nil {
+		t.Fatal(err)
 	}
-	s.root.do("POST", base+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"}}).json(t, &ap)
-	s.root.do("POST", base+"/human-actions", map[string]any{"type": "approval", "title": "Deploy again?", "request": map[string]any{"action": "deploy"}}).json(t, &ap2)
-	s.root.do("POST", base+"/human-actions", map[string]any{"type": "question", "title": "Which region?"}).json(t, &q)
-	if ap.ID == "" || q.ID == "" || ap2.ID == "" {
-		t.Fatal("actions not created")
+	setOptIn := func(space, mode string) {
+		s.exec(t, `INSERT INTO space_telegram_settings (space_id, enabled, content_level, enforced_approvals, topics, terminal_watch, created_at, created_by, updated_at, updated_by, version)
+			VALUES (?, 1, 'full', ?, 0, 0, 0, 't', 0, 't', 1) ON CONFLICT (space_id) DO UPDATE SET enforced_approvals = excluded.enforced_approvals`, space, mode)
 	}
-	for _, outcome := range []string{"approved", "denied"} {
-		r := s.mini(t, "POST", base+"/human-actions/"+ap.ID+"/respond", `{"outcome":"`+outcome+`"}`, "Authorization", "Telegram good", "If-Match", `"1"`)
-		expect(t, r, http.StatusForbidden)
-		if !strings.Contains(string(r.body), "decided on the web") {
-			t.Fatalf("refusal reason: %s", r.body)
-		}
-	}
-	// The bot (in process) is refused the same way.
-	p, err := s.h.c.Auth.TelegramPrincipal(context.Background(), s.linkID, auth.TelegramOptions{})
+	setOptIn(s.space, "confirm")
+	setOptIn(other, "web_only")
+	p, err := s.h.c.Auth.TelegramPrincipal(ctx, s.linkID, auth.TelegramOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, api.Prefix+base+"/human-actions/"+ap2.ID+"/respond", strings.NewReader(`{"outcome":"approved"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("If-Match", `"1"`)
-	s.deps.InProcessHandler().ServeHTTP(rec, req.WithContext(api.WithInProcessPrincipal(context.Background(), p)))
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "decided on the web") {
-		t.Fatalf("bot on an approval: %d %s", rec.Code, rec.Body.String())
+	confirm := s.h.c.TelegramConfirmations
+	if confirm == nil || s.deps.Telegram.Confirmations != confirm {
+		t.Fatal("confirmations not wired")
 	}
-	// The same user may decide it on the web (so the refusal isn't a missing permission), and answer a question from
-	// Telegram.
-	expect(t, s.ui.do("POST", base+"/human-actions/"+ap.ID+"/respond", map[string]any{"outcome": "approved"}, "If-Match", `"1"`), 200)
-	expect(t, s.mini(t, "POST", base+"/human-actions/"+q.ID+"/respond", `{"outcome":"answered","answer":"eu-west"}`,
-		"Authorization", "Telegram good", "If-Match", `"1"`), 200)
+	type created struct {
+		ID string `json:"id"`
+	}
+	newApproval := func(space string, enforced bool) string {
+		var ap created
+		s.root.do("POST", "/spaces/"+space+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"}}).json(t, &ap)
+		if ap.ID == "" {
+			t.Fatal("approval not created")
+		}
+		if enforced {
+			s.exec(t, `INSERT INTO approvals (id, space_id, policy_id, operation, resource, args_digest, args_preview, requester_run, requester_role,
+				human_action_id, state, uses_allowed, uses_left, valid_seconds, request_expires_at, created_at, updated_at)
+				VALUES (?, ?, 'pol', 'mcp.x.y', '', 'd', '', 'run_x', 'control', ?, 'pending', 1, 1, 60, 9000000000000000, 0, 0)`, "apr_"+ap.ID, space, ap.ID)
+		}
+		return ap.ID
+	}
+	approval := func(actionID string) (state, via string) {
+		_ = s.h.c.Store.ReadDB().QueryRowContext(ctx, `SELECT state, decided_via FROM approvals WHERE human_action_id = ?`, actionID).Scan(&state, &via)
+		return state, via
+	}
+	path := func(space, id string) string { return "/spaces/" + space + "/human-actions/" + id + "/respond" }
+	bot := func(space, id, body, tok string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, api.Prefix+path(space, id), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"1"`)
+		c := api.WithInProcessPrincipal(ctx, p)
+		if tok != "" {
+			c = api.WithApprovalConfirmation(c, tok)
+		}
+		s.deps.InProcessHandler().ServeHTTP(rec, req.WithContext(c))
+		return rec
+	}
+	refused := func(what string, rec *httptest.ResponseRecorder, text string) {
+		t.Helper()
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), text) {
+			t.Fatalf("%s: %d %s", what, rec.Code, rec.Body.String())
+		}
+	}
+	mini := func(space, id, body string) resp {
+		return s.mini(t, "POST", path(space, id), body, "Authorization", "Telegram good", "If-Match", `"1"`)
+	}
+	const webOnly, needsConfirm = "decided on the web", "with a second confirmation"
+
+	// Advisory: from the Mini App and the bot, in either space; a denial without a note is refused by the server.
+	adv := newApproval(other, false)
+	expect(t, mini(other, adv, `{"outcome":"denied"}`), http.StatusUnprocessableEntity)
+	expect(t, mini(other, adv, `{"outcome":"denied","note":"not today"}`), 200)
+	if rec := bot(s.space, newApproval(s.space, false), `{"outcome":"approved"}`, ""); rec.Code != 200 {
+		t.Fatalf("advisory from the bot: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Enforced, no opt-in in its space: refused everywhere, even with a confirmation armed for exactly it.
+	enfOther := newApproval(other, true)
+	r := mini(other, enfOther, `{"outcome":"approved"}`)
+	expect(t, r, http.StatusForbidden)
+	if !strings.Contains(string(r.body), webOnly) {
+		t.Fatalf("Mini App refusal: %s", r.body)
+	}
+	refused("bot, no opt-in", bot(other, enfOther, `{"outcome":"approved"}`, ""), webOnly)
+	refused("bot, no opt-in, confirmed", bot(other, enfOther, `{"outcome":"approved"}`, confirm.Arm(s.linkID, other, enfOther, "approved", 1)), webOnly)
+	refused("bot, no opt-in, deny", bot(other, enfOther, `{"outcome":"denied","note":"n"}`, confirm.Arm(s.linkID, other, enfOther, "denied", 1)), webOnly)
+	if st, _ := approval(enfOther); st != "pending" {
+		t.Fatalf("enforced approval after refusals: %q", st)
+	}
+
+	// Enforced, with the opt-in: only the bot with the confirmation armed for exactly this decision.
+	enf := newApproval(s.space, true)
+	r = mini(s.space, enf, `{"outcome":"approved"}`)
+	expect(t, r, http.StatusForbidden)
+	if !strings.Contains(string(r.body), needsConfirm) {
+		t.Fatalf("Mini App with the opt-in: %s", r.body)
+	}
+	refused("no confirmation", bot(s.space, enf, `{"outcome":"approved"}`, ""), needsConfirm)
+	refused("armed for deny", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, enf, "denied", 1)), needsConfirm)
+	refused("armed for another version", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, enf, "approved", 2)), needsConfirm)
+	refused("armed for another link", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm("tgl_other", s.space, enf, "approved", 1)), needsConfirm)
+	refused("armed for another action", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, enfOther, "approved", 1)), needsConfirm)
+	refused("armed in another space", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, other, enf, "approved", 1)), needsConfirm)
+	if st, _ := approval(enf); st != "pending" {
+		t.Fatalf("enforced approval after refusals: %q", st)
+	}
+	tok := confirm.Arm(s.linkID, s.space, enf, "approved", 1)
+	if rec := bot(s.space, enf, `{"outcome":"approved"}`, tok); rec.Code != 200 {
+		t.Fatalf("confirmed in chat: %d %s", rec.Code, rec.Body.String())
+	}
+	if st, via := approval(enf); st != "approved" || via != audit.ViaTelegram+s.linkID {
+		t.Fatalf("decision: %q via %q", st, via)
+	}
+	// A denial with the opt-in: armed for "denied", with its note.
+	enfDeny := newApproval(s.space, true)
+	if rec := bot(s.space, enfDeny, `{"outcome":"denied","note":"risky"}`, confirm.Arm(s.linkID, s.space, enfDeny, "denied", 1)); rec.Code != 200 {
+		t.Fatalf("denied in chat: %d %s", rec.Code, rec.Body.String())
+	}
+	if st, _ := approval(enfDeny); st != "denied" {
+		t.Fatalf("denial: %q", st)
+	}
+
+	// The opt-in is read at request time: turned off between the two steps, the second is refused.
+	late := newApproval(s.space, true)
+	tok = confirm.Arm(s.linkID, s.space, late, "approved", 1)
+	setOptIn(s.space, "web_only")
+	refused("opt-in turned off", bot(s.space, late, `{"outcome":"approved"}`, tok), webOnly)
+	// A space hidden from Telegram doesn't count as opted in either.
+	setOptIn(s.space, "confirm")
+	s.exec(t, `UPDATE space_telegram_settings SET enabled = 0 WHERE space_id = ?`, s.space)
+	refused("space hidden", bot(s.space, late, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, late, "approved", 1)), webOnly)
+
+	// The same user decides an enforced approval on the web.
+	expect(t, s.ui.do("POST", path(other, enfOther), map[string]any{"outcome": "approved"}, "If-Match", `"1"`), 200)
 }
 
-// Cancelling an approval finalizes it (approvals.onFinalized turns it into Revoked, ending an enforced approval), so
-// cancel-human-action is refused from Telegram like respond, for enforced and advisory approvals, from the Mini App and
-// the bot; the same user withdraws it on the web. The approval stays pending after a refusal.
+// Cancelling an approval finalizes it (approvals.onFinalized turns it into Revoked, ending an enforced approval), and
+// the chat has no two-step withdrawal, so cancel-human-action stays refused from Telegram for enforced and advisory
+// approvals, from the Mini App and the bot, even in a space with the enforced-approval opt-in (TG-7-2); the same user
+// withdraws it on the web. The approval stays pending after a refusal.
 func TestTelegramRefusesApprovalCancel(t *testing.T) {
 	t.Parallel()
 	s := newTelegramSetup(t)
@@ -487,6 +594,8 @@ func TestTelegramRefusesApprovalCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.exec(t, `INSERT INTO space_telegram_settings (space_id, enabled, content_level, enforced_approvals, topics, terminal_watch, created_at, created_by, updated_at, updated_by, version)
+		VALUES (?, 1, 'full', 'confirm', 0, 0, 0, 't', 0, 't', 1)`, s.space)
 	newApproval := func(enforced bool) string {
 		var ap struct {
 			ID string `json:"id"`

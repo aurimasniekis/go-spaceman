@@ -10,8 +10,9 @@ import (
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
 
-// SM-TG-008 (TG-7-2): an approval, which is decided only in the app, gets a Mini App button built from the configured
-// Mini App host (a link to the action's page); with no Mini App host the card keeps its text and has no button.
+// SM-TG-006 (TG-7-2): an enforced approval in a space without the opt-in, which is decided only in the browser, gets a
+// Mini App button built from the configured Mini App host (a link to the action's page); with no Mini App host the card
+// keeps its text and has no button.
 func TestTelegramNeedsYouAppButton(t *testing.T) {
 	t.Parallel()
 	e := newMiniAppEnv(t)
@@ -33,6 +34,10 @@ func TestTelegramNeedsYouAppButton(t *testing.T) {
 		ID string `json:"id"`
 	}
 	r.json(t, &act)
+	// Enforced (ADR-0024): an approvals row stands behind the action.
+	e.exec(t, `INSERT INTO approvals (id, space_id, policy_id, operation, resource, args_digest, args_preview, requester_run, requester_role,
+		human_action_id, state, uses_allowed, uses_left, valid_seconds, request_expires_at, created_at, updated_at)
+		VALUES (?, ?, 'pol', 'mcp.x.y', '', 'd', '', 'run_x', 'control', ?, 'pending', 1, 1, 60, 9000000000000000, 0, 0)`, "apr_"+act.ID, e.space, act.ID)
 
 	d := e.h.c.TelegramUpdates.Dispatcher
 	from := botapi.User{ID: 42}
@@ -59,7 +64,7 @@ func TestTelegramNeedsYouAppButton(t *testing.T) {
 		return last()
 	}
 	f := open()
-	if !strings.Contains(f.Text, "decided in the app") || f.ReplyMarkup == nil || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
+	if !strings.Contains(f.Text, "decided in the browser") || f.ReplyMarkup == nil || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
 		t.Fatalf("approval card: %q %+v", f.Text, f.ReplyMarkup)
 	}
 	want := e.origin() + "/spaces/" + e.space + "/human?action=" + act.ID
@@ -73,7 +78,7 @@ func TestTelegramNeedsYouAppButton(t *testing.T) {
 		t.Fatal("Mini App host still set")
 	}
 	f = open()
-	if !strings.Contains(f.Text, "decided in the app") || f.ReplyMarkup != nil {
+	if !strings.Contains(f.Text, "decided in the browser") || f.ReplyMarkup != nil {
 		t.Fatalf("no host: %q %+v", f.Text, f.ReplyMarkup)
 	}
 }

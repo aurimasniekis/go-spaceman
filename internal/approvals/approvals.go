@@ -776,6 +776,15 @@ func (svc *Service) ForAction(ctx context.Context, spaceID, actionID string) (*A
 	return svc.Get(ctx, spaceID, a.ID)
 }
 
+// Enforced reports whether an enforced approval stands behind a human action, in any space.
+func (svc *Service) Enforced(ctx context.Context, actionID string) (bool, error) {
+	_, err := svc.s.R().GetApprovalByAction(ctx, actionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // List returns a space's most recent approvals.
 func (svc *Service) List(ctx context.Context, spaceID string, limit int64) ([]*Approval, error) {
 	if limit <= 0 || limit > 200 {

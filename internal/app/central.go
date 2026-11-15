@@ -165,6 +165,9 @@ type Central struct {
 	// TelegramSettings keeps the Telegram policy and defaults and each space's Telegram settings, cached in memory and
 	// applied to the inbound limits (and, through BindSender, to the outbound sender) without a restart (TG-3c).
 	TelegramSettings *tgsettings.Service
+	// TelegramConfirmations are the chat's armed confirmations of enforced approvals (ADR-0083 decision 14), shared by
+	// the bot (arms them) and the respond rule (consumes them).
+	TelegramConfirmations *api.ApprovalConfirmations
 	// TelegramLimiter holds each link's inbound limits (plan §3.5).
 	TelegramLimiter *updates.Limiter
 	// TelegramLink runs the linking protocol (ADR-0083 decision 2): web codes, /start and both confirmations.
@@ -634,8 +637,9 @@ func (c *Central) APIDeps() *api.Deps {
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink), api.RegisterTelegramMiniApp(c.TelegramMiniApp), api.RegisterTelegramDownloads(c.TelegramDownloads, c.Attachments, c.miniAppOrigin)},
-		Raw:      rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
-		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch, Sessions: c.TelegramMiniApp, MiniAppOrigin: c.miniAppOrigin}}
+		Raw: rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
+		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch, Sessions: c.TelegramMiniApp, MiniAppOrigin: c.miniAppOrigin,
+			EnforcedApproval: c.enforcedApproval, ApprovalsInChat: c.approvalsInChat, Confirmations: c.TelegramConfirmations}}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
 		d.MCP = c.mcpEndpoint
@@ -980,6 +984,30 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		return false
 	}
 	return c.Authz.AllowedAll(subjects, spaceID, authz.ApprovalDecide)
+}
+
+// enforcedApproval reports whether an enforced approval (ADR-0024) stands behind an approval action, for the Telegram
+// respond rule. The approvals package asks with the dedup key "approval:<id>" before it links its row to the action, so
+// that key alone counts too: in that window the action is never taken for advisory.
+func (c *Central) enforcedApproval(ctx context.Context, a *human.Action) (bool, error) {
+	if strings.HasPrefix(a.DedupKey, "approval:") {
+		return true, nil
+	}
+	if c.Approvals == nil {
+		return true, nil
+	}
+	return c.Approvals.Enforced(ctx, a.ID)
+}
+
+// approvalsInChat reports whether a space lets enforced approvals be decided in the chat with a second confirmation:
+// visible to Telegram with enforced_approvals = confirm. It reads the store, not the settings cache, so turning the
+// opt-in off applies to the very next request.
+func (c *Central) approvalsInChat(ctx context.Context, spaceID string) bool {
+	if c.TelegramSettings == nil {
+		return false
+	}
+	sp, err := c.TelegramSettings.GetSpace(ctx, spaceID)
+	return err == nil && sp.Visible() && sp.EnforcedApprovals == tgsettings.ApprovalsConfirm
 }
 
 // telegramSSOGrants is the link_sso_grants setting (off when unwired).

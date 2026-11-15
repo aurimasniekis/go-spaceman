@@ -341,19 +341,235 @@ func TestCustomComplexSchemaLinksToApp(t *testing.T) {
 	}
 }
 
-// Approvals are not answered here (TG-7-2): the form only says to open the app, and no tap can respond.
-func TestApprovalStaysInApp(t *testing.T) {
+// SM-TG-006 (TG-7-2): an advisory approval is decided in chat. Approve shows a Confirm step and responds only from
+// it, with the card's version as If-Match; Back returns to the choice. No confirmation is armed for an advisory one.
+func TestApprovalAdvisoryApproveConfirm(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "approval", "Deploy?", `{"action":"deploy prod","details":"why"}`)
+	f := e.open(spA, hid('1'))
+	if !strings.Contains(f.Text, "Approve: deploy prod") || f.ReplyMarkup == nil {
+		t.Fatalf("%q", f.Text)
+	}
+	row := f.ReplyMarkup.InlineKeyboard[0]
+	if len(row) != 2 || row[0].Style != botapi.StyleSuccess || row[1].Style != botapi.StyleDanger || !strings.Contains(row[1].Text, "Deny") {
+		t.Fatalf("buttons %+v", row)
+	}
+	// A Confirm that no Approve came before (tampered data) never responds.
+	e.tapData(humanData('y', spA, hid('1'), -1), f)
+	if e.responded() != 0 || e.lastAnswer() != TextUnavailable {
+		t.Fatalf("confirm without approve: %d %q", e.responded(), e.lastAnswer())
+	}
+	e.tapData(find(f, "Approve"), f)
+	if e.responded() != 0 {
+		t.Fatal("Approve responded without Confirm")
+	}
+	c := e.formMsg()
+	if !strings.Contains(c.Text, "Approve: deploy prod?") || find(c, "Confirm approve") == "" || find(c, "Back") == "" {
+		t.Fatalf("confirm step: %q", c.Text)
+	}
+	e.tapData(find(c, "Back"), c)
+	if b := e.formMsg(); find(b, "Confirm approve") != "" || find(b, "Approve") == "" {
+		t.Fatalf("back: %q", b.Text)
+	}
+	e.tapData(humanData('y', spA, hid('1'), -1), f) // Back cancelled the Confirm step
+	if e.responded() != 0 {
+		t.Fatal("confirm after back responded")
+	}
+	e.tapData(find(f, "Approve"), f)
+	e.tapData(find(e.formMsg(), "Confirm approve"), e.formMsg())
+	if e.responded() != 1 || e.api.responds[0]["outcome"] != "approved" || e.api.respHdr[0] != `"4"` || e.api.respTok[0] != "" {
+		t.Fatalf("%v %v %v", e.api.responds, e.api.respHdr, e.api.respTok)
+	}
+	if len(e.arms) != 0 {
+		t.Fatalf("armed for an advisory approval: %v", e.arms)
+	}
+	if !strings.Contains(e.last().Text, "✅ Done: approved") {
+		t.Fatalf("%q", e.last().Text)
+	}
+}
+
+// Deny asks for a note with a ForceReply; an empty or blank note is refused and asked for again, nothing is sent; the
+// note goes with the denial.
+func TestApprovalDenyNeedsNote(t *testing.T) {
 	e := newEnv(t)
 	e.addHuman(spA, hid('1'), "approval", "Deploy?", `{"action":"deploy"}`)
 	f := e.open(spA, hid('1'))
-	if !strings.Contains(f.Text, TextApprovalInApp) || f.ReplyMarkup != nil {
+	e.tapData(find(f, "Deny"), f)
+	if e.responded() != 0 || !e.sentForce() || e.last().Text != TextDenyNote {
+		t.Fatalf("deny prompt: %q", e.last().Text)
+	}
+	pr := e.last().MessageID
+	e.reply("   ", pr, chatID, e.l)
+	if e.responded() != 0 || e.last().Text != TextDenyNoteEmpty || !e.sentForce() {
+		t.Fatalf("blank note: %d %q", e.responded(), e.last().Text)
+	}
+	again := e.last().MessageID
+	e.reply("x", pr, chatID, e.l) // the first prompt is used up
+	if e.responded() != 0 {
+		t.Fatal("old prompt reused")
+	}
+	e.reply(strings.Repeat("n", maxNoteRunes+1), again, chatID, e.l)
+	if e.responded() != 0 || !e.sentForce() {
+		t.Fatal("over-long note sent")
+	}
+	e.reply("too risky today", e.last().MessageID, chatID, e.l)
+	if e.responded() != 1 || e.api.responds[0]["outcome"] != "denied" || e.api.responds[0]["note"] != "too risky today" || e.api.respHdr[0] != `"4"` {
+		t.Fatalf("%v %v", e.api.responds, e.api.respHdr)
+	}
+}
+
+// A card whose action changed since it was shown (someone else decided, or it was edited) responds with the old
+// version, gets the conflict, and the form is dropped: the next tap says it expired.
+func TestApprovalStaleCard(t *testing.T) {
+	e := newEnv(t)
+	a := e.addHuman(spA, hid('1'), "approval", "Deploy?", `{"action":"deploy"}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Approve"), f)
+	a.Version = 5
+	c := e.formMsg()
+	e.tapData(find(c, "Confirm approve"), c)
+	if e.responded() != 1 || e.api.respHdr[0] != `"4"` || a.Status != "open" || !strings.Contains(e.lastAnswer(), "changed or was already answered") {
+		t.Fatalf("%v %q", e.api.respHdr, e.lastAnswer())
+	}
+	e.tapData(find(c, "Confirm approve"), c)
+	if e.responded() != 1 || e.lastAnswer() != TextFormExpired {
+		t.Fatalf("after conflict: %d %q", e.responded(), e.lastAnswer())
+	}
+}
+
+// A form and a deny prompt live for the pending TTL: after it, Confirm and the note never respond.
+func TestApprovalFormExpires(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "approval", "Deploy?", `{"action":"deploy"}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Approve"), f)
+	c := e.formMsg()
+	e.clock().Advance(pendingTTL + time.Second)
+	e.tapData(find(c, "Confirm approve"), c)
+	if e.responded() != 0 || e.lastAnswer() != TextFormExpired {
+		t.Fatalf("expired confirm: %d %q", e.responded(), e.lastAnswer())
+	}
+	f = e.open(spA, hid('1'))
+	e.tapData(find(f, "Deny"), f)
+	pr := e.last().MessageID
+	e.clock().Advance(pendingTTL + time.Second)
+	e.reply("no", pr, chatID, e.l)
+	if e.responded() != 0 {
+		t.Fatal("expired deny prompt responded")
+	}
+}
+
+// Tampered callback data never decides: another action on this form's message, another link, a verb with an extra
+// argument, junk, and a Confirm on a non-approval form.
+func TestApprovalTamperedCallbacks(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "approval", "Deploy?", `{"action":"deploy"}`)
+	e.addHuman(spA, hid('2'), "approval", "Other?", `{"action":"other"}`)
+	e.addHuman(spA, hid('3'), "question", "Q?", `{"options":["a"]}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Approve"), f)
+	c := e.formMsg()
+	e.tapData(humanData('y', spA, hid('2'), -1), c)     // another action on this form
+	e.tapData(humanData('y', spA, hid('1'), 0), c)      // an argument the verb doesn't take
+	e.tapData("hy:"+strings.TrimPrefix(spA, "spc_"), c) // truncated
+	e.tapData("hy:..:..", c)
+	other := e.l
+	other.ID = "tgl_2"
+	e.upd++
+	u := botapi.Update{UpdateID: e.upd, CallbackQuery: &botapi.CallbackQuery{ID: "cbx", From: botapi.User{ID: chatID}, Message: &c, Data: humanData('y', spA, hid('1'), -1)}}
+	e.srv.PushUpdate(u)
+	e.h.Handle(context.Background(), u, other) // another link tapping this link's form
+	q := e.open(spA, hid('3'))
+	e.tapData(humanData('y', spA, hid('3'), -1), q)
+	e.tapData(humanData('d', spA, hid('3'), -1), q)
+	if e.responded() != 0 {
+		t.Fatalf("tampered data responded: %v", e.api.responds)
+	}
+	// The real Confirm still works afterwards.
+	e.tapData(find(c, "Confirm approve"), c)
+	if e.responded() != 1 || e.api.responds[0]["outcome"] != "approved" {
+		t.Fatalf("%v", e.api.responds)
+	}
+}
+
+// An enforced approval in a space without the opt-in is decided in the browser: the card shows the operation,
+// resource, scope, uses, expiry and digest, never the body or the arguments, and offers no decision; taps arm nothing
+// and never respond.
+func TestEnforcedApprovalWebOnly(t *testing.T) {
+	e := newEnv(t)
+	e.h.o.AppURL = func(space, id string) string { return "https://app.example.com/a/" + id }
+	e.addHuman(spA, hid('1'), "approval", "Approve mcp.github.merge", `{"action":"Run mcp.github.merge"}`)
+	e.api.enforced[hid('1')] = true
+	f := e.open(spA, hid('1'))
+	for _, want := range []string{TextApprovalInApp, "Operation: mcp.github.merge", "Resource: repo/x", "Uses: 1", "Argument digest: sha256:abc", "Request expires: 2026-11-14 10:00 UTC"} {
+		if !strings.Contains(f.Text, want) {
+			t.Fatalf("missing %q in %q", want, f.Text)
+		}
+	}
+	if strings.Contains(f.Text, "do the thing") || strings.Contains(f.Text, "SECRET-ARGS") {
+		t.Fatalf("body or arguments shown: %q", f.Text)
+	}
+	texts, _ := buttons(f)
+	if len(texts) != 1 || texts[0] != "Decide in browser" || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
+		t.Fatalf("%v", texts)
+	}
+	for _, v := range []byte("aydb") {
+		e.tapData(humanData(v, spA, hid('1'), -1), f)
+	}
+	if e.responded() != 0 || len(e.arms) != 0 {
+		t.Fatalf("decided from a web-only card: %v %v", e.api.responds, e.arms)
+	}
+}
+
+// With the space's opt-in, an enforced approval is decided in two steps: Approve (or Deny) arms the server's
+// confirmation for this link, space, action, outcome and version, and Confirm (or the note) carries it. Back drops it.
+func TestEnforcedApprovalConfirmInChat(t *testing.T) {
+	e := newEnv(t)
+	e.apConfirm.Store(true)
+	e.addHuman(spA, hid('1'), "approval", "Approve merge", `{"action":"Run mcp.github.merge"}`)
+	e.addHuman(spA, hid('2'), "approval", "Approve merge 2", `{"action":"Run mcp.github.merge"}`)
+	e.api.enforced[hid('1')], e.api.enforced[hid('2')] = true, true
+	f := e.open(spA, hid('1'))
+	if strings.Contains(f.Text, "do the thing") || find(f, "Approve") == "" {
 		t.Fatalf("%q", f.Text)
 	}
-	for _, v := range []byte("qtcmfwksx") {
-		e.tapData(humanData(v, spA, hid('1'), 0), f)
+	e.tapData(find(f, "Approve"), f)
+	if len(e.arms) != 1 || e.arms[0] != "tgl_1 "+spA+" "+hid('1')+" approved 4" || e.responded() != 0 {
+		t.Fatalf("arm: %v", e.arms)
 	}
+	c := e.formMsg()
+	if !strings.Contains(c.Text, "second step") {
+		t.Fatalf("%q", c.Text)
+	}
+	e.tapData(find(c, "Back"), c)
+	e.tapData(humanData('y', spA, hid('1'), -1), c)
 	if e.responded() != 0 {
-		t.Fatal("an approval was answered")
+		t.Fatal("confirm after back")
+	}
+	e.tapData(find(f, "Approve"), f)
+	e.tapData(find(e.formMsg(), "Confirm approve"), e.formMsg())
+	if e.responded() != 1 || e.api.respTok[0] != "tok-2" || e.api.responds[0]["outcome"] != "approved" || e.api.respHdr[0] != `"4"` {
+		t.Fatalf("%v %v", e.api.respTok, e.api.responds)
+	}
+	// Deny: armed for "denied" at the tap, carried by the note.
+	f = e.open(spA, hid('2'))
+	e.tapData(find(f, "Deny"), f)
+	if e.arms[len(e.arms)-1] != "tgl_1 "+spA+" "+hid('2')+" denied 4" {
+		t.Fatalf("deny arm: %v", e.arms)
+	}
+	e.reply("", e.last().MessageID, chatID, e.l)
+	e.reply("not now", e.last().MessageID, chatID, e.l)
+	if e.responded() != 2 || e.api.respTok[1] != "tok-3" || e.api.responds[1]["outcome"] != "denied" || e.api.responds[1]["note"] != "not now" {
+		t.Fatalf("%v %v", e.api.respTok, e.api.responds)
+	}
+	// Arming that fails (the server's set is full or unwired) starts nothing.
+	e.h.o.ArmApproval = func(string, string, string, string, int64) string { return "" }
+	e.addHuman(spA, hid('4'), "approval", "Approve merge 4", `{"action":"x"}`)
+	e.api.enforced[hid('4')] = true
+	f = e.open(spA, hid('4'))
+	e.tapData(find(f, "Approve"), f)
+	if find(e.formMsg(), "Confirm approve") != "" || e.lastAnswer() != TextFailed {
+		t.Fatalf("unarmed confirm offered: %q", e.lastAnswer())
 	}
 }
 
@@ -717,5 +933,34 @@ func TestWizardPromptNotesCappedMaxLength(t *testing.T) {
 	e.open(spA, hid('1'))
 	if p := e.last().Text; !strings.Contains(p, "2000") || !strings.Contains(p, "app") {
 		t.Fatalf("%q", p)
+	}
+}
+
+// A Confirm the server refuses (not a conflict) goes back to Approve/Deny: the server's confirmation was used up, so a
+// second Confirm tap never responds without a new Approve.
+func TestApprovalRefusedConfirmStartsOver(t *testing.T) {
+	e := newEnv(t)
+	e.apConfirm.Store(true)
+	e.addHuman(spA, hid('1'), "approval", "Approve merge", `{"action":"x"}`)
+	e.api.enforced[hid('1')] = true
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Approve"), f)
+	e.api.badDetail = "refused"
+	e.tapData(find(e.formMsg(), "Confirm approve"), e.formMsg())
+	if e.responded() != 1 || !strings.Contains(e.lastAnswer(), "refused") {
+		t.Fatalf("%d %q", e.responded(), e.lastAnswer())
+	}
+	if m := e.formMsg(); find(m, "Confirm approve") != "" || find(m, "Approve") == "" {
+		t.Fatalf("after a refused confirm: %q", m.Text)
+	}
+	e.tapData(humanData('y', spA, hid('1'), -1), f)
+	if e.responded() != 1 {
+		t.Fatal("confirmed again without Approve")
+	}
+	e.api.badDetail = ""
+	e.tapData(find(e.formMsg(), "Approve"), e.formMsg())
+	e.tapData(find(e.formMsg(), "Confirm approve"), e.formMsg())
+	if e.responded() != 2 || e.api.respTok[1] != "tok-2" {
+		t.Fatalf("%v", e.api.respTok)
 	}
 }
