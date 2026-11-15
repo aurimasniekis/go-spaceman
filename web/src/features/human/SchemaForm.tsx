@@ -1,6 +1,7 @@
 import { Checkbox, Group, NumberInput, Radio, Select, Stack, Switch, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
 import { useForm, useSelector } from '@tanstack/react-form'
 import { fieldError, required } from '@/lib/form'
+import { compactValue, deref, kindOf, SchemaValue, supported, type Node } from './schemaValue'
 
 // A JSON Schema 2020-12 subset rendered as a form (SM-HTYPE-003). Only data from the schema and the type's safe UI
 // metadata is used; nothing in either is executed. Fields the form cannot render, and anyone who prefers it, use the
@@ -23,16 +24,21 @@ const kind = (p: Prop) => (Array.isArray(p.type) ? p.type.find((t) => t !== 'nul
 
 /** Whether every property can be rendered as a field (otherwise the JSON editor is used). */
 export function formable(schema: unknown): boolean {
-  const s = (schema ?? {}) as ObjectSchema
-  return Object.values(s.properties ?? {}).every((p) => {
-    const k = kind(p)
-    return k === 'string' || k === 'number' || k === 'integer' || k === 'boolean' || (k === 'array' && (p.items?.type === 'string' || !!p.items?.enum))
-  })
+  const s = (schema ?? {}) as Node
+  return Object.values(s.properties ?? {}).every((p) => supported(p, s))
+}
+
+/** Whether a property is one of the simple inputs below (the rest nest or pick through SchemaValue). */
+function simple(p: Prop): boolean {
+  const t = kindOf(p as Node)
+  const p2 = p as Node
+  if (p2.$ref || p2.oneOf || p2.anyOf || t === 'object') return false
+  return t !== 'array' || !!p.items?.enum || p.items?.type === 'string'
 }
 
 /** The value without empty fields: an empty string, a cleared number or an empty list means "not given". */
 function compact(v: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(v).filter(([, x]) => !(x === '' || x === undefined || x === null || (Array.isArray(x) && x.length === 0))))
+  return compactValue(v) as Record<string, unknown>
 }
 
 function parseObject(text: string): Record<string, unknown> {
@@ -97,7 +103,8 @@ export function SchemaForm({ schema, ui, value, onChange, label }: { schema: unk
           )}
         </form.Field>
       ) : order.length === 0 ? <Text size="sm" c="dimmed">No fields.</Text> : order.map((k) => {
-        const p = props[k]
+        const raw = props[k]
+        const p = (deref(raw as Node, s as Node) ?? raw) as Prop
         const fm = meta.fields?.[k] ?? {}
         const fieldLabel = fm.label || p.title || k
         const desc = fm.help || p.description
@@ -113,6 +120,7 @@ export function SchemaForm({ schema, ui, value, onChange, label }: { schema: unk
                 emit()
               }
               const error = fieldError(f.state.meta)
+              if (!simple(raw)) return <SchemaValue node={raw as Node} root={s as Node} label={fieldLabel} description={desc} required={req} ui={meta} value={v} onChange={set} />
               if (t === 'boolean') return <Checkbox label={fieldLabel} description={desc} checked={v === true} onChange={(e) => set(e.currentTarget.checked)} />
               if (t === 'number' || t === 'integer') {
                 return <NumberInput label={fieldLabel} description={desc} withAsterisk={req} allowDecimal={t === 'number'} value={typeof v === 'number' ? v : ''} error={error}
@@ -161,9 +169,9 @@ export function DataView({ data, schema, ui }: { data: unknown; schema?: unknown
   return (
     <Stack gap={4}>
       {keys.map((k) => (
-        <Group key={k} gap="xs" align="flex-start" wrap="nowrap">
+        <Group key={k} gap={4} align="flex-start">
           <Text size="sm" c="dimmed" w={160} style={{ flexShrink: 0 }}>{meta.fields?.[k]?.label || props[k]?.title || k}</Text>
-          <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{typeof obj[k] === 'string' ? (obj[k] as string) : JSON.stringify(obj[k])}</Text>
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: '1 1 12rem', minWidth: 0 }}>{typeof obj[k] === 'string' ? (obj[k] as string) : JSON.stringify(obj[k])}</Text>
         </Group>
       ))}
     </Stack>

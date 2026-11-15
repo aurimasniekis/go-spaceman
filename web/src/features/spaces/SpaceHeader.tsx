@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState, type ReactNode } from 'react'
 import { api, ifMatch, unwrap, type Space } from '@/api/client'
+import { isMiniApp } from '@/api/session'
 import { keys, useMe, useNodes, useSpace } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { SpaceState } from '@/components/StatusBadge'
@@ -78,7 +79,7 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
           <Text size="xs" c="dimmed">
             <span className="mono">{s.slug}</span>
             {' · node '}
-            <AnchorLink to="/nodes" size="xs" c="dimmed">{node?.name ?? s.node_id}</AnchorLink>
+            {isMiniApp() ? (node?.name ?? s.node_id) : <AnchorLink to="/nodes" size="xs" c="dimmed">{node?.name ?? s.node_id}</AnchorLink>}
             {node && ` · ${node.state !== 'active' ? node.state : node.connected ? 'connected' : 'offline'}`}
             {s.desired_node_id && s.desired_node_id !== s.node_id && ' · relocating'}
           </Text>

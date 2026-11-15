@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type HumanAction, type HumanNotification } from '@/api/client'
 import { keys, useMe } from '@/api/queries'
+import { isMiniApp } from '@/api/session'
 import { AnchorLink } from '@/components/AnchorLink'
 import { AttachmentList } from '@/components/AttachmentList'
 import { useAppForm } from '@/components/form/appForm'
@@ -134,7 +135,7 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
       )}
       {enforced.data && <EnforcedApprovalCard approval={enforced.data} />}
       {(action.notifications ?? []).map((n) => (
-        <DeliveryCard key={n.id} action={action} n={n} canRoute={canRespond} onRouted={done} />
+        <DeliveryCard key={n.id} action={action} n={n} canRoute={canRespond && !isMiniApp()} onRouted={done} />
       ))}
 
       <Divider label="Comments (discussion, not a response)" labelPosition="left" />
