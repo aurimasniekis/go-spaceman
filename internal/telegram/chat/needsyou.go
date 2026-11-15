@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"slices"
@@ -36,7 +37,7 @@ const (
 	maxWizardChoices  = 8
 	maxFormsPerLink   = 10
 	bodyRunes         = 1500
-	maxOptions        = 20
+	maxOptions        = 20 // a question with more options is answered in the app
 	maxSteps          = 20 // a todo with more steps is answered in the app
 )
 
@@ -69,6 +70,9 @@ type wfield struct {
 	kind        string // string, number, integer, boolean
 	choices     []string
 	required    bool
+	maxLen      *int
+	minLen      *int
+	min, max    *float64
 }
 
 type wizard struct {
@@ -91,7 +95,7 @@ type form struct {
 	done                    []bool
 	requiresAck             bool
 	wiz                     *wizard
-	big                     bool   // too many steps for a keyboard
+	big                     bool   // too many steps or options for a keyboard
 	head                    string // the text above the controls
 }
 
@@ -131,14 +135,20 @@ func (h *Handler) cmdNeedsYou(ctx context.Context, l updates.Link, arg string) {
 		return
 	}
 	h.setCurrent(l.ID, s.ID)
-	var out struct {
-		Items []humanAction `json:"items"`
+	// The list takes one status at a time: an action assigned or escalated to the caller is in_progress.
+	var items []humanAction
+	for _, st := range []string{"open", "in_progress"} {
+		var out struct {
+			Items []humanAction `json:"items"`
+		}
+		r := c.get(ctx, "/spaces/"+s.ID+"/human-actions?status="+st+"&limit="+strconv.Itoa(h.o.PageSize+1), &out)
+		if !r.ok() {
+			h.send(ctx, l.ChatID, reply{text: failText(r)})
+			return
+		}
+		items = append(items, out.Items...)
 	}
-	r := c.get(ctx, "/spaces/"+s.ID+"/human-actions?status=open&limit="+strconv.Itoa(h.o.PageSize+1), &out)
-	if !r.ok() {
-		h.send(ctx, l.ChatID, reply{text: failText(r)})
-		return
-	}
+	out := struct{ Items []humanAction }{items}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Needs you in %s", s.title())
 	if len(out.Items) == 0 {
@@ -341,9 +351,7 @@ func (h *Handler) newForm(a humanAction, l updates.Link, s spaceRef) *form {
 			AllowText bool     `json:"allow_text"`
 		}
 		_ = json.Unmarshal(a.Request, &q)
-		if len(q.Options) > maxOptions {
-			q.Options = q.Options[:maxOptions]
-		}
+		f.big = len(q.Options) > maxOptions // answered in the app, like a large todo
 		f.options, f.allowText = q.Options, q.AllowText || len(q.Options) == 0
 	case "todo":
 		var t struct {
@@ -417,8 +425,12 @@ func parseWizard(a humanAction) *wizard {
 	}
 	for _, n := range names {
 		var p struct {
-			Type string            `json:"type"`
-			Enum []json.RawMessage `json:"enum"`
+			Type      string            `json:"type"`
+			Enum      []json.RawMessage `json:"enum"`
+			MaxLength *int              `json:"maxLength"`
+			MinLength *int              `json:"minLength"`
+			Minimum   *float64          `json:"minimum"`
+			Maximum   *float64          `json:"maximum"`
 		}
 		var raw map[string]json.RawMessage
 		_ = json.Unmarshal(sch.Properties[n], &raw)
@@ -432,7 +444,8 @@ func parseWizard(a humanAction) *wizard {
 		if json.Unmarshal(sch.Properties[n], &p) != nil {
 			return nil
 		}
-		fl := wfield{name: n, label: clean(ui.Fields[n].Label, 60), kind: p.Type, required: slices.Contains(sch.Required, n)}
+		fl := wfield{name: n, label: clean(ui.Fields[n].Label, 60), kind: p.Type, required: slices.Contains(sch.Required, n),
+			maxLen: p.MaxLength, minLen: p.MinLength, min: p.Minimum, max: p.Maximum}
 		if fl.label == "" {
 			fl.label = clean(n, 60)
 		}
@@ -771,7 +784,12 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 	}
 	if p.field < 0 {
 		if f.typ == "question" && f.allowText {
-			h.respond(ctx, c, l, nil, s, f, map[string]any{"outcome": "answered", "answer": truncate(text, 50000)})
+			if n := len([]rune(text)); n > maxAnswerRunes {
+				h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("That answer is too long (%d characters, at most %d). Nothing was sent; reply again with a shorter one.", n, maxAnswerRunes)})
+				h.addPrompt(k, p)
+				return true
+			}
+			h.respond(ctx, c, l, nil, s, f, map[string]any{"outcome": "answered", "answer": text})
 		}
 		return true
 	}
@@ -780,22 +798,10 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 		return true
 	}
 	fl := f.wiz.fields[p.field]
-	var v any = truncate(text, 2000)
-	switch fl.kind {
-	case "integer":
-		i, err := strconv.ParseInt(text, 10, 64)
-		if err != nil {
-			h.retryPrompt(ctx, f, fl, "a whole number")
-			return true
-		}
-		v = i
-	case "number":
-		x, err := strconv.ParseFloat(text, 64)
-		if err != nil {
-			h.retryPrompt(ctx, f, fl, "a number")
-			return true
-		}
-		v = x
+	v, bad := fl.parse(text)
+	if bad != "" {
+		h.retryPrompt(ctx, f, fl, bad)
+		return true
 	}
 	f.wiz.values[fl.name] = v
 	f.wiz.idx++
@@ -803,8 +809,55 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 	return true
 }
 
+// maxWizardText is the longest free-text value taken when the schema sets no maxLength.
+const maxWizardText = 2000
+
+// maxAnswerRunes is the longest free-text answer to a question.
+const maxAnswerRunes = 50000
+
+// parse checks a typed value against the field's kind and limits. On failure it returns what the field needs.
+func (fl wfield) parse(text string) (any, string) {
+	switch fl.kind {
+	case "integer", "number":
+		var x float64
+		var v any
+		if fl.kind == "integer" {
+			i, err := strconv.ParseInt(text, 10, 64)
+			if err != nil {
+				return nil, "a whole number"
+			}
+			x, v = float64(i), i
+		} else {
+			f, err := strconv.ParseFloat(text, 64)
+			if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, "a number"
+			}
+			x, v = f, f
+		}
+		if fl.min != nil && x < *fl.min {
+			return nil, "a value of at least " + strconv.FormatFloat(*fl.min, 'g', -1, 64)
+		}
+		if fl.max != nil && x > *fl.max {
+			return nil, "a value of at most " + strconv.FormatFloat(*fl.max, 'g', -1, 64)
+		}
+		return v, ""
+	}
+	n := len([]rune(text))
+	limit := maxWizardText
+	if fl.maxLen != nil && *fl.maxLen < limit {
+		limit = *fl.maxLen
+	}
+	if n > limit {
+		return nil, fmt.Sprintf("at most %d characters (you sent %d)", limit, n)
+	}
+	if fl.minLen != nil && n < *fl.minLen {
+		return nil, fmt.Sprintf("at least %d characters", *fl.minLen)
+	}
+	return text, ""
+}
+
 func (h *Handler) retryPrompt(ctx context.Context, f *form, fl wfield, what string) {
-	m, ok := h.send(ctx, f.key.chat, reply{text: fl.label + " needs " + what + ". Reply with it.", force: &botapi.ForceReply{ForceReply: true, InputFieldPlaceholder: truncate(fl.label, 60)}})
+	m, ok := h.send(ctx, f.key.chat, reply{text: fl.label + " needs " + what + ". Nothing was saved; reply with it again.", force: &botapi.ForceReply{ForceReply: true, InputFieldPlaceholder: truncate(fl.label, 60)}})
 	if ok {
 		h.addPrompt(pendingKey{f.key.chat, m.MessageID}, prompt{linkID: f.linkID, form: f.key, field: f.wiz.idx})
 	}

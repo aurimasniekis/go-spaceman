@@ -6,6 +6,7 @@ import (
 	"net/netip"
 
 	"net/http"
+	"net/url"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
@@ -131,6 +132,15 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 				return "", "", "", false
 			}
 			return m.SpaceID, m.Key.ID, m.LinkID, true
+		},
+		// Approvals and forms too complex for the chat open in the Mini App; without its host there is no button.
+		AppURL: func(spaceID, actionID string) string {
+			o := c.miniAppOrigin()
+			if o == "" {
+				return ""
+			}
+			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
+			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
 		},
 		Bot: func() chat.Bot {
 			b, _ := d.Bot().(chat.Bot)

@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -517,4 +518,179 @@ func TestBigTodoAndEmptyOutcome(t *testing.T) {
 	if parseWizard(*a) != nil || e.responded() != 0 {
 		t.Fatal("empty outcome accepted")
 	}
+}
+
+// An action assigned or escalated to the caller is in_progress, and /needsyou lists it with the open ones.
+func TestNeedsYouListsInProgress(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "question", "Open one", `{"options":["a"]}`)
+	esc := e.addHuman(spA, hid('2'), "question", "Escalated one", `{"options":["a"]}`)
+	esc.Status = "in_progress"
+	e.addHuman(spA, hid('3'), "message", "Done", `{}`).Status = "cancelled"
+	e.say("/needsyou alpha")
+	texts, data := buttons(e.last())
+	if len(texts) != 2 || !slices.Contains(data, humanData('o', spA, hid('2'), -1)) || !slices.Contains(data, humanData('o', spA, hid('1'), -1)) {
+		t.Fatalf("%v %v", texts, data)
+	}
+	// and its form is live: it answers
+	f := e.open(spA, hid('2'))
+	e.tapData(find(f, "a"), f)
+	if e.responded() != 1 {
+		t.Fatal("escalated action not answered")
+	}
+}
+
+// A form is bound to the link it was shown to: after an unlink and relink in the same chat (a new link ID), a tap on
+// the old form message responds to nothing. (Mutant: dropping `f.linkID != linkID` in formFor makes this fail.)
+func TestFormBoundToLink(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "question", "Which one?", `{"options":["red","blue"]}`)
+	f := e.open(spA, hid('1'))
+	e.l.ID = "tgl_2"
+	e.tapData(find(f, "blue"), f)
+	if e.responded() != 0 || e.lastAnswer() != TextFormExpired {
+		t.Fatalf("%d %q", e.responded(), e.lastAnswer())
+	}
+	e.l.ID = "tgl_1"
+	e.tapData(find(f, "blue"), f)
+	if e.responded() != 1 {
+		t.Fatal("the original link can't answer")
+	}
+}
+
+// A link holds at most maxFormsPerLink live forms: opening one more retires the oldest.
+func TestFormCapPerLink(t *testing.T) {
+	e := newEnv(t)
+	var forms []botapi.Message
+	for i := 0; i <= maxFormsPerLink; i++ {
+		id := hid(byte('i' + i)) // never 'h': that ID is the hidden one
+		e.addHuman(spA, id, "question", "Q", `{"options":["x"]}`)
+		forms = append(forms, e.open(spA, id))
+		e.clk.Advance(time.Second)
+	}
+	e.tapData(find(forms[0], "x"), forms[0])
+	if e.responded() != 0 || e.lastAnswer() != TextFormExpired {
+		t.Fatalf("oldest form still live: %d %q", e.responded(), e.lastAnswer())
+	}
+	e.tapData(find(forms[1], "x"), forms[1])
+	last := forms[len(forms)-1]
+	e.tapData(find(last, "x"), last)
+	if e.responded() != 2 {
+		t.Fatalf("live forms refused: %d", e.responded())
+	}
+}
+
+// A question with more options than a keyboard takes is answered in the app, like a large todo.
+func TestManyOptionsOpensInApp(t *testing.T) {
+	e := newEnv(t)
+	e.h.o.AppURL = func(space, id string) string { return "https://app.example.com/a/" + id }
+	opts := make([]string, maxOptions+1)
+	for i := range opts {
+		opts[i] = "o" + strings.Repeat("x", i)
+	}
+	b, _ := json.Marshal(map[string]any{"options": opts, "allow_text": true})
+	e.addHuman(spA, hid('1'), "question", "Many", string(b))
+	f := e.open(spA, hid('1'))
+	if !strings.Contains(f.Text, TextOpenInApp) || f.ReplyMarkup == nil || len(f.ReplyMarkup.InlineKeyboard) != 1 || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
+		t.Fatalf("%q %+v", f.Text, f.ReplyMarkup)
+	}
+	e.tapData(humanData('q', spA, hid('1'), 0), f)
+	e.tapData(humanData('f', spA, hid('1'), -1), f)
+	if e.responded() != 0 {
+		t.Fatal("answered in chat")
+	}
+	// exactly maxOptions stay in the chat
+	b, _ = json.Marshal(map[string]any{"options": opts[:maxOptions]})
+	e.addHuman(spA, hid('2'), "question", "Twenty", string(b))
+	f = e.open(spA, hid('2'))
+	if strings.Contains(f.Text, TextOpenInApp) || len(f.ReplyMarkup.InlineKeyboard) != maxOptions {
+		t.Fatalf("%q", f.Text)
+	}
+}
+
+// The wizard checks the schema's limits for each typed value, refuses NaN and Inf, and never cuts a long text.
+func TestWizardFieldValidation(t *testing.T) {
+	e := newEnv(t)
+	schema := `{"type":"object","properties":{
+		"name":{"type":"string","minLength":3,"maxLength":5},
+		"qty":{"type":"integer","minimum":1,"maximum":10},
+		"ratio":{"type":"number","minimum":0,"maximum":1},
+		"free":{"type":"string"}},"required":["name","qty","ratio","free"]}`
+	e.addCustom(hid('1'), schema, []string{"done"}, `{"order":["name","qty","ratio","free"]}`)
+	f := e.open(spA, hid('1'))
+	_ = f
+	say := func(text, want string) {
+		t.Helper()
+		before := len(e.srv.Messages(chatID))
+		e.reply(text, e.promptMsg(), chatID, e.l)
+		got := e.last().Text
+		if want == "" {
+			return
+		}
+		if !strings.Contains(got, want) || len(e.srv.Messages(chatID)) == before {
+			t.Fatalf("%q: %q, want %q", text, got, want)
+		}
+	}
+	say("ab", "at least 3")
+	say("abcdef", "at most 5")
+	say("abc", "")
+	say("0", "at least 1")
+	say("11", "at most 10")
+	say("1.5", "whole number")
+	say("5", "")
+	for _, bad := range []string{"NaN", "Inf", "-Inf", "+Inf", "infinity", "nan"} {
+		say(bad, "a number")
+	}
+	say("-0.1", "at least 0")
+	say("1.1", "at most 1")
+	say("0.5", "")
+	// free text over the default limit is refused with a notice, not cut
+	say(strings.Repeat("x", maxWizardText+1), "at most 2000 characters")
+	if len(e.api.responds) != 0 {
+		t.Fatal("responded")
+	}
+	say(strings.Repeat("x", maxWizardText), "")
+	form := e.formMsg()
+	if !strings.Contains(form.Text, "Your answers") {
+		t.Fatalf("%q", form.Text)
+	}
+	e.tapData(find(form, "Submit: done"), form)
+	data := e.api.responds[0]["data"].(map[string]any)
+	if data["name"] != "abc" || data["qty"] != float64(5) || data["ratio"] != 0.5 || len(data["free"].(string)) != maxWizardText {
+		t.Fatalf("%v", data)
+	}
+}
+
+// A question's free-text answer over the limit is refused with a notice and the prompt stays.
+func TestQuestionAnswerTooLong(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "question", "Name it", `{"allow_text":true}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Type an answer"), f)
+	pr := e.last().MessageID
+	e.reply(strings.Repeat("x", maxAnswerRunes+1), pr, chatID, e.l)
+	if !strings.Contains(e.last().Text, "too long") || e.responded() != 0 {
+		t.Fatalf("%q", e.last().Text)
+	}
+	e.reply("fine", pr, chatID, e.l)
+	if e.responded() != 1 || e.api.responds[0]["answer"] != "fine" {
+		t.Fatalf("%v", e.api.responds)
+	}
+}
+
+// promptMsg is the latest ForceReply prompt message.
+func (e *env) promptMsg() int {
+	e.t.Helper()
+	for i := len(e.sent) - 1; i >= 0; i-- {
+		if _, ok := e.sent[i].ReplyMarkup.(*botapi.ForceReply); ok {
+			ms := e.srv.Messages(chatID)
+			for j := len(ms) - 1; j >= 0; j-- {
+				if ms[j].Text == e.sent[i].Text {
+					return ms[j].MessageID
+				}
+			}
+		}
+	}
+	e.t.Fatal("no prompt")
+	return 0
 }
