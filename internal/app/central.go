@@ -353,7 +353,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		},
 		OnSpaceRenamed: func(ctx context.Context, spaceID, name string) {
 			if c.TelegramTopics != nil {
-				go c.TelegramTopics.Renamed(context.WithoutCancel(ctx), spaceID, name) // the topics take the new name (ADR-0089)
+				c.TelegramTopics.Renamed(ctx, spaceID, name) // the topics take the new name (ADR-0089); one read and queued calls
 			}
 		},
 		OnSpaceState: func(spaceID, state string) {

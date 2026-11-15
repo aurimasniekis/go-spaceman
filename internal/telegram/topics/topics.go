@@ -261,10 +261,18 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 		return 0, nil
 	}
 	ls.mu.Lock()
-	defer ls.mu.Unlock()
 	ls.threads[key] = topic.MessageThreadID
 	m.rememberName(ls, key, title)
 	m.saveLocked(ctx, ls, linkID)
+	ls.mu.Unlock()
+	// A rename that committed while the topic was being created may have found no thread to edit. The thread is saved
+	// now, so the title is read again: a rename committed before this read is seen here, one committed after finds the
+	// saved thread in Renamed.
+	if now := m.name(ctx, key); now != title {
+		if err := m.rename(ctx, c, LinkThread{LinkID: linkID, ChatID: chatID, ID: topic.MessageThreadID}, key, now); err != nil {
+			m.o.Log.Debug("telegram topics: the title of a new topic was not brought up to date", slog.String("error", err.Error()))
+		}
+	}
 	return topic.MessageThreadID, nil
 }
 
@@ -387,7 +395,8 @@ func (m *Manager) forget(ctx context.Context, linkID, key string, thread int) {
 // Renamed gives every link's topic of a space the space's new name (ADR-0089 T7): one editForumTopic per link that has a
 // topic for it. The calls are queued on the sender, so they count in its rate limits and retry like any send; a link
 // whose topic is already known to have the name is skipped. The topics are read once for all links (Store.Threads),
-// never per recipient. It is meant to run off the request that renamed the space.
+// never per recipient. It runs on the request that renamed the space, so it does one read and queues the calls; it never
+// waits for Telegram.
 func (m *Manager) Renamed(ctx context.Context, spaceID, name string) {
 	if m == nil || m.o.Sender == nil || m.o.Store == nil || spaceID == "" {
 		return
@@ -403,6 +412,7 @@ func (m *Manager) Renamed(ctx context.Context, spaceID, name string) {
 		return
 	}
 	for _, t := range threads {
+		m.link(t.LinkID) // its state exists until Forget (a revoked link), which skips the queued rename
 		err := snd.Enqueue(sender.Message{ChatID: t.ChatID, Priority: sender.Edit, Key: "topic-rename:" + spaceID,
 			Send: func(ctx context.Context, c *botapi.Client) error {
 				return m.rename(ctx, c, t, spaceID, name)
@@ -416,7 +426,12 @@ func (m *Manager) Renamed(ctx context.Context, spaceID, name string) {
 // rename edits one topic's title. It runs on a sender worker. A topic that is gone is left alone: the next send that
 // needs it creates it again with the current title.
 func (m *Manager) rename(ctx context.Context, c *botapi.Client, t LinkThread, key, name string) error {
-	ls := m.link(t.LinkID)
+	m.mu.Lock()
+	ls := m.links[t.LinkID]
+	m.mu.Unlock()
+	if ls == nil {
+		return nil // the link was revoked (Forget) after the rename was queued
+	}
 	ls.mu.Lock()
 	if ls.loaded && ls.threads[key] != t.ID {
 		ls.mu.Unlock()
