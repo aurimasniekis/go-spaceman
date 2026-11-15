@@ -1,0 +1,70 @@
+{
+  "parts": [
+    {
+      "text": "Before.\n\nClick here\nFolded content.\n• a list\n\nAfter.",
+      "entities": [
+        {
+          "type": "bold",
+          "offset": 9,
+          "length": 10,
+          "covers": "Click here"
+        },
+        {
+          "type": "expandable_blockquote",
+          "offset": 20,
+          "length": 24,
+          "covers": "Folded content.\n• a list"
+        },
+        {
+          "type": "bold",
+          "offset": 27,
+          "length": 7,
+          "covers": "content"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "paragraph",
+        "text": "Before."
+      },
+      {
+        "type": "details",
+        "summary": "Click here",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": [
+              "Folded ",
+              {
+                "type": "bold",
+                "text": "content"
+              },
+              "."
+            ]
+          },
+          {
+            "type": "list",
+            "items": [
+              {
+                "blocks": [
+                  {
+                    "type": "paragraph",
+                    "text": "a list"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "text": "After."
+      }
+    ]
+  },
+  "markdown": "Before.\n\n**Click here**\n> Folded **content**.\\\n> • a list\n\nAfter."
+}
