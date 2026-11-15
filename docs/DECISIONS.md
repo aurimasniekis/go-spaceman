@@ -5244,6 +5244,14 @@
   - **Group send limit.** `send_limits.group_per_minute` (1-20, default 20) already existed in the sender but no caller
     set `Message.Group`. The sender now treats every negative chat ID as a group, whatever the caller set, so the
     notifier's and the chat handler's group posts take the per-group bucket.
+  - **With topics mode (TG-11; no authorization change).** `Handle` records the thread an update came from for every
+    chat, then hands a group update to `handleGroup` before the private chat's topic pin (`SpaceOfThread`) is looked
+    up: a group's space comes from its binding only, and its replies stay in the forum topic they answer. `send`
+    applies one thread source (an explicit thread or reply target, else the update's thread). `setCurrent` is a no-op
+    in a group as well as in a pinned topic, and `cmdSpace` never moves the current space from a group, so nothing done
+    in a group changes the member's private chat. Tests: `internal/telegram/chat`
+    `TestGroupForumTopicRepliesInTopicAndLeavesPrivateChatAlone`, `TestSendUsesOneThreadSource`,
+    `TestCmdSpaceInAGroupContextKeepsPrivateCurrent`.
   - **Tests:** `internal/app` `TestTelegramGroupBindOverHTTP` (admin-only, 403 for an operator, getChat checks against
     the fake, 409 on a duplicate, keep/rebind/unbind, a deleted space), `internal/telegram/chat`
     `TestGroupEphemeralReplies`, `TestGroupFormLinksToAppWithDirectLink`, `internal/telegram/updates` (the refusal alert),
