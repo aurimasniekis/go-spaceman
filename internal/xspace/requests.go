@@ -679,6 +679,11 @@ func (svc *Service) Accept(ctx context.Context, actor audit.Actor, spaceID, id s
 		if err != nil {
 			return nil, err
 		}
+		// A task stored under the key before the reserved namespaces (ADR-0087) may be someone else's: link only the
+		// task this request made.
+		if t.OriginKind != originKind || t.OriginID != r.ID {
+			return nil, apperr.New(apperr.CodeConflict, "the task under xspace:%s was not created for this request", r.ID)
+		}
 		taskID = t.ID
 	}
 	err = svc.s.W().TxNamed(ctx, "xspace.accept", func(tx *store.Tx) error {

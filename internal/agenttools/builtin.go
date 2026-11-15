@@ -35,7 +35,7 @@ type inboxAddIn struct {
 	Body          string `json:"body" jsonschema:"Markdown"`
 	Urgency       string `json:"urgency,omitempty" jsonschema:"low, normal, high or urgent"`
 	CorrelationID string `json:"correlation_id,omitempty"`
-	DedupKey      string `json:"dedup_key,omitempty" jsonschema:"repeating a key returns the existing item instead of a duplicate"`
+	DedupKey      string `json:"dedup_key,omitempty" jsonschema:"repeating a key returns the existing item instead of a duplicate; for a worker the key is per role and stored as role:<role>:<key>"`
 }
 
 type inboxStatusIn struct {
@@ -81,15 +81,28 @@ func (r *Registry) registerInbox() {
 		})
 	Add(r, "spaceman_inbox_add", "Add an item to your space's inbox (a finding, follow-up or request). It is not a task: control decides what to do with it.",
 		producers, false, func(ctx context.Context, p *fleet.RunPrincipal, in inboxAddIn) (any, error) {
-			kind := "worker"
+			kind, key := "worker", in.DedupKey
 			switch p.Kind {
 			case KindDreamer:
 				kind = "dreamer"
 			case KindKB:
 				kind = "kb"
+			default:
+				// Every worker run shares source_kind "worker", so a bare key would collide across roles (ADR-0088). The
+				// role keeps restarts of the same role deduplicating.
+				if key != "" {
+					// The prefix counts against the 256-byte limit, so check the key before adding it: the error names the
+					// limit this role actually has.
+					prefix := "role:" + p.Role + ":"
+					if limit := inbox.MaxDedupKey - len(prefix); len(key) > limit {
+						return nil, apperr.New(apperr.CodeInvalid, "dedup_key: at most %d bytes for role %q (%d minus its %d-byte prefix)",
+							limit, p.Role, inbox.MaxDedupKey, len(prefix))
+					}
+					key = prefix + key
+				}
 			}
 			it, _, err := r.d.Inbox.Create(ctx, actor(p), p.SpaceID, inbox.CreateInput{SourceKind: kind, SourceID: p.RunID, SourceLabel: label(p), Title: in.Title,
-				Body: in.Body, Urgency: in.Urgency, CorrelationID: in.CorrelationID, DedupKey: in.DedupKey})
+				Body: in.Body, Urgency: in.Urgency, CorrelationID: in.CorrelationID, DedupKey: key})
 			return it, err
 		})
 	Add(r, "spaceman_inbox_set_status", "Change an inbox item's processing status (control only): mark it in progress, defer it, reject it, or mark it done and link the work.",
