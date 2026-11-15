@@ -157,7 +157,7 @@ type Options struct {
 	// Limits are the rate limits and bounds (zero value: DefaultLimits).
 	Limits Limits
 	// Workers is how many calls may be in flight together (default 8). A quarter of them (2 by default) are kept for
-	// Interactive messages, so a few long multi-call sends waiting in Take can't delay a callback answer.
+	// Interactive messages, so a few long multi-call sends waiting in Take can't delay a callback answer. With Workers below 4 there is no Interactive reserve.
 	Workers int
 	// Clock drives the buckets (default: the system clock).
 	Clock clock.Clock

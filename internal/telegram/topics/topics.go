@@ -106,8 +106,9 @@ func clip(s string, n int) string {
 }
 
 // Send sends p to the topic key of the link's chat (key "": the main chat), creating the topic if there is none and
-// recovering from a deleted or closed one (see the package comment). p.MessageThreadID is set here. The sender paid for
-// the first Bot API call; every further one (a topic creation, a resend) is charged with sender.Take.
+// recovering from a deleted or closed one (see the package comment). p.MessageThreadID is set here. The caller's pay()
+// (the sender's dispatch) pays for the first Bot API call; every further one (a topic creation, a resend) is charged with
+// sender.Take.
 func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, chatID int64, key string, p botapi.SendMessageParams) (botapi.Message, error) {
 	p.ChatID = chatID
 	thread := 0
@@ -142,6 +143,13 @@ func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, cha
 // payer charges the Bot API calls of one Send: the first is paid for by the sender's dispatch, each later one by Take.
 type payer struct{ calls int }
 
+// unused gives back the dispatch's free call when nothing was sent with it.
+func (p *payer) unused() {
+	if p.calls == 1 {
+		p.calls = 0
+	}
+}
+
 func (p *payer) next(ctx context.Context) error {
 	p.calls++
 	if p.calls == 1 {
@@ -165,8 +173,17 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, pay *payer, link
 	if t := ls.threads[key]; t != 0 {
 		return t, nil
 	}
-	if err := pay.next(ctx); err != nil {
+	// Paying can wait for the buckets (seconds, or a whole retry_after), and SpaceOf takes this lock for every topic
+	// message, so the lock is released for the wait and the cache is checked again after it.
+	ls.mu.Unlock()
+	err := pay.next(ctx)
+	ls.mu.Lock()
+	if err != nil {
 		return 0, err
+	}
+	if t := ls.threads[key]; t != 0 { // another send created it meanwhile: use it, and hand back a free call that was not used
+		pay.unused()
+		return t, nil
 	}
 	t, err := c.CreateForumTopic(ctx, botapi.CreateForumTopicParams{ChatID: chatID, Name: m.name(ctx, key)})
 	if err != nil {
