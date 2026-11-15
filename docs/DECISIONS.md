@@ -4837,17 +4837,28 @@
     in the bot's health (`miniapp_host`, `miniapp_host_source` `config`|`bot`, `miniapp_host_ignored`) on the System
     page and in `get-system`. Writes of a different `miniapp_host` are not refused: Terraform state and the
     configuration change at different times, and refusing would block unrelated bot changes.
-  - **Without the setting** the bot's `miniapp_host` is routed only while a bot row names it (enabled or not), so a
-    deleted bot or an emptied `miniapp_host` makes the name an ordinary main-host name again (the edge still blocks
-    credentials there). Before central has loaded the bot at start, only the configured host is known. That is why
-    the setting is the recommended deployment and the only fully fail-closed one.
+  - **Without the setting (fix round on the review's M-1).** A bot's `miniapp_host` is refused on create and update
+    (422 naming `telegram.miniapp_host`), because a host that only the database knows can't be routed safely. A row
+    stored before this keeps working as before (served when its bot runs, otherwise a 404 host), and is flagged: a
+    warning in the log at start, in the bot's `warnings` and on the System page (`miniapp_host_needs_key`) telling the
+    operator to set `telegram.miniapp_host`. Central reads the stored bot row **before it listens**
+    (`tgbot.LoadStoredHost`; the bot itself starts later, in the background), so the stored host routes to the Mini App
+    handler, and its 404 gate, from the first request; a failed read refuses to start rather than serve without
+    knowing the host. Every host the bot row has had since central started (a deleted bot's, an emptied or a changed
+    `miniapp_host`) is **retired**, not released: it stays routed to the Mini App handler (404) in memory until central
+    restarts. After a restart, a host that no row names is an ordinary main-host name again with no key set (the edge
+    still blocks credentials there). The setting stays the recommended deployment and the only one where the host
+    never depends on the database.
   - **Tests:** `internal/app` `TestMiniAppHostFailsClosedWithoutBot` (configured host, no bot, a disabled bot with and
     without the same `miniapp_host`, a deleted bot: every path in every host spelling is the Mini App 404, including
     sign-in, `openapi.json`, `/` and admin operations with a valid root Bearer token that answer 200 on the main host)
     and `TestMiniAppHostFailsClosedWithBot` (only Mini App routes answer; Bearer tokens and cookie sessions are 401,
     sign-in and openapi 404; a different stored host is the 404 host and the mismatch is logged and in `get-system`;
     disabling returns everything to 404); `internal/telegram/tgbot` `TestConfiguredMiniAppHostWins`,
-    `TestStoredMiniAppHostWithoutConfig`; `internal/config` `TestTelegramMiniAppHost`; `internal/telegram/tghost`.
+    `TestPutRefusesMiniAppHostWithoutKey`, `TestLoadStoredHostWithoutKey`, `TestRetiredMiniAppHostsStayRouted`,
+    `TestLoadStoredHostReadError`; `internal/app` `TestMiniAppHostFailsClosedNoKeyDisabledBot`,
+    `TestMiniAppHostRoutedBeforeTheBotStarts`, `TestMiniAppHostRetiredNoKey`, `TestServeRefusesWhenTheStoredHostCannotBeRead`;
+    `internal/config` `TestTelegramMiniAppHost`; `internal/telegram/tghost`.
     Mutants that restore the fall-through (route only while the running bot serves, ignore the configured host, let
     the 404 gate fall through to the main handler, drop the gate, compare the raw Host, route the ignored stored host
     to the main handler) are each killed.

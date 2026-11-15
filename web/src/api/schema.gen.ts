@@ -11669,6 +11669,8 @@ export interface components {
             miniapp_host?: string;
             /** @description The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything */
             miniapp_host_ignored?: string;
+            /** @description The bot stores a miniapp_host but central's configuration does not set telegram.miniapp_host: set it (or clear the bot's miniapp_host) */
+            miniapp_host_needs_key?: boolean;
             /**
              * @description Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)
              * @enum {string}

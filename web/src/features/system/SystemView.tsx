@@ -69,6 +69,12 @@ function MiniAppHostLine({ tg }: { tg: SystemStatus['telegram'] }) {
           ignored: it answers 404 for everything. Set the bot&apos;s Mini App host to the same value, or leave it empty.
         </Text>
       )}
+      {tg.miniapp_host_needs_key && (
+        <Text size="sm" c="owlYellow" style={{ wordBreak: 'break-word' }} data-testid="system-telegram-host-needs-key">
+          The bot stores a Mini App host but central&apos;s configuration does not set telegram.miniapp_host. Set telegram.miniapp_host to
+          that host, or clear the bot&apos;s Mini App host.
+        </Text>
+      )}
     </Stack>
   )
 }
