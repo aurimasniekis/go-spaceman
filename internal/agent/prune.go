@@ -91,7 +91,7 @@ func (a *Agent) sendFollowUp(ctx context.Context, conn *websocket.Conn, rs []run
 			if err != nil || cur.UpdatedAt != r.UpdatedAt {
 				continue
 			}
-			if err := a.sendOn(ctx, conn, proto.TypeRunReport, r.report()); err != nil {
+			if err := a.sendOn(ctx, conn, proto.TypeRunReport, r.report(a.now())); err != nil {
 				return
 			}
 			a.noteSent([]runRow{r})

@@ -99,7 +99,7 @@ func TestHelloBoundedByLiveAndRecentRuns(t *testing.T) {
 	}
 	h := proto.Hello{Runs: []proto.RunReport{}}
 	for _, r := range hello {
-		h.Runs = append(h.Runs, r.report())
+		h.Runs = append(h.Runs, r.report(a.now()))
 	}
 	b, _ := json.Marshal(h)
 	if len(b) > 4096 {
