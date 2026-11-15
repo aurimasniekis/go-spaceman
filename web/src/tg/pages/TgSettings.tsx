@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Card, Checkbox, Group, NativeSelect, Stack, Switch, Text, TextInput } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api, ifMatch, unwrap, type Schemas } from '@/api/client'
 import { useMe, useSpaces } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
@@ -23,6 +23,30 @@ const FLAG_FIELDS = [
   ['new_actions', 'New human actions'], ['assigned_to_me', 'Actions assigned to me'], ['clarifications', 'Clarification requests and replies'],
   ['escalations', 'Escalations'], ['operator_messages', 'Agent messages to operators'], ['digest', 'Daily digest'],
 ] as const
+
+type Topics = Prefs['topics']
+
+/** The read-only topics mode state: what it is, which of your spaces use it, and what to do on the Telegram side. */
+export function TopicsNote({ topics, names }: { topics: Topics; names: Map<string, string> }) {
+  if (!topics.available) return <Text size="sm" c="dimmed">Topics mode is not available: the Telegram bot is not running.</Text>
+  const label = (id: string) => names.get(id) ?? id
+  return (
+    <Stack gap={4} aria-label="Topics mode">
+      <Text size="sm" c="dimmed">
+        Topics mode is turned on per space, by someone with space settings access; it is not a setting of your link. A space with it on gets its own topic in this chat, and what needs you goes to a "Needs you" topic.
+      </Text>
+      {topics.spaces.length === 0
+        ? <Text size="sm">None of your spaces use topics mode.</Text>
+        : <Text size="sm">Topics are on for: {topics.spaces.map(label).join(', ')}.</Text>}
+      {topics.spaces.length > 0 && !topics.refused && (
+        <Text size="xs" c="dimmed">Topics show in a private chat only when topics are enabled for the bot in BotFather.</Text>
+      )}
+      {topics.refused && (
+        <Text size="sm" c="orange">Telegram refused to create a topic in your chat, so messages go to the main chat. Enable topics for this bot in BotFather; the bot asks again after a while.</Text>
+      )}
+    </Stack>
+  )
+}
 
 interface Form { eff: Effective; timezone: string }
 
@@ -89,7 +113,9 @@ export function TgSettings() {
 function PrefsForm() {
   const qc = useQueryClient()
   const prefs = useQuery({ queryKey: PREFS_KEY, queryFn: async ({ signal }) => unwrap(await api.GET('/telegram/link/prefs', { signal })) })
-  const spaces = useSpaces().data ?? []
+  const spacesData = useSpaces().data
+  const spaces = useMemo(() => spacesData ?? [], [spacesData])
+  const names = useMemo(() => new Map(spaces.map((x) => [x.id, x.name])), [spaces])
   const [form, setForm] = useState<Form | null>(null)
   const [saving, setSaving] = useState(false)
   const [conflict, setConflict] = useState(false)
@@ -170,10 +196,10 @@ function PrefsForm() {
           {form.eff.muted_spaces.filter((id) => !known.has(id)).map((id) => <Checkbox key={id} label={id} checked onChange={(e) => toggleMuted(id, e.currentTarget.checked)} />)}
         </Stack>
       </Stack></Card>
-      <Group justify="space-between" wrap="nowrap">
-        <Text size="sm">Topics mode</Text>
-        <Text size="sm" c="dimmed">{data.topics.available ? 'Available (set in the chat)' : 'Not available yet'}</Text>
-      </Group>
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>Topics mode</Text>
+        <TopicsNote topics={data.topics} names={names} />
+      </Stack>
       <Button type="submit" loading={saving} disabled={saving}>Save</Button>
     </Stack>
   )

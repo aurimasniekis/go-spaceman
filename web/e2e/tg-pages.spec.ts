@@ -43,7 +43,7 @@ const message = { id: 'msg_pages1', space_id: SPACE, kind: 'request', subject: '
 function basePrefs(): Record<string, unknown> {
   const d = { assigned_to_me: true, clarifications: true, digest: true, digest_time: '09:00', escalations: true, failed_runs: 'digest', inbox_items: 'digest', min_priority: 'normal', new_actions: true,
     operator_messages: true, quiet_hours: true, quiet_hours_end: '08:00', quiet_hours_start: '23:00', reminders: 'push', tasks_in_review: 'digest' }
-  return { link_id: 'tgl_1', overrides: {}, defaults: d, effective: { ...d, muted_spaces: [] }, timezone: 'Europe/Vilnius', topics: { available: false }, version: 3 }
+  return { link_id: 'tgl_1', overrides: {}, defaults: d, effective: { ...d, muted_spaces: [] }, timezone: 'Europe/Vilnius', topics: { available: true, spaces: [SPACE], refused: false }, version: 3 }
 }
 
 /** The fixtures a test can replace: the queue's tasks, the scheduled messages to control and the space's attention counts. */
@@ -296,7 +296,9 @@ test('settings: edit and save round-trips with If-Match, and topics are read-onl
   const seen = await launch(page, { path: '/settings' })
   const form = page.getByRole('form', { name: 'Notification settings' })
   await expect(form.getByText(/Per user, not per link/)).toBeVisible()
-  await expect(form.getByText('Not available yet')).toBeVisible()
+  await expect(form.getByText(/Topics are on for: Pages space/)).toBeVisible()
+  await expect(form.getByText(/turned on per space/)).toBeVisible()
+  await expect(form.getByText('Not available yet')).toHaveCount(0)
   await clean(page)
   await form.getByLabel('New inbox items').selectOption('push')
   await form.getByLabel('Pages space').check()

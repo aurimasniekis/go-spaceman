@@ -109,7 +109,7 @@ func TestHardExclusions(t *testing.T) {
 		"respond-human-action", "assign-human-action", "cancel-human-action", "clarify-human-action", "comment-human-action",
 		"move-human-action", "route-human-notification", "takeover-input", "send-input", "end-takeover", "renew-takeover",
 		"list-users", "get-user", "list-all-tokens", "get-root-token", "list-oidc-providers", "get-oidc-test-login",
-		"acknowledge-restore", "upload-attachment",
+		"upload-attachment",
 		// Personal session operations (a filtered read is not one).
 		"logout", "list-my-tokens", "get-notification-preferences",
 		// Harbor Pilot connection writes need a step-up (dangerous if they ever stop needing one).
@@ -124,7 +124,7 @@ func TestHardExclusions(t *testing.T) {
 		"put_space_harbor_pilot": spacemanmcp.Dangerous, "delete_space_harbor_pilot": spacemanmcp.Write,
 		"get_harbor_pilot_connection": spacemanmcp.Read, "save_harness_profile": spacemanmcp.Dangerous,
 		"create_account": spacemanmcp.Dangerous, "create_mcp_server": spacemanmcp.Dangerous,
-		"delete_schedule": spacemanmcp.Dangerous, "get_recording": spacemanmcp.SensitiveRead,
+		"delete_schedule": spacemanmcp.Dangerous, "acknowledge_restore": spacemanmcp.Dangerous, "get_recording": spacemanmcp.SensitiveRead,
 	} {
 		tl, ok := c.Tool(name)
 		if !ok || tl.Class != want {
