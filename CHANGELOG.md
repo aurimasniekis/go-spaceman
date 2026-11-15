@@ -53,6 +53,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   audited. A hold that clears lets the runs parked under it resume on the next round. A resume whose `--resume` fails
   before the first turn starts once more in a fresh session. A released task in review stays in review, with only its
   assignee cleared.
+- Usage limits in the web UI (ADR-0079): a run at its usage limit shows the limit and its reset time (and "at usage
+  limit" as its state), and a run parked at one says so. The Limits page lists the accounts and gateway references held
+  at a usage limit (other spaces' holds on the same account as "shared", without their details) and the runs waiting
+  for a reset, each with until when, plus "Resume now", "Release" and "Clear" for operators and "Clear in every space"
+  for account admins. Times are shown in the viewer's time zone, with UTC in the tooltip. The usage-limit maximum wait
+  now reads in days and hours on the Limits page.
 
 ## [0.1.3] - 2026-11-13
 
