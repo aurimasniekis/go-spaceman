@@ -137,8 +137,8 @@ func (e *miniAppEnv) exec(t *testing.T, q string, args ...any) {
 	}
 }
 
-// origin is the Mini App's origin as a browser sends it.
-func (e *miniAppEnv) origin() string { return "http://" + miniHost + ":" + e.port }
+// origin is the Mini App's origin as a browser sends it: the menu button opens https://<miniapp_host>/, whatever public_url says.
+func (e *miniAppEnv) origin() string { return "https://" + miniHost }
 
 // send sends a request to central's listener with the given Host header (headers as name, value pairs).
 func (e *miniAppEnv) send(t *testing.T, host, method, path, body string, hdr ...string) resp {

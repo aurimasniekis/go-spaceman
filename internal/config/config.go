@@ -92,6 +92,8 @@ type TelegramConfig struct {
 	// disabled, the host answers 404 for everything. Empty: the bot's miniapp_host is used, and only while a bot is
 	// stored. When both are set and differ, this one wins and the difference is logged and shown on the System page.
 	// Set it whenever the Mini App's host points at central (ADR-0083 §3.4.1).
+	// The Mini App's one allowed origin is https://<miniapp_host> (no port), the URL the menu button opens; it does not
+	// depend on public_url's scheme or port.
 	MiniAppHost string `yaml:"miniapp_host"`
 }
 
