@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -526,4 +527,28 @@ func TestVisibilityRecheckedBeforeCreate(t *testing.T) {
 	if e.createdN() != 0 {
 		t.Fatalf("created %d in a hidden space", e.createdN())
 	}
+}
+
+// The upload is streamed through a pipe; when the API refuses early (here 413) without reading the body, fetchAndUpload
+// must close the read side so the writer goroutine is not left blocked in the pipe for good.
+func TestUploadRefusedEarlyLeavesNoBlockedWriter(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	e.api.uploadSt = 413
+	content := make([]byte, 200<<10)
+	id := e.srv.AddFile("big.bin", content, int64(len(content)))
+	e.msg(func(m *botapi.Message) { m.Document = &botapi.Document{FileID: id, FileName: "big.bin"} })
+	if e.createdN() != 0 {
+		t.Fatalf("created %d", e.createdN())
+	}
+	var stacks string
+	for i := 0; i < 100; i++ {
+		buf := make([]byte, 1<<20)
+		stacks = string(buf[:runtime.Stack(buf, true)])
+		if !strings.Contains(stacks, "io.(*pipe).write") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("a goroutine is still blocked writing the upload pipe:\n%s", stacks)
 }
