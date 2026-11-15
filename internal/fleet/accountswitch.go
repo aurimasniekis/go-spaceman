@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -174,20 +175,24 @@ func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, h
 		return accountHeld(ctx, tx.Q, id, now)
 	}
 	// Resolve from the limited account: it is bound (so a space without a default still resolves) and avoided, so the
-	// pool's order decides. A fresh retry's wait doesn't know it (from is empty): the preferred account is bound too,
-	// so it anchors the resolve instead. When that is gone too, from no account.
-	anchor := from
-	if anchor == "" {
-		anchor = prefer
-	}
+	// pool's order decides. A fresh retry's wait doesn't know it (from is empty): the role's pool decides first, and
+	// only a role without a pool of its own (the space pool is every bound account, so it can't widen) falls back to
+	// the preferred account as the anchor, for a space with no default. A scoped pool with no usable account is none.
 	resolve := func(av func(string) (bool, error)) (string, error) {
-		if anchor != "" {
-			id, err := svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, anchor, av)
+		if from != "" {
+			id, err := svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, from, av)
 			if err == nil || apperr.CodeOf(err) != apperr.CodePrecondition {
 				return id, err
 			}
 		}
-		return svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, "", av)
+		id, err := svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, "", av)
+		if err == nil || apperr.CodeOf(err) != apperr.CodePrecondition || from != "" || prefer == "" {
+			return id, err
+		}
+		if scoped, serr := accounts.RoleScoped(ctx, tx, spaceID, harness, role); serr != nil || scoped {
+			return "", err
+		}
+		return svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, prefer, av)
 	}
 	if prefer != "" {
 		// The preferred account stays only while it is an eligible member of the run's pool: resolving with every other

@@ -781,3 +781,26 @@ func TestAccountSwitchResumedRunStopped(t *testing.T) {
 		t.Fatalf("switch %+v", sw)
 	}
 }
+
+// A fresh retry keeps the account the switch moved to only while the role's pool still allows it: a pool an operator
+// sets after the failed resume decides, it is never widened by the anchor (review of PR 159).
+func TestAccountSwitchResumeFailedRespectsRolePool(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`UPDATE space_accounts SET is_default = 0 WHERE space_id = 'spc_a'`)
+	e.exec(`INSERT INTO space_accounts (space_id, account_id, harness, created_at, created_by) VALUES ('spc_a', 'acc_3', 'claude-code', 1, 't')`)
+	e.running("run_r", "worker", 2)
+	e.armAndPark("run_r")
+	e.clk.Advance(limitRetrySoon)
+	e.due()
+	newID, _ := e.launchOf(e.instance("run_r"))
+	e.exec(`UPDATE runs SET observed = 'running' WHERE id = ?`, newID)
+	e.endRun(newID, proto.RunFailed, "error", 0)
+	e.exec(`INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES ('spc_a', 'implementor', 'acc_1', 100, 0, 't'),
+		('spc_a', 'implementor', 'acc_3', 100, 0, 't')`)
+	if n := e.due(); n != 1 {
+		t.Fatalf("retried %d: wait %+v", n, e.waitOf(newID))
+	}
+	if _, p := e.launchOf(e.instance("run_r")); p.AccountRef != "acc_3" {
+		t.Fatalf("fresh retry on %s, want acc_3", p.AccountRef)
+	}
+}

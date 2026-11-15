@@ -693,6 +693,17 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 	return chosen, nil
 }
 
+// RoleScoped reports whether role has a pool of its own for harness in the space: one of its accounts is bound for the
+// harness (usable or not), so the role's pool governs and never widens to the space's accounts.
+func RoleScoped(ctx context.Context, tx *store.Tx, spaceID, harness, role string) (bool, error) {
+	bs, err := bindings(ctx, tx.Q, spaceID)
+	if err != nil {
+		return false, err
+	}
+	_, scoped, err := candidates(ctx, tx.Q, spaceID, harness, role, bs, nil)
+	return scoped, err
+}
+
 // candidate is an account of the pool in play: its priority there and its place in the space's binding order.
 type candidate struct {
 	Binding
