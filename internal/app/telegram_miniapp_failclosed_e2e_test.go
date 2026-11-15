@@ -301,7 +301,7 @@ func TestMiniAppHostRetiredNoKey(t *testing.T) {
 }
 
 // M-1: a bot row that can't be read refuses central's start, before anything listens.
-func TestServeRefusesWhenTheStoredHostCannotBeRead(t *testing.T) {
+func TestMiniAppServeRefusesWhenTheStoredHostCannotBeRead(t *testing.T) {
 	t.Parallel()
 	e := noKeyEnv(t, false)
 	ctx, cancel := context.WithCancel(t.Context())
