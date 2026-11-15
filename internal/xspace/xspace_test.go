@@ -694,3 +694,20 @@ func TestPeerConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ADR-0088: a task stored under xspace:<id> before the reserved namespaces (ADR-0087) is not linked to the request.
+func TestAcceptRefusesPlantedLegacyTask(t *testing.T) {
+	f := newFx(t)
+	f.allow("spc_a", "spc_b", Inbound{Discover: true, Questions: true, Delegation: true, Disclosure: DiscloseSummary}, all)
+	r, err := f.ask(pa, RequestInput{To: "bravo", Kind: Delegation, Title: "Rotate the key", Body: "Please rotate it.", DedupKey: "rot-legacy"})
+	must(t, err)
+	planted, _, err := f.q.Create(f.ctx, audit.System, "spc_b", queue.CreateInput{Title: "Planted", Status: queue.Ready, DedupKey: "xspace:" + r.ID, Internal: true})
+	must(t, err)
+	_, err = f.svc.Accept(f.ctx, audit.Actor{Type: audit.ActorAgent, ID: ctlB}, "spc_b", r.ID, &TaskInput{Objective: "Rotate it", Ready: true})
+	code(t, err, apperr.CodeConflict)
+	in, err := f.svc.Get(f.ctx, "spc_b", r.ID)
+	must(t, err)
+	if in.State != Pending || in.LocalTaskID != "" {
+		t.Fatalf("request moved on despite the planted task %s: %+v", planted.ID, in)
+	}
+}

@@ -313,3 +313,24 @@ func TestIncidentTriggersFromTools(t *testing.T) {
 	code(t, f.call(f.ctrl, "spaceman_task_resume", map[string]any{"task_id": inc.ID}, nil), apperr.CodePrecondition)
 	code(t, f.call(f.wrk, "spaceman_task_resume", map[string]any{"task_id": inc.ID}, nil), apperr.CodeForbidden)
 }
+
+// ADR-0088: a worker's inbox dedup key is scoped to its role; the same role still deduplicates across runs.
+func TestWorkerInboxDedupScopedToRole(t *testing.T) {
+	f := newFx(t)
+	add := func(p *fleet.RunPrincipal) inbox.Item {
+		var it inbox.Item
+		must(t, f.call(p, "spaceman_inbox_add", map[string]any{"title": "Finding", "body": "details", "dedup_key": "finding-1"}, &it))
+		return it
+	}
+	a := add(f.wrk)
+	other := *f.wrk
+	other.Role, other.RunID = "reviewer", "run_other"
+	if b := add(&other); b.ID == a.ID {
+		t.Fatalf("another role was handed %s", a.ID)
+	}
+	restarted := *f.wrk
+	restarted.RunID = "run_restarted"
+	if c := add(&restarted); c.ID != a.ID {
+		t.Fatalf("a restart of the same role created %s, want %s", c.ID, a.ID)
+	}
+}

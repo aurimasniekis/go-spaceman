@@ -81,15 +81,21 @@ func (r *Registry) registerInbox() {
 		})
 	Add(r, "spaceman_inbox_add", "Add an item to your space's inbox (a finding, follow-up or request). It is not a task: control decides what to do with it.",
 		producers, false, func(ctx context.Context, p *fleet.RunPrincipal, in inboxAddIn) (any, error) {
-			kind := "worker"
+			kind, key := "worker", in.DedupKey
 			switch p.Kind {
 			case KindDreamer:
 				kind = "dreamer"
 			case KindKB:
 				kind = "kb"
+			default:
+				// Every worker run shares source_kind "worker", so a bare key would collide across roles (ADR-0088). The
+				// role keeps restarts of the same role deduplicating.
+				if key != "" {
+					key = "role:" + p.Role + ":" + key
+				}
 			}
 			it, _, err := r.d.Inbox.Create(ctx, actor(p), p.SpaceID, inbox.CreateInput{SourceKind: kind, SourceID: p.RunID, SourceLabel: label(p), Title: in.Title,
-				Body: in.Body, Urgency: in.Urgency, CorrelationID: in.CorrelationID, DedupKey: in.DedupKey})
+				Body: in.Body, Urgency: in.Urgency, CorrelationID: in.CorrelationID, DedupKey: key})
 			return it, err
 		})
 	Add(r, "spaceman_inbox_set_status", "Change an inbox item's processing status (control only): mark it in progress, defer it, reject it, or mark it done and link the work.",
