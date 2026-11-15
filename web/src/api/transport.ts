@@ -23,7 +23,8 @@ export interface StreamHandle {
 export interface WatchTransport {
   /** False where the transport cannot run at all (no EventSource): the feed stays off. */
   supported(): boolean
-  open(url: string, h: StreamHandlers): StreamHandle
+  /** `types` are the event names the EventSource listens for (the change feed's by default). */
+  open(url: string, h: StreamHandlers, types?: readonly string[]): StreamHandle
   /** Re-checks the session before a retry (web: GET /auth/me; Mini App: whether the session is still held). */
   sessionStillValid(): Promise<boolean>
 }
@@ -31,14 +32,14 @@ export interface WatchTransport {
 /** The web UI's transport: EventSource, unchanged behaviour. */
 export const eventSourceTransport: WatchTransport = {
   supported: () => typeof EventSource !== 'undefined',
-  open(url, h) {
+  open(url, h, types = ['change', 'position', 'gap', 'end']) {
     const src = new EventSource(url)
     src.onopen = () => h.onOpen()
     src.onerror = () => {
       if (src.readyState === EventSource.CLOSED) h.onClosed()
       else h.onReconnecting()
     }
-    for (const type of ['change', 'position', 'gap', 'end']) {
+    for (const type of types) {
       src.addEventListener(type, (ev) => h.onEvent(type, (ev as MessageEvent<string>).data, (ev as MessageEvent<string>).lastEventId))
     }
     return { close: () => src.close() }

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -696,5 +697,202 @@ func TestTelegramSelfRules(t *testing.T) {
 		if r.Public {
 			t.Errorf("%s sets TelegramSelf on a public rule", op.OperationID)
 		}
+	}
+}
+
+// SM-TG-006 (TG-10-3, ADR-0083 Q3): the Mini App's watch-only terminal. The stream is refused to a Telegram link unless
+// the space opted in (terminal_watch) AND the link's principal holds terminal:watch in the space (an operator cap; a
+// viewer cap reads runs but not terminals). The refusal for no access is a 404 before the setting is looked at, so a
+// viewer cannot learn what the space turned on. The features read the Mini App uses to hide the terminal gives the same
+// answer. The bot's host (the main host) never serves the stream to a Telegram principal.
+func TestTelegramTerminalWatchGate(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	var on atomic.Bool
+	s.deps.Telegram.SpaceFeature = func(_ context.Context, space, feature string) bool {
+		return on.Load() && space == s.space && feature == api.TelegramFeatureTerminalWatch
+	}
+	runID := ids.New(ids.Run)
+	s.exec(t, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		VALUES (?, ?, 'nod_oidc', 1, 'worker', 'implementor', 'codex', 'ins_1', 'running', 'running', 'idle', '{}', 0, 't', 0)`, runID, s.space)
+	stream := "/spaces/" + s.space + "/runs/" + runID + "/terminal"
+	features := "/telegram/spaces/" + s.space + "/features"
+	// open reads the stream's status and content type only: a live stream never ends by itself.
+	open := func() (int, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.minisrv.URL+api.Prefix+stream, nil)
+		req.Header.Set("Authorization", "Telegram good")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, ct := res.StatusCode, res.Header.Get("Content-Type")
+		cancel() // before closing: a live stream's body would otherwise be drained
+		res.Body.Close()
+		return code, ct
+	}
+	wantFeature := func(want bool) {
+		t.Helper()
+		r := s.mini(t, "GET", features, "", "Authorization", "Telegram good")
+		expect(t, r, 200)
+		var f struct {
+			TerminalWatch bool `json:"terminal_watch"`
+		}
+		r.json(t, &f)
+		if f.TerminalWatch != want {
+			t.Fatalf("features terminal_watch = %v, want %v", f.TerminalWatch, want)
+		}
+	}
+
+	// Off (the default): refused, and the features read says so.
+	if code, _ := open(); code != http.StatusForbidden {
+		t.Fatalf("opt-in off: %d", code)
+	}
+	wantFeature(false)
+	// On, operator: the stream opens, read-only (the server has no input on this route at all).
+	on.Store(true)
+	if code, ct := open(); code != http.StatusOK || !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("opt-in on: %d %q", code, ct)
+	}
+	wantFeature(true)
+	// On, but the link is capped to viewer (no terminal:watch): not found, whatever the setting.
+	s.setLinkRole(t, "viewer")
+	if code, _ := open(); code != http.StatusNotFound {
+		t.Fatalf("viewer: %d", code)
+	}
+	wantFeature(false)
+	// Back to operator, opt-in off again (read at request time): refused again.
+	s.setLinkRole(t, "operator")
+	on.Store(false)
+	if code, _ := open(); code != http.StatusForbidden {
+		t.Fatalf("opt-in off again: %d", code)
+	}
+	// There is no input path: the stream route has no other method, and no terminal input or size operation is
+	// reachable from the Mini App, with or without the opt-in.
+	on.Store(true)
+	expect(t, s.mini(t, "POST", stream, `{}`, "Authorization", "Telegram good"), 405)
+	for _, p := range []string{"/input", "/terminal-size", "/takeover"} {
+		for _, m := range []string{"POST", "PUT", "DELETE"} {
+			if r := s.mini(t, m, "/spaces/"+s.space+"/runs/"+runID+p, `{}`, "Authorization", "Telegram good"); r.status < 400 {
+				t.Fatalf("%s %s from the Mini App: %d", m, p, r.status)
+			}
+		}
+	}
+}
+
+// SM-TG-006 (TG-10-3): terminal_watch through central's own wiring. The other tests inject SpaceFeature; this one keeps
+// what APIDeps builds, and turns the setting on and off through the settings API, so a central that never wires
+// SpaceFeature (the feature then off for ever) fails here.
+//   - Off, or the space disabled: the stream is 403 and the features read says false.
+//   - On: the stream opens and the features read says true.
+//   - Turned off while a stream is open: the stream ends with reason "forbidden" at the next re-check.
+func TestTelegramTerminalWatchProduction(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	s.deps.Telegram.SpaceFeature = s.h.c.APIDeps().Telegram.SpaceFeature // central's, not the test's
+	if s.deps.Telegram.SpaceFeature == nil {
+		t.Fatal("central wires no SpaceFeature")
+	}
+	s.deps.StreamRevalidate = 100 * time.Millisecond
+	runID := ids.New(ids.Run)
+	s.exec(t, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		VALUES (?, ?, 'nod_oidc', 1, 'worker', 'implementor', 'codex', 'ins_1', 'running', 'running', 'idle', '{}', 0, 't', 0)`, runID, s.space)
+	stream := "/spaces/" + s.space + "/runs/" + runID + "/terminal"
+	settingsPath := "/spaces/" + s.space + "/telegram"
+	etag := ""
+	put := func(enabled, watch bool) {
+		t.Helper()
+		var hdr []string
+		if etag != "" {
+			hdr = []string{"If-Match", etag}
+		}
+		r := s.root.do("PUT", settingsPath, map[string]any{"enabled": enabled, "terminal_watch": watch}, hdr...)
+		expect(t, r, 200)
+		etag = r.header.Get("ETag")
+	}
+	open := func(ctx context.Context) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.minisrv.URL+api.Prefix+stream, nil)
+		req.Header.Set("Authorization", "Telegram good")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	status := func() int {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		res := open(ctx)
+		code := res.StatusCode
+		cancel()
+		res.Body.Close()
+		return code
+	}
+	wantFeature := func(want bool) {
+		t.Helper()
+		r := s.mini(t, "GET", "/telegram/spaces/"+s.space+"/features", "", "Authorization", "Telegram good")
+		expect(t, r, 200)
+		var f struct {
+			TerminalWatch bool `json:"terminal_watch"`
+		}
+		r.json(t, &f)
+		if f.TerminalWatch != want {
+			t.Fatalf("features terminal_watch = %v, want %v", f.TerminalWatch, want)
+		}
+	}
+
+	// No settings stored, then stored with the watch off, then a disabled space with the watch on: all refused.
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("no settings: %d", code)
+	}
+	put(true, false)
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("terminal_watch false: %d", code)
+	}
+	wantFeature(false)
+	put(false, true)
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("space disabled: %d", code)
+	}
+	wantFeature(false)
+	// content_level off hides the space: refused though enabled with terminal_watch on.
+	r := s.root.do("PUT", settingsPath, map[string]any{"enabled": true, "terminal_watch": true, "content_level": "off"}, "If-Match", etag)
+	expect(t, r, 200)
+	etag = r.header.Get("ETag")
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("content_level off: %d", code)
+	}
+	wantFeature(false)
+	// On.
+	put(true, true)
+	if code := status(); code != http.StatusOK {
+		t.Fatalf("terminal_watch true: %d", code)
+	}
+	wantFeature(true)
+
+	// Turned off while a stream is open: it ends with "forbidden" at the next re-check.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	res := open(ctx)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("open stream: %d", res.StatusCode)
+	}
+	put(true, false)
+	br := bufio.NewReader(res.Body)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("stream ended without an end event: %v", err)
+		}
+		if strings.HasPrefix(line, "event: end") {
+			break
+		}
+	}
+	if line, err := br.ReadString('\n'); err != nil || !strings.Contains(line, api.EndForbidden) {
+		t.Fatalf("end reason: %q %v", line, err)
 	}
 }

@@ -190,6 +190,13 @@ export const useRun = (space: string, run: string) =>
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/runs/{run_id}', { params: { path: { space_id: space, run_id: run } }, signal })),
   })
 
+/** Whether the Mini App may show a space's watch-only terminal (TG-10-3): off unless the space opted in and the link may watch. */
+export const useTelegramTerminalWatch = (space: string) =>
+  useQuery({
+    queryKey: ['telegram-space-features', space],
+    queryFn: async ({ signal }) => unwrap(await api.GET('/telegram/spaces/{space_id}/features', { params: { path: { space_id: space } }, signal })).terminal_watch,
+  })
+
 // Node connectivity (connected, last_seen_at) changes without change-feed entries, so the list also refreshes on a timer.
 export const useNodes = (enabled = true) =>
   useQuery({ queryKey: keys.nodes, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/nodes', { signal })).items, refetchInterval: 15_000 })

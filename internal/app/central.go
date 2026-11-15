@@ -696,7 +696,7 @@ func (c *Central) APIDeps() *api.Deps {
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink), api.RegisterTelegramLinkPrefs(c.TelegramLink), api.RegisterTelegramMiniApp(c.TelegramMiniApp), api.RegisterTelegramDownloads(c.TelegramDownloads, c.Attachments, c.miniAppOrigin)},
 		Raw: rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
 		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch, Sessions: c.TelegramMiniApp, MiniAppOrigin: c.miniAppOrigin,
-			EnforcedApproval: c.enforcedApproval, ApprovalsInChat: c.approvalsInChat, Confirmations: c.TelegramConfirmations}}
+			EnforcedApproval: c.enforcedApproval, ApprovalsInChat: c.approvalsInChat, SpaceFeature: c.telegramSpaceFeature, Confirmations: c.TelegramConfirmations}}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
 		d.MCP = c.mcpEndpoint
@@ -1094,6 +1094,17 @@ func (c *Central) approvalsInChat(ctx context.Context, spaceID string) bool {
 	}
 	sp, err := c.TelegramSettings.GetSpace(ctx, spaceID)
 	return err == nil && sp.Visible() && sp.EnforcedApprovals == tgsettings.ApprovalsConfirm
+}
+
+// telegramSpaceFeature reports whether a space has a Telegram feature on: visible to Telegram with the feature's
+// setting set. Only terminal_watch exists; any other name is off. It reads the store, not the settings cache, so turning
+// the setting off applies to the very next request and to a live stream's next re-check.
+func (c *Central) telegramSpaceFeature(ctx context.Context, spaceID, feature string) bool {
+	if feature != api.TelegramFeatureTerminalWatch || c.TelegramSettings == nil {
+		return false
+	}
+	sp, err := c.TelegramSettings.GetSpace(ctx, spaceID)
+	return err == nil && sp.Visible() && sp.TerminalWatch
 }
 
 // telegramSSOGrants is the link_sso_grants setting (off when unwired).
