@@ -102,7 +102,7 @@ func (h *Handler) cmdQueue(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.send(ctx, l.ChatID, h.queueList(ctx, c, s, 0))
 }
 
@@ -301,7 +301,7 @@ func (h *Handler) queueCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
-		h.setCurrent(l.ID, s.ID)
+		h.setCurrent(ctx, l.ID, s.ID)
 		h.answer(ctx, q.ID, "")
 		h.show(ctx, l.ChatID, q.Message, h.queueList(ctx, c, s, page))
 		return

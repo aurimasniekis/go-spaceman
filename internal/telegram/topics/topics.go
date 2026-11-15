@@ -49,10 +49,16 @@ type Options struct {
 type Manager struct {
 	o Options
 
-	mu      sync.Mutex
-	threads map[string]map[string]int // link ID → key → thread
-	loaded  map[string]bool
+	mu      sync.Mutex // guards links and refused only; never held across I/O
+	links   map[string]*linkState
 	refused map[int64]time.Time // chat → when to ask again
+}
+
+// linkState is one link's thread IDs, with a lock of its own that is held across the topic create and the save.
+type linkState struct {
+	mu      sync.Mutex
+	threads map[string]int // key → thread
+	loaded  bool
 }
 
 // New returns a Manager.
@@ -63,7 +69,7 @@ func New(o Options) *Manager {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Manager{o: o, threads: map[string]map[string]int{}, loaded: map[string]bool{}, refused: map[int64]time.Time{}}
+	return &Manager{o: o, links: map[string]*linkState{}, refused: map[int64]time.Time{}}
 }
 
 // Route returns the topic key a message about a space goes to: Needs for something that needs the user, the space's ID
@@ -130,26 +136,16 @@ func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, cha
 // thread returns the thread of a key, creating its topic; 0 when there is none to use. A rate limit (429) is returned
 // so the sender repeats the whole send after the wait, and nothing is remembered about it.
 func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, chatID int64, key string) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock() // held across the create call: topics are created rarely, and two sends must not both create one
-	if t := m.refused[chatID]; m.o.Now().Before(t) {
+	if m.isRefused(chatID) {
 		return 0, nil
 	}
-	if !m.loaded[linkID] {
-		if m.o.Store != nil {
-			saved, err := m.o.Store.Load(ctx, linkID)
-			if err != nil {
-				m.o.Log.Warn("telegram topics: reading a link's topics failed", slog.String("error", err.Error()))
-				return 0, nil
-			}
-			m.threads[linkID] = saved
-		}
-		if m.threads[linkID] == nil {
-			m.threads[linkID] = map[string]int{}
-		}
-		m.loaded[linkID] = true
+	ls := m.link(linkID)
+	ls.mu.Lock()
+	defer ls.mu.Unlock() // held across the create call: two sends of one link must not both create a topic; other links don't wait
+	if !m.loadLocked(ctx, ls, linkID) {
+		return 0, nil
 	}
-	if t := m.threads[linkID][key]; t != 0 {
+	if t := ls.threads[key]; t != 0 {
 		return t, nil
 	}
 	t, err := c.CreateForumTopic(ctx, botapi.CreateForumTopicParams{ChatID: chatID, Name: m.name(ctx, key)})
@@ -158,44 +154,108 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 		if errors.As(err, &be) && (be.Code == 429 || be.Code >= 500) {
 			return 0, err
 		}
-		// Topics off for the bot in this chat, or a rate limit: use the main chat and ask again later.
+		// Topics off for the bot in this chat: use the main chat and ask again later.
+		m.mu.Lock()
 		m.refused[chatID] = m.o.Now().Add(RefusedFor)
+		m.mu.Unlock()
 		m.o.Log.Debug("telegram topics: a topic was not created", slog.String("error", err.Error()))
 		return 0, nil
 	}
-	m.threads[linkID][key] = t.MessageThreadID
-	m.saveLocked(ctx, linkID)
+	ls.threads[key] = t.MessageThreadID
+	m.saveLocked(ctx, ls, linkID)
 	return t.MessageThreadID, nil
+}
+
+func (m *Manager) isRefused(chatID int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.o.Now().Before(m.refused[chatID])
+}
+
+// link returns a link's state, making it on first use.
+func (m *Manager) link(linkID string) *linkState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ls := m.links[linkID]
+	if ls == nil {
+		ls = &linkState{}
+		m.links[linkID] = ls
+	}
+	return ls
+}
+
+// loadLocked reads a link's stored threads once; false when the store failed (nothing is used then).
+func (m *Manager) loadLocked(ctx context.Context, ls *linkState, linkID string) bool {
+	if ls.loaded {
+		return true
+	}
+	saved := map[string]int{}
+	if m.o.Store != nil {
+		var err error
+		if saved, err = m.o.Store.Load(ctx, linkID); err != nil {
+			m.o.Log.Warn("telegram topics: reading a link's topics failed", slog.String("error", err.Error()))
+			return false
+		}
+		if saved == nil {
+			saved = map[string]int{}
+		}
+	}
+	ls.threads, ls.loaded = saved, true
+	return true
+}
+
+// SpaceOf is the reverse lookup: the space a thread of the link's private chat belongs to. It answers only from the
+// thread IDs the bot itself created and stored (never from anything a user sent); the Needs-you topic and unknown
+// threads answer false. It says which space a topic stands for, not whether the link may act on it: the caller
+// authorizes that.
+func (m *Manager) SpaceOf(ctx context.Context, linkID string, thread int) (string, bool) {
+	if m == nil || thread == 0 {
+		return "", false
+	}
+	ls := m.link(linkID)
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	if !m.loadLocked(ctx, ls, linkID) {
+		return "", false
+	}
+	for k, t := range ls.threads {
+		if t == thread && k != Needs {
+			return k, true
+		}
+	}
+	return "", false
 }
 
 // forget drops a thread that Telegram says is gone, unless another send already replaced it.
 func (m *Manager) forget(ctx context.Context, linkID, key string, thread int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.threads[linkID][key] != thread {
+	ls := m.link(linkID)
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	if ls.threads[key] != thread {
 		return
 	}
-	delete(m.threads[linkID], key)
-	m.saveLocked(ctx, linkID)
+	delete(ls.threads, key)
+	m.saveLocked(ctx, ls, linkID)
 }
 
-// Forget drops everything remembered about a link (it was revoked or moved).
+// Forget drops everything remembered in memory about a link (it was revoked). The stored row goes with the link.
 func (m *Manager) Forget(linkID string) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.threads, linkID)
-	delete(m.loaded, linkID)
+	delete(m.links, linkID)
 }
 
-func (m *Manager) saveLocked(ctx context.Context, linkID string) {
+// saveLocked persists a link's threads. A failure is only logged: the topic exists in Telegram but may not be
+// remembered, so after a restart the next send can create it a second time (a duplicate topic, never a lost message).
+func (m *Manager) saveLocked(ctx context.Context, ls *linkState, linkID string) {
 	if m.o.Store == nil {
 		return
 	}
-	cp := make(map[string]int, len(m.threads[linkID]))
-	for k, v := range m.threads[linkID] {
+	cp := make(map[string]int, len(ls.threads))
+	for k, v := range ls.threads {
 		cp[k] = v
 	}
 	if err := m.o.Store.Save(ctx, linkID, cp); err != nil {

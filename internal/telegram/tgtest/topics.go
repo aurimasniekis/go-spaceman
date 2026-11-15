@@ -19,6 +19,14 @@ func (s *Server) DisableTopics(chatID int64) {
 	s.noTopics[chatID] = true
 }
 
+// GoneTopics makes every send into a topic of chatID (any thread, even one just created) answer "message thread not
+// found", like a chat whose topics all vanish. Sends without a thread still work.
+func (s *Server) GoneTopics(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.goneAll[chatID] = true
+}
+
 // CloseTopic closes a topic: sends to it fail with TOPIC_CLOSED.
 func (s *Server) CloseTopic(chatID int64, thread int) {
 	s.setTopic(chatID, thread, func(t *topic) { t.closed = true })
@@ -76,6 +84,9 @@ func (s *Server) threadLocked(chatID int64, p params) *apiError {
 	n, ok := p.int64("message_thread_id")
 	if !ok || n == 0 {
 		return nil
+	}
+	if s.goneAll[chatID] {
+		return &apiError{code: http.StatusBadRequest, desc: "Bad Request: message thread not found"}
 	}
 	t := s.topics[chatID][int(n)]
 	switch {

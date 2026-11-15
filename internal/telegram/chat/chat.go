@@ -90,6 +90,10 @@ type Options struct {
 	// Content opens an attachment's stored bytes. The caller has already read the attachment's metadata through the
 	// API as the link's principal, which is the authorization; nil: attachments are not sent to Telegram.
 	Content func(ctx context.Context, spaceID, attachmentID string) (io.ReadSeekCloser, error)
+	// SpaceOfThread maps a topic of the link's private chat to the space it belongs to (topics.Manager.SpaceOf: only
+	// from thread IDs the bot stored). A message written in a space's topic acts on that space, re-authorized like any
+	// named space; the Needs-you topic and unknown threads answer false and keep the current-space behaviour. Nil: none.
+	SpaceOfThread func(ctx context.Context, linkID string, thread int) (spaceID string, ok bool)
 	// AlbumQuiet is how long an album waits for its next part before it becomes one item (default 1.5 s).
 	AlbumQuiet time.Duration
 
@@ -148,6 +152,11 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 		ctx = withThread(ctx, u.CallbackQuery.Message.MessageThreadID)
 	case u.Message != nil:
 		ctx = withThread(ctx, u.Message.MessageThreadID)
+		if t := u.Message.MessageThreadID; t != 0 && h.o.SpaceOfThread != nil {
+			if id, ok := h.o.SpaceOfThread(ctx, l.ID, t); ok {
+				ctx = context.WithValue(ctx, pinKey{}, id)
+			}
+		}
 	}
 	switch {
 	case u.CallbackQuery != nil:
@@ -243,6 +252,14 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 }
 
 type threadKey struct{}
+
+// pinKey carries the space a message's topic belongs to; target uses it instead of the current space.
+type pinKey struct{}
+
+func pinnedOf(ctx context.Context) string {
+	s, _ := ctx.Value(pinKey{}).(string)
+	return s
+}
 
 // withThread records the topic (message_thread_id) an update came from; 0 is the main chat.
 func withThread(ctx context.Context, thread int) context.Context {

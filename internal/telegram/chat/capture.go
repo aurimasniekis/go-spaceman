@@ -348,7 +348,7 @@ func (h *Handler) commit(ctx context.Context, l updates.Link, ps []piece, droppe
 		h.send(ctx, l.ChatID, reply{text: TextFailed})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.send(ctx, l.ChatID, h.ack(s, it, len(ids), dropped, skipped))
 }
 

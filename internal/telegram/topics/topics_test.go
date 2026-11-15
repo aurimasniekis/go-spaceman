@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
@@ -153,5 +154,71 @@ func TestFallsBackToTheMainChat(t *testing.T) {
 	send(t, m, c, "spc_1", "three")
 	if n := len(srv.Calls("createForumTopic")); n != 2 {
 		t.Errorf("%d create calls, want 2", n)
+	}
+}
+
+// Every topic is gone, also a freshly created one: exactly one recreate, then the main chat, and the send ends.
+func TestAllTopicsGoneRecreatesOnceThenMainChat(t *testing.T) {
+	srv, c, _, mk := setup(t)
+	m := mk()
+	send(t, m, c, "spc_1", "one") // makes the topic
+	srv.GoneTopics(chat)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // a send that never ends fails here
+	defer cancel()
+	got, err := m.Send(ctx, c, "tgl_1", chat, "spc_1", botapi.SendMessageParams{Text: "two"})
+	if err != nil || got.MessageThreadID != 0 || got.Text != "two" {
+		t.Fatalf("message %+v, error %v, want one in the main chat", got, err)
+	}
+	if n := len(srv.Calls("createForumTopic")); n != 2 { // the first topic, then one recreate
+		t.Errorf("%d topics created, want 1 + 1 recreate", n)
+	}
+	inMain := 0
+	for _, msg := range srv.Messages(chat) {
+		if msg.MessageThreadID == 0 {
+			inMain++
+		}
+	}
+	if inMain != 1 {
+		t.Errorf("%d messages in the main chat, want 1", inMain)
+	}
+}
+
+// A rate limit on createForumTopic is returned for the sender to repeat; the chat is not marked as refusing topics, and
+// the next attempt creates the topic once.
+func TestCreateRateLimitIsReturnedAndNotRemembered(t *testing.T) {
+	srv, c, _, mk := setup(t)
+	m := mk()
+	srv.FailNext("createForumTopic", 429, "Too Many Requests: retry after 1", 1)
+	if _, err := m.Send(context.Background(), c, "tgl_1", chat, "spc_1", botapi.SendMessageParams{Text: "one"}); err == nil {
+		t.Fatal("want the rate limit error")
+	}
+	if got := send(t, m, c, "spc_1", "two"); got.MessageThreadID == 0 {
+		t.Fatal("the chat was treated as refusing topics")
+	}
+	if n := len(srv.Calls("createForumTopic")); n != 2 { // the refused call, then one real create
+		t.Errorf("%d create calls, want 2", n)
+	}
+	if n := len(srv.Topics(chat)); n != 1 {
+		t.Errorf("%d topics exist, want 1", n)
+	}
+}
+
+// SpaceOf answers only from stored threads, and never for Needs-you or an unknown thread.
+func TestSpaceOf(t *testing.T) {
+	_, c, _, mk := setup(t)
+	m := mk()
+	a := send(t, m, c, "spc_1", "one").MessageThreadID
+	n := send(t, m, c, topics.Needs, "two").MessageThreadID
+	ctx := context.Background()
+	if id, ok := mk().SpaceOf(ctx, "tgl_1", a); !ok || id != "spc_1" { // a new Manager: read from the store
+		t.Errorf("SpaceOf(%d) = %q, %v", a, id, ok)
+	}
+	for _, th := range []int{n, 0, 12345} {
+		if id, ok := m.SpaceOf(ctx, "tgl_1", th); ok {
+			t.Errorf("SpaceOf(%d) = %q, want none", th, id)
+		}
+	}
+	if _, ok := m.SpaceOf(ctx, "tgl_other", a); ok {
+		t.Error("another link's lookup must not see this link's topics")
 	}
 }

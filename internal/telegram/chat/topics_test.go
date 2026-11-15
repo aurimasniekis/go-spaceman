@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
@@ -50,4 +51,59 @@ func (e *env) makeTopic() (botapi.ForumTopic, error) {
 		return botapi.ForumTopic{}, err
 	}
 	return c.CreateForumTopic(context.Background(), botapi.CreateForumTopicParams{ChatID: chatID, Name: "Alpha"})
+}
+
+func (e *env) itemsIn(space string) int {
+	e.api.mu.Lock()
+	defer e.api.mu.Unlock()
+	n := 0
+	for _, it := range e.api.items {
+		if it.SpaceID == space && strings.HasPrefix(it.Title, "topic note") {
+			n++
+		}
+	}
+	return n
+}
+
+// H1: a message written in a space's topic acts on that space, not on the link's current space.
+func TestTopicPinsTheTargetSpace(t *testing.T) {
+	e := newEnv(t)
+	e.threadSpace = map[int]string{7: spA}
+	e.say("/space " + spS) // the current space is another one
+	e.sayIn(7, "topic note one")
+	if e.itemsIn(spA) != 1 || e.itemsIn(spS) != 0 {
+		t.Fatalf("A has %d, current space has %d; want 1 and 0", e.itemsIn(spA), e.itemsIn(spS))
+	}
+	// Outside a known topic the current space still applies.
+	e.sayIn(0, "topic note two")
+	e.sayIn(99, "topic note three")
+	if e.itemsIn(spS) != 2 || e.itemsIn(spA) != 1 {
+		t.Fatalf("A has %d, current space has %d; want 1 and 2: %q", e.itemsIn(spA), e.itemsIn(spS), e.texts())
+	}
+}
+
+// H1: when the topic's space is no longer allowed, the write is refused and does not fall back to the current space.
+func TestTopicOfARevokedSpaceIsRefused(t *testing.T) {
+	e := newEnv(t)
+	e.threadSpace = map[int]string{7: spA}
+	e.say("/space " + spS)
+	e.hideA.Store(true) // the grant is gone: A is no longer visible
+	e.sayIn(7, "topic note one")
+	if e.itemsIn(spA) != 0 || e.itemsIn(spS) != 0 || e.createdN() != 0 {
+		t.Fatalf("items landed: A %d, current %d", e.itemsIn(spA), e.itemsIn(spS))
+	}
+	if got := e.last(); got.Text != TextUnavailable {
+		t.Fatalf("answer %q, want %q", got.Text, TextUnavailable)
+	}
+}
+
+// H1: a command without an argument also works on the topic's space.
+func TestTopicPinsCommandsWithoutAnArgument(t *testing.T) {
+	e := newEnv(t)
+	e.threadSpace = map[int]string{7: spA}
+	e.say("/space " + spS)
+	e.sayIn(7, "/inbox")
+	if got := e.last().Text; !strings.HasPrefix(got, "Inbox of Alpha") {
+		t.Fatalf("/inbox in A's topic answered %q", got)
+	}
 }

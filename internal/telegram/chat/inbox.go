@@ -106,7 +106,7 @@ func (h *Handler) cmdInbox(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.send(ctx, l.ChatID, h.inboxList(ctx, c, s, filter, 0))
 }
 
@@ -269,7 +269,7 @@ func (h *Handler) inboxCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 		if err != nil {
 			break
 		}
-		h.setCurrent(l.ID, s.ID)
+		h.setCurrent(ctx, l.ID, s.ID)
 		h.answer(ctx, q.ID, "")
 		h.show(ctx, l.ChatID, q.Message, h.inboxList(ctx, c, s, f[2], page))
 		return
