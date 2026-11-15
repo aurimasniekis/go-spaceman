@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -214,8 +215,99 @@ func TestMiniAppHostFailsClosedWithBot(t *testing.T) {
 		t.Errorf("system status %+v", sys.Telegram)
 	}
 
+	// The stored host changes back to the configured one: the one it replaced is retired, not released.
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": miniHost}, "If-Match", `"2"`), 200)
+	assertAll404(t, e, "the replaced stored host", []string{other}, failClosedCases(e, cookie))
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": other}, "If-Match", `"3"`), 200)
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": miniHost}, "If-Match", `"4"`), 200)
+
 	// Disabled: everything on the host is a 404 again, the shell included.
-	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": false, "mode": "polling", "miniapp_host": miniHost}, "If-Match", `"2"`), 200)
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": false, "mode": "polling", "miniapp_host": miniHost}, "If-Match", `"5"`), 200)
 	assertAll404(t, e, "disabled", hostVariants(e.port), failClosedCases(e, cookie))
 	assertAll404(t, e, "disabled, Mini App session", []string{miniHost}, []failClosedCase{{"GET", api.Prefix + "/spaces", "", []string{"Authorization", "Telegram " + tok}}})
+}
+
+// noKeyEnv is a Mini App environment with telegram.miniapp_host unset, both web UIs embedded; start false leaves the
+// bot service unstarted.
+func noKeyEnv(t *testing.T, start bool) *miniAppEnv {
+	t.Helper()
+	return newMiniAppEnvStart(t, slog.New(slog.DiscardHandler), func(c *config.Config) { c.Telegram.MiniAppHost = "" }, func(c *app.Central) {
+		c.UI = webui.Handler(dlFiles)
+		c.MiniAppUI = webui.MiniAppHandler(dlFiles)
+	}, start)
+}
+
+// seedLegacyHost stores a bot (without a host, the only kind a keyless central accepts) and writes miniapp_host into
+// the row as an installation from before the key was required would have it. The service's memory is untouched: it
+// is what a restarted central knows before it reads the row.
+func seedLegacyHost(t *testing.T, e *miniAppEnv, enabled bool) {
+	t.Helper()
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"bot_token": e.tg.Token(), "enabled": enabled, "mode": "polling"}), 200)
+	e.exec(t, `UPDATE telegram_bot SET miniapp_host = ?`, miniHost)
+}
+
+// L-1: no telegram.miniapp_host and a stored but disabled bot whose miniapp_host is the probe host. The host reaches the
+// Mini App handler only, loaded at start and again after the bot's own start; every path is a 404.
+func TestMiniAppHostFailsClosedNoKeyDisabledBot(t *testing.T) {
+	t.Parallel()
+	e := noKeyEnv(t, true)
+	cases := failClosedCases(e, "")
+	seedLegacyHost(t, e, false)
+	if err := e.h.c.TelegramBot.LoadStoredHost(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertAll404(t, e, "no key, disabled bot, loaded", hostVariants(e.port), cases)
+	e.h.c.TelegramBot.Start(t.Context())
+	assertAll404(t, e, "no key, disabled bot, started", hostVariants(e.port), cases)
+	if e.h.c.TelegramBot.MiniAppHost() != "" {
+		t.Fatal("a disabled bot serves the Mini App")
+	}
+	expect(t, e.send(t, "", "GET", api.Prefix+"/openapi.json", ""), 200) // the main host is untouched
+}
+
+// M-1: a stored host with no key reaches the Mini App handler from the first request, before the bot service has
+// started (central reads the row before it listens). Without the read the same request is the main UI.
+func TestMiniAppHostRoutedBeforeTheBotStarts(t *testing.T) {
+	t.Parallel()
+	e := noKeyEnv(t, false) // the bot service's start is still pending
+	seedLegacyHost(t, e, true)
+	if r := e.send(t, miniHost, "GET", "/", ""); r.status != 200 {
+		t.Fatalf("before the stored host is known the probe host is the main host (%d): the test proves nothing", r.status)
+	}
+	if err := e.h.c.TelegramBot.LoadStoredHost(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertAll404(t, e, "stored host loaded, bot not started", hostVariants(e.port), failClosedCases(e, ""))
+}
+
+// M-1: with no key, a delete or an emptied host never hands the old host to the main router (until restart).
+func TestMiniAppHostRetiredNoKey(t *testing.T) {
+	t.Parallel()
+	e := noKeyEnv(t, true)
+	cases := failClosedCases(e, "")
+	seedLegacyHost(t, e, true)
+	if err := e.h.c.TelegramBot.LoadStoredHost(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// The host is refused on every write; emptying it is allowed and must not release the old host.
+	if r := e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": miniHost}, "If-Match", `"1"`); r.status != 422 ||
+		!strings.Contains(string(r.body), "telegram.miniapp_host") {
+		t.Fatalf("a host without the key: %d %s", r.status, r.body)
+	}
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling"}, "If-Match", `"1"`), 200)
+	assertAll404(t, e, "host emptied", hostVariants(e.port), cases)
+	expect(t, e.root.do("DELETE", "/telegram/bot", nil, "If-Match", `"2"`), 204)
+	assertAll404(t, e, "bot deleted", hostVariants(e.port), cases)
+}
+
+// M-1: a bot row that can't be read refuses central's start, before anything listens.
+func TestServeRefusesWhenTheStoredHostCannotBeRead(t *testing.T) {
+	t.Parallel()
+	e := noKeyEnv(t, false)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := e.h.c.Serve(ctx)
+	if err == nil || !strings.Contains(err.Error(), "miniapp_host") {
+		t.Fatalf("Serve with an unreadable bot row: %v", err)
+	}
 }

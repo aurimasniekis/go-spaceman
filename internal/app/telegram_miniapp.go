@@ -74,7 +74,7 @@ func (c *Central) isMiniAppHost(hostport string) bool {
 	if h == c.Cfg.Telegram.MiniAppHost {
 		return true
 	}
-	return c.TelegramBot != nil && h == c.TelegramBot.StoredMiniAppHost()
+	return c.TelegramBot != nil && c.TelegramBot.RoutesToMiniApp(h)
 }
 
 // miniAppServing reports whether the running bot serves the Mini App on hostport: a bot runs, enabled, and its Mini

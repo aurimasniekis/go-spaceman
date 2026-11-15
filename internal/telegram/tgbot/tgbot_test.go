@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -266,7 +267,7 @@ func TestPutValidation(t *testing.T) {
 	}
 
 	// Webhook mode needs an https public URL; polling doesn't.
-	h := newEnv(t, "http://127.0.0.1:8080")
+	h := newEnvWith(t, "http://127.0.0.1:8080", func(o *Options) { o.MiniAppHost = "tg.localhost" })
 	_, err = h.svc.Put(ctx, admin, 0, Input{BotToken: h.tg.Token(), Enabled: true})
 	fieldMsg(t, err, "mode", "public_url to be https")
 	if _, err := h.svc.Put(ctx, admin, 0, Input{BotToken: h.tg.Token(), Enabled: true, Mode: ModePolling, MiniAppHost: "tg.localhost"}); err != nil {
@@ -274,7 +275,8 @@ func TestPutValidation(t *testing.T) {
 	}
 
 	// Valid values are stored in canonical order (a set in Terraform).
-	b := e.put(0, Input{BotToken: token, MiniAppHost: "tg.central.example.com", WebhookIPAllowlist: []string{"91.108.4.0/22", "149.154.160.0/20", "2001:db8::/32"}})
+	k := newEnvWith(t, publicURL, func(o *Options) { o.MiniAppHost = "tg.central.example.com" })
+	b := k.put(0, Input{BotToken: k.tg.Token(), MiniAppHost: "tg.central.example.com", WebhookIPAllowlist: []string{"91.108.4.0/22", "149.154.160.0/20", "2001:db8::/32"}})
 	if b.MiniAppHost != "tg.central.example.com" || strings.Join(b.WebhookIPAllowlist, ",") != "91.108.4.0/22,149.154.160.0/20,2001:db8::/32" {
 		t.Fatalf("bot %+v", b)
 	}
@@ -403,7 +405,7 @@ func private(id int64, text string) botapi.Update {
 // than the setWebhook. Disabling removes the webhook and the route.
 func TestWebhookModeStartupAndHealth(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, publicURL)
+	e := newEnvWith(t, publicURL, func(o *Options) { o.MiniAppHost = "tg.central.example.com" })
 	ctx := context.Background()
 	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true, MiniAppHost: "tg.central.example.com"})
 	if b.WebhookStatus != StateOK || b.Health.Username != "spaceman_test_bot" || b.Health.Error != "" {
@@ -454,8 +456,8 @@ func TestWebhookModeStartupAndHealth(t *testing.T) {
 	if b.WebhookStatus != StateOK || e.tg.Calls("setWebhook")[1].Params["drop_pending_updates"] != "" {
 		t.Fatalf("after an update: %+v %v", b.Health, e.tg.Calls("setWebhook")[1].Params)
 	}
-	if m := e.tg.MenuButton(); m.Type != botapi.MenuButtonCommands || e.svc.MiniAppHost() != "" {
-		t.Fatalf("menu without a Mini App host: %+v %q", m, e.svc.MiniAppHost())
+	if m := e.tg.MenuButton(); m.Type != botapi.MenuButtonWebApp || e.svc.MiniAppHost() != "tg.central.example.com" {
+		t.Fatalf("menu with the configured Mini App host: %+v %q", m, e.svc.MiniAppHost())
 	}
 	// The allowlist is live: the test client is not in Telegram's range.
 	if code, _ := e.tg.Deliver(ctx, private(4243, "hi")); code != http.StatusForbidden {
@@ -695,22 +697,92 @@ func TestConfiguredMiniAppHostWins(t *testing.T) {
 	}
 }
 
-// Without telegram.miniapp_host the stored miniapp_host is the Mini App host, reported with source bot, and stays the
-// stored host while the bot is disabled.
-func TestStoredMiniAppHostWithoutConfig(t *testing.T) {
+// Without telegram.miniapp_host a bot's miniapp_host is refused on create and on update (422 naming the setting): the
+// host is only routed from the first request when central's configuration knows it.
+func TestPutRefusesMiniAppHostWithoutKey(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, publicURL)
 	ctx := context.Background()
-	if st := e.svc.Status(ctx); st.MiniAppHost != "" || st.MiniAppHostSource != "" {
-		t.Fatalf("nothing set: %+v", st)
+	_, err := e.svc.Put(ctx, admin, 0, Input{BotToken: e.tg.Token(), Mode: ModePolling, MiniAppHost: "tg.central.example.com"})
+	fieldMsg(t, err, "miniapp_host", "telegram.miniapp_host")
+	if _, err := e.svc.Get(ctx); apperr.CodeOf(err) != apperr.CodeNotFound {
+		t.Fatalf("a refused create was stored: %v", err)
 	}
-	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true, WebhookIPAllowlist: []string{"149.154.160.0/20"}, MiniAppHost: "tg.central.example.com"})
-	if e.svc.MiniAppHost() != "tg.central.example.com" || e.svc.StoredMiniAppHost() != "tg.central.example.com" || b.Health.MiniAppHostSource != "bot" ||
-		b.Health.MiniAppHost != "tg.central.example.com" || b.Health.MiniAppHostIgnored != "" || len(b.Warnings) != 0 {
-		t.Fatalf("stored host: %+v", b)
+	e.put(0, Input{BotToken: e.tg.Token(), Mode: ModePolling})
+	_, err = e.svc.Put(ctx, admin, 1, Input{Mode: ModePolling, MiniAppHost: "tg.central.example.com"})
+	fieldMsg(t, err, "miniapp_host", "telegram.miniapp_host")
+	if b, err := e.svc.Get(ctx); err != nil || b.MiniAppHost != "" || b.Version != 1 {
+		t.Fatalf("a refused update changed the bot: %+v %v", b, err)
 	}
-	e.put(1, Input{Enabled: false, MiniAppHost: "tg.central.example.com"})
-	if e.svc.MiniAppHost() != "" || e.svc.StoredMiniAppHost() != "tg.central.example.com" {
-		t.Fatalf("disabled: serving %q, stored %q", e.svc.MiniAppHost(), e.svc.StoredMiniAppHost())
+}
+
+// A row stored before the key was required (or by hand): LoadStoredHost makes its host known before the bot starts, with
+// a warning and a health flag naming telegram.miniapp_host. Emptying the host or deleting the bot retires the host: it
+// keeps routing to the Mini App handler until restart.
+func TestLoadStoredHostWithoutKey(t *testing.T) {
+	t.Parallel()
+	const host = "tg.central.example.com"
+	e := newEnv(t, publicURL)
+	ctx := context.Background()
+	e.put(0, Input{BotToken: e.tg.Token(), Mode: ModePolling})
+	if err := e.s.W().Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE telegram_bot SET miniapp_host = ?`, host)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if e.svc.RoutesToMiniApp(host) {
+		t.Fatal("routed before it was loaded")
+	}
+	if err := e.svc.LoadStoredHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !e.svc.RoutesToMiniApp(host) || e.svc.RoutesToMiniApp("tg.other.example.com") || e.svc.RoutesToMiniApp("") {
+		t.Fatal("the stored host is not routed")
+	}
+	if !strings.Contains(e.logs.String(), "telegram.miniapp_host is not set") {
+		t.Fatalf("no warning logged: %s", e.logs.String())
+	}
+	b, err := e.svc.Get(ctx)
+	if err != nil || !b.Health.MiniAppHostNeedsKey || !slices.Contains(b.Warnings, NeedsKeyWarning(host)) {
+		t.Fatalf("health %+v warnings %q %v", b, b.Warnings, err)
+	}
+	// Emptied: the host is retired, not released.
+	e.put(1, Input{Mode: ModePolling})
+	if e.svc.StoredMiniAppHost() != "" || !e.svc.RoutesToMiniApp(host) {
+		t.Fatalf("emptied: stored %q, routed %v", e.svc.StoredMiniAppHost(), e.svc.RoutesToMiniApp(host))
+	}
+	if st := e.svc.Status(ctx); st.MiniAppHostNeedsKey {
+		t.Fatal("the flag outlived the host")
+	}
+}
+
+// With the key, a deleted bot's host and a changed host stay routed (to the 404 gate) until restart.
+func TestRetiredMiniAppHostsStayRouted(t *testing.T) {
+	t.Parallel()
+	const cfg, other = "tg.central.example.com", "tg.other.example.com"
+	e := newEnvWith(t, publicURL, func(o *Options) { o.MiniAppHost = cfg })
+	ctx := context.Background()
+	e.put(0, Input{BotToken: e.tg.Token(), Mode: ModePolling, MiniAppHost: other})
+	e.put(1, Input{Mode: ModePolling, MiniAppHost: cfg})
+	if e.svc.StoredMiniAppHost() != cfg || !e.svc.RoutesToMiniApp(other) || !e.svc.RoutesToMiniApp(cfg) {
+		t.Fatal("a changed host was released")
+	}
+	if err := e.svc.Delete(ctx, admin, 2); err != nil {
+		t.Fatal(err)
+	}
+	if e.svc.StoredMiniAppHost() != "" || !e.svc.RoutesToMiniApp(cfg) || !e.svc.RoutesToMiniApp(other) {
+		t.Fatal("a deleted bot's host was released")
+	}
+}
+
+// A failed read of the bot row refuses to start.
+func TestLoadStoredHostReadError(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := e.svc.LoadStoredHost(ctx); err == nil {
+		t.Fatal("a failed read was ignored")
 	}
 }

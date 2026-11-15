@@ -127,6 +127,11 @@ type Service struct {
 	// storedHost is the stored bot's miniapp_host, enabled or not ("" with no bot): central routes it to the Mini App
 	// handler whatever the bot's state. Read per request.
 	storedHost atomic.Pointer[string]
+	// retired are the hosts a stored miniapp_host has been before (a delete, an emptied or changed host). They stay the
+	// Mini App handler's (404) until central restarts, so a host that was routed never reaches the main router. Guarded
+	// by retiredMu; never shrinks (a handful of operator edits at most).
+	retiredMu sync.Mutex
+	retired   map[string]struct{}
 	// miniAppBot is the running bot's Mini App initData key (nil when off).
 	miniAppBot atomic.Pointer[miniapp.Bot]
 
@@ -203,6 +208,9 @@ func (svc *Service) out(ctx context.Context, r db.TelegramBot) *Bot {
 	if m := svc.hostMismatch(r.MiniappHost); m != "" {
 		b.Warnings = append(b.Warnings, MismatchWarning(svc.o.MiniAppHost, m))
 	}
+	if svc.hostNeedsKey(r.MiniappHost) {
+		b.Warnings = append(b.Warnings, NeedsKeyWarning(r.MiniappHost))
+	}
 	return b
 }
 
@@ -210,6 +218,13 @@ func (svc *Service) out(ctx context.Context, r db.TelegramBot) *Bot {
 func MismatchWarning(configured, stored string) string {
 	return "The bot's miniapp_host " + stored + " is ignored: central's configuration sets telegram.miniapp_host to " + configured +
 		", which wins. Set the bot's miniapp_host to the same value, or leave it empty."
+}
+
+// NeedsKeyWarning explains a stored bot miniapp_host while telegram.miniapp_host is not set.
+func NeedsKeyWarning(stored string) string {
+	return "The bot's miniapp_host " + stored + " is stored but telegram.miniapp_host is not set in central's configuration: set it to " +
+		"the same host (central then routes the host from the first request after a restart), or clear the bot's miniapp_host. " +
+		"Until then the host answers 404 for everything but the Mini App."
 }
 
 // checkMiniAppHost validates miniapp_host with the rules central's telegram.miniapp_host follows too (tghost.Check).
@@ -326,6 +341,9 @@ func (svc *Service) Put(ctx context.Context, actor audit.Actor, version int64, i
 		v.Add("mode", "webhook mode needs central's public_url to be https (Telegram only calls HTTPS webhooks); use polling")
 	}
 	checkMiniAppHost(v, in.MiniAppHost, svc.o.PublicURL)
+	if in.MiniAppHost != "" && svc.o.MiniAppHost == "" {
+		v.Add("miniapp_host", "can't be stored while telegram.miniapp_host is not set in central's configuration: set telegram.miniapp_host to the Mini App host first (the host is only routed safely when central knows it at start), or leave miniapp_host empty")
+	}
 	_, allow := parseAllowlist(v, in.WebhookIPAllowlist)
 	switch {
 	case in.BotToken == "" && !exists:

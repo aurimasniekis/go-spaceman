@@ -767,6 +767,13 @@ func (c *Central) ManagementHandler() http.Handler {
 
 // Serve runs every listener until ctx ends, then shuts down gracefully within the configured timeout.
 func (c *Central) Serve(ctx context.Context) error {
+	// The stored bot's Mini App host is read before anything listens: the router must know it from the first request
+	// (the bot itself starts later, in the background). A failed read refuses to start.
+	if c.TelegramBot != nil {
+		if err := c.TelegramBot.LoadStoredHost(ctx); err != nil {
+			return fmt.Errorf("telegram: %w", err)
+		}
+	}
 	d := c.APIDeps()
 	srv := &http.Server{Addr: c.Cfg.HTTP.Listen, Handler: c.Handler(d), ReadHeaderTimeout: c.Cfg.HTTP.ReadHeaderTimeout.D(), //nolint:contextcheck // handlers take their context from each request
 		ErrorLog: slog.NewLogLogger(obs.Component(c.Log, "http").Handler(), slog.LevelWarn), BaseContext: func(net.Listener) context.Context { return ctx }}

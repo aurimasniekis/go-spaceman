@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"strconv"
@@ -73,9 +74,10 @@ type Status struct {
 	LastErrorMessage   string     `json:"last_error_message,omitempty"`
 	CheckedAt          *time.Time `json:"checked_at,omitempty" doc:"When Telegram was last asked (getWebhookInfo)"`
 	// The Mini App host (ADR-0083 §3.4.1).
-	MiniAppHost        string `json:"miniapp_host,omitempty" doc:"The host central routes to the Mini App handler only (it never reaches the rest of central; 404 for everything while no bot serves it): telegram.miniapp_host from central's configuration when set, otherwise the bot's miniapp_host"`
-	MiniAppHostSource  string `json:"miniapp_host_source,omitempty" enum:"config,bot," doc:"Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)"`
-	MiniAppHostIgnored string `json:"miniapp_host_ignored,omitempty" doc:"The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything"`
+	MiniAppHost         string `json:"miniapp_host,omitempty" doc:"The host central routes to the Mini App handler only (it never reaches the rest of central; 404 for everything while no bot serves it): telegram.miniapp_host from central's configuration when set, otherwise the bot's miniapp_host"`
+	MiniAppHostSource   string `json:"miniapp_host_source,omitempty" enum:"config,bot," doc:"Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)"`
+	MiniAppHostIgnored  string `json:"miniapp_host_ignored,omitempty" doc:"The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything"`
+	MiniAppHostNeedsKey bool   `json:"miniapp_host_needs_key,omitempty" doc:"The bot stores a miniapp_host but central's configuration does not set telegram.miniapp_host: set it (or clear the bot's miniapp_host)"`
 }
 
 // runtime is the live bot. Fields above mu are owned by Service.mu; the rest are read by Status under mu.
@@ -112,6 +114,66 @@ func (svc *Service) MiniAppHost() string { return *svc.miniAppHost.Load() }
 // Central routes it to the Mini App handler whatever the bot's state, like telegram.miniapp_host; the handler serves
 // only MiniAppHost. Before Start has loaded the bot it is "".
 func (svc *Service) StoredMiniAppHost() string { return *svc.storedHost.Load() }
+
+// RoutesToMiniApp reports whether host (already normalized, tghost.Of) is a host central routes to the Mini App handler
+// because of the bot: the stored miniapp_host, or one it has been since central started (a retired host keeps answering
+// 404 until a restart, so a delete or a change never lets it reach the main router).
+func (svc *Service) RoutesToMiniApp(host string) bool {
+	if host == "" {
+		return false
+	}
+	if host == *svc.storedHost.Load() {
+		return true
+	}
+	svc.retiredMu.Lock()
+	defer svc.retiredMu.Unlock()
+	_, ok := svc.retired[host]
+	return ok
+}
+
+// setStored records the stored bot's miniapp_host (row nil: no bot) and retires the host it replaces. It returns the
+// previous one.
+func (svc *Service) setStored(row *db.TelegramBot) string {
+	stored := ""
+	if row != nil {
+		stored = row.MiniappHost
+	}
+	// The retired set takes the old host before the new one is visible, so no request sees neither.
+	if old := *svc.storedHost.Load(); old != "" && old != stored {
+		svc.retiredMu.Lock()
+		if svc.retired == nil {
+			svc.retired = map[string]struct{}{}
+		}
+		svc.retired[old] = struct{}{}
+		svc.retiredMu.Unlock()
+	}
+	return *svc.storedHost.Swap(&stored)
+}
+
+// hostNeedsKey is true when a bot stores a miniapp_host while telegram.miniapp_host is not set.
+func (svc *Service) hostNeedsKey(stored string) bool { return stored != "" && svc.o.MiniAppHost == "" }
+
+// LoadStoredHost reads the stored bot row and makes its miniapp_host known to the router. Central calls it before it
+// listens, so the stored host reaches the Mini App handler (and its 404 gate) from the first request, whatever the
+// bot's state or how long the bot takes to start. A failed read is an error: central must not serve without knowing.
+func (svc *Service) LoadStoredHost(ctx context.Context) error {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	r, err := svc.s.R().GetTelegramBot(ctx)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		svc.setStored(nil)
+		return nil
+	case err != nil:
+		return fmt.Errorf("read the Telegram bot's stored miniapp_host: %w", err)
+	}
+	svc.setStored(&r)
+	if svc.hostNeedsKey(r.MiniappHost) {
+		svc.o.Log.Warn("telegram: the bot stores a miniapp_host but telegram.miniapp_host is not set; set it in central's configuration",
+			slog.String("bot_miniapp_host", r.MiniappHost))
+	}
+	return nil
+}
 
 // effectiveHost is the Mini App host for a bot whose stored miniapp_host is stored: the configured one wins.
 func (svc *Service) effectiveHost(stored string) string {
@@ -253,7 +315,7 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 		stored = row.MiniappHost
 	}
 	// Routing follows the stored row before anything else: a disabled or failing bot's host stays the Mini App's (404).
-	prevStored := *svc.storedHost.Swap(&stored)
+	prevStored := svc.setStored(row)
 	svc.setState(func(rt *runtime) { rt.gen++; gen = rt.gen })
 	if m := svc.hostMismatch(stored); m != "" && (m != prevStored || gen == 1) {
 		svc.o.Log.Warn("telegram: the bot's miniapp_host differs from telegram.miniapp_host; the configuration wins",
@@ -424,7 +486,7 @@ func (svc *Service) Status(ctx context.Context) Status {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	st := Status{Configured: rt.configured, Enabled: rt.enabled, Mode: rt.mode, BotID: rt.botID, Username: rt.username,
-		WebhookStatus: rt.state, Error: rt.err, MiniAppHost: svc.effectiveHost(stored), MiniAppHostIgnored: svc.hostMismatch(stored)}
+		WebhookStatus: rt.state, Error: rt.err, MiniAppHost: svc.effectiveHost(stored), MiniAppHostIgnored: svc.hostMismatch(stored), MiniAppHostNeedsKey: svc.hostNeedsKey(stored)}
 	switch {
 	case svc.o.MiniAppHost != "":
 		st.MiniAppHostSource = "config"
