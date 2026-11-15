@@ -17,7 +17,7 @@ const NEEDS_YOU_TOP = 5
 const URGENCY: Record<HumanAction['priority'], number> = { urgent: 0, high: 1, normal: 2, low: 3 }
 
 /** An unknown priority ranks as normal, so a value the web does not know yet is neither first nor last. */
-const rank = (a: HumanAction) => URGENCY[a.priority] ?? URGENCY.normal
+const rank = (a: HumanAction) => (Object.hasOwn(URGENCY, a.priority) ? URGENCY[a.priority] : URGENCY.normal)
 
 /** The most urgent first, then the oldest; the server's order breaks the rest. */
 function topNeedsYou(items: HumanAction[], n = NEEDS_YOU_TOP): HumanAction[] {
