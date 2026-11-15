@@ -85,7 +85,8 @@ test('a long terminal shows its latest output first and loads earlier output on 
       if (!p.more) break
       after = p.next_after
     }
-    const lastStatic = rec.findLast((r) => r.k === 'o' && Buffer.from(r.d ?? '', 'base64').toString('latin1').includes('static line 140 of 140'))!
+    const lastStatic = rec.findLast((r) => r.k === 'o' && Buffer.from(r.d ?? '', 'base64').toString('latin1').includes('static line 140 of 140'))
+    if (!lastStatic) throw new Error('the recording has no output record with "static line 140 of 140"')
     const wanted = (lastStatic.t - rec[0].t + 1_500_000) / (rec.at(-1)!.t - rec[0].t)
     expect(wanted, 'the run outlives the redraws by seconds').toBeLessThan(0.9)
     const b = (await seek.boundingBox())!
