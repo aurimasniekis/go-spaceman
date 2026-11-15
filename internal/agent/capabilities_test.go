@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -340,10 +341,10 @@ func TestUnmanagedCapabilitiesRedetected(t *testing.T) {
 	if h := claudeEntry(t, fc.next(t, proto.TypeHello)); h.Version != "2.1.5" || h.Path != bin || h.Managed {
 		t.Fatalf("hello %+v", h)
 	}
-	// Detections can overlap by design (a hello's and capsLoop's), and under -race on a loaded runner one can still be
-	// running (and about to report) when the hello arrives. Wait for every detection to finish before the binary changes, so that any report still on
-	// its way carries what the first detections saw (2.1.5), never the new binary. Without this a late detection
-	// ran the new stub and reported 2.1.6 before the interval, failing the "not yet" check below.
+	// Wait for every detection to finish before the binary changes, so that any report still on its way carries what
+	// the startup detection saw (2.1.5), never the new binary. capsLoop does not detect before that one has cached
+	// (TestCapsLoopWaitsForFirstDetection), so this is normally already true; the wait keeps the test from depending on
+	// a loaded runner's scheduling.
 	waitUntil(t, "startup detections finished", func() bool { return detecting.Load() == 0 })
 	stub("2.1.6")
 	// Not yet: nothing may report the new version before the interval has passed (a leftover report of 2.1.5 is fine).
@@ -369,6 +370,60 @@ quiet:
 	if h := claudeEntry(t, fc.next(t, proto.TypeNodeCapabilities)); h.Version != "2.1.6" || !h.Available || h.Managed {
 		t.Fatalf("re-detected %+v", h)
 	}
+}
+
+// SM-HARN-008: capsLoop's first tick must not detect before the session's own startup detection has cached the
+// capabilities. A zero capsAt used to count as overdue, so the loop's detection could overlap the session's, finish
+// after the welcome and report a stale inventory: an unexpected node.capabilities (the flake this test pins). The
+// session's detection is held until capsLoop's detection starts, so that overlap happens on every run when the gate is
+// missing, and the welcome is held back until the test has checked nothing was detected early.
+func TestCapsLoopWaitsForFirstDetection(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin+".new", []byte("#!/bin/sh\necho '2.1.5 (Claude Code)'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(bin+".new", bin); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	loopStarted, release := make(chan struct{}), make(chan struct{})
+	releaseLoop := sync.OnceFunc(func() { close(release) })
+	realDetect := detectCapabilities
+	detectCapabilities = func(a *Agent, ctx context.Context) proto.Capabilities {
+		switch calls.Add(1) {
+		case 1:
+			// The session's detection: it waits until capsLoop's has started (one second if capsLoop never detects early).
+			select {
+			case <-loopStarted:
+			case <-time.After(time.Second):
+			}
+		case 2:
+			// capsLoop's detection: held until the welcome has arrived, so a report from it would follow the welcome.
+			close(loopStarted)
+			<-release
+		}
+		return realDetect(a, ctx)
+	}
+	t.Cleanup(func() { detectCapabilities = realDetect })
+	a, _ := ccAgent(t, dir, nil, func(o *Options) { o.HarnessBinaries[harness.KindClaude] = bin })
+	fc := newWSCentral(t, proto.MinorHarnessVersion)
+	runAgent(t, a, fc)
+	t.Cleanup(releaseLoop)
+	fc.next(t, proto.TypeHello)
+	waitUntil(t, "welcome", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.connected
+	})
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("%d detections started before the session's own detection had cached (capsLoop detected early)", n-1)
+	}
+	releaseLoop()
+	fc.none(t, proto.TypeNodeCapabilities, 300*time.Millisecond)
 }
 
 func waitUntil(t *testing.T, what string, cond func() bool) {
