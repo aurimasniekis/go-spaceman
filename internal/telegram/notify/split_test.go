@@ -250,3 +250,47 @@ func TestNoContinuationsInGroupsOrAtSummary(t *testing.T) {
 		})
 	}
 }
+
+// TestContinuationRowsMoveForwardWhenTheCardIsRecorded: retention prunes by created_at, so when the card is recorded
+// again later (an edit with no change to the continuations), their rows move forward with it and are not pruned
+// before the card.
+func TestContinuationRowsMoveForwardWhenTheCardIsRecorded(t *testing.T) {
+	e := newEnv(t, 1)
+	e.flushEvery = 2 * time.Millisecond
+	defer e.run(e.maps)()
+	r := action("hum_1", 1, false)
+	r.Detail = longBody(12)
+	e.change("hum_1", r, 1, changefeed.Created)
+	e.waitExactly(3)
+	e.waitRows(3)
+
+	later := e.clk.Now().Add(time.Hour)
+	e.clk.Set(later)
+	r2 := action("hum_1", 2, false)
+	r2.Detail = longBody(12) // the same body: the continuations are not edited, only the card is
+	e.change("hum_1", r2, 2, changefeed.Updated)
+	e.waitCalls("editMessageText", 1)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		conts, moved := 0, 0
+		e.maps.mu.Lock()
+		for _, m := range e.maps.rows {
+			if !m.Cont {
+				continue
+			}
+			conts++
+			if m.CreatedAt.Equal(later) {
+				moved++
+			}
+		}
+		e.maps.mu.Unlock()
+		if conts == 2 && moved == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d continuation rows moved to the later record time, want 2 of 2", moved, conts)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
