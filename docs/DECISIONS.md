@@ -4596,16 +4596,17 @@
 - **Decision:**
   - `spaceman_inbox_add` stores a worker's key as `role:<role>:<key>`. The same role keeps deduplicating across runs and
     restarts, a different role no longer collides. Dreamer and KB items already have their own source kinds and one role
-    each, so their keys are unchanged. Items without a key are unaffected. The stored key is 256 bytes at most, so a worker
-    key that was within one byte of the limit now fails validation.
+    each, so their keys are unchanged. Items without a key are unaffected. The stored key is 256 bytes at most. The
+    `role:<role>:` prefix takes 7–54 bytes (role names are at most 48 bytes), so a worker key longer than 202–249 bytes,
+    depending on the role, now fails validation; the error states the limit for that role.
   - `xspace.Accept` links the task only if its origin is `xspace_request` with this request's ID. Otherwise it fails with
     `conflict` and the request stays pending. It does not create a second task: the unique key is taken.
 - **Alternatives:** a new source kind per role needs a schema change; a hash of the role would hide the key in the UI.
 - **Consequences:** `spaceman_inbox_add` dedup now means "per role" for workers. Worker items stored before this change
   keep their bare key; a retry of one after the upgrade creates a new item once. A planted legacy task blocks accepting
   that request with a task until an operator removes or re-keys the row.
-- **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`; `internal/xspace`
-  `TestAcceptRefusesPlantedLegacyTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
+- **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`, `TestWorkerInboxDedupKeyEffectiveLimit`;
+  `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
