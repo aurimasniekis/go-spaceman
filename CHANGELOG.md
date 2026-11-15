@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `telegram.webhook_base_url` (environment `SPACEMAN_TELEGRAM_WEBHOOK_BASE_URL`): the public https base URL the Telegram
+  webhook is registered under, for a deployment whose `public_url` is not reachable from the internet. Empty keeps the
+  webhook under `public_url`. The webhook path and secret-token check are unchanged.
+  A path prefix is for the reverse proxy, which must strip it before forwarding (central serves only
+  `/telegram/webhook/<id>`). The host must differ from `telegram.miniapp_host`; the Mini App origin still derives from
+  `public_url`.
+
 ### Changed
 
 - Control can close a task that never had a worker run (control did the work itself) as **done** straight from backlog or ready with `spaceman_task_set_status`, a result required; the audit event is marked `direct`. The task must have no unmet dependency and no open `blocks_task` human action. No other transition changes, and operators and workers cannot use it.
@@ -17,6 +26,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Attaching a file or image in the Telegram Mini App (new inbox item, human-action responses, messages, tasks) no longer fails with "authentication required". The upload sent a cookie and CSRF token, which the Mini App never has; it now sends the Mini App's `Authorization: Telegram` session like every other call.
 - The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
+- The human-action lists sort before they truncate, so a top-N view (the Mini App home) shows the most urgent pending action even when more than a page is pending; before, a newer urgent item was cut off and the oldest were kept.
 
 ### Security
 

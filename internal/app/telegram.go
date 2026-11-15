@@ -93,7 +93,7 @@ func (c *Central) newTelegram(ctx context.Context) {
 // dispatcher client, poller) whenever the bot is written and at start (Serve calls Start).
 func (c *Central) newTelegramBot() *tgbot.Service {
 	return tgbot.New(c.Store, c.Audit, c.Keyring, tgbot.Options{BaseURL: c.Cfg.Telegram.APIBaseURL, PublicURL: c.Cfg.PublicURL,
-		MiniAppHost: c.Cfg.Telegram.MiniAppHost, Updates: c.TelegramUpdates, Metrics: c.Metrics, Bus: c.Bus, Log: obs.Component(c.Log, "telegram")})
+		WebhookBaseURL: c.Cfg.Telegram.WebhookBaseURL, MiniAppHost: c.Cfg.Telegram.MiniAppHost, Updates: c.TelegramUpdates, Metrics: c.Metrics, Bus: c.Bus, Log: obs.Component(c.Log, "telegram")})
 }
 
 // newTelegramLink builds the linking protocol (ADR-0083 decision 2); newTelegram hands the dispatcher its bot-side

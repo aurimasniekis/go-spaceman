@@ -18924,7 +18924,7 @@
             "type": "string"
           },
           "mode": {
-            "description": "webhook (default; needs central's public_url to be https) or polling",
+            "description": "webhook (default; needs an https public_url or telegram.webhook_base_url) or polling",
             "enum": [
               "webhook",
               "polling",
