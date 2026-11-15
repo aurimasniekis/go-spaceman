@@ -147,7 +147,7 @@ func RegisterTelegramSettings(svc *settings.Service) func(api huma.API, d *Deps)
 				return &spaceTelegramOut{ETag: ETag(s.Version), Body: s}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "delete-space-telegram", Method: http.MethodDelete, Path: "/spaces/{space_id}/telegram",
-			Summary: "Remove a space's Telegram settings (Telegram is off for it again)", Description: "Needs space_config:write in the space and a step-up.",
+			Summary: "Remove a space's Telegram settings (Telegram is off for it again)", Description: "Needs space_config:write in the space and a step-up. It also unbinds the space's group, which needs no telegram_group:write (unbinding with group_chat_id 0 on the PUT does).",
 			Tags: tags, DefaultStatus: http.StatusNoContent},
 			func(ctx context.Context, in *struct {
 				SpacePath

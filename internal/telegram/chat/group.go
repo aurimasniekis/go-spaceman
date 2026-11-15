@@ -28,6 +28,10 @@ const (
 	TextGroupFixed    = "This group is bound to one space."
 )
 
+// groupCommands are the commands the bot answers in a group (the others are ignored without a reply).
+var groupCommands = map[string]bool{"inbox": true, "needsyou": true, "queue": true, "runs": true, "messages": true,
+	"spaces": true, "space": true, "control": true}
+
 type groupKey struct{}
 
 func withGroup(ctx context.Context, g updates.Group) context.Context {
@@ -53,6 +57,16 @@ func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Li
 		case u.Message != nil:
 			if _, _, ok := command(u.Message.Text); ok {
 				h.replyIn(ctx, u.Message, text)
+			}
+		}
+	}
+	// A command that isn't the bot's own group command is none of its business: stay silent before any lookup, so a
+	// member without access can't make the bot reveal (by its refusal) that they have a link.
+	if q == nil && u.Message != nil {
+		if cmd, to, _, ok := commandFor(u.Message.Text); ok {
+			// A command addressed to another bot is that bot's. An unknown own username fails closed.
+			if to != "" && !strings.EqualFold(to, h.botUsername()) || !groupCommands[cmd] {
+				return
 			}
 		}
 	}
@@ -83,11 +97,7 @@ func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Li
 	if m == nil {
 		return
 	}
-	if cmd, to, arg, ok := commandFor(m.Text); ok {
-		// A command addressed to another bot is that bot's: stay silent. An unknown own username fails closed.
-		if to != "" && !strings.EqualFold(to, h.botUsername()) {
-			return
-		}
+	if cmd, _, arg, ok := commandFor(m.Text); ok {
 		switch cmd {
 		case "inbox":
 			h.cmdInbox(ctx, l, arg)

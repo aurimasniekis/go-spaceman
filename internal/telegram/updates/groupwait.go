@@ -39,6 +39,12 @@ func (d *Dispatcher) startWaiting(chatID int64) {
 	}
 }
 
+func (d *Dispatcher) forgetWait(chatID int64) {
+	d.wait.mu.Lock()
+	defer d.wait.mu.Unlock()
+	delete(d.wait.deadline, chatID)
+}
+
 func (d *Dispatcher) waiting(chatID int64) bool {
 	d.wait.mu.Lock()
 	defer d.wait.mu.Unlock()

@@ -722,8 +722,12 @@ func (svc *Service) DeleteSpace(ctx context.Context, actor audit.Actor, spaceID 
 			return err
 		}
 		svc.publish(tx, spaceID)
+		details := map[string]any{"space_id": spaceID, "was_enabled": cur.Enabled == 1}
+		if cur.GroupChatID.Valid {
+			details["group_chat_id"] = cur.GroupChatID.Int64 // deleting the settings also unbinds the group
+		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "telegram.space.deleted", Target: audit.Target{Type: "space_telegram", ID: spaceID},
-			Details: map[string]any{"space_id": spaceID, "was_enabled": cur.Enabled == 1}})
+			Details: details})
 		return err
 	})
 	if err != nil {

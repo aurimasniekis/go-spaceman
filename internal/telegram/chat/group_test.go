@@ -98,6 +98,23 @@ func TestGroupUnauthorizedTapperRefused(t *testing.T) {
 	}
 }
 
+// L1: a member without access who sends commands that aren't the bot's group commands (another bot's, unknown ones)
+// gets no reply at all: a refusal would reveal that the person has a link.
+func TestGroupForeignCommandsFromNoAccessMemberAreSilent(t *testing.T) {
+	e := newEnv(t)
+	nogrant := member("tgl_nogrant", spD)
+	for _, c := range []string{"/start@OtherBot", "/foo", "/inbox@OtherBot"} {
+		e.gsay(nogrant, c)
+	}
+	if n := len(e.group()); n != 0 || len(e.api.seen()) != 0 {
+		t.Fatalf("%d replies, lookups %v", n, e.api.seen())
+	}
+	e.gsay(nogrant, "/inbox") // a real group command keeps its refusal
+	if g := e.group(); len(g) != 1 || g[0].Text != TextGroupNoAccess {
+		t.Fatalf("real command: %+v", g)
+	}
+}
+
 func (e *env) touched(id string) bool { return e.api.touched(id) }
 
 // In a group only the bound space exists: a card or button naming another space, a /command naming one, and the space

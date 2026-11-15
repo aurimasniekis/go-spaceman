@@ -226,7 +226,9 @@ func TestDispatcherUnboundForumGroupWaitIsBounded(t *testing.T) {
 	if len(rec.got()) != 0 || left() != 0 {
 		t.Fatalf("handled %v, left %d", rec.got(), left())
 	}
-	clk.Advance(14 * time.Minute)
+	clk.Advance(10 * time.Minute)
+	added(8, -100901) // a repeated add doesn't extend the wait (groupwait.go startWaiting)
+	clk.Advance(4 * time.Minute)
 	groups[-100902] = "spc_x" // bound in time
 	d.SweepGroups(ctx)
 	if left() != 0 {
@@ -237,6 +239,13 @@ func TestDispatcherUnboundForumGroupWaitIsBounded(t *testing.T) {
 	calls := srv.Calls("leaveChat")
 	if len(calls) != 2 || calls[0].Params["chat_id"] == "-100902" || calls[1].Params["chat_id"] == "-100902" {
 		t.Fatalf("after the grace: %+v", calls)
+	}
+	// A group the bot was removed from is forgotten: the sweep makes no futile leaveChat.
+	added(9, -100906)
+	d.Dispatch(ctx, botapi.Update{UpdateID: 10, MyChatMember: &botapi.ChatMemberUpdated{Chat: forum(-100906), From: botapi.User{ID: 8},
+		NewChatMember: botapi.ChatMember{Status: botapi.MemberKicked}}})
+	if d.waiting(-100906) {
+		t.Fatal("a kicked group is still waited for")
 	}
 	// A restart: a new dispatcher knows no wait, so the first activity of an unbound forum group makes it leave.
 	d2 := NewDispatcher(DispatcherOptions{Links: &recorder{}, Handler: rec, Bot: bot, Groups: groupsFake{}, Clock: clk})

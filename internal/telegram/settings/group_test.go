@@ -116,6 +116,13 @@ func TestGroupSpace(t *testing.T) {
 	if svc.Space("spc_a").GroupChatID != -100500 {
 		t.Fatalf("the binding was lost: %+v", svc.Space("spc_a"))
 	}
+	// Deleting the settings also unbinds the group, and the audit event names it.
+	if err := svc.DeleteSpace(ctx, admin, "spc_a", svc.Space("spc_a").Version); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM audit_events WHERE action = 'telegram.space.deleted' AND details_json LIKE '%"group_chat_id":-100500%'`); n != 1 {
+		t.Fatalf("the delete audit named the group %d times", n)
+	}
 }
 
 // TG-13-2: a group that stops acting for a space is reported (the bot leaves it): unbound, rebound to another group,

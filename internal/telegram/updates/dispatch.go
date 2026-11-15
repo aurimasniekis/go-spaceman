@@ -272,6 +272,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 			d.metrics.TelegramUpdate(metrics.TelegramUpdateIgnored)
 			return
 		}
+		d.forgetWait(c.Chat.ID) // left or kicked: nothing to wait for, no futile leaveChat from the sweep
 		d.leaveGroup(ctx, c)
 		return
 	}
