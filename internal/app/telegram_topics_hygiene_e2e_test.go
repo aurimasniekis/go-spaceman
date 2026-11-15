@@ -210,3 +210,48 @@ func runNotifier(t *testing.T, e *miniAppEnv) {
 	go func() { _ = e.h.c.TelegramNotify.Run(ctx); close(done) }()
 	t.Cleanup(func() { stop(); <-done })
 }
+
+// TestTelegramTopicsRelinkUnderAnotherBotDoesNotReuseTopics: the revoked link belonged to a bot that has since been
+// replaced, so its thread IDs mean nothing to the current bot (they could collide with its own topics) and the relink
+// starts with none.
+func TestTelegramTopicsRelinkUnderAnotherBotDoesNotReuseTopics(t *testing.T) {
+	e := newMiniAppEnv(t)
+	ui := enrolledSession(t, e.h, "mini@example.com")
+	e.startBot(t)
+	ctx := t.Context()
+	e.h.c.TelegramLinks.Start(ctx)
+	runNotifier(t, e)
+	bot, err := botapi.New(botapi.Options{BaseURL: e.tg.URL(), Token: e.tg.Token()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(linkID string) botapi.Message {
+		t.Helper()
+		m, err := e.h.c.TelegramTopics.Send(ctx, bot, linkID, 42, e.space, botapi.SendMessageParams{Text: "a message"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	first := send("tgl_mini")
+	if err := e.h.c.TelegramLink.UnlinkAny(ctx, audit.System, "tgl_mini"); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `UPDATE telegram_links SET bot_id = '1' WHERE id = 'tgl_mini'`) // it was made under the bot that was replaced
+	relinkTelegramUser42(t, e, ui)
+	var relinked string
+	for _, l := range listLiveLinks(t, e) {
+		if l.TgUserID == 42 {
+			relinked = l.ID
+		}
+	}
+	if relinked == "" || relinked == "tgl_mini" {
+		t.Fatalf("no new live link for the chat (got %q)", relinked)
+	}
+	if got := send(relinked); got.MessageThreadID == first.MessageThreadID {
+		t.Fatalf("a link under another bot reused topic %d", first.MessageThreadID)
+	}
+	if n := len(e.tg.Calls("createForumTopic")); n != 2 {
+		t.Fatalf("%d topic creates, want 2", n)
+	}
+}

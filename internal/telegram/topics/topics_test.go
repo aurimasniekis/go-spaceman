@@ -543,7 +543,7 @@ func TestQuickRenamesEndWithTheLatestName(t *testing.T) {
 	title.Store("Beta")
 	m.Renamed(context.Background(), "spc_1", "Beta")
 	title.Store("Gamma")
-	m.Renamed(context.Background(), "spc_1", "Gamma")
+	m.Renamed(context.Background(), "spc_1", "Beta") // a late call carrying a stale name: the title is read when sent
 	waitFor(t, "the latest name", func() bool { return srv.Topics(chat)[first.MessageThreadID] == "Gamma" })
 	time.Sleep(100 * time.Millisecond)
 	if got := srv.Topics(chat)[first.MessageThreadID]; got != "Gamma" {
