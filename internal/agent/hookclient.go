@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -126,11 +128,32 @@ func runWrapped(ctx context.Context, command string, stdin []byte) (string, bool
 	buf.max = wrapOutputMax
 	cmd.Stdout = &buf
 	cmd.WaitDelay = 200 * time.Millisecond
-	// Its own process group, killed whole on timeout: a hung status script must not leave orphans at every refresh.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Its own process group, so a timeout kills the whole group: a hung status script must not leave orphans at every
+	// refresh. Background children of a command that exits cleanly are not killed, as when Claude Code runs it directly.
+	// Teardown: on SIGHUP or SIGTERM the wrapper kills the whole group before it exits. Pdeathsig is the backstop for a
+	// SIGKILL of the wrapper, and it ends only the direct child (a grandchild in the group survives). It is tied to the
+	// thread that started the process, so the thread stays locked from Start until Wait returns.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := cmd.Start(); err != nil {
+		return "", false
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-sigs:
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		case <-done:
+		}
+	}()
 	// A clean exit whose background child still holds the output open (ErrWaitDelay) keeps what was printed.
-	if err := cmd.Run(); (err != nil && !errors.Is(err, exec.ErrWaitDelay)) || ctx.Err() != nil {
+	if err := cmd.Wait(); (err != nil && !errors.Is(err, exec.ErrWaitDelay)) || ctx.Err() != nil {
 		return "", false
 	}
 	return buf.b.String(), buf.b.Len() > 0

@@ -38,6 +38,11 @@ func (a *Agent) stopFailureIntake(ctx context.Context, req bridgeRequest) bridge
 		a.failureClasses[req.Run] = f.Error
 		a.mu.Unlock()
 	}
+	// The run may have ended between the bridge's check and the stores above; its data was dropped then, so drop it again.
+	if r, err := a.j.getRun(ctx, req.Run); err != nil || ended(r.State) {
+		a.forgetHookData(req.Run)
+		return bridgeResponse{OK: true}
+	}
 	a.log.Debug("claude stop failure", slog.String(obs.FieldRunID, req.Run), slog.String("class", f.Error))
 	// The accelerator: scan now instead of after the settle delay.
 	// Coalesced per run: a process of the run can send these as fast as it likes, and every scan holds the node-wide scan
@@ -53,6 +58,10 @@ func (a *Agent) stopFailureIntake(ctx context.Context, req bridgeRequest) bridge
 	}
 	a.stopScans[req.Run] = now
 	a.mu.Unlock()
+	if r, err := a.j.getRun(ctx, req.Run); err != nil || ended(r.State) {
+		a.forgetHookData(req.Run)
+		return bridgeResponse{OK: true}
+	}
 	a.goTrack(func() { a.limitScan(context.WithoutCancel(ctx), req.Run, false) })
 	return bridgeResponse{OK: true}
 }

@@ -602,6 +602,11 @@ Quota board).
   `context_window.used_percentage` and `current_usage` are `null` and `rate_limits` is absent, so the node's allowlist
   treats `null` as absent. `resets_at` is read as Unix seconds and dropped when outside 1e9–4e9 (not yet seen in a live
   payload; K-17).
+- The wrapper runs the profile's own `statusLine` command (2 s bound, its own process group, killed whole on timeout and
+  when the wrapper gets SIGHUP or SIGTERM; after a SIGKILL of the wrapper only the direct child dies, through Pdeathsig, and
+  a grandchild in the group survives). When that command fails, times out or prints nothing, the wrapper prints its own
+  `SpaceMan · <model> · ctx … · 5h … · 7d …` line instead of an empty status line. This is intended (plan §3.3). Background
+  children of a command that exits cleanly are not killed, the same as when Claude Code runs it directly.
 - Opt-in check: `SPACEMAN_REAL=1 go test -tags real ./test/real -run TestRealClaudeStatusLineWrapper` (needs `claude`, `go`
   and `script`). It covers the status line only; a live `StopFailure` was not triggered (it needs an API error), so that
   hook is *tested (simulated)*, not externally verified.
