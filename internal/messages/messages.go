@@ -591,8 +591,16 @@ func (svc *Service) ack(ctx context.Context, tx *store.Tx, actor audit.Actor, m 
 	return err
 }
 
+// checkVersion refuses a change based on a stale version (If-Match). A version of zero means the caller sent none.
+func checkVersion(m db.Message, version int64) error {
+	if version > 0 && m.Version != version {
+		return apperr.New(apperr.CodePrecondition, "the message changed since version %d (now %d)", version, m.Version)
+	}
+	return nil
+}
+
 // AckOperator acknowledges a message addressed to operators (an explicit action in the UI or API).
-func (svc *Service) AckOperator(ctx context.Context, actor audit.Actor, spaceID, id string) (*Message, error) {
+func (svc *Service) AckOperator(ctx context.Context, actor audit.Actor, spaceID, id string, version int64) (*Message, error) {
 	err := svc.s.W().TxNamed(ctx, "messages.ack_operator", func(tx *store.Tx) error {
 		m, err := tx.Q.GetMessage(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && m.SpaceID != spaceID) {
@@ -603,6 +611,9 @@ func (svc *Service) AckOperator(ctx context.Context, actor audit.Actor, spaceID,
 		if m.ToKind != "operators" {
 			return apperr.New(apperr.CodeForbidden, "operators acknowledge only messages addressed to operators")
 		}
+		if err := checkVersion(m, version); err != nil {
+			return err
+		}
 		return svc.ack(ctx, tx, actor, m, actor.ID, sql.NullInt64{Int64: tx.NowMicros(), Valid: true})
 	})
 	if err != nil {
@@ -612,7 +623,7 @@ func (svc *Service) AckOperator(ctx context.Context, actor audit.Actor, spaceID,
 }
 
 // Resolve closes a message (typically a request) with a resolution.
-func (svc *Service) Resolve(ctx context.Context, actor audit.Actor, spaceID, id, resolution string) (*Message, error) {
+func (svc *Service) Resolve(ctx context.Context, actor audit.Actor, spaceID, id, resolution string, version int64) (*Message, error) {
 	if len(resolution) > 2000 {
 		return nil, apperr.New(apperr.CodeInvalid, "resolution: at most 2000 characters")
 	}
@@ -621,6 +632,9 @@ func (svc *Service) Resolve(ctx context.Context, actor audit.Actor, spaceID, id,
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && m.SpaceID != spaceID) {
 			return errNotFound
 		} else if err != nil {
+			return err
+		}
+		if err := checkVersion(m, version); err != nil {
 			return err
 		}
 		n, err := tx.Q.ResolveMessage(ctx, db.ResolveMessageParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, Resolution: resolution, ID: id})

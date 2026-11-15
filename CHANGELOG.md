@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- `move-task`, `ack-message` and `resolve-message` accept an optional `If-Match` with the resource version; a stale version is a
+  409 `precondition_failed` and changes nothing, and requests without it behave as before. The Telegram chat sends the card's
+  version with them, so a change between its check and the call is a conflict, not a stale action.
 - `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
   proxy that drops idle connections (about 100 s) never sees them idle.
 - Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready

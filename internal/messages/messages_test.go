@@ -189,21 +189,21 @@ func TestAcknowledge(t *testing.T) {
 	}
 	code(t, f.svc.AckRun(f.ctx, op, wrk, m.ID), apperr.CodeConflict)
 	code(t, f.svc.AckRun(f.ctx, op, wrk, "msg_nope"), apperr.CodeNotFound)
-	_, err = f.svc.AckOperator(f.ctx, op, "spc_a", m.ID)
+	_, err = f.svc.AckOperator(f.ctx, op, "spc_a", m.ID, 0)
 	code(t, err, apperr.CodeForbidden)
 	toOps, _, err := f.svc.Send(f.ctx, op, "spc_a", From{Kind: "run", ID: wrkRun}, SendInput{To: "operators", Subject: "Need a key"})
 	must(t, err)
-	acked, err := f.svc.AckOperator(f.ctx, op, "spc_a", toOps.ID)
+	acked, err := f.svc.AckOperator(f.ctx, op, "spc_a", toOps.ID, 0)
 	must(t, err)
 	if acked.State != Acknowledged {
 		t.Fatalf("operator ack %+v", acked)
 	}
-	res, err := f.svc.Resolve(f.ctx, op, "spc_a", toOps.ID, "added")
+	res, err := f.svc.Resolve(f.ctx, op, "spc_a", toOps.ID, "added", 0)
 	must(t, err)
 	if res.State != Resolved || res.Resolution != "added" {
 		t.Fatalf("resolve %+v", res)
 	}
-	_, err = f.svc.Resolve(f.ctx, op, "spc_a", toOps.ID, "again")
+	_, err = f.svc.Resolve(f.ctx, op, "spc_a", toOps.ID, "again", 0)
 	code(t, err, apperr.CodeConflict)
 	code(t, f.svc.AckRun(f.ctx, op, wrk, "hnt_nope"), apperr.CodeNotFound)
 }
@@ -502,5 +502,33 @@ func TestControlWantedAndWaiting(t *testing.T) {
 	must(t, f.n.Sweep(f.ctx))
 	if len(wanted) != 2 {
 		t.Fatalf("a human response did not ask for control: %v", wanted)
+	}
+}
+
+// A version on AckOperator and Resolve is the If-Match of the API: a stale one is a precondition failure that changes
+// nothing, the current one is honoured, and zero (no header) behaves as before.
+func TestOperatorActionsHonourVersion(t *testing.T) {
+	f := newFx(t)
+	m, _, err := f.svc.Send(f.ctx, op, "spc_a", From{Kind: "run", ID: wrkRun}, SendInput{To: "operators", Subject: "Need a key"})
+	must(t, err)
+	cur, err := f.svc.Get(f.ctx, "spc_a", m.ID)
+	must(t, err)
+	_, err = f.svc.AckOperator(f.ctx, op, "spc_a", m.ID, cur.Version+1)
+	code(t, err, apperr.CodePrecondition)
+	_, err = f.svc.Resolve(f.ctx, op, "spc_a", m.ID, "x", cur.Version+1)
+	code(t, err, apperr.CodePrecondition)
+	if got, _ := f.svc.Get(f.ctx, "spc_a", m.ID); got.State != cur.State || got.Version != cur.Version {
+		t.Fatalf("a refused change moved the message: %+v", got)
+	}
+	acked, err := f.svc.AckOperator(f.ctx, op, "spc_a", m.ID, cur.Version)
+	must(t, err)
+	_, err = f.svc.Resolve(f.ctx, op, "spc_a", m.ID, "x", cur.Version) // stale after the ack bumped it
+	if acked.Version != cur.Version {
+		code(t, err, apperr.CodePrecondition)
+	}
+	res, err := f.svc.Resolve(f.ctx, op, "spc_a", m.ID, "done", acked.Version)
+	must(t, err)
+	if res.State != Resolved {
+		t.Fatalf("resolve %+v", res)
 	}
 }

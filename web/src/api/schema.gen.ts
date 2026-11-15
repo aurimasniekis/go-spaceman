@@ -2844,7 +2844,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Acknowledge a message addressed to operators */
+        /**
+         * Acknowledge a message addressed to operators
+         * @description Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).
+         */
         post: operations["ack-message"];
         delete?: never;
         options?: never;
@@ -2901,7 +2904,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Close a message or request */
+        /**
+         * Close a message or request
+         * @description Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).
+         */
         post: operations["resolve-message"];
         delete?: never;
         options?: never;
@@ -3827,7 +3833,7 @@ export interface paths {
         put?: never;
         /**
          * Place a task in the queue
-         * @description Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
+         * @description Optional If-Match: a task that changed since that version is refused as a conflict (409 precondition_failed). Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
          */
         post: operations["move-task"];
         delete?: never;
@@ -18702,7 +18708,10 @@ export interface operations {
     "ack-message": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 message_id: string;
@@ -18802,7 +18811,10 @@ export interface operations {
     "resolve-message": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 message_id: string;
@@ -21067,7 +21079,10 @@ export interface operations {
     "move-task": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 task_id: string;

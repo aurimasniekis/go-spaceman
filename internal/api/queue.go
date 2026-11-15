@@ -203,17 +203,22 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 				return taskResult(t), nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "move-task", Method: http.MethodPost, Path: "/spaces/{space_id}/tasks/{task_id}/move",
-			Summary: "Place a task in the queue", Description: "Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.",
+			Summary: "Place a task in the queue", Description: "Optional If-Match: a task that changed since that version is refused as a conflict (409 precondition_failed). Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.",
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				TaskPath
+				IfMatch
 				Body struct {
 					BeforeID string `json:"before_id,omitempty" maxLength:"64"`
 					AfterID  string `json:"after_id,omitempty" maxLength:"64"`
 					To       string `json:"to,omitempty" enum:"top,bottom"`
 				}
 			}) (*taskOut, error) {
-				t, err := svc.Move(ctx, Actor(ctx), in.SpaceID, in.TaskID, queue.MoveInput{BeforeID: in.Body.BeforeID, AfterID: in.Body.AfterID, To: in.Body.To})
+				v, err := optionalVersion(in.IfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "queue.move", err)
+				}
+				t, err := svc.Move(ctx, Actor(ctx), in.SpaceID, in.TaskID, v, queue.MoveInput{BeforeID: in.Body.BeforeID, AfterID: in.Body.AfterID, To: in.Body.To})
 				if err != nil {
 					return nil, d.fail(ctx, "queue.move", err)
 				}
