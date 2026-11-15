@@ -105,6 +105,11 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 				// Storing the decision is a write: a viewer may ask what is next, not record it (security review SR-L07).
 				if in.Record {
 					p := PrincipalFrom(ctx)
+					// Telegram reads what is next and never records it (ADR-0083 amendment TG-10-4): a GET is not
+					// origin-checked on the Mini App host, so it must not write.
+					if p.ViaTelegram() || telegramChannelFrom(ctx) != channelNone {
+						return nil, d.fail(ctx, "queue.next", errTelegramRefused())
+					}
 					if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.QueueWrite) {
 						return nil, d.fail(ctx, "queue.next", apperr.New(apperr.CodeForbidden, "recording a decision needs queue:write"))
 					}

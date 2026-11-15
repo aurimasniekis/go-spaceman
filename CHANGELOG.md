@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
+  App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
+  muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App
+  may also read what the queue picks next (`queue-next`), without recording the decision.
 - `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
   proxy that drops idle connections (about 100 s) never sees them idle.
 - Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
