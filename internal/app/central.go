@@ -361,7 +361,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines,
 		// ADR-0079: failover and the probe backoff cap are space limits.
 		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
-			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait}
+			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter}
 			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
 				out.Failover = v.Get(limits.UsageLimitFailover) != 0
 				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
@@ -370,6 +370,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				if h := v.Get(limits.UsageLimitMaxWait); h > 0 {
 					out.MaxWait = time.Duration(h) * time.Hour
 				}
+				out.NotifyAfter = time.Duration(v.Get(limits.UsageLimitNotifyAfter)) * time.Hour // 0: never
 			}
 			return out
 		},
@@ -801,6 +802,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "limit_waits", Next: c.Fleet.NextLimitWait, Due: c.Fleet.LimitWaitsDue},
 		// Gateway usage-limit holds: their reset estimated from Harbor Pilot, re-read every 15 minutes (ADR-0079 decision 9).
 		human.Deadline{Name: "gateway_waits", Next: c.HarborPilotWaits.Next, Due: c.HarborPilotWaits.Due},
+		// Holds whose reset is far away: the space's people get one human action each (ADR-0079 Q5). A limit report wakes it.
+		human.Deadline{Name: "usage_limit_people", Due: c.Supervisor.TellLongHolds},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
