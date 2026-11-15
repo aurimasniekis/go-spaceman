@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { Ghostty, type GhosttyTerminal } from 'ghostty-web'
 
+import { ERASE_ALL } from './ghostty'
+
 /**
  * The ghostty-web behaviour createTerminal works around (ghostty.ts), against the WebAssembly module it loads: in one
  * shared instance, a terminal created after another was freed starts out with the freed terminal's cells, and freed
@@ -42,6 +44,17 @@ describe('ghostty-web 0.4.0 WebAssembly instances', () => {
     const g = await instance()
     viewAndLeave(g, runA)
     expect(screen(nextTerminal(g))).toContain('run A secret line')
+  })
+
+  it('are erased from the new terminal by ERASE_ALL (what resetTerminal writes after Terminal.reset)', async () => {
+    const g = await instance()
+    viewAndLeave(g, runA)
+    const t = g.createTerminal(120, 40, { scrollbackLimit: 10_000 })
+    t.resize(200, 120)
+    t.write(ERASE_ALL)
+    t.write('run B\r\n')
+    expect(screen(t)).not.toContain('run A')
+    expect(screen(t)).toContain('run B')
   })
 
   it('give a terminal of its own instance an empty screen', async () => {

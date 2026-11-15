@@ -33,6 +33,7 @@ vi.mock('./ghostty', () => ({
   followCursor: () => () => {},
   holdDrawing: () => () => {},
   regularCell: () => null,
+  resetTerminal: (t: { reset(): void }) => t.reset(),
   rowHeight: () => 0,
   scrollWithWheelAndTouch: () => () => {},
   setInputMode: (t: { options: { disableStdin?: boolean } }, on: boolean) => void (t.options.disableStdin = !on),
