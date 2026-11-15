@@ -11671,6 +11671,17 @@ export interface components {
              */
             last_error_at?: string;
             last_error_message?: string;
+            /** @description The host central routes to the Mini App handler only (it never reaches the rest of central; 404 for everything while no bot serves it): telegram.miniapp_host from central's configuration when set, otherwise the bot's miniapp_host */
+            miniapp_host?: string;
+            /** @description The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything */
+            miniapp_host_ignored?: string;
+            /** @description The bot stores a miniapp_host but central's configuration does not set telegram.miniapp_host: set it (or clear the bot's miniapp_host) */
+            miniapp_host_needs_key?: boolean;
+            /**
+             * @description Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)
+             * @enum {string}
+             */
+            miniapp_host_source?: "config" | "bot" | "";
             /** @enum {string} */
             mode?: "webhook" | "polling" | "";
             /**

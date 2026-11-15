@@ -18069,6 +18069,27 @@
           "last_error_message": {
             "type": "string"
           },
+          "miniapp_host": {
+            "description": "The host central routes to the Mini App handler only (it never reaches the rest of central; 404 for everything while no bot serves it): telegram.miniapp_host from central's configuration when set, otherwise the bot's miniapp_host",
+            "type": "string"
+          },
+          "miniapp_host_ignored": {
+            "description": "The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything",
+            "type": "string"
+          },
+          "miniapp_host_needs_key": {
+            "description": "The bot stores a miniapp_host but central's configuration does not set telegram.miniapp_host: set it (or clear the bot's miniapp_host)",
+            "type": "boolean"
+          },
+          "miniapp_host_source": {
+            "description": "Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)",
+            "enum": [
+              "config",
+              "bot",
+              ""
+            ],
+            "type": "string"
+          },
           "mode": {
             "enum": [
               "webhook",
