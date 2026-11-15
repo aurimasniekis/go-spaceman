@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/netip"
 
@@ -123,6 +124,11 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			return c.Auth.TelegramPrincipal(ctx, linkID, auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})
 		},
 		Space: c.TelegramSettings.Space,
+		Allow: c.TelegramLimiter.Allow,
+		Content: func(ctx context.Context, spaceID, attachmentID string) (io.ReadSeekCloser, error) {
+			_, rc, err := c.Attachments.Open(ctx, spaceID, attachmentID)
+			return rc, err
+		},
 		Bot: func() chat.Bot {
 			b, _ := d.Bot().(chat.Bot)
 			return b

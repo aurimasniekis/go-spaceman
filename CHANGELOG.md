@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram inbox capture (ADR-0083, TG-8a-2; the bot isn't usable yet): a message to the bot becomes an inbox item in
+  the chosen space. Text or a caption is the body, photos and files become attachments (up to 20 MB, through the API's
+  upload checks), a forward adds a "Forwarded from" line to the body, and an album becomes one item. Every capture is
+  answered with an ack. A webhook update is acknowledged before it is handled, so an update in flight when central
+  restarts is lost together with its ack; send it again. Reading an item in chat also sends its first attachments,
+  with forwarding and saving off.
 - Configuration: `telegram.api_base_url` (default `https://api.telegram.org`), the Bot API endpoint for the planned
   Telegram bot (ADR-0083). It is settable only in central's configuration, never through the API. Nothing uses it yet.
 - Telegram groundwork (ADR-0083, not usable yet): migration 0051 with every Telegram table, and the inbound side of the
