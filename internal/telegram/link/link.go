@@ -110,11 +110,13 @@ type Options struct {
 	// TopicSpaces returns the spaces with topics mode on (visible to Telegram), TopicsRefused whether a private chat
 	// refused topics lately and CanRead whether the subjects may read a space. They feed the read-only topics state of
 	// the link preferences; a nil TopicSpaces reports topics as not available.
-	TopicSpaces   func() []string
-	TopicsRefused func(chatID int64) bool
-	CanRead       func(subjects []string, spaceID string) bool
-	Clock         clock.Clock
-	Log           *slog.Logger
+	TopicSpaces func() []string
+	// TopicsAvailable reports whether the bot is running; nil means it is.
+	TopicsAvailable func() bool
+	TopicsRefused   func(chatID int64) bool
+	CanRead         func(subjects []string, spaceID string) bool
+	Clock           clock.Clock
+	Log             *slog.Logger
 }
 
 // Service runs the linking protocol.

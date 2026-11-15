@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Card, Checkbox, Group, NativeSelect, Stack, Switch, Text, TextInput } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api, ifMatch, unwrap, type Schemas } from '@/api/client'
 import { useMe, useSpaces } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
@@ -39,10 +39,10 @@ export function TopicsNote({ topics, names }: { topics: Topics; names: Map<strin
         ? <Text size="sm">None of your spaces use topics mode.</Text>
         : <Text size="sm">Topics are on for: {topics.spaces.map(label).join(', ')}.</Text>}
       {topics.spaces.length > 0 && !topics.refused && (
-        <Text size="xs" c="dimmed">If you see no topics, enable topics for this bot in BotFather.</Text>
+        <Text size="xs" c="dimmed">Topics show in a private chat only when topics are enabled for the bot in BotFather.</Text>
       )}
       {topics.refused && (
-        <Text size="sm" c="orange">Telegram refused to create a topic in your chat, so messages go to the main chat. Enable topics for this bot in BotFather; the bot asks again within 10 minutes.</Text>
+        <Text size="sm" c="orange">Telegram refused to create a topic in your chat, so messages go to the main chat. Enable topics for this bot in BotFather; the bot asks again after a while.</Text>
       )}
     </Stack>
   )
@@ -113,7 +113,9 @@ export function TgSettings() {
 function PrefsForm() {
   const qc = useQueryClient()
   const prefs = useQuery({ queryKey: PREFS_KEY, queryFn: async ({ signal }) => unwrap(await api.GET('/telegram/link/prefs', { signal })) })
-  const spaces = useSpaces().data ?? []
+  const spacesData = useSpaces().data
+  const spaces = useMemo(() => spacesData ?? [], [spacesData])
+  const names = useMemo(() => new Map(spaces.map((x) => [x.id, x.name])), [spaces])
   const [form, setForm] = useState<Form | null>(null)
   const [saving, setSaving] = useState(false)
   const [conflict, setConflict] = useState(false)
@@ -196,7 +198,7 @@ function PrefsForm() {
       </Stack></Card>
       <Stack gap={4}>
         <Text size="sm" fw={600}>Topics mode</Text>
-        <TopicsNote topics={data.topics} names={new Map(spaces.map((x) => [x.id, x.name]))} />
+        <TopicsNote topics={data.topics} names={names} />
       </Stack>
       <Button type="submit" loading={saving} disabled={saving}>Save</Button>
     </Stack>

@@ -228,4 +228,12 @@ func TestLinkPrefsTopicsState(t *testing.T) {
 	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a2")); err != nil || p.Topics.Refused {
 		t.Fatalf("another chat: %+v, %v", p.Topics, err)
 	}
+	svc.o.CanRead = func([]string, string) bool { return false }
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || p.Topics.Refused || len(p.Topics.Spaces) != 0 {
+		t.Fatalf("no readable topic space: %+v, %v", p.Topics, err)
+	}
+	svc.o.TopicsAvailable = func() bool { return false }
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || p.Topics.Available {
+		t.Fatalf("bot off: %+v, %v", p.Topics, err)
+	}
 }

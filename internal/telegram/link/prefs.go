@@ -83,6 +83,9 @@ func (s *Service) topicsOut(l db.TelegramLink, p *auth.Principal) TopicsPrefs {
 	if s.o.TopicSpaces == nil {
 		return out
 	}
+	if s.o.TopicsAvailable != nil && !s.o.TopicsAvailable() {
+		return out
+	}
 	out.Available = true
 	subj := p.Subjects()
 	for _, id := range s.o.TopicSpaces() {
@@ -90,7 +93,7 @@ func (s *Service) topicsOut(l db.TelegramLink, p *auth.Principal) TopicsPrefs {
 			out.Spaces = append(out.Spaces, id)
 		}
 	}
-	out.Refused = s.o.TopicsRefused != nil && s.o.TopicsRefused(l.ChatID)
+	out.Refused = len(out.Spaces) > 0 && s.o.TopicsRefused != nil && s.o.TopicsRefused(l.ChatID)
 	return out
 }
 

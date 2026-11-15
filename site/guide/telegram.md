@@ -180,7 +180,7 @@ The per-space `topics` setting is the switch, turned on by someone with `space_c
 shows it read-only: which of your spaces use topics, and a note to enable topics for the bot in BotFather when Telegram refused
 a topic in your chat.
 
-The per-space `topics` setting is the switch. The global `topics_mode_default` is stored with the settings, but nothing reads
+The global `topics_mode_default` is stored with the settings, but nothing reads
 it yet, so it changes nothing.
 
 ## Group mode

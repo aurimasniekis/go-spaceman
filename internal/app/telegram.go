@@ -103,7 +103,7 @@ func (c *Central) newTelegramBot() *tgbot.Service {
 func (c *Central) newTelegramLink() *tglink.Service {
 	log := obs.Component(c.Log, "telegram")
 	svc := tglink.New(tglink.Options{Store: c.Store, Auth: c.Auth, Audit: c.Audit, Settings: c.TelegramSettings.Current,
-		TopicSpaces: c.topicSpaces, TopicsRefused: func(chatID int64) bool { return c.TelegramTopics.Refused(chatID) },
+		TopicSpaces: c.topicSpaces, TopicsAvailable: func() bool { return c.TelegramBot.Sender() != nil }, TopicsRefused: func(chatID int64) bool { return c.TelegramTopics.Refused(chatID) },
 		CanRead:   func(subj []string, id string) bool { return c.Authz.AllowedAll(subj, id, authz.SpaceRead) },
 		PublicURL: c.Cfg.PublicURL, Bus: c.Bus, Clock: c.Clock, Log: log, Notify: func(chatID int64, text string) {
 			snd := c.TelegramBot.Sender()
