@@ -231,9 +231,11 @@ func newTool(op operation, method, path string, rule api.Rule, e Entry, componen
 		case "header":
 			switch p.Name {
 			case "If-Match":
-				t.IfMatch, t.IfMatchRequired = true, p.Required
+				// Every If-Match of the API is required (SM-API-002: a missing one is a 428), though the OpenAPI header
+				// is not marked so, to keep the REST answer a 428 rather than a validation error. The tool says so.
+				t.IfMatch, t.IfMatchRequired = true, true
 				if err := add(ArgIfMatch, map[string]any{"type": "string",
-					"description": "The resource's current version (its version field or ETag, e.g. 3); a stale version is a conflict"}, p.Required); err != nil {
+					"description": "Required: the resource's current version (its version field or ETag, e.g. 3); read it first. A missing version is refused (428) and a stale one is a conflict"}, true); err != nil {
 					return nil, err
 				}
 			case "Idempotency-Key":
@@ -268,11 +270,11 @@ func newTool(op operation, method, path string, rule api.Rule, e Entry, componen
 	if t.InputSchema, err = json.Marshal(schema); err != nil {
 		return nil, err
 	}
-	t.Description = describe(op, e)
+	t.Description = describe(op, e, t.IfMatch)
 	return t, nil
 }
 
-func describe(op operation, e Entry) string {
+func describe(op operation, e Entry, ifMatch bool) string {
 	d := strings.TrimSpace(op.Summary)
 	if desc := strings.TrimSpace(op.Description); desc != "" {
 		if d != "" {
@@ -282,6 +284,9 @@ func describe(op operation, e Entry) string {
 	}
 	if d == "" {
 		d = op.OperationID
+	}
+	if ifMatch {
+		d += ". Requires if_match: the resource's current version (read it first), or the call is refused with 428"
 	}
 	prefix := "[SpaceMan · " + string(e.Class) + "] "
 	if len(prefix)+len(d) > maxDescription {

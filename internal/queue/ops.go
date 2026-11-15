@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
@@ -190,6 +191,9 @@ type StatusInput struct {
 	Status string
 	Reason string
 	Result string
+	// ControlDone lets control close a task that never had a worker (backlog or ready, never started, never
+	// preempted) as done: control did the work itself. Only control's tool sets it; a result is required.
+	ControlDone bool
 }
 
 // SetStatus moves a task between states (SM-QUEUE-008). Starting a task requires it to be eligible; running → ready is
@@ -207,7 +211,17 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 		from, fx = t.Status, &effects{}
 		// A preempted task whose workers were let finish may still be reported for review (SM-QUEUE-009).
 		finishing := from == Ready && in.Status == Review && t.PreemptedBy != ""
-		if !slices.Contains(transitions[from], in.Status) && !finishing {
+		// Control did the work itself: only backlog/ready → done, only for a task that never ran, only with a result.
+		direct := in.ControlDone && in.Status == Done && (from == Backlog || from == Ready)
+		if direct {
+			if strings.TrimSpace(in.Result) == "" {
+				return apperr.New(apperr.CodeInvalid, "closing a task that never ran as done needs a result saying what was done")
+			}
+			if t.StartedAt != nil || t.Preemptions > 0 || t.PreemptedBy != "" || t.AssigneeRun != "" || t.Kind == KindIncident {
+				return apperr.New(apperr.CodePrecondition, "only an ordinary task that never had a worker run can be closed as done from %s", from)
+			}
+		}
+		if !slices.Contains(transitions[from], in.Status) && !finishing && !direct {
 			return apperr.New(apperr.CodePrecondition, "a %s task cannot become %s", from, in.Status)
 		}
 		if in.Status == Running {
@@ -239,7 +253,7 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 			return err
 		}
 		if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.status", Target: audit.Target{Type: "task", ID: t.ID},
-			Details: map[string]any{"space_id": spaceID, "from": from, "to": in.Status, "reason": in.Reason, "preempted": preempted == 1}}); err != nil {
+			Details: map[string]any{"space_id": spaceID, "from": from, "to": in.Status, "reason": in.Reason, "preempted": preempted == 1, "direct": direct}}); err != nil {
 			return err
 		}
 		t.Status, t.Version = in.Status, t.Version+1

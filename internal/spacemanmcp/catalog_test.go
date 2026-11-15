@@ -253,6 +253,23 @@ func TestSchemasAreValidObjects(t *testing.T) {
 	if !tl.IfMatch || !strings.Contains(string(tl.InputSchema), `"if_match"`) || tl.Idempotent {
 		t.Errorf("update_space: %+v", tl)
 	}
+	// set_space_state needs If-Match: the schema requires if_match and the description says so, so an approved call
+	// is not refused with a 428 and approved a second time.
+	for _, name := range []string{"set_space_state", "update_space"} {
+		tl, ok := c.Tool(name)
+		if !ok {
+			t.Fatalf("%s: not in the catalog", name)
+		}
+		var s struct {
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(tl.InputSchema, &s); err != nil {
+			t.Fatal(err)
+		}
+		if !tl.IfMatchRequired || !slices.Contains(s.Required, spacemanmcp.ArgIfMatch) || !strings.Contains(tl.Description, "if_match") {
+			t.Errorf("%s: if_match not required or not described: %s / %s", name, tl.InputSchema, tl.Description)
+		}
+	}
 	tl, _ = c.Tool("create_space")
 	if !tl.Idempotent || strings.Contains(string(tl.InputSchema), "Idempotency") {
 		t.Errorf("create_space: %+v %s", tl, tl.InputSchema)

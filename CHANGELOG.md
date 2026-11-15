@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Admin MCP tools that take `If-Match` (`set_space_state`, `update_space`, and every other versioned write) now list `if_match` as a required argument and say so in the description, so an approved call is not refused with a 428 and approved again.
+- A question request refused with `unknown field "allow_text"` was a request of another type (approval, to-do, message), where `allow_text` is not a field. The refusal now names the type and the fields it takes, and the `spaceman_human_ask` request description says `allow_text` is for questions only.
+
+### Changed
+
+- Control can close a task that never had a worker run (control did the work itself) as **done** straight from backlog or ready with `spaceman_task_set_status`, a result required; the audit event is marked `direct`. No other transition changes, and operators and workers cannot use it.
+
 ## [0.1.5] - 2026-11-15
 
 Release on top of v0.1.4. It adds the Telegram integration (ADR-0083): a bot you chat with, a Mini App that opens inside

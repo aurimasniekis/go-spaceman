@@ -407,3 +407,20 @@ func TestLifecycleEventsCarrySafeMetadataOnly(t *testing.T) {
 		t.Fatalf("events %v", types)
 	}
 }
+
+// A field of another type's request is refused naming the type and what it takes: allow_text belongs to question
+// requests only, so on an approval, a to-do or a message it is an unknown field. (A call that "sometimes" failed with
+// `unknown field "allow_text"` had a request of a type other than question.)
+func TestRequestUnknownFieldNamesTheType(t *testing.T) {
+	t.Parallel()
+	if _, _, err := validateRequest(TypeQuestion, json.RawMessage(`{"options":["a"],"allow_text":true}`)); err != nil {
+		t.Fatalf("question with allow_text: %v", err)
+	}
+	for typ, want := range map[string]string{TypeApproval: "{action, details}", TypeTodo: "{steps}", TypeMessage: "{requires_ack}"} {
+		_, _, err := validateRequest(typ, json.RawMessage(`{"allow_text":true}`))
+		if err == nil || !strings.Contains(err.Error(), `unknown field "allow_text"`) ||
+			!strings.Contains(err.Error(), "a "+typ+" request takes "+want) {
+			t.Errorf("%s: %v", typ, err)
+		}
+	}
+}

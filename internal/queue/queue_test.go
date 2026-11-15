@@ -320,3 +320,40 @@ func TestTopLevelLimitDefaultAndLowering(t *testing.T) {
 		t.Fatalf("selection after lowering %+v", sel)
 	}
 }
+
+// Control may close a task that never had a worker run (it did the work itself) as done from backlog or ready, with
+// a result; nothing else gains a shortcut to done, and the audit event says the closure was direct.
+func TestControlDoneOfNeverRunTask(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	direct := func(id string, v int64, in StatusInput) (*Task, error) {
+		in.ControlDone = true
+		return f.svc.SetStatus(f.ctx, op, "spc_a", id, v, in)
+	}
+	for _, start := range []string{Backlog, Ready} {
+		tk := f.add(CreateInput{Title: "did it myself " + start, Status: start})
+		if _, err := f.svc.SetStatus(f.ctx, op, "spc_a", tk.ID, tk.Version, StatusInput{Status: Done, Result: "x"}); apperr.CodeOf(err) != apperr.CodePrecondition {
+			t.Fatalf("%s → done without control: %v", start, err)
+		}
+		if _, err := direct(tk.ID, tk.Version, StatusInput{Status: Done}); apperr.CodeOf(err) != apperr.CodeInvalid {
+			t.Fatalf("%s → done without a result: %v", start, err)
+		}
+		d, err := direct(tk.ID, tk.Version, StatusInput{Status: Done, Result: "done by control"})
+		if err != nil || d.Status != Done || d.Result != "done by control" || d.FinishedAt == nil {
+			t.Fatalf("%s → done: %+v %v", start, d, err)
+		}
+	}
+	// Other transitions keep their rules: backlog/ready → failed, and a task that ran, are not covered.
+	tk := f.add(CreateInput{Title: "ran"})
+	r, err := f.svc.SetStatus(f.ctx, op, "spc_a", tk.ID, tk.Version, StatusInput{Status: Running})
+	must(t, err)
+	r, err = f.svc.SetStatus(f.ctx, op, "spc_a", tk.ID, r.Version, StatusInput{Status: Ready})
+	must(t, err)
+	if _, err := direct(tk.ID, r.Version, StatusInput{Status: Done, Result: "r"}); apperr.CodeOf(err) != apperr.CodePrecondition {
+		t.Fatalf("a task that ran was closed directly: %v", err)
+	}
+	b := f.add(CreateInput{Title: "b"})
+	if _, err := direct(b.ID, b.Version, StatusInput{Status: Failed, Result: "r"}); apperr.CodeOf(err) != apperr.CodePrecondition {
+		t.Fatalf("backlog → failed: %v", err)
+	}
+}

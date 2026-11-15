@@ -21,6 +21,11 @@ A worker starts with the task as its first instruction (title, objective, accept
 adds), then reports with `spaceman_task_set_status` (**review**, or **blocked**). Nothing is accepted
 automatically: control or an operator moves the task to done.
 
+When control did the work itself and no worker ever ran on the task, control may set a **backlog** or **ready** task
+straight to **done** with `spaceman_task_set_status`, giving a result. Only those two transitions are added, only
+for an ordinary task that never started, was never preempted and has no assigned run; the audit event carries
+`direct: true`. Anything else still goes through running and review.
+
 ## Separate worktrees for writers
 
 When control starts a worker with a repository (`repo`), the worker gets its **own git worktree** of that repository
