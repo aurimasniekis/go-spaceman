@@ -110,7 +110,7 @@ func (a *Agent) sendFollowUp(ctx context.Context, conn *websocket.Conn, rs []run
 
 // finalAck handles central's reconcile: the ended runs this process sent that central no longer lists as active are
 // acknowledged. An ended run central still lists as active did not get its final state applied (a restored backup, a
-// report lost with the connection, an apply failure): it is unacknowledged again and reported at once, well inside the
+// report lost with the connection, an apply failure): it is unacknowledged again and reported at once (unless this connection's hello or follow-up still has to send it), well inside the
 // stale sweeper's grace (ADR-0074), which would otherwise end it lost and fence the real final state. It then prunes.
 func (a *Agent) finalAck(ctx context.Context, rec proto.Reconcile) {
 	active := make(map[string]bool, len(rec.Runs))
@@ -128,6 +128,10 @@ func (a *Agent) finalAck(ctx context.Context, rec proto.Reconcile) {
 	}
 	for _, r := range runs {
 		if ended(r.State) && active[r.RunID] {
+			if a.finalSent[r.RunID] < r.UpdatedAt {
+				// Not sent yet by this process: the hello or the paced follow-up still carries it.
+				continue
+			}
 			delete(a.finalAcked, r.RunID)
 			delete(a.finalSent, r.RunID)
 			resend = append(resend, r)
