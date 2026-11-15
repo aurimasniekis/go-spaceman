@@ -34,6 +34,13 @@ func (s *Server) dispatch(r *http.Request, method string, p params, files map[st
 	switch method {
 	case "getMe":
 		return s.opts.Bot, nil
+	case "getChat":
+		// Like Telegram, only a chat the bot is in is found: one registered with SetChat.
+		id, _ := p.int64("chat_id")
+		if c, ok := s.chats[id]; ok && id != 0 {
+			return c, nil
+		}
+		return nil, badRequest("chat not found")
 	case "setWebhook":
 		return s.setWebhookLocked(p)
 	case "deleteWebhook":
@@ -192,6 +199,9 @@ func (s *Server) replyLocked(chat botapi.Chat, p params) (*botapi.Message, *apiE
 		return nil, nil
 	}
 	m, ok := s.messages[chat.ID][rp.MessageID]
+	if !ok {
+		m, ok = s.known[chat.ID][rp.MessageID]
+	}
 	if !ok {
 		return nil, badRequest("message to be replied not found")
 	}

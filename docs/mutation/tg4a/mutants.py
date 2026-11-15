@@ -109,4 +109,7 @@ M = [
  ("ops-stepup-allowed", "internal/telegram/ops.go", '\t"list-spaces":                api.TelegramBoth,', '\t"list-spaces": api.TelegramBoth,\n\t"create-user": api.TelegramBoth,'),
  ("ops-auto-self", "internal/telegram/ops.go", '\tcase r.TelegramSelf:\n\t\treturn "", false\n', ''),
  ("ops-watch", "internal/telegram/ops.go", 'const Watch = api.TelegramMiniApp', 'const Watch = api.TelegramClass("")'),
+ # TG-13-1 review: a group withdraw must not find the member's private form; /cmd@OtherBot is ignored in groups
+ ("form-by-action-chat", "internal/telegram/chat/needsyou_actions.go", 'f.key.chat == chatID && f.linkID == linkID', 'f.linkID == linkID'),
+ ("group-other-bot", "internal/telegram/chat/group.go", 'if to != "" && !strings.EqualFold(to, h.botUsername()) {', 'if false && to != "" && !strings.EqualFold(to, h.botUsername()) {'),
 ]

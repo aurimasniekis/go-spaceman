@@ -16,6 +16,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/commands"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
@@ -43,22 +44,8 @@ const (
 	retryMax = 10 * time.Minute
 )
 
-// Commands is the bot's command menu in private chats (plan §2.0).
-var Commands = []botapi.BotCommand{
-	{Command: "needs", Description: "What needs you"},
-	{Command: "inbox", Description: "Inbox of the current space"},
-	{Command: "new", Description: "Create an inbox item"},
-	{Command: "queue", Description: "Queue of the current space"},
-	{Command: "runs", Description: "Runs of the current space"},
-	{Command: "messages", Description: "Messages waiting for you"},
-	{Command: "control", Description: "Talk to the control run"},
-	{Command: "spaces", Description: "Your spaces"},
-	{Command: "space", Description: "Switch the current space"},
-	{Command: "digest", Description: "Your digest now"},
-	{Command: "settings", Description: "Your Telegram settings"},
-	{Command: "help", Description: "What this bot can do"},
-	{Command: "unlink", Description: "Unlink this Telegram account"},
-}
+// Commands is the bot's command menu in private chats (plan §2.0): the commands package's table.
+var Commands = commands.Menu()
 
 // Status is the bot's live health, for the System page and get-telegram-bot. It carries no token, secret or webhook
 // path.
@@ -200,6 +187,14 @@ func (svc *Service) hostMismatch(stored string) string {
 		return stored
 	}
 	return ""
+}
+
+// Username is the bot's username without "@" from the last getMe ("" while unknown). It makes no call.
+func (svc *Service) Username() string {
+	rt := &svc.run
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.username
 }
 
 // MiniAppBot is the running bot's ID with the key its Mini App initData is signed with (miniapp.SecretKey of its

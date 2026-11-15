@@ -50,6 +50,9 @@ func (c *Central) newTelegramMiniApp() {
 		Log:       obs.Component(c.Log, "telegram"),
 	})
 	c.TelegramDownloads = miniapp.NewDownloads(c.Clock)
+	// A space's Telegram visibility or terminal_watch turned off: open terminal streams end now, not at their next
+	// interval (the feature gate itself reads the store, so the re-check refuses).
+	c.TelegramSettings.OnSpaceOff(func(string) { c.Auth.TelegramPolicyChanged() })
 	var last *bool
 	c.TelegramSettings.OnChange(func(s tgsettings.Settings) {
 		if last != nil && *last != s.LinkSSOGrants {

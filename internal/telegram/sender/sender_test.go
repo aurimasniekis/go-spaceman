@@ -804,3 +804,50 @@ func TestConcurrentWorkersRealClock(t *testing.T) {
 		}
 	}
 }
+
+// TG-13-2: a message to a group chat takes the group send limit (group_per_minute) even when the caller didn't set
+// Message.Group, so the notifier and the chat handler, which only know the chat ID, can't overrun Telegram's 20 a
+// minute per group.
+func TestNegativeChatIDGetsTheGroupLimit(t *testing.T) {
+	e := newEnv(t, nil)
+	r := newResults()
+	const group = int64(-100555)
+	for i := range 30 {
+		name := fmt.Sprint(i)
+		m := text(group, sender.Notification, "", name, r.done(name))
+		m.Group = false // as the notifier builds it
+		e.enqueue(m)
+	}
+	e.start()
+	r.wait(t, 30)
+	if n := calls429(e.fake); n != 0 {
+		t.Fatalf("%d answers were 429: the group bucket wasn't used", n)
+	}
+	if got := len(texts(e.fake, group)); got != 30 {
+		t.Fatalf("%d of 30 messages were delivered", got)
+	}
+}
+
+// The configured group_per_minute is the bucket: a lower value spaces the sends further apart.
+func TestGroupPerMinuteIsTheGroupBucket(t *testing.T) {
+	e := newEnv(t, func(o *sender.Options) {
+		l := sender.DefaultLimits()
+		l.GroupPerMinute = 2
+		o.Limits = l
+	})
+	r := newResults()
+	const group = int64(-100556)
+	for i := range 5 {
+		name := fmt.Sprint(i)
+		m := text(group, sender.Notification, "", name, r.done(name))
+		m.Group = false
+		e.enqueue(m)
+	}
+	e.start()
+	start := e.clk.Now()
+	r.wait(t, 5)
+	// A burst of 2, then one every 30 s: the fifth message waits at least 90 s.
+	if d := e.clk.Now().Sub(start); d < 90*time.Second {
+		t.Fatalf("5 messages to a group at 2 a minute took %s of virtual time, want at least 90s", d)
+	}
+}

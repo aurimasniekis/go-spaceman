@@ -32,3 +32,6 @@ WHERE space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
 
 -- name: DeleteSpaceTelegram :execrows
 DELETE FROM space_telegram_settings WHERE space_id = ? AND version = ?;
+
+-- name: SetSpaceTelegramGroup :execrows
+UPDATE space_telegram_settings SET group_chat_id = sqlc.narg(group_chat_id) WHERE space_id = sqlc.arg(space_id);

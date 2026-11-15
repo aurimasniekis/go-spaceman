@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -155,13 +154,14 @@ func (h *Handler) getAction(ctx context.Context, c caller, s spaceRef, id string
 	return a, r
 }
 
-// formByAction returns the link's live form of an action, if it has one.
-func (h *Handler) formByAction(linkID, spaceID, actionID string) *form {
+// formByAction returns the link's live form of an action in one chat, if it has one. The chat matters: the same link
+// can hold a private form of the action and a group's, and the group must never get the private one.
+func (h *Handler) formByAction(linkID, spaceID, actionID string, chatID int64) *form {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.o.Clock.Now()
 	for _, f := range h.forms {
-		if f.linkID == linkID && f.spaceID == spaceID && f.action == actionID && now.Sub(f.at) <= pendingTTL {
+		if f.key.chat == chatID && f.linkID == linkID && f.spaceID == spaceID && f.action == actionID && now.Sub(f.at) <= pendingTTL {
 			return f
 		}
 	}
@@ -176,7 +176,7 @@ func (h *Handler) reloadCard(ctx context.Context, c caller, l updates.Link, s sp
 	at := &botapi.Message{MessageID: f.key.msg}
 	if !r.ok() {
 		h.dropForm(f.key)
-		h.show(ctx, l.ChatID, at, reply{text: f.head + "\n\n" + failText(r)})
+		h.show(ctx, f.key.chat, at, reply{text: f.head + "\n\n" + failText(r)})
 		return
 	}
 	nf := h.newForm(a, l, s)
@@ -192,7 +192,7 @@ func (h *Handler) reloadCard(ctx context.Context, c caller, l updates.Link, s sp
 	} else {
 		h.addForm(nf)
 	}
-	h.show(ctx, l.ChatID, at, rp)
+	h.show(ctx, f.key.chat, at, rp)
 	if a.pending() {
 		h.wizardPrompt(ctx, nf)
 	}
@@ -306,7 +306,7 @@ func (h *Handler) cancelConfirmTap(ctx context.Context, q *botapi.CallbackQuery,
 	defer h.formMu.Unlock()
 	r := c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/human-actions/"+actionID+"/cancel", map[string]any{"reason": "Withdrawn from Telegram"},
 		map[string]string{"If-Match": fmt.Sprintf(`"%d"`, version)})
-	f := h.formByAction(l.ID, s.ID, actionID)
+	f := h.formByAction(l.ID, s.ID, actionID, l.ChatID)
 	if !r.ok() {
 		h.answer(ctx, q.ID, failText(r))
 		if conflict(r) {
@@ -323,7 +323,7 @@ func (h *Handler) cancelConfirmTap(ctx context.Context, q *botapi.CallbackQuery,
 	h.show(ctx, l.ChatID, q.Message, reply{text: "🗑 The request was cancelled."})
 	if f != nil {
 		h.dropForm(f.key)
-		h.show(ctx, l.ChatID, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\n🗑 Cancelled."})
+		h.show(ctx, f.key.chat, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\n🗑 Cancelled."})
 	}
 }
 
@@ -334,7 +334,7 @@ func (h *Handler) files(ctx context.Context, q *botapi.CallbackQuery, l updates.
 		h.answer(ctx, q.ID, TextNoFilesHere)
 		return
 	}
-	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
+	if !h.full(s) {
 		h.answer(ctx, q.ID, TextNoFilesHere)
 		return
 	}

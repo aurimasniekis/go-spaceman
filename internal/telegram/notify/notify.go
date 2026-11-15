@@ -534,8 +534,8 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 				return nil
 			}
 			// The card is rendered here, from the space's current content level: a body queued at "full" is never sent
-			// after the space was lowered to "summary" while it waited.
-			full := n.o.Policy.Space(res.SpaceID).ContentLevel == settings.ContentFull
+			// after the space was lowered to "summary" while it waited. A group chat only ever gets the summary.
+			full := settings.Full(n.o.Policy.Space(res.SpaceID), settings.IsGroupChat(chat))
 			text, entities := renderCard(&res, full)
 			protect := full && res.Detail != ""                                                                                                       // plan 3.8: a card with a body can't be forwarded or saved
 			return n.cards.upsert(ctx, c, n.sender(&res, linkID), linkID, chat, &res, res.SpaceID, text, entities, protect, n.silent(cur, n.o.Now())) // quiet hours: no sound

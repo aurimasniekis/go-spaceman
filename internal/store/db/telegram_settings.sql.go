@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const deleteSpaceTelegram = `-- name: DeleteSpaceTelegram :execrows
@@ -175,6 +176,23 @@ func (q *Queries) ListSpaceTelegram(ctx context.Context) ([]SpaceTelegramSetting
 		return nil, err
 	}
 	return items, nil
+}
+
+const setSpaceTelegramGroup = `-- name: SetSpaceTelegramGroup :execrows
+UPDATE space_telegram_settings SET group_chat_id = ?1 WHERE space_id = ?2
+`
+
+type SetSpaceTelegramGroupParams struct {
+	GroupChatID sql.NullInt64
+	SpaceID     string
+}
+
+func (q *Queries) SetSpaceTelegramGroup(ctx context.Context, arg SetSpaceTelegramGroupParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSpaceTelegramGroup, arg.GroupChatID, arg.SpaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateSpaceTelegram = `-- name: UpdateSpaceTelegram :execrows

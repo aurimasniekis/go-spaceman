@@ -14,6 +14,13 @@ func (c *Client) GetMe(ctx context.Context) (User, error) {
 	return u, err
 }
 
+// GetChat returns a chat the bot is a member of (API#getchat); a chat the bot can't see is a 400 "chat not found".
+func (c *Client) GetChat(ctx context.Context, chatID int64) (Chat, error) {
+	var ch Chat
+	err := c.Call(ctx, "getChat", map[string]int64{"chat_id": chatID}, &ch)
+	return ch, err
+}
+
 // SetWebhookParams are setWebhook's parameters (API#setwebhook). SecretToken is 1–256 characters of [A-Za-z0-9_-].
 type SetWebhookParams struct {
 	URL                string   `json:"url"`
@@ -188,6 +195,9 @@ func (c *Client) SendDocument(ctx context.Context, p SendDocumentParams) (Messag
 	if p.Document == nil {
 		return Message{}, errors.New("telegram sendDocument: no document")
 	}
+	if err := privateOnly("sendDocument", p.ChatID); err != nil {
+		return Message{}, err
+	}
 	var m Message
 	err := c.callMultipart(ctx, "sendDocument", p, uploadsOf(p.Document), &m)
 	return m, err
@@ -211,6 +221,9 @@ func (c *Client) SendPhoto(ctx context.Context, p SendPhotoParams) (Message, err
 	if p.Photo == nil {
 		return Message{}, errors.New("telegram sendPhoto: no photo")
 	}
+	if err := privateOnly("sendPhoto", p.ChatID); err != nil {
+		return Message{}, err
+	}
 	var m Message
 	err := c.callMultipart(ctx, "sendPhoto", p, uploadsOf(p.Photo), &m)
 	return m, err
@@ -229,6 +242,9 @@ type SendMediaGroupParams struct {
 
 // SendMediaGroup sends an album and returns its messages.
 func (c *Client) SendMediaGroup(ctx context.Context, p SendMediaGroupParams) ([]Message, error) {
+	if err := privateOnly("sendMediaGroup", p.ChatID); err != nil {
+		return nil, err
+	}
 	files := make([]*InputFile, 0, len(p.Media))
 	for i, m := range p.Media {
 		if m.Media == nil {
@@ -239,6 +255,20 @@ func (c *Client) SendMediaGroup(ctx context.Context, p SendMediaGroupParams) ([]
 	var ms []Message
 	err := c.callMultipart(ctx, "sendMediaGroup", p, uploadsOf(files...), &ms)
 	return ms, err
+}
+
+// ErrGroupContent refuses a file to a group chat: attachments are above the summary content level, and a group chat
+// only ever gets the summary (ADR-0083 amendment TG-13).
+var ErrGroupContent = errors.New("telegram: files are never sent to a group chat")
+
+// privateOnly is the Bot API client's backstop for group mode: every file send (sendDocument, sendPhoto,
+// sendMediaGroup) goes only to a private chat, whose ID is the person's positive user ID. Groups, supergroups and
+// channels have negative IDs; 0 is refused too.
+func privateOnly(method string, chatID int64) error {
+	if chatID <= 0 {
+		return fmt.Errorf("%s: %w", method, ErrGroupContent)
+	}
+	return nil
 }
 
 func uploadsOf(files ...*InputFile) []*InputFile {
