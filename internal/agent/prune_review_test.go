@@ -89,6 +89,10 @@ func TestReviewFollowUpLostReportedAgain(t *testing.T) {
 	seedRun(t, a, "run_old", proto.RunExited, 3*day)
 	_, follow, _ := a.helloRuns(context.Background())
 	a.noteSent(follow) // written to the connection, which dropped before central applied it
+	// The next connection's hello has nothing to carry or follow up (sent, not acknowledged); its reconcile still lists it.
+	if hello, follow, _ := a.helloRuns(context.Background()); len(hello)+len(follow) != 0 {
+		t.Fatalf("hello %d follow-up %d", len(hello), len(follow))
+	}
 	ack(a, "run_old")
 	expectReport(t, reports, "run_old")
 	if _, follow, _ = a.helloRuns(context.Background()); !slices.Equal(runRowIDs(follow), []string{"run_old"}) {
@@ -120,4 +124,36 @@ func TestReviewFollowUpPendingNotReportedInline(t *testing.T) {
 		t.Fatalf("reconcile reported %s inline", id)
 	case <-time.After(200 * time.Millisecond):
 	}
+}
+
+// The follow-up can send its first slice before central's reconcile is read (central sends the welcome first and lists
+// runs as active until it applies the follow-up): the reconcile must not report those runs a second time, and must not
+// acknowledge them either.
+func TestReviewFollowUpSentBeforeReconcileNotReportedAgain(t *testing.T) {
+	ctx := context.Background()
+	a := pruneAgent(t, t.TempDir())
+	conn, reports := wsSink(t, a)
+	seedRun(t, a, "run_old", proto.RunExited, 3*day)
+	_, follow, _ := a.helloRuns(ctx)
+	a.sendFollowUp(ctx, conn, follow)
+	expectReport(t, reports, "run_old")
+	ack(a, "run_old") // central has not applied the follow-up yet: still listed active
+	select {
+	case id := <-reports:
+		t.Fatalf("reconcile reported %s a second time", id)
+	case <-time.After(200 * time.Millisecond):
+	}
+	a.mu.Lock()
+	acked := a.finalAcked["run_old"]
+	a.mu.Unlock()
+	if acked != 0 {
+		t.Fatal("a run central still lists was acknowledged")
+	}
+	if n := a.pruneRuns(ctx); n != 0 {
+		t.Fatalf("pruned %d", n)
+	}
+	// The next connection has no snapshot for it: a reconcile that still lists it reports it again.
+	_, _, _ = a.helloRuns(ctx)
+	ack(a, "run_old")
+	expectReport(t, reports, "run_old")
 }
