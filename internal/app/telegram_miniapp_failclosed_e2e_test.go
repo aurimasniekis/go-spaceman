@@ -363,7 +363,8 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 	defer func() {
 		cancel()
 		select {
-		case <-served:
+		case err := <-served:
+			_ = err // the shutdown error is not what this test checks
 		case <-time.After(20 * time.Second):
 			t.Error("Serve did not stop")
 		}
@@ -378,7 +379,7 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 	var firstRefused int
 	deadline := time.Now().Add(15 * time.Second)
 	for len(answers) < 20 && time.Now().Before(deadline) {
-		req, _ := http.NewRequestWithContext(t.Context(), "GET", "http://"+addr+"/", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", nil)
 		req.Host = miniHost
 		resp, err := hc.Do(req)
 		attempts.Add(1)
