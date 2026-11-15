@@ -31647,11 +31647,13 @@
             }
           },
           {
+            "description": "How many of the newest runs to list; live runs are always included on top",
             "explode": false,
             "in": "query",
             "name": "limit",
             "schema": {
               "default": 100,
+              "description": "How many of the newest runs to list; live runs are always included on top",
               "format": "int64",
               "maximum": 500,
               "minimum": 1,

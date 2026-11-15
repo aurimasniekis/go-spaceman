@@ -20363,6 +20363,7 @@ export interface operations {
     "list-runs": {
         parameters: {
             query?: {
+                /** @description How many of the newest runs to list; live runs are always included on top */
                 limit?: number;
                 /** @description What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text */
                 include?: ("manifest" | "prompt")[];
