@@ -127,7 +127,8 @@ func (h *Hub) Shutdown(reason string, grace time.Duration) {
 	h.mu.Unlock()
 	h.CloseAll(reason)
 	done := make(chan struct{})
-	go func() { h.work.Wait(); close(done) }()
+	reloc := h.svc.relocStop()
+	go func() { h.work.Wait(); <-reloc; close(done) }()
 	t := time.NewTimer(grace)
 	defer t.Stop()
 	select {
