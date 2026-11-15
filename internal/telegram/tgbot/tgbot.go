@@ -118,6 +118,10 @@ type Service struct {
 	// retryMin and retryMax bound the startup backoff (tests shorten them).
 	retryMin, retryMax time.Duration
 
+	// onLoadStoredHost is a test seam: LoadStoredHost calls it before it reads the row, so a test can hold the load
+	// (and with it central's start) at a point of its choosing. Nil outside tests; set it before Serve.
+	onLoadStoredHost func(context.Context)
+
 	// mu serializes Put, Delete and the live reconfiguration, so the live bot follows the database's order of writes.
 	mu  sync.Mutex
 	run runtime
