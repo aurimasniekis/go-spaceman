@@ -369,6 +369,8 @@ var Table = map[string]Entry{
 	"list-space-limit-waits":  {Read, rRead},
 	// Clearing a space's own hold lets its launches through; a wrong clear only costs a refused launch at the limit.
 	"clear-space-usage-limit": {Write, rSpaceWrite},
+	"resume-limit-wait":       {Write, rSpaceWrite},
+	"release-limit-wait":      {Write, rSpaceWrite},
 	"stop-run":                {Write, rSpaceWrite},
 	"start-takeover":          {Excluded, rTakeover},
 	"end-takeover":            {Excluded, rTakeover},

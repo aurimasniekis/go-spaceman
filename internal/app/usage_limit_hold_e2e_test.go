@@ -96,14 +96,28 @@ func TestUsageLimitHoldControlAndClear(t *testing.T) {
 	if n := pending(); n != 0 {
 		t.Fatalf("%d human actions raised for a usage-limit end", n)
 	}
+	launches := func() int { return launchTxs(t, e.c) }
+	// UL-7: control is parked; its wait brings it back at the reset, so auto-start leaves it alone. An operator gives the
+	// wait up here, so control can only come back through auto-start, which the hold defers.
+	w, err := e.c.Fleet.LimitWaitForRun(ctx, ctrl.ID)
+	if err != nil || w == nil || w.RunKind != "control" || w.ReleaseAt != nil {
+		t.Fatalf("control's limit wait: %+v %v", w, err)
+	}
+	before := launches()
+	e.c.Supervisor.ControlWanted(ctx, sp.ID)
+	if n := launches() - before; n != 0 {
+		t.Fatalf("auto-start tried %d launches for a parked control", n)
+	}
+	if _, err := e.c.Fleet.ReleaseLimitWait(ctx, admin, sp.ID, w.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	// Its account is held in space A. Work waits for control: auto-start is deferred, silently, and only the first
 	// sweep tries a launch (one refused launch transaction); later sweeps only read the hold.
 	exec(`INSERT INTO usage_limits (id, space_id, scope, account_id, kind, resets_at, source, first_run_id, seen_at, created_at, updated_at)
 		VALUES ('ulm_hold_a', ?, 'account', ?, 'five_hour', ?, 'transcript', ?, ?, ?, ?)`, sp.ID, acc, reset.UnixMicro(), ctrl.ID, now.UnixMicro(),
 		now.UnixMicro(), now.UnixMicro())
-	launches := func() int { return launchTxs(t, e.c) }
-	before := launches()
+	before = launches()
 	for range 5 {
 		e.c.Supervisor.ControlWanted(ctx, sp.ID)
 	}
@@ -232,6 +246,8 @@ func TestUsageLimitClearRules(t *testing.T) {
 	for op, want := range map[string]api.Rule{
 		"clear-space-usage-limit":    api.InSpace(authz.RunControl),
 		"clear-account-usage-limits": api.Global(authz.AccountWrite),
+		"resume-limit-wait":          api.InSpace(authz.RunControl),
+		"release-limit-wait":         api.InSpace(authz.RunControl),
 	} {
 		if got, ok := app.SpecDeps().RuleFor(op); !ok || got != want {
 			t.Errorf("%s: %+v, want %+v", op, got, want)

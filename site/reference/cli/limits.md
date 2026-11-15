@@ -12,6 +12,8 @@ Aliases: `limit`.
 | [`spaceman limits definitions`](#spaceman-limits-definitions) | Every limit: unit, bounds, default and enforcement point |
 | [`spaceman limits get`](#spaceman-limits-get) | A space's effective limits and where each value comes from |
 | [`spaceman limits holds`](#spaceman-limits-holds) | A space's usage-limit holds, and other spaces' open holds on its accounts (shared) |
+| [`spaceman limits release`](#spaceman-limits-release) | Give up on a run parked at a usage limit; its task goes back to the queue |
+| [`spaceman limits resume`](#spaceman-limits-resume) | Resume a run parked at a usage limit now (the usual launch checks apply) |
 | [`spaceman limits set`](#spaceman-limits-set) | Override a space's limits (keys not given keep their override) |
 | [`spaceman limits waits`](#spaceman-limits-waits) | A space's runs parked at a usage limit, waiting to resume |
 
@@ -62,6 +64,34 @@ spaceman limits holds [flags]
 ```
 
 API: `list-space-usage-limits` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman limits release
+
+Give up on a run parked at a usage limit; its task goes back to the queue.
+
+```sh
+spaceman limits release <wait> [flags]
+```
+
+API: `release-limit-wait` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman limits resume
+
+Resume a run parked at a usage limit now (the usual launch checks apply).
+
+```sh
+spaceman limits resume <wait> [flags]
+```
+
+API: `resume-limit-wait` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

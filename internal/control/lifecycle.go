@@ -67,6 +67,10 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 	if sv.stillDeferred(ctx, spaceID) {
 		return
 	}
+	// Control parked at its usage limit comes back through its wait, with its session, at the reset (ADR-0079).
+	if parked, err := sv.fl.ControlParked(ctx, spaceID); err != nil || parked {
+		return
+	}
 	sp, err := sv.fl.GetSpace(ctx, spaceID)
 	if err != nil || sp.State != "active" || sp.Lease == nil || !sp.Lease.Valid {
 		return // paused, archived or its node is away: the work waits

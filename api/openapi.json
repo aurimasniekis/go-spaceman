@@ -4730,6 +4730,15 @@
       "FleetLimitWait": {
         "additionalProperties": false,
         "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetLimitWait.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
           "attempts": {
             "format": "int64",
             "type": "integer"
@@ -27250,6 +27259,110 @@
           }
         },
         "summary": "A space's runs parked at a usage limit, waiting to resume",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/limit-waits/{wait_id}/release": {
+      "post": {
+        "description": "Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and unassigned, and control is told. Audited.",
+        "operationId": "release-limit-wait",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "wait_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetLimitWait"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Give up on a run parked at a usage limit",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/limit-waits/{wait_id}/resume": {
+      "post": {
+        "description": "Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space or a node that isn't connected refuses it, and the wait keeps waiting. Audited.",
+        "operationId": "resume-limit-wait",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "wait_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetLimitWait"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resume a run parked at a usage limit now",
         "tags": [
           "runs"
         ]

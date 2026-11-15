@@ -281,6 +281,10 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 		return nil, err
 	}
 	svc.hub.Kick(nodeID)
+	if state == "active" {
+		// Runs parked at a usage limit that waited for the space to resume look again now (ADR-0079).
+		svc.wakeWaits(ctx, []string{id}, WaitSpacePaused)
+	}
 	if svc.opts.OnSpaceState != nil {
 		svc.opts.OnSpaceState(id, state)
 	}

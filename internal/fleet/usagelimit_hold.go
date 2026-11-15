@@ -32,8 +32,11 @@ const (
 type UsageLimitSettings struct {
 	// Failover lets Resolve pick another bound account of the same harness without an open hold (default off, Q1).
 	Failover bool
-	// KeepAliveMax caps the backoff between probes of a hold whose reset is unknown.
+	// KeepAliveMax caps the backoff between probes of a hold whose reset is unknown, and is how long a run at its limit
+	// is kept alive before it is parked.
 	KeepAliveMax time.Duration
+	// MaxWait is how long a parked worker waits before its task is released (0: DefaultLimitMaxWait).
+	MaxWait time.Duration
 }
 
 // HoldTarget is what a launch would use that a usage-limit hold can hold: an account, or the gateway references of a

@@ -240,6 +240,8 @@ var LimitRanges = map[string][2]int64{
 	// auto-continue never arms for longer waits).
 	"usage_limit_failover":               {0, 1},
 	"usage_limit_keep_alive_max_minutes": {1, 1440},
+	// Hours a parked worker waits before its task is released (at most 30 days).
+	"usage_limit_max_wait_hours": {1, 720},
 }
 
 // TerminalLimitFloor is the smallest value other than 0 that the terminal_cols and terminal_rows limits accept.
@@ -259,7 +261,8 @@ func (c *Config) LimitValues() map[string]int64 {
 		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
 		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes,
 		"terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows,
-		"usage_limit_failover": l.UsageLimitFailover, "usage_limit_keep_alive_max_minutes": l.UsageLimitKeepAliveMaxMinutes}
+		"usage_limit_failover": l.UsageLimitFailover, "usage_limit_keep_alive_max_minutes": l.UsageLimitKeepAliveMaxMinutes,
+		"usage_limit_max_wait_hours": l.UsageLimitMaxWaitHours}
 }
 
 func (v *validator) limits(c *Config) {

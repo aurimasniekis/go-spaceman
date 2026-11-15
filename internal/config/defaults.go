@@ -44,7 +44,7 @@ func Default() *Config {
 		Limits: LimitsConfig{MaxConcurrentRuns: 8, MaxTopLevelTasks: 1, MaxKBSessions: 8, SupportDepth: 1, MaxHumanPending: 500,
 			MaxHumanPendingPerRun: 25, MaxToolCallsPerRun: 5000, IngestPerMinute: 600, EventDepth: 8, BudgetWarnPercent: 80, RecordingQuotaBytes: 512 << 20,
 			ExportMaxBytes: 2 << 30, ControlAutostart: 1, ControlIdleStopMinutes: 30,
-			UsageLimitKeepAliveMaxMinutes: 360},
+			UsageLimitKeepAliveMaxMinutes: 360, UsageLimitMaxWaitHours: 168},
 		Shutdown: ShutdownConfig{Timeout: Duration(30 * time.Second)},
 	}
 }

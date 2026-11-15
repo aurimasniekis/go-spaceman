@@ -462,6 +462,8 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	if err := h.sendReconcile(ctx, s); err != nil {
 		return err
 	}
+	// Runs parked at a usage limit that waited for this node resume now that its leases are granted (ADR-0079).
+	svc.wakeWaitsOnNode(ctx, s.nodeID)
 	// The stale-run sweep's due time depends on which nodes are connected and since when (ADR-0074).
 	svc.wakeDeadlines()
 	// The node learns which of its terminals are taken over before any command (it refuses run.input for them).

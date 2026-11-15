@@ -167,6 +167,10 @@ type LimitsConfig struct {
 	// UsageLimitKeepAliveMaxMinutes is how long a run at a usage limit waits for the reset with its process kept alive,
 	// and the longest gap between checks of a hold whose reset time is unknown (1-1440, default 360; ADR-0079).
 	UsageLimitKeepAliveMaxMinutes int64 `yaml:"usage_limit_keep_alive_max_minutes"`
+	// UsageLimitMaxWaitHours is how long a worker or diagnostic run parked at a usage limit waits to be resumed before
+	// its task goes back to the queue, ready and unassigned (1-720, default 168: 7 days; control is never given up on;
+	// ADR-0079 Q2).
+	UsageLimitMaxWaitHours int64 `yaml:"usage_limit_max_wait_hours"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual
