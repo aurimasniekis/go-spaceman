@@ -22,9 +22,10 @@ import (
 //
 // A binary built with the race detector defaults to RaceMaxTxDuration instead: the detector slows the pure-Go SQLite
 // several-fold, so a legitimate transaction (purging a space cascades over about forty child tables) takes 60-300 ms
-// on a loaded machine while it takes a few ms without it. scripts/race.sh and `make check` already relax the guard
+// on a loaded machine while it takes tens of ms without it. scripts/race.sh and `make check` already relax the guard
 // this way; the default makes a bare `go test -race` agree with them. The 100 ms requirement stays enforced by the
-// non-race runs (`make coverage`, `make check-fast`'s tests without SM_TEST_TX_MAX).
+// non-race runs: `make test`, `make coverage` and bare `go test`. `make check-fast` sets SM_TEST_TX_MAX=500ms, and
+// hosted CI uses 1s or 250ms (ADR-0062).
 var MaxTxDuration = func() time.Duration {
 	if v, err := time.ParseDuration(os.Getenv("SM_TEST_TX_MAX")); err == nil && v > 0 {
 		return v

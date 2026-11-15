@@ -96,7 +96,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **Flaky write-lock guard under `go test -race`.** `TestGatewayRevoked*` (and others) failed with write locks held
   100-300 ms against the 100 ms limit when run directly under the race detector on a busy machine. Not a long
   transaction: purging a space, for one, spends about 60 ms in the cascade over its ~40 child tables with the detector
-  on, and a few ms without it. A store opened by `storetest.Open` in a race-built binary now defaults to the 500 ms
+  on, and tens of ms without it. A store opened by `storetest.Open` in a race-built binary now defaults to the 500 ms
   that `make race` already used; `SM_TEST_TX_MAX` still overrides it, and runs without the race detector keep 100 ms.
 - A run could show `starting` with no terminal while its program was running. A repeated launch made the node report an
   older copy of the run, which could reach central after the `running` report and replace it. Central now ignores a run
