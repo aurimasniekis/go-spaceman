@@ -352,7 +352,8 @@
     for every space. The tools needed to ask and talk to people can never be gated.
   - A gated call without a matching approval returns at once with an approval request: an `approvals` row and a human
     action of type `approval` (created with a dedup key, so a crash between the two is repaired on the next call). The
-    agent is notified of the decision and calls again.
+    agent is notified of the decision and calls again. The `approval:` dedup namespace is reserved for this service,
+    and an action under it that the service did not write is never linked (ADR-0087).
   - An approval matches only the same operation, resource (MCP servers by ID), space, requesting **run** and digest:
     SHA-256 over the operation, resource and canonical JSON arguments (sorted keys, numbers kept exactly).
   - Deciding needs `approval:decide` (API). Before every execution the approver is checked again (user active, API
@@ -4541,6 +4542,47 @@
   in place), that needs a new generation or an explicit protocol change, not a plain report.
 - **Evidence:** `TestStaleStartingReportDoesNotOverwriteRunning` (failed on main), `TestRunReportOrderGuard` and
   `TestStaleReportStillStopsUnwantedRun` in `internal/fleet/run_report_order_test.go`.
+
+### ADR-0087 — SpaceMan's own dedup namespaces are reserved
+- **Status:** Accepted, 2026-11-15. No migration, no API schema change. A tightening, not a relaxation: callers lose
+  the use of a few key prefixes.
+- **Context:** human actions and tasks are deduplicated per space on `(space_id, dedup_key)`, whatever the type or
+  requester, and `human.Create` / `queue.Create` return an existing row with the key. Several services rely on that
+  to repair a crash between two writes, and trust the row they get back: `approvals.ask` links the action under
+  `approval:<approval id>` to an enforced approval (ADR-0024), control raises its supervisor and usage-limit notices
+  under `control-failing:`, `control-autostart-*:` and `usage-limit-human:` keys, an accepted cross-space request
+  creates its task under `xspace:<request id>`, and a schedule creates each occurrence's task under
+  `schedule:<id>:<unix>`. The same keys could be supplied by any caller allowed to create in the space (the human
+  actions and tasks API, `spaceman_human_ask`, `spaceman_task_create`). A row created first under such a key would be
+  reused by the service: an enforced approval could be linked to an action whose title and body the service never
+  wrote, and the surfaces that render the action's body (the web, notifications) would show that text to the person
+  deciding. Surfaces that read the approval row (the Telegram card) were not affected. A supervisor notice or a
+  delegated task could be replaced the same way.
+- **Decision:**
+  - Each package keeps the list of its reserved prefixes (`human.ReservedDedup`, `queue.ReservedDedup`): human actions
+    `approval:`, `usage-limit-human:`, `control-failing:`, `control-autostart-limit:`, `control-autostart-refused:`;
+    tasks `xspace:`, `schedule:`.
+  - `CreateInput.Internal` marks a row a SpaceMan service creates. It is set only in code, never from request input.
+    `Create` refuses a reserved key without it (`validation_failed` on `dedup_key`), so an outside caller can neither
+    plant a row under a service's key nor be handed back the service's row. The reverse is refused too: an internal
+    key outside the list is an error, so a service that adds a key must reserve its prefix. The default is safe: a new
+    API or tool that passes a caller's key through can't reach a reserved namespace.
+  - `approvals.ask` also checks what it gets back: an action that isn't of type `approval` or whose title or body
+    differ from what it writes (one stored before this change) is never linked. The approval is revoked ("its human
+    action did not match the approval") and the call fails with `conflict`; the next call asks again under a new
+    approval ID.
+- **Alternatives:** requiring the same type and requester for reuse doesn't help: the requester of an enforced
+  approval's action is the run that asked, the same run that could plant it, and a system notice would still be
+  blocked by a planted row (the unique index refuses the second insert). Scoping every caller's key to its requester
+  would change what `spaceman_human_ask` dedup returns to agents and needs a data migration; kept out of this fix.
+- **Checked, not affected:** inbox items are deduplicated per `(space, source_kind)` (`response:`, `undeliverable:`,
+  `xspace:` items have their own source kinds), messages per sender, cross-space requests per requesting run.
+- **Consequences:** a caller that used a key starting with one of these prefixes for its own rows now gets
+  `validation_failed`. Rows planted before this change under a supervisor or usage-limit key are still reused (the
+  notice is suppressed once, for that window or hold); the approval path refuses them.
+- **Evidence:** `internal/approvals` `TestApprovalActionCannotBePlanted` (failed on main: the person deciding saw the
+  planted body), `TestApprovalRefusesForeignActionUnderItsKey`; `internal/human` `TestReservedDedupNamespaces`;
+  `internal/queue` `TestReservedTaskDedupNamespaces`; `internal/agenttools` `TestAttachmentsAndHuman`.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9

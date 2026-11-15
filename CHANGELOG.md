@@ -139,6 +139,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Security
 
+- **Reserved dedup namespaces** (ADR-0087). The dedup keys SpaceMan's own services use for human actions
+  (`approval:`, `usage-limit-human:`, `control-failing:`, `control-autostart-*:`) and tasks (`xspace:`, `schedule:`)
+  are refused from the API and agent tools with `validation_failed`. Before, a caller could create a row under such a
+  key first and the service would reuse it: an enforced approval's action could show text the approvals service never
+  wrote. An enforced approval also refuses an existing action under its key that it didn't write, revokes itself, and
+  is asked again under a new ID.
 - Central's public listener no longer lets a client hold a connection by declaring a request body and not sending it.
   A handler that refused such a request without reading the body (a 401, a POST to a UI path) made the server wait,
   with no deadline, for up to 256 KiB that never came, and a handler reading a body the client stopped sending waited

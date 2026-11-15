@@ -600,11 +600,21 @@ func (svc *Service) ask(ctx context.Context, p Requester, a db.Approval, pol *db
 	body := fmt.Sprintf("SpaceMan will run this only after approval, and only as shown.\n\n- **Operation:** `%s`\n- **Resource:** `%s`\n- **Requested by:** %s\n- **Uses:** %d, within %s of the decision\n- **Argument digest:** `%s`\n\n```json\n%s\n```\n",
 		a.Operation, a.Resource, who, a.UsesAllowed, time.Duration(a.ValidSeconds)*time.Second, a.ArgsDigest, a.ArgsPreview)
 	req, _ := json.Marshal(human.ApprovalRequest{Action: truncate("Run "+a.Operation, 500), Details: "Enforced approval " + a.ID})
+	title := truncate("Approve "+a.Operation, 200)
 	act, _, err := svc.human.Create(ctx, p.Actor, a.SpaceID, human.CreateInput{Type: human.TypeApproval,
-		Title: truncate("Approve "+a.Operation, 200), Body: body, Request: req, ExpiresAt: &exp, DedupKey: "approval:" + a.ID, Priority: "high",
+		Title: title, Body: body, Request: req, ExpiresAt: &exp, DedupKey: "approval:" + a.ID, Internal: true, Priority: "high",
 		Requester: p.Human})
 	if err != nil {
 		return err
+	}
+	if act.Type != human.TypeApproval || act.Title != strings.TrimSpace(title) || act.Body != body {
+		// The dedup key returned an action this service did not write (one stored before the approval: namespace was
+		// reserved, ADR-0087). A person would decide on text that isn't this approval's, so it is never linked: the
+		// approval ends and the next call asks again under a new ID.
+		if err := svc.end(ctx, a, Revoked, "its human action did not match the approval"); err != nil {
+			return err
+		}
+		return apperr.New(apperr.CodeConflict, "approval %s could not be shown to a person; call again to request a new one", a.ID)
 	}
 	_ = pol
 	return svc.s.W().TxNamed(ctx, "approvals.ask", func(tx *store.Tx) error {

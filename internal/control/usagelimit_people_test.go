@@ -149,7 +149,7 @@ func TestTellLongHoldsAfterCrash(t *testing.T) {
 	e.exec(`UPDATE usage_limits SET notified_humans_at = 1 WHERE id = 'ulm_c'`)
 	if _, created, err := e.human.Create(e.ctx, audit.System, "spc_a", human.CreateInput{Type: human.TypeMessage, Title: "t", Body: "b",
 		Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "Usage limits"},
-		DedupKey: LongHoldDedup("ulm_a")}); err != nil || !created {
+		DedupKey: LongHoldDedup("ulm_a"), Internal: true}); err != nil || !created {
 		t.Fatal(created, err)
 	}
 	if n := e.tell(); n != 0 {

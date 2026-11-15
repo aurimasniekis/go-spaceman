@@ -35,7 +35,7 @@ func (sv *Supervisor) TellLongHolds(ctx context.Context) (int, error) {
 		_, created, err := sv.human.Create(ctx, audit.System, h.Hold.SpaceID, human.CreateInput{Type: human.TypeMessage, Priority: "normal",
 			Title: title, Body: body, Request: []byte(`{"requires_ack":false}`),
 			Requester:     human.Requester{Kind: "system", Label: "Usage limits"},
-			CorrelationID: h.Hold.ID, DedupKey: LongHoldDedup(h.Hold.ID)})
+			CorrelationID: h.Hold.ID, DedupKey: LongHoldDedup(h.Hold.ID), Internal: true})
 		switch apperr.CodeOf(err) {
 		case "":
 		case apperr.CodeRateLimited, apperr.CodePrecondition:

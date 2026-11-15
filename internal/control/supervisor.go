@@ -269,7 +269,7 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 			Body:      fmt.Sprintf("Control was restarted %d times in the last %s and ended again (%s). SpaceMan stopped restarting it. Check the last run's terminal, then launch control again.", n, sv.Window, detail),
 			Requester: human.Requester{Kind: "system", Label: "Control supervisor"},
 			Request:   []byte(`{"steps":["Open the last control run and read its terminal","Fix the cause (account, harness, prompt or node)","Launch control again"]}`),
-			DedupKey:  fmt.Sprintf("control-failing:%s", now.Truncate(sv.Window).Format(time.RFC3339))})
+			DedupKey:  fmt.Sprintf("control-failing:%s", now.Truncate(sv.Window).Format(time.RFC3339)), Internal: true})
 		if err != nil {
 			sv.log.Warn("raise control attention", obs.Err(err))
 		}
