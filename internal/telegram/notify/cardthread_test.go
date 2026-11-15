@@ -157,3 +157,40 @@ func TestCardWithoutAThreadFallsBackToTheLayout(t *testing.T) {
 		t.Errorf("last part %.12q in thread %d, want the current layout's main chat (card in %d)", last.Text, last.MessageThreadID, topic)
 	}
 }
+
+// A card whose topic was closed or deleted can't take a new part: the card is sent again with all its parts, together
+// in one thread, and the new part is not lost.
+func TestCardGrowsAfterItsTopicIsClosedOrDeleted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kill func(e *env, thread int)
+	}{
+		{"closed", func(e *env, th int) { e.fake.CloseTopic(1001, th) }},
+		{"deleted", func(e *env, th int) { e.fake.DeleteTopic(1001, th) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _, _ := topicsEnv(t)
+			defer e.run(e.maps)()
+			e.firstCard(12)
+			e.waitCalls("sendMessage", 4)
+			old := e.cardParts(3)[0].MessageThreadID
+			if old == 0 {
+				t.Fatal("the card is in the main chat, want a topic")
+			}
+			tc.kill(e, old)
+
+			r := action("hum_1", 2, false)
+			r.Detail = longBody(20)
+			e.change("hum_1", r, 2, changefeed.Updated)
+			parts := e.cardParts(4)
+			th := parts[0].MessageThreadID
+			if th == old {
+				t.Errorf("the card is still in the %s topic %d", tc.name, old)
+			}
+			e.allInThread(parts, th)
+			if last := parts[3]; !strings.HasPrefix(last.Text, "(4/4)") {
+				t.Errorf("last part %.12q, want (4/4)", last.Text)
+			}
+		})
+	}
+}
