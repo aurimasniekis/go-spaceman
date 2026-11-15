@@ -90,6 +90,9 @@ func (h *Handler) capture(ctx context.Context, m *botapi.Message, l updates.Link
 
 // extract reads the parts of a message that capture uses; ok is false for a message with nothing to add.
 func extract(m *botapi.Message) (piece, bool) {
+	if len(m.Video)+len(m.VideoNote)+len(m.Voice)+len(m.Audio)+len(m.Animation)+len(m.Sticker) > 0 {
+		return piece{}, false // not carried: say so rather than keep its caption alone
+	}
 	p := piece{id: m.MessageID, text: strings.TrimSpace(m.Text), origin: originLine(m.ForwardOrigin)}
 	if p.text == "" {
 		p.text = strings.TrimSpace(m.Caption)

@@ -415,3 +415,13 @@ func TestAttachmentOutChecksAccess(t *testing.T) {
 		t.Fatalf("sent %d files over the limit", n)
 	}
 }
+
+// Media capture doesn't carry is refused even with a caption, so a video's caption isn't kept as if it were all of it.
+func TestCaptureUnsupportedMediaRefused(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	e.msg(func(m *botapi.Message) { m.Caption = "bug repro"; m.Video = json.RawMessage(`{"file_id":"x"}`) })
+	if e.createdN() != 0 || e.last().Text != TextNotKind {
+		t.Fatalf("created %d, last %q", e.createdN(), e.last().Text)
+	}
+}
