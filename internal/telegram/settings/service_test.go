@@ -479,3 +479,34 @@ func TestUnknownLinkCapFallsBackToViewer(t *testing.T) {
 		t.Fatalf("effective %+v: want viewer cap and links_per_user 2", got)
 	}
 }
+
+// A key stored in another case still decodes (encoding/json is case-insensitive), so it is judged like the lower-case one.
+func TestUnknownLinkCapKeyCaseFallsBackToViewer(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t, nil)
+	if got := seedRaw(t, svc, s, `{"LINK_DEFAULT_MAX_ROLE":"guest","links_per_user":2}`); got.LinkDefaultMaxRole != RoleViewer || got.LinksPerUser != 2 {
+		t.Fatalf("effective %+v: want viewer cap and links_per_user 2", got)
+	}
+}
+
+// A leaf rejected only against its partner's default is applied once the partner is stored: quiet hours 22:00-23:00
+// next to an invalid digest_time keep both stored times (the end 23:00 equals the default start, so it failed first).
+func TestCrossFieldLeafRetriedAgainstStoredPartner(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t, nil)
+	got := seedRaw(t, svc, s, `{"notification_defaults":{"quiet_hours_start":"22:00","quiet_hours_end":"23:00","digest_time":"99:99"}}`)
+	nd := got.NotificationDefaults
+	if nd.QuietHoursStart != "22:00" || nd.QuietHoursEnd != "23:00" || nd.DigestTime != Defaults().NotificationDefaults.DigestTime {
+		t.Fatalf("notification_defaults %+v: want quiet hours 22:00-23:00 kept, digest_time at its default", nd)
+	}
+}
+
+// queue_per_chat sorts before queue_total and is judged against its default total; both stored values must survive.
+func TestCrossFieldSendLimitsKeepStoredPair(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t, nil)
+	got := seedRaw(t, svc, s, `{"send_limits":{"queue_total":300,"queue_per_chat":200,"chat_burst":9999}}`)
+	if got.SendLimits.QueueTotal != 300 || got.SendLimits.QueuePerChat != 200 {
+		t.Fatalf("send_limits %+v: want queue_total 300 and queue_per_chat 200 kept", got.SendLimits)
+	}
+}

@@ -236,6 +236,8 @@ func (svc *Service) effective(r db.TelegramSetting) Settings {
 		svc.log.Warn("telegram: the stored settings are unreadable; using the defaults", slog.String("error", err.Error()))
 		return Defaults()
 	}
+	// The paths are lower-cased: encoding/json matches field names case-insensitively, so a stored "LINK_DEFAULT_MAX_ROLE"
+	// still decodes and must be recognized by its path too.
 	// One candidate per leaf: a nested object (send_limits, inbound_limits, notification_defaults) is split into its own
 	// fields, so one invalid sibling never widens a stricter stored leaf.
 	type leaf struct {
@@ -248,25 +250,39 @@ func (svc *Service) effective(r db.TelegramSetting) Settings {
 		if v[0] == '{' && json.Unmarshal(v, &sub) == nil {
 			for sk, sv := range sub {
 				raw, _ := json.Marshal(map[string]map[string]json.RawMessage{k: {sk: sv}})
-				leaves = append(leaves, leaf{k + "." + sk, raw})
+				leaves = append(leaves, leaf{strings.ToLower(k) + "." + strings.ToLower(sk), raw})
 			}
 			continue
 		}
 		raw, _ := json.Marshal(map[string]json.RawMessage{k: v})
-		leaves = append(leaves, leaf{k, raw})
+		leaves = append(leaves, leaf{strings.ToLower(k), raw})
 	}
 	slices.SortFunc(leaves, func(a, b leaf) int { return strings.Compare(a.path, b.path) })
 	s := Defaults()
-	for _, l := range leaves {
-		var one Input
-		cand := s
-		if err := json.Unmarshal(l.raw, &one); err == nil {
-			cand.Apply(one)
-			if err = cand.Validate(); err == nil {
-				s = cand
-				continue
+	// A leaf is judged against everything applied so far, so a cross-field rule (queue_per_chat <= queue_total, quiet
+	// hours start != end) can reject a leaf only because its partner has not been applied yet. The rejected leaves are
+	// therefore retried until a pass applies none, and only then fall back to their defaults.
+	pending := leaves
+	for len(pending) > 0 {
+		var rejected []leaf
+		for _, l := range pending {
+			var one Input
+			cand := s
+			if err := json.Unmarshal(l.raw, &one); err == nil {
+				cand.Apply(one)
+				if err = cand.Validate(); err == nil {
+					s = cand
+					continue
+				}
 			}
+			rejected = append(rejected, l)
 		}
+		if len(rejected) == len(pending) {
+			break
+		}
+		pending = rejected
+	}
+	for _, l := range pending {
 		svc.log.Warn("telegram: a stored setting is out of bounds; using its default", slog.String("field", l.path))
 		if l.path == "link_default_max_role" {
 			// An unknown cap is read as the stricter one, not the wider default.

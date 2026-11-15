@@ -248,6 +248,8 @@ func TestPutValidation(t *testing.T) {
 		{make([]string, MaxAllowlist+1), "more than 32"},
 		{[]string{"::ffff:149.154.160.0/116"}, "IPv4-mapped"},
 		{[]string{"149.154.160.0/20", "::ffff:0:0/96"}, "IPv4-mapped"},
+		// A non-canonical mapped prefix gets the mapped-range advice: its "canonical form" would still be rejected.
+		{[]string{"::ffff:149.154.160.1/116"}, "IPv4-mapped"},
 	} {
 		fieldMsg(t, put(Input{BotToken: token, WebhookIPAllowlist: c.list}), "webhook_ip_allowlist", c.want)
 	}
@@ -595,6 +597,34 @@ func TestRetryAfterWrite(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if got := len(e.tg.Calls("getMe")); got != n || e.svc.Status(ctx).WebhookStatus != StateError {
 		t.Fatalf("a refused token was retried (%d -> %d getMe calls)", n, got)
+	}
+}
+
+// A write that applies the newest state ends the retry loop of an older attempt at once, instead of leaving it asleep
+// until its next (up to retryMax) wake-up.
+func TestWriteEndsSupersededRetryLoop(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.svc.retryMin, e.svc.retryMax = time.Hour, time.Hour
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.tg.FailNext("getMe", http.StatusBadGateway, "transient", 0)
+	e.svc.Start(ctx)
+	e.svc.mu.Lock()
+	running := e.svc.run.retryStop != nil
+	e.svc.mu.Unlock()
+	if !running {
+		t.Fatal("a transient start failure started no retry loop")
+	}
+	if got := e.put(b.Version, Input{Enabled: true}); got.WebhookStatus != StateOK {
+		t.Fatalf("put: %+v", got.Health)
+	}
+	e.svc.mu.Lock()
+	running = e.svc.run.retryStop != nil
+	e.svc.mu.Unlock()
+	if running {
+		t.Fatal("the retry loop of the superseded attempt is still running")
 	}
 }
 
