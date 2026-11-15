@@ -232,7 +232,7 @@ func (h *Handler) cmdControl(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.setControl(l.ID, s.ID)
 	h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("Control mode for %s. Your next text messages become drafts you can send to its control run; images, files and forwards still go to the inbox. Control's replies come back here. /control off ends it.", s.title())})
 }
@@ -243,6 +243,9 @@ func (h *Handler) controlText(ctx context.Context, m *botapi.Message, l updates.
 	spaceID := h.controlSpace(l.ID)
 	if spaceID == "" || m.MediaGroupID != "" {
 		return false
+	}
+	if pin := pinnedOf(ctx); pin != "" && pin != spaceID {
+		return false // written in another space's topic: that topic's space decides, not the control mode of this one
 	}
 	p, ok := extract(m)
 	if !ok || p.origin != "" || len(p.files) > 0 || p.text == "" {
@@ -349,7 +352,7 @@ func (h *Handler) cmdMessages(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.send(ctx, l.ChatID, h.messagesList(ctx, c, s, 0))
 }
 
@@ -461,7 +464,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
-		h.setCurrent(l.ID, s.ID)
+		h.setCurrent(ctx, l.ID, s.ID)
 		h.answer(ctx, q.ID, "")
 		h.show(ctx, l.ChatID, q.Message, h.messagesList(ctx, c, s, page))
 		return
