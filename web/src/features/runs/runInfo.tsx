@@ -97,7 +97,8 @@ export function runStateText(r: Run, now = Date.now()): string {
       const d = runDuration(r, now)
       const base = tone === 'working' ? `working${d ? ` · ${d}` : ''}` : 'idle'
       // The latest failure Claude Code reported (node protocol 1.13): a health signal next to the state.
-      return r.failure ? `${base} · ${failureText(r.failure)}` : base
+      // Not while a turn is running: the class belongs to the turn that failed, and a new one has started.
+      return r.failure && tone !== 'working' ? `${base} · ${failureText(r.failure)}` : base
     }
   }
 }

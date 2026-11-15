@@ -19,6 +19,10 @@ import (
 // stopScanGap is the shortest time between two StopFailure-started scans of one run.
 const stopScanGap = 2 * time.Second
 
+// statusMaxAge is how old a status-line snapshot may be and still fill a limit's reset: the wrapper refreshes every
+// minute while Claude Code runs, so an older one belongs to a window that may be over or to an earlier limit.
+const statusMaxAge = 5 * time.Minute
+
 // StatusObservation is a run's latest status-line snapshot and when the node received it.
 type StatusObservation struct {
 	harness.StatusSnapshot
@@ -80,6 +84,7 @@ func (a *Agent) statusLineIntake(ctx context.Context, req bridgeRequest) bridgeR
 	if a.statusSnaps == nil {
 		a.statusSnaps = map[string]StatusObservation{}
 	}
+	prev := a.statusSnaps[req.Run]
 	a.statusSnaps[req.Run] = StatusObservation{StatusSnapshot: s, ObservedAt: a.now()}
 	a.mu.Unlock()
 	// The run may have ended between the bridge's check and the store above; its data was dropped then, so drop it again.
@@ -89,7 +94,7 @@ func (a *Agent) statusLineIntake(ctx context.Context, req bridgeRequest) bridgeR
 		return bridgeResponse{OK: true}
 	}
 	// An open limit still without a reset time gets the status line's, now rather than at the next report.
-	if l := r.Limit.wire(a.now()); l != nil && !l.Cleared && l.ResetsAt == nil && statusLineReset(l.Kind, s) != nil {
+	if l := r.Limit.wire(a.now()); l != nil && !l.Cleared && l.ResetsAt == nil && a.fillChanged(l, prev.StatusSnapshot, s) {
 		a.goTrack(func() { a.reportHookData(context.WithoutCancel(ctx), req.Run) })
 	}
 	return bridgeResponse{OK: true}
@@ -145,6 +150,25 @@ func statusLineReset(kind string, s harness.StatusSnapshot) *time.Time {
 	return &t
 }
 
+// fillChanged reports whether the new snapshot gives the open limit l a reset (one that survives the limit's bounds)
+// that the previous one did not, so a status line refreshing every minute does not repeat the same report.
+func (a *Agent) fillChanged(l *proto.RunLimit, prev, next harness.StatusSnapshot) bool {
+	fill := func(s harness.StatusSnapshot) *time.Time {
+		r := statusLineReset(l.Kind, s)
+		if r == nil {
+			return nil
+		}
+		c := *l
+		c.ResetsAt, c.Source = r, proto.LimitSourceStatusLine
+		if n, ok := c.Normalized(a.now()); ok {
+			return n.ResetsAt
+		}
+		return nil
+	}
+	n, p := fill(next), fill(prev)
+	return n != nil && (p == nil || !p.Equal(*n))
+}
+
 // withHookData adds what the hooks gave the node to a run's report (minor ≥ 13; ForMinor strips it below): the
 // non-limit StopFailure class, and, on an open limit whose transcript record carried no reset time, the reset the status
 // line's window gives (source statusline). A reset the transcript gave is never replaced. The limit is copied, never
@@ -154,7 +178,7 @@ func (a *Agent) withHookData(rep proto.RunReport) proto.RunReport {
 	rep.Failure = proto.FailureClass(a.failureClasses[rep.RunID])
 	snap, haveSnap := a.statusSnaps[rep.RunID]
 	a.mu.Unlock()
-	if l := rep.Limit; l != nil && !l.Cleared && l.ResetsAt == nil && haveSnap {
+	if l := rep.Limit; l != nil && !l.Cleared && l.ResetsAt == nil && haveSnap && a.now().Sub(snap.ObservedAt) <= statusMaxAge {
 		if r := statusLineReset(l.Kind, snap.StatusSnapshot); r != nil {
 			filled := *l
 			filled.ResetsAt, filled.Source = r, proto.LimitSourceStatusLine

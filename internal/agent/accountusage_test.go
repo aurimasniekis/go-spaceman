@@ -46,7 +46,7 @@ func TestWithHookData(t *testing.T) {
 	a, _ := ccAgent(t, t.TempDir(), nil, nil)
 	now := time.Now().UTC().Truncate(time.Second)
 	a.o.Clock = clock.NewFake(now)
-	a.statusSnaps = map[string]StatusObservation{"run_1": {StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 100, ResetsAt: now.Add(time.Hour).Unix()}}}}
+	a.statusSnaps = map[string]StatusObservation{"run_1": {ObservedAt: now, StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 100, ResetsAt: now.Add(time.Hour).Unix()}}}}
 	a.failureClasses = map[string]string{"run_1": "billing_error", "run_2": "free text"}
 
 	lim := &proto.RunLimit{Kind: proto.LimitUnknown, Since: now.Add(-time.Minute)}
@@ -60,6 +60,11 @@ func TestWithHookData(t *testing.T) {
 	if got := a.withHookData(proto.RunReport{RunID: "run_2"}); got.Failure != "" {
 		t.Fatalf("an unlisted class crossed: %q", got.Failure)
 	}
+	// A snapshot older than statusMaxAge is not used.
+	a.statusSnaps["run_4"] = StatusObservation{ObservedAt: now.Add(-statusMaxAge - time.Second), StatusSnapshot: a.statusSnaps["run_1"].StatusSnapshot}
+	if got := a.withHookData(proto.RunReport{RunID: "run_4", Limit: &proto.RunLimit{Kind: proto.LimitUnknown, Since: now.Add(-time.Minute)}}); got.Limit.ResetsAt != nil {
+		t.Fatalf("a stale snapshot filled a reset: %+v", got.Limit)
+	}
 	// A transcript reset, a cleared limit and a reset before since are left alone.
 	tr := now.Add(3 * time.Hour)
 	if got := a.withHookData(proto.RunReport{RunID: "run_1", Limit: &proto.RunLimit{Kind: proto.LimitUnknown, Since: now, ResetsAt: &tr}}); !got.Limit.ResetsAt.Equal(tr) || got.Limit.Source != "" {
@@ -68,7 +73,7 @@ func TestWithHookData(t *testing.T) {
 	if got := a.withHookData(proto.RunReport{RunID: "run_1", Limit: &proto.RunLimit{Cleared: true, Since: now}}); got.Limit.ResetsAt != nil {
 		t.Fatalf("cleared limit got a reset: %+v", got.Limit)
 	}
-	a.statusSnaps["run_3"] = StatusObservation{StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 100, ResetsAt: now.Add(-2 * time.Hour).Unix()}}}
+	a.statusSnaps["run_3"] = StatusObservation{ObservedAt: now, StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 100, ResetsAt: now.Add(-2 * time.Hour).Unix()}}}
 	if got := a.withHookData(proto.RunReport{RunID: "run_3", Limit: &proto.RunLimit{Kind: proto.LimitUnknown, Since: now}}); got.Limit.ResetsAt != nil || got.Limit.Source != "" {
 		t.Fatalf("a reset before since was kept: %+v", got.Limit)
 	}
