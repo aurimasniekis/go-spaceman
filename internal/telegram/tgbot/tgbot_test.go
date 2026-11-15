@@ -749,6 +749,54 @@ func TestStaleGenZeroStartDoesNotStopWritesLoop(t *testing.T) {
 	}
 }
 
+// The boot read failed (generation 0, a retry loop waits). A write then applies generation 1 while that loop's timer
+// fires and the loop waits on svc.mu. When the loop gets the lock it must see that the write owns the state: it must
+// neither run startLocked again (with the reads failing, that would overwrite the healthy state with an error) nor
+// keep retrying.
+func TestGenZeroRetryLoopDoesNotRerunAfterWrite(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.svc.retryMin, e.svc.retryMax = 5*time.Millisecond, 20*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	row, err := e.s.R().GetTelegramBot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A second service over the same store has applied nothing. Closing the reader pool makes its boot read fail, and
+	// every read after it, so the only way to a healthy state is the write below.
+	svc := New(e.s, e.svc.audit, e.svc.kr, e.svc.o)
+	svc.retryMin, svc.retryMax = 5*time.Millisecond, 20*time.Millisecond
+	if err := e.s.ReadDB().Close(); err != nil {
+		t.Fatal(err)
+	}
+	svc.Start(ctx)
+	svc.mu.Lock()
+	done, gen := svc.run.retryDone, svc.run.gen
+	svc.mu.Unlock()
+	if gen != 0 || done == nil {
+		t.Fatalf("gen %d, retry loop started %t: want generation 0 with a loop", gen, done != nil)
+	}
+
+	svc.mu.Lock()
+	time.Sleep(50 * time.Millisecond) // the loop's timer fires; the loop blocks on svc.mu
+	if retry := svc.applyLocked(ctx, &row, false); retry {
+		t.Fatal("the healthy write asked for a retry")
+	}
+	svc.mu.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the generation-0 retry loop kept running after a write applied a newer generation")
+	}
+	if st := svc.Status(ctx); st.WebhookStatus != StateOK {
+		t.Fatalf("a stale generation-0 retry overwrote the write's state: %+v", st)
+	}
+}
+
 // A Telegram error that echoes the token, or only its secret part, reaches neither the health, the warnings, the
 // Put error nor the logs (botapi redacts both).
 func TestTokenEchoedByTelegramStaysOut(t *testing.T) {
