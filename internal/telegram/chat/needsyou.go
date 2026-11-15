@@ -66,6 +66,7 @@ type humanAction struct {
 	Status         string          `json:"status"`
 	Outcome        string          `json:"outcome"`
 	Version        int64           `json:"version"`
+	DedupKey       string          `json:"dedup_key"`
 	TypeSpec       *struct {
 		Outcomes       []string        `json:"outcomes"`
 		ResponseSchema json.RawMessage `json:"response_schema"`
@@ -378,12 +379,17 @@ type enforcedApproval struct {
 	RequestExpiry time.Time `json:"request_expires_at"`
 }
 
-// approvalOf reads the enforced approval behind an approval action and sets the form's mode. Not found means advisory;
-// any other answer counts as enforced with nothing to show (decided in the browser), never as advisory.
+// approvalOf reads the enforced approval behind an approval action and sets the form's mode. Not found means advisory,
+// unless the action carries the approvals package's dedup key ("approval:…"); any other answer counts as enforced with
+// nothing to show (decided in the browser), never as advisory.
 func (h *Handler) approvalOf(ctx context.Context, c caller, s spaceRef, a humanAction, f *form) *enforcedApproval {
 	var ap enforcedApproval
 	r := c.get(ctx, "/spaces/"+s.ID+"/human-actions/"+a.ID+"/approval", &ap)
 	switch {
+	case r.status == http.StatusNotFound && strings.HasPrefix(a.DedupKey, "approval:"):
+		// The approvals package's dedup key without its row yet (or a failed link): enforced, as the server counts it.
+		f.enforced = true
+		return nil
 	case r.status == http.StatusNotFound:
 		return nil
 	case !r.ok() || ap.HumanActionID != a.ID:

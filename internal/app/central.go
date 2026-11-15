@@ -962,6 +962,12 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 			if err != nil || p.User.ID != by.ID || p.Limited {
 				return false
 			}
+			// Only enforced approvals reach this check, and from Telegram they are decided only with the space's
+			// opt-in (ADR-0083 decision 14): withdrawing it, or hiding the space from Telegram, also ends approvals
+			// already decided in chat.
+			if !c.approvalsInChat(ctx, spaceID) {
+				return false
+			}
 			return c.Authz.AllowedAll(p.Subjects(), spaceID, authz.ApprovalDecide)
 		}
 		u, err := c.Store.R().GetUser(ctx, by.ID)

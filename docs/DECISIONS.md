@@ -4774,12 +4774,19 @@
       note prompt, so an enforced approve takes two taps and an enforced deny a tap and a note.
     - The enforced card shows operation, resource, space, uses, request expiry and argument digest, never the action
       body (it carries the redacted arguments) or the arguments (SM-APPR-005); without the opt-in it says it is decided
-      in the browser and has only "Decide in browser" (the Mini App link). Notifier cards (TG-6) still show their
-      bounded detail text; the card buttons and their body rule are a later task.
+      in the browser and has only "Decide in browser" (the Mini App link). The chat counts an action with the
+      `approval:` dedup key as enforced too, like the server. Notifier cards (TG-6) carry no detail text for an
+      enforced approval (same test: a row or the dedup key; a lookup error counts as enforced).
     - *Cancel* stays refused from Telegram for every approval, whatever the setting: it finalizes the action (an
       enforced approval becomes revoked) and the chat has no two-step withdrawal.
-    - The approver recheck before an approved operation runs (SM-APPR-003, decision 4 change 5) is unchanged and
-      applies to decisions made in chat.
+    - The approver recheck before an approved operation runs (SM-APPR-003, decision 4 change 5) applies to decisions
+      made in chat, and for a `telegram:` decision it also requires the space's opt-in (visible, `confirm`) at
+      execution: withdrawing it, or hiding the space, ends approvals already decided in chat.
+    - Invariant (documented on `approvals.ask`): an approvals row is only linked to an action created by `ask` with the
+      `approval:<id>` dedup key, so an action read as advisory can't become enforced before it is finalized.
+    - Known, not changed here: `human.Create` returns any existing action with the same dedup key, so an action planted
+      under `approval:<id>` before `ask` runs would be linked; the chat's enforced card shows the approval row's fields,
+      not that action's body. Tracked as an open item for the human/approvals owners.
   - **Inbox capture (TG-8a-2).** A linked user's non-command message becomes an inbox item in the link's current space
     (or its only visible one), created as the link's Telegram principal through the in-process API, so the web's
     authorization (`inbox:write`, `attachment:write`), size cap, content sniffing, quota and audit apply; a space hidden

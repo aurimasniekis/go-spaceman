@@ -964,3 +964,15 @@ func TestApprovalRefusedConfirmStartsOver(t *testing.T) {
 		t.Fatalf("%v", e.api.respTok)
 	}
 }
+
+// An approval carrying the approvals package's dedup key but no enforced record yet (the window before the row is
+// linked) is shown as enforced, like the server counts it: no body, no decision without the opt-in.
+func TestApprovalDedupKeyCountsAsEnforced(t *testing.T) {
+	e := newEnv(t)
+	a := e.addHuman(spA, hid('1'), "approval", "Approve merge", `{"action":"x"}`)
+	a.DedupKey = "approval:apr_1"
+	f := e.open(spA, hid('1'))
+	if !strings.Contains(f.Text, TextApprovalInApp) || strings.Contains(f.Text, "do the thing") || find(f, "Approve") != "" {
+		t.Fatalf("%q", f.Text)
+	}
+}

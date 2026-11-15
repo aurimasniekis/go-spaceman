@@ -522,6 +522,26 @@ func TestTelegramApprovalResponses(t *testing.T) {
 		t.Fatalf("advisory from the bot: %d %s", rec.Code, rec.Body.String())
 	}
 
+	// The link's cap applies to advisory approvals: capped to viewer, the link can't decide one.
+	capped := newApproval(s.space, false)
+	s.setLinkRole(t, "viewer")
+	expect(t, mini(s.space, capped, `{"outcome":"approved"}`), http.StatusForbidden)
+	if rec := bot(s.space, capped, `{"outcome":"approved"}`, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer-capped link on an advisory approval: %d %s", rec.Code, rec.Body.String())
+	}
+	s.setLinkRole(t, "operator") // replaces every link grant: give back the second space's
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'telegram', 0, 't')`, auth.TelegramSubject(s.linkID), other)
+	if err := s.h.c.Authz.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// An action with the approvals package's dedup key counts as enforced before its row is linked.
+	var keyed created
+	kr := s.root.do("POST", "/spaces/"+other+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"},
+		"dedup_key": "approval:apr_unlinked"})
+	expect(t, kr, 201)
+	kr.json(t, &keyed)
+	refused("dedup key without a row", bot(other, keyed.ID, `{"outcome":"approved"}`, ""), webOnly)
+
 	// Enforced, no opt-in in its space: refused everywhere, even with a confirmation armed for exactly it.
 	enfOther := newApproval(other, true)
 	r := mini(other, enfOther, `{"outcome":"approved"}`)

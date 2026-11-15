@@ -591,6 +591,10 @@ func (svc *Service) request(ctx context.Context, p Requester, pol *db.ApprovalPo
 
 // ask creates the human action for a pending approval. The dedup key makes it safe to repeat after a crash between
 // storing the approval and asking.
+//
+// Invariant the Telegram respond rule relies on (ADR-0083 decision 14): an approvals row is only ever linked to an
+// action created here, whose dedup key is "approval:<id>", so an action that looks advisory (no row, no such key) can
+// never become enforced between that check and its finalization. Code that links a row to any other action breaks it.
 func (svc *Service) ask(ctx context.Context, p Requester, a db.Approval, pol *db.ApprovalPolicy) error {
 	exp := time.UnixMicro(a.RequestExpiresAt).UTC()
 	who := fmt.Sprintf("run `%s` (%s)", a.RequesterRun, a.RequesterRole)

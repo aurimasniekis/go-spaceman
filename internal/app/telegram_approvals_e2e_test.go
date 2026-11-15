@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 )
@@ -177,7 +178,7 @@ func (c *approvalChat) action(id string) actionState {
 func (c *approvalChat) advisory(title string) string {
 	c.t.Helper()
 	r := c.s.root.do("POST", "/spaces/"+c.s.space+"/human-actions", map[string]any{"type": "approval", "title": title,
-		"request": map[string]any{"action": title}})
+		"body": "context for " + title, "request": map[string]any{"action": title}})
 	expect(c.t, r, 201)
 	var a struct {
 		ID string `json:"id"`
@@ -306,6 +307,16 @@ func TestTelegramApprovalsInChat(t *testing.T) {
 		t.Fatalf("enforced approval decided without the opt-in: %q", st)
 	}
 
+	// The notifier's card never carries an enforced approval's body (its arguments); an advisory one keeps its detail.
+	rd := notify.StoreReader{S: c.s.h.c.Store, Human: c.s.h.c.Human}
+	res, err := rd.Read(context.Background(), map[string]any{}, notify.Key{Type: notify.TypeHumanAction, ID: enf})
+	if err != nil || res.Detail != "" {
+		t.Fatalf("enforced notifier detail: %q %v", res.Detail, err)
+	}
+	if res, err := rd.Read(context.Background(), map[string]any{}, notify.Key{Type: notify.TypeHumanAction, ID: adv}); err != nil || res.Detail != "context for Ship the release" {
+		t.Fatalf("advisory notifier detail: %+v %v", res, err)
+	}
+
 	// With the opt-in: two steps in chat, then the operation runs once with the approval.
 	c.optIn(true)
 	f = c.open(enf)
@@ -322,7 +333,8 @@ func TestTelegramApprovalsInChat(t *testing.T) {
 
 // SM-APPR-003 (TG-7-2): an enforced approval decided in chat is rechecked before the operation runs. Approved from the
 // chat with the opt-in, it is used while the approver may still decide; it is revoked, and the operation asks again,
-// once the link is suspended, the user's grant is removed, the user is disabled, or the link is revoked.
+// once the link is suspended, the user's grant is removed, the user is disabled, the space withdraws its opt-in, or
+// the link is revoked.
 func TestTelegramEnforcedApprovalRecheck(t *testing.T) {
 	t.Parallel()
 	c := newApprovalChat(t)
@@ -331,7 +343,7 @@ func TestTelegramEnforcedApprovalRecheck(t *testing.T) {
 	expect(t, c.s.root.do("POST", "/users", map[string]any{"email": "admin2@example.com", "display_name": "Admin", "password": "correct horse battery staple",
 		"grants": []map[string]string{{"role": "admin", "domain": "*"}}}), 201)
 	ids := map[int]string{}
-	for pr := 1; pr <= 5; pr++ {
+	for pr := 1; pr <= 6; pr++ {
 		_, ids[pr] = c.require(pr)
 		c.approveInChat(ids[pr])
 	}
@@ -375,6 +387,10 @@ func TestTelegramEnforcedApprovalRecheck(t *testing.T) {
 	if _, err := c.s.h.c.Auth.SetEnabled(ctx, audit.System, c.s.userID, true); err != nil {
 		t.Fatal(err)
 	}
+
+	c.optIn(false)
+	revoked("space opt-in withdrawn", 6)
+	c.optIn(true)
 
 	c.s.exec(t, `UPDATE telegram_links SET state = 'revoked', revoked_at = 1 WHERE id = ?`, c.s.linkID)
 	revoked("revoked link", 5)
