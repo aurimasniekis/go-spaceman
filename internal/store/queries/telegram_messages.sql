@@ -3,8 +3,14 @@
 -- name: UpsertTelegramMessage :exec
 INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version;
+-- created_at is when the message was last sent, edited or alerted: retention prunes by it, and a card loaded after a
+-- restart takes it as the time up to which reminders and escalations were already announced.
+ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at;
 
 -- name: ListTelegramMessagesByResource :many
-SELECT chat_id, message_id, resource_version FROM telegram_messages
+SELECT chat_id, message_id, resource_version, created_at FROM telegram_messages
 WHERE resource_type = ? AND resource_id = ? AND kind = 'card';
+
+-- name: PruneTelegramMessages :execrows
+DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
+  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < sqlc.arg(cutoff) LIMIT sqlc.arg(lim));

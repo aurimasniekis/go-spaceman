@@ -78,8 +78,15 @@ func TestLinksLoad(t *testing.T) {
 	exec(link, "tgl_b", "usr_b", 2, 22, "suspended", "{}", nil)
 	exec(link, "tgl_c", "usr_c", 3, 33, "active", "{}", nil)
 
+	// usr_a has chosen a zone; usr_b has an invalid one (none); usr_c none.
+	exec(`INSERT INTO notification_prefs (user_id, prefs_json, updated_at, version) VALUES ('usr_a', '{"timezone":"Asia/Kolkata"}', 0, 1)`)
+	exec(`INSERT INTO notification_prefs (user_id, prefs_json, updated_at, version) VALUES ('usr_b', '{"timezone":"Mars/Base"}', 0, 1)`)
+
 	check := func(_ context.Context, id string) (bool, error) { return id != "usr_c", nil }
-	l := notify.NewLinks(st, eventbus.New(), check, nil, time.Hour)
+	bus := eventbus.New()
+	l := notify.NewLinks(st, bus, check, nil, time.Hour)
+	changed := make(chan struct{}, 4)
+	l.OnChange = func() { changed <- struct{}{} }
 	ctx2, cancel := context.WithCancel(ctx)
 	defer cancel()
 	l.Start(ctx2)
@@ -87,7 +94,52 @@ func TestLinksLoad(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "tgl_a" || got[0].ChatID != 11 {
 		t.Fatalf("links = %+v, want only the active link of a user who may act", got)
 	}
+	if got[0].Zone == nil || got[0].Zone.String() != "Asia/Kolkata" {
+		t.Errorf("zone = %v, want the user's Asia/Kolkata", got[0].Zone)
+	}
+	select {
+	case <-changed:
+	default:
+		t.Error("the first load changes the digest schedule: OnChange expected")
+	}
 	if p := got[0].Prefs.Effective(notifyDefaults()); p.NewActions {
 		t.Error("the link's override (new_actions false) was lost")
+	}
+}
+
+// A change of the user's zone reaches the links and moves the digest schedule (OnChange), and nothing else does.
+func TestLinksZoneChangeKicksTheDigest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := storetest.Open(t)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := st.W().Exec(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	exec(`INSERT INTO users (id, display_name, enabled, provisioned_via, created_at, created_by, updated_at) VALUES ('usr_a', 'a', 1, 'admin', 0, 't', 0)`)
+	exec(`INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, prefs_json, created_at, updated_at) VALUES ('tgl_a', 'usr_a', 7, 1, 11, 'active', '{}', 0, 0)`)
+	bus := eventbus.New()
+	l := notify.NewLinks(st, bus, func(context.Context, string) (bool, error) { return true, nil }, nil, time.Hour)
+	changed := make(chan struct{}, 8)
+	l.OnChange = func() { changed <- struct{}{} }
+	l.Start(ctx)
+	<-changed
+	exec(`INSERT INTO notification_prefs (user_id, prefs_json, updated_at, version) VALUES ('usr_a', '{"timezone":"Europe/Vilnius"}', 0, 1)`)
+	bus.Publish(eventbus.Event{Topic: eventbus.TopicUserChanged})
+	select {
+	case <-changed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a new zone did not kick the digest schedule")
+	}
+	if z := l.Snapshot()[0].Zone; z == nil || z.String() != "Europe/Vilnius" {
+		t.Fatalf("zone = %v", z)
+	}
+	bus.Publish(eventbus.Event{Topic: eventbus.TopicUserChanged}) // nothing changed
+	select {
+	case <-changed:
+		t.Error("an unchanged reload must not kick the deadline loop")
+	case <-time.After(300 * time.Millisecond):
 	}
 }

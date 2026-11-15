@@ -53,6 +53,7 @@ const (
 	KindAttachments  = "attachments"
 	KindHumanActions = "human_actions"
 	KindAudit        = "audit_events"
+	KindTelegram     = "telegram_messages"
 )
 
 // Actor is who retention deletions are attributed to.
@@ -405,7 +406,41 @@ func (svc *Service) work(ctx context.Context) (Counts, error) {
 			errs = append(errs, err)
 		}
 	}
+	n, err := svc.pruneTelegramMessages(ctx)
+	counts[KindTelegram] += n
+	if err != nil {
+		errs = append(errs, err)
+	}
 	return counts, errors.Join(errs...)
+}
+
+// TelegramMessageDays is how long the bot keeps the (chat, message) mappings of its cards (ADR-0083); the mappings only
+// let a card be edited, and an older card is sent again instead.
+const TelegramMessageDays = 30
+
+// telegramPruneBatch bounds the rows one write transaction deletes.
+const telegramPruneBatch = 200
+
+// pruneTelegramMessages deletes the bot's message mappings older than TelegramMessageDays, in short transactions.
+func (svc *Service) pruneTelegramMessages(ctx context.Context) (int64, error) {
+	cutoff := svc.o.Clock.Now().Add(-TelegramMessageDays * 24 * time.Hour).UnixMicro()
+	var total int64
+	for ctx.Err() == nil {
+		var n int64
+		err := svc.s.W().TxNamed(ctx, "retention.telegram_messages", func(tx *store.Tx) error {
+			var err error
+			n, err = tx.Q.PruneTelegramMessages(ctx, db.PruneTelegramMessagesParams{Cutoff: cutoff, Lim: telegramPruneBatch})
+			return err
+		})
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < telegramPruneBatch {
+			break
+		}
+	}
+	return total, nil
 }
 
 // space applies one space's retention periods.

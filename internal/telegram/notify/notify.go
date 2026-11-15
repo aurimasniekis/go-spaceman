@@ -21,6 +21,7 @@ import (
 	"context"
 	"log/slog"
 	"time"
+	"unicode/utf16"
 
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
@@ -93,6 +94,9 @@ type Resource struct {
 	Assignee string
 	// Final: the resource reached its final state: a card that exists is edited, and none is sent if there is none.
 	Final bool
+	// RemindedAt and EscalatedAt (microseconds, 0: never) are when the action's latest reminder and its escalation
+	// happened; a card that already exists announces a newer one as a message of its own.
+	RemindedAt, EscalatedAt int64
 	// Notify: the state is worth a notification when no card exists yet (an open action, a task in review, a failed run).
 	Notify bool
 }
@@ -147,9 +151,10 @@ type Options struct {
 
 // Notifier is the single change-feed consumer.
 type Notifier struct {
-	o     Options
-	log   *slog.Logger
-	cards *cards
+	o      Options
+	log    *slog.Logger
+	cards  *cards
+	digest *digestBuf
 
 	cursor int64 // only the Run goroutine touches it
 }
@@ -174,7 +179,7 @@ func New(o Options) *Notifier {
 	if o.FlushRows <= 0 {
 		o.FlushRows = 100
 	}
-	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows)}
+	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf()}
 }
 
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
@@ -344,12 +349,16 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 	}
 }
 
-// deliver enqueues the resource's card for every link that may see it.
+// deliver enqueues the resource's card for every link that may see it, and the reminders, escalations and
+// assignments of a card that exists as messages of their own.
 func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link, r *Resource, now time.Time, created bool) {
 	set := n.o.Policy.Current()
 	sp := n.o.Policy.Space(r.SpaceID)
 	if !sp.Visible() {
 		return
+	}
+	if r.Final || !r.Notify {
+		n.digest.drop(r.Key) // it no longer needs anybody's attention
 	}
 	loaded := false
 	for i := range links {
@@ -362,18 +371,77 @@ func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link
 			n.cards.load(ctx, r.Key)
 			loaded = true
 		}
+		p := l.Prefs.Effective(set.NotificationDefaults)
 		card := n.cards.get(l.ChatID, r.Key)
 		if card == nil {
 			// A card that is still waiting in the sender is replaced by the newest state (its final one too); with no
-			// card at all, only a state worth a notification, that the link wants, sends one.
-			if queued := n.cards.sendQueued(l.ChatID, r.Key); !queued && (r.Final || !r.Notify || !wants(l.Prefs.Effective(set.NotificationDefaults), r)) {
-				continue
+			// card at all, only a state worth a notification, that the link wants, sends one, or collects into its digest.
+			if !n.cards.sendQueued(l.ChatID, r.Key) {
+				if r.Final || !r.Notify {
+					continue
+				}
+				switch delivery(p, r, l.UserID) {
+				case settings.DeliveryDigest:
+					if l.Zone != nil && p.Digest { // a digest that can never be sent collects nothing
+						n.digest.add(l.ID, r, digestSection(r), now)
+					}
+					continue
+				case settings.DeliveryPush:
+				default:
+					continue
+				}
 			}
+		} else if r.Kind == KindAction && !r.Final {
+			n.announce(snd, l, r, p)
 		}
 		if card != nil && card.version >= r.Version && r.Version != 0 {
 			continue // the card already shows this state
 		}
 		n.enqueue(snd, l, r, card != nil)
+	}
+}
+
+// announce sends what happened to a pending action whose card exists: an escalation, an assignment to the link's user,
+// or a reminder, as a message of its own (an edit makes no sound). The link's preferences decide: escalations and
+// "assigned to me" are flags, reminders are push, digest or off.
+func (n *Notifier) announce(snd *sender.Sender, l *Link, r *Resource, p settings.EffectivePrefs) {
+	reminded, escalated, reassigned := n.cards.observe(l.ChatID, r)
+	mine := r.Assignee == l.UserID
+	switch {
+	case escalated && p.Escalations:
+		n.enqueueAlert(snd, l, r, "Escalated")
+	case reassigned && mine && p.AssignedToMe:
+		n.enqueueAlert(snd, l, r, "Assigned to you")
+	case reminded && p.Reminders == settings.DeliveryPush:
+		n.enqueueAlert(snd, l, r, "Reminder")
+	case reminded && p.Reminders == settings.DeliveryDigest:
+		if l.Zone != nil && p.Digest {
+			n.digest.add(l.ID, r, secReminders, n.o.Now())
+		}
+	}
+}
+
+// enqueueAlert sends a short message about a pending action. Like a card it is checked and rendered at send time, and it
+// carries the title only: the body is the Mini App's.
+func (n *Notifier) enqueueAlert(snd *sender.Sender, l *Link, r *Resource, what string) {
+	chat, linkID, res := l.ChatID, l.ID, *r
+	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: sender.NeedsYou, Key: "alert:" + what + ":" + r.String(),
+		Send: func(ctx context.Context, c *botapi.Client) error {
+			cur := n.currentLink(linkID, chat)
+			if cur == nil || !n.stillMay(linkID, chat, &res) {
+				return nil
+			}
+			head := what + ": " + res.Label
+			text := head + "\n" + clip(oneLine(res.Title), maxTitle)
+			_, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, DisableNotification: n.silent(cur, n.o.Now()),
+				Entities: []botapi.MessageEntity{{Type: "bold", Offset: 0, Length: len(utf16.Encode([]rune(head)))}}, ProtectContent: true})
+			if err == nil {
+				n.cards.touch(linkID, chat, &res, n.o.Now()) // the mapping's time carries the announcement across a restart
+			}
+			return err
+		}})
+	if err != nil {
+		n.log.Debug("telegram notifier: alert refused", slog.String("error", err.Error()))
 	}
 }
 
@@ -396,21 +464,43 @@ func (n *Notifier) may(l *Link, r *Resource, set settings.Settings, now time.Tim
 
 var priorityRank = map[string]int{"low": 0, "normal": 1, "high": 2, "urgent": 3}
 
-// wants applies the preferences to a new card.
-func wants(p settings.EffectivePrefs, r *Resource) bool {
+// delivery applies the preferences to a new notification: push, digest or off. An action assigned to the link's user
+// always counts when "assigned to me" is on, whatever its priority; other new actions need "new actions" and the
+// minimum priority.
+func delivery(p settings.EffectivePrefs, r *Resource, userID string) string {
+	push := func(ok bool) string {
+		if ok {
+			return settings.DeliveryPush
+		}
+		return settings.DeliveryOff
+	}
 	switch r.Kind {
 	case KindAction:
-		return p.NewActions && priorityRank[r.Priority] >= priorityRank[p.MinPriority]
+		if r.Assignee != "" && r.Assignee == userID && p.AssignedToMe {
+			return settings.DeliveryPush
+		}
+		return push(p.NewActions && priorityRank[r.Priority] >= priorityRank[p.MinPriority])
 	case KindInbox:
-		return p.InboxItems == settings.DeliveryPush
+		return p.InboxItems
 	case KindTaskReview:
-		return p.TasksInReview == settings.DeliveryPush
+		return p.TasksInReview
 	case KindFailedRun:
-		return p.FailedRuns == settings.DeliveryPush
+		return p.FailedRuns
 	case KindMessage:
-		return p.OperatorMessages
+		return push(p.OperatorMessages)
 	}
-	return false
+	return settings.DeliveryOff
+}
+
+// digestSection is where a resource that goes to the digest is listed.
+func digestSection(r *Resource) int {
+	switch r.Kind {
+	case KindTaskReview:
+		return secTasks
+	case KindFailedRun:
+		return secRuns
+	}
+	return secInbox
 }
 
 func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) {
@@ -430,15 +520,16 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 		Send: func(ctx context.Context, c *botapi.Client) error {
 			// The send may run long after it was queued (behind a chat's rate limit): access is checked again, from
 			// memory, so a revoked link, grant, mute or hidden space never gets a card that was queued before.
-			if !n.stillMay(linkID, chat, &res) {
+			cur := n.currentLink(linkID, chat)
+			if cur == nil || !n.stillMay(linkID, chat, &res) {
 				return nil
 			}
 			// The card is rendered here, from the space's current content level: a body queued at "full" is never sent
 			// after the space was lowered to "summary" while it waited.
 			full := n.o.Policy.Space(res.SpaceID).ContentLevel == settings.ContentFull
 			text, entities := renderCard(&res, full)
-			protect := full && res.Detail != "" // plan 3.8: a card with a body can't be forwarded or saved
-			return n.cards.upsert(ctx, c, linkID, chat, &res, res.SpaceID, text, entities, protect)
+			protect := full && res.Detail != ""                                                                               // plan 3.8: a card with a body can't be forwarded or saved
+			return n.cards.upsert(ctx, c, linkID, chat, &res, res.SpaceID, text, entities, protect, n.silent(cur, n.o.Now())) // quiet hours: no sound
 		}})
 	if err != nil {
 		if done != nil {
@@ -454,13 +545,22 @@ func (n *Notifier) stillMay(linkID string, chat int64, r *Resource) bool {
 	if !n.o.Policy.Space(r.SpaceID).Visible() {
 		return false
 	}
+	l := n.currentLink(linkID, chat)
+	return l != nil && n.may(l, r, n.o.Policy.Current(), n.o.Now())
+}
+
+// currentLink is the link as it is now (nil: gone, or moved to another chat).
+func (n *Notifier) currentLink(linkID string, chat int64) *Link {
 	links := n.o.Links.Snapshot()
 	for i := range links {
 		if links[i].ID == linkID {
-			return links[i].ChatID == chat && n.may(&links[i], r, n.o.Policy.Current(), n.o.Now())
+			if links[i].ChatID != chat {
+				return nil
+			}
+			return &links[i]
 		}
 	}
-	return false
+	return nil
 }
 
 // overflow sends one "many changes" message per chat that may read one of the window's spaces.
