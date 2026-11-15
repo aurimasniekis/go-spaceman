@@ -166,6 +166,11 @@ type Agent struct {
 	limitSend   sync.Mutex
 	limitTimers map[string]*time.Timer
 	limitFiles  map[string]os.FileInfo
+	// statusSnaps are the latest status-line snapshots and failureClasses the latest non-limit StopFailure class of
+	// each run, by run ID (hooks.go); both are dropped when the run ends.
+	statusSnaps    map[string]StatusObservation
+	failureClasses map[string]string
+	stopScans      map[string]time.Time
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.

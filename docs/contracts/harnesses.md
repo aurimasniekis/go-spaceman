@@ -594,6 +594,18 @@ Quota board).
 - Claude Code's retry count comes from `CLAUDE_CODE_MAX_RETRIES` (default 10 attempts, as observed); SpaceMan doesn't
   set it.
 
+## Status line and StopFailure hook (2.1.325, live, no credentials)
+
+- Print mode (`claude -p`) never runs the `statusLine` command. Interactive Claude Code under a pseudo-terminal runs it at
+  session start, before any model call, with the documented JSON on stdin: `session_id`, `transcript_path`, `cwd`,
+  `model.{id,display_name}`, `version`, `cost.*`, `context_window.*`, `workspace.*`. Before the first response
+  `context_window.used_percentage` and `current_usage` are `null` and `rate_limits` is absent, so the node's allowlist
+  treats `null` as absent. `resets_at` is read as Unix seconds and dropped when outside 1e9–4e9 (not yet seen in a live
+  payload; K-17).
+- Opt-in check: `SPACEMAN_REAL=1 go test -tags real ./test/real -run TestRealClaudeStatusLineWrapper` (needs `claude`, `go`
+  and `script`). It covers the status line only; a live `StopFailure` was not triggered (it needs an API error), so that
+  hook is *tested (simulated)*, not externally verified.
+
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |
 |---|---|---|

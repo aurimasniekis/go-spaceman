@@ -126,6 +126,76 @@ func denyPermissionDialogs(own map[string]any, agentBinary string) {
 	own["hooks"] = hooks
 }
 
+// ClaudeStopFailureHookCommand is the shell command of SpaceMan's StopFailure hook. It ends with `|| true` and drops its
+// stderr: whatever happens to the agent binary or its socket, the hook exits 0 at once and Claude Code is not affected.
+func ClaudeStopFailureHookCommand(c Context) string {
+	return shellQuote(c.AgentBinary) + " hook stop-failure --run " + shellQuote(c.RunID) + " --socket " + shellQuote(c.BridgeSocket) +
+		" 2>/dev/null || true"
+}
+
+// ClaudeStatusLineCommand is the shell command of SpaceMan's status line. wrap is the profile's own status-line command
+// ("" when it has none), which the wrapper runs and prints.
+func ClaudeStatusLineCommand(c Context, wrap string) string {
+	cmd := shellQuote(c.AgentBinary) + " statusline --run " + shellQuote(c.RunID) + " --socket " + shellQuote(c.BridgeSocket)
+	if wrap != "" {
+		cmd += " --wrap " + shellQuote(wrap)
+	}
+	return cmd + " 2>/dev/null || true"
+}
+
+// ClaudeStatusLineRefresh is the status line's refreshInterval in seconds, so the subscription windows are sampled
+// while a run is idle.
+const ClaudeStatusLineRefresh = 60
+
+// addStopFailureHook appends SpaceMan's StopFailure hook (spaceman-agent hook stop-failure) to the run's hooks, after the
+// profile's own, once. The hook is fire-and-forget (Claude Code ignores its output and exit code) and only reports the
+// error class to the node agent, which scans for a usage limit at once.
+func addStopFailureHook(own map[string]any, c Context) {
+	command := ClaudeStopFailureHookCommand(c)
+	hooks := map[string]any{}
+	if cur, ok := own["hooks"].(map[string]any); ok {
+		for k, v := range cur {
+			hooks[k] = v
+		}
+	}
+	var groups []any
+	switch l := hooks["StopFailure"].(type) {
+	case []any:
+		groups = append(groups, l...)
+	case []map[string]any:
+		for _, g := range l {
+			groups = append(groups, g)
+		}
+	}
+	for _, g := range groups {
+		if hasHookCommand(g, command) {
+			own["hooks"] = hooks
+			return
+		}
+	}
+	groups = append(groups, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 5}}})
+	hooks["StopFailure"] = groups
+	own["hooks"] = hooks
+}
+
+// wrapStatusLine sets the run's statusLine to SpaceMan's wrapper. A command status line of the profile is kept as the
+// wrapped command, so the operator still sees it; anything else of the profile's statusLine is replaced.
+func wrapStatusLine(own map[string]any, c Context) {
+	wrap := ""
+	line := map[string]any{"refreshInterval": ClaudeStatusLineRefresh}
+	if cur, ok := own["statusLine"].(map[string]any); ok {
+		if t, _ := cur["type"].(string); t == "command" {
+			wrap, _ = cur["command"].(string)
+			// The profile's layout (padding, its own refreshInterval) stays.
+			for k, v := range cur {
+				line[k] = v
+			}
+		}
+	}
+	line["type"], line["command"] = "command", ClaudeStatusLineCommand(c, wrap)
+	own["statusLine"] = line
+}
+
 // hasHookCommand reports whether a hooks matcher group already runs command.
 func hasHookCommand(group any, command string) bool {
 	g, ok := group.(map[string]any)
@@ -380,6 +450,8 @@ func (Claude) Build(c Context) (Launch, error) {
 	}
 	denyTerminalPrompts(own)
 	denyPermissionDialogs(own, c.AgentBinary)
+	addStopFailureHook(own, c)
+	wrapStatusLine(own, c)
 	addSpaceDirectory(own, c.SpaceDir, c.ConfigDir, c.SpaceInstances)
 	// The run's own auto memory lives outside the space folder, since every instance's projects folder is denied to
 	// the file tools; Claude Code lets its tools write its auto memory folder without a dialog (verified with Claude

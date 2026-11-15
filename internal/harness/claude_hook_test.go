@@ -17,9 +17,14 @@ import (
 
 // spacemanHooks is the hooks key a run gets from SpaceMan when its profile has none (ADR-0068).
 func spacemanHooks() map[string]any {
-	return map[string]any{"PermissionRequest": []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{
-		"type": "command", "command": ClaudePermissionHookCommand("/opt/spaceman/spaceman-agent"), "timeout": 30,
-	}}}}}
+	return map[string]any{
+		"PermissionRequest": []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{
+			"type": "command", "command": ClaudePermissionHookCommand("/opt/spaceman/spaceman-agent"), "timeout": 30,
+		}}}},
+		"StopFailure": []any{map[string]any{"hooks": []any{map[string]any{
+			"type": "command", "command": "'/opt/spaceman/spaceman-agent' hook stop-failure --run 'run_1' --socket '/run/sm/bridge.sock' 2>/dev/null || true", "timeout": 5,
+		}}}},
+	}
 }
 
 // withCreds is rules followed by the deny rules for the space's login files and the instances' harness configuration
@@ -81,7 +86,8 @@ func TestClaudePreventsPermissionDialogs(t *testing.T) {
 			t.Fatal(err)
 		}
 		own = l.OwnJSON[cfgSettings]
-		wantHooks := map[string]any{"PermissionRequest": []any{operatorHook, ours}, "PreToolUse": []any{guard}}
+		wantHooks := map[string]any{"PermissionRequest": []any{operatorHook, ours}, "PreToolUse": []any{guard},
+			"StopFailure": spacemanHooks()["StopFailure"]}
 		if !reflect.DeepEqual(own["hooks"], wantHooks) {
 			t.Fatalf("%s: hooks %v", kind, own["hooks"])
 		}
@@ -347,5 +353,49 @@ func TestClaudePermissionRequestHook(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &o); err != nil || o["hookSpecificOutput"]["decision"].(map[string]any)["behavior"] != "deny" ||
 		o["hookSpecificOutput"]["decision"].(map[string]any)["message"] != ClaudePermissionDenyMessage {
 		t.Fatalf("big input: %s %v", out.String(), err)
+	}
+}
+
+// spacemanStatusLine is the statusLine key a run gets, wrapping the profile's own command when wrap is set.
+func spacemanStatusLine(wrap string) map[string]any {
+	cmd := "'/opt/spaceman/spaceman-agent' statusline --run 'run_1' --socket '/run/sm/bridge.sock'"
+	if wrap != "" {
+		cmd += " --wrap " + shellQuote(wrap)
+	}
+	return map[string]any{"type": "command", "command": cmd + " 2>/dev/null || true", "refreshInterval": 60}
+}
+
+// The StopFailure hook and the status-line wrapper are SpaceMan's on every run; the profile's own StopFailure hooks are
+// kept, and its command status line is wrapped, never lost.
+func TestClaudeStatusLineAndStopFailureWiring(t *testing.T) {
+	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
+	own := func(cs proto.ClaudeSettings) map[string]any {
+		l, err := Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: cs}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l.OwnJSON[cfgSettings]
+	}
+	if got := own(nil)["statusLine"]; !reflect.DeepEqual(got, spacemanStatusLine("")) {
+		t.Fatalf("no profile status line: %v", got)
+	}
+	// A shell command with quotes survives as one argument of --wrap.
+	wrap := `~/bin/line.sh --name "it's" $HOME`
+	got := own(proto.ClaudeSettings{"statusLine": map[string]any{"type": "command", "command": wrap, "padding": 2}})["statusLine"]
+	wantLine := spacemanStatusLine(wrap)
+	wantLine["padding"] = 2
+	if !reflect.DeepEqual(got, wantLine) {
+		t.Fatalf("wrapped: %v", got)
+	}
+	// A status line that is not a command is replaced, not wrapped.
+	if got := own(proto.ClaudeSettings{"statusLine": map[string]any{"type": "static", "command": "x"}})["statusLine"]; !reflect.DeepEqual(got, spacemanStatusLine("")) {
+		t.Fatalf("non-command: %v", got)
+	}
+	// The profile's own StopFailure hook stays first; ours is added once.
+	mine := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/usr/local/bin/notify"}}}
+	h := own(proto.ClaudeSettings{"hooks": map[string]any{"StopFailure": []any{mine}}})["hooks"].(map[string]any)
+	want := []any{mine, spacemanHooks()["StopFailure"].([]any)[0]}
+	if !reflect.DeepEqual(h["StopFailure"], want) {
+		t.Fatalf("StopFailure %v", h["StopFailure"])
 	}
 }

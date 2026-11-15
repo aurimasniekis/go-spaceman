@@ -46,7 +46,7 @@ func newRoot() *cobra.Command {
 	g := &globals{}
 	root := &cobra.Command{Use: "spaceman-agent", Short: "SpaceMan node agent", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVarP(&g.configPath, "config", "c", os.Getenv("SPACEMAN_AGENT_CONFIG"), "configuration file (env SPACEMAN_AGENT_CONFIG)")
-	root.AddCommand(versionCmd(), enrollCmd(g), runCmd(g), launchCmd(), leaseGuardCmd(), mcpBridgeCmd(), hookCmd())
+	root.AddCommand(versionCmd(), enrollCmd(g), runCmd(g), launchCmd(), leaseGuardCmd(), mcpBridgeCmd(), hookCmd(), statuslineCmd())
 	return root
 }
 
@@ -281,5 +281,37 @@ func hookCmd() *cobra.Command {
 			return harness.ClaudePermissionRequestHook(cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	})
+	var run, socket string
+	stop := &cobra.Command{
+		Use:   "stop-failure --run RUN --socket SOCKET",
+		Short: "Claude Code StopFailure hook: tell the node agent the error class so it scans for a usage limit at once",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Best effort, never an error: Claude Code ignores the hook's result and must not be held up by it.
+			agent.StopFailureHook(cmd.Context(), cmd.InOrStdin(), socket, run)
+			return nil
+		},
+	}
+	stop.Flags().StringVar(&run, "run", "", "run ID")
+	stop.Flags().StringVar(&socket, "socket", "", "agent bridge socket")
+	cmd.AddCommand(stop)
+	return cmd
+}
+
+func statuslineCmd() *cobra.Command {
+	var run, socket, wrap string
+	cmd := &cobra.Command{
+		Use:    "statusline --run RUN --socket SOCKET [--wrap COMMAND]",
+		Short:  "Internal: Claude Code status line; forwards allowlisted numbers to the node agent and prints the profile's own status line",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			agent.StatusLine(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), socket, run, wrap)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&run, "run", "", "run ID")
+	cmd.Flags().StringVar(&socket, "socket", "", "agent bridge socket")
+	cmd.Flags().StringVar(&wrap, "wrap", "", "the profile's own status-line command to run and print")
 	return cmd
 }
