@@ -711,3 +711,20 @@ func TestAcceptRefusesPlantedLegacyTask(t *testing.T) {
 		t.Fatalf("request moved on despite the planted task %s: %+v", planted.ID, in)
 	}
 }
+
+// ADR-0088: a retried Accept whose first attempt created the task (then failed before recording the decision) links that
+// same task, because it carries this request's origin.
+func TestAcceptRetryLinksOwnTask(t *testing.T) {
+	f := newFx(t)
+	f.allow("spc_a", "spc_b", Inbound{Discover: true, Questions: true, Delegation: true, Disclosure: DiscloseSummary}, all)
+	r, err := f.ask(pa, RequestInput{To: "bravo", Kind: Delegation, Title: "Rotate the key", Body: "Please rotate it.", DedupKey: "rot-retry"})
+	must(t, err)
+	first, _, err := f.q.Create(f.ctx, audit.System, "spc_b", queue.CreateInput{Title: "Rotate the key", Status: queue.Ready,
+		OriginKind: originKind, OriginID: r.ID, DedupKey: "xspace:" + r.ID, Internal: true})
+	must(t, err)
+	acc, err := f.svc.Accept(f.ctx, audit.Actor{Type: audit.ActorAgent, ID: ctlB}, "spc_b", r.ID, &TaskInput{Objective: "Rotate it", Ready: true})
+	must(t, err)
+	if acc.State != Accepted || acc.LocalTaskID != first.ID {
+		t.Fatalf("retry linked %q, want the request's own task %s: %+v", acc.LocalTaskID, first.ID, acc)
+	}
+}
