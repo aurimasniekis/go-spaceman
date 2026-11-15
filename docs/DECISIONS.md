@@ -5452,10 +5452,12 @@
     be a problem.
   - Deleting resolved cards (Q4) or using silent edits for reminders (Q9): see decisions 4 and 9.
 - **Consequences:** Topic creation becomes a per-link action, and a user can have no topic at all. The Bot API surface
-  grows by `editForumTopic`, `pinChatMessage`, `unpinChatMessage` and `deleteMessages` (T1, no behaviour change). Every
-  fact the design relies on is in the contract with its source. Nothing has been observed against a real bot yet.
+  grows by `editForumTopic`, `pinChatMessage`, `unpinChatMessage` and `deleteMessages` (T1, no behaviour change). The
+  facts the design relies on are recorded in the contract with a source; the new rows were checked against the Bot API
+  page on 2026-11-15. Nothing has been observed against a real bot yet.
 - **Evidence:** T1: `internal/telegram/botapi` `TestGetMeTopicFlags`, `TestEditForumTopic`, `TestMessagesInRecordsThread`,
-  `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags`. All of it is
+  `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` (it covers the flags after a reconfigure only; the reset to false on a disable or a
+  failed getMe is not tested). All of it is
   simulated (`internal/telegram/tgtest`); the real-bot run is TG-14 (plan §6.3).
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
