@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
 
 ## [0.1.5] - 2026-11-15
