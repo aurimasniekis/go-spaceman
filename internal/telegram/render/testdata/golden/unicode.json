@@ -1,0 +1,88 @@
+{
+  "parts": [
+    {
+      "text": "Emoji 😀 bold 👍🏽 skin and flags 🇱🇹 ZWJ 👩‍💻 family 👨‍👩‍👧. CJK 漢字かな 한국어 combining é (e + U+0301) ñ. Math 𝔘𝔫𝔦𝔠𝔬𝔡𝔢 𝒸ℴ𝒹ℯ link 🔗.",
+      "entities": [
+        {
+          "type": "bold",
+          "offset": 9,
+          "length": 14,
+          "covers": "bold 👍🏽 skin"
+        },
+        {
+          "type": "italic",
+          "offset": 39,
+          "length": 25,
+          "covers": "ZWJ 👩‍💻 family 👨‍👩‍👧"
+        },
+        {
+          "type": "bold",
+          "offset": 75,
+          "length": 3,
+          "covers": "한국어"
+        },
+        {
+          "type": "strikethrough",
+          "offset": 104,
+          "length": 1,
+          "covers": "ñ"
+        },
+        {
+          "type": "code",
+          "offset": 127,
+          "length": 6,
+          "covers": "𝒸ℴ𝒹ℯ"
+        },
+        {
+          "type": "text_link",
+          "offset": 134,
+          "length": 7,
+          "url": "https://example.com/%F0%9F%98%80",
+          "covers": "link 🔗"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "paragraph",
+        "text": [
+          "Emoji 😀 ",
+          {
+            "type": "bold",
+            "text": "bold 👍🏽 skin"
+          },
+          " and flags 🇱🇹 ",
+          {
+            "type": "italic",
+            "text": "ZWJ 👩‍💻 family 👨‍👩‍👧"
+          },
+          ". CJK 漢字かな ",
+          {
+            "type": "bold",
+            "text": "한국어"
+          },
+          " combining é (e + U+0301) ",
+          {
+            "type": "strikethrough",
+            "text": "ñ"
+          },
+          ". Math 𝔘𝔫𝔦𝔠𝔬𝔡𝔢 ",
+          {
+            "type": "code",
+            "text": "𝒸ℴ𝒹ℯ"
+          },
+          " ",
+          {
+            "type": "url",
+            "text": "link 🔗",
+            "url": "https://example.com/%F0%9F%98%80"
+          },
+          "."
+        ]
+      }
+    ]
+  },
+  "markdown": "Emoji 😀 **bold 👍🏽 skin** and flags 🇱🇹 *ZWJ 👩‍💻 family 👨‍👩‍👧*. CJK 漢字かな **한국어** combining é (e + U+0301) ~~ñ~~. Math 𝔘𝔫𝔦𝔠𝔬𝔡𝔢 `𝒸ℴ𝒹ℯ` [link 🔗](<https://example.com/%F0%9F%98%80>)."
+}

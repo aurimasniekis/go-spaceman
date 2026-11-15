@@ -1,0 +1,65 @@
+{
+  "parts": [
+    {
+      "text": "A claim[1] and another[2], plus a missing one[^nope].\n\n──────────\n[1] The source.\n[2] Second note.",
+      "entities": [
+        {
+          "type": "italic",
+          "offset": 74,
+          "length": 6,
+          "covers": "source"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "paragraph",
+        "text": [
+          "A claim",
+          "[1]",
+          " and another",
+          "[2]",
+          ", plus a missing one[^nope]."
+        ]
+      },
+      {
+        "type": "divider"
+      },
+      {
+        "type": "list",
+        "items": [
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": [
+                  "The ",
+                  {
+                    "type": "italic",
+                    "text": "source"
+                  },
+                  "."
+                ]
+              }
+            ],
+            "value": 1,
+            "type": "1"
+          },
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "Second note."
+              }
+            ],
+            "value": 2,
+            "type": "1"
+          }
+        ]
+      }
+    ]
+  },
+  "markdown": "A claim\\[1\\] and another\\[2\\], plus a missing one\\[^nope\\].\n\n──────────\\\n\\[1\\] The *source*.\\\n\\[2\\] Second note."
+}

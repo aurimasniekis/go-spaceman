@@ -157,6 +157,9 @@ Patch release on top of v0.1.2. It makes no production-readiness claim (docs/REL
 
 ### Added
 
+- Telegram renderer (ADR-0083, TG-5; not usable until the bot ships): `internal/telegram/render` turns Markdown into
+  Telegram message entities (UTF-16 offsets, links limited to an allowlist, 4096/1024-character splitting with at most
+  four parts) and turns inbound entities back into Markdown. It isn't wired to a sender yet.
 - `GET /api/v1/watch?live=1` starts the change feed at the newest change, without replaying the retained history, and
   sends a first `position` event with that change's ID.
 

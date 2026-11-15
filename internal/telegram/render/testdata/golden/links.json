@@ -1,0 +1,164 @@
+{
+  "parts": [
+    {
+      "text": "ok mail http js data tg rel noscheme userinfo file vb JS Autolinks: https://example.org/x, www.example.net, https://example.com/auto, someone@example.com. remote image js image image bold code link",
+      "entities": [
+        {
+          "type": "text_link",
+          "offset": 0,
+          "length": 2,
+          "url": "https://example.com/a_b?c=d&e=f",
+          "covers": "ok"
+        },
+        {
+          "type": "text_link",
+          "offset": 3,
+          "length": 4,
+          "url": "mailto:a@example.com",
+          "covers": "mail"
+        },
+        {
+          "type": "text_link",
+          "offset": 8,
+          "length": 4,
+          "url": "http://example.com",
+          "covers": "http"
+        },
+        {
+          "type": "text_link",
+          "offset": 68,
+          "length": 21,
+          "url": "https://example.org/x",
+          "covers": "https://example.org/x"
+        },
+        {
+          "type": "text_link",
+          "offset": 91,
+          "length": 15,
+          "url": "http://www.example.net",
+          "covers": "www.example.net"
+        },
+        {
+          "type": "text_link",
+          "offset": 108,
+          "length": 24,
+          "url": "https://example.com/auto",
+          "covers": "https://example.com/auto"
+        },
+        {
+          "type": "text_link",
+          "offset": 134,
+          "length": 19,
+          "url": "mailto:someone@example.com",
+          "covers": "someone@example.com"
+        },
+        {
+          "type": "text_link",
+          "offset": 155,
+          "length": 12,
+          "url": "https://example.com/i.png",
+          "covers": "remote image"
+        },
+        {
+          "type": "text_link",
+          "offset": 177,
+          "length": 5,
+          "url": "https://example.com/noalt.png",
+          "covers": "image"
+        },
+        {
+          "type": "bold",
+          "offset": 183,
+          "length": 14,
+          "covers": "bold code link"
+        },
+        {
+          "type": "text_link",
+          "offset": 183,
+          "length": 14,
+          "url": "https://example.com/b",
+          "covers": "bold code link"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "paragraph",
+        "text": [
+          {
+            "type": "url",
+            "text": "ok",
+            "url": "https://example.com/a_b?c=d\u0026e=f"
+          },
+          " ",
+          {
+            "type": "url",
+            "text": "mail",
+            "url": "mailto:a@example.com"
+          },
+          " ",
+          {
+            "type": "url",
+            "text": "http",
+            "url": "http://example.com"
+          },
+          " js data tg rel noscheme userinfo file vb JS Autolinks: ",
+          {
+            "type": "url",
+            "text": "https://example.org/x",
+            "url": "https://example.org/x"
+          },
+          ", ",
+          {
+            "type": "url",
+            "text": "www.example.net",
+            "url": "http://www.example.net"
+          },
+          ", ",
+          {
+            "type": "url",
+            "text": "https://example.com/auto",
+            "url": "https://example.com/auto"
+          },
+          ", ",
+          {
+            "type": "url",
+            "text": "someone@example.com",
+            "url": "mailto:someone@example.com"
+          },
+          ". ",
+          {
+            "type": "url",
+            "text": "remote image",
+            "url": "https://example.com/i.png"
+          },
+          " js image ",
+          {
+            "type": "url",
+            "text": "image",
+            "url": "https://example.com/noalt.png"
+          },
+          " ",
+          {
+            "type": "url",
+            "text": {
+              "type": "bold",
+              "text": [
+                "bold ",
+                {
+                  "type": "code",
+                  "text": "code"
+                },
+                " link"
+              ]
+            },
+            "url": "https://example.com/b"
+          }
+        ]
+      }
+    ]
+  },
+  "markdown": "[ok](<https://example.com/a_b?c=d&e=f>) [mail](<mailto:a@example.com>) [http](<http://example.com>) js data tg rel noscheme userinfo file vb JS Autolinks: [https://example.org/x](<https://example.org/x>), [www.example.net](<http://www.example.net>), [https://example.com/auto](<https://example.com/auto>), [someone@example.com](<mailto:someone@example.com>). [remote image](<https://example.com/i.png>) js image [image](<https://example.com/noalt.png>) [**bold code link**](<https://example.com/b>)"
+}
