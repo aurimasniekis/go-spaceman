@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type HumanAction } from '@/api/client'
 import { useMe } from '@/api/queries'
+import { isMiniApp } from '@/api/session'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
@@ -90,7 +91,7 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
         ))}
         {actions.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">{empty}</Text>}
       </Stack>
-      <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size="lg" title="Human action">
+      <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size={isMiniApp() ? "100%" : "lg"} title="Human action">
         {current && <ActionDetail action={current} spaceName={spaceNames?.[current.space_id]} onChanged={setOpenState} />}
       </Drawer>
     </>

@@ -248,6 +248,8 @@ func TestPutValidation(t *testing.T) {
 		{make([]string, MaxAllowlist+1), "more than 32"},
 		{[]string{"::ffff:149.154.160.0/116"}, "IPv4-mapped"},
 		{[]string{"149.154.160.0/20", "::ffff:0:0/96"}, "IPv4-mapped"},
+		// A non-canonical mapped prefix gets the mapped-range advice: its "canonical form" would still be rejected.
+		{[]string{"::ffff:149.154.160.1/116"}, "IPv4-mapped"},
 	} {
 		fieldMsg(t, put(Input{BotToken: token, WebhookIPAllowlist: c.list}), "webhook_ip_allowlist", c.want)
 	}
@@ -595,6 +597,82 @@ func TestRetryAfterWrite(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if got := len(e.tg.Calls("getMe")); got != n || e.svc.Status(ctx).WebhookStatus != StateError {
 		t.Fatalf("a refused token was retried (%d -> %d getMe calls)", n, got)
+	}
+}
+
+// A write that applies the newest state ends the retry loop of an older attempt at once, instead of leaving it asleep
+// until its next (up to retryMax) wake-up.
+func TestWriteEndsSupersededRetryLoop(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.svc.retryMin, e.svc.retryMax = time.Hour, time.Hour
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.tg.FailNext("getMe", http.StatusBadGateway, "transient", 0)
+	e.svc.Start(ctx)
+	e.svc.mu.Lock()
+	done := e.svc.run.retryDone
+	e.svc.mu.Unlock()
+	if done == nil {
+		t.Fatal("a transient start failure started no retry loop")
+	}
+	if got := e.put(b.Version, Input{Enabled: true}); got.WebhookStatus != StateOK {
+		t.Fatalf("put: %+v", got.Health)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the retry loop of the superseded attempt is still running")
+	}
+	e.svc.mu.Lock()
+	left := e.svc.run.retryStop != nil
+	e.svc.mu.Unlock()
+	if left {
+		t.Fatal("the stopped retry loop is still registered")
+	}
+}
+
+// Start's attempt fails, then a write reconfigures the bot (and its own failure starts a retry loop) before Start gets
+// to start its loop: Start's loop is stale and must neither replace nor stop the write's.
+func TestStaleStartRetryDoesNotReplaceWritesLoop(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.svc.retryMin, e.svc.retryMax = time.Hour, time.Hour
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.svc.mu.Lock()
+	e.svc.run.baseCtx = ctx
+	e.svc.mu.Unlock()
+
+	e.tg.FailNext("getMe", http.StatusBadGateway, "transient", 0)
+	retry, gen := e.svc.startOnce(ctx, 0) // Start's attempt, before it starts its loop
+	if !retry {
+		t.Fatal("a transient failure is not retried")
+	}
+	e.tg.FailNext("getMe", http.StatusBadGateway, "transient", 0)
+	if got := e.put(b.Version, Input{Enabled: true}); got.WebhookStatus != StateError {
+		t.Fatalf("put: %+v", got.Health)
+	}
+	e.svc.mu.Lock()
+	writeDone := e.svc.run.retryDone
+	e.svc.mu.Unlock()
+	if writeDone == nil {
+		t.Fatal("the failed write started no retry loop")
+	}
+
+	e.svc.mu.Lock()
+	e.svc.startRetryLocked(ctx, gen) // Start's late call with the stale generation
+	after := e.svc.run.retryDone
+	e.svc.mu.Unlock()
+	if after != writeDone {
+		t.Fatal("a stale Start loop replaced the write's retry loop")
+	}
+	select {
+	case <-writeDone:
+		t.Fatal("a stale Start loop stopped the write's retry loop")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

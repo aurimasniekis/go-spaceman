@@ -62,6 +62,7 @@ import { Route as SpacesSpaceIdInboxIndexRouteImport } from './routes/spaces.$sp
 import { Route as SpacesSpaceIdInboxItemIdRouteImport } from './routes/spaces.$spaceId.inbox.$itemId'
 import { Route as SpacesSpaceIdRunsIndexRouteImport } from './routes/spaces.$spaceId.runs.index'
 import { Route as SpacesSpaceIdRunsRunIdRouteImport } from './routes/spaces.$spaceId.runs.$runId'
+import { Route as SpacesSpaceIdInboxItemIdDiagramRouteImport } from './routes/spaces.$spaceId.inbox_.$itemId.diagram'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -333,6 +334,12 @@ const SpacesSpaceIdRunsRunIdRoute = SpacesSpaceIdRunsRunIdRouteImport.update({
   path: '/runs/$runId',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdInboxItemIdDiagramRoute =
+  SpacesSpaceIdInboxItemIdDiagramRouteImport.update({
+    id: '/inbox_/$itemId/diagram',
+    path: '/inbox/$itemId/diagram',
+    getParentRoute: () => SpacesSpaceIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -388,6 +395,7 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId/events/': typeof SpacesSpaceIdEventsIndexRoute
   '/spaces/$spaceId/inbox/': typeof SpacesSpaceIdInboxIndexRoute
   '/spaces/$spaceId/runs/': typeof SpacesSpaceIdRunsIndexRoute
+  '/spaces/$spaceId/inbox/$itemId/diagram': typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -438,6 +446,7 @@ export interface FileRoutesByTo {
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsIndexRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxIndexRoute
   '/spaces/$spaceId/runs': typeof SpacesSpaceIdRunsIndexRoute
+  '/spaces/$spaceId/inbox/$itemId/diagram': typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -494,6 +503,7 @@ export interface FileRoutesById {
   '/spaces/$spaceId/events/': typeof SpacesSpaceIdEventsIndexRoute
   '/spaces/$spaceId/inbox/': typeof SpacesSpaceIdInboxIndexRoute
   '/spaces/$spaceId/runs/': typeof SpacesSpaceIdRunsIndexRoute
+  '/spaces/$spaceId/inbox_/$itemId/diagram': typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -551,6 +561,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/events/'
     | '/spaces/$spaceId/inbox/'
     | '/spaces/$spaceId/runs/'
+    | '/spaces/$spaceId/inbox/$itemId/diagram'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -601,6 +612,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/inbox'
     | '/spaces/$spaceId/runs'
+    | '/spaces/$spaceId/inbox/$itemId/diagram'
   id:
     | '__root__'
     | '/'
@@ -656,6 +668,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/events/'
     | '/spaces/$spaceId/inbox/'
     | '/spaces/$spaceId/runs/'
+    | '/spaces/$spaceId/inbox_/$itemId/diagram'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1064,6 +1077,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdRunsRunIdRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/inbox_/$itemId/diagram': {
+      id: '/spaces/$spaceId/inbox_/$itemId/diagram'
+      path: '/inbox/$itemId/diagram'
+      fullPath: '/spaces/$spaceId/inbox/$itemId/diagram'
+      preLoaderRoute: typeof SpacesSpaceIdInboxItemIdDiagramRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
   }
 }
 
@@ -1123,6 +1143,7 @@ interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
   SpacesSpaceIdRunsIndexRoute: typeof SpacesSpaceIdRunsIndexRoute
+  SpacesSpaceIdInboxItemIdDiagramRoute: typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 
 const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
@@ -1141,6 +1162,7 @@ const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,
   SpacesSpaceIdRunsIndexRoute: SpacesSpaceIdRunsIndexRoute,
+  SpacesSpaceIdInboxItemIdDiagramRoute: SpacesSpaceIdInboxItemIdDiagramRoute,
 }
 
 const SpacesSpaceIdRouteWithChildren = SpacesSpaceIdRoute._addFileChildren(

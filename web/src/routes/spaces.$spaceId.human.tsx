@@ -3,6 +3,7 @@ import { IconPlus } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { api, unwrap } from '@/api/client'
+import { isMiniApp } from '@/api/session'
 import { useState } from 'react'
 import { useHumanSearch, useMe } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
@@ -39,6 +40,8 @@ function SpaceHumanPage() {
   })
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
+  // The Mini App serves no type, policy, permission or creation operations (SM-TG-006): only answering.
+  const mini = isMiniApp()
   const [creating, setCreating] = useState(false)
   const [types, setTypes] = useState(false)
   const [policies, setPolicies] = useState(false)
@@ -49,10 +52,10 @@ function SpaceHumanPage() {
       <SectionHeader title="Human actions" description="Questions, approvals and tasks for people in this space"
         actions={(
           <>
-            <Button variant="default" onClick={() => setPolicies(true)}>Policies</Button>
-            {canWrite && <Button variant="default" onClick={() => setTypes(true)}>Types</Button>}
-            <Button variant="default" onClick={() => setPerms(true)}>Permissions</Button>
-            {canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>}
+            {!mini && <Button variant="default" onClick={() => setPolicies(true)}>Policies</Button>}
+            {!mini && canWrite && <Button variant="default" onClick={() => setTypes(true)}>Types</Button>}
+            {!mini && <Button variant="default" onClick={() => setPerms(true)}>Permissions</Button>}
+            {!mini && canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>}
           </>
         )} />
       <ErrorAlert error={list.error ?? linked.error} />

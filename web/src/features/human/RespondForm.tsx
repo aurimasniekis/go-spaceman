@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type HumanAction } from '@/api/client'
 import { keys } from '@/api/queries'
+import { isMiniApp } from '@/api/session'
 import { errorMessage } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
 import type { ApprovalReq, MessageReq, QuestionReq, TodoReq } from './badges'
@@ -104,7 +105,9 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
             {req.action && <Text size="sm"><b>Requested:</b> {req.action}</Text>}
             {req.details && <MarkdownView source={req.details} spaceId={action.space_id} />}
             {noteComposer('Note', 'Required to deny')}
-            {canDecide ? (
+            {enforced.data && isMiniApp() ? (
+              <Text size="sm" c="dimmed" data-testid="enforced-in-chat">An enforced approval is not decided in the Mini App. Decide it in the chat if this space allows that, or on the web.</Text>
+            ) : canDecide ? (
               <form.Subscribe selector={(s) => s.values.note.trim() !== ''}>
                 {(hasNote) => (
                   <Group justify="flex-end">
