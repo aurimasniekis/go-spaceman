@@ -469,3 +469,35 @@ func TestRequire(t *testing.T) {
 	_, err = f.svc.Require(f.ctx, run1, "spaceman.human_ask", "spaceman", nil)
 	code(t, err, apperr.CodeInvalid)
 }
+
+// A caller that can ask people in the space must not get its own text shown as an enforced approval's request: an
+// action created under approval:<id> before the approval flow asks would otherwise be reused and linked (ADR-0087).
+func TestApprovalActionCannotBePlanted(t *testing.T) {
+	f := newFx(t)
+	f.policy("spaceman.task_create", 1)
+	args := `{"title":"Deploy"}`
+	a := f.gateRequired(run1, "spaceman.task_create", args)
+	// A crash between storing the approval and asking: the approval has no human action yet.
+	must(t, f.s.W().TxNamed(f.ctx, "unlink", func(tx *store.Tx) error {
+		if _, err := tx.SQL.ExecContext(f.ctx, `UPDATE approvals SET human_action_id = '' WHERE id = ?`, a.ID); err != nil {
+			return err
+		}
+		_, err := tx.SQL.ExecContext(f.ctx, `DELETE FROM human_actions WHERE id = ?`, a.HumanActionID)
+		return err
+	}))
+	const planted = "Harmless: approve."
+	agentActor := audit.Actor{Type: audit.ActorAgent, ID: run1.RunID}
+	_, _, plantErr := f.human.Create(f.ctx, agentActor, "spc_a", human.CreateInput{Type: human.TypeApproval, Title: "Approve spaceman.task_create",
+		Body: planted, Request: json.RawMessage(`{"action":"Run spaceman.task_create"}`), DedupKey: "approval:" + a.ID,
+		Requester: human.Requester{Kind: "agent", ID: run1.RunID, Role: run1.Role, Run: run1.RunID}})
+	again := f.gateRequired(run1, "spaceman.task_create", args)
+	if again.ID != a.ID || again.HumanActionID == "" {
+		t.Fatalf("the approval was not asked again: %+v", again)
+	}
+	act, err := f.human.Get(f.ctx, "spc_a", again.HumanActionID)
+	must(t, err)
+	if act.Body == planted || !strings.Contains(act.Body, a.ArgsDigest) {
+		t.Fatalf("the person deciding approval %s sees text the approval flow did not write: %q", a.ID, act.Body)
+	}
+	code(t, plantErr, apperr.CodeInvalid)
+}

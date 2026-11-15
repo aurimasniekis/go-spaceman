@@ -196,7 +196,7 @@ func (sv *Supervisor) attention(ctx context.Context, spaceID, spaceName, kind, b
 		Body:      body,
 		Requester: human.Requester{Kind: "system", Label: "Control supervisor"},
 		Request:   []byte(`{"steps":["Open the space's runs and read the last control run's terminal","Fix the cause (control role, account, budget or node)","Launch control again"]}`),
-		DedupKey:  fmt.Sprintf("%s:%s", kind, sv.clock.Now().Truncate(sv.Window).Format(time.RFC3339))})
+		DedupKey:  fmt.Sprintf("%s:%s", kind, sv.clock.Now().Truncate(sv.Window).Format(time.RFC3339)), Internal: true})
 	if err != nil {
 		sv.log.Warn("raise control attention", obs.Err(err))
 	}

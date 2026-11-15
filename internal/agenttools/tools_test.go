@@ -240,6 +240,11 @@ func TestAttachmentsAndHuman(t *testing.T) {
 		t.Fatalf("visibility: requester %+v, unrelated %+v", mineA, theirs)
 	}
 	code(t, f.call(f.wrk, "spaceman_human_ask", map[string]any{"type": "poll", "title": "x"}, nil), apperr.CodeInvalid)
+	// SpaceMan's own dedup namespaces are refused (ADR-0087): an agent can't plant the action an enforced approval
+	// will show, nor a task a service will reuse.
+	code(t, f.call(f.wrk, "spaceman_human_ask", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"},
+		"dedup_key": "approval:apv_1"}, nil), apperr.CodeInvalid)
+	code(t, f.call(f.ctrl, "spaceman_task_create", map[string]any{"title": "Planted", "dedup_key": "xspace:xsr_1"}, nil), apperr.CodeInvalid)
 }
 
 // The agent tools guide lists every tool, so the documented grants never drift from the registry.
