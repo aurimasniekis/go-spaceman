@@ -8,7 +8,7 @@
 - **Constraint from the operator:** no proxy or gateway for model traffic (not Harbor Pilot, not `claude -p` behind a
   proxy). Runs stay the real interactive Claude Code with real subscription credentials; SpaceMan swaps the
   credentials. (Reading recorded as Q1.)
-- **ADR:** **ADR-0089** in `docs/DECISIONS.md` (landed by T0 on 2026-11-15; the [draft file](2026-11-15-account-switching-adr.md)
+- **ADR:** **ADR-0090** in `docs/DECISIONS.md` (landed by T0 on 2026-11-15; the [draft file](2026-11-15-account-switching-adr.md)
   now only points there).
 - **Builds on:** ADR-0079 (usage limits: detection, holds, keep-alive, park, resume), ADR-0009 (launcher shim),
   ADR-0021 (first-run seed), ADR-0053 (Codex ChatGPT logins), ADR-0068 (the PermissionRequest hook).
