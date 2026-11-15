@@ -555,7 +555,7 @@ func TestMiniAppHostDiffersFromPublicHostWithTrailingDot(t *testing.T) {
 	t.Parallel()
 	for _, public := range []string{"https://central.example.com.", "https://CENTRAL.example.com.:8443/x"} {
 		v := &apperr.Validation{}
-		checkMiniAppHost(v, "central.example.com", public)
+		checkMiniAppHost(v, "central.example.com", public, "")
 		fieldMsg(t, v.Err(), "miniapp_host", "must differ from the host of central's public URL")
 	}
 }
@@ -1018,5 +1018,28 @@ func TestWebhookBaseURL(t *testing.T) {
 	fh := f.query(`SELECT hook_id FROM telegram_bot`)
 	if got := f.tg.Calls("setWebhook")[0].Params["url"]; got != publicURL+updates.WebhookPath+fh {
 		t.Fatalf("fallback webhook url %q", got)
+	}
+}
+
+// A miniapp_host equal to the webhook base host is rejected: the webhook would be routed to the Mini App (404).
+func TestMiniAppHostDiffersFromWebhookBaseHost(t *testing.T) {
+	t.Parallel()
+	v := &apperr.Validation{}
+	checkMiniAppHost(v, "hooks.example.com", "https://central.example.com", "https://HOOKS.example.com:8443/tg")
+	fieldMsg(t, v.Err(), "miniapp_host", "must differ from the host of telegram.webhook_base_url")
+	v = &apperr.Validation{}
+	checkMiniAppHost(v, "tg.example.com", "https://central.example.com", "https://hooks.example.com")
+	if err := v.Err(); err != nil {
+		t.Fatalf("distinct hosts: %v", err)
+	}
+}
+
+// The webhook base's scheme is matched case-insensitively by Put's https check.
+func TestIsHTTPSScheme(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]bool{"https://a.example.com": true, "HTTPS://a.example.com": true, "http://a.example.com": false, "": false, "https://": false} {
+		if got := isHTTPS(in); got != want {
+			t.Errorf("isHTTPS(%q) = %v, want %v", in, got, want)
+		}
 	}
 }

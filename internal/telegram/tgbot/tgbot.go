@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -79,7 +80,7 @@ type Bot struct {
 type Input struct {
 	BotToken           string   `json:"bot_token,omitempty" maxLength:"256" writeOnly:"true" doc:"The token BotFather gave (123456:ABC…). Required on create; empty keeps the stored one. Checked with getMe before it is stored. Never returned"`
 	Enabled            bool     `json:"enabled,omitempty" doc:"Run the bot (default false)"`
-	Mode               string   `json:"mode,omitempty" enum:"webhook,polling," doc:"webhook (default; needs central's public_url to be https) or polling"`
+	Mode               string   `json:"mode,omitempty" enum:"webhook,polling," doc:"webhook (default; needs an https public_url or telegram.webhook_base_url) or polling"`
 	MiniAppHost        string   `json:"miniapp_host,omitempty" maxLength:"253" doc:"The Mini App's host: a lower-case DNS name, not an IP address, without scheme, port or path, and not the host of central's public_url. Empty: Mini App off"`
 	WebhookIPAllowlist []string `json:"webhook_ip_allowlist,omitempty" maxItems:"32" doc:"CIDRs (e.g. 149.154.160.0/20) the webhook accepts requests from, in canonical form; empty: no check. Only safe when the client address behind the proxy is trustworthy"`
 }
@@ -157,6 +158,12 @@ func (svc *Service) webhookBase() string {
 		return svc.o.WebhookBaseURL
 	}
 	return svc.o.PublicURL
+}
+
+// isHTTPS reports whether base is an https URL, whatever the case of the scheme.
+func isHTTPS(base string) bool {
+	u, err := url.Parse(base)
+	return err == nil && u.Scheme == "https" && u.Host != ""
 }
 
 // New returns the service. Call Start once central serves, to bring the configured bot up.
@@ -244,9 +251,16 @@ func NeedsKeyWarning(stored string) string {
 }
 
 // checkMiniAppHost validates miniapp_host with the rules central's telegram.miniapp_host follows too (tghost.Check).
-func checkMiniAppHost(v *apperr.Validation, host, publicURL string) {
+func checkMiniAppHost(v *apperr.Validation, host, publicURL, webhookBaseURL string) {
 	if err := tghost.Check(host, publicURL); err != nil {
 		v.Add("miniapp_host", "%s", err.Error())
+		return
+	}
+	if host == "" || webhookBaseURL == "" {
+		return
+	}
+	if u, err := url.Parse(webhookBaseURL); err == nil && strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), host) {
+		v.Add("miniapp_host", "must differ from the host of telegram.webhook_base_url: central would route the webhook to the Mini App, which answers 404")
 	}
 }
 
@@ -353,10 +367,10 @@ func (svc *Service) Put(ctx context.Context, actor audit.Actor, version int64, i
 	if in.Mode != ModeWebhook && in.Mode != ModePolling {
 		v.Add("mode", "must be webhook or polling")
 	}
-	if in.Enabled && in.Mode == ModeWebhook && !strings.HasPrefix(svc.webhookBase(), "https://") {
+	if in.Enabled && in.Mode == ModeWebhook && !isHTTPS(svc.webhookBase()) {
 		v.Add("mode", "webhook mode needs central's public_url (or telegram.webhook_base_url) to be https (Telegram only calls HTTPS webhooks); use polling")
 	}
-	checkMiniAppHost(v, in.MiniAppHost, svc.o.PublicURL)
+	checkMiniAppHost(v, in.MiniAppHost, svc.o.PublicURL, svc.o.WebhookBaseURL)
 	if in.MiniAppHost != "" && svc.o.MiniAppHost == "" {
 		v.Add("miniapp_host", "can't be stored while telegram.miniapp_host is not set in central's configuration: set telegram.miniapp_host to the Mini App host first (the host is only routed safely when central knows it at start), or leave miniapp_host empty")
 	}

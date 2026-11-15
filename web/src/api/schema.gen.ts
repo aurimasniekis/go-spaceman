@@ -12210,7 +12210,7 @@ export interface components {
             /** @description The Mini App's host: a lower-case DNS name, not an IP address, without scheme, port or path, and not the host of central's public_url. Empty: Mini App off */
             miniapp_host?: string;
             /**
-             * @description webhook (default; needs central's public_url to be https) or polling
+             * @description webhook (default; needs an https public_url or telegram.webhook_base_url) or polling
              * @enum {string}
              */
             mode?: "webhook" | "polling" | "";
