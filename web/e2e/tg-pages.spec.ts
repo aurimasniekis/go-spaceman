@@ -10,7 +10,7 @@ import { extname, join, normalize } from 'node:path'
  * overflow and with axe (WCAG 2.1 A/AA); the queue is reordered with touch pointer events; "New task" is offered to
  * operators only. Needs `pnpm build` output in web/dist. Run alone: `pnpm exec playwright test e2e/tg-pages.spec.ts`.
  */
-const PORT = 39732
+let PORT = 0 // an ephemeral port: set once the server listens
 const dist = join(process.cwd(), 'dist')
 const SPACE = 'spc_pages1'
 const T = (n: number) => 'tsk_page' + n
@@ -26,7 +26,8 @@ test.beforeAll(async () => {
     res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream')
     createReadStream(file).pipe(res)
   })
-  await new Promise<void>((r) => server.listen(PORT, '127.0.0.1', r))
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  PORT = (server.address() as { port: number }).port
 })
 test.afterAll(() => new Promise<void>((r) => server.close(() => r())))
 
@@ -263,6 +264,29 @@ test('settings: edit and save round-trips with If-Match, and topics are read-onl
   await expect(form.getByLabel('New inbox items')).toHaveValue('push')
   await expect(form.getByLabel('Time zone')).toHaveValue('Europe/London')
   expect(seen.requests.filter((r) => r.includes('record'))).toEqual([])
+})
+
+test('settings: a save without editing the time zone sends no timezone', async ({ page }) => {
+  const seen = await launch(page, { path: '/settings' })
+  const form = page.getByRole('form', { name: 'Notification settings' })
+  await form.getByLabel('New inbox items').selectOption('push')
+  await form.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByText('Your Telegram notification settings were saved.')).toBeVisible()
+  expect(seen.puts).toHaveLength(1)
+  expect(seen.puts[0].body).toEqual({ inbox_items: 'push' })
+  expect('timezone' in seen.puts[0].body).toBe(false)
+})
+
+test('settings: an untouched override equal to the default is kept', async ({ page }) => {
+  const base = basePrefs()
+  // reminders is overridden to the same value as its default; failed_runs is overridden to something else.
+  const prefs = { ...base, overrides: { reminders: 'push', failed_runs: 'off' }, effective: { ...(base.effective as object), failed_runs: 'off' } }
+  const seen = await launch(page, { path: '/settings', prefs })
+  const form = page.getByRole('form', { name: 'Notification settings' })
+  await form.getByLabel('New inbox items').selectOption('push')
+  await form.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByText('Your Telegram notification settings were saved.')).toBeVisible()
+  expect(seen.puts[0].body).toEqual({ reminders: 'push', failed_runs: 'off', inbox_items: 'push' })
 })
 
 test('settings: a stale save (412) reloads the form and shows a conflict notice', async ({ page }) => {

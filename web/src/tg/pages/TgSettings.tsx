@@ -1,6 +1,6 @@
 import { Alert, Badge, Button, Card, Checkbox, Group, NativeSelect, Stack, Switch, Text, TextInput } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { ApiError, api, ifMatch, unwrap, type Schemas } from '@/api/client'
 import { useMe, useSpaces } from '@/api/queries'
@@ -9,7 +9,6 @@ import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { datetime } from '@/lib/format'
 import { notifyError } from '@/lib/notify'
-import { useQuery } from '@tanstack/react-query'
 
 type Prefs = Schemas['LinkPrefs']
 type Effective = Prefs['effective']
@@ -27,15 +26,25 @@ const FLAG_FIELDS = [
 
 interface Form { eff: Effective; timezone: string }
 
-/** The overrides to save: only what differs from the defaults, so everything else keeps following them. */
+/**
+ * The overrides to save: the stored ones, changed only where the form differs from what was loaded. A touched field that
+ * is back at the default follows the default again; an untouched override is kept even when it equals the default.
+ */
 export function overridesFrom(p: Prefs, form: Form): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+  const out: Record<string, unknown> = { ...(p.overrides as unknown as Record<string, unknown>) }
   const d = p.defaults as unknown as Record<string, unknown>
+  const loaded = p.effective as unknown as Record<string, unknown>
   for (const [k, v] of Object.entries(form.eff)) {
     if (k === 'muted_spaces') continue
-    if (v !== d[k]) out[k] = v
+    if (v === loaded[k]) continue // untouched
+    if (v === d[k]) delete out[k]
+    else out[k] = v
   }
-  if (form.eff.muted_spaces.length > 0) out.muted_spaces = form.eff.muted_spaces
+  const m = form.eff.muted_spaces
+  if (m.length !== p.effective.muted_spaces.length || m.some((id, i) => id !== p.effective.muted_spaces[i])) {
+    if (m.length > 0) out.muted_spaces = m
+    else delete out.muted_spaces
+  }
   return out
 }
 
@@ -97,7 +106,9 @@ function PrefsForm() {
     setSaving(true)
     setConflict(false)
     try {
-      const body = { ...overridesFrom(data, form), timezone: form.timezone.trim() } as Schemas['LinkPrefsInput']
+      // The time zone belongs to the user and If-Match guards only the link version: send it only when edited.
+      const tz = form.timezone.trim()
+      const body = { ...overridesFrom(data, form), ...(tz !== data.timezone ? { timezone: tz } : {}) } as Schemas['LinkPrefsInput']
       const saved = unwrap(await api.PUT('/telegram/link/prefs', { params: { header: { 'If-Match': ifMatch(data.version) } }, body }))
       qc.setQueryData(PREFS_KEY, saved)
       notifications.show({ color: 'green', title: 'Saved', message: 'Your Telegram notification settings were saved.' })
