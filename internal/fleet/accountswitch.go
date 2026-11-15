@@ -174,10 +174,15 @@ func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, h
 		return accountHeld(ctx, tx.Q, id, now)
 	}
 	// Resolve from the limited account: it is bound (so a space without a default still resolves) and avoided, so the
-	// pool's order decides; when it is gone too, from no account.
+	// pool's order decides. A fresh retry's wait doesn't know it (from is empty): the preferred account is bound too,
+	// so it anchors the resolve instead. When that is gone too, from no account.
+	anchor := from
+	if anchor == "" {
+		anchor = prefer
+	}
 	resolve := func(av func(string) (bool, error)) (string, error) {
-		if from != "" {
-			id, err := svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, from, av)
+		if anchor != "" {
+			id, err := svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, anchor, av)
 			if err == nil || apperr.CodeOf(err) != apperr.CodePrecondition {
 				return id, err
 			}
@@ -378,13 +383,10 @@ func (svc *Service) armSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, lim
 	if err != nil || !d.decided {
 		return nil, err
 	}
-	// The instance may have only one active switch: an older one (a resumed switch that wasn't verified) gives way.
+	// The instance may have only one active switch: an older one (a resumed switch that wasn't verified) gives way. A
+	// resumed switch whose new run is limited at once was already failed by switchOnLimitTx, earlier in the same report.
 	if old, err := tx.Q.GetActiveAccountSwitch(ctx, db.GetActiveAccountSwitchParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID}); err == nil {
-		state, reason := SwitchCancelled, WaitSuperseded
-		if old.State == SwitchResumed && old.NewRunID == r.ID {
-			state, reason = SwitchFailed, SwitchLimitedAtOnce
-		}
-		if _, _, err := svc.moveSwitchTx(ctx, tx, old, state, reason, nil); err != nil {
+		if _, _, err := svc.moveSwitchTx(ctx, tx, old, SwitchCancelled, WaitSuperseded, nil); err != nil {
 			return nil, err
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -517,9 +519,13 @@ func (svc *Service) switchEndedTx(ctx context.Context, tx *store.Tx, r db.Run, t
 	} else if err != nil {
 		return err
 	}
-	if turn > 0 {
+	switch {
+	case turn > 0:
 		_, _, err = svc.moveSwitchTx(ctx, tx, sw, SwitchSucceeded, "", nil)
-	} else {
+	case r.Desired == "stopped":
+		// An operator stopped the resumed run before its first turn: not a failed --resume.
+		_, _, err = svc.moveSwitchTx(ctx, tx, sw, SwitchCancelled, SwitchRunStopped, nil)
+	default:
 		_, _, err = svc.moveSwitchTx(ctx, tx, sw, SwitchFailed, SwitchResumeFailed, nil)
 	}
 	return err

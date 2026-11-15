@@ -5449,7 +5449,11 @@
   - A resumed run that hits a limit before its first turn keeps the session it was resumed with: its next switch
     resumes it again (a plain ADR-0079 re-park is unchanged).
   - A switch's failed resume gets ADR-0079's fresh retry on the account it moved to (`limit_waits.switch_to_account_id`
-    on the retry wait).
+    on the retry wait). With no limited account to anchor on, the retry's target is resolved from itself (it is
+    bound), so a space without a default account keeps it. A resumed run an operator stops before its first turn
+    cancels its switch (`run_stopped`); it is not a failed resume.
+  - A limit that clears while the switch is parked still moves the run to the target: the run is already stopped, and
+    the resume uses the target account either way.
   - New space limits are named as in decision 5, without a unit suffix: `usage_limit_wait_if_reset_within` (minutes)
     and `usage_limit_switch_max_per_day`. Metric `spaceman_account_switches_total{result}`.
 - **Security-relevant because:**

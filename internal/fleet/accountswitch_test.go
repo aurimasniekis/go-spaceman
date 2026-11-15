@@ -646,3 +646,138 @@ func TestAccountSwitchFailoverOffWhileArmed(t *testing.T) {
 		t.Fatalf("control notices %v", e.notices)
 	}
 }
+
+// A failed switch's fresh retry has no limited account to resolve from; in a space without a default account it still
+// keeps the account the switch moved to (review of PR 159).
+func TestAccountSwitchResumeFailedNoDefault(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`UPDATE space_accounts SET is_default = 0 WHERE space_id = 'spc_a'`)
+	e.running("run_r", "worker", 2)
+	e.armAndPark("run_r")
+	e.clk.Advance(limitRetrySoon)
+	e.due()
+	newID, _ := e.launchOf(e.instance("run_r"))
+	e.exec(`UPDATE runs SET observed = 'running' WHERE id = ?`, newID)
+	e.endRun(newID, proto.RunFailed, "error", 0)
+	if n := e.due(); n != 1 {
+		t.Fatalf("retried %d: wait %+v", n, e.waitOf(newID))
+	}
+	if _, p := e.launchOf(e.instance("run_r")); p.AccountRef != "acc_2" || p.Resume {
+		t.Fatalf("fresh retry %+v", p)
+	}
+	if w := e.waitOf(newID); w.SwitchToAccountID != "acc_2" {
+		t.Fatalf("retry wait %+v", w)
+	}
+}
+
+// The resume launches on the switch's target, not on what the launch would pick by itself: the target (acc_3) is not
+// the pool's first choice and the limited account's hold has cleared before the resume, so ignoring the target would
+// resume on acc_1.
+func TestAccountSwitchResumeUsesTarget(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`INSERT INTO space_accounts (space_id, account_id, harness, created_at, created_by) VALUES ('spc_a', 'acc_3', 'claude-code', 1, 't')`)
+	e.hold("ulm_b", "spc_c", "acc_2", "", proto.LimitSevenDay, dur(48*time.Hour), nil)
+	e.running("run_t", "worker", 2)
+	if sw := e.armAndPark("run_t"); sw.ToAccountID != "acc_3" {
+		t.Fatalf("target %s", sw.ToAccountID)
+	}
+	e.exec(`UPDATE usage_limits SET cleared_at = 1 WHERE account_id IN ('acc_1', 'acc_2')`)
+	if n := e.due(); n != 1 {
+		t.Fatalf("resumed %d", n)
+	}
+	if _, p := e.launchOf(e.instance("run_t")); p.AccountRef != "acc_3" || !p.Resume {
+		t.Fatalf("launch %+v", p)
+	}
+}
+
+// When the target is gone at the resume, the limited account is never the replacement, even though its hold has
+// cleared and it is the space's default: the pool's next account is.
+func TestAccountSwitchRetargetAvoidsLimitedAccount(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`INSERT INTO space_accounts (space_id, account_id, harness, created_at, created_by) VALUES ('spc_a', 'acc_3', 'claude-code', 1, 't')`)
+	e.running("run_g", "worker", 2)
+	if sw := e.armAndPark("run_g"); sw.ToAccountID != "acc_2" {
+		t.Fatalf("target %s", sw.ToAccountID)
+	}
+	e.exec(`DELETE FROM space_accounts WHERE space_id = 'spc_a' AND account_id = 'acc_2'`)
+	e.exec(`UPDATE usage_limits SET cleared_at = 1 WHERE account_id = 'acc_1'`)
+	if n := e.due(); n != 1 {
+		t.Fatalf("resumed %d", n)
+	}
+	if _, p := e.launchOf(e.instance("run_g")); p.AccountRef != "acc_3" {
+		t.Fatalf("resumed on %s, want acc_3", p.AccountRef)
+	}
+}
+
+// The daily budget is a rolling 24 h window: a switch older than that no longer counts.
+func TestAccountSwitchBudgetWindowRolls(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.budget = 1
+	e.running("run_b", "worker", 1)
+	e.exec(`INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, to_account_id, cause, limit_kind,
+		state, created_at, updated_at) VALUES ('asw_old', 'spc_a', ?, 'implementor', 'worker', 'claude-code', 'run_prev', 'acc_2', 'acc_1', 'usage_limit',
+		'five_hour', 'succeeded', ?, ?)`, e.instance("run_b"), e.clk.Now().Add(-23*time.Hour).UnixMicro(), e.clk.Now().UnixMicro())
+	e.report("run_b", "working", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_b"); sw.State != SwitchFellBack || sw.Reason != SwitchBudgetSpent {
+		t.Fatalf("inside the window: %+v", sw)
+	}
+	e.clk.Advance(2 * time.Hour) // the old switch is now 25 h old
+	e.running("run_c", "worker", 1)
+	e.exec(`UPDATE runs SET instance_id = ? WHERE id = 'run_c'`, e.instance("run_b"))
+	e.report("run_c", "working", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_c"); sw.State != SwitchPending {
+		t.Fatalf("after the window rolled: %+v", sw)
+	}
+}
+
+// An armed switch whose run already has a wait can't park it: the switch is cancelled (not left armed) and control
+// hears the run is kept alive.
+func TestAccountSwitchParkWithExistingWaitCancels(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_w", "worker", 2)
+	e.report("run_w", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, launch_json, resume_at, created_at, updated_at)
+		VALUES ('lwt_pre', 'spc_a', 'run_w', 'worker', 'implementor', 'nod_1', ?, 'claude-code', '{}', ?, 0, 0)`, e.instance("run_w"), e.clk.Now().Add(24*time.Hour).UnixMicro())
+	e.report("run_w", "idle", 2, nil)
+	if sw := e.switchOf("run_w"); sw.State != SwitchCancelled || sw.Reason != WaitSuperseded {
+		t.Fatalf("switch %+v", sw)
+	}
+	if r := e.observed("run_w"); r.Desired != "running" {
+		t.Fatal("run stopped without a wait of its own")
+	}
+	if strings.Join(e.notices, ",") != "run_w" {
+		t.Fatalf("control notices %v", e.notices)
+	}
+}
+
+// The keep-alive job leaves a run with an armed switch to the switch (its idle point or switchArmMax).
+func TestAccountSwitchKeepAliveSkipsArmed(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.keepMax = time.Minute
+	e.running("run_k", "worker", 2)
+	e.report("run_k", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	e.clk.Advance(2 * time.Minute) // past the keep-alive, inside switchArmMax
+	if n, err := e.svc.parkDueRuns(e.ctx, e.clk.Now()); err != nil || n != 0 {
+		t.Fatalf("parked %d: %v", n, err)
+	}
+	if sw := e.switchOf("run_k"); sw.State != SwitchPending {
+		t.Fatalf("switch %+v", sw)
+	}
+	if r := e.observed("run_k"); r.Desired != "running" {
+		t.Fatal("the keep-alive stopped a run with an armed switch")
+	}
+}
+
+// A resumed run an operator stops before its first turn is a stopped run, not a failed --resume.
+func TestAccountSwitchResumedRunStopped(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_o", "worker", 2)
+	e.armAndPark("run_o")
+	e.due()
+	newID, _ := e.launchOf(e.instance("run_o"))
+	e.exec(`UPDATE runs SET observed = 'running', desired = 'stopped' WHERE id = ?`, newID)
+	e.endRun(newID, proto.RunExited, "stopped", 0)
+	if sw := e.switchOf("run_o"); sw.State != SwitchCancelled || sw.Reason != SwitchRunStopped {
+		t.Fatalf("switch %+v", sw)
+	}
+}
