@@ -340,7 +340,9 @@ func (h *Handler) openAction(ctx context.Context, q *botapi.CallbackQuery, l upd
 	h.answer(ctx, q.ID, "")
 	fm := h.newForm(a, l, s)
 	var ap *enforcedApproval
-	if a.Type == "approval" && a.pending() {
+	if a.Type == "approval" {
+		// Every status: the body of an enforced approval holds its arguments, so it is never shown unless the approval is
+		// positively known to be advisory (SM-APPR-005).
 		ap = h.approvalOf(ctx, c, s, a, fm)
 	}
 	rp := h.renderForm(fm, a, s, ap)

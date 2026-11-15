@@ -16,6 +16,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
@@ -394,4 +395,27 @@ func TestTelegramEnforcedApprovalRecheck(t *testing.T) {
 
 	c.s.exec(t, `UPDATE telegram_links SET state = 'revoked', revoked_at = 1 WHERE id = ?`, c.s.linkID)
 	revoked("revoked link", 5)
+}
+
+// A failing approvals lookup (an error other than "no rows") counts as enforced in the notifier: no body is sent.
+func TestTelegramNotifierLookupErrorCountsAsEnforced(t *testing.T) {
+	t.Parallel()
+	c := newApprovalChat(t)
+	ctx := context.Background()
+	adv := c.advisory("Ship it")
+	rd := notify.StoreReader{S: c.s.h.c.Store, Human: c.s.h.c.Human}
+	k := notify.Key{Type: notify.TypeHumanAction, ID: adv}
+	if res, err := rd.Read(ctx, map[string]any{}, k); err != nil || res.Detail != "context for Ship it" {
+		t.Fatalf("advisory before the failure: %+v %v", res, err)
+	}
+	if err := c.s.h.c.Store.W().Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, "ALTER TABLE approvals RENAME TO approvals_gone")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := rd.Read(ctx, map[string]any{}, k)
+	if err != nil || res == nil || res.Detail != "" {
+		t.Fatalf("lookup error must count as enforced: %+v %v", res, err)
+	}
 }

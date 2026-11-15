@@ -10,6 +10,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -974,5 +975,40 @@ func TestApprovalDedupKeyCountsAsEnforced(t *testing.T) {
 	f := e.open(spA, hid('1'))
 	if !strings.Contains(f.Text, TextApprovalInApp) || strings.Contains(f.Text, "do the thing") || find(f, "Approve") != "" {
 		t.Fatalf("%q", f.Text)
+	}
+}
+
+// SM-APPR-005: the body of an enforced approval holds its arguments, so it is never shown in chat at content=full,
+// whatever the status (resolved, denied, expired, cancelled); the enforced check runs for every status. A lookup
+// error counts as enforced; an advisory approval in the same state keeps its body.
+func TestEnforcedApprovalBodyNeverShownForAnyStatus(t *testing.T) {
+	e := newEnv(t)
+	e.h.o.Space = func(id string) settings.Space {
+		s := settings.DefaultSpace(id)
+		s.Enabled, s.ContentLevel = true, settings.ContentFull
+		return s
+	}
+	for i, st := range []string{"resolved", "denied", "expired", "cancelled"} {
+		id := hid(byte('1' + i))
+		a := e.addHuman(spA, id, "approval", "Approve merge "+st, `{"action":"x"}`)
+		a.Body = `{"args":"SECRET-ARGS"}`
+		a.Status = st
+		e.api.enforced[id] = true
+		f := e.open(spA, id)
+		if strings.Contains(f.Text, "SECRET-ARGS") || !strings.Contains(f.Text, "Operation: mcp.github.merge") {
+			t.Fatalf("%s enforced approval card: %q", st, f.Text)
+		}
+		// A dedup-keyed approval whose row is not linked yet is enforced too.
+		did := hid(byte('a' + i))
+		d := e.addHuman(spA, did, "approval", "Keyed "+st, `{"action":"x"}`)
+		d.Body, d.Status, d.DedupKey = "SECRET-ARGS", st, "approval:apr_1"
+		if f := e.open(spA, did); strings.Contains(f.Text, "SECRET-ARGS") {
+			t.Fatalf("%s keyed approval card: %q", st, f.Text)
+		}
+	}
+	adv := e.addHuman(spA, hid('9'), "approval", "Advisory", `{"action":"x"}`)
+	adv.Body, adv.Status = "ADVISORY-BODY", "resolved"
+	if f := e.open(spA, hid('9')); !strings.Contains(f.Text, "ADVISORY-BODY") {
+		t.Fatalf("advisory body dropped: %q", f.Text)
 	}
 }

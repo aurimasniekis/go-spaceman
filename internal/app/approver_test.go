@@ -9,6 +9,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -175,4 +176,14 @@ func TestApproverRecheckTelegram(t *testing.T) {
 
 	exec(`UPDATE telegram_links SET state = 'revoked', revoked_at = 1 WHERE id = 'tgl_a'`)
 	check("revoked link", by, false)
+}
+
+// Without an approvals service the Telegram respond rule counts every approval as enforced (never advisory).
+func TestEnforcedApprovalWithoutApprovalsService(t *testing.T) {
+	t.Parallel()
+	c := &Central{}
+	ok, err := c.enforcedApproval(context.Background(), &human.Action{ID: "hum_1"})
+	if err != nil || !ok {
+		t.Fatalf("enforcedApproval with no approvals service = %v, %v; want true", ok, err)
+	}
 }
