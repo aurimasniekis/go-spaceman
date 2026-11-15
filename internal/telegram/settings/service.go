@@ -46,6 +46,7 @@ type Service struct {
 	loaded    bool
 	spaces    map[string]Space
 	listeners []func(Settings)
+	spaceOff  []func(spaceID string)
 
 	// Reload pacing, fields so tests can shorten them: while the last Load failed it is retried with a backoff from
 	// retryMin up to retryMax; otherwise the cache is reloaded every reloadEvery, the backstop for dropped events and
@@ -163,6 +164,30 @@ func (svc *Service) OnChange(fn func(Settings)) {
 	fn(cur)
 }
 
+// OnSpaceOff registers fn: it is called with a space's ID after a reload in which the space went from visible to
+// Telegram, or from terminal_watch on, to off (the settings turned off, or the space deleted, archived or purged).
+// It is not called for the first load. fn runs on the reloading goroutine and must not block for long.
+func (svc *Service) OnSpaceOff(fn func(spaceID string)) {
+	svc.refreshMu.Lock()
+	defer svc.refreshMu.Unlock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	svc.spaceOff = append(svc.spaceOff, fn)
+}
+
+// spacesOff returns the spaces that lost visibility or terminal watching between two caches, sorted.
+func spacesOff(prev, next map[string]Space) []string {
+	var out []string
+	for id, p := range prev {
+		n := next[id] // zero value: not visible, no terminal watch
+		if p.Visible() && (!n.Visible() || (p.TerminalWatch && !n.TerminalWatch)) {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // Load reads the stored settings into the cache and tells the listeners if the global settings changed.
 func (svc *Service) Load(ctx context.Context) error {
 	svc.refreshMu.Lock()
@@ -192,9 +217,19 @@ func (svc *Service) Load(ctx context.Context) error {
 	}
 	svc.mu.Lock()
 	changed := !svc.loaded || ver != svc.curVer || cur != svc.cur
+	var off []string
+	if svc.loaded {
+		off = spacesOff(svc.spaces, spaces)
+	}
 	svc.cur, svc.curVer, svc.spaces, svc.loaded = cur, ver, spaces, true
 	ls := slices.Clone(svc.listeners)
+	offFns := slices.Clone(svc.spaceOff)
 	svc.mu.Unlock()
+	for _, id := range off {
+		for _, fn := range offFns {
+			fn(id)
+		}
+	}
 	if changed {
 		for _, fn := range ls {
 			fn(cur)

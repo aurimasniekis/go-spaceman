@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
+	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
@@ -559,8 +560,14 @@ func TestTelegramTerminalRouteRefusesChat(t *testing.T) {
 	d := tgDeps(t, &fakeSessions{p: map[string]*auth.Principal{"good": tgPrincipal()}})
 	d.Telegram.SpaceFeature = func(context.Context, string, string) bool { return true }
 	var terminal *RawRoute
-	for _, rt := range RecordingStreams(nil) {
+	// A stub fleet: the route is built for real, but its handler is swapped for a sentinel, so a gate that let the
+	// request through fails the test with a 418 instead of a nil-pointer panic in the real handler.
+	reached := false
+	for _, rt := range RecordingStreams(&fleet.Service{}) {
 		if strings.HasSuffix(rt.Pattern, "/terminal") {
+			rt.Handler = func(*Deps) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) { reached = true; w.WriteHeader(http.StatusTeapot) }
+			}
 			terminal = &rt
 		}
 	}
@@ -574,6 +581,9 @@ func TestTelegramTerminalRouteRefusesChat(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/spaces/"+tgSpace+"/runs/run_x/terminal", nil).WithContext(ctx))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("chat channel on the terminal: %d %s", rec.Code, rec.Body.String())
+	}
+	if reached {
+		t.Fatal("the terminal handler ran: the gate did not stop the chat channel")
 	}
 }
 
