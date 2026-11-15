@@ -177,3 +177,19 @@ func runResource(k Key, ru db.Run) *Resource {
 	return &Resource{Key: k, SpaceID: ru.SpaceID, Version: ru.Version, Kind: KindFailedRun, Perm: authz.RunRead, Label: "Run",
 		Title: ru.Role, State: ru.Observed, Notify: true}
 }
+
+// ErrNoCard is returned by Card for a message that isn't a card the bot recorded.
+var ErrNoCard = errors.New("notify: no such card")
+
+// Card returns the card recorded for a message (the chat's message ID), with the link it was sent to.
+func (m StoreMappings) Card(ctx context.Context, chatID int64, messageID int) (Mapping, error) {
+	r, err := m.S.R().GetTelegramMessage(ctx, db.GetTelegramMessageParams{ChatID: chatID, MessageID: int64(messageID)})
+	if errors.Is(err, sql.ErrNoRows) {
+		return Mapping{}, ErrNoCard
+	}
+	if err != nil {
+		return Mapping{}, err
+	}
+	return Mapping{ChatID: chatID, MessageID: messageID, LinkID: r.LinkID.String, SpaceID: r.SpaceID.String,
+		Key: Key{Type: r.ResourceType, ID: r.ResourceID}, Version: r.ResourceVersion}, nil
+}

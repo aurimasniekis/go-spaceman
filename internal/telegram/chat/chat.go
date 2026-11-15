@@ -70,6 +70,11 @@ type Options struct {
 	Space func(spaceID string) settings.Space
 	// Bot returns the live bot client (nil: nothing is sent).
 	Bot func() Bot
+	// Resolve maps a notifier card (chat, message) to its action and the link it was sent to (the telegram_messages
+	// mapping), for a button whose data doesn't carry the action ID. Nil: such buttons are refused.
+	Resolve func(ctx context.Context, chatID int64, messageID int) (spaceID, actionID, linkID string, ok bool)
+	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
+	AppURL func(spaceID, actionID string) string
 
 	// Allow takes one unit of a link's inbound limit of that kind (updates.Limiter.Allow); nil: no limit. Capture costs
 	// one KindInboxItem per item and one KindDownload per file moved in either direction.
@@ -90,8 +95,11 @@ type Handler struct {
 	o Options
 
 	mu      sync.Mutex
-	current map[string]string      // link ID -> space ID chosen with /spaces or /space
-	pending map[pendingKey]rej     // a reject reason being asked for
+	formMu  sync.Mutex         // serializes changes to forms
+	current map[string]string  // link ID -> space ID chosen with /spaces or /space
+	pending map[pendingKey]rej // a reject reason being asked for
+	forms   map[pendingKey]*form
+	prompts map[pendingKey]prompt
 	albums  map[albumKey]*album    // media groups still collecting parts
 	refused map[albumKey]time.Time // media groups answered "too many albums"; their other parts are dropped quietly
 	dl      chan struct{}          // the global download semaphore (capture.go)
@@ -118,7 +126,8 @@ func New(o Options) *Handler {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Handler{o: o, current: map[string]string{}, pending: map[pendingKey]rej{}, albums: map[albumKey]*album{}, refused: map[albumKey]time.Time{}, dl: make(chan struct{}, maxDownloads)}
+	return &Handler{o: o, current: map[string]string{}, pending: map[pendingKey]rej{}, forms: map[pendingKey]*form{},
+		prompts: map[pendingKey]prompt{}, albums: map[albumKey]*album{}, refused: map[albumKey]time.Time{}, dl: make(chan struct{}, maxDownloads)}
 }
 
 // Handle routes a linked user's update: commands, button taps, the reply to a reject-reason prompt, and capture: any
@@ -137,10 +146,12 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 				h.cmdSpace(ctx, l, arg)
 			case "inbox":
 				h.cmdInbox(ctx, l, arg)
+			case "needsyou":
+				h.cmdNeedsYou(ctx, l, arg)
 			}
 			return
 		}
-		if m.ReplyToMessage != nil && h.rejectReply(ctx, m, l) {
+		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l)) {
 			return
 		}
 		h.capture(ctx, m, l)

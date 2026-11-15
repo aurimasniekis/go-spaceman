@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,10 @@ type fakeAPI struct {
 	conflict bool
 	// badDetail makes a status change answer 400 with this detail.
 	badDetail string
+	// human holds the human actions; responds records the respond calls (body plus If-Match).
+	human    map[string]*humanAction
+	responds []map[string]any
+	respHdr  []string
 
 	// capture: uploads and created items.
 	atts     map[string]*storedAtt
@@ -155,6 +160,57 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		it.Reason, _ = body["reason"].(string)
 		it.Version++
 		out(200, it)
+	case len(seg) == 3 && seg[2] == "human-actions" && r.Method == http.MethodGet:
+		var items []humanAction
+		pending := r.URL.Query().Get("pending") == "true"
+		for _, a := range f.human {
+			if a.SpaceID == seg[1] && (a.Status == r.URL.Query().Get("status") || pending && (a.Status == "open" || a.Status == "in_progress")) {
+				items = append(items, *a)
+			}
+		}
+		// pending=true is the space's rank order: escalated (in_progress) first, then by ID.
+		slices.SortFunc(items, func(a, b humanAction) int {
+			if (a.Status == "in_progress") != (b.Status == "in_progress") {
+				if a.Status == "in_progress" {
+					return -1
+				}
+				return 1
+			}
+			return strings.Compare(a.ID, b.ID)
+		})
+		if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && len(items) > n {
+			items = items[:n]
+		}
+		out(200, map[string]any{"items": items})
+	case len(seg) == 4 && seg[2] == "human-actions" && r.Method == http.MethodGet:
+		a := f.human[seg[3]]
+		if a == nil || a.SpaceID != seg[1] || seg[3] == hidden {
+			out(404, map[string]any{"status": 404})
+			return
+		}
+		out(200, a)
+	case len(seg) == 5 && seg[4] == "respond" && r.Method == http.MethodPost:
+		a := f.human[seg[3]]
+		if a == nil || a.SpaceID != seg[1] {
+			out(404, map[string]any{"status": 404})
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.responds = append(f.responds, body)
+		f.respHdr = append(f.respHdr, r.Header.Get("If-Match"))
+		switch {
+		case r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, a.Version):
+			out(412, map[string]any{"status": 412, "detail": "changed"})
+		case !a.pending():
+			out(409, map[string]any{"status": 409, "detail": "final"})
+		case f.badDetail != "":
+			out(400, map[string]any{"status": 400, "detail": f.badDetail})
+		default:
+			a.Status, a.Outcome = "resolved", fmt.Sprint(body["outcome"])
+			a.Version++
+			out(200, a)
+		}
 	case len(seg) == 3 && seg[2] == "attachments" && r.Method == http.MethodPost:
 		if f.uploadSt != 0 {
 			out(f.uploadSt, map[string]any{"status": f.uploadSt, "detail": "attachments are limited to 1048576 bytes"})
@@ -224,6 +280,7 @@ type env struct {
 	l   updates.Link
 	// principalErr makes the principal build fail (a revoked link).
 	principalErr error
+	clk          *clock.Fake
 	upd          int64
 	sent         []botapi.SendMessageParams // every send, with its flags
 	mu           sync.Mutex                 // guards sent and files (albums are captured from a timer)
@@ -302,7 +359,8 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{t: t, srv: srv, l: updates.Link{ID: "tgl_1", UserID: "usr_1", ChatID: chatID}}
-	e.api = &fakeAPI{hdrs: map[string]string{}, items: map[string]*inboxItem{}, atts: map[string]*storedAtt{}}
+	e.clk = clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
+	e.api = &fakeAPI{hdrs: map[string]string{}, items: map[string]*inboxItem{}, human: map[string]*humanAction{}, atts: map[string]*storedAtt{}}
 	e.addItem(spA, iid('1'), "First item", "new", "# hello\nbody text")
 	e.addItem(spS, iid('2'), "Summary item", "new", "SECRET BODY")
 	e.addItem(spB, iid('3'), "Hidden item", "new", "nope")
@@ -342,7 +400,7 @@ func newEnv(t *testing.T) *env {
 		},
 		AlbumQuiet: 30 * time.Millisecond,
 		PageSize:   2,
-		Clock:      clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)),
+		Clock:      e.clk,
 	})
 	return e
 }

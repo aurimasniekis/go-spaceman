@@ -2,6 +2,7 @@ package notify_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -55,6 +56,14 @@ func TestStoreFeedAndMappings(t *testing.T) {
 	}
 	if got, _ := m.Lookup(ctx, notify.Key{Type: notify.TypeHumanAction, ID: "hum_2"}); len(got) != 0 {
 		t.Fatalf("Lookup of another resource = %+v", got)
+	}
+	// A card is found by its message, and an unknown message is ErrNoCard.
+	c, err := m.Card(ctx, 9, 5)
+	if err != nil || c.Key != k || c.Version != 4 || c.LinkID != "" {
+		t.Fatalf("Card = %+v, %v", c, err)
+	}
+	if _, err := m.Card(ctx, 9, 6); !errors.Is(err, notify.ErrNoCard) {
+		t.Fatalf("Card of an unknown message: %v", err)
 	}
 }
 

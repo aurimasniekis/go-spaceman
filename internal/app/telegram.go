@@ -7,6 +7,7 @@ import (
 	"net/netip"
 
 	"net/http"
+	"net/url"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
@@ -15,6 +16,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/chat"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
@@ -124,6 +126,23 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			return c.Auth.TelegramPrincipal(ctx, linkID, auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})
 		},
 		Space: c.TelegramSettings.Space,
+		// A notifier card's button names no action: it comes from the card mapping, only for the link the card went to.
+		Resolve: func(ctx context.Context, chatID int64, messageID int) (string, string, string, bool) {
+			m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)
+			if err != nil || m.Key.Type != notify.TypeHumanAction {
+				return "", "", "", false
+			}
+			return m.SpaceID, m.Key.ID, m.LinkID, true
+		},
+		// Approvals and forms too complex for the chat open in the Mini App; without its host there is no button.
+		AppURL: func(spaceID, actionID string) string {
+			o := c.miniAppOrigin()
+			if o == "" {
+				return ""
+			}
+			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
+			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
+		},
 		Allow: c.TelegramLimiter.Allow,
 		Content: func(ctx context.Context, spaceID, attachmentID string) (io.ReadSeekCloser, error) {
 			_, rc, err := c.Attachments.Open(ctx, spaceID, attachmentID)
