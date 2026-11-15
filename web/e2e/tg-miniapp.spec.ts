@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -161,4 +162,17 @@ test('a malformed start parameter is ignored', async ({ page }) => {
   await launch(page, { startParam: 'inbox-..%2F..-x', path: '/' })
   await expect(page.locator('#root')).not.toBeEmpty()
   expect(new URL(page.url()).pathname).toBe('/')
+})
+
+test('startapp=needs opens the Needs you page, whose filters sit behind a Filter button', async ({ page }) => {
+  await launch(page, { startParam: 'needs', path: '/' })
+  await expect(page).toHaveURL(/\/human$/)
+  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
+  // The Mini App's filter bar is collapsed; the reminded/escalated toggle stays in view.
+  await expect(page.getByRole('textbox', { name: 'Search title and text' })).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: /Only reminded or escalated/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Filter' }).click()
+  await expect(page.getByRole('textbox', { name: 'Search title and text' })).toBeVisible()
+  const res = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  expect(res.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([])
 })
