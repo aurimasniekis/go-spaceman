@@ -162,3 +162,27 @@ test('a malformed start parameter is ignored', async ({ page }) => {
   await expect(page.locator('#root')).not.toBeEmpty()
   expect(new URL(page.url()).pathname).toBe('/')
 })
+
+test('attaching a file in the new-item dialog uploads with the Telegram header and no cookie or CSRF token', async ({ page }) => {
+  const uploads: Array<{ auth?: string; cookie?: string; csrf?: string; idem?: string }> = []
+  await launch(page, { path: `/spaces/${SPACE}/inbox` })
+  // Registered after launch: the last matching route wins.
+  await page.route(`**/api/v1/spaces/${SPACE}/attachments`, async (route) => {
+    const h = await route.request().allHeaders()
+    if (route.request().method() !== 'POST') return route.fallback()
+    uploads.push({ auth: h.authorization, cookie: h.cookie, csrf: h['x-csrf-token'], idem: h['idempotency-key'] })
+    if (h.authorization !== 'Telegram spaceman_tgs_test') return route.fulfill(problem(401, 'unauthorized'))
+    return route.fulfill(
+      json({ id: IMG, space_id: SPACE, name: 'IMG_3881.png', mime: 'image/png', size: PNG.length, inline: false, url: `/api/v1/spaces/${SPACE}/attachments/${IMG}/content`, uri: `spaceman://attachment/${IMG}` }, 201),
+    )
+  })
+  await page.getByRole('button', { name: /new/i }).first().click()
+  await page.locator('input[type="file"]').first().setInputFiles({ name: 'IMG_3881.png', mimeType: 'image/png', buffer: PNG })
+  await expect(page.getByText('IMG_3881.png').first()).toBeVisible()
+  await expect(page.getByText(/authentication required|unauthorized/i)).toHaveCount(0)
+  expect(uploads).toHaveLength(1)
+  expect(uploads[0].auth).toBe('Telegram spaceman_tgs_test')
+  expect(uploads[0].cookie ?? '').toBe('')
+  expect(uploads[0].csrf).toBeUndefined()
+  expect(uploads[0].idem).toBeTruthy()
+})
