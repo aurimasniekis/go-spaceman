@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
@@ -19,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tghost"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -61,23 +61,30 @@ func (c *Central) newTelegramMiniApp() {
 	})
 }
 
-// hostOf is a Host header's host name: lower case, without the port and one trailing dot. "tg.example.com." is the
-// same host to DNS, so it must get the Mini App host's allowlist, never the main host's routes under the Mini App name.
-func hostOf(hostport string) string {
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		hostport = h
+// isMiniAppHost reports whether a request's Host (r.Host, never X-Forwarded-Host) is a Mini App host (ADR-0083
+// §3.4.1), compared case-insensitively without the port and one trailing dot: central's telegram.miniapp_host, read
+// from the configuration here so it holds even without a bot service, or the stored bot's miniapp_host, enabled or
+// not (when it differs from telegram.miniapp_host it is ignored, but still never reaches the main handler). Such a
+// request is served by the Mini App handler only.
+func (c *Central) isMiniAppHost(hostport string) bool {
+	h := tghost.Of(hostport)
+	if h == "" {
+		return false
 	}
-	return strings.ToLower(strings.TrimSuffix(hostport, "."))
+	if h == c.Cfg.Telegram.MiniAppHost {
+		return true
+	}
+	return c.TelegramBot != nil && c.TelegramBot.RoutesToMiniApp(h)
 }
 
-// isMiniAppHost reports whether a request's Host (r.Host, never X-Forwarded-Host) is the running bot's Mini App host.
-// With no bot or no miniapp_host, nothing is.
-func (c *Central) isMiniAppHost(hostport string) bool {
+// miniAppServing reports whether the running bot serves the Mini App on hostport: a bot runs, enabled, and its Mini
+// App host is this one. Otherwise the Mini App host answers 404 for everything.
+func (c *Central) miniAppServing(hostport string) bool {
 	if c.TelegramBot == nil {
 		return false
 	}
 	h := c.TelegramBot.MiniAppHost()
-	return h != "" && hostOf(hostport) == h
+	return h != "" && tghost.Of(hostport) == h
 }
 
 // miniAppOrigin is the Mini App's origin: public_url's scheme and port on the Mini App host ("" when there is none).
@@ -102,7 +109,22 @@ func (c *Central) miniAppOrigin() string {
 // with its assets, and nothing else. Sign-in and everything under /api/v1/auth/, the external MCP endpoint, the node
 // protocol, the Telegram webhook and the main web UI are never served here: they are a plain 404, without a redirect to
 // the main host.
+//
+// It never hands a request to the main handler. While no bot serves the Mini App (none stored, disabled, failed to
+// start, or its Mini App host is another), everything is a 404.
 func (c *Central) miniAppHandler(d *api.Deps) http.Handler {
+	mux := c.miniAppMux(d)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !c.miniAppServing(r.Host) {
+			miniAppNotFound(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// miniAppMux is the Mini App host's allowlist of routes.
+func (c *Central) miniAppMux(d *api.Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(api.Prefix+"/", d.TelegramHandler())
 	mux.Handle(api.Prefix+"/auth/", http.HandlerFunc(miniAppNotFound))

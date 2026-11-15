@@ -52,13 +52,35 @@ func newMiniAppEnv(t *testing.T) *miniAppEnv {
 // newMiniAppEnvWith is newMiniAppEnv with central logging to log and pre run on central before its handler is built.
 func newMiniAppEnvWith(t *testing.T, log *slog.Logger, pre func(*app.Central)) *miniAppEnv {
 	t.Helper()
+	return newMiniAppEnvFull(t, log, nil, pre)
+}
+
+// newMiniAppEnvFull is newMiniAppEnvWith with mod applied to central's configuration as well.
+func newMiniAppEnvFull(t *testing.T, log *slog.Logger, mod func(*config.Config), pre func(*app.Central)) *miniAppEnv {
+	t.Helper()
+	return newMiniAppEnvStart(t, log, mod, pre, true)
+}
+
+// newMiniAppEnvStart is newMiniAppEnvFull; with start false the bot service never starts (a bot service whose start is
+// still pending, or never happens, while requests arrive).
+func newMiniAppEnvStart(t *testing.T, log *slog.Logger, mod func(*config.Config), pre func(*app.Central), start bool) *miniAppEnv {
+	t.Helper()
 	tg := tgtest.New(t, tgtest.Options{Limits: tgtest.Limits{Disabled: true}})
-	h := newHarnessFull(t, log, func(c *config.Config) { c.Telegram.APIBaseURL = tg.URL() }, pre)
+	h := newHarnessFull(t, log, func(c *config.Config) {
+		c.Telegram.APIBaseURL = tg.URL()
+		// A bot's miniapp_host needs the key: tests set it unless mod says otherwise.
+		c.Telegram.MiniAppHost = miniHost
+		if mod != nil {
+			mod(c)
+		}
+	}, pre)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go h.c.TelegramUpdates.Run(ctx)
 	go h.c.TelegramSettings.Run(ctx)
-	h.c.TelegramBot.Start(ctx)
+	if start {
+		h.c.TelegramBot.Start(ctx)
+	}
 	e := &miniAppEnv{h: h, tg: tg, space: seedSpace(t, h), linkID: "tgl_mini"}
 	u, _ := url.Parse(h.srv.URL)
 	e.port = u.Port()
@@ -87,6 +109,12 @@ func (e *miniAppEnv) startBot(t *testing.T) {
 	if e.h.c.TelegramBot.MiniAppHost() != miniHost {
 		t.Fatalf("Mini App host %q", e.h.c.TelegramBot.MiniAppHost())
 	}
+	e.startBotLinks(t)
+}
+
+// startBotLinks links Telegram user 42 of the configured bot to the user (capped to operator).
+func (e *miniAppEnv) startBotLinks(t *testing.T) {
+	t.Helper()
 	botID, _, _ := strings.Cut(e.tg.Token(), ":")
 	e.exec(t, `INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, created_at, updated_at) VALUES (?, ?, ?, 42, 42, 'active', 0, 0)`,
 		e.linkID, e.userID, botID)
@@ -198,9 +226,9 @@ func TestMiniAppHostSeparation(t *testing.T) {
 	e := newMiniAppEnv(t)
 	main := ""
 
-	// No bot yet: the would-be Mini App host is just another name for the main host.
-	if r := e.send(t, miniHost, "GET", "/", ""); r.status != 200 {
-		t.Fatalf("no Mini App host configured: GET / on %s is %d", miniHost, r.status)
+	// No bot yet: the configured Mini App host is routed to the Mini App handler, which answers 404 (fail closed).
+	if r := e.send(t, miniHost, "GET", "/", ""); r.status != 404 {
+		t.Fatalf("no bot: GET / on %s is %d", miniHost, r.status)
 	}
 	if r := e.send(t, miniHost, "POST", api.Prefix+"/telegram/session", exchangeBody("x"), "Origin", e.h.srv.URL); r.status != 404 {
 		t.Fatalf("exchange without a Mini App host: %d %s", r.status, r.body)
@@ -308,9 +336,9 @@ func TestMiniAppHostSeparation(t *testing.T) {
 		}
 	}
 
-	// Turning the Mini App off unmounts it: the host is the main host again and its sessions end.
-	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling"}, "If-Match", `"1"`), 200)
-	if r := e.send(t, miniHost, "GET", "/", ""); r.status != 200 {
+	// Turning the bot off never gives the host to the main router: it answers 404 for everything.
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": false, "mode": "polling"}, "If-Match", `"1"`), 200)
+	if r := e.send(t, miniHost, "GET", "/", ""); r.status != 404 || strings.Contains(string(r.body), "MainUI") {
 		t.Errorf("Mini App off: GET / on %s is %d", miniHost, r.status)
 	}
 }
