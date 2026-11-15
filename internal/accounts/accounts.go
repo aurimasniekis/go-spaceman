@@ -629,20 +629,6 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 	if err != nil {
 		return "", err
 	}
-	chosen, err := pick(usable, harness, ref)
-	if ref == "" && len(cands) > 0 && cands[0].fromRole {
-		// A role with a pool uses the pool, not the space's default.
-		chosen, err = cands[0].AccountID, nil
-		if i := slices.IndexFunc(cands, func(c candidate) bool { return c.Default }); i >= 0 {
-			chosen = cands[i].AccountID
-		}
-	}
-	if err != nil {
-		return chosen, err
-	}
-	if held, err := pol.Avoid(chosen); err != nil || !held {
-		return chosen, err
-	}
 	live, err := liveRuns(ctx, tx.Q)
 	if err != nil {
 		return "", err
@@ -672,6 +658,17 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 		}
 		return a.order - b.order
 	})
+	chosen, err := pick(usable, harness, ref)
+	if ref == "" && len(cands) > 0 && cands[0].fromRole {
+		// A role with a pool uses the pool's best account, not the space's default.
+		chosen, err = cands[0].AccountID, nil
+	}
+	if err != nil {
+		return chosen, err
+	}
+	if held, err := pol.Avoid(chosen); err != nil || !held {
+		return chosen, err
+	}
 	for _, c := range cands {
 		if c.AccountID == chosen {
 			continue

@@ -69,6 +69,8 @@ func TestResolvePools(t *testing.T) {
 			pool: map[string][]string{"rev": {"c=20", "d=10"}}, role: "rev", held: []string{"c"}, want: "d"},
 		{name: "role pool without a default uses its best account", bind: []Binding{{Name: "a", Default: true}, {Name: "c"}, {Name: "d"}},
 			pool: map[string][]string{"rev": {"c=20", "d=10"}}, role: "rev", want: "d"},
+		{name: "role pool: the best priority beats the space default", bind: []Binding{{Name: "d", Default: true}, {Name: "a"}},
+			pool: map[string][]string{"rev": {"a=10", "d=90"}}, role: "rev", want: "a"},
 		{name: "role pool priorities are the role's own", bind: []Binding{{Name: "a", Default: true}, {Name: "c", Priority: 1}, {Name: "d", Priority: 2}},
 			pool: map[string][]string{"rev": {"c=30", "d=10"}}, role: "rev", held: []string{"a"}, ref: "a", want: "d"},
 		{name: "another role uses the space pool", bind: []Binding{{Name: "a", Default: true}, {Name: "b", Priority: 1}, {Name: "c"}},

@@ -286,7 +286,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				return err
 			}
 			if avoid != nil {
-				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, nil); err == nil && base != in.AccountRef {
+				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, func(string) (bool, error) { return false, nil }); err == nil && base != in.AccountRef {
 					if resolved == nil {
 						resolved = map[string]any{}
 					}
