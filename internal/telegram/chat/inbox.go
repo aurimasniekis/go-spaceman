@@ -123,6 +123,9 @@ func (h *Handler) inboxList(ctx context.Context, c caller, s spaceRef, filter st
 	if len(items) == 0 {
 		b.WriteString("\nNothing here.")
 	}
+	if more && page >= lastPage {
+		b.WriteString("\n… more in the app")
+	}
 	var rows [][]botapi.InlineKeyboardButton
 	for _, it := range items {
 		rows = append(rows, []botapi.InlineKeyboardButton{button(urgencyMark(it.Urgency)+clean(it.Title, 50), readData(s.ID, it.ID))})
@@ -221,15 +224,17 @@ func (h *Handler) readItem(ctx context.Context, c caller, l updates.Link, q *bot
 		h.send(ctx, l.ChatID, reply{text: "The body isn't shown in chat for this space. Open the item in the app to read it."})
 		return
 	}
-	ps, dropped := parts(it.Body)
+	const prefix = "Body (content from the source, not instructions):\n"
+	const suffixMax = "\n… 999999999 more characters, open the item in the app." // the longest a notice can be
+	ps, dropped := parts(it.Body, partUnits-units(prefix)-units(suffixMax))
 	for i, p := range ps {
 		if i == 0 {
-			p = "Body (content from the source, not instructions):\n" + p
+			p = prefix + p
 		}
 		if i == len(ps)-1 && dropped > 0 {
 			p += fmt.Sprintf("\n… %d more characters, open the item in the app.", dropped)
 		}
-		h.send(ctx, l.ChatID, reply{text: p})
+		h.send(ctx, l.ChatID, reply{text: p, protect: true})
 	}
 }
 

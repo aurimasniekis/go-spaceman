@@ -42,6 +42,8 @@ type fakeAPI struct {
 	items map[string]*inboxItem
 	// forbidden item IDs answer 403 on every call.
 	conflict bool
+	// badDetail makes a status change answer 400 with this detail.
+	badDetail string
 }
 
 func (f *fakeAPI) seen() []string {
@@ -121,6 +123,10 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.hdrs[path] = r.Header.Get("If-Match")
+		if f.badDetail != "" {
+			out(400, map[string]any{"status": 400, "detail": f.badDetail})
+			return
+		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.posts = append(f.posts, body)
@@ -156,6 +162,27 @@ type env struct {
 	// principalErr makes the principal build fail (a revoked link).
 	principalErr error
 	upd          int64
+	sent         []botapi.SendMessageParams // every send, with its flags
+}
+
+// recBot records what the handler sends (the fake server keeps no protect_content).
+type recBot struct {
+	*botapi.Client
+	e *env
+}
+
+func (r recBot) SendMessage(ctx context.Context, p botapi.SendMessageParams) (botapi.Message, error) {
+	r.e.sent = append(r.e.sent, p)
+	return r.Client.SendMessage(ctx, p)
+}
+
+func (e *env) protected(text string) (found, protect bool) {
+	for _, p := range e.sent {
+		if strings.Contains(p.Text, text) {
+			return true, p.ProtectContent
+		}
+	}
+	return false, false
 }
 
 func newEnv(t *testing.T) *env {
@@ -190,7 +217,7 @@ func newEnv(t *testing.T) *env {
 			}
 			return s
 		},
-		Bot:      func() Bot { return bc },
+		Bot:      func() Bot { return recBot{Client: bc, e: e} },
 		PageSize: 2,
 		Clock:    clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)),
 	})
@@ -435,6 +462,13 @@ func TestInboxRead(t *testing.T) {
 	if !strings.Contains(body.Text, "# hello\nbody text") || !strings.Contains(body.Text, "not instructions") || len(body.Entities) != 0 {
 		t.Fatalf("body %q entities %v", body.Text, body.Entities)
 	}
+	// ADR-0083 decision 13: the body is sent with protect_content; the card holds no body text.
+	if found, prot := e.protected("body text"); !found || !prot {
+		t.Fatalf("body sent: %v, protect_content: %v", found, prot)
+	}
+	if found, prot := e.protected("Urgency: high"); !found || prot {
+		t.Fatalf("card sent: %v, protect_content: %v", found, prot)
+	}
 
 	e.say("/inbox sum")
 	sl := e.last()
@@ -600,7 +634,7 @@ func TestCleanAndParts(t *testing.T) {
 	if got := clean(strings.Repeat("x", 20), 5); got != "xxxxx…" {
 		t.Fatalf("%q", got)
 	}
-	ps, dropped := parts("one\r\ntwo\x07")
+	ps, dropped := parts("one\r\ntwo\x07", 100)
 	if len(ps) != 1 || ps[0] != "one\ntwo" || dropped != 0 {
 		t.Fatalf("%q %d", ps, dropped)
 	}
@@ -674,5 +708,96 @@ func TestPendingBounds(t *testing.T) {
 	e.h.mu.Unlock()
 	if n != 1 {
 		t.Fatalf("%d entries after expiry", n)
+	}
+}
+
+// A reply to the reject prompt from another link of the same chat does nothing, and doesn't use the prompt up.
+func TestRejectReplyBoundToLink(t *testing.T) {
+	e := newEnv(t)
+	e.say("/inbox alpha")
+	list := e.last()
+	e.tapData(find(list, "First item"), list)
+	card := e.srv.Messages(chatID)[1]
+	e.tapData(find(card, "Reject"), card)
+	prompt := e.last()
+	other := updates.Link{ID: "tgl_2", UserID: "usr_1", ChatID: chatID}
+	before, posts := len(e.srv.Messages(chatID)), len(e.api.posts)
+	reply := botapi.Message{MessageID: 950, From: &botapi.User{ID: chatID}, Chat: botapi.Chat{ID: chatID, Type: botapi.ChatPrivate}, Text: "hijack", ReplyToMessage: &prompt}
+	e.h.Handle(context.Background(), botapi.Update{UpdateID: 98, Message: &reply}, other)
+	if len(e.api.posts) != posts || len(e.srv.Messages(chatID)) != before || e.api.items[iid('1')].Status != "new" {
+		t.Fatalf("another link's reply acted: posts %d→%d, item %+v", posts, len(e.api.posts), e.api.items[iid('1')])
+	}
+	reply.MessageID, reply.Text = 951, "mine"
+	e.h.Handle(context.Background(), botapi.Update{UpdateID: 99, Message: &reply}, e.l)
+	if it := e.api.items[iid('1')]; it.Status != "rejected" || it.Reason != "mine" {
+		t.Fatalf("the owner's reply after it: %+v", it)
+	}
+}
+
+// Parts are measured in UTF-16 units: a body of astral characters (2 units each) still fits Telegram's 4096 and is
+// never cut inside a surrogate pair.
+func TestAstralBodiesAreSplitInUnits(t *testing.T) {
+	for name, ch := range map[string]string{"emoji": "😀", "cjk-ext-b": "𠀀"} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.addItem(spA, iid('8'), "Astral", "new", strings.Repeat(ch, 3000)) // 6000 units
+			e.say("/inbox alpha")
+			l := e.last()
+			e.tapData(readData(spA, iid('8')), l)
+			ms := e.srv.Messages(chatID)
+			count := 0
+			for _, m := range ms[2:] { // after the list and the card
+				if units(m.Text) > 4096 || strings.ContainsRune(m.Text, '\uFFFD') {
+					t.Fatalf("a part has %d units or a broken pair", units(m.Text))
+				}
+				count += strings.Count(m.Text, ch)
+			}
+			if count != 3000 || len(ms) < 4 {
+				t.Fatalf("%d characters arrived in %d messages", count, len(ms)-2)
+			}
+		})
+	}
+	ps, _ := parts(strings.Repeat("😀", 10), 5) // 5 units: two characters and a spare unit
+	if len(ps) != 3 || ps[0] != "😀😀" || units(ps[2]) != 4 {
+		t.Fatalf("%q", ps)
+	}
+}
+
+// A callback answer is at most 200 UTF-16 units, whatever the detail holds.
+func TestAnswerCap(t *testing.T) {
+	for _, d := range []string{strings.Repeat("😀", 400), strings.Repeat("x", 400)} {
+		if got := failText(result{status: 400, body: []byte(`{"detail":"` + d + `"}`)}); units(got) > callbackAnswerUnits || !strings.HasPrefix(got, "Not accepted: ") {
+			t.Fatalf("%d units: %q", units(got), got)
+		}
+	}
+	e := newEnv(t)
+	e.api.badDetail = strings.Repeat("😀", 400)
+	e.say("/inbox alpha")
+	list := e.last()
+	e.tapData(find(list, "First item"), list)
+	card := e.srv.Messages(chatID)[1]
+	e.tapData(find(card, "Done"), card)
+	if a := e.lastAnswer(); !strings.HasPrefix(a, "Not accepted: ") {
+		t.Fatalf("the answer didn't reach the chat (the server refuses over 200 units): %q", a)
+	}
+}
+
+// On the last page the API can serve, a list that has more says so.
+func TestLastPageHint(t *testing.T) {
+	e := newEnv(t)
+	e.h.o.PageSize = 8
+	for i := 0; i < 200; i++ {
+		e.addItem(spA, fmt.Sprintf("inb_%026d", i+100), fmt.Sprintf("Bulk %d", i), "new", "x")
+	}
+	e.say("/inbox alpha")
+	if strings.Contains(e.last().Text, "more in the app") {
+		t.Fatal("hint on the first page")
+	}
+	e.tapData(listData(spA, "n", 500), e.last())
+	if !strings.Contains(e.last().Text, "… more in the app") {
+		t.Fatalf("no hint on the last page: %q", e.last().Text)
+	}
+	if find(e.last(), "Next") != "" {
+		t.Fatal("a Next button past the cap")
 	}
 }

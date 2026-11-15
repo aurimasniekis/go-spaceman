@@ -38,7 +38,13 @@ const (
 	TextNoAccess    = "Your link can't do that. Ask an administrator, or use the web UI."
 	apiTimeout      = 20 * time.Second
 	maxBodyParts    = 3
-	bodyPartRunes   = 3500
+	// partUnits is the size of one body message in UTF-16 code units (the Bot API's measure; its limit is 4096), prefix
+	// and suffix included.
+	partUnits = 3500
+	// callbackAnswerUnits is the Bot API's limit for a callback answer's text (200 UTF-16 units); the detail of a
+	// problem is cut well under it so the "Not accepted: " lead fits.
+	callbackAnswerUnits = 200
+	detailRunes         = 150
 )
 
 // Bot is the part of the Bot API the commands use. *botapi.Client satisfies it.
@@ -146,6 +152,8 @@ type reply struct {
 	text   string
 	markup *botapi.InlineKeyboardMarkup
 	force  *botapi.ForceReply
+	// protect sets protect_content (no forwarding or saving), for message bodies (ADR-0083 decision 13).
+	protect bool
 }
 
 func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Message, bool) {
@@ -155,7 +163,7 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
-	p := botapi.SendMessageParams{ChatID: chatID, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}}
+	p := botapi.SendMessageParams{ChatID: chatID, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
 	switch {
 	case r.force != nil:
 		p.ReplyMarkup = r.force
@@ -231,7 +239,7 @@ func (r result) problemDetail() string {
 		Detail string `json:"detail"`
 	}
 	_ = json.Unmarshal(r.body, &pr)
-	return clean(pr.Detail, 200)
+	return clean(pr.Detail, detailRunes)
 }
 
 func (c caller) do(ctx context.Context, method, path string, body any, hdr map[string]string) result {
@@ -278,7 +286,7 @@ func failText(r result) string {
 		return TextStale
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		if d := r.problemDetail(); d != "" {
-			return "Not accepted: " + d
+			return fitUnits("Not accepted: "+d, callbackAnswerUnits)
 		}
 	}
 	return TextFailed
@@ -311,9 +319,42 @@ func clean(s string, n int) string {
 	return b.String()
 }
 
-// parts splits a body into at most maxBodyParts messages, breaking at line ends where it can; what doesn't fit is
-// counted in dropped (runes).
-func parts(body string) (out []string, dropped int) {
+// units is the length of s in UTF-16 code units, the measure of the Bot API's limits.
+func units(s string) int {
+	n := 0
+	for _, r := range s {
+		n += runeUnits(r)
+	}
+	return n
+}
+
+func runeUnits(r rune) int {
+	if r >= 0x10000 {
+		return 2
+	}
+	return 1
+}
+
+// fitUnits cuts s to at most n UTF-16 units without splitting a surrogate pair, marking the cut with "…".
+func fitUnits(s string, n int) string {
+	if units(s) <= n {
+		return s
+	}
+	used := 1 // the ellipsis
+	var b strings.Builder
+	for _, r := range s {
+		if used+runeUnits(r) > n {
+			break
+		}
+		used += runeUnits(r)
+		b.WriteRune(r)
+	}
+	return b.String() + "…"
+}
+
+// parts splits a body into at most maxBodyParts messages of at most budget UTF-16 units each, breaking at line ends
+// where it can and never inside a surrogate pair; what doesn't fit is counted in dropped (runes).
+func parts(body string, budget int) (out []string, dropped int) {
 	rs := []rune(strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n"))
 	for i := range rs {
 		if rs[i] != '\n' && rs[i] != '\t' && (unicode.IsControl(rs[i]) || unicode.Is(unicode.Cf, rs[i])) {
@@ -324,7 +365,11 @@ func parts(body string) (out []string, dropped int) {
 		if len(out) == maxBodyParts {
 			return out, len(rs)
 		}
-		n := min(len(rs), bodyPartRunes)
+		n, u := 0, 0
+		for n < len(rs) && u+runeUnits(rs[n]) <= budget {
+			u += runeUnits(rs[n])
+			n++
+		}
 		if n < len(rs) {
 			for j := n; j > n/2; j-- {
 				if rs[j-1] == '\n' {

@@ -137,6 +137,7 @@ func TestTelegramChatSpacesAndInbox(t *testing.T) {
 		}
 	}
 	tap(done, card)
+	edited0 := last()
 	r = s.root.do("GET", "/spaces/"+s.space+"/inbox/"+item.ID, nil)
 	expect(t, r, 200)
 	var got struct {
@@ -145,6 +146,40 @@ func TestTelegramChatSpacesAndInbox(t *testing.T) {
 	r.json(t, &got)
 	if got.Status != "done" {
 		t.Fatalf("status %q after Done", got.Status)
+	}
+	// Forged taps pair a visible space with an item of a readable space Telegram is off for: the generic answer, and the
+	// item stays as it was.
+	r = s.root.do("POST", "/spaces/"+off+"/inbox", map[string]any{"title": "Off-space item", "body": "private", "urgency": "low"})
+	expect(t, r, 201)
+	var offItem struct {
+		ID      string `json:"id"`
+		Version int64  `json:"version"`
+	}
+	r.json(t, &offItem)
+	nMsgs := len(tg.Messages(42))
+	for _, forged := range []string{
+		"ir:" + strings.TrimPrefix(s.space, "spc_") + ":" + strings.TrimPrefix(offItem.ID, "inb_"),
+		statusDataFor(s.space, offItem.ID, "x", offItem.Version),
+		statusDataFor(s.space, offItem.ID, "p", offItem.Version),
+	} {
+		tap(forged, edited0)
+		a := tg.CallbackAnswers()
+		if a[len(a)-1].Text != "That isn't available. Use /spaces to see your spaces." {
+			t.Fatalf("forged tap %q answered %q", forged, a[len(a)-1].Text)
+		}
+	}
+	if got := len(tg.Messages(42)); got != nMsgs {
+		t.Fatalf("a forged tap sent %d messages", got-nMsgs)
+	}
+	r = s.root.do("GET", "/spaces/"+off+"/inbox/"+offItem.ID, nil)
+	expect(t, r, 200)
+	var offGot struct {
+		Status  string `json:"status"`
+		Version int64  `json:"version"`
+	}
+	r.json(t, &offGot)
+	if offGot.Status != "new" || offGot.Version != offItem.Version {
+		t.Fatalf("a forged tap changed the off-space item: %+v", offGot)
 	}
 	// A viewer-only link can't change the status: the web's rule (inbox:write) applies.
 	s.setLinkRole(t, "viewer")
