@@ -5429,7 +5429,7 @@
   - ADR-0079 keeps a limited run alive or parks it until its reset. Its failover (`usage_limit_failover`, off by default)
     applies only when a run is launched or resumed, and a resume names its old account, so in practice a limited run waits.
   - The operator wants a limited run to continue at once on another subscription account of its pool, without a proxy or
-    gateway (no Harbor Pilot, no `claude -p` behind a proxy).
+    gateway (no Harbor Pilot, no `claude -p` behind a proxy). This applies to subscription traffic; Harbor Pilot routing (ADR-0060) stays for 3rd-party/gateway models and is unchanged.
   - Claude Code fixes `CLAUDE_CODE_OAUTH_TOKEN` for the life of the process ("To replace an expired token, generate a new
     one and restart", official env-vars docs). Codex refuses to adopt a different account's `auth.json` in a running
     process (`codex-rs/login/src/auth/manager.rs`: reload skipped on an account-id mismatch).
@@ -5449,7 +5449,7 @@
      run does not switch. It waits as ADR-0079 does: kept alive, then parked until the reset.
   3. **Pools.** The space's bindings for the harness, ordered by `space_accounts.priority`. An optional role pool
      (`space_role_accounts`) replaces it for that role. Eligible: enabled, bound, compatible, with no open hold in any space
-     (probe-due holds included). Order: priority, lowest known window utilisation, fewest live runs, binding order. The
+     (probe-due holds included). Order: priority, lowest known utilisation of the window that limited the run, fewest live runs, binding order. The
      same order applies to launches and resumes whenever failover is on.
   4. **Launch-time headroom gate, no pre-emptive switch.** `usage_limit_min_headroom_percent` (0–100, default 0 = off). A
      new run (a launch, a fresh resume, or a switch's resume) starts on an account only if every window with known usage
