@@ -268,6 +268,8 @@ func TestKeepAliveAfterReadBody(t *testing.T) {
 }
 
 // A WebSocket upgrade's hijacked connection keeps no deadline from the guard: it is still usable after the idle bound.
+// The hijack paths are exact matches (slices.Contains on r.URL.Path), not prefixes: only "/agent/" is exempt here, so an
+// upgrade-headed request to any other path is still guarded.
 func TestReadGuardLeavesUpgradesAlone(t *testing.T) {
 	srv, done := readServer(t, idle, func(w http.ResponseWriter, _ *http.Request) error {
 		conn, brw, err := http.NewResponseController(w).Hijack()

@@ -215,7 +215,7 @@ flowchart LR
 
 The **Backups** page and a banner on every page show the restore: what was paused, stopped, cancelled, reset and revoked,
 and how many spaces are still paused. Check each space and its node, then **resume** it (**Resume** on the space overview, or
-`POST /api/v1/spaces/{space_id}/state`). Administrators can dismiss the banner once they have seen it.
+`POST /api/v1/spaces/{space_id}/state`). The banner goes away once every space the restore paused is resumed. If some stay paused on purpose, an administrator can dismiss it (**Dismiss** on the banner, `spaceman system restore acknowledge`, or the `acknowledge_restore` tool of the admin MCP, which needs approval). Dismissing is audited, changes no space, and a later restore shows the banner again.
 
 ### After a restore, also
 

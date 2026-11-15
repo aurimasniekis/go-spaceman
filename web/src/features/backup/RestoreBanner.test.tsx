@@ -39,6 +39,19 @@ describe('RestoreBanner', () => {
     expect(screen.queryByText(/Restored from a backup/)).not.toBeInTheDocument()
   })
 
+  it('hides the banner once an administrator dismissed it, even with spaces still paused on purpose', async () => {
+    show({ restored: true, still_paused: 3, state: state({ acknowledged_at: '2026-11-15T10:00:00Z', acknowledged_by: 'usr_admin' }) })
+    await waitFor(() => expect(api.GET).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByText(/Restored from a backup/)).not.toBeInTheDocument()
+  })
+
+  it('shows the banner and its Dismiss button for a new, undismissed restore', async () => {
+    show({ restored: true, still_paused: 3, state: state({ backup_id: 'bkp_new' }) })
+    expect(await screen.findByText(/bkp_new/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
+  })
+
   it('hides the banner at 0 still paused even when nobody dismissed it', async () => {
     show({ restored: true, still_paused: 0, state: state({ resumed_spaces: ['spc_a', 'spc_b', 'spc_c'] }) })
     await waitFor(() => expect(api.GET).toHaveBeenCalled())
