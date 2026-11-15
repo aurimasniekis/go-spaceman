@@ -81,6 +81,7 @@ type Handler struct {
 	o Options
 
 	mu      sync.Mutex
+	formMu  sync.Mutex         // serializes changes to forms
 	current map[string]string  // link ID -> space ID chosen with /spaces or /space
 	pending map[pendingKey]rej // a reject reason being asked for
 	forms   map[pendingKey]*form

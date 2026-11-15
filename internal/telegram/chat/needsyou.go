@@ -37,6 +37,7 @@ const (
 	maxFormsPerLink   = 10
 	bodyRunes         = 1500
 	maxOptions        = 20
+	maxSteps          = 20 // a todo with more steps is answered in the app
 )
 
 // humanAction is the part of an action the forms read.
@@ -90,6 +91,7 @@ type form struct {
 	done                    []bool
 	requiresAck             bool
 	wiz                     *wizard
+	big                     bool   // too many steps for a keyboard
 	head                    string // the text above the controls
 }
 
@@ -293,6 +295,8 @@ func (h *Handler) humanCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 		h.answer(ctx, q.ID, TextFormExpired)
 		return
 	}
+	h.formMu.Lock() // one change to a form at a time: taps and replies may be handled concurrently
+	defer h.formMu.Unlock()
 	h.formAction(ctx, q, l, c, s, fm, verb, n)
 }
 
@@ -319,6 +323,9 @@ func (h *Handler) openAction(ctx context.Context, q *botapi.CallbackQuery, l upd
 }
 
 func (f *form) interactive() bool {
+	if f.big {
+		return false
+	}
 	return f.typ == "question" || f.typ == "todo" || f.typ == "message" || f.wiz != nil
 }
 
@@ -343,6 +350,7 @@ func (h *Handler) newForm(a humanAction, l updates.Link, s spaceRef) *form {
 			Steps []string `json:"steps"`
 		}
 		_ = json.Unmarshal(a.Request, &t)
+		f.big = len(t.Steps) > maxSteps
 		f.steps, f.done = t.Steps, make([]bool, len(t.Steps))
 	case "message":
 		var m struct {
@@ -400,7 +408,13 @@ func parseWizard(a humanAction) *wizard {
 	}
 	slices.Sort(rest)
 	names = append(names, rest...)
-	w := &wizard{values: map[string]any{}, outcomes: a.TypeSpec.Outcomes}
+	w := &wizard{values: map[string]any{}}
+	for _, o := range a.TypeSpec.Outcomes {
+		if o == "" || len([]rune(o)) > 32 {
+			return nil
+		}
+		w.outcomes = append(w.outcomes, o)
+	}
 	for _, n := range names {
 		var p struct {
 			Type string            `json:"type"`
@@ -488,6 +502,9 @@ func (h *Handler) renderForm(f *form, a humanAction, s spaceRef) reply {
 		}
 	case a.Type == "approval":
 		rp.text += "\n\n" + TextApprovalInApp
+		rp.markup = markup(app)
+	case f.big:
+		rp.text += "\n\n" + TextOpenInApp
 		rp.markup = markup(app)
 	case a.Type == "custom" && f.wiz == nil:
 		rp.text += "\n\n" + TextOpenInApp
@@ -710,7 +727,7 @@ func (h *Handler) respond(ctx context.Context, c caller, l updates.Link, q *bota
 		h.answer(ctx, q.ID, "Done")
 	}
 	outcome, _ := body["outcome"].(string)
-	h.show(ctx, l.ChatID, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\n✅ " + strings.ToUpper(outcome[:1]) + outcome[1:] + "."})
+	h.show(ctx, l.ChatID, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\n✅ Done: " + clean(outcome, 32) + "."})
 }
 
 // --- free-text replies ---
@@ -730,6 +747,8 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 	if !ok {
 		return false
 	}
+	h.formMu.Lock()
+	defer h.formMu.Unlock()
 	f := h.formFor(p.form, l.ID)
 	if f == nil {
 		h.send(ctx, l.ChatID, reply{text: TextFormExpired})

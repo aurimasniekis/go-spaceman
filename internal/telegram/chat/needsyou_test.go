@@ -74,7 +74,7 @@ func TestQuestionOptionAnswers(t *testing.T) {
 	if e.responded() != 1 || e.api.responds[0]["answer"] != "blue" || e.api.responds[0]["outcome"] != "answered" || e.api.respHdr[0] != `"4"` {
 		t.Fatalf("%v %v", e.api.responds, e.api.respHdr)
 	}
-	if e.api.human[hid('1')].Status != "resolved" || !strings.Contains(e.last().Text, "✅ Answered") || e.last().ReplyMarkup != nil {
+	if e.api.human[hid('1')].Status != "resolved" || !strings.Contains(e.last().Text, "✅ Done: answered") || e.last().ReplyMarkup != nil {
 		t.Fatalf("closed: %q", e.last().Text)
 	}
 	// a second tap on the closed form never responds again
@@ -497,4 +497,24 @@ func (e *env) reply(text string, to int, chat int64, l updates.Link) {
 	e.upd++
 	e.h.Handle(context.Background(), botapi.Update{UpdateID: e.upd, Message: &botapi.Message{MessageID: int(e.upd) + 500, From: &botapi.User{ID: chat},
 		Chat: botapi.Chat{ID: chat, Type: botapi.ChatPrivate}, Text: text, ReplyToMessage: &botapi.Message{MessageID: to, Chat: botapi.Chat{ID: chat}}}}, l)
+}
+
+// More steps than a keyboard holds, and an empty outcome, are answered in the app rather than broken in chat.
+func TestBigTodoAndEmptyOutcome(t *testing.T) {
+	e := newEnv(t)
+	steps := make([]string, maxSteps+1)
+	for i := range steps {
+		steps[i] = "s"
+	}
+	b, _ := json.Marshal(map[string]any{"steps": steps})
+	e.addHuman(spA, hid('1'), "todo", "Big", string(b))
+	f := e.open(spA, hid('1'))
+	if !strings.Contains(f.Text, TextOpenInApp) {
+		t.Fatalf("%q", f.Text)
+	}
+	e.tapData(humanData('c', spA, hid('1'), -1), f)
+	a := e.addCustom(hid('2'), `{"type":"object","properties":{}}`, []string{""}, `{}`)
+	if parseWizard(*a) != nil || e.responded() != 0 {
+		t.Fatal("empty outcome accepted")
+	}
 }
