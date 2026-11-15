@@ -152,7 +152,7 @@ ENV
 
 down() {
   local dir=${1:?usage: dev-stack.sh down DIR}
-  [[ "$dir" == /tmp/smdev-* ]] || { echo "refusing: $dir is not a dev stack" >&2; exit 2; }
+  [[ $dir =~ ^/tmp/smdev-[A-Za-z0-9]{6}$ ]] || { echo "refusing: $dir is not a dev stack" >&2; exit 2; }
   # The env file doesn't exist yet when a start is cleaned up halfway.
   # shellcheck disable=SC1091
   [[ -f "$dir/env" ]] && source "$dir/env"
@@ -165,8 +165,16 @@ down() {
   [[ -z "${SM_HC_SESSION:-}" ]] || "${clean_env[@]}" HC_SESSION="$SM_HC_SESSION" HC_SOCKET="$SM_HC_SOCKET" XDG_STATE_HOME="$SM_HC_HOME/state" XDG_CONFIG_HOME="$SM_HC_HOME/config" \
     hc server stop >/dev/null 2>&1 || true
   # Anything else started from this stack (an agent the tests enrolled, the stub harness) has the directory in its command
-  # line; only those are stopped.
-  local left; left=$(pgrep -f -- "$dir/" || true)
+  # line; only those are stopped. The caller (make e2e, screenshots.sh) has the directory in its own command line too, so
+  # this script and its ancestors are skipped.
+  local self=" $$ " p=$$ q left=""
+  while p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') && [[ -n $p && $p -gt 1 ]]; do self+="$p "; done
+  # pgrep's exit status goes outside the substitution: a `|| true` inside it would leave a subshell with this script's
+  # command line behind, and the subshell would match.
+  local found; found=$(pgrep -u "$(id -u)" -f -- "$dir/") || true
+  for q in $found; do
+    [[ $self == *" $q "* ]] || left+="$q "
+  done
   # shellcheck disable=SC2086
   stop_pids $left
   if [[ "${KEEP:-}" != 1 ]]; then rm -rf "$dir"; fi
@@ -174,7 +182,7 @@ down() {
 
 restart() {
   local dir=${1:?usage: dev-stack.sh restart DIR}
-  [[ "$dir" == /tmp/smdev-* && -f "$dir/central.yaml" ]] || { echo "refusing: $dir is not a dev stack" >&2; exit 2; }
+  [[ $dir =~ ^/tmp/smdev-[A-Za-z0-9]{6}$ && -f "$dir/central.yaml" ]] || { echo "refusing: $dir is not a dev stack" >&2; exit 2; }
   # shellcheck disable=SC1091
   source "$dir/env"
   if [[ "${SKIP_UI_BUILD:-}" != 1 ]] && ! (cd "$root/web" && pnpm run build >"$dir/ui-build.log" 2>&1); then

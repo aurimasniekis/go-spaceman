@@ -125,7 +125,9 @@ Notes from using it:
 - **Cleanup.** `make e2e`, `make screenshots` and a failing or interrupted `dev-stack.sh up` stop everything they
   started on success, failure, Ctrl-C and `kill`: central, the agent, devpulse, devmcp, the stub harness, the stack's own
   herdr-core core, and anything else with the stack's directory in its command line. A process that ignores SIGTERM for
-  10 seconds gets SIGKILL. The loop's stack is the one thing that stays up, until `make e2e-down`. A stack from a run
+  10 seconds gets SIGKILL. A TERM sent only to the script's PID doesn't stop the run at once: the script waits for the
+  Playwright command it started to exit before it runs cleanup. To stop the whole run immediately, send TERM to its
+  process group (`kill -TERM -- -<pgid>`), or press Ctrl-C. The loop's stack is the one thing that stays up, until `make e2e-down`. A stack from a run
   that was killed with SIGKILL is stopped with `scripts/dev-stack.sh down /tmp/smdev-XXXXXX`. Only stop stacks you
   started.
 - **Overflow spec.** `ui-overflow.spec.ts` checks every page and dialog at three widths in two themes. The widths run
