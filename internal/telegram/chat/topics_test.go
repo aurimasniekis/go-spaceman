@@ -120,6 +120,37 @@ func TestTopicPinIgnoresSpacesNamedLikeItsID(t *testing.T) {
 	}
 }
 
+// The topic's space is left out of the visible list (unreadable, or hidden), and a space named like its ID is visible.
+// The impostor must not take the topic: no write lands on it and /control in the topic does not put it in control mode.
+func TestTopicPinOfAHiddenSpaceDoesNotFallToAnImpostor(t *testing.T) {
+	cases := map[string]struct {
+		pin  string
+		hide bool
+	}{
+		"unreadable": {pin: spD},
+		"hidden":     {pin: spA, hide: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.threadSpace = map[int]string{7: tc.pin}
+			e.api.listFirst = []spaceRef{{ID: spViewer, Slug: "x", Name: strings.ToUpper(tc.pin), State: "active"}}
+			e.hideA.Store(tc.hide)
+			e.sayIn(7, "topic note one")
+			if e.itemsIn(spViewer) != 0 || e.itemsIn(tc.pin) != 0 || e.createdN() != 0 {
+				t.Fatalf("impostor %d, pinned %d, created %d; want 0, 0, 0", e.itemsIn(spViewer), e.itemsIn(tc.pin), e.createdN())
+			}
+			e.sayIn(7, "/control")
+			if got := e.last().Text; got != TextUnavailable {
+				t.Fatalf("/control in the topic answered %q, want %q", got, TextUnavailable)
+			}
+			if strings.Contains(e.last().Text, "Control mode") {
+				t.Fatalf("/control in the topic entered control mode: %q", e.last().Text)
+			}
+		})
+	}
+}
+
 // Control mode of S does not swallow text written in A's topic (it is captured into A), and /control there targets A.
 func TestTopicPinAgainstControlMode(t *testing.T) {
 	e := newEnv(t)
