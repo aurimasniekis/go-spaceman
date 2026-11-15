@@ -1407,7 +1407,9 @@
     `get-telegram-link-code`, `cancel-telegram-link-code` and `confirm-telegram-link`, because linking a Telegram account
     works only in the browser session that created the code and refuses API tokens. ADR-0083 (TG-9a) also adds `create-telegram-session`, not a sign-in flow of the web but of the
     Telegram Mini App: `create-telegram-session` (served only on the Mini App host, from its origin, with initData
-    Telegram signs for the app). Of the raw routes, the live terminal stream has no command: it
+    Telegram signs for the app). ADR-0083 (amendment TG-10-4) adds `get-my-telegram-link-prefs` and
+    `set-my-telegram-link-prefs`: a Telegram link's own preferences, served only on the Mini App host to that link's
+    Mini App session. Of the raw routes, the live terminal stream has no command: it
     replays terminal output with its escape sequences, which belongs in the web terminal viewer
     (`run recording download` saves the recording instead). The change feed is followed with `spaceman watch`
     (`--after`, `--count`; JSON Lines with `-o json`).
@@ -5076,6 +5078,64 @@
     Mutants that restore the fall-through (route only while the running bot serves, ignore the configured host, let
     the 404 gate fall through to the main handler, drop the gate, compare the raw Host, route the ignored stored host
     to the main handler) are each killed.
+
+- **Amendment TG-10-4: a link's own preferences, and queue-next (2026-11-15, security-relevant change: widens what a
+  Telegram principal can reach).** TG-10-2's Mini App settings page was read-only: `get-telegram-settings`,
+  `list-telegram-links` and the web's notification preferences stay excluded for Telegram (they are administration or
+  another channel's personal settings), and nothing could write `telegram_links.prefs_json`, the link overrides of
+  decision 12's notification defaults. This amendment adds the narrowest write that makes the page editable, and
+  classifies `queue-next` for the Mini App's "Next" card.
+  - **Two operations, Mini App only.** `get-my-telegram-link-prefs` and `set-my-telegram-link-prefs`
+    (`GET`/`PUT /api/v1/telegram/link/prefs`), class `miniapp`, rule `{Session, TelegramSelf}` (so the SpaceMan MCP,
+    which is refused on personal Session rules, never reaches them). The handler also answers 404 unless the request
+    came over the Mini App host from a Telegram principal, like `get-telegram-me`; the bot's chat channel is refused by
+    the class. The write is a mutation on the Mini App host, so the Mini App origin check applies.
+  - **The link is the session's, never a parameter.** Neither operation has a path, query or body field naming a
+    link; the body schema allows no extra properties, so a `link_id` (or `max_role`, `spaces`, `grants`, `user_id`,
+    `state`, a global settings field) is a 422. The service (`link.Service.GetPrefs`/`SetPrefs`) takes the link from the
+    authenticated principal's `TelegramLinkID` (`ownLinkID`: a Telegram principal with a user and no token or root
+    token; anything else is 403) and reads it (`ownLink`): it must exist, belong to the principal's user and be
+    `active`, else 404, so a caller can't tell another link exists. The `UPDATE` repeats `user_id` and `state = 'active'`
+    in its `WHERE` with the version from `If-Match` (required), so a race with an unlink or a mismatch writes nothing
+    (409). A revoked link's Mini App sessions end with the unlink (TG-9a), so its requests are 401 before any of this.
+  - **What it can change.** The link's overrides, in the existing `settings.LinkPrefs` shape (the notification
+    categories, minimum priority, reminder, inbox, review and failed-run delivery, digest and its time, quiet hours and
+    their times, `muted_spaces`), validated as the global defaults are (`LinkPrefs.Validate`); `PUT` replaces them, a
+    field left out follows the defaults again. `muted_spaces` must be space IDs (at most 200, de-duplicated); a space
+    the link can't read is accepted, since muting only removes notifications and refusing it would reveal which IDs
+    exist. And the **user's time zone**: decision 12 (Q9) makes the zone per user and editable in the Mini App, so a
+    sent `timezone` sets only the `timezone` field of the user's `notification_prefs` (validated, outside the write
+    transaction, against the embedded zone database; empty clears it; left out keeps it); every other field there is
+    kept. It is shared by the user's links and the web. Unreadable stored web preferences make the write a 409 rather
+    than being overwritten.
+  - **What it can't.** Another link (the same user's or anyone's), the link's cap, spaces, topics map, state or
+    re-confirmation, any grant, the space or global Telegram settings, and any web preference but the zone. No role or
+    grant code runs on this path.
+  - **Topics opt-in: a placeholder.** The answer carries `topics: {available: false}`. Topics mode is TG-11; the opt-in
+    is not accepted yet (an unknown field, 422) and is added with TG-11 and its own review.
+  - **Effects and audit.** The save writes `telegram.link.prefs_saved` (target the link; details record only whether
+    overrides, muted spaces and a zone change were saved, no values) and publishes `telegram.link` after commit, so the
+    notifier re-reads the links and zones at once. No migration: `prefs_json` exists since 0051; a new query
+    `SetTelegramLinkPrefs`.
+  - **queue-next is served read-only (class both).** It returns the next eligible task and the skipped ones with their
+    titles and waiting reasons: a subset of what `list-tasks` (class both, `queue:read`) already shows a Telegram
+    principal, under the same rule. Its `?record=true` stores the decision (a write needing `queue:write`) behind a
+    `GET`, which the Mini App host's origin check does not cover, so the handler refuses `record` to any Telegram
+    principal or channel (403) and Telegram records nothing. `queue-decisions` stays excluded.
+  - **Tests:** `internal/telegram/link` `TestLinkPrefsOwnership` (another user's link, a revoked link, an unknown link,
+    a web session, an API token, a root token, no user and nil are refused on read and write; the other links keep
+    their preferences and version; the version guards the write), `TestLinkPrefsTimezoneAndValidation`;
+    `internal/app` `TestMiniAppLinkPrefsReadAndSave`, `TestMiniAppLinkPrefsOnlyTheSessionsLink` (a `link_id` in the
+    body is 422, in the query ignored, under the path 404; the second link's session sees its own),
+    `TestMiniAppLinkPrefsCannotEscalate` (cap, spaces, grants, user, state and settings fields are 422; the cap,
+    spaces and grants are unchanged and no Telegram settings row appears; the settings, links, web preferences and
+    grants operations stay 403/404 from the Mini App), `TestMiniAppLinkPrefsRefusesOtherPrincipals` (web session, API
+    token and root token 404, the chat channel 403, a revoked link 401) and `TestMiniAppQueueNextIsReadOnly`. Also
+    `TestSetTelegramLinkPrefsQueryGuards` (the `UPDATE` alone writes nothing for another user's or a revoked link).
+    Nine mutants are each killed: the ownership check without the user check, without the state check, accepting a
+    non-Telegram principal, accepting token principals, skipping the in-transaction read; the `UPDATE` without
+    `user_id`/`state`; the handler without the Mini App channel check; `queue-next` without the `record` refusal; the
+    write classified `both`.
 
 ### ADR-0084 — "Message the agent" is typed into the running session at once
 - **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.

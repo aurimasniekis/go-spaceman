@@ -25,6 +25,9 @@ var Ops = map[string]api.TelegramClass{
 	"move-task":       api.TelegramBoth,
 	"decide-incident": api.TelegramBoth,
 	"create-task":     api.TelegramMiniApp,
+	// What the queue picks next and why (amendment TG-10-4): the same tasks list-tasks shows, read-only. Recording the
+	// decision (?record=true) is refused to Telegram in the handler.
+	"queue-next": api.TelegramBoth,
 	// Needs you (human actions); the type labels are for the Mini App's forms.
 	"list-human-actions":     api.TelegramBoth,
 	"get-human-action":       api.TelegramBoth,
@@ -52,6 +55,9 @@ var Ops = map[string]api.TelegramClass{
 	"get-telegram-me": api.TelegramMiniApp,
 	// Whether the space opted in to the watch-only terminal (the stream route checks it again).
 	"get-telegram-space-features": api.TelegramMiniApp,
+	// The caller's own link's preferences (amendment TG-10-4): the link is the session's, never a parameter.
+	"get-my-telegram-link-prefs": api.TelegramMiniApp,
+	"set-my-telegram-link-prefs": api.TelegramMiniApp,
 	// Signed single-purpose download links for attachments (§3.4.3): the Mini App mints, /tg-dl/ redeems.
 	"create-telegram-download-link": api.TelegramMiniApp,
 	// Runs (Q3: stop, never launch).
@@ -230,7 +236,6 @@ var Ops = map[string]api.TelegramClass{
 	"put-space-harbor-pilot":        api.TelegramExcluded,
 	"put-xspace-peer":               api.TelegramExcluded,
 	"queue-decisions":               api.TelegramExcluded,
-	"queue-next":                    api.TelegramExcluded,
 	"reject-kb-proposal":            api.TelegramExcluded,
 	"release-limit-wait":            api.TelegramExcluded,
 	"remove-repository-ssh-key":     api.TelegramExcluded,
