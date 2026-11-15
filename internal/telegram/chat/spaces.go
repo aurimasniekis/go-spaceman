@@ -71,14 +71,28 @@ func (h *Handler) resolve(ctx context.Context, c caller, ref string) (spaceRef, 
 		return spaceRef{}, false
 	}
 	for _, s := range vis {
-		if s.ID == ref || strings.EqualFold(s.Slug, ref) || strings.EqualFold(s.Name, ref) {
+		if s.ID == ref {
+			return s, true // an exact ID wins over a slug or name that happens to look like it
+		}
+	}
+	for _, s := range vis {
+		if strings.EqualFold(s.Slug, ref) || strings.EqualFold(s.Name, ref) {
 			return s, true
 		}
 	}
 	return spaceRef{}, false
 }
 
-func (h *Handler) setCurrent(linkID, spaceID string) {
+// setCurrent makes spaceID the link's current space. Work done in a space's topic leaves it alone: the topic already
+// says which space, and a note written there must not redirect what the user writes in the main chat.
+func (h *Handler) setCurrent(ctx context.Context, linkID, spaceID string) {
+	if pinnedOf(ctx) != "" {
+		return
+	}
+	h.setCurrentNow(linkID, spaceID)
+}
+
+func (h *Handler) setCurrentNow(linkID, spaceID string) {
 	h.mu.Lock()
 	h.current[linkID] = spaceID
 	h.mu.Unlock()
@@ -90,10 +104,18 @@ func (h *Handler) currentSpace(linkID string) string {
 	return h.current[linkID]
 }
 
-// target picks the space a command works on: the one named, else the chosen one, else the only visible one.
+// target picks the space a command works on: the one named, else the one of the topic written in, else the chosen one, else the only visible one.
 func (h *Handler) target(ctx context.Context, c caller, l updates.Link, ref string) (spaceRef, string) {
 	if ref != "" {
 		if s, ok := h.resolve(ctx, c, ref); ok {
+			return s, ""
+		}
+		return spaceRef{}, TextUnavailable
+	}
+	if pin := pinnedOf(ctx); pin != "" {
+		// Written in a space's topic: that space, authorized again like a named one. Never the current space instead.
+		// By ID only: slugs and names are free text, so a space renamed to another's ID must not take its topic.
+		if s, _, ok := h.space(ctx, c, pin); ok {
 			return s, ""
 		}
 		return spaceRef{}, TextUnavailable
@@ -185,7 +207,7 @@ func (h *Handler) cmdSpace(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrentNow(l.ID, s.ID) // an explicit /space moves it even from a topic
 	h.send(ctx, l.ChatID, h.overview(ctx, c, s))
 }
 
@@ -289,7 +311,7 @@ func (h *Handler) spaceCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 		h.answer(ctx, q.ID, failText(r))
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.answer(ctx, q.ID, "")
 	h.show(ctx, l.ChatID, q.Message, h.overview(ctx, c, s))
 }

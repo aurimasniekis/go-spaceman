@@ -4799,7 +4799,7 @@
       and the digest is rechecked (access, mute, space visibility) and rendered with titles only when it is sent;
       a link with nothing collected gets none; a link without a zone or with the digest off collects nothing, and items older than 48 hours are left out. Announcements are at most once, barring a crash before the mapping flush (the announced instants then restart from the mapping's older touch, so one may repeat): after a restart a card's assignee is unknown until its next change, so the first assignment seen on such a card is not announced, and an alert queued when the process stops is lost. A queued alert (reminder, escalation, assignment) is rechecked at send time for the link, the grants and the space's visibility (like a card), but not against the resource's own state: an alert for an action that was resolved while it waited is still sent. `telegram_messages.created_at` is refreshed by every send, edit and
       announcement, and retention prunes rows older than 30 days in batches of 200.
-  16. **What SpaceMan uses of Telegram's newer features:** private-chat topics (opt-in per link, M3, **(Q6)**), rich
+  16. **What SpaceMan uses of Telegram's newer features:** private-chat topics (opt-in per space, M3, **(Q6)**), rich
       messages with an entity fallback **(Q12)**, styled buttons, `copy_text`, `disabled`, and ephemeral messages in group
       mode. **Not used:** guest mode, bot-to-bot, managed and business bots (each lets content or commands arrive from
       something that isn't a linked user), widgets, polls, draft streaming (later). v1 is **private chats only**; group

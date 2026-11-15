@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram topics mode (ADR-0083, TG-11; the bot isn't usable yet): a space whose Telegram settings turn `topics` on gets a
+  topic of its own in each linked private chat, and its open actions go to a "Needs you" topic. The bot creates a topic on
+  first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted
+  or closed is created again once; if that fails, or the chat has topics off for the bot, the message goes to the main
+  chat. Topics only choose where a message appears; who may receive it is unchanged.
 - Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
   App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
   muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App

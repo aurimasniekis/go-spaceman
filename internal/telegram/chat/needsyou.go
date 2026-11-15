@@ -171,7 +171,7 @@ func (h *Handler) cmdNeedsYou(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	// One call with pending=true: open and in_progress (assigned or escalated) actions in the space's rank order.
 	var out struct {
 		Items []humanAction `json:"items"`
