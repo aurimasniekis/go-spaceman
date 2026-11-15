@@ -41,7 +41,7 @@ const problem = (status: number, code: string) => ({ status, headers: { 'Content
 const base = { space_id: SPACE, status: 'open', priority: 'normal', rank: 1, blocks_task: false, version: 1, reminder_count: 0, requester_kind: 'agent', requester_label: 'control', created_at: '2026-11-14T10:00:00Z', body: 'Please look at this.', attachments: [], comments: [], notifications: [] }
 const SCHEMA = {
   type: 'object',
-  required: ['site'],
+  required: ['site', 'mode'],
   properties: {
     site: { type: 'object', title: 'Site', required: ['name'], properties: { name: { type: 'string', title: 'Site name' }, level: { $ref: '#/$defs/level' } } },
     contacts: { type: 'array', title: 'Contacts', items: { type: 'object', title: 'Contact', properties: { email: { type: 'string', title: 'Email' }, retries: { type: 'integer', title: 'Retries' } } } },

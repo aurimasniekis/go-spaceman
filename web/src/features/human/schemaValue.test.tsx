@@ -12,7 +12,7 @@ globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {
 
 const schema = {
   type: 'object',
-  required: ['site'],
+  required: ['site', 'mode'],
   properties: {
     site: { type: 'object', required: ['name'], properties: { name: { type: 'string', title: 'Site name' }, level: { $ref: '#/$defs/level' } } },
     contacts: { type: 'array', title: 'Contacts', items: { type: 'object', title: 'Contact', properties: { email: { type: 'string' }, retries: { type: 'integer', minimum: 0 } } } },
@@ -32,10 +32,16 @@ describe('complex schemas', () => {
   it('resolves local refs and oneOf constants', () => {
     expect(deref({ $ref: '#/$defs/level' }, schema)?.enum).toEqual(['low', 'high'])
     expect(deref({ $ref: '#/$defs/missing' }, schema)).toBeUndefined()
-    expect(optionsOf(schema.properties.mode)).toEqual([{ value: 'a', label: 'Alpha' }, { value: 'b', label: 'Beta' }])
+    expect(optionsOf(schema.properties.mode)).toEqual([{ value: 'a', label: 'Alpha', raw: 'a' }, { value: 'b', label: 'Beta', raw: 'b' }])
+  })
+  it('survives malformed refs and null nodes, and keeps enum types', () => {
+    expect(deref({ $ref: '#/$defs/100%' }, schema)).toBeUndefined()
+    expect(formable({ properties: { a: null } })).toBe(false)
+    expect(optionsOf({ enum: [1, true] })?.map((o) => o.raw)).toEqual([1, true])
+    expect(compactValue({ a: { b: '' }, c: 1 })).toEqual({ c: 1 })
   })
   it('compacts nested empties', () => {
-    expect(compactValue({ a: '', b: { c: '', d: [] }, e: [{ x: '' }, { x: 'y' }], f: 0, g: false })).toEqual({ b: {}, e: [{ x: 'y' }], f: 0, g: false })
+    expect(compactValue({ a: '', b: { c: '', d: [] }, e: [{ x: '' }, { x: 'y' }], f: 0, g: false })).toEqual({ e: [{ x: 'y' }], f: 0, g: false })
   })
   it('render nested objects and repeated groups, and report the nested value', () => {
     const onChange = vi.fn()

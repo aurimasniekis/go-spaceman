@@ -34,12 +34,19 @@ const MAX_DEPTH = 4
 
 /** The node a local `#/$defs/x` or `#/definitions/x` reference names (anything else is unsupported). */
 export function deref(n: Node, root: Node, hops = 0): Node | undefined {
+  if (typeof n !== 'object' || n === null) return undefined
   if (!n.$ref) return n
   if (hops > 8) return undefined
   const m = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(n.$ref)
   if (!m) return undefined
   const defs = (root as Record<string, unknown>)[m[1]] as Record<string, Node> | undefined
-  const target = defs?.[decodeURIComponent(m[2])]
+  let name: string
+  try {
+    name = decodeURIComponent(m[2])
+  } catch {
+    return undefined
+  }
+  const target = defs?.[name]
   const { $ref: _ref, ...rest } = n
   return target ? deref({ ...target, ...rest }, root, hops + 1) : undefined
 }
@@ -47,10 +54,10 @@ export function deref(n: Node, root: Node, hops = 0): Node | undefined {
 export const kindOf = (n: Node) => (Array.isArray(n.type) ? n.type.find((t) => t !== 'null') : n.type)
 
 /** The labelled options of a node: its enum, or a oneOf/anyOf of constants (with their titles). */
-export function optionsOf(n: Node): { value: string; label: string }[] | undefined {
-  if (n.enum) return n.enum.map((v) => ({ value: String(v), label: String(v) }))
+export function optionsOf(n: Node): { value: string; label: string; raw: unknown }[] | undefined {
+  if (n.enum) return n.enum.map((v) => ({ value: String(v), label: String(v), raw: v }))
   const alts = n.oneOf ?? n.anyOf
-  if (alts && alts.length > 0 && alts.every((a) => a.const !== undefined)) return alts.map((a) => ({ value: String(a.const), label: a.title ?? String(a.const) }))
+  if (alts && alts.length > 0 && alts.every((a) => a.const !== undefined)) return alts.map((a) => ({ value: String(a.const), label: a.title ?? String(a.const), raw: a.const }))
   return undefined
 }
 
@@ -74,7 +81,8 @@ const empty = (x: unknown) => x === '' || x === undefined || x === null || (Arra
 export function compactValue(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(compactValue).filter((x) => !empty(x) && !(typeof x === 'object' && x !== null && Object.keys(x).length === 0))
   if (typeof v === 'object' && v !== null) {
-    const o = Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, compactValue(x)]).filter(([, x]) => !empty(x)))
+    const o = Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, compactValue(x)])
+      .filter(([, x]) => !empty(x) && !(typeof x === 'object' && x !== null && !Array.isArray(x) && Object.keys(x).length === 0)))
     return o
   }
   return v
@@ -83,16 +91,17 @@ export function compactValue(v: unknown): unknown {
 type Common = { root: Node; label: string; description?: string; required?: boolean; ui?: UIMeta; depth?: number }
 
 /** One value (any supported node) as a controlled input; objects and arrays of objects nest. */
-export function SchemaValue({ node, root, value, onChange, label, description, required, ui, depth = 0 }: Common & { node: Node; value: unknown; onChange: (v: unknown) => void }) {
+export function SchemaValue({ node, root, value, onChange, label, description, required, depth = 0 }: Common & { node: Node; value: unknown; onChange: (v: unknown) => void }) {
   const n = deref(node, root) ?? {}
   const k = kindOf(n)
   const desc = description ?? n.description
   const opts = optionsOf(n)
   if (k === 'boolean') return <Checkbox label={label} description={desc} checked={value === true} onChange={(e) => onChange(e.currentTarget.checked)} />
   if (opts && k !== 'array') {
-    const asNumber = k === 'number' || k === 'integer'
-    const set = (x: string | null) => onChange(x === null ? undefined : asNumber ? Number(x) : x)
-    if (ui?.fields?.[label]?.widget === 'radio' || opts.length <= 3) {
+    // The selected option's own value (a number or boolean enum keeps its type).
+    const set = (x: string | null) => onChange(x === null ? undefined : opts.find((o) => o.value === x)?.raw)
+    // A required short list is radios; an optional one stays a clearable select.
+    if (required && opts.length <= 3) {
       return (
         <Radio.Group label={label} description={desc} withAsterisk={required} value={value === undefined ? '' : String(value)} onChange={(x) => set(x)}>
           <Stack gap={4} mt={4}>{opts.map((o) => <Radio key={o.value} value={o.value} label={o.label} />)}</Stack>
@@ -153,7 +162,7 @@ export function SchemaValue({ node, root, value, onChange, label, description, r
                 onClick={() => onChange(list.filter((_, j) => j !== i))}><IconTrash size={14} /></ActionIcon>
             </Stack>
           ))}
-          <Button size="xs" variant="default" w="fit-content" disabled={list.length >= max} onClick={() => onChange([...list, ik === 'object' ? {} : undefined])}>Add {items.title ?? 'item'}</Button>
+          <Button size="xs" variant="default" w="fit-content" disabled={list.length >= max} onClick={() => onChange([...list, ik === 'object' ? {} : ik === 'boolean' ? false : ik === 'array' ? [] : undefined])}>Add {items.title ?? 'item'}</Button>
         </Stack>
       </Fieldset>
     )
