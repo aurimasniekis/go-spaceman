@@ -34302,7 +34302,7 @@
     },
     "/spaces/{space_id}/telegram": {
       "delete": {
-        "description": "Needs space_config:write in the space and a step-up.",
+        "description": "Needs space_config:write in the space and a step-up. It also unbinds the space's group, which needs no telegram_group:write (unbinding with group_chat_id 0 on the PUT does).",
         "operationId": "delete-space-telegram",
         "parameters": [
           {

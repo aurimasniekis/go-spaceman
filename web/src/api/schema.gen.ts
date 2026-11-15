@@ -3990,7 +3990,7 @@ export interface paths {
         post?: never;
         /**
          * Remove a space's Telegram settings (Telegram is off for it again)
-         * @description Needs space_config:write in the space and a step-up.
+         * @description Needs space_config:write in the space and a step-up. It also unbinds the space's group, which needs no telegram_group:write (unbinding with group_chat_id 0 on the PUT does).
          */
         delete: operations["delete-space-telegram"];
         options?: never;
