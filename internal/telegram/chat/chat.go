@@ -80,9 +80,16 @@ type Options struct {
 	ResolveMessage func(ctx context.Context, chatID int64, messageID int) (spaceID, msgID, linkID string, ok bool)
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
+	// AppLink is the direct Mini App link (t.me/<bot>?startapp=…) of an action, for forms in a group, where Telegram
+	// refuses web_app buttons: they get a plain URL button instead (nil or "": no button).
+	AppLink func(spaceID, actionID string) string
 	// ArmApproval arms the server's confirmation of an enforced approval for the first step of deciding it in chat
 	// (api.ApprovalConfirmations.Arm); "" or nil: enforced approvals can't be decided in chat.
 	ArmApproval func(linkID, spaceID, actionID, outcome string, version int64) string
+
+	// BotUsername returns the bot's own username without "@" ("" while unknown). In a group a command addressed to
+	// another bot ("/cmd@OtherBot") is ignored: only bare commands and ones addressed to this username are answered.
+	BotUsername func() string
 
 	// Allow takes one unit of a link's inbound limit of that kind (updates.Limiter.Allow); nil: no limit. Capture costs
 	// one KindInboxItem per item and one KindDownload per file moved in either direction.
@@ -146,12 +153,20 @@ func New(o Options) *Handler {
 // Handle routes a linked user's update: commands, button taps, the reply to a reject-reason prompt, and capture: any
 // other message with text, a photo or a file becomes an inbox item in the link's current space (capture.go).
 func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
-	// Replies go to the topic the user wrote in (topics mode), or the main chat for a message outside any topic.
+	// Replies go to the topic the update came from (a topic of the private chat in topics mode, or a forum topic of a
+	// bound group), or the main chat for one outside any topic. Only a context value: no lookup happens here.
 	switch {
 	case u.CallbackQuery != nil && u.CallbackQuery.Message != nil:
 		ctx = withThread(ctx, u.CallbackQuery.Message.MessageThreadID)
 	case u.Message != nil:
 		ctx = withThread(ctx, u.Message.MessageThreadID)
+	}
+	if l.Group != nil {
+		// A group's space comes from its binding only: the private chat's topic pin never applies there.
+		h.handleGroup(ctx, u, l)
+		return
+	}
+	if u.Message != nil {
 		if t := u.Message.MessageThreadID; t != 0 && h.o.SpaceOfThread != nil {
 			if id, ok := h.o.SpaceOfThread(ctx, l.ID, t); ok {
 				ctx = context.WithValue(ctx, pinKey{}, id)
@@ -196,15 +211,28 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 
 // command splits "/name@bot args" into its parts; ok is false for text that is not a command.
 func command(text string) (name, arg string, ok bool) {
+	name, _, arg, ok = commandFor(text)
+	return
+}
+
+// commandFor is command that also reports the "@bot" the command was addressed to ("" for a bare command).
+func commandFor(text string) (name, to, arg string, ok bool) {
 	t := strings.TrimSpace(text)
 	if !strings.HasPrefix(t, "/") {
-		return "", "", false
+		return "", "", "", false
 	}
 	head, arg, _ := strings.Cut(t[1:], " ")
 	if i := strings.IndexByte(head, '@'); i >= 0 {
-		head = head[:i]
+		head, to = head[:i], head[i+1:]
 	}
-	return strings.ToLower(head), strings.TrimSpace(arg), head != ""
+	return strings.ToLower(head), to, strings.TrimSpace(arg), head != ""
+}
+
+func (h *Handler) botUsername() string {
+	if h.o.BotUsername == nil {
+		return ""
+	}
+	return h.o.BotUsername()
 }
 
 // --- sending ---
@@ -220,6 +248,8 @@ type reply struct {
 	text   string
 	markup *botapi.InlineKeyboardMarkup
 	force  *botapi.ForceReply
+	// replyTo makes the message a reply to that message of the chat (0: none), and thread puts it in that forum topic.
+	replyTo, thread int
 	// protect sets protect_content (no forwarding or saving), for message bodies (ADR-0083 decision 13).
 	protect bool
 }
@@ -231,7 +261,15 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
-	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: threadOf(ctx), Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
+	// One thread source only: an explicit thread or reply target of r wins, else the topic the update came from.
+	thread := r.thread
+	if r.thread == 0 && r.replyTo == 0 {
+		thread = threadOf(ctx)
+	}
+	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: thread, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
+	if r.replyTo != 0 {
+		p.ReplyParameters = &botapi.ReplyParameters{MessageID: r.replyTo}
+	}
 	switch {
 	case r.force != nil:
 		p.ReplyMarkup = r.force
@@ -296,7 +334,9 @@ func (h *Handler) answer(ctx context.Context, id, text string) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
-	if err := b.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: id, Text: text}); err != nil {
+	// In a group an answer is an alert: answerCallbackQuery is shown only to the tapper, so nothing reaches the others.
+	_, inGroup := groupOf(ctx)
+	if err := b.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: id, Text: text, ShowAlert: inGroup && text != ""}); err != nil {
 		h.o.Log.Debug("telegram: a button tap was not answered", slog.String("error", err.Error()))
 	}
 }

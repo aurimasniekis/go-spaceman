@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -225,7 +224,7 @@ func (h *Handler) readItem(ctx context.Context, c caller, l updates.Link, q *bot
 	}
 	h.answer(ctx, q.ID, "")
 	h.send(ctx, l.ChatID, h.itemCard(it, s))
-	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
+	if !h.full(s) {
 		h.send(ctx, l.ChatID, reply{text: "The body isn't shown in chat for this space. Open the item in the app to read it."})
 		return
 	}

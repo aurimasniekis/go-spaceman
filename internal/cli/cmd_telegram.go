@@ -27,7 +27,8 @@ func (a *App) telegramCmd() *cobra.Command {
 			str("content-level", "content_level", "full, summary or off (default full)").
 			str("enforced-approvals", "enforced_approvals", "web_only or confirm (default web_only)").
 			boolean("topics", "topics", "give the space its own topic for users in topics mode").
-			boolean("terminal-watch", "terminal_watch", "allow watching run terminals (read-only) from the Mini App")
+			boolean("terminal-watch", "terminal_watch", "allow watching run terminals (read-only) from the Mini App").
+			integer("group-chat-id", "group_chat_id", "bind the forum supergroup with this chat ID (negative; the bot must be in it) to the space, 0 to unbind; admins only")
 	}
 	bot := group("bot", "The bot's connection: token, mode, Mini App host and health (ADR-0083)", nil,
 		a.cmd(opts{use: "get", short: "The bot's connection and health (never its token)", op: "get-telegram-bot"}),

@@ -3990,13 +3990,13 @@ export interface paths {
         get: operations["get-space-telegram"];
         /**
          * Set a space's Telegram settings
-         * @description Without If-Match this creates the settings (409 if the space has some); with it, it replaces them. A field left out takes its default. Needs space_config:write in the space and a step-up.
+         * @description Without If-Match this creates the settings (409 if the space has some); with it, it replaces them. A field left out takes its default, except group_chat_id: left out, the space's bound group stays. Needs space_config:write in the space and a step-up; binding or unbinding the group (group_chat_id) also needs telegram_group:write (admins). The group must be a forum supergroup the bot is a member of (422 otherwise), and a group serves one space only (409 when it is bound elsewhere).
          */
         put: operations["put-space-telegram"];
         post?: never;
         /**
          * Remove a space's Telegram settings (Telegram is off for it again)
-         * @description Needs space_config:write in the space and a step-up.
+         * @description Needs space_config:write in the space and a step-up. It also unbinds the space's group, which needs no telegram_group:write (unbinding with group_chat_id 0 on the PUT does).
          */
         delete: operations["delete-space-telegram"];
         options?: never;
@@ -11639,6 +11639,11 @@ export interface components {
              * @enum {string}
              */
             enforced_approvals: "web_only" | "confirm";
+            /**
+             * Format: int64
+             * @description The forum supergroup bound to the space (group mode); omitted when none. Members of the group who linked their account can use the space's summaries there
+             */
+            group_chat_id?: number;
             space_id: string;
             /** @description false: the defaults (Telegram off for the space) */
             stored: boolean;
@@ -11671,6 +11676,11 @@ export interface components {
              * @enum {string}
              */
             enforced_approvals?: "web_only" | "confirm";
+            /**
+             * Format: int64
+             * @description Binds the forum supergroup (its chat ID, negative; the bot must be a member) to the space; 0 unbinds it. Left out, the current binding stays. Changing it needs telegram_group:write (admins); 409 when the group is bound to another space
+             */
+            group_chat_id?: number;
             /** @description Default false */
             terminal_watch?: boolean;
             /** @description Default false */

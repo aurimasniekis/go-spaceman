@@ -163,6 +163,7 @@ spaceman telegram set-space --space payments --enabled --content-level summary
 | `--enabled` | bool |  | make the space visible through Telegram |
 | `--enforced-approvals` | string |  | web_only or confirm (default web_only) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--group-chat-id` | integer |  | bind the forum supergroup with this chat ID (negative; the bot must be in it) to the space, 0 to unbind; admins only |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--terminal-watch` | bool |  | allow watching run terminals (read-only) from the Mini App |

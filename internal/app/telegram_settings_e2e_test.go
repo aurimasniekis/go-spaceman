@@ -160,7 +160,7 @@ func TestTelegramSettingsOverHTTP(t *testing.T) {
 		t.Fatal("the space cache didn't follow")
 	}
 	expect(t, spaceAdmin.do("PUT", base, spaceAll), 409)
-	for _, bad := range []map[string]any{{"content_level": "all"}, {"enforced_approvals": "chat"}, {"group_chat_id": -100}} {
+	for _, bad := range []map[string]any{{"content_level": "all"}, {"enforced_approvals": "chat"}, {"group_chat_id": 5}} {
 		if r := spaceAdmin.do("PUT", base, bad, "If-Match", `"1"`); r.status != 422 {
 			t.Errorf("%v: %d %s", bad, r.status, r.body)
 		}

@@ -40,6 +40,18 @@ func (s *Service) Run(ctx context.Context) {
 		defer close(done)
 		s.Webhook.auditLoop(ctx, auditFlushEvery)
 	}()
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.Dispatcher.SweepGroups(ctx)
+			}
+		}
+	}()
 	s.Intake.Run(ctx, s.Dispatcher.Dispatch)
 }
 
