@@ -59,6 +59,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   for a reset, each with until when, plus "Resume now", "Release" and "Clear" for operators and "Clear in every space"
   for account admins. Times are shown in the viewer's time zone, with UTC in the tooltip. The usage-limit maximum wait
   now reads in days and hours on the Limits page.
+- Harbor Pilot runs waiting on an exhausted gateway now know roughly when to come back (ADR-0079 decision 9). Central
+  estimates a gateway hold's reset from Harbor Pilot. For a quota exhaustion it takes the earliest reset among the
+  quota board's exhausted accounts (`GET /api/v1/quota/board`, which the service-principal token's `usage.read`
+  already allows). For a blocking budget it takes the budget's period end. It reads Harbor Pilot again every 15
+  minutes, or at once when a subscription on the Harbor Pilot quota template receives `quota.window.recovered`. When
+  the accounts recover or the budget no longer blocks, the hold clears and the parked runs resume. Launches refused
+  meanwhile name the estimate. The board covers every account of the Harbor Pilot installation, not only the ones the
+  space's plan uses, so the time is an estimate: a run may resume early, hit the limit again and be parked again.
 
 ## [0.1.3] - 2026-11-13
 

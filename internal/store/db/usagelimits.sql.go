@@ -813,6 +813,53 @@ func (q *Queries) ListLimitedLiveRuns(ctx context.Context, limit int64) ([]Run, 
 	return items, nil
 }
 
+const listOpenGatewayUsageLimits = `-- name: ListOpenGatewayUsageLimits :many
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'gateway' AND cleared_at IS NULL ORDER BY seen_at, id LIMIT ?1
+`
+
+// Every open gateway hold, in every space: the gateway re-check reads it on each round (ADR-0079 decision 9).
+func (q *Queries) ListOpenGatewayUsageLimits(ctx context.Context, lim int64) ([]UsageLimit, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenGatewayUsageLimits, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageLimit{}
+	for rows.Next() {
+		var i UsageLimit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.AccountID,
+			&i.GatewayRef,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.CheckAt,
+			&i.Source,
+			&i.FirstRunID,
+			&i.SeenAt,
+			&i.ClearedAt,
+			&i.ClearedBy,
+			&i.NotifiedControlAt,
+			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenUsageLimitsByAccount = `-- name: ListOpenUsageLimitsByAccount :many
 SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `
@@ -1284,6 +1331,37 @@ type SetUsageLimitCheckParams struct {
 func (q *Queries) SetUsageLimitCheck(ctx context.Context, arg SetUsageLimitCheckParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setUsageLimitCheck,
 		arg.CheckAt,
+		arg.Now,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setUsageLimitEstimate = `-- name: SetUsageLimitEstimate :execrows
+UPDATE usage_limits SET resets_at = ?1, check_at = ?2, source = ?3, version = version + 1,
+  updated_at = ?4
+WHERE id = ?5 AND version = ?6 AND cleared_at IS NULL
+`
+
+type SetUsageLimitEstimateParams struct {
+	ResetsAt sql.NullInt64
+	CheckAt  sql.NullInt64
+	Source   string
+	Now      int64
+	ID       string
+	Version  int64
+}
+
+// A gateway hold's estimate from Harbor Pilot (quota board or budget status) and its next re-check.
+func (q *Queries) SetUsageLimitEstimate(ctx context.Context, arg SetUsageLimitEstimateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setUsageLimitEstimate,
+		arg.ResetsAt,
+		arg.CheckAt,
+		arg.Source,
 		arg.Now,
 		arg.ID,
 		arg.Version,

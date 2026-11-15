@@ -163,12 +163,15 @@ func parkAt(r db.Run, keepAliveMax time.Duration) time.Time {
 }
 
 // waitResumeAt is when a new wait resumes: after the known reset; else at the hold's probe; else with backoff from 1 h,
-// doubling with each attempt, capped at the keep-alive. Never before now.
+// doubling with each attempt, capped at the keep-alive. A gateway limit whose hold is no longer open resumes now: the
+// gateway's hold is opened with the limit, so it was cleared (Harbor Pilot recovered, UL-8). Never before now.
 func waitResumeAt(now time.Time, lim limitState, hold *db.UsageLimit, attempts int64, keepAliveMax time.Duration) time.Time {
 	var at time.Time
 	switch {
 	case lim.resets.Valid:
 		at = time.UnixMicro(lim.resets.Int64).Add(limitResumeSlack)
+	case hold == nil && gatewayLimit(lim.kind):
+		at = now
 	case hold != nil && hold.ResetsAt.Valid:
 		at = time.UnixMicro(hold.ResetsAt.Int64).Add(limitResumeSlack)
 	case hold != nil && hold.CheckAt.Valid:

@@ -24,6 +24,10 @@ SELECT * FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleare
 -- name: ListOpenUsageLimitsByGateway :many
 SELECT * FROM usage_limits WHERE scope = 'gateway' AND gateway_ref = ? AND cleared_at IS NULL ORDER BY seen_at, id;
 
+-- Every open gateway hold, in every space: the gateway re-check reads it on each round (ADR-0079 decision 9).
+-- name: ListOpenGatewayUsageLimits :many
+SELECT * FROM usage_limits WHERE scope = 'gateway' AND cleared_at IS NULL ORDER BY seen_at, id LIMIT sqlc.arg(lim);
+
 -- name: ListOpenUsageLimitsBySpace :many
 SELECT * FROM usage_limits WHERE space_id = ? AND cleared_at IS NULL ORDER BY seen_at, id;
 
@@ -50,6 +54,12 @@ WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND cleared_at IS NULL;
 
 -- name: SetUsageLimitReset :execrows
 UPDATE usage_limits SET resets_at = sqlc.narg(resets_at), version = version + 1, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND cleared_at IS NULL;
+
+-- A gateway hold's estimate from Harbor Pilot (quota board or budget status) and its next re-check.
+-- name: SetUsageLimitEstimate :execrows
+UPDATE usage_limits SET resets_at = sqlc.narg(resets_at), check_at = sqlc.narg(check_at), source = sqlc.arg(source), version = version + 1,
+  updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND cleared_at IS NULL;
 
 -- name: ClearUsageLimit :execrows
