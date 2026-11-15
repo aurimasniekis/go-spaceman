@@ -858,6 +858,14 @@ func TestTelegramTerminalWatchProduction(t *testing.T) {
 		t.Fatalf("space disabled: %d", code)
 	}
 	wantFeature(false)
+	// content_level off hides the space: refused though enabled with terminal_watch on.
+	r := s.root.do("PUT", settingsPath, map[string]any{"enabled": true, "terminal_watch": true, "content_level": "off"}, "If-Match", etag)
+	expect(t, r, 200)
+	etag = r.header.Get("ETag")
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("content_level off: %d", code)
+	}
+	wantFeature(false)
 	// On.
 	put(true, true)
 	if code := status(); code != http.StatusOK {
