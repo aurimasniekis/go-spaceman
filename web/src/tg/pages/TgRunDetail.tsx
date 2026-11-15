@@ -1,14 +1,17 @@
 import { Card, Group, Stack, Text, Title } from '@mantine/core'
-import { useRun } from '@/api/queries'
+import { useRun, useTelegramTerminalWatch } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
+import { TerminalView } from '@/features/terminal/TerminalView'
 import { RunState } from '@/components/StatusBadge'
 import { harnessLabel, kindLabel, runDuration, runStateText, runTitle } from '@/features/runs/runInfo'
 import { datetime, isSet } from '@/lib/format'
 
-/** One run, read-only: who it is, its state and timing. The terminal and the replay are not part of the Mini App yet. */
+/** One run, read-only: who it is, its state and timing; and, only when the space opted in, its live terminal, watch-only. */
 export function TgRunDetail({ spaceId, runId }: { spaceId: string; runId: string }) {
   const run = useRun(spaceId, runId)
+  // Hidden until the server says the space opted in and this link may watch (an error counts as off).
+  const watch = useTelegramTerminalWatch(spaceId).data === true
   if (run.error) return <ErrorAlert error={run.error} />
   if (!run.data) return null
   const r = run.data
@@ -32,7 +35,14 @@ export function TgRunDetail({ spaceId, runId }: { spaceId: string; runId: string
         </Stack>
       </Card>
       {r.error && <Text size="sm" c="owlRed">{r.error}</Text>}
-      <Text size="xs" c="dimmed">The terminal is not available in the Telegram app. Open SpaceMan in a browser to watch or take over a run.</Text>
+      {watch ? (
+        <Stack gap={4} data-testid="tg-terminal">
+          <Title order={5}>Terminal (watch only)</Title>
+          <TerminalView spaceId={spaceId} runId={runId} mode="live" />
+        </Stack>
+      ) : (
+        <Text size="xs" c="dimmed">The terminal is not available in the Telegram app. Open SpaceMan in a browser to watch or take over a run.</Text>
+      )}
     </Stack>
   )
 }

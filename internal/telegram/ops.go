@@ -53,6 +53,8 @@ var Ops = map[string]api.TelegramClass{
 	"create-telegram-session": api.TelegramExchange,
 	// The Mini App's identity (get-me is not served on its host): the same document for the link's user.
 	"get-telegram-me": api.TelegramMiniApp,
+	// Whether the space opted in to the watch-only terminal (the stream route checks it again).
+	"get-telegram-space-features": api.TelegramMiniApp,
 	// The caller's own link's preferences (amendment TG-10-4): the link is the session's, never a parameter.
 	"get-my-telegram-link-prefs": api.TelegramMiniApp,
 	"set-my-telegram-link-prefs": api.TelegramMiniApp,

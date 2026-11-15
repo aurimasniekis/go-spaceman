@@ -4565,6 +4565,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/telegram/spaces/{space_id}/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the Mini App may show in a space
+         * @description Mini App host only (404 elsewhere). terminal_watch is true only when the space's admin turned the watch-only terminal on for Telegram and the caller may watch terminals in the space; otherwise it is false, so the Mini App hides the terminal. The stream route enforces the same two conditions itself.
+         */
+        get: operations["get-telegram-space-features"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tokens": {
         parameters: {
             query?: never;
@@ -12052,6 +12072,16 @@ export interface components {
             idle_timeout_seconds: number;
             /** @description The session token, sent as "Authorization: Telegram <token>" on the Mini App host only; never in a URL or a cookie */
             token: string;
+        };
+        TelegramSpaceFeatures: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSpaceFeatures.json
+             */
+            readonly $schema?: string;
+            /** @description The watch-only terminal is on for this space and the caller may watch it */
+            terminal_watch: boolean;
         };
         TemplateDefinition: {
             body: string;
@@ -23128,6 +23158,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpaceTelegramList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-space-features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The space */
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSpaceFeatures"];
                 };
             };
             /** @description Error */
