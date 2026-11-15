@@ -190,7 +190,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 			}) (*struct{ Body *catalog.PromptVersion }, error) {
 				v := int64(0)
-				if in.OptionalIfMatch.IfMatch != "" {
+				if in.IfMatch != "" {
 					var err error
 					if v, err = in.Version(); err != nil {
 						return nil, d.fail(ctx, "prompts.draft", err)
@@ -336,7 +336,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 			}) (*struct{ Body *catalog.Skill }, error) {
 				v := int64(0)
-				if in.OptionalIfMatch.IfMatch != "" {
+				if in.IfMatch != "" {
 					var err error
 					if v, err = in.Version(); err != nil {
 						return nil, d.fail(ctx, "skills.draft", err)

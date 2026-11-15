@@ -433,7 +433,7 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				Body HumanTypeDraftInput
 			}) (*struct{ Body *human.HumanType }, error) {
 				v := int64(0)
-				if in.OptionalIfMatch.IfMatch != "" {
+				if in.IfMatch != "" {
 					var err error
 					if v, err = in.Version(); err != nil {
 						return nil, d.fail(ctx, "human_types.draft", err)
