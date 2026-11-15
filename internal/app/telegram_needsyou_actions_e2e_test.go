@@ -141,3 +141,32 @@ func TestTelegramNeedsYouCommonActions(t *testing.T) {
 		t.Fatal("an approval was withdrawn from the chat")
 	}
 }
+
+// SM-TG-006 (TG-7-3): a card opened by an operator link, then the link capped to viewer: the server refuses Claim,
+// Comment, Ask requester and Withdraw+Confirm through the real dispatcher, API and human service. Each leaves the action
+// unchanged: same version, no comments, still open and unassigned.
+func TestTelegramNeedsYouViewerRefusedEndToEnd(t *testing.T) {
+	t.Parallel()
+	c := newApprovalChat(t)
+	id := c.question("Which environment?")
+	f := c.open(id)
+	before := c.common(id)
+	c.s.setLinkRole(t, "viewer")
+
+	c.tap(f, "Claim")
+	c.tap(f, "Comment")
+	c.say("hello", c.last().MessageID)
+	c.tap(f, "Ask requester")
+	c.say("why?", c.last().MessageID)
+	c.tap(f, "Withdraw")
+	ask := c.last()
+	c.tap(ask, "Confirm")
+
+	a := c.common(id)
+	if a.Version != before.Version || a.Status != before.Status || a.Assignee != "" || len(a.Comments) != 0 {
+		t.Fatalf("a viewer link changed the action: before %+v after %+v", before, a)
+	}
+	if a.Status == human.Cancelled {
+		t.Fatal("cancelled by a viewer")
+	}
+}

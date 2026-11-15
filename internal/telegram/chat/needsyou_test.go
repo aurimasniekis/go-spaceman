@@ -511,7 +511,9 @@ func TestEnforcedApprovalWebOnly(t *testing.T) {
 		t.Fatalf("body or arguments shown: %q", f.Text)
 	}
 	texts, _ := buttons(f)
-	if texts[0] != "Decide in browser" || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil || find(f, "Withdraw") != "" {
+	// the in-app button plus the common verbs, and nothing that decides (an approval is never withdrawn from the chat)
+	if want := []string{"Decide in browser", "🙋 Claim", "💬 Comment", "❓ Ask requester"}; !slices.Equal(texts, want) ||
+		f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil || find(f, "Withdraw") != "" {
 		t.Fatalf("%v", texts)
 	}
 	for _, v := range []byte("aydb") {
@@ -810,6 +812,9 @@ func TestManyOptionsOpensInApp(t *testing.T) {
 	f := e.open(spA, hid('1'))
 	if !strings.Contains(f.Text, TextOpenInApp) || f.ReplyMarkup == nil || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
 		t.Fatalf("%q %+v", f.Text, f.ReplyMarkup)
+	}
+	if n := len(f.ReplyMarkup.InlineKeyboard); n != 3 { // the app button, the common row, Withdraw: no option rows
+		t.Fatalf("the over-limit card has %d rows: %v", n, f.ReplyMarkup.InlineKeyboard)
 	}
 	e.tapData(humanData('q', spA, hid('1'), 0), f)
 	e.tapData(humanData('f', spA, hid('1'), -1), f)

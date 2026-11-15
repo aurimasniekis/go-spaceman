@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -240,6 +241,10 @@ func TestCommentWithAttachment(t *testing.T) {
 		t.Fatalf("commented after a failed upload: %v", e.acts())
 	}
 	e.api.uploadSt = 0
+	if !e.sentForce() || e.last().MessageID == pr.MessageID {
+		t.Fatalf("no fresh prompt after the failed upload: %q", e.last().Text)
+	}
+	pr = e.last()
 	e.reply("", pr.MessageID, chatID, e.l)
 	if len(e.acts()) != 2 || !strings.Contains(e.last().Text, "Send text, a photo or a file") {
 		t.Fatalf("%q", e.last().Text)
@@ -389,7 +394,7 @@ func TestApprovalCancelRefused(t *testing.T) {
 
 // A viewer's link: the server refuses each action (the fake answers like the API's permission check) and the chat says
 // it isn't available; nothing changes.
-func TestViewerLinkIsRefusedByTheServer(t *testing.T) {
+func TestViewerLinkIsRefusedByTheFakeServer(t *testing.T) {
 	e := newEnv(t)
 	a := e.addHuman(spViewer, hid('1'), "message", "FYI", `{}`)
 	e.tapData(humanData('o', spViewer, hid('1'), -1), e.card())
@@ -492,5 +497,120 @@ func TestCommentAlbumPartsAreNotCaptured(t *testing.T) {
 	time.Sleep(200 * time.Millisecond) // past the album's quiet time
 	if len(e.acts()) != 1 || e.createdN() != 0 {
 		t.Fatalf("acts %v, inbox items %d", e.acts(), e.createdN())
+	}
+}
+
+// A comment's photo is downloaded and uploaded without the bot-wide form lock: while the upload is held, a Claim tap on
+// another card (another goroutine) completes. The upload's result is posted afterwards.
+func TestCommentUploadDoesNotHoldTheFormLock(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "message", "FYI", `{}`)
+	e.addHuman(spA, hid('2'), "message", "Other", `{}`)
+	f1 := e.open(spA, hid('1'))
+	f2 := e.open(spA, hid('2'))
+	e.tapData(find(f1, "Comment"), f1)
+	pr := e.last()
+	entered, release := make(chan struct{}), make(chan struct{})
+	e.api.onUpload = func() {
+		close(entered)
+		<-release
+	}
+	var released sync.Once
+	rel := func() { released.Do(func() { close(release) }) }
+	defer rel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.replyMedia(pr.MessageID, "big file", []byte("\x89PNG\r\n\x1a\n-----"))
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the upload never started")
+	}
+	claimed := make(chan struct{})
+	go func() {
+		defer close(claimed)
+		e.tapData(find(f2, "Claim"), f2)
+	}()
+	select {
+	case <-claimed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a tap on another card waited for an upload: the form lock is held across network I/O")
+	}
+	rel()
+	<-done
+	if got := e.acts(); len(got) != 2 || got[0] != "assign" || got[1] != "comments" {
+		t.Fatalf("%v", got)
+	}
+}
+
+// If the card is gone when the upload finishes, nothing is posted and the user is told; the uploaded attachment stays
+// unlinked.
+func TestCommentUploadFinishesAfterTheFormExpired(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "message", "FYI", `{}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Comment"), f)
+	pr := e.last()
+	e.api.onUpload = func() { e.h.dropForm(pendingKey{chatID, f.MessageID}) }
+	e.replyMedia(pr.MessageID, "late", []byte("\x89PNG\r\n\x1a\n-----"))
+	if len(e.acts()) != 0 || !strings.Contains(e.last().Text, TextFormExpired) {
+		t.Fatalf("%v %q", e.acts(), e.last().Text)
+	}
+}
+
+// A comment reply that can't be used asks again with a fresh ForceReply bound to the new message, and gives up after
+// maxPromptRetries.
+func TestCommentRetryIsAFreshForceReplyAndCapped(t *testing.T) {
+	e := newEnv(t)
+	a := e.addHuman(spA, hid('1'), "message", "FYI", `{}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Comment"), f)
+	pr := e.last()
+	for i := 0; i < maxPromptRetries; i++ {
+		e.reply("", pr.MessageID, chatID, e.l)
+		nr := e.last()
+		if nr.MessageID == pr.MessageID || !e.sentForce() {
+			t.Fatalf("retry %d: no fresh ForceReply: %q", i+1, nr.Text)
+		}
+		pr = nr
+	}
+	e.reply("", pr.MessageID, chatID, e.l) // one too many
+	if e.sentForce() || len(e.acts()) != 0 || len(a.Comments) != 0 {
+		t.Fatalf("still asking after the cap: %q", e.last().Text)
+	}
+	e.reply("late", pr.MessageID, chatID, e.l)
+	if len(e.acts()) != 0 {
+		t.Fatal("a reply to the last prompt was taken after the cap")
+	}
+	// a fresh tap starts over
+	e.tapData(find(f, "Comment"), f)
+	e.reply("ok", e.last().MessageID, chatID, e.l)
+	if len(a.Comments) != 1 {
+		t.Fatalf("%d comments", len(a.Comments))
+	}
+}
+
+// The withdraw confirmation is sent with protect_content, and a Keep from another link neither edits it nor spends it.
+func TestWithdrawConfirmationIsProtectedAndKeepIsLinkBound(t *testing.T) {
+	e := newEnv(t)
+	a := e.addHuman(spA, hid('1'), "message", "FYI", `{}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Withdraw"), f)
+	cf := e.last()
+	if found, protect := e.protected(TextCancelAsk); !found || !protect {
+		t.Fatalf("confirmation sent unprotected: found=%v protect=%v", found, protect)
+	}
+	other := e.l
+	other.ID = "tgl_2"
+	e.upd++
+	e.h.Handle(context.Background(), botapi.Update{UpdateID: e.upd, CallbackQuery: &botapi.CallbackQuery{ID: "k", From: botapi.User{ID: chatID}, Message: &cf, Data: find(cf, "Keep")}}, other)
+	if strings.Contains(e.cardOf(cf.MessageID).Text, "Kept") {
+		t.Fatal("another link's Keep took effect")
+	}
+	e.tapData(find(cf, "Confirm"), cf) // still there for the owner
+	if a.Status != "cancelled" {
+		t.Fatalf("the owner's confirmation was spent: %s", a.Status)
 	}
 }

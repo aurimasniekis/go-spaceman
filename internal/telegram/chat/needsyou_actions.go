@@ -354,11 +354,34 @@ func (h *Handler) files(ctx context.Context, q *botapi.CallbackQuery, l updates.
 
 // commentReply takes the reply to a comment or clarification prompt: its text or caption is the body, and a photo or a
 // document is uploaded through the API and attached. The prompt is already consumed; a reply that can't be used asks
-// again with the same prompt.
-func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates.Link, k pendingKey, p prompt, f *form) {
+// again with a fresh ForceReply prompt bound to the new message, at most maxPromptRetries times.
+//
+// It runs without formMu: the downloads and uploads can take a while and must not block other taps. The form is looked
+// up briefly first, the files are moved, and the form is looked up again under formMu before the comment is posted. If
+// the form or the action went away meanwhile, the uploaded attachments stay unlinked (the server owns them until they
+// are attached or expire).
+func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates.Link, k pendingKey, p prompt) {
 	retry := func(text string) {
-		h.send(ctx, l.ChatID, reply{text: text})
-		h.addPrompt(k, p)
+		if p.tries >= maxPromptRetries {
+			h.send(ctx, l.ChatID, reply{text: text + " Nothing was sent. Tap the button on the card to try again."})
+			return
+		}
+		p.tries++
+		nm, ok := h.send(ctx, l.ChatID, reply{text: text, force: &botapi.ForceReply{ForceReply: true, InputFieldPlaceholder: "Your reply"}})
+		if ok {
+			h.addPrompt(pendingKey{l.ChatID, nm.MessageID}, p)
+		}
+	}
+	h.formMu.Lock()
+	f0 := h.formFor(p.form, l.ID)
+	var spaceID, actionID string
+	if f0 != nil {
+		spaceID, actionID = f0.spaceID, f0.action
+	}
+	h.formMu.Unlock()
+	if f0 == nil {
+		h.send(ctx, l.ChatID, reply{text: TextFormExpired})
+		return
 	}
 	if m.MediaGroupID != "" {
 		// An album's other parts reply to the same prompt: only the first is taken, the rest are dropped quietly rather
@@ -390,7 +413,7 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 	if !ok {
 		return
 	}
-	s, r, ok := h.space(ctx, c, f.spaceID)
+	s, r, ok := h.space(ctx, c, spaceID)
 	if !ok {
 		retry(failText(r) + " Nothing was sent.")
 		return
@@ -416,11 +439,18 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 	if len(ids) > 0 {
 		in["attachment_ids"] = ids
 	}
+	h.formMu.Lock() // only the comment call and the redraw run under the lock
+	defer h.formMu.Unlock()
+	f := h.formFor(p.form, l.ID)
+	if f == nil {
+		h.send(ctx, l.ChatID, reply{text: TextFormExpired + " Nothing was sent."})
+		return
+	}
 	path, done := "/comments", "Comment added."
 	if p.field == promptClarify {
 		path, done = "/clarify", "Question sent to the requester. The request stays open."
 	}
-	r = c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/human-actions/"+f.action+path, in, nil)
+	r = c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/human-actions/"+actionID+path, in, nil)
 	if !r.ok() {
 		if conflict(r) || r.status == http.StatusForbidden || r.status == http.StatusNotFound {
 			h.send(ctx, l.ChatID, reply{text: failText(r)}) // final: the action changed or isn't yours to comment on
@@ -430,7 +460,7 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 		return
 	}
 	h.send(ctx, l.ChatID, reply{text: done})
-	if a, gr := h.getAction(ctx, c, s, f.action); gr.ok() && a.pending() {
+	if a, gr := h.getAction(ctx, c, s, actionID); gr.ok() && a.pending() {
 		h.syncForm(f, a, s)
 		h.draw(ctx, f)
 	}

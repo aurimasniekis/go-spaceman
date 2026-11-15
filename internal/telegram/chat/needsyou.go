@@ -132,7 +132,11 @@ type prompt struct {
 	form   pendingKey
 	field  int // wizard field index, -1 for a question's answer, promptDenyNote for an approval's denial note
 	at     time.Time
+	tries  int // retries after an unusable comment reply (capped at maxPromptRetries)
 }
+
+// maxPromptRetries caps how often a comment or clarification prompt is asked again after an unusable reply.
+const maxPromptRetries = 3
 
 // promptDenyNote is prompt.field for an approval's denial note.
 const promptDenyNote = -2
@@ -984,15 +988,15 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 	if !ok {
 		return false
 	}
+	if p.field == promptComment || p.field == promptClarify {
+		h.commentReply(ctx, m, l, k, p) // takes formMu itself, only around the form lookups and the API call
+		return true
+	}
 	h.formMu.Lock()
 	defer h.formMu.Unlock()
 	f := h.formFor(p.form, l.ID)
 	if f == nil {
 		h.send(ctx, l.ChatID, reply{text: TextFormExpired})
-		return true
-	}
-	if p.field == promptComment || p.field == promptClarify {
-		h.commentReply(ctx, m, l, k, p, f)
 		return true
 	}
 	text := strings.TrimSpace(m.Text)

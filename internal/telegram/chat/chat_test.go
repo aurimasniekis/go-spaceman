@@ -291,7 +291,9 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if f.onUpload != nil {
+			f.mu.Unlock() // the hook may block: other requests must still be served
 			f.onUpload()
+			f.mu.Lock()
 		}
 		file, hd, err := r.FormFile("file")
 		if err != nil {
