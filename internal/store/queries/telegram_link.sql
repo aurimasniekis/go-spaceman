@@ -78,6 +78,9 @@ WHERE id = sqlc.arg(id) AND state <> 'revoked';
 UPDATE telegram_links SET reconfirm_due_at = sqlc.arg(reconfirm_due_at), updated_at = sqlc.arg(now), version = version + 1
 WHERE id = sqlc.arg(id) AND state = 'active';
 
+-- name: SetTelegramLinkTopics :execrows
+UPDATE telegram_links SET topics_json = sqlc.arg(topics_json) WHERE id = sqlc.arg(id) AND state <> 'revoked';
+
 -- name: SetTelegramLinkPrefs :execrows
 -- A link's own preference overrides (ADR-0083 amendment TG-10-4). The link is named by the caller's authenticated
 -- Telegram principal only; user_id and state repeat the service's ownership check so a mismatch writes nothing.

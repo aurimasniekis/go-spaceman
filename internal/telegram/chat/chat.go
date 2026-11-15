@@ -90,6 +90,10 @@ type Options struct {
 	// Content opens an attachment's stored bytes. The caller has already read the attachment's metadata through the
 	// API as the link's principal, which is the authorization; nil: attachments are not sent to Telegram.
 	Content func(ctx context.Context, spaceID, attachmentID string) (io.ReadSeekCloser, error)
+	// SpaceOfThread maps a topic of the link's private chat to the space it belongs to (topics.Manager.SpaceOf: only
+	// from thread IDs the bot stored). A message written in a space's topic acts on that space, re-authorized like any
+	// named space; the Needs-you topic and unknown threads answer false and keep the current-space behaviour. Nil: none.
+	SpaceOfThread func(ctx context.Context, linkID string, thread int) (spaceID string, ok bool)
 	// AlbumQuiet is how long an album waits for its next part before it becomes one item (default 1.5 s).
 	AlbumQuiet time.Duration
 
@@ -142,6 +146,18 @@ func New(o Options) *Handler {
 // Handle routes a linked user's update: commands, button taps, the reply to a reject-reason prompt, and capture: any
 // other message with text, a photo or a file becomes an inbox item in the link's current space (capture.go).
 func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
+	// Replies go to the topic the user wrote in (topics mode), or the main chat for a message outside any topic.
+	switch {
+	case u.CallbackQuery != nil && u.CallbackQuery.Message != nil:
+		ctx = withThread(ctx, u.CallbackQuery.Message.MessageThreadID)
+	case u.Message != nil:
+		ctx = withThread(ctx, u.Message.MessageThreadID)
+		if t := u.Message.MessageThreadID; t != 0 && h.o.SpaceOfThread != nil {
+			if id, ok := h.o.SpaceOfThread(ctx, l.ID, t); ok {
+				ctx = context.WithValue(ctx, pinKey{}, id)
+			}
+		}
+	}
 	switch {
 	case u.CallbackQuery != nil:
 		h.callback(ctx, u.CallbackQuery, l)
@@ -215,7 +231,7 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
-	p := botapi.SendMessageParams{ChatID: chatID, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
+	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: threadOf(ctx), Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
 	switch {
 	case r.force != nil:
 		p.ReplyMarkup = r.force
@@ -223,11 +239,39 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 		p.ReplyMarkup = r.markup
 	}
 	m, err := b.SendMessage(ctx, p)
+	if err != nil && p.MessageThreadID != 0 && botapi.IsTopicGone(err) {
+		// The topic was deleted or closed since the user wrote in it: answer in the main chat instead.
+		p.MessageThreadID = 0
+		m, err = b.SendMessage(ctx, p)
+	}
 	if err != nil {
 		h.o.Log.Debug("telegram: a chat reply was not sent", slog.String("error", err.Error()))
 		return botapi.Message{}, false
 	}
 	return m, true
+}
+
+type threadKey struct{}
+
+// pinKey carries the space a message's topic belongs to; target uses it instead of the current space.
+type pinKey struct{}
+
+func pinnedOf(ctx context.Context) string {
+	s, _ := ctx.Value(pinKey{}).(string)
+	return s
+}
+
+// withThread records the topic (message_thread_id) an update came from; 0 is the main chat.
+func withThread(ctx context.Context, thread int) context.Context {
+	if thread == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, threadKey{}, thread)
+}
+
+func threadOf(ctx context.Context) int {
+	t, _ := ctx.Value(threadKey{}).(int)
+	return t
 }
 
 // show puts r on the message a button was tapped on, or sends it when there is none (or it can't be edited).
