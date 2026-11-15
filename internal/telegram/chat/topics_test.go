@@ -103,7 +103,46 @@ func TestTopicPinsCommandsWithoutAnArgument(t *testing.T) {
 	e.threadSpace = map[int]string{7: spA}
 	e.say("/space " + spS)
 	e.sayIn(7, "/inbox")
-	if got := e.last().Text; !strings.HasPrefix(got, "Inbox of Alpha") {
+	if got := e.last().Text; !strings.HasPrefix(got, "Inbox of Space aa") {
 		t.Fatalf("/inbox in A's topic answered %q", got)
+	}
+}
+
+// A space renamed to another space's ID must not take over that space's topic: the pin resolves by ID only.
+func TestTopicPinIgnoresSpacesNamedLikeItsID(t *testing.T) {
+	e := newEnv(t)
+	e.threadSpace = map[int]string{7: spA}
+	e.api.listFirst = []spaceRef{{ID: spViewer, Slug: "x", Name: strings.ToUpper(spA), State: "active"}}
+	e.say("/space " + spS)
+	e.sayIn(7, "topic note one")
+	if e.itemsIn(spA) != 1 || e.itemsIn(spViewer) != 0 || e.itemsIn(spS) != 0 {
+		t.Fatalf("A %d, impostor %d, current %d; want 1, 0, 0", e.itemsIn(spA), e.itemsIn(spViewer), e.itemsIn(spS))
+	}
+}
+
+// Control mode of S does not swallow text written in A's topic (it is captured into A), and /control there targets A.
+func TestTopicPinAgainstControlMode(t *testing.T) {
+	e := newEnv(t)
+	e.threadSpace = map[int]string{7: spA}
+	e.say("/control " + spS)
+	e.sayIn(7, "topic note one")
+	if e.itemsIn(spA) != 1 || e.itemsIn(spS) != 0 {
+		t.Fatalf("A %d, S %d; want 1, 0: %q", e.itemsIn(spA), e.itemsIn(spS), e.texts())
+	}
+	e.sayIn(7, "/control")
+	if got := e.last().Text; !strings.Contains(got, "Control mode for Space aa") {
+		t.Fatalf("/control in A's topic answered %q", got)
+	}
+}
+
+// An explicit /space sent from a topic still moves the current space. (Mutant: cmdSpace calling setCurrent(ctx,…) fails.)
+func TestExplicitSpaceFromATopicMovesCurrent(t *testing.T) {
+	e := newEnv(t)
+	e.threadSpace = map[int]string{7: spS}
+	e.say("/space " + spS)
+	e.sayIn(7, "/space alpha")
+	e.sayIn(0, "topic note one")
+	if e.itemsIn(spA) != 1 || e.itemsIn(spS) != 0 {
+		t.Fatalf("A %d, S %d; want 1, 0: %q", e.itemsIn(spA), e.itemsIn(spS), e.texts())
 	}
 }

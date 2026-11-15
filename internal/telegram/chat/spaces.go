@@ -71,7 +71,12 @@ func (h *Handler) resolve(ctx context.Context, c caller, ref string) (spaceRef, 
 		return spaceRef{}, false
 	}
 	for _, s := range vis {
-		if s.ID == ref || strings.EqualFold(s.Slug, ref) || strings.EqualFold(s.Name, ref) {
+		if s.ID == ref {
+			return s, true // an exact ID wins over a slug or name that happens to look like it
+		}
+	}
+	for _, s := range vis {
+		if strings.EqualFold(s.Slug, ref) || strings.EqualFold(s.Name, ref) {
 			return s, true
 		}
 	}
@@ -109,7 +114,8 @@ func (h *Handler) target(ctx context.Context, c caller, l updates.Link, ref stri
 	}
 	if pin := pinnedOf(ctx); pin != "" {
 		// Written in a space's topic: that space, authorized again like a named one. Never the current space instead.
-		if s, ok := h.resolve(ctx, c, pin); ok {
+		// By ID only: slugs and names are free text, so a space renamed to another's ID must not take its topic.
+		if s, _, ok := h.space(ctx, c, pin); ok {
 			return s, ""
 		}
 		return spaceRef{}, TextUnavailable

@@ -41,11 +41,12 @@ var (
 
 // fakeAPI answers the operations the commands call, like the in-process API handler would for one user.
 type fakeAPI struct {
-	mu    sync.Mutex
-	reqs  []string
-	hdrs  map[string]string // last If-Match per path
-	posts []map[string]any
-	items map[string]*inboxItem
+	listFirst []spaceRef // spaces the list answers before the usual ones
+	mu        sync.Mutex
+	reqs      []string
+	hdrs      map[string]string // last If-Match per path
+	posts     []map[string]any
+	items     map[string]*inboxItem
 	// forbidden item IDs answer 403 on every call.
 	conflict bool
 	// badDetail makes a status change answer 400 with this detail.
@@ -101,9 +102,9 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	seg := strings.Split(strings.Trim(path, "/"), "/")
 	switch {
 	case path == "/spaces":
-		out(200, map[string]any{"items": []spaceRef{
+		out(200, map[string]any{"items": append(append([]spaceRef{}, f.listFirst...), []spaceRef{
 			{ID: spA, Slug: "alpha", Name: "Alpha", State: "active"}, {ID: spB, Slug: "beta", Name: "Beta", State: "active"},
-			{ID: spC, Slug: "gamma", Name: "Gamma", State: "active"}, {ID: spS, Slug: "sum", Name: "Summary", State: "active"}}})
+			{ID: spC, Slug: "gamma", Name: "Gamma", State: "active"}, {ID: spS, Slug: "sum", Name: "Summary", State: "active"}}...)})
 	case path == "/attention":
 		out(200, map[string]any{"spaces": []map[string]any{{"space_id": spA, "human_pending": 2, "tasks_failed": 1}}})
 	case len(seg) == 2 && seg[0] == "spaces":
