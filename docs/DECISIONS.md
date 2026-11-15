@@ -4969,7 +4969,7 @@
     would break deployments whose proxy adds Basic auth.
   - **Telegram mode.** Exactly one Authorization header, scheme `Telegram`, resolved by `TelegramPolicy.Sessions`
     (TG-9a) to a Telegram principal without a token; anything else 401 (rate-limited like bearer failures). Mutations
-    are checked against `TelegramPolicy.MiniAppOrigin` (no origin configured: every mutation refused). The MCP endpoint
+    are checked against `TelegramPolicy.MiniAppOrigin` (no origin configured: every mutation refused; the origin is exactly `https://<miniapp_host>`, never derived from `public_url`). The MCP endpoint
     isn't mounted. `Set-Cookie` is dropped and logged as a warning; the metric the plan mentions is left to TG-9a, which
     owns the Mini App host's metrics.
   - **Schema.** Link grants are `role_grants` rows with source `telegram`; 0051 (unreleased) rebuilds `role_grants` to
