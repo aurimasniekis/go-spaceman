@@ -11,7 +11,7 @@ import (
 )
 
 const listTelegramMessagesByResource = `-- name: ListTelegramMessagesByResource :many
-SELECT chat_id, message_id, resource_version FROM telegram_messages
+SELECT chat_id, message_id, resource_version, created_at FROM telegram_messages
 WHERE resource_type = ? AND resource_id = ? AND kind = 'card'
 `
 
@@ -24,6 +24,7 @@ type ListTelegramMessagesByResourceRow struct {
 	ChatID          int64
 	MessageID       int64
 	ResourceVersion int64
+	CreatedAt       int64
 }
 
 func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTelegramMessagesByResourceParams) ([]ListTelegramMessagesByResourceRow, error) {
@@ -35,7 +36,12 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 	items := []ListTelegramMessagesByResourceRow{}
 	for rows.Next() {
 		var i ListTelegramMessagesByResourceRow
-		if err := rows.Scan(&i.ChatID, &i.MessageID, &i.ResourceVersion); err != nil {
+		if err := rows.Scan(
+			&i.ChatID,
+			&i.MessageID,
+			&i.ResourceVersion,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -49,11 +55,29 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 	return items, nil
 }
 
+const pruneTelegramMessages = `-- name: PruneTelegramMessages :execrows
+DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
+  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < ?1 LIMIT ?2)
+`
+
+type PruneTelegramMessagesParams struct {
+	Cutoff int64
+	Lim    int64
+}
+
+func (q *Queries) PruneTelegramMessages(ctx context.Context, arg PruneTelegramMessagesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneTelegramMessages, arg.Cutoff, arg.Lim)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const upsertTelegramMessage = `-- name: UpsertTelegramMessage :exec
 
 INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version
+ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at
 `
 
 type UpsertTelegramMessageParams struct {
@@ -69,6 +93,8 @@ type UpsertTelegramMessageParams struct {
 }
 
 // Messages the notifier sent that it may edit later (ADR-0083, plan 4.2 step 7). Written in batches.
+// created_at is when the message was last sent, edited or alerted: retention prunes by it, and a card loaded after a
+// restart takes it as the time up to which reminders and escalations were already announced.
 func (q *Queries) UpsertTelegramMessage(ctx context.Context, arg UpsertTelegramMessageParams) error {
 	_, err := q.db.ExecContext(ctx, upsertTelegramMessage,
 		arg.ChatID,

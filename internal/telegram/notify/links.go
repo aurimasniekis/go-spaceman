@@ -3,7 +3,9 @@ package notify
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +24,8 @@ type Link struct {
 	SSOUntil    time.Time
 	ReconfirmAt time.Time // zero: none
 	Prefs       Prefs
+	// Zone is the user's own IANA time zone (nil: none set, so no quiet hours and no digest).
+	Zone *time.Location
 }
 
 // Prefs are a link's preference overrides.
@@ -74,6 +78,10 @@ type Links struct {
 	users    UserCheck
 	log      *slog.Logger
 	interval time.Duration
+	// OnChange is called after a reload that changed what the digest depends on (the links, their zones or preferences),
+	// so the deadline loop looks at the next digest time again. Set it before Start.
+	OnChange func()
+	sig      string
 
 	mu    sync.RWMutex
 	links []Link
@@ -135,10 +143,36 @@ func (l *Links) reload(ctx context.Context) {
 		out = nil
 	}
 	l.Set(out)
+	if l.OnChange != nil {
+		if sig := digestSignature(out); sig != l.sig {
+			l.sig = sig
+			l.OnChange()
+		}
+	}
+}
+
+// digestSignature summarizes what the digest schedule depends on.
+func digestSignature(links []Link) string {
+	var b strings.Builder
+	for i := range links {
+		b.WriteString(links[i].ID)
+		b.WriteByte('|')
+		if links[i].Zone != nil {
+			b.WriteString(links[i].Zone.String())
+		}
+		b.WriteByte('|')
+		b.WriteString(links[i].Prefs.Marshal())
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func (l *Links) load(ctx context.Context) ([]Link, error) {
 	rows, err := l.store.R().ListLiveTelegramLinks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	zones, err := l.zones(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +192,36 @@ func (l *Links) load(ctx context.Context) ([]Link, error) {
 		if !ok {
 			continue
 		}
-		out = append(out, fromRow(r.ID, r.UserID, r.ChatID, r.ViaSso == 1, r.SsoUntil, r.ReconfirmDueAt, r.PrefsJson))
+		lk := fromRow(r.ID, r.UserID, r.ChatID, r.ViaSso == 1, r.SsoUntil, r.ReconfirmDueAt, r.PrefsJson)
+		lk.Zone = zones[r.UserID]
+		out = append(out, lk)
+	}
+	return out, nil
+}
+
+// zones reads the time zones of the users with a link, in one query. A zone that isn't valid counts as none.
+func (l *Links) zones(ctx context.Context) (map[string]*time.Location, error) {
+	rows, err := l.store.R().ListNotificationPrefsOfLinkedUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byName := map[string]*time.Location{}
+	out := make(map[string]*time.Location, len(rows))
+	for _, r := range rows {
+		var p struct {
+			Timezone string `json:"timezone"`
+		}
+		if json.Unmarshal([]byte(r.PrefsJson), &p) != nil || p.Timezone == "" {
+			continue
+		}
+		loc, seen := byName[p.Timezone]
+		if !seen {
+			loc, _ = settings.LoadZone(p.Timezone)
+			byName[p.Timezone] = loc
+		}
+		if loc != nil {
+			out[r.UserID] = loc
+		}
 	}
 	return out, nil
 }

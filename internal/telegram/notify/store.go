@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
@@ -57,7 +58,7 @@ func (m StoreMappings) Lookup(ctx context.Context, k Key) ([]Mapping, error) {
 	}
 	out := make([]Mapping, len(rows))
 	for i, r := range rows {
-		out[i] = Mapping{ChatID: r.ChatID, MessageID: int(r.MessageID), Key: k, Version: r.ResourceVersion}
+		out[i] = Mapping{ChatID: r.ChatID, MessageID: int(r.MessageID), Key: k, Version: r.ResourceVersion, CreatedAt: time.UnixMicro(r.CreatedAt)}
 	}
 	return out, nil
 }
@@ -131,7 +132,7 @@ func (r StoreReader) action(ctx context.Context, scope map[string]any, k Key) (*
 	}
 	return &Resource{Key: k, SpaceID: a.SpaceID, Version: a.Version, Kind: KindAction, Perm: authz.HumanRead, ViewRole: role,
 		Label: humanLabel(a.Type, a.TypeSlug), Title: a.Title, Detail: a.Body, State: state, Priority: a.Priority, Assignee: a.Assignee,
-		Notify: open, Final: !open}, nil
+		Notify: open, Final: !open, RemindedAt: a.RemindedAt.Int64, EscalatedAt: a.EscalatedAt.Int64}, nil
 }
 
 func humanLabel(t, slug string) string {

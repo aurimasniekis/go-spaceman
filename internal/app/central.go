@@ -817,7 +817,9 @@ func (c *Central) Serve(ctx context.Context) error {
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
-		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
+		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due},
+		// The Telegram digest, at each linked user's own wall-clock time: it reads memory and only enqueues (ADR-0083).
+		human.Deadline{Name: "telegram.digest", Next: c.TelegramNotify.NextDigest, Due: c.TelegramNotify.DigestDue})
 	go c.Notifier.Run(ctx)
 	// Telegram links: the cache loads before the dispatcher's workers run, so the first update already sees them.
 	c.TelegramLinks.Start(ctx)
@@ -1007,8 +1009,10 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		// Like the link's principal: a disabled user, or one who must still enroll MFA, acts for nobody.
 		return u.Enabled && (!u.MFARequired || u.MFAEnrolled), nil
 	}
+	links := tgnotify.NewLinks(c.Store, c.Bus, users, obs.Component(log, "telegram.notify"), 0)
+	links.OnChange = c.Human.Kick // a changed zone or digest time moves the next digest: the deadline loop looks again
 	return tgnotify.New(tgnotify.Options{
 		Feed: tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
-		Links: tgnotify.NewLinks(c.Store, c.Bus, users, obs.Component(log, "telegram.notify"), 0), Sender: c.TelegramBot.Sender,
+		Links: links, Sender: c.TelegramBot.Sender,
 		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
 }

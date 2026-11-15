@@ -4562,6 +4562,19 @@
       queued card is sent, so access revoked while a card waits in the sender drops it. A card with a body at the `full`
       content level is sent with `protect_content`. A failed `changes` read re-arms one retry after a second for the
       unread rest.
+      **TG-6-2:** reminders, escalation and expiry stay the human service's (they write a change; the notifier reacts
+      and has no timer of its own). A reminder or escalation of a pending action whose card exists is a separate
+      message (an edit makes no sound), announced once per chat (`escalations`, `reminders` push/digest/off), and an
+      assignment to the link's user is announced by `assigned_to_me`, which also lets a low-priority assignment
+      create the card; the instants announced are kept in memory and, after a restart, start at the mapping's last
+      touch. Quiet hours set `disable_notification` when the message is *sent*, judged in the user's zone
+      (`notification_prefs.timezone`, read for all linked users in one query on each link reload); no zone, no
+      quiet hours and no digest. Digest-delivered items (inbox, tasks in review, failed runs, digest reminders) collect
+      in a bounded in-memory buffer (50 per link, lost on restart, removed when the resource finishes); `NextDigest` and
+      `DigestDue` of the `telegram.digest` deadline read memory only, `DigestDue` enqueues and never returns an error,
+      and the digest is rechecked (access, mute, space visibility) and rendered with titles only when it is sent;
+      a link with nothing collected gets none. `telegram_messages.created_at` is refreshed by every send, edit and
+      announcement, and retention prunes rows older than 30 days in batches of 1000.
   16. **What SpaceMan uses of Telegram's newer features:** private-chat topics (opt-in per link, M3, **(Q6)**), rich
       messages with an entity fallback **(Q12)**, styled buttons, `copy_text`, `disabled`, and ephemeral messages in group
       mode. **Not used:** guest mode, bot-to-bot, managed and business bots (each lets content or commands arrive from
