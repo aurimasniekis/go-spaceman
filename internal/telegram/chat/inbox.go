@@ -304,6 +304,7 @@ func (h *Handler) callback(ctx context.Context, q *botapi.CallbackQuery, l updat
 	switch {
 	case q.Data == "sl" || strings.HasPrefix(q.Data, "sp:"):
 	case isHumanData(q.Data):
+	case isQRData(q.Data):
 	case strings.HasPrefix(q.Data, "il:"), strings.HasPrefix(q.Data, "ir:"), strings.HasPrefix(q.Data, "is:"):
 	default:
 		h.answer(ctx, q.ID, "")
@@ -321,6 +322,10 @@ func (h *Handler) callback(ctx context.Context, q *botapi.CallbackQuery, l updat
 	}
 	if isHumanData(q.Data) {
 		h.humanCallback(ctx, q, l, c, q.Data)
+		return
+	}
+	if isQRData(q.Data) {
+		h.qrCallback(ctx, q, l, c, q.Data)
 		return
 	}
 	h.inboxCallback(ctx, q, l, c, q.Data)
