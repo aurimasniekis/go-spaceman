@@ -33,6 +33,8 @@ function simple(p: Prop): boolean {
   const t = kindOf(p as Node)
   const p2 = p as Node
   if (p2.$ref || p2.oneOf || p2.anyOf || t === 'object') return false
+  // The simple select and radios hold strings; a number or boolean enum must keep its type (SchemaValue does).
+  if (p.enum && !p.enum.every((e) => typeof e === 'string')) return false
   return t !== 'array' || !!p.items?.enum || p.items?.type === 'string'
 }
 

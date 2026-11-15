@@ -34,11 +34,12 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const space = useSpace(spaceId)
-  const nodes = useNodes()
+  const nodes = useNodes(!isMiniApp())
   const me = useMe().data
   const role = roleIn(me, spaceId)
   const life = useSpaceLifecycleAccess(space.data)
   const canMove = hasGlobal(me, 'admin') // relocation is global administration (space:relocate)
+  const mini = isMiniApp() // every space-wide operation below is TelegramExcluded (internal/telegram/ops.go)
   const [open, setOpen] = useState<'launch' | 'edit' | 'relocate' | 'export' | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
   if (!space.data) {
@@ -85,7 +86,7 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
           </Text>
         </Stack>
         <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0, marginLeft: 'auto' }}>
-          {atLeast(role, 'operator') && s.state === 'active' && (
+          {!mini && atLeast(role, 'operator') && s.state === 'active' && (
             <Menu position="bottom-end">
               <Menu.Target>
                 <Button variant="default" leftSection={<IconPlayerPause size={14} />} rightSection={<IconChevronDown size={12} />}>Pause</Button>
@@ -100,13 +101,13 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
               </Menu.Dropdown>
             </Menu>
           )}
-          {atLeast(role, 'operator') && s.state === 'paused' && <Button variant="default" leftSection={<IconPlayerPlay size={14} />} onClick={() => void setState('active')}>Resume</Button>}
-          {atLeast(role, 'operator') && (
+          {!mini && atLeast(role, 'operator') && s.state === 'paused' && <Button variant="default" leftSection={<IconPlayerPlay size={14} />} onClick={() => void setState('active')}>Resume</Button>}
+          {!mini && atLeast(role, 'operator') && (
             <Tooltip label={s.state !== 'active' ? 'The space is not active' : 'Start an agent in this space'}>
               <Button leftSection={<IconRocket size={14} />} disabled={s.state !== 'active'} onClick={() => setOpen('launch')}>Launch run</Button>
             </Tooltip>
           )}
-          {(more.length > 0 || lifecycle.length > 0) && (
+          {!mini && (more.length > 0 || lifecycle.length > 0) && (
             <Menu position="bottom-end">
               <Menu.Target>
                 <Button variant="default" px="xs" aria-label={`More actions for ${s.name}`}><IconDots size={16} /></Button>

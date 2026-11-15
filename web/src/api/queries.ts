@@ -189,8 +189,8 @@ export const useRun = (space: string, run: string) =>
   })
 
 // Node connectivity (connected, last_seen_at) changes without change-feed entries, so the list also refreshes on a timer.
-export const useNodes = () =>
-  useQuery({ queryKey: keys.nodes, queryFn: async ({ signal }) => unwrap(await api.GET('/nodes', { signal })).items, refetchInterval: 15_000 })
+export const useNodes = (enabled = true) =>
+  useQuery({ queryKey: keys.nodes, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/nodes', { signal })).items, refetchInterval: 15_000 })
 
 export const useUsers = () => useQuery({ queryKey: keys.users, queryFn: async ({ signal }) => unwrap(await api.GET('/users', { signal })).items })
 
@@ -460,8 +460,8 @@ export const useUserIdentities = (id: string) =>
   })
 
 /** A space's cross-space requests, outgoing and incoming (ADR-0038). */
-export const useXSpaceRequests = (spaceId: string) =>
-  useQuery({ queryKey: keys.xspaceRequests(spaceId),
+export const useXSpaceRequests = (spaceId: string, enabled = true) =>
+  useQuery({ queryKey: keys.xspaceRequests(spaceId), enabled,
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/xspace/requests', { params: { path: { space_id: spaceId }, query: { limit: 200 } }, signal })).items })
 /** What a space accepts from and may send to each peer. */
 export const useXSpacePeers = (spaceId: string) =>

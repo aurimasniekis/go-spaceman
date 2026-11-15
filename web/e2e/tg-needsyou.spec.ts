@@ -52,7 +52,8 @@ const SCHEMA = {
 }
 const ACTIONS = [
   { ...base, id: 'hum_q1', type: 'question', title: 'Which region?', request: { options: ['eu', 'us'], allow_text: true } },
-  { ...base, id: 'hum_a1', type: 'approval', title: 'Deploy to production', request: { action: 'deploy', details: 'Rolls out **v2**.' } },
+  { ...base, id: 'hum_a1', type: 'approval', title: 'Deploy to production', request: { action: 'deploy', details: 'Rolls out **v2**.' },
+    notifications: [{ id: 'not_1', kind: 'response', state: 'pending', target_kind: 'operators', wake: true }] },
   { ...base, id: 'hum_t1', type: 'todo', title: 'Rotate the key', request: { steps: ['Create', 'Swap'] } },
   { ...base, id: 'hum_m1', type: 'message', title: 'Heads up', request: { requires_ack: true } },
   { ...base, id: 'hum_c1', type: 'custom', type_slug: 'site-review', type_version: 1, title: 'Review the site', request: { site: { name: 'North' } },
@@ -60,7 +61,10 @@ const ACTIONS = [
 ]
 const MERMAID = '```mermaid\ngraph TD\n  A[Start] --> B[Done]\n```'
 
+const requested: string[] = []
+
 async function launch(page: Page, path: string) {
+  requested.length = 0
   await page.route('https://telegram.org/js/telegram-web-app.js', (r) =>
     r.fulfill({
       contentType: 'text/javascript',
@@ -74,11 +78,13 @@ async function launch(page: Page, path: string) {
   )
   await page.route('**/api/v1/**', async (route) => {
     const p = new URL(route.request().url()).pathname.replace('/api/v1', '')
+    requested.push(p)
     if (p === '/telegram/session') return route.fulfill(json({ token: 'spaceman_tgs_test', expires_at: '2099-01-01T00:00:00Z', idle_timeout_seconds: 600 }, 201))
     if (p === '/telegram/me') return route.fulfill(json({ root: false, method: 'telegram', session_id: '', limited: false, needs_enroll: false, expires_at: '2099-01-01T00:00:00Z', domains: [SPACE], user: { id: 'usr_1', name: 'Test', enabled: true, grants: [{ domain: SPACE, role: 'operator' }] } }))
     if (p === '/watch') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': ok\n\n' })
     const one = /\/human-actions\/(hum_\w+)$/.exec(p)
     if (one) return route.fulfill(json(ACTIONS.find((a) => a.id === one[1])))
+    if (p.endsWith('/hum_a1/approval')) return route.fulfill(json({ id: 'apr_1', space_id: SPACE, state: 'approved', uses_allowed: 1, uses_left: 1, operation: 'deploy', resource: 'x', requester_run: 'run_1', requester_role: 'impl', args_digest: 'd', args_preview: '{}', request_expires_at: '2099-01-01T00:00:00Z', executions: [] }))
     if (p.endsWith('/approval')) return route.fulfill(problem(404, 'not_found'))
     if (p === '/human-actions' || p === `/spaces/${SPACE}/human-actions`) return route.fulfill(json({ items: ACTIONS, counts: { [SPACE]: ACTIONS.length }, total: ACTIONS.length }))
     if (p === '/spaces') return route.fulfill(json({ items: [{ id: SPACE, name: 'Mini', slug: 'mini', state: 'active', node_id: 'nod_1', version: 1 }] }))
@@ -132,4 +138,30 @@ test('the inbox is a card list and an item with a diagram offers View diagram', 
   await expect(page.locator('figure.sm-mermaid-figure')).toBeVisible()
   await expect(page.locator('figure.sm-mermaid-figure')).toHaveAttribute('data-state', 'rendered', { timeout: 20_000 })
   await clean(page)
+})
+
+test('no action the server refuses a Telegram principal is offered (ops.go: excluded)', async ({ page }) => {
+  await launch(page, `/spaces/${SPACE}/human?action=hum_a1`)
+  // An enforced approval (mocked /approval) with a notification: the Mini App only reads it. The server refuses the
+  // decision, the withdrawal, the revocation and the re-route to a Telegram principal, so none of them is offered.
+  await expect(page.getByText('Enforced approval').first()).toBeVisible()
+  await expect(page.getByText('Requester notified')).toBeVisible()
+  await expect(page.getByTestId('enforced-in-chat')).toBeVisible()
+  for (const name of ['Approve', 'Deny', 'Revoke before use', 'Send to control']) {
+    await expect(page.getByRole('button', { name })).toHaveCount(0)
+  }
+  await expect(page.getByText(/Withdraw this action/)).toHaveCount(0)
+  // The space header and the section links hold no excluded operation.
+  await expect(page.getByTestId('space-header')).toBeVisible()
+  for (const name of ['Types', 'Policies', 'Permissions', 'New action', 'Pause', 'Resume', 'Launch run', /More actions/]) {
+    await expect(page.getByRole('button', { name })).toHaveCount(0)
+  }
+  for (const name of ['Repositories', 'Knowledge', 'Memory', 'Events', 'Schedules', 'Limits', 'Cross-space']) {
+    await expect(page.getByRole('link', { name })).toHaveCount(0)
+  }
+  await page.goto(`http://127.0.0.1:${PORT}/human`)
+  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /New action|Policies|Types|Permissions/ })).toHaveCount(0)
+  // The pages never even ask for the excluded operations (types, policies, permissions, approvals, nodes).
+  expect(requested.filter((p) => /human-polic|human-type-(options|permissions)|^\/human-types|\/approvals|\/nodes|xspace/.test(p))).toEqual([])
 })

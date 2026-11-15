@@ -55,4 +55,20 @@ describe('complex schemas', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove Contact 1' }))
     expect(onChange).toHaveBeenLastCalledWith({ site: { name: 'North' } })
   })
+  it('does not loop or throw on a $ref cycle or a self-referencing object', () => {
+    const cycle = { properties: { x: { $ref: '#/$defs/a' } }, $defs: { a: { $ref: '#/$defs/b' }, b: { $ref: '#/$defs/a' } } }
+    expect(() => formable(cycle)).not.toThrow()
+    expect(formable(cycle)).toBe(false)
+    expect(deref({ $ref: '#/$defs/a' }, cycle)).toBeUndefined()
+    const selfRef = { properties: { n: { $ref: '#/$defs/n' } }, $defs: { n: { type: 'object', properties: { child: { $ref: '#/$defs/n' } } } } }
+    expect(() => formable(selfRef)).not.toThrow()
+    expect(formable(selfRef)).toBe(false)
+  })
+  it('submits a number for a numeric enum', () => {
+    const onChange = vi.fn()
+    const numeric = { type: 'object', required: ['level'], properties: { level: { type: 'integer', enum: [1, 2], title: 'Level' } } }
+    render(<MantineProvider><SchemaForm label="Response" schema={numeric} value={{}} onChange={onChange} /></MantineProvider>)
+    fireEvent.click(screen.getByRole('radio', { name: '2' }))
+    expect(onChange).toHaveBeenLastCalledWith({ level: 2 })
+  })
 })
