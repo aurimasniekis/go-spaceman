@@ -384,9 +384,15 @@ export const useAttention = (space = '', enabled = true) =>
 export const useNotificationPrefs = (enabled = true) =>
   useQuery({ queryKey: keys.notificationPrefs, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/auth/me/notification-preferences', { signal })) })
 
-/** Pending human actions across every space the principal can read, with counts (the nav badge). */
+/**
+ * Pending human actions across every space the principal can read, with counts (the nav badge). Sorted by urgency, so
+ * the server's first page (the Mini App home's top items) holds the most urgent ones, not just the oldest.
+ */
 export const useHumanPending = (enabled = true) =>
-  useQuery({ queryKey: keys.humanPending, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/human-actions', { signal })) })
+  useQuery({
+    queryKey: keys.humanPending, enabled,
+    queryFn: async ({ signal }) => unwrap(await api.GET('/human-actions', { params: { query: { sort: 'priority' } }, signal })),
+  })
 
 export const useAccounts = (enabled = true) =>
   useQuery({ queryKey: keys.accounts, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/accounts', { signal })).items })
