@@ -66,6 +66,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/telegram"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
+	tgnotify "github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
@@ -171,6 +172,9 @@ type Central struct {
 	// TelegramLinks is the dispatcher's in-memory view of the active links, kept current by the telegram.link eventbus
 	// topic (no change-feed rows): a revoked or re-confirmed link applies to the next update.
 	TelegramLinks *tglink.Cache
+	// TelegramNotify turns the change feed into Telegram notifications and card edits (ADR-0078, plan §4.2): one
+	// consumer, no per-user feeds, nothing written per tick.
+	TelegramNotify *tgnotify.Notifier
 	// TelegramSSOGrants reports the link_sso_grants setting (ADR-0083 Q8; TG-3c wires it): whether a link confirmed
 	// from an SSO session acts with the user's SSO grants until that session's absolute expiry. Nil: off, so every
 	// Telegram principal acts with the user's local grants only.
@@ -410,6 +414,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.newTelegram(ctx)
 	c.TelegramBot = c.newTelegramBot()
 	c.newTelegramMiniApp()
+	c.TelegramNotify = c.newTelegramNotifier(log)
 	// Once: the settings keep their listeners, and the bot carries the limits to every sender it makes.
 	c.TelegramSettings.BindSender(c.TelegramBot)
 	c.Queue.Workers = c.Fleet
@@ -822,6 +827,8 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.TelegramBot.Start(ctx)
 	// Telegram settings: the cache reloads on every published change.
 	go c.TelegramSettings.Run(ctx)
+	// Telegram notifications: starts at the newest change; sends nothing while the bot is off.
+	go func() { _ = c.TelegramNotify.Run(ctx) }()
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)
 	// Terminal takeovers end when their holder stops renewing them (one timer; SM-UI-004).
@@ -987,4 +994,21 @@ type usageWithBudgets struct {
 func (u usageWithBudgets) Report(ctx context.Context, nodeID string, rep proto.UsageReport) {
 	u.Service.Report(ctx, nodeID, rep)
 	u.limits.OnUsage(ctx, rep.RunID)
+}
+
+// newTelegramNotifier builds the notifier from the services the bot already runs on. Its sender is the live bot's,
+// fetched for each window, so it never holds one from before a (re)start; nothing is sent while the bot is off.
+func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
+	users := func(ctx context.Context, id string) (bool, error) {
+		u, err := c.Auth.Get(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		// Like the link's principal: a disabled user, or one who must still enroll MFA, acts for nobody.
+		return u.Enabled && (!u.MFARequired || u.MFAEnrolled), nil
+	}
+	return tgnotify.New(tgnotify.Options{
+		Feed: tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
+		Links: tgnotify.NewLinks(c.Store, c.Bus, users, obs.Component(log, "telegram.notify"), 0), Sender: c.TelegramBot.Sender,
+		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
 }
