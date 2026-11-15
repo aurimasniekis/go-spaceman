@@ -512,3 +512,41 @@ func TestLinkPrincipalRefusesLimited(t *testing.T) {
 		t.Fatalf("Limited link: %v, want ErrUnauthorized", err)
 	}
 }
+
+// A user whose MFA is required and not set up gets no session, and a 403 that says to finish it in the browser (not the
+// generic "reopen" 401: reopening cannot help).
+func TestExchangeRefusesLimitedWithMessage(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	f.mu.Lock()
+	f.lim["tgl_a"] = true
+	f.mu.Unlock()
+	_, err := f.exchange(f.initData(42, 0))
+	if code(err) != apperr.CodeForbidden || !strings.Contains(err.Error(), "browser") {
+		t.Fatalf("Limited exchange: %v, want a forbidden error naming the browser", err)
+	}
+	if f.svc.Len() != 0 {
+		t.Fatalf("a session was opened for a Limited link")
+	}
+}
+
+// A session opened while the user could act stops resolving once MFA becomes required for them (Limited): Authenticate
+// and Validate (stream re-checks) both refuse it with ErrUnauthorized, and it resolves again if the user is no longer Limited.
+func TestResolveRefusesLimitedPrincipal(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	tok := f.mustExchange(42)
+	ctx := context.Background()
+	if _, err := f.svc.Authenticate(ctx, tok); err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	f.mu.Lock()
+	f.lim["tgl_a"] = true
+	f.mu.Unlock()
+	if _, err := f.svc.Authenticate(ctx, tok); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("Authenticate with a Limited principal: %v, want ErrUnauthorized", err)
+	}
+	if _, err := f.svc.Validate(ctx, tok); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("Validate with a Limited principal: %v, want ErrUnauthorized", err)
+	}
+}

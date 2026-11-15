@@ -3,7 +3,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { keys } from './queries'
 import { API_PREFIX } from './session'
-import { endReason, sessionStillValid } from './streams'
+import { endReasonOf } from './streams'
+import { watchTransport, type StreamHandle } from './transport'
 
 /** One change-feed entry (internal/changefeed.Change). */
 export interface Change {
@@ -264,7 +265,8 @@ export function useWatch(enabled: boolean): WatchState {
   // The last change seen (here or relayed), so a reconnect, or this tab taking over the stream, resumes from it.
   const last = useRef(0)
   useEffect(() => {
-    if (!enabled || typeof EventSource === 'undefined') return
+    const transport = watchTransport()
+    if (!enabled || !transport.supported()) return
     const bc = typeof BroadcastChannel !== 'undefined' && typeof navigator !== 'undefined' && navigator.locks ? new BroadcastChannel(CHANNEL) : null
     let leading = !bc
     const show = (st: WatchState) => {
@@ -285,7 +287,7 @@ export function useWatch(enabled: boolean): WatchState {
     // function that retries at once when the stream is down.
     const open = () => {
       let closed = false
-      let es: EventSource | null = null // the stream that is open or opening; null while down
+      let es: StreamHandle | null = null // the stream that is open or opening; null while down
       let timer: ReturnType<typeof setTimeout> | undefined
       let checking = false // a session check before a retry is in flight
       let attempt = 0
@@ -312,7 +314,7 @@ export function useWatch(enabled: boolean): WatchState {
         if (closed || checking || es) return
         checking = true
         publish('connecting')
-        void sessionStillValid().then((ok) => {
+        void transport.sessionStillValid().then((ok) => {
           checking = false
           if (closed) return
           if (ok) connect()
@@ -322,54 +324,54 @@ export function useWatch(enabled: boolean): WatchState {
       const connect = () => {
         // Without a position yet (this tab has just loaded its data) the stream starts at the newest change instead of
         // replaying the retained history, which can be thousands of changes, each an invalidation.
-        const src = new EventSource(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : '?live=1'}`)
-        es = src
-        src.onopen = () => {
-          attempt = 0
-          openedAt = Date.now()
-          publish('live')
-        }
-        src.onerror = () => {
-          if (es !== src) return
-          if (src.readyState === EventSource.CLOSED) later()
-          else publish('connecting')
-        }
-        src.addEventListener('change', (ev) => {
-          const seq = Number((ev as MessageEvent<string>).lastEventId) || 0
-          try {
-            const c = JSON.parse((ev as MessageEvent<string>).data) as Change
-            deliver(c, seq)
-            bc?.postMessage({ t: 'change', c, seq } satisfies Relay)
-          } catch {
-            // A malformed event is ignored; the next list refetch is authoritative.
-          }
-        })
-        // A live stream's first event: where the feed is now. Whatever changed between this tab loading its data and
-        // that position is caught by refreshing the active queries once.
-        src.addEventListener('position', (ev) => {
-          const seq = Number((ev as MessageEvent<string>).lastEventId) || 0
-          if (seq > 0) last.current = Math.max(last.current, seq)
-          refresh(qc)
-        })
-        src.addEventListener('gap', () => {
-          refresh(qc)
-          bc?.postMessage({ t: 'gap' } satisfies Relay)
-        })
-        src.addEventListener('end', (ev) => {
-          src.close()
-          if (es !== src) return
-          if (endReason(ev) === 'unauthenticated') {
-            // Re-check the session: a rotated one reconnects, a gone one goes to sign-in. The first such end of a
-            // stream that was open for a while does it at once; each further quick one waits for the next backoff step.
-            es = null
-            quickEnds = Date.now() - openedAt < RETRY_MAX_MS ? quickEnds + 1 : 1
-            if (quickEnds === 1) retry()
-            else {
-              attempt = Math.max(attempt, quickEnds - 2)
-              later()
+        const src: StreamHandle = transport.open(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : '?live=1'}`, {
+          onOpen: () => {
+            attempt = 0
+            openedAt = Date.now()
+            publish('live')
+          },
+          onReconnecting: () => {
+            if (es === src) publish('connecting')
+          },
+          onClosed: () => {
+            if (es === src) later()
+          },
+          onEvent: (type, data, lastEventId) => {
+            const seq = Number(lastEventId) || 0
+            if (type === 'change') {
+              try {
+                const c = JSON.parse(data) as Change
+                deliver(c, seq)
+                bc?.postMessage({ t: 'change', c, seq } satisfies Relay)
+              } catch {
+                // A malformed event is ignored; the next list refetch is authoritative.
+              }
+            } else if (type === 'position') {
+              // A live stream's first event: where the feed is now. Whatever changed between this tab loading its data
+              // and that position is caught by refreshing the active queries once.
+              if (seq > 0) last.current = Math.max(last.current, seq)
+              refresh(qc)
+            } else if (type === 'gap') {
+              refresh(qc)
+              bc?.postMessage({ t: 'gap' } satisfies Relay)
+            } else if (type === 'end') {
+              src.close()
+              if (es !== src) return
+              if (endReasonOf(data) === 'unauthenticated') {
+                // Re-check the session: a rotated one reconnects, a gone one goes to sign-in. The first such end of a
+                // stream that was open for a while does it at once; each further quick one waits for the next backoff step.
+                es = null
+                quickEnds = Date.now() - openedAt < RETRY_MAX_MS ? quickEnds + 1 : 1
+                if (quickEnds === 1) retry()
+                else {
+                  attempt = Math.max(attempt, quickEnds - 2)
+                  later()
+                }
+              } else later()
             }
-          } else later()
+          },
         })
+        es = src
       }
       // The window coming back online, or the leading tab becoming visible, retries at once (session check first).
       const now = () => retry()

@@ -25,6 +25,7 @@ var Excluded = map[string]string{ //nolint:gosec // G101 false positive: operati
 		"(cross-site protection), so the user redeems the reset token on the sign-in page; `spaceman user reset-token` issues it",
 	"create-telegram-session": "the Telegram Mini App's session exchange: served only on the Mini App host, from the Mini App's origin, " +
 		"with initData Telegram signs for the app (ADR-0083)",
+	"get-telegram-me": "the Telegram Mini App's own identity (the get-me document): served only on the Mini App host, to a Mini App session (ADR-0083)",
 	"create-telegram-download-link": "mints a signed, single-purpose download link for the Telegram Mini App: served only on the Mini App host, " +
 		"to a Mini App session (ADR-0083)",
 }

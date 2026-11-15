@@ -12,8 +12,13 @@ export type StreamEndReason = 'unauthenticated' | 'forbidden' | ''
 
 /** Reads the reason of an `end` event; anything unexpected counts as a normal end. */
 export function endReason(ev: Event): StreamEndReason {
+  return endReasonOf((ev as MessageEvent<string>).data)
+}
+
+/** The reason in an `end` event's data. */
+export function endReasonOf(data: string | undefined): StreamEndReason {
   try {
-    const reason = (JSON.parse((ev as MessageEvent<string>).data ?? '{}') as { reason?: unknown }).reason
+    const reason = (JSON.parse(data ?? '{}') as { reason?: unknown }).reason
     return reason === 'unauthenticated' || reason === 'forbidden' ? reason : ''
   } catch {
     return ''

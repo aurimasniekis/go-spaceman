@@ -1,23 +1,30 @@
 import { Alert, Button, Center, Loader, Stack, Text, Title } from '@mantine/core'
 import type { QueryClient } from '@tanstack/react-query'
-import { createRootRouteWithContext, Outlet, useRouterState } from '@tanstack/react-router'
+import { createRootRouteWithContext, Outlet, useRouter, useRouterState } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { useMe } from '@/api/queries'
 import { isPublicPath, loginUrl } from '@/api/session'
 import { AppLayout } from '@/components/AppLayout'
 import { errorMessage } from '@/components/ErrorAlert'
+import { TgShell } from '@/tg/TgShell'
 import { ReauthModal } from '@/features/auth/ReauthModal'
 
 const RouterDevtools = import.meta.env.DEV
   ? lazy(() => import('@tanstack/react-router-devtools').then((m) => ({ default: m.TanStackRouterDevtools })))
   : () => null
 
-export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+export const Route = createRootRouteWithContext<{ queryClient: QueryClient; miniApp?: boolean }>()({
   component: Root,
   notFoundComponent: NotFound,
 })
 
 function Root() {
+  // The Telegram Mini App (tg/router.tsx) renders the same pages in a slim shell: no sign-in, no navbar (ADR-0083 §4.6).
+  if (useRouter().options.context.miniApp) return <TgShell />
+  return <WebRoot />
+}
+
+function WebRoot() {
   const path = useRouterState({ select: (s) => s.location.pathname })
   const devtools = (
     <Suspense fallback={null}>

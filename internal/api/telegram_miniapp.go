@@ -15,6 +15,8 @@ import (
 // Mini App host (telegram.Ops classifies it as the exchange; on any other host it is not found).
 var TelegramMiniAppRules = map[string]Rule{
 	"create-telegram-session": public(),
+	// The Mini App's own identity: /auth/me is not served on the Mini App host (the whole /auth/ prefix is a 404 there).
+	"get-telegram-me": {Session: true, TelegramSelf: true},
 }
 
 // TelegramExchanger exchanges a Mini App's initData for a session (miniapp.Service).
@@ -38,9 +40,22 @@ type TelegramSessionOut struct {
 	IdleTimeoutSeconds int64     `json:"idle_timeout_seconds" doc:"The session ends after this long without a request"`
 }
 
-// RegisterTelegramMiniApp registers the Mini App's session exchange. A nil exchanger serves nothing (404).
+// RegisterTelegramMiniApp registers the Mini App's session exchange and its identity read. A nil exchanger serves
+// nothing (404).
 func RegisterTelegramMiniApp(ex TelegramExchanger) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
+		huma.Register(api, huma.Operation{OperationID: "get-telegram-me", Method: http.MethodGet, Path: "/telegram/me",
+			Summary: "The Mini App session's principal",
+			Description: "Mini App host only (404 elsewhere). The same document as get-me, for the Telegram link's user, so the Mini App " +
+				"can tell what the person may do. It carries no CSRF token and the session never needs one.",
+			Tags: []string{"telegram"}},
+			func(ctx context.Context, _ *struct{}) (*struct{ Body Me }, error) {
+				p := PrincipalFrom(ctx)
+				if ex == nil || telegramChannelFrom(ctx) != channelMiniApp || !p.ViaTelegram() {
+					return nil, d.fail(ctx, "telegram.me", apperr.New(apperr.CodeNotFound, "not found"))
+				}
+				return &struct{ Body Me }{Body: d.me(p)}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "create-telegram-session", Method: http.MethodPost, Path: "/telegram/session",
 			Summary: "Exchange Telegram Mini App initData for a session",
 			Description: "Served only on the Mini App host (miniapp_host; 404 elsewhere). The initData must carry a valid signature of the " +

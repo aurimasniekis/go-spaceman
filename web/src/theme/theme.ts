@@ -98,6 +98,20 @@ export const LIGHT_DIMMED = '#5c6670'
 // Readable on the hovered or selected row too (#1d3b53, 4.6:1), not only on the body and cards.
 export const DARK_DIMMED = '#93a6b4'
 
+/**
+ * Syntax highlighting colors (the classes @tanstack/highlight emits, components/markdown/markdown.css), from Night Owl
+ * and Light Owl like the documentation site's code. Light Owl shades are darkened where they were under 4.5:1 on the
+ * code block's white surface; contrast.test.ts checks every token on its scheme's surface.
+ */
+export const CODE_TOKENS = {
+  light: { token: lightOwl.fg, comment: LIGHT_DIMMED, keyword: lightOwl.purple, string: '#06805d', number: lightOwl.orange, function: '#3b66c4',
+    type: '#b35a58', property: '#0b7f83', operator: '#0b7f83', deleted: '#c62828' },
+  dark: { token: nightOwl.fg, comment: DARK_DIMMED, keyword: nightOwl.purple, string: nightOwl.green, number: nightOwl.orange, function: nightOwl.blue,
+    type: nightOwl.yellow, property: nightOwl.teal, operator: nightOwl.teal, deleted: '#ff6b68' },
+}
+
+const codeVariables = (c: Record<string, string>) => Object.fromEntries(Object.entries(c).map(([k, v]) => [`--sm-code-${k}`, v]))
+
 /** Exact Night Owl / Light Owl surfaces as CSS variables (body, borders, dimmed text). */
 export const cssVariablesResolver: CSSVariablesResolver = () => ({
   variables: { '--sm-mono': 'var(--mantine-font-family-monospace)' },
@@ -111,6 +125,7 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--sm-on-filled': '#ffffff',
     '--sm-accent-purple': lightOwl.purple,
     '--sm-accent-teal': lightOwl.teal,
+    ...codeVariables(CODE_TOKENS.light),
   },
   dark: {
     '--mantine-color-body': nightOwl.bg,
@@ -121,6 +136,7 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--sm-on-filled': nightOwl.bg,
     '--sm-accent-purple': nightOwl.purple,
     '--sm-accent-teal': nightOwl.teal,
+    ...codeVariables(CODE_TOKENS.dark),
     ...darkLightVariants(),
   },
 })

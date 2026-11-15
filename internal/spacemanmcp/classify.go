@@ -57,7 +57,7 @@ const (
 	rUsers           = "user accounts and identities are managed by people only"
 	rTokens          = "token management: an agent never mints, lists or revokes credentials"
 	rSignIn          = "sign-in providers and settings are managed by people only"
-	rTelegramMiniApp = "a signed download link for the Telegram Mini App: minted only from a Mini App session on the Mini App host"
+	rTelegramMiniApp = "a Telegram Mini App operation (a signed download link, the session's identity): served only from a Mini App session on the Mini App host"
 	rTelegram        = "Telegram link policy and what spaces send to Telegram are managed by people only"
 	rMCP             = "HTTP MCP server and grant writes: outbound calls (SSRF) and tool reach of other runs; AM-5 also refuses spaceman-kind targets"
 	rDelete          = "deletes configuration or data"
@@ -199,6 +199,7 @@ var Table = map[string]Entry{
 	"list-telegram-links":           {Excluded, rTelegram},
 	"delete-telegram-link":          {Excluded, rTelegram},
 	"create-telegram-download-link": {Excluded, rTelegramMiniApp},
+	"get-telegram-me":               {Excluded, rTelegramMiniApp},
 
 	// Human-action policies.
 	"delete-human-policy":       {Dangerous, rPolicy},
