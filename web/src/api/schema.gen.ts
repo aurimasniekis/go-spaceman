@@ -8834,7 +8834,7 @@ export interface components {
             username: string;
         };
         LinkTopicsPrefs: {
-            /** @description True while messages to this chat go to topics: the layout is on and the chat has not refused topics lately */
+            /** @description True while the bot tries topics for this chat: the layout is on (or automatic with topics enabled) and the chat has not refused lately. It can be true while available is false (the layout is on but the bot lacks topics): the first topic is then refused and messages go to the main chat */
             active: boolean;
             /** @description Whether topics can be used now: the bot is running and has topics enabled (BotFather) */
             available: boolean;

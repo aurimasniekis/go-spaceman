@@ -41,7 +41,7 @@ type TopicsPrefs struct {
 	Available bool     `json:"available" doc:"Whether topics can be used now: the bot is running and has topics enabled (BotFather)"`
 	Mode      string   `json:"mode" enum:"auto,on,off" doc:"The chat layout that applies to this link: your override, else the administrator's default (auto is on while the bot has topics enabled)"`
 	Override  *string  `json:"override,omitempty" enum:"auto,on,off" doc:"Your own choice (the threads field of the preferences); left out when you follow the default"`
-	Active    bool     `json:"active" doc:"True while messages to this chat go to topics: the layout is on and the chat has not refused topics lately"`
+	Active    bool     `json:"active" doc:"True while the bot tries topics for this chat: the layout is on (or automatic with topics enabled) and the chat has not refused lately. It can be true while available is false (the layout is on but the bot lacks topics): the first topic is then refused and messages go to the main chat"`
 	Spaces    []string `json:"spaces" doc:"IDs of the spaces you can read that already have a topic in this chat, sorted"`
 	Refused   bool     `json:"refused" doc:"True while the bot is not asking this chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat"`
 }
