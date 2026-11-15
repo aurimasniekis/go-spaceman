@@ -43,8 +43,8 @@ func (q *Queries) GetTelegramMessage(ctx context.Context, arg GetTelegramMessage
 }
 
 const listTelegramMessagesByResource = `-- name: ListTelegramMessagesByResource :many
-SELECT chat_id, message_id, resource_version, created_at FROM telegram_messages
-WHERE resource_type = ? AND resource_id = ? AND kind = 'card'
+SELECT chat_id, message_id, kind, resource_version, created_at FROM telegram_messages
+WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont')
 `
 
 type ListTelegramMessagesByResourceParams struct {
@@ -55,10 +55,12 @@ type ListTelegramMessagesByResourceParams struct {
 type ListTelegramMessagesByResourceRow struct {
 	ChatID          int64
 	MessageID       int64
+	Kind            string
 	ResourceVersion int64
 	CreatedAt       int64
 }
 
+// Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
 func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTelegramMessagesByResourceParams) ([]ListTelegramMessagesByResourceRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTelegramMessagesByResource, arg.ResourceType, arg.ResourceID)
 	if err != nil {
@@ -71,6 +73,7 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 		if err := rows.Scan(
 			&i.ChatID,
 			&i.MessageID,
+			&i.Kind,
 			&i.ResourceVersion,
 			&i.CreatedAt,
 		); err != nil {

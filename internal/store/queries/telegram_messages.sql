@@ -8,8 +8,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at;
 
 -- name: ListTelegramMessagesByResource :many
-SELECT chat_id, message_id, resource_version, created_at FROM telegram_messages
-WHERE resource_type = ? AND resource_id = ? AND kind = 'card';
+-- Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
+SELECT chat_id, message_id, kind, resource_version, created_at FROM telegram_messages
+WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont');
 
 -- name: PruneTelegramMessages :execrows
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (

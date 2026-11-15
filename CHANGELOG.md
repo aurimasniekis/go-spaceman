@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Telegram cards now show a message body as formatting (bold, code, lists, links) instead of raw Markdown, and send the whole body instead of cutting it at 600 characters: what doesn't fit in the card goes in numbered reply messages ("(2/3)"), up to four messages, and the rest is left to the app. The continuation messages are edited, added or deleted when the card changes. A message card says "Unread" or "Read" instead of the internal state "stored". At content level `summary` a card still never shows a body.
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
 
 ## [0.1.5] - 2026-11-15
