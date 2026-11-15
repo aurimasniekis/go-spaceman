@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Page } from '@playwright/test'
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -196,10 +196,28 @@ test.afterAll(async ({ browser }) => {
 
 test.use({ storageState: STATE })
 
-for (const width of WIDTHS) {
-  test(`pages at ${width} px have no unwanted scrollbars`, async ({ page }) => {
-    test.setTimeout(300_000)
-    await page.setViewportSize({ width, height: height(width) })
+/**
+ * The three widths are independent (own browser context, same session and world, nothing is written), so they run at
+ * the same time: a test takes as long as its slowest width instead of the sum. Every page and every dialog is still
+ * checked at every width in both themes; only the waiting overlaps.
+ */
+async function atEachWidth(browser: Browser, run: (page: Page, width: number) => Promise<string[]>) {
+  const failures = await Promise.all(
+    WIDTHS.map(async (width) => {
+      const ctx = await browser.newContext({ storageState: STATE, viewport: { width, height: height(width) }, colorScheme: 'dark' })
+      try {
+        return await run(await ctx.newPage(), width)
+      } finally {
+        await ctx.close()
+      }
+    }),
+  )
+  expect(failures.flat()).toEqual([])
+}
+
+test('pages have no unwanted scrollbars at phone, desktop and wide widths', async ({ browser }) => {
+  test.setTimeout(300_000)
+  await atEachWidth(browser, async (page, width) => {
     const failures: string[] = []
     for (const path of PAGES(world)) {
       await page.goto(path)
@@ -207,48 +225,47 @@ for (const width of WIDTHS) {
       await settle(page, 600)
       await check(page, `${path} at ${width} px`, failures)
     }
-    expect(failures).toEqual([])
+    return failures
   })
+})
 
-  test(`every modal and drawer at ${width} px has no unwanted scrollbars`, async ({ page }) => {
-    test.setTimeout(600_000)
-    await page.setViewportSize({ width, height: height(width) })
+test('every modal and drawer has no unwanted scrollbars at phone, desktop and wide widths', async ({ browser }) => {
+  test.setTimeout(600_000)
+  await atEachWidth(browser, async (page, width) => {
     const failures: string[] = []
     const dialogs = page.locator('.mantine-Modal-content, .mantine-Drawer-content')
     let at = ''
     for (const d of DIALOGS) {
       if (d.widths && !d.widths.includes(width)) continue
-      await test.step(d.name, async () => {
-        // Dialogs on the same page reuse it (closed with Escape); a fresh load otherwise.
-        const path = d.path(world)
-        if (path !== at || !page.url().endsWith(path) || (await dialogs.count()) > 0) {
-          await page.goto(path)
-          await page.locator('main').waitFor()
-          await settle(page, 400)
-          at = path
+      // Dialogs on the same page reuse it (closed with Escape); a fresh load otherwise.
+      const path = d.path(world)
+      if (path !== at || !page.url().endsWith(path) || (await dialogs.count()) > 0) {
+        await page.goto(path)
+        await page.locator('main').waitFor()
+        await settle(page, 400)
+        at = path
+      }
+      try {
+        for (const step of d.open) {
+          await step(page)
+          await settle(page, 300)
         }
-        try {
-          for (const step of d.open) {
-            await step(page)
-            await settle(page, 300)
-          }
-          await expect(dialogs.last()).toBeVisible(T)
-        } catch (e) {
-          failures.push(`${d.name} at ${width} px: could not open (${String(e).split('\n')[0]})`)
-          at = ''
-          return
-        }
-        await settle(page, 450) // Mantine transitions run in JavaScript
-        await check(page, `${d.name} at ${width} px`, failures)
-        for (let i = 0; i < 3 && (await dialogs.count()) > 0; i++) {
-          await page.keyboard.press('Escape')
-          await settle(page, 350)
-        }
-      })
+        await expect(dialogs.last()).toBeVisible(T)
+      } catch (e) {
+        failures.push(`${d.name} at ${width} px: could not open (${String(e).split('\n')[0]})`)
+        at = ''
+        continue
+      }
+      await settle(page, 450) // Mantine transitions run in JavaScript
+      await check(page, `${d.name} at ${width} px`, failures)
+      for (let i = 0; i < 3 && (await dialogs.count()) > 0; i++) {
+        await page.keyboard.press('Escape')
+        await settle(page, 350)
+      }
     }
-    expect(failures).toEqual([])
+    return failures
   })
-}
+})
 
 /**
  * Operator report after #29 (Chrome on macOS, Retina): the "New inbox item" dialog showed a vertical scrollbar although

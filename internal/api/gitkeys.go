@@ -99,9 +99,9 @@ func RegisterGitKeys(svc *gitkeys.Service) func(api huma.API, d *Deps) {
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				GitKeyPath
-				IfMatch
+				OptionalIfMatch
 			}) (*gitKeyOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "gitkeys.rotate", err)
 				}

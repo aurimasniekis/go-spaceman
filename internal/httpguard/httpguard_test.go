@@ -21,7 +21,7 @@ const idle = 300 * time.Millisecond
 func server(t *testing.T, h func(w http.ResponseWriter, r *http.Request) error) (*httptest.Server, chan error) {
 	t.Helper()
 	done := make(chan error, 4)
-	srv := httptest.NewUnstartedServer(WriteProgress(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { done <- h(w, r) }), idle))
+	srv := httptest.NewUnstartedServer(WriteProgress(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { done <- h(w, r) }), idle, "/"))
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.Start()
 	t.Cleanup(srv.Close)
@@ -187,3 +187,26 @@ func TestOnlyWebSocketUpgradesPassThrough(t *testing.T) {
 }
 
 var errGuarded = errors.New("the handler got the guarded writer")
+
+// A real WebSocket handshake is exempt only on a hijacking route. The same headers on a download or an event stream
+// (any other path) must not exempt it: a stalled reader is cut off within the idle bound (PR #78 re-review, finding C).
+func TestUpgradeHeadersOnAnotherRouteAreStillGuarded(t *testing.T) {
+	srv, done := server(t, big(64<<20))
+	c, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.(*net.TCPConn).SetReadBuffer(4 << 10)
+	if _, err := fmt.Fprint(c, "GET /download HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the write of a stalled download with upgrade headers succeeded")
+		}
+	case <-time.After(10 * idle):
+		t.Fatal("a stalled download carrying WebSocket upgrade headers was not cut off: the guard skipped a non-hijacking route")
+	}
+}

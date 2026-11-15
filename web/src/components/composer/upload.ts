@@ -1,5 +1,5 @@
 import { apiError, type Schemas } from '@/api/client'
-import { API_PREFIX, csrfToken } from '@/api/session'
+import { API_PREFIX, csrfToken, endMiniAppSession, isMiniApp, miniAppFetchInit } from '@/api/session'
 
 export type UploadedAttachment = Schemas['AttachmentOut']
 
@@ -7,12 +7,18 @@ export type UploadedAttachment = Schemas['AttachmentOut']
 export async function uploadAttachment(spaceId: string, file: File): Promise<UploadedAttachment> {
   const form = new FormData()
   form.append('file', file, file.name)
-  const res = await fetch(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/attachments`, {
-    method: 'POST',
-    body: form,
-    headers: { 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID() },
-    credentials: 'same-origin',
-  })
+  // The Mini App has no cookie and no CSRF token: its session is the Authorization header (ADR-0083 §3.4.2), exactly as
+  // the API client's middleware sends it for every other call.
+  const miniApp = isMiniApp()
+  const url = `${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/attachments`
+  const idem = { 'Idempotency-Key': crypto.randomUUID() }
+  const res = await fetch(
+    url,
+    miniApp
+      ? miniAppFetchInit({ method: 'POST', body: form, headers: idem })
+      : { method: 'POST', body: form, headers: { ...idem, 'X-CSRF-Token': csrfToken() }, credentials: 'same-origin' },
+  )
+  if (miniApp && res.status === 401) await endMiniAppSession(res)
   const body: unknown = await res.json().catch(() => ({}))
   if (!res.ok) throw apiError(body, res.status)
   return body as UploadedAttachment

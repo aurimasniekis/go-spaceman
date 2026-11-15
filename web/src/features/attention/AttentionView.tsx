@@ -2,6 +2,7 @@ import { Alert, Badge, Card, Group, List, Progress, SimpleGrid, Stack, Text, Tit
 import { IconCircleCheck } from '@tabler/icons-react'
 import type { ReactNode } from 'react'
 import type { Schemas } from '@/api/client'
+import { isMiniApp } from '@/api/session'
 import { AnchorLink } from '@/components/AnchorLink'
 import { formatBytes } from '@/components/composer/upload'
 import { DataTable, type ColumnDef } from '@/components/DataTable'
@@ -68,7 +69,7 @@ const columns: ColumnDef<AttentionSpace, unknown>[] = [
   { id: 'tasks', header: 'Blocked or failed tasks', accessorFn: (s) => (s.tasks_blocked ?? 0) + (s.tasks_failed ?? 0), size: 120 },
   {
     id: 'what', header: 'What needs you', enableSorting: false, accessorFn: (s) => s.slug,
-    cell: ({ row }) => <SpaceCounts s={row.original} />,
+    cell: ({ row }) => <SpaceCounts s={row.original} miniApp={isMiniApp()} />,
   },
 ]
 
@@ -111,9 +112,13 @@ function StorageSection({ st }: { st: Schemas['AttentionStorage'] }) {
   )
 }
 
-/** Everything that needs a person (SM-UI-003), per space and for the installation where the caller may read it. */
+/**
+ * Everything that needs a person (SM-UI-003), per space and for the installation where the caller may read it. In the
+ * Mini App the installation sections keep their text but drop the links to the pages the Mini App does not have.
+ */
 export function AttentionView({ data }: { data: Attention }) {
   const nodes = data.nodes ?? []
+  const miniApp = isMiniApp()
   return (
     <Stack gap="md">
       {data.total === 0 ? (
@@ -134,7 +139,7 @@ export function AttentionView({ data }: { data: Attention }) {
                 <List size="sm">
                   {nodes.map((n) => (
                     <List.Item key={n.id}>
-                      <AnchorLink to="/nodes" size="sm">{n.name}</AnchorLink> is not connected{n.last_disconnect_at ? ` since ${datetime(n.last_disconnect_at)}` : ''};
+                      {miniApp ? n.name : <AnchorLink to="/nodes" size="sm">{n.name}</AnchorLink>} is not connected{n.last_disconnect_at ? ` since ${datetime(n.last_disconnect_at)}` : ''};
                       {' '}{n.spaces.length} space{n.spaces.length === 1 ? '' : 's'} start no new work.
                     </List.Item>
                   ))}
@@ -145,7 +150,7 @@ export function AttentionView({ data }: { data: Attention }) {
           {data.outbox && (
             <Section title="Outbound events" ok={data.outbox.dead === 0}>
               <Text size="sm">{data.outbox.dead} dead letter{data.outbox.dead === 1 ? '' : 's'}, {data.outbox.retrying} retrying.</Text>
-              {data.outbox.dead > 0 && <AnchorLink to="/events" size="sm">See the outbound status on Events</AnchorLink>}
+              {data.outbox.dead > 0 && !miniApp && <AnchorLink to="/events" size="sm">See the outbound status on Events</AnchorLink>}
             </Section>
           )}
           {data.backups && (
@@ -155,7 +160,7 @@ export function AttentionView({ data }: { data: Attention }) {
                 {data.backups.last_failed_at && ` Last failure ${datetime(data.backups.last_failed_at)}.`}
                 {data.backups.last_verify_failed_at && ` Last failed verification ${datetime(data.backups.last_verify_failed_at)}.`}
               </Text>
-              <AnchorLink to="/backups" size="sm">Backups</AnchorLink>
+              {!miniApp && <AnchorLink to="/backups" size="sm">Backups</AnchorLink>}
             </Section>
           )}
           {data.storage && <StorageSection st={data.storage} />}

@@ -137,10 +137,10 @@ func registerHumanTypePermissions(api huma.API, d *Deps, svc *human.Service) {
 			"Permissions narrow the roles' own permissions and are audited.", Tags: tags},
 		func(ctx context.Context, in *struct {
 			HumanTypePermissionPath
-			IfMatch
+			OptionalIfMatch
 			Body human.TypePermissionInput
 		}) (*humanPermOut, error) {
-			v, err := optionalVersion(in.IfMatch)
+			v, err := optionalVersion(in.OptionalIfMatch)
 			if err != nil {
 				return nil, d.fail(ctx, "human_perms.set", err)
 			}

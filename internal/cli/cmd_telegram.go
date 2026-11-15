@@ -6,7 +6,7 @@ func (a *App) telegramCmd() *cobra.Command {
 	botForm := func(f *form) {
 		f.secret("bot-token", "bot_token", "bot token from BotFather; required when configuring, omit to keep the stored one").
 			boolean("enabled", "enabled", "run the bot").
-			str("mode", "mode", "webhook (default; needs an https public_url) or polling").
+			str("mode", "mode", "webhook (default; needs an https public_url or telegram.webhook_base_url) or polling").
 			str("miniapp-host", "miniapp_host", "the Mini App's own host, e.g. tg.central.example.com (empty: Mini App off)").
 			list("webhook-ip-allowlist", "webhook_ip_allowlist", "CIDR the webhook accepts requests from, e.g. 149.154.160.0/20 (empty: no check)")
 	}

@@ -12,6 +12,7 @@ import { Markdown } from '@tiptap/markdown'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useEffect, useRef, useState } from 'react'
+import { useAttachmentsHost } from '@/components/attachmentsHost'
 import { errorMessage } from '@/components/ErrorAlert'
 import { referenceAttachments, referencedAttachments, resolveAttachments } from '@/lib/markdown'
 import { formatBytes, uploadAttachment, type UploadedAttachment } from './upload'
@@ -95,13 +96,20 @@ export function Composer({ spaceId, initialMarkdown = '', placeholder = 'Write i
   const [uploading, setUploading] = useState(0)
   const [error, setError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
+  const host = useAttachmentsHost()
+  const hostRef = useRef(host)
+  hostRef.current = host
+  // Preview URLs (blob:) shown in the editor, mapped back to the content URL that is stored as an attachment reference.
+  const previews = useRef(new Map<string, string>())
   const filesRef = useRef(files)
   filesRef.current = files
   const submitRef = useRef(onSubmit)
   submitRef.current = onSubmit
 
   const emit = (e: Editor) => {
-    const markdown = referenceAttachments(e.getMarkdown(), spaceId)
+    let md = e.getMarkdown()
+    for (const [blob, url] of previews.current) md = md.split(blob).join(url)
+    const markdown = referenceAttachments(md, spaceId)
     const ids = new Set([...referencedAttachments(markdown), ...filesRef.current.map((f) => f.id)])
     onChange({ markdown, attachmentIds: [...ids] })
   }
@@ -112,12 +120,21 @@ export function Composer({ spaceId, initialMarkdown = '', placeholder = 'Write i
       setUploading((n) => n + 1)
       try {
         const att = await uploadAttachment(spaceId, file)
-        // Insert after the current selection, never over it: an inserted image stays selected, and the next file would
-        // otherwise replace it.
-        const chain = e.chain().focus().setTextSelection(pos ?? e.state.selection.to)
         if (att.inline) {
-          chain.setImage({ src: att.url, alt: att.name }).run()
+          // The Mini App has no cookie: the content URL would not load, so the preview is the blob the host fetches with
+          // its session header (the stored reference is still the attachment).
+          let src = att.url
+          const blob = await hostRef.current?.load(spaceId, att.id)
+          if (blob) {
+            previews.current.set(blob, att.url)
+            src = blob
+          }
+          // Insert after the current selection, never over it: an inserted image stays selected, and the next file would
+          // otherwise replace it.
+          const chain = e.chain().focus().setTextSelection(pos ?? e.state.selection.to)
+          chain.setImage({ src, alt: att.name }).run()
         } else {
+          const chain = e.chain().focus().setTextSelection(pos ?? e.state.selection.to)
           setFiles((f) => [...f, att])
           chain.insertContent({ type: 'text', text: att.name, marks: [{ type: 'link', attrs: { href: att.url } }] }).insertContent(' ').run()
         }

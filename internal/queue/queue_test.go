@@ -320,3 +320,117 @@ func TestTopLevelLimitDefaultAndLowering(t *testing.T) {
 		t.Fatalf("selection after lowering %+v", sel)
 	}
 }
+
+// Control may close a task that never had a worker run (it did the work itself) as done from backlog or ready, with
+// a result; nothing else gains a shortcut to done, and the audit event says the closure was direct.
+func TestControlDoneOfNeverRunTask(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	direct := func(id string, v int64, in StatusInput) (*Task, error) {
+		in.ControlDone = true
+		return f.svc.SetStatus(f.ctx, op, "spc_a", id, v, in)
+	}
+	for _, start := range []string{Backlog, Ready} {
+		tk := f.add(CreateInput{Title: "did it myself " + start, Status: start})
+		if _, err := f.svc.SetStatus(f.ctx, op, "spc_a", tk.ID, tk.Version, StatusInput{Status: Done, Result: "x"}); apperr.CodeOf(err) != apperr.CodePrecondition {
+			t.Fatalf("%s → done without control: %v", start, err)
+		}
+		if _, err := direct(tk.ID, tk.Version, StatusInput{Status: Done}); apperr.CodeOf(err) != apperr.CodeInvalid {
+			t.Fatalf("%s → done without a result: %v", start, err)
+		}
+		d, err := direct(tk.ID, tk.Version, StatusInput{Status: Done, Result: "done by control"})
+		if err != nil || d.Status != Done || d.Result != "done by control" || d.FinishedAt == nil {
+			t.Fatalf("%s → done: %+v %v", start, d, err)
+		}
+	}
+	// Other transitions keep their rules: backlog/ready → failed, and a task that ran, are not covered.
+	tk := f.add(CreateInput{Title: "ran"})
+	r, err := f.svc.SetStatus(f.ctx, op, "spc_a", tk.ID, tk.Version, StatusInput{Status: Running})
+	must(t, err)
+	r, err = f.svc.SetStatus(f.ctx, op, "spc_a", tk.ID, r.Version, StatusInput{Status: Ready})
+	must(t, err)
+	if _, err := direct(tk.ID, r.Version, StatusInput{Status: Done, Result: "r"}); apperr.CodeOf(err) != apperr.CodePrecondition {
+		t.Fatalf("a task that ran was closed directly: %v", err)
+	}
+	b := f.add(CreateInput{Title: "b"})
+	if _, err := direct(b.ID, b.Version, StatusInput{Status: Failed, Result: "r"}); apperr.CodeOf(err) != apperr.CodePrecondition {
+		t.Fatalf("backlog → failed: %v", err)
+	}
+}
+
+// The direct closure keeps every guard on its own: an incident, a task with an assignee run or one preempted by an
+// incident is refused, an unfinished dependency or an open blocker holds it back until they are done, and the audit
+// event of a successful one says direct (an ordinary transition says it did not).
+func TestControlDoneGuards(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	direct := func(id string, v int64) (*Task, error) {
+		return f.svc.SetStatus(f.ctx, op, "spc_a", id, v, StatusInput{Status: Done, Result: "did it", ControlDone: true})
+	}
+	refused := func(what string, tk *Task, code apperr.Code) {
+		t.Helper()
+		if _, err := direct(tk.ID, f.get(tk.ID).Version); apperr.CodeOf(err) != code {
+			t.Fatalf("%s: %v", what, err)
+		}
+		if got := f.get(tk.ID).Status; got == Done {
+			t.Fatalf("%s: the task became done", what)
+		}
+	}
+	refused("incident", f.add(CreateInput{Title: "inc", Kind: "incident", Triggers: []string{TriggerControl}}), apperr.CodePrecondition)
+
+	asg := f.add(CreateInput{Title: "assigned"})
+	f.wait("lw_1", "run_1", asg.ID) // seeds the run
+	must(t, f.s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(f.ctx, `UPDATE tasks SET assignee_run = 'run_1' WHERE id = ?`, asg.ID)
+		return err
+	}))
+	refused("assignee run", asg, apperr.CodePrecondition)
+
+	pre := f.add(CreateInput{Title: "preempted"})
+	must(t, f.s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(f.ctx, `UPDATE tasks SET preempted_by = ? WHERE id = ?`, asg.ID, pre.ID)
+		return err
+	}))
+	refused("preempted", pre, apperr.CodePrecondition)
+
+	// An unfinished dependency holds it back; once the dependency is done, the closure goes through.
+	dep := f.add(CreateInput{Title: "dep", Status: Backlog})
+	on := f.add(CreateInput{Title: "on dep", DependsOn: []string{dep.ID}})
+	refused("unmet dependency", on, apperr.CodePrecondition)
+	if _, err := direct(dep.ID, f.get(dep.ID).Version); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := direct(on.ID, f.get(on.ID).Version); err != nil || d.Status != Done {
+		t.Fatalf("after the dependency is done: %+v %v", d, err)
+	}
+
+	// An open blocks_task human action (a blocker) holds it back until it is resolved.
+	blk := f.add(CreateInput{Title: "blocked"})
+	_, err := f.svc.AddBlocker(f.ctx, op, "spc_a", blk.ID, "human_action", "hum_9", "")
+	must(t, err)
+	refused("open human action", blk, apperr.CodePrecondition)
+	must(t, f.s.W().TxNamed(f.ctx, "resolve", func(tx *store.Tx) error {
+		_, err := ResolveBlockersByRef(f.ctx, tx, "human_action", "hum_9", "usr_op")
+		return err
+	}))
+	if d, err := direct(blk.ID, f.get(blk.ID).Version); err != nil || d.Status != Done {
+		t.Fatalf("after the human action is resolved: %+v %v", d, err)
+	}
+
+	// The audit event of the direct closure says so; an ordinary transition says it did not.
+	var directN, plainN int
+	q := `SELECT count(*) FROM audit_events WHERE action = 'task.status' AND details_json LIKE ?`
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, q, `%"direct":true%`).Scan(&directN))
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, q, `%"direct":false%`).Scan(&plainN))
+	if directN != 3 { // dep, on, blk
+		t.Fatalf("direct audit events = %d, want 3", directN)
+	}
+	r := f.add(CreateInput{Title: "ordinary"})
+	if _, err := f.svc.SetStatus(f.ctx, op, "spc_a", r.ID, r.Version, StatusInput{Status: Running}); err != nil {
+		t.Fatal(err)
+	}
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, q, `%"direct":false%`).Scan(&plainN))
+	if plainN == 0 {
+		t.Fatal("an ordinary transition was not audited with direct false")
+	}
+}

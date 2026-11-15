@@ -169,6 +169,10 @@ func (m *mappings) Save(_ context.Context, rows []notify.Mapping) error {
 	defer m.mu.Unlock()
 	m.saves++
 	for _, r := range rows {
+		if r.Delete {
+			delete(m.rows, [2]int64{r.ChatID, int64(r.MessageID)})
+			continue
+		}
 		m.rows[[2]int64{r.ChatID, int64(r.MessageID)}] = r
 	}
 	return nil

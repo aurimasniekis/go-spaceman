@@ -37,9 +37,32 @@ for (const [proto, name, make] of stubs) {
   }
 }
 
-// @mantine/hooks use-focus-trap queues an uncleared 0 ms setTimeout that can fire after jsdom has
-// been torn down, throwing "window is not defined" (seen from UsageLimitsCard.test.tsx). Yield once
-// on a real timer before teardown so that callback runs while the environment still exists. The
-// setTimeout is captured at module load, so the flush cannot hang when a test enables fake timers.
+// Mantine timers (use-focus-trap's 0 ms setTimeout, Transition's enter/exit timers) can outlive a test file and fire
+// after jsdom has been torn down, throwing an unhandled "window is not defined" that fails the whole run (seen from
+// UsageLimitsCard.test.tsx and TelegramLink.test.tsx, about one run in three). Track the timers a file schedules,
+// give the ones due right away a real tick to run while the environment still exists, then clear what is left: no
+// test cares about a timer that has not fired by the end of its file. The real setTimeout/clearTimeout are captured at
+// module load, so this cannot hang or misfire when a test enables fake timers.
 const realSetTimeout = globalThis.setTimeout
-afterAll(() => new Promise((resolve) => realSetTimeout(resolve, 0)))
+const realClearTimeout = globalThis.clearTimeout
+const pending = new Set<ReturnType<typeof setTimeout>>()
+
+globalThis.setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+  const id: ReturnType<typeof setTimeout> = realSetTimeout((...a: unknown[]) => {
+    pending.delete(id)
+    return fn(...a)
+  }, ms, ...args)
+  pending.add(id)
+  return id
+}) as typeof setTimeout
+
+globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+  if (id !== undefined) pending.delete(id)
+  return realClearTimeout(id)
+}) as typeof clearTimeout
+
+afterAll(async () => {
+  await new Promise((resolve) => realSetTimeout(resolve, 0))
+  for (const id of pending) realClearTimeout(id)
+  pending.clear()
+})

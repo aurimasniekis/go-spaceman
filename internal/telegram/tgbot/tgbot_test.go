@@ -271,7 +271,7 @@ func TestPutValidation(t *testing.T) {
 	// Webhook mode needs an https public URL; polling doesn't.
 	h := newEnvWith(t, "http://127.0.0.1:8080", func(o *Options) { o.MiniAppHost = "tg.localhost" })
 	_, err = h.svc.Put(ctx, admin, 0, Input{BotToken: h.tg.Token(), Enabled: true})
-	fieldMsg(t, err, "mode", "public_url to be https")
+	fieldMsg(t, err, "mode", "to be https")
 	if _, err := h.svc.Put(ctx, admin, 0, Input{BotToken: h.tg.Token(), Enabled: true, Mode: ModePolling, MiniAppHost: "tg.localhost"}); err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestMiniAppHostDiffersFromPublicHostWithTrailingDot(t *testing.T) {
 	t.Parallel()
 	for _, public := range []string{"https://central.example.com.", "https://CENTRAL.example.com.:8443/x"} {
 		v := &apperr.Validation{}
-		checkMiniAppHost(v, "central.example.com", public)
+		checkMiniAppHost(v, "central.example.com", public, "")
 		fieldMsg(t, v.Err(), "miniapp_host", "must differ from the host of central's public URL")
 	}
 }
@@ -983,5 +983,63 @@ func TestLoadStoredHostReadError(t *testing.T) {
 	cancel()
 	if err := e.svc.LoadStoredHost(ctx); err == nil {
 		t.Fatal("a failed read was ignored")
+	}
+}
+
+// telegram.webhook_base_url: setWebhook is registered under it instead of public_url (same path, same secret token),
+// and it also lets webhook mode start when public_url is not https; without it public_url is used.
+func TestWebhookBaseURL(t *testing.T) {
+	t.Parallel()
+	const base = "https://hooks.example.com"
+	e := newEnvWith(t, "http://192.168.1.5:8080", func(o *Options) { o.WebhookBaseURL = base + "/" })
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	if b.WebhookStatus != StateOK {
+		t.Fatalf("health %+v", b.Health)
+	}
+	set := e.tg.Calls("setWebhook")
+	if len(set) != 1 {
+		t.Fatalf("setWebhook calls %d", len(set))
+	}
+	hook := e.query(`SELECT hook_id FROM telegram_bot`)
+	if got, want := set[0].Params["url"], base+updates.WebhookPath+hook; got != want {
+		t.Fatalf("webhook url %q, want %q", got, want)
+	}
+	if set[0].Params["secret_token"] == "" {
+		t.Fatal("no secret token registered")
+	}
+	// A delivery with the secret token still reaches the dispatcher.
+	if code, err := e.tg.Deliver(context.Background(), private(4242, "hi")); err != nil || code != http.StatusOK {
+		t.Fatalf("delivery: %d %v", code, err)
+	}
+
+	// Without it, public_url is used.
+	f := newEnv(t, publicURL)
+	f.put(0, Input{BotToken: f.tg.Token(), Enabled: true})
+	fh := f.query(`SELECT hook_id FROM telegram_bot`)
+	if got := f.tg.Calls("setWebhook")[0].Params["url"]; got != publicURL+updates.WebhookPath+fh {
+		t.Fatalf("fallback webhook url %q", got)
+	}
+}
+
+// A miniapp_host equal to the webhook base host is rejected: the webhook would be routed to the Mini App (404).
+func TestMiniAppHostDiffersFromWebhookBaseHost(t *testing.T) {
+	t.Parallel()
+	v := &apperr.Validation{}
+	checkMiniAppHost(v, "hooks.example.com", "https://central.example.com", "https://HOOKS.example.com:8443/tg")
+	fieldMsg(t, v.Err(), "miniapp_host", "must differ from the host of telegram.webhook_base_url")
+	v = &apperr.Validation{}
+	checkMiniAppHost(v, "tg.example.com", "https://central.example.com", "https://hooks.example.com")
+	if err := v.Err(); err != nil {
+		t.Fatalf("distinct hosts: %v", err)
+	}
+}
+
+// The webhook base's scheme is matched case-insensitively by Put's https check.
+func TestIsHTTPSScheme(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]bool{"https://a.example.com": true, "HTTPS://a.example.com": true, "http://a.example.com": false, "": false, "https://": false} {
+		if got := isHTTPS(in); got != want {
+			t.Errorf("isHTTPS(%q) = %v, want %v", in, got, want)
+		}
 	}
 }

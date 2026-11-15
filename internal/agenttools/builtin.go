@@ -220,7 +220,8 @@ func (r *Registry) registerTasks() {
 			return map[string]any{"task": t, "outcome": outcome}, nil
 		})
 	Add(r, "spaceman_task_set_status", "Change a task's state. Control may move any task; a worker may only mark its own assigned task review or blocked. "+
-		"Nothing is accepted automatically: control or an operator decides when work is done.",
+		"Nothing is accepted automatically: control or an operator decides when work is done. Control may also set a backlog or ready task that never had a worker run "+
+		"(control did the work itself) directly to done, with a result; any other task goes through running and review.",
 		[]string{KindControl, KindWorker}, false, func(ctx context.Context, p *fleet.RunPrincipal, in taskStatusIn) (any, error) {
 			t, err := r.d.Queue.Get(ctx, p.SpaceID, in.TaskID)
 			if err != nil {
@@ -234,7 +235,8 @@ func (r *Registry) registerTasks() {
 					return nil, apperr.New(apperr.CodeForbidden, "workers may set their task to review or blocked; control decides the rest")
 				}
 			}
-			return r.d.Queue.SetStatus(ctx, actor(p), p.SpaceID, in.TaskID, t.Version, queue.StatusInput{Status: in.Status, Reason: in.Reason, Result: in.Result})
+			return r.d.Queue.SetStatus(ctx, actor(p), p.SpaceID, in.TaskID, t.Version, queue.StatusInput{Status: in.Status, Reason: in.Reason, Result: in.Result,
+				ControlDone: p.Kind == KindControl})
 		})
 }
 
@@ -360,7 +362,7 @@ type humanAskIn struct {
 	CustomType    string         `json:"custom_type,omitempty" jsonschema:"a custom type's slug from spaceman_human_types; request must match its request schema"`
 	Title         string         `json:"title"`
 	Body          string         `json:"body,omitempty" jsonschema:"Markdown: context the person needs"`
-	Request       map[string]any `json:"request,omitempty" jsonschema:"question: {options:[...], allow_text}; approval: {action, details}; todo: {steps:[...]}; message: {requires_ack}"`
+	Request       map[string]any `json:"request,omitempty" jsonschema:"depends on type, and no other field is accepted: question: {options:[...], allow_text} (allow_text is for questions only); approval: {action, details}; todo: {steps:[...]}; message: {requires_ack}"`
 	TaskID        string         `json:"task_id,omitempty"`
 	BlocksTask    bool           `json:"blocks_task,omitempty" jsonschema:"block that task until a person responds"`
 	Priority      string         `json:"priority,omitempty" jsonschema:"low, normal, high or urgent"`

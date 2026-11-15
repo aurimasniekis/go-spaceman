@@ -110,9 +110,9 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 			Summary: "Acknowledge a message addressed to operators", Description: "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).", Tags: tags},
 			func(ctx context.Context, in *struct {
 				MessagePath
-				IfMatch
+				OptionalIfMatch
 			}) (*struct{ Body *messages.Message }, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "messages.ack", err)
 				}
@@ -158,12 +158,12 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 			Summary: "Close a message or request", Description: "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).", Tags: tags},
 			func(ctx context.Context, in *struct {
 				MessagePath
-				IfMatch
+				OptionalIfMatch
 				Body struct {
 					Resolution string `json:"resolution,omitempty" maxLength:"2000"`
 				}
 			}) (*struct{ Body *messages.Message }, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "messages.resolve", err)
 				}

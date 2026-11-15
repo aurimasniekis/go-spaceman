@@ -36,6 +36,11 @@ type relocEngine struct {
 	locks map[string]*sync.Mutex
 	// retain wakes the retention timer (a relocation finished or a retention changed).
 	retain chan struct{}
+	// work tracks the background advances relocKick starts, so central's shutdown (Hub.Shutdown) waits for them
+	// before it closes the store; stopped (guarded by mu) refuses new ones once it began (the relocation resumes
+	// from the database at the next start).
+	work    sync.WaitGroup
+	stopped bool
 }
 
 func (svc *Service) relocLock(key string) func() {
@@ -64,8 +69,31 @@ func (svc *Service) relocDir(id string) string {
 func (svc *Service) relocLog() *slog.Logger { return obs.Component(svc.opts.Log, "relocation") }
 
 // relocKick advances a relocation in the background (after a commit, a report or a run's end).
+// The advance is tracked: Hub.Shutdown waits for it (bounded by its grace) before the store is closed.
 func (svc *Service) relocKick(ctx context.Context, id string) {
-	go svc.advanceRelocation(context.WithoutCancel(ctx), id)
+	e := &svc.reloc
+	e.mu.Lock()
+	if e.stopped {
+		e.mu.Unlock()
+		return
+	}
+	e.work.Add(1)
+	e.mu.Unlock()
+	go func() {
+		defer e.work.Done()
+		svc.advanceRelocation(context.WithoutCancel(ctx), id)
+	}()
+}
+
+// relocStop refuses new background advances and returns a channel closed once the running ones are done.
+func (svc *Service) relocStop() <-chan struct{} {
+	e := &svc.reloc
+	e.mu.Lock()
+	e.stopped = true
+	e.mu.Unlock()
+	done := make(chan struct{})
+	go func() { e.work.Wait(); close(done) }()
+	return done
 }
 
 // kickSpaceRelocation advances the space's relocation in progress, if any (a run of the space ended).

@@ -109,7 +109,7 @@ func TestHardExclusions(t *testing.T) {
 		"respond-human-action", "assign-human-action", "cancel-human-action", "clarify-human-action", "comment-human-action",
 		"move-human-action", "route-human-notification", "takeover-input", "send-input", "end-takeover", "renew-takeover",
 		"list-users", "get-user", "list-all-tokens", "get-root-token", "list-oidc-providers", "get-oidc-test-login",
-		"acknowledge-restore", "upload-attachment",
+		"upload-attachment",
 		// Personal session operations (a filtered read is not one).
 		"logout", "list-my-tokens", "get-notification-preferences",
 		// Harbor Pilot connection writes need a step-up (dangerous if they ever stop needing one).
@@ -124,7 +124,7 @@ func TestHardExclusions(t *testing.T) {
 		"put_space_harbor_pilot": spacemanmcp.Dangerous, "delete_space_harbor_pilot": spacemanmcp.Write,
 		"get_harbor_pilot_connection": spacemanmcp.Read, "save_harness_profile": spacemanmcp.Dangerous,
 		"create_account": spacemanmcp.Dangerous, "create_mcp_server": spacemanmcp.Dangerous,
-		"delete_schedule": spacemanmcp.Dangerous, "get_recording": spacemanmcp.SensitiveRead,
+		"delete_schedule": spacemanmcp.Dangerous, "acknowledge_restore": spacemanmcp.Dangerous, "get_recording": spacemanmcp.SensitiveRead,
 	} {
 		tl, ok := c.Tool(name)
 		if !ok || tl.Class != want {
@@ -253,9 +253,72 @@ func TestSchemasAreValidObjects(t *testing.T) {
 	if !tl.IfMatch || !strings.Contains(string(tl.InputSchema), `"if_match"`) || tl.Idempotent {
 		t.Errorf("update_space: %+v", tl)
 	}
+	// set_space_state needs If-Match: the schema requires if_match and the description says so, so an approved call
+	// is not refused with a 428 and approved a second time.
+	for _, name := range []string{"set_space_state", "update_space"} {
+		tl, ok := c.Tool(name)
+		if !ok {
+			t.Fatalf("%s: not in the catalog", name)
+		}
+		var s struct {
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(tl.InputSchema, &s); err != nil {
+			t.Fatal(err)
+		}
+		if !tl.IfMatchRequired || !slices.Contains(s.Required, spacemanmcp.ArgIfMatch) || !strings.Contains(tl.Description, "if_match") {
+			t.Errorf("%s: if_match not required or not described: %s / %s", name, tl.InputSchema, tl.Description)
+		}
+	}
 	tl, _ = c.Tool("create_space")
 	if !tl.Idempotent || strings.Contains(string(tl.InputSchema), "Idempotency") {
 		t.Errorf("create_space: %+v %s", tl, tl.InputSchema)
+	}
+}
+
+// optionalIfMatchTools are the tools whose handler reads If-Match with optionalVersion: a missing version means create
+// or overwrite, so the tool must not require it or promise a 428. Every other If-Match tool calls Version() (a missing
+// header is a 428) and must require it. Keep this list in step with the handlers (api.OptionalIfMatch).
+var optionalIfMatchTools = []string{
+	"ack_message", "delete_space_repository", "generate_repository_ssh_key", "move_task", "put_space_harbor_pilot",
+	"put_xspace_peer", "remove_repository_ssh_key", "resolve_message", "rotate_git_ssh_key", "save_harness_profile",
+	"save_human_type_draft", "save_prompt_draft", "save_role_template", "save_skill_draft", "set_human_policy",
+	"set_human_type_permission", "set_space_human_policy", "set_space_limits", "update_xspace_settings",
+}
+
+func TestIfMatchRequiredPerOperation(t *testing.T) {
+	c := catalog(t)
+	seen := 0
+	for _, tl := range c.Tools() {
+		if !tl.IfMatch {
+			continue
+		}
+		seen++
+		var s struct {
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(tl.InputSchema, &s); err != nil {
+			t.Fatal(err)
+		}
+		inRequired := slices.Contains(s.Required, spacemanmcp.ArgIfMatch)
+		says428 := strings.Contains(tl.Description, "428")
+		if slices.Contains(optionalIfMatchTools, tl.Name) {
+			if tl.IfMatchRequired || inRequired || says428 {
+				t.Errorf("%s: optional If-Match is required or promises a 428 (flag %v, schema %v, 428 line %v)", tl.Name, tl.IfMatchRequired, inRequired, says428)
+			}
+			continue
+		}
+		if !tl.IfMatchRequired || !inRequired || !says428 {
+			t.Errorf("%s: required If-Match is not required or lacks the 428 line (flag %v, schema %v, 428 line %v)", tl.Name, tl.IfMatchRequired, inRequired, says428)
+		}
+	}
+	for _, name := range optionalIfMatchTools {
+		if tl, ok := c.Tool(name); !ok || !tl.IfMatch {
+			t.Errorf("%s: listed as optional If-Match but not an If-Match tool", name)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no If-Match tools")
 	}
 }
 

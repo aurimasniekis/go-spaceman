@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as session from '@/api/session'
 import type { StreamHandlers } from '@/api/transport'
-import * as tg from './session'
-import { fetchSseTransport, SseParser, type SseEvent } from './sseTransport'
+import { fetchSseTransport, PROBLEM_BODY_WAIT_MS, SseParser, type SseEvent } from './sseTransport'
 
 function parse(chunks: string[]): SseEvent[] {
   const out: SseEvent[] = []
@@ -71,12 +70,15 @@ describe('fetchSseTransport', () => {
     const [url, init] = f.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/api/v1/watch?live=1')
     expect(init.credentials).toBe('omit')
-    expect(init.headers).toMatchObject({ Authorization: 'Telegram tok', Accept: 'text/event-stream' })
+    const hd = new Headers(init.headers)
+    expect(hd.get('Authorization')).toBe('Telegram tok')
+    expect(hd.get('Accept')).toBe('text/event-stream')
     expect(calls).toEqual(['open', 'change|{"x":1}|7', 'closed'])
   })
 
   it('ends the session on 401 and neither reports closed nor retries', async () => {
-    const end = vi.spyOn(tg, 'endSession').mockImplementation(() => {})
+    const end = vi.fn()
+    session.setMiniAppMode(end)
     const f = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))
     vi.stubGlobal('fetch', f)
     const { calls, h } = handlers()
@@ -85,7 +87,20 @@ describe('fetchSseTransport', () => {
     expect(end).toHaveBeenCalledOnce()
     expect(calls).toEqual([])
     expect(f).toHaveBeenCalledOnce()
-    end.mockRestore()
+  })
+
+  it('ends the session with the MFA message on a 401 mfa_required from the stream', async () => {
+    const end = vi.fn()
+    session.setMiniAppMode(end)
+    const f = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'mfa_required' }), { status: 401, headers: { 'Content-Type': 'application/problem+json' } }))
+    vi.stubGlobal('fetch', f)
+    const { calls, h } = handlers()
+    fetchSseTransport.open('/api/v1/watch', h)
+    await settle()
+    expect(end).toHaveBeenCalledOnce()
+    expect(end).toHaveBeenCalledWith(session.MFA_PENDING_MESSAGE)
+    expect(calls).toEqual([])
+    expect(f).toHaveBeenCalledOnce()
   })
 
   it('reports another status, or a wrong content type, as closed', async () => {
@@ -99,8 +114,21 @@ describe('fetchSseTransport', () => {
     expect(b.calls).toEqual(['closed:200'])
   })
 
+  it('aborts the request on a 401 whose body never ends, once the bounded read gives up', async () => {
+    const body = new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode('{"code":')) })
+    const f = vi.fn().mockResolvedValue(new Response(body, { status: 401 }))
+    vi.stubGlobal('fetch', f)
+    const end = vi.fn()
+    session.setMiniAppMode(end)
+    const { calls, h } = handlers()
+    fetchSseTransport.open('/u', h)
+    await vi.waitFor(() => expect(end).toHaveBeenCalledOnce(), { timeout: PROBLEM_BODY_WAIT_MS * 3 })
+    const init = f.mock.calls[0][1] as RequestInit
+    expect(init.signal?.aborted).toBe(true)
+    expect(calls).toEqual([])
+  })
+
   it.each([
-    ['401', 401, 'text/event-stream'],
     ['502', 502, 'text/event-stream'],
     ['a wrong content type', 200, 'text/plain'],
   ])('cancels the body and aborts the request on %s', async (_name, status, type) => {
@@ -108,7 +136,7 @@ describe('fetchSseTransport', () => {
     const body = new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode('data: x\n\n')), cancel: cancelled })
     const f = vi.fn().mockResolvedValue(new Response(body, { status, headers: { 'Content-Type': type } }))
     vi.stubGlobal('fetch', f)
-    const end = vi.spyOn(tg, 'endSession').mockImplementation(() => {})
+    session.setMiniAppMode(() => {})
     session.setTelegramSession('tok')
     const { h } = handlers()
     fetchSseTransport.open('/u', h)
@@ -116,7 +144,6 @@ describe('fetchSseTransport', () => {
     const init = f.mock.calls[0][1] as RequestInit
     expect(cancelled).toHaveBeenCalledOnce()
     expect(init.signal?.aborted).toBe(true)
-    end.mockRestore()
   })
 
   it('stays quiet after close()', async () => {
