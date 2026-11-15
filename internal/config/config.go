@@ -79,12 +79,20 @@ type Config struct {
 }
 
 // TelegramConfig holds the Telegram settings that belong to the deployment rather than the API (ADR-0083). The bot
-// itself (token, mode, Mini App host) is configured through the API and Terraform.
+// itself (token, mode, its Mini App host) is configured through the API and Terraform.
 type TelegramConfig struct {
 	// APIBaseURL is the Bot API endpoint the bot token is sent to: https, or http on a loopback host (a fake server in
 	// tests, a local Bot API server). It is deliberately settable only in central's own configuration (this file or
 	// its environment override), never through the API or Terraform: whoever sets it receives the token.
 	APIBaseURL string `yaml:"api_base_url"`
+	// MiniAppHost is the Telegram Mini App's own host (e.g. tg.example.com): a lower-case DNS name, not an IP address,
+	// without scheme, port or path, and not the host of public_url. Every request whose Host is this name (compared
+	// case-insensitively, without the port) is served only by the Mini App (its page, its assets, its part of the API
+	// and its downloads) and never reaches the rest of central, whatever the bot's state: while no bot runs, or it is
+	// disabled, the host answers 404 for everything. Empty: the bot's miniapp_host is used, and only while a bot is
+	// stored. When both are set and differ, this one wins and the difference is logged and shown on the System page.
+	// Set it whenever the Mini App's host points at central (ADR-0083 §3.4.1).
+	MiniAppHost string `yaml:"miniapp_host"`
 }
 
 // RetentionConfig holds the installation-wide retention that cannot be set per space (ADR-0045). Per-space retention
