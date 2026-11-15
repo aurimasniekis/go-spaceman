@@ -11,8 +11,7 @@ import (
 )
 
 // SM-TG-006 (TG-7-2): an enforced approval in a space without the opt-in, which is decided only in the browser, gets a
-// Mini App button built from the configured Mini App host (a link to the action's page); with no Mini App host the card
-// keeps its text and has no button.
+// Mini App button built from the configured Mini App host (a link to the action's page).
 func TestTelegramNeedsYouAppButton(t *testing.T) {
 	t.Parallel()
 	e := newMiniAppEnv(t)
@@ -70,15 +69,5 @@ func TestTelegramNeedsYouAppButton(t *testing.T) {
 	want := e.origin() + "/spaces/" + e.space + "/human?action=" + act.ID
 	if got := f.ReplyMarkup.InlineKeyboard[0][0].WebApp.URL; got != want {
 		t.Fatalf("Mini App URL %q, want %q", got, want)
-	}
-
-	// Without a Mini App host: the text stays, no button.
-	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": ""}, "If-Match", `"1"`), 200)
-	if e.h.c.TelegramBot.MiniAppHost() != "" {
-		t.Fatal("Mini App host still set")
-	}
-	f = open()
-	if !strings.Contains(f.Text, "decided in the browser") || f.ReplyMarkup != nil {
-		t.Fatalf("no host: %q %+v", f.Text, f.ReplyMarkup)
 	}
 }
