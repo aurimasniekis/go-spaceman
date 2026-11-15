@@ -12,36 +12,47 @@ export type AttentionSpace = Schemas['AttentionSpace']
 
 type SpaceRoute = '/spaces/$spaceId' | '/spaces/$spaceId/human' | '/spaces/$spaceId/queue' | '/spaces/$spaceId/events' | '/spaces/$spaceId/limits'
 
+/** The pages the Mini App does not have (their operations are excluded there): in the Mini App their counts stay, unlinked. */
+const WEB_ONLY: SpaceRoute[] = ['/spaces/$spaceId/events', '/spaces/$spaceId/limits']
+
+/** A count's link to the page where it is handled; in the Mini App a web-only page gets no link. */
+function Linked({ to, spaceId, miniApp, children }: { to: SpaceRoute; spaceId: string; miniApp: boolean; children: ReactNode }) {
+  if (miniApp && WEB_ONLY.includes(to)) return <>{children}</>
+  return <AnchorLink to={to} params={{ spaceId }} size="sm" underline="never">{children}</AnchorLink>
+}
+
 /** One count that links to the page where it is handled; nothing when it is zero or unreadable. */
-function Count({ n, label, to, spaceId, color = 'owlYellow' }: { n?: number; label: string; to: SpaceRoute; spaceId: string; color?: string }) {
+function Count({ n, label, to, spaceId, miniApp, color = 'owlYellow' }: { n?: number; label: string; to: SpaceRoute; spaceId: string; miniApp: boolean; color?: string }) {
   if (!n) return null
+  const linked = !(miniApp && WEB_ONLY.includes(to))
   return (
-    <AnchorLink to={to} params={{ spaceId }} size="sm" underline="never">
-      <Badge variant="light" color={color} style={{ cursor: 'pointer', textTransform: 'none' }}>{n} {label}</Badge>
-    </AnchorLink>
+    <Linked to={to} spaceId={spaceId} miniApp={miniApp}>
+      <Badge variant="light" color={color} style={{ cursor: linked ? 'pointer' : undefined, textTransform: 'none' }}>{n} {label}</Badge>
+    </Linked>
   )
 }
 
-/** The counts of one space as linked badges (SM-UI-003). */
-export function SpaceCounts({ s }: { s: AttentionSpace }) {
+/** The counts of one space as linked badges (SM-UI-003). In the Mini App the web-only ones are plain badges. */
+export function SpaceCounts({ s, miniApp = false }: { s: AttentionSpace; miniApp?: boolean }) {
   const id = s.space_id
+  const c = { spaceId: id, miniApp }
   return (
     <Group gap={4}>
       {s.node_disconnected && <AnchorLink to="/spaces/$spaceId" params={{ spaceId: id }} size="sm" underline="never"><Badge variant="light" color="owlRed" style={{ textTransform: 'none' }}>node offline</Badge></AnchorLink>}
-      <Count n={s.human_pending} label="human actions" to="/spaces/$spaceId/human" spaceId={id} />
-      <Count n={s.human_overdue} label="overdue" to="/spaces/$spaceId/human" spaceId={id} color="owlRed" />
-      <Count n={s.human_escalated} label="escalated" to="/spaces/$spaceId/human" spaceId={id} color="owlPurple" />
-      <Count n={s.tasks_blocked} label="blocked tasks" to="/spaces/$spaceId/queue" spaceId={id} />
-      <Count n={s.tasks_failed} label="failed tasks" to="/spaces/$spaceId/queue" spaceId={id} color="owlRed" />
-      <Count n={s.quarantine_open} label="quarantined events" to="/spaces/$spaceId/events" spaceId={id} color="owlPurple" />
-      <Count n={s.runs_unknown} label="runs unknown" to="/spaces/$spaceId" spaceId={id} color="owlPurple" />
-      <Count n={s.runs_failed} label="runs failed (24 h)" to="/spaces/$spaceId" spaceId={id} color="owlRed" />
-      <Count n={s.budget_exceeded} label="budgets exceeded" to="/spaces/$spaceId/limits" spaceId={id} color="owlRed" />
-      <Count n={s.budget_warnings} label="budget warnings" to="/spaces/$spaceId/limits" spaceId={id} />
+      <Count n={s.human_pending} label="human actions" to="/spaces/$spaceId/human" {...c} />
+      <Count n={s.human_overdue} label="overdue" to="/spaces/$spaceId/human" {...c} color="owlRed" />
+      <Count n={s.human_escalated} label="escalated" to="/spaces/$spaceId/human" {...c} color="owlPurple" />
+      <Count n={s.tasks_blocked} label="blocked tasks" to="/spaces/$spaceId/queue" {...c} />
+      <Count n={s.tasks_failed} label="failed tasks" to="/spaces/$spaceId/queue" {...c} color="owlRed" />
+      <Count n={s.quarantine_open} label="quarantined events" to="/spaces/$spaceId/events" {...c} color="owlPurple" />
+      <Count n={s.runs_unknown} label="runs unknown" to="/spaces/$spaceId" {...c} color="owlPurple" />
+      <Count n={s.runs_failed} label="runs failed (24 h)" to="/spaces/$spaceId" {...c} color="owlRed" />
+      <Count n={s.budget_exceeded} label="budgets exceeded" to="/spaces/$spaceId/limits" {...c} color="owlRed" />
+      <Count n={s.budget_warnings} label="budget warnings" to="/spaces/$spaceId/limits" {...c} />
       {s.storage_near_quota && (
-        <AnchorLink to="/spaces/$spaceId/limits" params={{ spaceId: id }} size="sm" underline="never">
+        <Linked to="/spaces/$spaceId/limits" spaceId={id} miniApp={miniApp}>
           <Badge variant="light" color="owlPurple" style={{ textTransform: 'none' }}>attachments {formatBytes(s.storage_bytes ?? 0)} of {formatBytes(s.storage_quota_bytes ?? 0)}</Badge>
-        </AnchorLink>
+        </Linked>
       )}
     </Group>
   )

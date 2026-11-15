@@ -485,18 +485,18 @@ func (h *Handler) fetchAndUpload(ctx context.Context, c caller, s spaceRef, f fi
 // sendAttachments sends an item's first attachments back as files, with protect_content. It runs only where the body
 // was shown (content level full). Each attachment's metadata is read through the API as the link's principal first;
 // that read is the authorization for opening the stored bytes.
-func (h *Handler) sendAttachments(ctx context.Context, c caller, l updates.Link, s spaceRef, it inboxItem) {
+func (h *Handler) sendAttachments(ctx context.Context, c caller, l updates.Link, s spaceRef, atts []attachmentRef) {
 	b := h.bot()
-	if b == nil || h.o.Content == nil || len(it.Attachments) == 0 {
+	if b == nil || h.o.Content == nil || len(atts) == 0 {
 		return
 	}
 	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
 		return
 	}
 	sent := 0
-	for _, a := range it.Attachments {
+	for _, a := range atts {
 		if sent == maxSendFiles {
-			h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("… %d more attachment(s), open the item in the app.", len(it.Attachments)-sent)})
+			h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("… %d more attachment(s), open the item in the app.", len(atts)-sent)})
 			return
 		}
 		if h.o.Allow != nil && !h.o.Allow(l.ID, updates.KindDownload) {

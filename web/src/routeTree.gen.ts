@@ -28,6 +28,7 @@ import { Route as NodesRouteImport } from './routes/nodes'
 import { Route as RecoverRouteImport } from './routes/recover'
 import { Route as ResetRouteImport } from './routes/reset'
 import { Route as RolesRouteImport } from './routes/roles'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInProvidersRouteImport } from './routes/sign-in-providers'
 import { Route as SkillsRouteImport } from './routes/skills'
@@ -59,6 +60,7 @@ import { Route as SpacesSpaceIdEventsIndexRouteImport } from './routes/spaces.$s
 import { Route as SpacesSpaceIdEventsSubscriptionIdRouteImport } from './routes/spaces.$spaceId.events.$subscriptionId'
 import { Route as SpacesSpaceIdInboxIndexRouteImport } from './routes/spaces.$spaceId.inbox.index'
 import { Route as SpacesSpaceIdInboxItemIdRouteImport } from './routes/spaces.$spaceId.inbox.$itemId'
+import { Route as SpacesSpaceIdRunsIndexRouteImport } from './routes/spaces.$spaceId.runs.index'
 import { Route as SpacesSpaceIdRunsRunIdRouteImport } from './routes/spaces.$spaceId.runs.$runId'
 import { Route as SpacesSpaceIdInboxItemIdDiagramRouteImport } from './routes/spaces.$spaceId.inbox_.$itemId.diagram'
 
@@ -155,6 +157,11 @@ const ResetRoute = ResetRouteImport.update({
 const RolesRoute = RolesRouteImport.update({
   id: '/roles',
   path: '/roles',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -317,6 +324,11 @@ const SpacesSpaceIdInboxItemIdRoute =
     path: '/$itemId',
     getParentRoute: () => SpacesSpaceIdInboxRoute,
   } as any)
+const SpacesSpaceIdRunsIndexRoute = SpacesSpaceIdRunsIndexRouteImport.update({
+  id: '/runs/',
+  path: '/runs/',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdRunsRunIdRoute = SpacesSpaceIdRunsRunIdRouteImport.update({
   id: '/runs/$runId',
   path: '/runs/$runId',
@@ -349,6 +361,7 @@ export interface FileRoutesByFullPath {
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
   '/roles': typeof RolesRoute
+  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
@@ -381,6 +394,7 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId/runs/$runId': typeof SpacesSpaceIdRunsRunIdRoute
   '/spaces/$spaceId/events/': typeof SpacesSpaceIdEventsIndexRoute
   '/spaces/$spaceId/inbox/': typeof SpacesSpaceIdInboxIndexRoute
+  '/spaces/$spaceId/runs/': typeof SpacesSpaceIdRunsIndexRoute
   '/spaces/$spaceId/inbox/$itemId/diagram': typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 export interface FileRoutesByTo {
@@ -402,6 +416,7 @@ export interface FileRoutesByTo {
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
   '/roles': typeof RolesRoute
+  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
@@ -430,6 +445,7 @@ export interface FileRoutesByTo {
   '/spaces/$spaceId/runs/$runId': typeof SpacesSpaceIdRunsRunIdRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsIndexRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxIndexRoute
+  '/spaces/$spaceId/runs': typeof SpacesSpaceIdRunsIndexRoute
   '/spaces/$spaceId/inbox/$itemId/diagram': typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 export interface FileRoutesById {
@@ -453,6 +469,7 @@ export interface FileRoutesById {
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
   '/roles': typeof RolesRoute
+  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
@@ -485,6 +502,7 @@ export interface FileRoutesById {
   '/spaces/$spaceId/runs/$runId': typeof SpacesSpaceIdRunsRunIdRoute
   '/spaces/$spaceId/events/': typeof SpacesSpaceIdEventsIndexRoute
   '/spaces/$spaceId/inbox/': typeof SpacesSpaceIdInboxIndexRoute
+  '/spaces/$spaceId/runs/': typeof SpacesSpaceIdRunsIndexRoute
   '/spaces/$spaceId/inbox_/$itemId/diagram': typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 export interface FileRouteTypes {
@@ -509,6 +527,7 @@ export interface FileRouteTypes {
     | '/recover'
     | '/reset'
     | '/roles'
+    | '/settings'
     | '/setup'
     | '/sign-in-providers'
     | '/skills'
@@ -541,6 +560,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/runs/$runId'
     | '/spaces/$spaceId/events/'
     | '/spaces/$spaceId/inbox/'
+    | '/spaces/$spaceId/runs/'
     | '/spaces/$spaceId/inbox/$itemId/diagram'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -562,6 +582,7 @@ export interface FileRouteTypes {
     | '/recover'
     | '/reset'
     | '/roles'
+    | '/settings'
     | '/setup'
     | '/sign-in-providers'
     | '/skills'
@@ -590,6 +611,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/runs/$runId'
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/inbox'
+    | '/spaces/$spaceId/runs'
     | '/spaces/$spaceId/inbox/$itemId/diagram'
   id:
     | '__root__'
@@ -612,6 +634,7 @@ export interface FileRouteTypes {
     | '/recover'
     | '/reset'
     | '/roles'
+    | '/settings'
     | '/setup'
     | '/sign-in-providers'
     | '/skills'
@@ -644,6 +667,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/runs/$runId'
     | '/spaces/$spaceId/events/'
     | '/spaces/$spaceId/inbox/'
+    | '/spaces/$spaceId/runs/'
     | '/spaces/$spaceId/inbox_/$itemId/diagram'
   fileRoutesById: FileRoutesById
 }
@@ -667,6 +691,7 @@ export interface RootRouteChildren {
   RecoverRoute: typeof RecoverRoute
   ResetRoute: typeof ResetRoute
   RolesRoute: typeof RolesRoute
+  SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   SignInProvidersRoute: typeof SignInProvidersRoute
   SkillsRoute: typeof SkillsRoute
@@ -812,6 +837,13 @@ declare module '@tanstack/react-router' {
       path: '/roles'
       fullPath: '/roles'
       preLoaderRoute: typeof RolesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -1031,6 +1063,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdInboxItemIdRouteImport
       parentRoute: typeof SpacesSpaceIdInboxRoute
     }
+    '/spaces/$spaceId/runs/': {
+      id: '/spaces/$spaceId/runs/'
+      path: '/runs'
+      fullPath: '/spaces/$spaceId/runs/'
+      preLoaderRoute: typeof SpacesSpaceIdRunsIndexRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/runs/$runId': {
       id: '/spaces/$spaceId/runs/$runId'
       path: '/runs/$runId'
@@ -1103,6 +1142,7 @@ interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdTerminalsRoute: typeof SpacesSpaceIdTerminalsRoute
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
+  SpacesSpaceIdRunsIndexRoute: typeof SpacesSpaceIdRunsIndexRoute
   SpacesSpaceIdInboxItemIdDiagramRoute: typeof SpacesSpaceIdInboxItemIdDiagramRoute
 }
 
@@ -1121,6 +1161,7 @@ const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdTerminalsRoute: SpacesSpaceIdTerminalsRoute,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,
+  SpacesSpaceIdRunsIndexRoute: SpacesSpaceIdRunsIndexRoute,
   SpacesSpaceIdInboxItemIdDiagramRoute: SpacesSpaceIdInboxItemIdDiagramRoute,
 }
 
@@ -1161,6 +1202,7 @@ const rootRouteChildren: RootRouteChildren = {
   RecoverRoute: RecoverRoute,
   ResetRoute: ResetRoute,
   RolesRoute: RolesRoute,
+  SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   SignInProvidersRoute: SignInProvidersRoute,
   SkillsRoute: SkillsRoute,
