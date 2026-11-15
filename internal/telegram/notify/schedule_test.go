@@ -181,12 +181,30 @@ func TestAssignedToMe(t *testing.T) {
 	}
 }
 
+// waitMappings waits until the notifier has recorded n cards (their mappings reached the store), which is when a card
+// exists for it: the HTTP call being logged by the server is earlier than that.
+func (e *env) waitMappings(n int) {
+	e.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, rows := e.maps.counts(); rows >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("waited for %d card mappings", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestReassignedAnnounces(t *testing.T) {
 	e := newEnv(t, 2)
-	stop := e.run(nil)
+	e.flushEvery = 2 * time.Millisecond
+	stop := e.run(e.maps)
 	defer stop()
 	e.newAction("hum_1", 1) // normal priority: both links get the card
 	e.waitCalls("sendMessage", 2)
+	e.waitMappings(2) // both cards exist: the reassignment below is for a card that was sent
 	a := action("hum_1", 2, false)
 	a.Assignee = "usr_2"
 	e.update(a, 2)
@@ -195,6 +213,32 @@ func TestReassignedAnnounces(t *testing.T) {
 	c := e.fake.Calls("sendMessage")
 	if len(c) != 3 || c[2].Params["chat_id"] != "1002" || !strings.HasPrefix(c[2].Params["text"], "Assigned to you") {
 		t.Fatalf("sends = %+v, want one Assigned to you for the new assignee", c)
+	}
+}
+
+// A reassignment that arrives after Telegram has the card but before the notifier has its message id is still
+// announced (the card's mapping is recorded after the reply), and announced once even when the same state is seen
+// again before and after the mapping exists.
+func TestReassignedWhileCardIsBeingSent(t *testing.T) {
+	e := newEnv(t, 1)
+	stop := e.run(nil)
+	defer stop()
+	held, release := e.holdReplies()
+	e.newAction("hum_1", 1)
+	held(1) // the server has the card; the reply, and so the mapping, is not there yet
+
+	a := action("hum_1", 2, false)
+	a.Assignee = "usr_1"
+	e.update(a, 2)
+	e.update(a, 2) // the same change seen twice while the send is still open
+	release()
+	e.waitCalls("sendMessage", 2)
+	e.waitCalls("editMessageText", 1)
+	e.update(a, 2) // and once more after the mapping exists
+	time.Sleep(100 * time.Millisecond)
+	c := e.fake.Calls("sendMessage")
+	if len(c) != 2 || !strings.HasPrefix(c[1].Params["text"], "Assigned to you") || c[1].Params["chat_id"] != "1001" {
+		t.Fatalf("sends = %+v, want the card and exactly one Assigned to you", c)
 	}
 }
 
