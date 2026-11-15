@@ -52,6 +52,11 @@ type Bot interface {
 	SendMessage(ctx context.Context, p botapi.SendMessageParams) (botapi.Message, error)
 	EditMessageText(ctx context.Context, p botapi.EditMessageTextParams) (botapi.Message, error)
 	AnswerCallbackQuery(ctx context.Context, p botapi.AnswerCallbackQueryParams) error
+	// Capture: files a user sent come down with GetFile and DownloadFile; attachments of an item go back as uploads.
+	GetFile(ctx context.Context, fileID string) (botapi.File, error)
+	DownloadFile(ctx context.Context, filePath string, w io.Writer) (int64, error)
+	SendPhoto(ctx context.Context, p botapi.SendPhotoParams) (botapi.Message, error)
+	SendDocument(ctx context.Context, p botapi.SendDocumentParams) (botapi.Message, error)
 }
 
 // Options configure a Handler.
@@ -71,6 +76,15 @@ type Options struct {
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
 
+	// Allow takes one unit of a link's inbound limit of that kind (updates.Limiter.Allow); nil: no limit. Capture costs
+	// one KindInboxItem per item and one KindDownload per file moved in either direction.
+	Allow func(linkID string, k updates.Kind) bool
+	// Content opens an attachment's stored bytes. The caller has already read the attachment's metadata through the
+	// API as the link's principal, which is the authorization; nil: attachments are not sent to Telegram.
+	Content func(ctx context.Context, spaceID, attachmentID string) (io.ReadSeekCloser, error)
+	// AlbumQuiet is how long an album waits for its next part before it becomes one item (default 1.5 s).
+	AlbumQuiet time.Duration
+
 	PageSize int // inbox items per page (default 8)
 	Clock    clock.Clock
 	Log      *slog.Logger
@@ -86,6 +100,9 @@ type Handler struct {
 	pending map[pendingKey]rej // a reject reason being asked for
 	forms   map[pendingKey]*form
 	prompts map[pendingKey]prompt
+	albums  map[albumKey]*album    // media groups still collecting parts
+	refused map[albumKey]time.Time // media groups answered "too many albums"; their other parts are dropped quietly
+	dl      chan struct{}          // the global download semaphore (capture.go)
 }
 
 var _ updates.Handler = (*Handler)(nil)
@@ -100,18 +117,21 @@ func New(o Options) *Handler {
 	if o.PageSize <= 0 {
 		o.PageSize = 8
 	}
+	if o.AlbumQuiet <= 0 {
+		o.AlbumQuiet = 1500 * time.Millisecond
+	}
 	if o.Clock == nil {
 		o.Clock = clock.System{}
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Handler{o: o, current: map[string]string{}, pending: map[pendingKey]rej{},
-		forms: map[pendingKey]*form{}, prompts: map[pendingKey]prompt{}}
+	return &Handler{o: o, current: map[string]string{}, pending: map[pendingKey]rej{}, forms: map[pendingKey]*form{},
+		prompts: map[pendingKey]prompt{}, albums: map[albumKey]*album{}, refused: map[albumKey]time.Time{}, dl: make(chan struct{}, maxDownloads)}
 }
 
-// Handle routes a linked user's update: commands, button taps, and the reply to a reject-reason prompt. Anything else
-// is not this package's (capture is a later task).
+// Handle routes a linked user's update: commands, button taps, the reply to a reject-reason prompt, and capture: any
+// other message with text, a photo or a file becomes an inbox item in the link's current space (capture.go).
 func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 	switch {
 	case u.CallbackQuery != nil:
@@ -131,12 +151,10 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 			}
 			return
 		}
-		if m.ReplyToMessage != nil {
-			if h.promptReply(ctx, m, l) {
-				return
-			}
-			h.rejectReply(ctx, m, l)
+		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l)) {
+			return
 		}
+		h.capture(ctx, m, l)
 	}
 }
 
@@ -258,10 +276,21 @@ func (r result) problemDetail() string {
 
 func (c caller) do(ctx context.Context, method, path string, body any, hdr map[string]string) result {
 	var rd io.Reader
+	ct := ""
 	if body != nil {
 		b, _ := json.Marshal(body)
 		rd = strings.NewReader(string(b))
+		ct = "application/json"
 	}
+	return c.send(ctx, method, path, ct, rd, hdr)
+}
+
+// doRaw sends a body that is already encoded (a multipart upload).
+func (c caller) doRaw(ctx context.Context, method, path, contentType string, body io.Reader) result {
+	return c.send(ctx, method, path, contentType, body, nil)
+}
+
+func (c caller) send(ctx context.Context, method, path, contentType string, rd io.Reader, hdr map[string]string) result {
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(api.WithInProcessPrincipal(ctx, c.p), method, "http://localhost"+api.Prefix+path, rd)
@@ -269,8 +298,8 @@ func (c caller) do(ctx context.Context, method, path string, body any, hdr map[s
 		return result{status: http.StatusInternalServerError}
 	}
 	req.RemoteAddr = "127.0.0.1:0"
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)

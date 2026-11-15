@@ -21,23 +21,28 @@ const maxLimit = 200
 var itemIDRe = regexp.MustCompile(`^inb_[0-9a-z]{26}$`)
 
 type inboxItem struct {
-	ID          string    `json:"id"`
-	SpaceID     string    `json:"space_id"`
-	SourceKind  string    `json:"source_kind"`
-	SourceLabel string    `json:"source_label"`
-	Title       string    `json:"title"`
-	ContentType string    `json:"content_type"`
-	Body        string    `json:"body"`
-	Urgency     string    `json:"urgency"`
-	Status      string    `json:"status"`
-	Reason      string    `json:"status_reason"`
-	DeferUntil  time.Time `json:"defer_until"`
-	ReceivedAt  time.Time `json:"received_at"`
-	Version     int64     `json:"version"`
-	Attachments []struct {
-		Name string `json:"name"`
-		Size int64  `json:"size"`
-	} `json:"attachments"`
+	ID          string          `json:"id"`
+	SpaceID     string          `json:"space_id"`
+	SourceKind  string          `json:"source_kind"`
+	SourceLabel string          `json:"source_label"`
+	Title       string          `json:"title"`
+	ContentType string          `json:"content_type"`
+	Body        string          `json:"body"`
+	Urgency     string          `json:"urgency"`
+	Status      string          `json:"status"`
+	Reason      string          `json:"status_reason"`
+	DeferUntil  time.Time       `json:"defer_until"`
+	ReceivedAt  time.Time       `json:"received_at"`
+	Version     int64           `json:"version"`
+	Attachments []attachmentRef `json:"attachments"`
+}
+
+type attachmentRef struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	MIME   string `json:"mime"`
+	Inline bool   `json:"inline"`
 }
 
 type inboxPage struct {
@@ -236,6 +241,7 @@ func (h *Handler) readItem(ctx context.Context, c caller, l updates.Link, q *bot
 		}
 		h.send(ctx, l.ChatID, reply{text: p, protect: true})
 	}
+	h.sendAttachments(ctx, c, l, s, it)
 }
 
 // inboxCallback handles "il:", "ir:" and "is:" taps.
@@ -415,7 +421,7 @@ func (h *Handler) addPending(k pendingKey, r rej) {
 }
 
 // rejectReply takes the reply to a reject prompt as the reason. A reply to anything else is not this package's.
-func (h *Handler) rejectReply(ctx context.Context, m *botapi.Message, l updates.Link) {
+func (h *Handler) rejectReply(ctx context.Context, m *botapi.Message, l updates.Link) bool {
 	k := pendingKey{m.Chat.ID, m.ReplyToMessage.MessageID}
 	h.mu.Lock()
 	p, ok := h.pending[k]
@@ -426,23 +432,24 @@ func (h *Handler) rejectReply(ctx context.Context, m *botapi.Message, l updates.
 	}
 	h.mu.Unlock()
 	if !ok {
-		return
+		return false
 	}
 	reason := strings.TrimSpace(m.Text)
 	if reason == "" {
 		h.send(ctx, l.ChatID, reply{text: "A reason is needed. Reject the item again from its card."})
-		return
+		return true
 	}
 	c, ok := h.caller(ctx, l)
 	if !ok {
-		return
+		return true
 	}
 	s, r, ok := h.space(ctx, c, p.spaceID)
 	if !ok {
 		h.send(ctx, l.ChatID, reply{text: failText(r)})
-		return
+		return true
 	}
 	h.applyStatus(ctx, c, l, nil, s, p.itemID, p.version, map[string]any{"status": "rejected", "reason": truncate(reason, 2000)})
+	return true
 }
 
 func truncate(s string, n int) string {

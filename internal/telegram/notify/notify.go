@@ -372,11 +372,17 @@ func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link
 			loaded = true
 		}
 		p := l.Prefs.Effective(set.NotificationDefaults)
-		card := n.cards.get(l.ChatID, r.Key)
+		card, queued := n.cards.state(l.ChatID, r.Key)
 		if card == nil {
 			// A card that is still waiting in the sender is replaced by the newest state (its final one too); with no
 			// card at all, only a state worth a notification, that the link wants, sends one, or collects into its digest.
-			if !n.cards.sendQueued(l.ChatID, r.Key) {
+			if queued {
+				// The card's first send is on its way (maybe already at Telegram, its mapping not yet recorded): what
+				// happened since it was queued is still announced, against the baseline taken when it was queued.
+				if r.Kind == KindAction && !r.Final {
+					n.announce(snd, l, r, p)
+				}
+			} else {
 				if r.Final || !r.Notify {
 					continue
 				}
@@ -514,7 +520,7 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 	chat, linkID, res := l.ChatID, l.ID, *r
 	var done func(error)
 	if !edit {
-		done = n.cards.queue(chat, r.Key)
+		done = n.cards.queue(chat, r)
 	}
 	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: prio, Key: "card:" + r.String(), Done: done,
 		Send: func(ctx context.Context, c *botapi.Client) error {

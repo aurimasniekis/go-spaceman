@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/netip"
 
@@ -141,6 +142,11 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			}
 			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
 			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
+		},
+		Allow: c.TelegramLimiter.Allow,
+		Content: func(ctx context.Context, spaceID, attachmentID string) (io.ReadSeekCloser, error) {
+			_, rc, err := c.Attachments.Open(ctx, spaceID, attachmentID)
+			return rc, err
 		},
 		Bot: func() chat.Bot {
 			b, _ := d.Bot().(chat.Bot)

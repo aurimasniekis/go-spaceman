@@ -1,15 +1,18 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,11 +30,12 @@ func sid(c byte) string { return "spc_" + strings.Repeat(string(c), 26) }
 func iid(c byte) string { return "inb_" + strings.Repeat(string(c), 26) }
 
 var (
-	spA = sid('a') // visible, readable
-	spB = sid('b') // readable, but Telegram is off for it
-	spC = sid('c') // readable, enabled, content level off
-	spD = sid('d') // enabled, but the user can't read it (the API omits it)
-	spS = sid('s') // visible with content level summary
+	spA      = sid('a') // visible, readable
+	spB      = sid('b') // readable, but Telegram is off for it
+	spC      = sid('c') // readable, enabled, content level off
+	spD      = sid('d') // enabled, but the user can't read it (the API omits it)
+	spS      = sid('s') // visible with content level summary
+	spViewer = sid('v') // visible, readable, but the user may not create inbox items
 )
 
 // fakeAPI answers the operations the commands call, like the in-process API handler would for one user.
@@ -49,6 +53,19 @@ type fakeAPI struct {
 	human    map[string]*humanAction
 	responds []map[string]any
 	respHdr  []string
+
+	// capture: uploads and created items.
+	atts     map[string]*storedAtt
+	created  []map[string]any
+	createH  []http.Header
+	uploadSt int    // when set, an upload answers this status with a problem
+	createSt int    // when set, a create answers this status
+	onUpload func() // runs when an upload arrives
+}
+
+type storedAtt struct {
+	meta    attachmentRef
+	content []byte
 }
 
 func (f *fakeAPI) seen() []string {
@@ -194,6 +211,52 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			a.Version++
 			out(200, a)
 		}
+	case len(seg) == 3 && seg[2] == "attachments" && r.Method == http.MethodPost:
+		if f.uploadSt != 0 {
+			out(f.uploadSt, map[string]any{"status": f.uploadSt, "detail": "attachments are limited to 1048576 bytes"})
+			return
+		}
+		if f.onUpload != nil {
+			f.onUpload()
+		}
+		file, hd, err := r.FormFile("file")
+		if err != nil {
+			out(400, map[string]any{"status": 400, "detail": "no file"})
+			return
+		}
+		data, _ := io.ReadAll(file)
+		id := fmt.Sprintf("att_%026d", len(f.atts)+1)
+		f.atts[id] = &storedAtt{meta: attachmentRef{ID: id, Name: hd.Filename, Size: int64(len(data)), MIME: http.DetectContentType(data), Inline: false}, content: data}
+		out(201, f.atts[id].meta)
+	case len(seg) == 4 && seg[2] == "attachments" && r.Method == http.MethodGet:
+		a := f.atts[seg[3]]
+		if a == nil || seg[1] == spD {
+			out(404, map[string]any{"status": 404})
+			return
+		}
+		out(200, a.meta)
+	case len(seg) == 3 && seg[2] == "inbox" && r.Method == http.MethodPost:
+		if seg[1] == spViewer {
+			out(403, map[string]any{"status": 403, "detail": "forbidden"})
+			return
+		}
+		if f.createSt != 0 {
+			out(f.createSt, map[string]any{"status": f.createSt, "detail": "title too long"})
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.created = append(f.created, body)
+		f.createH = append(f.createH, r.Header.Clone())
+		it := &inboxItem{ID: fmt.Sprintf("inb_%026d", len(f.created)), SpaceID: seg[1], Title: fmt.Sprint(body["title"]), Body: fmt.Sprint(body["body"]), Status: "new",
+			SourceKind: "operator", SourceLabel: "Alice Operator", Urgency: "normal", Version: 1}
+		if ids, ok := body["attachment_ids"].([]any); ok {
+			for _, id := range ids {
+				it.Attachments = append(it.Attachments, f.atts[id.(string)].meta)
+			}
+		}
+		f.items[it.ID] = it
+		out(201, it)
 	default:
 		out(404, map[string]any{"status": 404})
 	}
@@ -220,6 +283,32 @@ type env struct {
 	clk          *clock.Fake
 	upd          int64
 	sent         []botapi.SendMessageParams // every send, with its flags
+	mu           sync.Mutex                 // guards sent and files (albums are captured from a timer)
+	files        []sentFile
+	allow        func(string, updates.Kind) bool
+	hideA        atomic.Bool // spA stops being visible to Telegram
+	dlNow, dlMax atomic.Int32
+	dlDelay      time.Duration // each download takes this long (to overlap them)
+}
+
+func (r recBot) DownloadFile(ctx context.Context, path string, w io.Writer) (int64, error) {
+	n := r.e.dlNow.Add(1)
+	defer r.e.dlNow.Add(-1)
+	for {
+		m := r.e.dlMax.Load()
+		if n <= m || r.e.dlMax.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	time.Sleep(r.e.dlDelay)
+	return r.Client.DownloadFile(ctx, path, w)
+}
+
+type sentFile struct {
+	method  string
+	name    string
+	protect bool
+	data    []byte
 }
 
 // recBot records what the handler sends (the fake server keeps no protect_content).
@@ -229,8 +318,28 @@ type recBot struct {
 }
 
 func (r recBot) SendMessage(ctx context.Context, p botapi.SendMessageParams) (botapi.Message, error) {
+	r.e.mu.Lock()
 	r.e.sent = append(r.e.sent, p)
+	r.e.mu.Unlock()
 	return r.Client.SendMessage(ctx, p)
+}
+
+func (r recBot) record(method string, f *botapi.InputFile, protect bool) {
+	data, _ := io.ReadAll(f.Reader)
+	r.e.mu.Lock()
+	r.e.files = append(r.e.files, sentFile{method: method, name: f.Name, protect: protect, data: data})
+	r.e.mu.Unlock()
+	f.Reader = bytes.NewReader(data)
+}
+
+func (r recBot) SendPhoto(ctx context.Context, p botapi.SendPhotoParams) (botapi.Message, error) {
+	r.record("sendPhoto", p.Photo, p.ProtectContent)
+	return r.Client.SendPhoto(ctx, p)
+}
+
+func (r recBot) SendDocument(ctx context.Context, p botapi.SendDocumentParams) (botapi.Message, error) {
+	r.record("sendDocument", p.Document, p.ProtectContent)
+	return r.Client.SendDocument(ctx, p)
 }
 
 func (e *env) protected(text string) (found, protect bool) {
@@ -251,7 +360,7 @@ func newEnv(t *testing.T) *env {
 	}
 	e := &env{t: t, srv: srv, l: updates.Link{ID: "tgl_1", UserID: "usr_1", ChatID: chatID}}
 	e.clk = clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
-	e.api = &fakeAPI{hdrs: map[string]string{}, items: map[string]*inboxItem{}, human: map[string]*humanAction{}}
+	e.api = &fakeAPI{hdrs: map[string]string{}, items: map[string]*inboxItem{}, human: map[string]*humanAction{}, atts: map[string]*storedAtt{}}
 	e.addItem(spA, iid('1'), "First item", "new", "# hello\nbody text")
 	e.addItem(spS, iid('2'), "Summary item", "new", "SECRET BODY")
 	e.addItem(spB, iid('3'), "Hidden item", "new", "nope")
@@ -265,8 +374,11 @@ func newEnv(t *testing.T) *env {
 		},
 		Space: func(id string) settings.Space {
 			s := settings.DefaultSpace(id)
+			if id == spA && e.hideA.Load() {
+				return s
+			}
 			switch id {
-			case spA, spD:
+			case spA, spD, spViewer:
 				s.Enabled = true
 			case spS:
 				s.Enabled, s.ContentLevel = true, settings.ContentSummary
@@ -275,9 +387,20 @@ func newEnv(t *testing.T) *env {
 			}
 			return s
 		},
-		Bot:      func() Bot { return recBot{Client: bc, e: e} },
-		PageSize: 2,
-		Clock:    e.clk,
+		Bot: func() Bot { return recBot{Client: bc, e: e} },
+		Allow: func(id string, k updates.Kind) bool {
+			return e.allow == nil || e.allow(id, k)
+		},
+		Content: func(_ context.Context, _, id string) (io.ReadSeekCloser, error) {
+			a := e.api.atts[id]
+			if a == nil {
+				return nil, errors.New("gone")
+			}
+			return nopSeekCloser{bytes.NewReader(a.content)}, nil
+		},
+		AlbumQuiet: 30 * time.Millisecond,
+		PageSize:   2,
+		Clock:      e.clk,
 	})
 	return e
 }
@@ -782,7 +905,9 @@ func TestRejectReplyBoundToLink(t *testing.T) {
 	before, posts := len(e.srv.Messages(chatID)), len(e.api.posts)
 	reply := botapi.Message{MessageID: 950, From: &botapi.User{ID: chatID}, Chat: botapi.Chat{ID: chatID, Type: botapi.ChatPrivate}, Text: "hijack", ReplyToMessage: &prompt}
 	e.h.Handle(context.Background(), botapi.Update{UpdateID: 98, Message: &reply}, other)
-	if len(e.api.posts) != posts || len(e.srv.Messages(chatID)) != before || e.api.items[iid('1')].Status != "new" {
+	// The reply isn't the reason (it is another link's), so it is captured like any message: with no space chosen that
+	// is the "pick a space" answer and nothing is created.
+	if len(e.api.posts) != posts || len(e.srv.Messages(chatID)) != before+1 || e.last().Text != TextPickSpace || len(e.api.created) != 0 || e.api.items[iid('1')].Status != "new" {
 		t.Fatalf("another link's reply acted: posts %d→%d, item %+v", posts, len(e.api.posts), e.api.items[iid('1')])
 	}
 	reply.MessageID, reply.Text = 951, "mine"
@@ -859,3 +984,7 @@ func TestLastPageHint(t *testing.T) {
 		t.Fatal("a Next button past the cap")
 	}
 }
+
+type nopSeekCloser struct{ *bytes.Reader }
+
+func (nopSeekCloser) Close() error { return nil }
