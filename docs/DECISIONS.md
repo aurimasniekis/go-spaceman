@@ -4509,6 +4509,39 @@
   about 5 s), `TestBodyGuardKeepsStreamsAndUploads`, and in `internal/httpguard` `TestUpgradeHeadersWithBodyAreStillGuarded`,
   `TestHandlerDeadlineIsATotalBound`, `TestDefaultBodyBoundApplies`, `TestOnlyWebSocketUpgradesPassThrough`, and `TestTrickledEnrollBodyMeetsDefaultBound`. The bypass and trickle probes fail on 80a7f5f.
 
+### ADR-0086 — Central ignores a run report that is behind the recorded state
+- **Status:** Accepted, 2026-11-14. No migration, no node protocol change. Not a security-relevant change: no check,
+  limit or default is relaxed; central applies fewer reports.
+- **Context:** central re-sends an unacknowledged launch on every kick. The node acknowledges the repeat as a duplicate
+  and reports the run's journal row from its session goroutine (`agent.command`), while the launch goroutine moves the
+  row to `running` and reports that. The two reports are not ordered. A duplicate's `starting` report, read before the
+  launch finished, could reach central after `running`. `applyRunReport` only refused live reports for an ended run, so
+  it applied the stale one: the run went back to `starting` and `UpdateRunObserved` cleared its `terminal_id` while the
+  terminal was live (seen in CI as a HarborPilot node e2e flake). Two places could fix it: the node could order its
+  reports per run (re-read under the run's lock, or a sequence number), or central could refuse a report that goes
+  backwards.
+- **Decision:** central refuses it (`staleReport` in `internal/fleet/runs.go`). Within one run row the node's state
+  only moves forward: `pending`, `starting`, `running`, `stopping`, then an ended state, and a row's generation never
+  changes (a relaunch is a new run row). A live report whose state ranks below the recorded live state is ignored. So is
+  a live report without a terminal when central already has one, because no node path clears a live run's terminal.
+  Central's own `unknown` (node disconnected) ranks below every live state, so a reconnecting node's re-reported journal
+  replaces it. An ignored report is not fenced, since fencing sends a kill and the run is live. If central wants the run
+  stopped, the stop command is still queued, as for any live report.
+- **Why central, not the node:** the guard covers every path that can deliver an old row: the duplicate launch, a
+  hello's journal re-report racing a live report, and older agents in the fleet, which need no upgrade. Ordering on the
+  node would mean either blocking the session goroutine on the run's lock (held while the runner starts the program,
+  which stalls every other command for that node) or adding a per-run sequence to the protocol and the journal (a
+  protocol minor and a migration). Neither is minimal.
+- **Transitions checked:** the forward path, including a managed launch reporting `starting` twice; stopped before
+  start (`starting` to `exited` with no terminal); a reconnect after `unknown`; adoption after a node restart (`unknown`
+  to `running` with a new terminal); relaunch, which gets a new run and generation, so the existing generation fence
+  applies; the stale-run sweeper and node `exited`/`failed`/`lost`, which are ended states and keep their own guards
+  (ADR-0074).
+- **Consequences:** if a node ever needs a run to move backwards within a generation (for example, restarting a program
+  in place), that needs a new generation or an explicit protocol change, not a plain report.
+- **Evidence:** `TestStaleStartingReportDoesNotOverwriteRunning` (failed on main), `TestRunReportOrderGuard` and
+  `TestStaleReportStillStopsUnwantedRun` in `internal/fleet/run_report_order_test.go`.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
