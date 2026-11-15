@@ -11,7 +11,7 @@ Everything here is built and tested against a fake Telegram server. **Nothing ha
 :::
 
 An administrator has to set the bot up first ([Telegram setup](/operators/telegram)), and each space is **off for
-Telegram until a space administrator turns it on**. A space that isn't enabled, or whose content level is `off`, is
+Telegram until someone with `space_config:write` (operators and up) turns it on**. A space that isn't enabled, or whose content level is `off`, is
 invisible to Telegram: it isn't listed, it sends no notifications and the bot answers as if it did not exist.
 
 ## Link your Telegram account
@@ -107,7 +107,7 @@ the same checks as the web:
 - An **advisory** approval: **Approve → Confirm**, and a denial asks for a note.
 - An **enforced** approval ([Enforced approvals](/guide/approvals)) shows what is being approved (operation, resource,
   scope, expiry and uses, the argument digest, never the arguments) and, by default, only a **Decide in browser**
-  button. A space administrator may opt a space in with `enforced_approvals = confirm`. Then deciding in chat takes a
+  button. Someone with `space_config:write` (operators and up) may opt a space in with `enforced_approvals = confirm`. Then deciding in chat takes a
   second step, and the **server** checks that the first step happened, so a replayed or forged tap decides nothing. The
   authorization is checked again when you confirm. Bulk approval and withdrawing an approval stay out of Telegram.
 - A custom form too complex for chat shows **Open in the app** and continues in the Mini App.
@@ -141,7 +141,7 @@ Content at the `summary` level goes to the Mini App only (phone to central, neve
 
 ## Spaces, content levels and the terminal
 
-A space administrator controls what Telegram may see, per space, with [`spaceman telegram set-space`](/reference/cli/telegram#spaceman-telegram-set-space), the API (there is no
+Someone with `space_config:write` (operators and up) controls what Telegram may see, per space, with [`spaceman telegram set-space`](/reference/cli/telegram#spaceman-telegram-set-space), the API (there is no
 web page for these settings):
 
 | Setting | Values | Meaning |
@@ -184,12 +184,13 @@ it yet, so it changes nothing.
 A **forum group** (a supergroup with topics turned on) can be bound to **one space**. In a bound group the bot posts that
 space's needs-you cards and answers a few commands, always at the **summary** level.
 
-**Binding.** A space administrator adds the bot to the group, then binds it with the space's `group_chat_id`
-(`spaceman telegram set-space --group-chat-id <negative chat ID>`; `0` unbinds). Binding, rebinding and unbinding need the
-admin-only `telegram_group:write` permission on top of `space_config:write` and a step-up; an operator who may write the
-space's other Telegram settings can't change the group. Central asks Telegram that the bot is a member and that the chat is
-a supergroup with topics (otherwise 422), and one group serves one space (409 if it is bound elsewhere). **Deleting the
-space's Telegram settings also unbinds the group.** Writing the other settings leaves the binding alone.
+**Binding.** Add the bot to the group, then, as someone with `space_config:write` (operators and up), bind it with the
+space's `group_chat_id` (`spaceman telegram set-space --group-chat-id <negative chat ID>`; `0` unbinds). Binding, rebinding
+and changing `group_chat_id` on a write (including `0`) need the admin-only `telegram_group:write` permission on top of
+`space_config:write` and a step-up; an operator who may write the space's other Telegram settings can't change the group.
+Central asks Telegram that the bot is a member and that the chat is a supergroup with topics (otherwise 422), and one group
+serves one space (409 if it is bound elsewhere). **Removing the space's Telegram settings (`space_config:write`, which
+operators hold) also unbinds the group.** Writing the other settings leaves the binding alone.
 
 In a bound group:
 
@@ -199,8 +200,9 @@ In a bound group:
 - **Summary only.** A group gets the summary level whatever the space's content level is, and the bot never sends an
   attachment to a group.
 - **Taps get private alerts.** A refusal or an answer to a tap is an alert only the person who tapped sees. A command has
-  no such reply: `/spaces`, `/space` and `/control` get one short public reply ("This group is bound to one space"), and so
-  does a command from a member whose account can't use the space; neither shows anything of the space.
+  no such reply: `/spaces`, `/space` and `/control` get one short public reply, "This group is bound to one space.", which shows
+  nothing of the space. A command from a member whose account can't use the space gets a different reply, "Your SpaceMan
+  account can't use this space. Ask an administrator.", which also shows nothing of the space.
 - **Silence.** A message that isn't a command of the bot's group set, a command for another bot, plain chatter, and any
   message from a member without a link are ignored without an answer. `/inbox`, `/needsyou`, `/queue`, `/runs` and
   `/messages` are answered, with summaries. `/needs`, `/settings`, `/help` and `/unlink`
@@ -241,6 +243,9 @@ mute individual spaces (a per-link setting). The digest is rechecked for access 
 what was collected is lost if central restarts. A link with nothing collected gets none.
 
 Your notification settings are per link (a link stores only what you changed, so a changed administrator default still
+reaches what you didn't touch); the time zone is per user. You set it on the web Account page. The Mini App's **Telegram
+settings** page also edits the categories, quiet hours, digest, muted spaces and the time zone; a save made from a stale
+form reloads with a conflict notice.
 
 
 ## Administration settings

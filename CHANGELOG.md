@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-15
+
+Release on top of v0.1.4. It adds the Telegram integration (ADR-0083): a bot you chat with, a Mini App that opens inside
+Telegram, topics and group mode. All of it is built and tested against a fake Telegram server and none of it is verified
+against a real bot yet, so the release makes no production-readiness claim. It also adds usage-limit handling for Claude
+Code runs (ADR-0079). **Central and the node agent both need upgrading**, central first: central adds migrations 0050
+to 0053, and the node agent adds its journal migration 0008 and node protocol 1.12. Telegram needs one new setting,
+`telegram.miniapp_host`.
+
+**Upgrade notes:**
+- **Upgrade central first and check that it starts** before any node agent. Central's migrations since v0.1.4 are 0050
+  (usage limits), 0051 (every Telegram table; it rebuilds `role_grants` with its rows kept), 0052 (link-code confirmation)
+  and 0053 (the leaked-code signal). They are forward-only in production: take a backup first, and to go back restore a
+  snapshot taken before them.
+- **Upgrade the node agents after central.** The agent's journal gets migration 0008 (a run's reported limit), and the node
+  protocol goes from 1.11 to 1.12, whose run reports may carry the usage limit a node detected. A node agent below 1.12
+  keeps working as before, without usage-limit detection. The journal now deletes ended runs after `journal_retention`
+  (default `720h`).
+- **Restarting a node agent ends its runs**, as before: let them finish or pause the node's spaces first.
+- **New configuration:** `telegram.miniapp_host` (a lower-case DNS name, the host the Mini App is served on; with no host
+  set, the Mini App fails closed). Also new are `telegram.api_base_url`, `http.stream_heartbeat`,
+  `usage_limit_max_wait_hours` and `journal_retention`, each with a default.
+- **Telegram stays off until it is set up:** an administrator configures the bot, and someone with `space_config:write`
+  turns on each space (`enabled`). Nothing changes for a deployment that doesn't do either.
+
 ### Added
 - Telegram Mini App watch-only terminal (ADR-0083, TG-10-3; the bot isn't usable yet): off by default. A space's admin turns on
   `terminal_watch` in its Telegram settings, and a run page in the Mini App then shows the live terminal of that space's
@@ -1813,7 +1838,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...v0.1.2

@@ -119,11 +119,12 @@ step-up. A space with no row, or a disabled one, is invisible to Telegram.
 #### Binding a group
 
 Add the bot to a **forum** supergroup (topics on), then bind it:
-`spaceman telegram set-space --space <space> --group-chat-id <negative chat ID>` (`0` unbinds). Binding or unbinding needs
-`telegram_group:write`, held by administrators only, on top of `space_config:write`; other settings are unaffected and a
-write that leaves `group_chat_id` out keeps the binding. The bot must be running (503 otherwise) and a member of the group,
-and the chat must be a forum supergroup (422 otherwise); a group serves one space (409). Removing the space's Telegram
-settings unbinds it too. Bind within 15 minutes of adding the bot: an unbound forum group is left after that, and so is any
+`spaceman telegram set-space --space <space> --group-chat-id <negative chat ID>` (`0` unbinds). Binding, rebinding and
+changing `group_chat_id` on a write (including `0`) need `telegram_group:write`, held by administrators only, on top of
+`space_config:write`; other settings are unaffected and a write that leaves `group_chat_id` out keeps the binding. The bot
+must be running (503 otherwise) and a member of the group, and the chat must be a forum supergroup (422 otherwise); a group
+serves one space (409). Removing the space's Telegram settings (`space_config:write`, which operators hold) also unbinds
+it. Bind within 15 minutes of adding the bot: an unbound forum group is left after that, and so is any
 group whose binding is lost. For forms to open the Mini App from a group, set the bot's Main Mini App in BotFather. See
 [Group mode](/guide/telegram#group-mode).
 
