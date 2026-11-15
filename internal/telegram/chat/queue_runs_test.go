@@ -922,3 +922,65 @@ func (e *env) taskCardMsg(t *queueTask) botapi.Message {
 	e.h.send(context.Background(), chatID, e.h.taskCard(*t, spaceRef{ID: spA, Slug: "alpha", Name: "Alpha"}))
 	return e.last()
 }
+
+// M3: callback data forged on the real confirmation message (naming another run, or the other decision) is refused
+// with nothing written: takeConfirm compares the tapped fields with the stored confirmation.
+func TestConfirmationForgedFieldsRefused(t *testing.T) {
+	t.Parallel()
+	t.Run("stop names another run in the space", func(t *testing.T) {
+		t.Parallel()
+		e, a := newQR(t)
+		e.say("/runs")
+		list := e.last()
+		e.tapData(find(list, "implementor"), list)
+		card := e.last()
+		e.tapData(find(card, "Stop"), card)
+		conf := e.last()
+		forged := runData("ry", spA, rid('2'))
+		if forged == find(conf, "Stop run") {
+			t.Fatal("forged data equals the real data")
+		}
+		e.tapData(forged, conf)
+		if len(a.writes()) != 0 || e.lastAnswer() != TextConfirmGone {
+			t.Fatalf("forged stop: writes %v answer %q", a.writes(), e.lastAnswer())
+		}
+	})
+	t.Run("dismiss tapped as confirm", func(t *testing.T) {
+		t.Parallel()
+		e, a := newQR(t)
+		a.task(tid('4')).IncidentProposedBy = "subscription:x"
+		e.say("/queue")
+		list := e.last()
+		e.tapData(find(list, "Ready four"), list)
+		card := e.lastWith("Dismiss")
+		e.tapData(find(card, "Dismiss"), card)
+		conf := e.last()
+		real := find(conf, "Dismiss")
+		if !strings.HasPrefix(real, "qj:") || !strings.Contains(real, ":d:") {
+			t.Fatalf("unexpected dismiss data %q", real)
+		}
+		forged := strings.Replace(real, ":d:", ":c:", 1)
+		e.tapData(forged, conf)
+		if len(a.writes()) != 0 || e.lastAnswer() != TextConfirmGone {
+			t.Fatalf("forged incident: writes %v answer %q", a.writes(), e.lastAnswer())
+		}
+	})
+}
+
+// M4: another link's confirmations never push this link's out of the per-link bound.
+func TestConfirmEvictionIsPerLink(t *testing.T) {
+	t.Parallel()
+	e, _ := newQR(t)
+	mine := pendingKey{1, 1}
+	e.h.qrAddConfirm(mine, confirmation{linkID: "tgl_1", kind: "stop", spaceID: spA, id: rid('1')})
+	for i := 0; i < 3*maxQRPerLink; i++ {
+		e.h.qrAddConfirm(pendingKey{2, i}, confirmation{linkID: "tgl_other", kind: "stop", spaceID: spA, id: rid('1')})
+	}
+	e.h.qr.mu.Lock()
+	_, kept := e.h.qr.confirm[mine]
+	n := len(e.h.qr.confirm)
+	e.h.qr.mu.Unlock()
+	if !kept || n != maxQRPerLink+1 {
+		t.Fatalf("own entry kept %v, %d entries", kept, n)
+	}
+}
