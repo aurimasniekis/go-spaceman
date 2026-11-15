@@ -241,7 +241,7 @@ func (h *Handler) readItem(ctx context.Context, c caller, l updates.Link, q *bot
 		}
 		h.send(ctx, l.ChatID, reply{text: p, protect: true})
 	}
-	h.sendAttachments(ctx, c, l, s, it)
+	h.sendAttachments(ctx, c, l, s, it.Attachments)
 }
 
 // inboxCallback handles "il:", "ir:" and "is:" taps.

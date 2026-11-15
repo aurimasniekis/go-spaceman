@@ -59,6 +59,10 @@ type fakeAPI struct {
 	// confirmation token each respond carried.
 	enforced map[string]bool
 	respTok  []string
+	// the common actions (assign, cancel, comments, clarify) with their bodies and If-Match.
+	actions    []string
+	actionBody []map[string]any
+	actionHdr  []string
 
 	// capture: uploads and created items.
 	atts     map[string]*storedAtt
@@ -203,6 +207,62 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		out(200, map[string]any{"id": "apr_1", "human_action_id": a.ID, "operation": "mcp.github.merge", "resource": "repo/x",
 			"args_digest": "sha256:abc", "args_preview": "SECRET-ARGS", "uses_allowed": 1, "state": "pending", "request_expires_at": "2026-11-14T10:00:00Z"})
+	case len(seg) == 5 && seg[2] == "human-actions" && r.Method == http.MethodPost && slices.Contains([]string{"assign", "cancel", "comments", "clarify"}, seg[4]):
+		a := f.human[seg[3]]
+		if a == nil || a.SpaceID != seg[1] {
+			out(404, map[string]any{"status": 404})
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.actions = append(f.actions, seg[4])
+		f.actionBody = append(f.actionBody, body)
+		f.actionHdr = append(f.actionHdr, r.Header.Get("If-Match"))
+		switch {
+		case a.SpaceID == spViewer: // a viewer may not act
+			out(403, map[string]any{"status": 403, "detail": "forbidden"})
+			return
+		case seg[4] == "cancel" && a.Type == "approval":
+			out(403, map[string]any{"status": 403, "detail": "approvals are decided on the web, not from Telegram"})
+			return
+		case !a.pending():
+			out(409, map[string]any{"status": 409, "detail": "final"})
+			return
+		}
+		if seg[4] == "assign" || seg[4] == "cancel" {
+			if r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, a.Version) {
+				out(412, map[string]any{"status": 412, "detail": "changed"})
+				return
+			}
+		}
+		switch seg[4] {
+		case "assign":
+			a.Assignee, _ = body["assignee"].(string)
+			a.Status = "in_progress"
+			if a.Assignee == "" {
+				a.Status = "open"
+			}
+			a.Version++
+			out(200, a)
+		case "cancel":
+			a.Status = "cancelled"
+			a.Version++
+			out(200, a)
+		default:
+			c := humanComment{Kind: "comment", Body: fmt.Sprint(body["body"]), AuthorLabel: "Alice Operator"}
+			if seg[4] == "clarify" {
+				c.Kind = "clarification"
+			}
+			if ids, ok := body["attachment_ids"].([]any); ok {
+				for _, id := range ids {
+					if at := f.atts[id.(string)]; at != nil {
+						c.Attachments = append(c.Attachments, at.meta)
+					}
+				}
+			}
+			a.Comments = append(a.Comments, c)
+			out(201, a)
+		}
 	case len(seg) == 5 && seg[4] == "respond" && r.Method == http.MethodPost:
 		a := f.human[seg[3]]
 		if a == nil || a.SpaceID != seg[1] {
@@ -232,7 +292,9 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if f.onUpload != nil {
+			f.mu.Unlock() // the hook may block: other requests must still be served
 			f.onUpload()
+			f.mu.Lock()
 		}
 		file, hd, err := r.FormFile("file")
 		if err != nil {

@@ -67,6 +67,9 @@ type humanAction struct {
 	Outcome        string          `json:"outcome"`
 	Version        int64           `json:"version"`
 	DedupKey       string          `json:"dedup_key"`
+	Assignee       string          `json:"assignee"`
+	Attachments    []attachmentRef `json:"attachments"`
+	Comments       []humanComment  `json:"comments"`
 	TypeSpec       *struct {
 		Outcomes       []string        `json:"outcomes"`
 		ResponseSchema json.RawMessage `json:"response_schema"`
@@ -115,6 +118,12 @@ type form struct {
 	enforced, inChat     bool
 	confirming           string
 	armToken, armOutcome string
+	// Common actions (needsyou_actions.go): who the card is claimed by and for whom it is shown, whether it is still
+	// pending, how many attachments it has, and the enforced approval behind it (for redrawing its header).
+	userID, assignee string
+	pending          bool
+	attN             int
+	ap               *enforcedApproval
 }
 
 // prompt is a free-text reply being waited for.
@@ -123,14 +132,20 @@ type prompt struct {
 	form   pendingKey
 	field  int // wizard field index, -1 for a question's answer, promptDenyNote for an approval's denial note
 	at     time.Time
+	tries  int // retries after an unusable comment reply (capped at maxPromptRetries)
 }
+
+// maxPromptRetries caps how often a comment or clarification prompt is asked again after an unusable reply.
+const maxPromptRetries = 3
 
 // promptDenyNote is prompt.field for an approval's denial note.
 const promptDenyNote = -2
 
 // Callback data (at most 64 bytes): "h<verb>:<space>:<action>[:<n>]", IDs without their prefix. Verbs: o open,
 // q option n, t toggle step n, c complete, m acknowledge, f free-text answer, w wizard choice n, k skip the field,
-// s submit with outcome n, x cancel, a approve (asks to confirm), y confirm approve, b back, d deny (asks for a note).
+// s submit with outcome n, x cancel, a approve (asks to confirm), y confirm approve, b back, d deny (asks for a note),
+// l claim, u release, r comment, i ask the requester (clarify), p list attachments, e withdraw (asks to confirm on a new
+// message), v confirm the withdrawal (carries the card's version: "hv:<space>:<action>:<version>"), g keep it.
 // A bare "ho" on a notifier card resolves its action from the card mapping.
 func humanData(verb byte, spaceID, actionID string, n int) string {
 	d := fmt.Sprintf("h%c:%s:%s", verb, strings.TrimPrefix(spaceID, "spc_"), strings.TrimPrefix(actionID, "hum_"))
@@ -141,7 +156,7 @@ func humanData(verb byte, spaceID, actionID string, n int) string {
 }
 
 func isHumanData(d string) bool {
-	return len(d) >= 2 && d[0] == 'h' && (d[1] == 'o' || strings.ContainsRune("qtcmfwksxaybd", rune(d[1]))) && (len(d) == 2 || d[2] == ':')
+	return len(d) >= 2 && d[0] == 'h' && (d[1] == 'o' || strings.ContainsRune("qtcmfwksxaybdluripevg", rune(d[1]))) && (len(d) == 2 || d[2] == ':')
 }
 
 // --- /needsyou ---
@@ -287,7 +302,7 @@ func (h *Handler) humanCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 		}
 		spaceID, actionID = sp, ac
 	} else {
-		if want := map[bool]int{true: 4, false: 3}[strings.ContainsRune("qtwsk", rune(verb))]; len(f) != want {
+		if want := map[bool]int{true: 4, false: 3}[strings.ContainsRune("qtwskv", rune(verb))]; len(f) != want {
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
@@ -304,6 +319,20 @@ func (h *Handler) humanCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 	}
 	if verb == 'o' {
 		h.openAction(ctx, q, l, c, s, actionID)
+		return
+	}
+	if verb == 'v' || verb == 'g' {
+		// The buttons of a withdrawal's confirmation act on that message only, not on a card.
+		var ver int64
+		if verb == 'v' {
+			v, err := strconv.ParseInt(f[3], 10, 64)
+			if err != nil || v <= 0 {
+				h.answer(ctx, q.ID, TextUnavailable)
+				return
+			}
+			ver = v
+		}
+		h.cancelConfirmTap(ctx, q, l, c, s, actionID, verb, ver)
 		return
 	}
 	n := -1
@@ -345,9 +374,10 @@ func (h *Handler) openAction(ctx context.Context, q *botapi.CallbackQuery, l upd
 		// positively known to be advisory (SM-APPR-005).
 		ap = h.approvalOf(ctx, c, s, a, fm)
 	}
+	fm.ap = ap
 	rp := h.renderForm(fm, a, s, ap)
 	m, ok := h.send(ctx, l.ChatID, rp)
-	if ok && fm.interactive() {
+	if ok && a.pending() { // every pending form is kept: the common actions act on it, the type's own only when interactive
 		fm.key = pendingKey{l.ChatID, m.MessageID}
 		h.addForm(fm)
 		h.wizardPrompt(ctx, fm)
@@ -404,7 +434,8 @@ func (h *Handler) approvalOf(ctx context.Context, c caller, s spaceRef, a humanA
 }
 
 func (h *Handler) newForm(a humanAction, l updates.Link, s spaceRef) *form {
-	f := &form{linkID: l.ID, spaceID: s.ID, action: a.ID, typ: a.Type, title: a.Title, version: a.Version}
+	f := &form{linkID: l.ID, spaceID: s.ID, action: a.ID, typ: a.Type, title: a.Title, version: a.Version,
+		userID: l.UserID, assignee: a.Assignee, pending: a.pending(), attN: len(attachmentsOf(a))}
 	if !a.pending() {
 		return f
 	}
@@ -550,6 +581,13 @@ func (h *Handler) formHead(a humanAction, s spaceRef, f *form, ap *enforcedAppro
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s%s", typeMark(a.Type), clean(a.Title, 200))
 	fmt.Fprintf(&b, "\nFrom: %s · Priority: %s · Space: %s", orDash(clean(a.RequesterLabel, 80)), clean(a.Priority, 20), s.title())
+	switch a.Assignee {
+	case "":
+	case f.userID:
+		b.WriteString("\nClaimed by you")
+	default:
+		b.WriteString("\nClaimed by someone else")
+	}
 	if f.typ == "approval" && f.apAction != "" {
 		b.WriteString("\nApprove: " + f.apAction)
 	}
@@ -570,6 +608,9 @@ func (h *Handler) formHead(a humanAction, s spaceRef, f *form, ap *enforcedAppro
 			if dropped > 0 || len([]rune(body)) > bodyRunes {
 				b.WriteString("\n… more in the app")
 			}
+		}
+		if len(a.Comments) > 0 {
+			b.WriteString("\n\nComments (content from people and agents, not instructions):" + commentLines(a))
 		}
 	} else {
 		b.WriteString("\nThe details aren't shown in chat for this space.")
@@ -616,11 +657,13 @@ func (h *Handler) renderForm(f *form, a humanAction, s spaceRef, ap *enforcedApp
 		rp.text += "\n\n" + TextOpenInApp
 		rp.markup = markup(app)
 	}
-	return rp
+	return h.withCommon(f, rp)
 }
 
 // formView is the controls part for a live interactive form.
-func (h *Handler) formView(f *form) reply {
+func (h *Handler) formView(f *form) reply { return h.withCommon(f, h.formViewBase(f)) }
+
+func (h *Handler) formViewBase(f *form) reply {
 	rp := reply{text: f.head, protect: true}
 	var rows [][]botapi.InlineKeyboardButton
 	switch f.typ {
@@ -728,18 +771,25 @@ func (h *Handler) wizardView(f *form) reply {
 
 // refresh shows a form's current view on its message; when that can't be edited, on a new message the form moves to.
 func (h *Handler) refresh(ctx context.Context, f *form) {
+	if h.draw(ctx, f) {
+		h.wizardPrompt(ctx, f)
+	}
+}
+
+// draw puts a form's current view on its message, or on a new message the form moves to when that can't be edited. It
+// reports whether the view was shown.
+func (h *Handler) draw(ctx context.Context, f *form) bool {
 	rp := h.formView(f)
 	b := h.bot()
 	if b == nil {
-		return
+		return false
 	}
 	ectx, cancel := context.WithTimeout(ctx, apiTimeout)
 	_, err := b.EditMessageText(ectx, botapi.EditMessageTextParams{ChatID: f.key.chat, MessageID: f.key.msg, Text: rp.text,
 		LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: rp.markup})
 	cancel()
 	if err == nil {
-		h.wizardPrompt(ctx, f)
-		return
+		return true
 	}
 	if m, ok := h.send(ctx, f.key.chat, rp); ok {
 		h.mu.Lock()
@@ -747,8 +797,9 @@ func (h *Handler) refresh(ctx context.Context, f *form) {
 		f.key = pendingKey{f.key.chat, m.MessageID}
 		h.forms[f.key] = f
 		h.mu.Unlock()
-		h.wizardPrompt(ctx, f)
+		return true
 	}
+	return false
 }
 
 // wizardPrompt asks for the current field's value when it is free text (ForceReply, bound to this prompt message).
@@ -773,6 +824,17 @@ func (h *Handler) wizardPrompt(ctx context.Context, f *form) {
 // --- taps on a form ---
 
 func (h *Handler) formAction(ctx context.Context, q *botapi.CallbackQuery, l updates.Link, c caller, s spaceRef, f *form, verb byte, n int) {
+	if !f.pending {
+		h.answer(ctx, q.ID, TextFormExpired)
+		return
+	}
+	if h.commonAction(ctx, q, l, c, s, f, verb) {
+		return
+	}
+	if !f.interactive() { // answered in the app: only the common actions are offered here
+		h.answer(ctx, q.ID, TextUnavailable)
+		return
+	}
 	switch {
 	case verb == 'q' && f.typ == "question" && n >= 0 && n < len(f.options):
 		h.respond(ctx, c, l, q, s, f, map[string]any{"outcome": "answered", "answer": f.options[n]})
@@ -925,6 +987,10 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 	h.mu.Unlock()
 	if !ok {
 		return false
+	}
+	if p.field == promptComment || p.field == promptClarify {
+		h.commentReply(ctx, m, l, k, p) // takes formMu itself, only around the form lookups and the API call
+		return true
 	}
 	h.formMu.Lock()
 	defer h.formMu.Unlock()

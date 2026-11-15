@@ -12,6 +12,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted
   or closed is created again once; if that fails, or the chat has topics off for the bot, the message goes to the main
   chat. Topics only choose where a message appears; who may receive it is unchanged.
+- Telegram needs-you common actions (ADR-0083, TG-7-3, not usable until the bot ships): every pending card can be
+  claimed or released, commented on, answered with a question to the requester (a clarification, which never answers the
+  request), and withdrawn after a confirmation tied to that card's version. A photo or file sent as the reply to a comment
+  prompt becomes an attachment of the comment, and the card's attachments come back to the chat with forwarding and saving
+  off, where the space shows content. A card that went stale gets a conflict and is redrawn, never overwritten.
+  Approvals still can't be withdrawn from Telegram.
 - `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
   proxy that drops idle connections (about 100 s) never sees them idle.
 - Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
