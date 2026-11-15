@@ -4,6 +4,7 @@ import { CanvasRenderer, CellFlags, Ghostty, GhosttyTerminal, Terminal } from 'g
 import wasmUrl from 'ghostty-web-vt/ghostty-vt.wasm?url'
 import { terminalTheme } from '@/theme/nightowl'
 import { boxCanScroll, createScroller, liveScrollTop, wheelPixels } from './scroll'
+import { SCROLLBACK_BYTES } from './scrollback'
 
 const FONT_FAMILY = "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, monospace"
 const FONT_SIZE = 13
@@ -208,7 +209,7 @@ export async function createTerminal(el: HTMLElement, cols = 120, rows = 40): Pr
     fontSize: FONT_SIZE,
     fontFamily: FONT_FAMILY,
     disableStdin: true,
-    scrollback: 10_000,
+    scrollback: SCROLLBACK_BYTES, // bytes, not lines (scrollback.ts)
     cursorBlink: false,
   })
   term.open(el)

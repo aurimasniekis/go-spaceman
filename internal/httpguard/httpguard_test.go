@@ -158,14 +158,17 @@ func TestOnlyWebSocketUpgradesPassThrough(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name    string
+		method  string
 		headers string
 		guarded bool
 	}{
-		{"websocket", "Connection: Upgrade\r\nUpgrade: websocket\r\n", false},
-		{"websocket, other case and lists", "Connection: keep-alive, UPGRADE\r\nUpgrade: foo/1, WebSocket\r\n", false},
-		{"another protocol", "Connection: Upgrade\r\nUpgrade: x\r\n", true},
-		{"upgrade without connection", "Upgrade: websocket\r\n", true},
-		{"none", "", true},
+		{"websocket", "GET", "Connection: Upgrade\r\nUpgrade: websocket\r\n", false},
+		{"websocket, other case and lists", "GET", "Connection: keep-alive, UPGRADE\r\nUpgrade: foo/1, WebSocket\r\n", false},
+		{"another protocol", "GET", "Connection: Upgrade\r\nUpgrade: x\r\n", true},
+		{"upgrade without connection", "GET", "Upgrade: websocket\r\n", true},
+		{"none", "GET", "", true},
+		{"websocket headers on a post with a body", "POST", "Connection: Upgrade\r\nUpgrade: websocket\r\nContent-Length: 2\r\n", true},
+		{"websocket headers on a chunked get", "GET", "Connection: Upgrade\r\nUpgrade: websocket\r\nTransfer-Encoding: chunked\r\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := net.Dial("tcp", srv.Listener.Addr().String())
@@ -173,7 +176,7 @@ func TestOnlyWebSocketUpgradesPassThrough(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer c.Close()
-			if _, err := fmt.Fprintf(c, "GET / HTTP/1.1\r\nHost: x\r\n%s\r\n", tc.headers); err != nil {
+			if _, err := fmt.Fprintf(c, "%s / HTTP/1.1\r\nHost: x\r\n%s\r\n", tc.method, tc.headers); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-done; errors.Is(err, errGuarded) != tc.guarded {

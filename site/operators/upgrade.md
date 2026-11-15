@@ -16,6 +16,10 @@ been tested either.
   consistent `VACUUM INTO` copy to `<data_dir>/backups/pre-migrate-<from>-<to>-<UTC>.db` and keeps the newest three.
   If a migration fails, the database stays at the last successful version, the process exits and the error names the
   snapshot directory.
+- **Migrations run in number order only.** A database that already ran a higher migration than one in the binary,
+  without that lower one, refuses to start with `database is missing migrations lower than its schema version` and
+  names it. This applies to central and to each node agent's journal. A database restored from an older backup has no
+  such gap and migrates forward.
 - **Never run an older binary on a newer schema.** It refuses to start with `database schema is newer than this binary`.
   Do not work around this.
 - **The KEK does not change during an upgrade.** Keep it available. Snapshots and backups are useless without it.
@@ -47,8 +51,8 @@ curl -fsS http://127.0.0.1:9090/readyz
 ```
 
 **Shutdown budget.** On SIGTERM central stops in three steps, one after the other: requests and background work get
-up to `shutdown.timeout` (30 s by default), background gateway token mints get 5 s, and the database gets 8 s for its
-final checkpoint and for connections still in use. That is at most 43 s, inside the unit's `TimeoutStopSec=45s` (and the
+up to `shutdown.timeout` (30 s by default), background gateway token mints and the work node connections started (memory
+syncs, usage, transcripts, tool calls) share 5 s, and the database gets 8 s for its final checkpoint and for connections still in use. That is at most 43 s, inside the unit's `TimeoutStopSec=45s` (and the
 compose file's `stop_grace_period: 45s`). If a database connection is still in use after its 8 s, central releases the
 data-directory lock anyway and logs `closing central failed` with the number of connections; the next start is not
 affected. If you raise `shutdown.timeout`, raise `TimeoutStopSec` by the same amount.

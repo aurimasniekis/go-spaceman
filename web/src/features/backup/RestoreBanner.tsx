@@ -8,15 +8,15 @@ import { notifyError } from '@/lib/notify'
 
 /**
  * Shown to everyone after central was restored from a backup (SM-STORE-006): every space came up paused with new
- * execution authority and needs an explicit resume. It stays while any of those spaces is still paused, or until an
- * administrator dismisses it.
+ * execution authority and needs an explicit resume. It stays only while any of those spaces is still paused, whether or
+ * not an administrator dismissed it.
  */
 export function RestoreBanner({ canAcknowledge }: { canAcknowledge: boolean }) {
   const qc = useQueryClient()
   const q = useRestoreNotice(true)
   const n = q.data
   if (!n?.restored || !n.state) return null
-  if (n.state.acknowledged_at && n.still_paused === 0) return null
+  if (n.still_paused === 0) return null
   const ack = async () => {
     try {
       unwrap(await api.POST('/system/restore/acknowledge'))

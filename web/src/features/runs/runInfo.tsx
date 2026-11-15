@@ -123,3 +123,10 @@ export function runLabels(runs: Run[]): Map<string, string> {
   }
   return out
 }
+
+/**
+ * The body of "Message the agent": typed into the running session at once (force), not only while its program is idle.
+ * A safe (idle-gated) send is refused by the node while the program works and is never retried, so the message would
+ * be lost; the harness decides when to act on typed input (verified with the fake runner only).
+ */
+export const agentMessageBody = (text: string) => ({ text, force: true })

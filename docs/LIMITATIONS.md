@@ -551,9 +551,13 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   herdr-core connection per sized run. The Terraform provider's `spaceman_space_limits` resource has no attributes for
   the two limits yet (the API, `spaceman limits set` and `spaceman run terminal-size` work).
 - **Scrolling back reaches only what the terminal keeps.** The live view scrolls back through the browser terminal's
-  scrollback (10,000 lines; a page reload rebuilds it from the stored recording), never by sending the run input. A
-  full-screen program on the alternate screen keeps its history itself, so watchers see only its current screen: Claude
-  Code runs therefore use its classic renderer unless the profile sets `"tui": "fullscreen"`, and other full-screen
+  scrollback (a 24 MiB limit: at least 10,000 rows at 160 columns, ADR-0080; a page reload rebuilds it from the stored
+  recording), never by sending the run input. A terminal first loads only the last 1 MiB of output; earlier output loads
+  when the viewer asks at the top of the scrollback (ADR-0081). A tail restores the terminal size and the DEC private
+  modes in effect where it starts, not colours, and a full-screen program's rows that it never repaints can be missing
+  from a tail until earlier output is loaded. A full-screen program on the alternate screen keeps its history itself,
+  so watchers see only its current screen: Claude Code runs therefore use its classic renderer unless the profile sets
+  `"tui": "fullscreen"`, and other full-screen
   programs (Codex's alternate screen, editors) are the same. During a takeover the wheel scrolls such a program only
   when it asks for mouse input (or xterm's alternate-scroll mode) (ADR-0064).
 - **Live views and many tabs over plain HTTP.** A browser opens at most six HTTP/1.1 connections to a host. The change
@@ -594,6 +598,9 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   are metrics (SM-OBS-001).
 
 ## Messaging
+- **A forced "Message the agent" can still be dropped.** The run page's box types the text at once (`force`), but a
+  program reported as `blocked` (a permission prompt, for example) refuses it, as does a takeover that starts in
+  between or a run that is ending. Central has already answered 202 and the operator is not told yet (ADR-0084).
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself. herdr-core's
   own gate accepts only idle, so a `done` program gets the notice ungated after a fresh status check (ADR-0052).
@@ -740,6 +747,12 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   outbound publication (`outbox.Publisher`), inbound event sources (`events.Source`: Pulse durable consumers and core
   NATS) and MCP upstream transports (`gateway.Transport`). Adapters are compiled in. The gateway speaks only streamable
   HTTP to upstream servers (no stdio or SSE-only transport), and Pulse is the only inbound event system.
+
+- **Central has no per-IP or global connection cap** (T-43, ADR-0085). Slow-body clients are bounded per connection (5 s on
+  a JSON operation and on the enrolment and MCP endpoints, 10 minutes on an attachment upload, which needs a valid
+  credential, 30 s without progress), but many connections
+  at once each hold a goroutine for that long. A reverse proxy or firewall in front of central is the place for connection
+  limits. A client below about 43 KiB/s can't upload a 25 MiB attachment within its 10 minutes.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The

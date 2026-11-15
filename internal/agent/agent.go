@@ -62,6 +62,9 @@ type Options struct {
 	RecordingCreate func(path string) (recording.File, error)
 	// Claude configures node-managed Claude Code (ADR-0077); the zero value keeps runs on HarnessBinaries.
 	Claude ClaudeOptions
+	// JournalRetention is how long the journal keeps an ended run (prune.go); 0 and anything below the Claude Code pin window
+	// (30 days) mean that window.
+	JournalRetention time.Duration
 	// DefaultCols and DefaultRows are the size the runner starts programs at (runner.terminal_size); a takeover open
 	// when a run's held size is cleared is resized back to it (ADR-0075). 0: left as it is.
 	DefaultCols, DefaultRows int
@@ -81,8 +84,11 @@ type Agent struct {
 	connected bool
 	leases    map[string]leaseRow
 	heartbeat time.Duration
-	// recorders are the live recordings by run ID.
-	recorders map[string]*recorder
+	// recorders are the live recordings by run ID. recordersStopped is set at shutdown (stopRecorders): no recorder
+	// starts after it, so a launch still finishing during drain leaves none running past Run.
+	recorders        map[string]*recorder
+	recordersStopped bool
+	recWG            sync.WaitGroup // every recorder goroutine, so stopRecorders can wait for the flushes it asked for
 	// lostAt is when central was last lost (zero while connected).
 	lostAt time.Time
 	wake   chan struct{}
@@ -100,6 +106,23 @@ type Agent struct {
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
+	// Recording shipping (record.go). sentSeq is the last sequence a send of each run went out for (above acked: on
+	// its way, or lost with a connection). held are records a live shipment kept back while it waited for a catch-up.
+	// catching is set while the catch-up pass runs, on catchUpConn with catchUpCtx (the newest connection's);
+	// catchUpAgain asks it for another sweep; caughtUp are the runs it has caught up. connCtx is the current
+	// connection's context.
+	sentSeq      map[string]uint64
+	held         map[string]*heldRecords
+	catching     bool
+	catchUpAgain bool
+	catchUpGen   uint64 // counts requests: a sweep marks runs caught up only for the request it serves
+	catchUpConn  *websocket.Conn
+	catchUpCtx   context.Context
+	caughtUp     map[string]bool
+	// finalSent and finalAcked are, per ended run, the journal update time of the final state this process sent to central
+	// and the one central acknowledged (prune.go); memory only.
+	finalSent, finalAcked map[string]int64
+	connCtx               context.Context
 	// minor is the negotiated protocol minor version of the current connection.
 	minor int
 	// toolCalls are the agent tool calls waiting for central's result, by call ID.
@@ -221,12 +244,7 @@ func RunName(runID string) string     { return "r-" + strings.TrimPrefix(runID, 
 // agent adopts its programs instead of starting duplicates (SM-NODE-009).
 func (a *Agent) Run(ctx context.Context) error {
 	a.mem.base = context.WithoutCancel(ctx)
-	defer a.drain(30 * time.Second)
-	// Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
-	// recorder attached when the next one adopts the run.
-	defer a.stopRecorders()
-	defer a.stopTakeovers()
-	defer a.stopHolds()
+	defer a.shutdown(30 * time.Second)
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err
@@ -272,12 +290,33 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
-// stopRecorders ends every live recording (each flushes and closes its writer).
+// shutdown is Run's stop sequence: holds, takeovers and recordings end first, then background work drains (bounded
+// by limit). Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
+// recorder attached when the next one adopts the run, so none starts once they stopped, not even from a launch that
+// finishes during the drain.
+func (a *Agent) shutdown(limit time.Duration) {
+	a.stopHolds()
+	a.stopTakeovers()
+	a.stopRecorders()
+	a.drain(limit)
+}
+
+// stopRecorders ends every live recording (each flushes and closes its writer) and refuses new ones. It waits, bounded,
+// for the flushes: a recorder writing its last records into the data directory after this returns raced the removal
+// of that directory (a TempDir cleanup failed with "directory not empty").
 func (a *Agent) stopRecorders() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.recordersStopped = true
 	for _, r := range a.recorders {
 		r.cancel()
+	}
+	a.mu.Unlock()
+	done := make(chan struct{})
+	go func() { a.recWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		a.log.Warn("recorders still flushing at shutdown")
 	}
 }
 
@@ -360,7 +399,7 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 	conn.SetReadLimit(proto.MaxMessage)
 	defer func() { _ = conn.CloseNow() }()
-	runs, err := a.j.runs(ctx, false)
+	runs, follow, err := a.helloRuns(ctx)
 	if err != nil {
 		return err
 	}
@@ -380,6 +419,7 @@ func (a *Agent) session(ctx context.Context) error {
 	if err := a.send(ctx, proto.TypeHello, hello); err != nil {
 		return err
 	}
+	a.noteSent(runs)
 	defer func() {
 		a.mu.Lock()
 		a.conn, a.connected, a.lostAt = nil, false, a.now()
@@ -406,19 +446,28 @@ func (a *Agent) session(ctx context.Context) error {
 			if err := env.Decode(&w); err != nil {
 				return err
 			}
+			// Connected and catching up start together: no live recording shipment can go ahead of the catch-up
+			// (shipLive).
 			a.mu.Lock()
 			a.connected, a.lostAt, a.minor = true, time.Time{}, w.Minor
 			if w.HeartbeatInterval > 0 {
 				a.heartbeat = w.HeartbeatInterval
 			}
+			a.connCtx = hbCtx
+			startPass := a.startCatchUpLocked()
 			a.mu.Unlock()
+			if startPass {
+				go a.catchUpRecordings()
+			}
 			go a.heartbeatLoop(hbCtx)
-			go a.catchUpRecordings(hbCtx)
 			go a.mem.resume(hbCtx)
 			go a.resendKBResults(hbCtx)
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.capsAfterHello(hbCtx, helloCaps)
+			if len(follow) > 0 {
+				go a.sendFollowUp(hbCtx, conn, follow)
+			}
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant
@@ -444,6 +493,7 @@ func (a *Agent) session(ctx context.Context) error {
 				return err
 			}
 			a.reconcileDesired(ctx, rec)
+			a.finalAck(ctx, rec)
 		case proto.TypeRecordingAck:
 			var ack proto.RecordingAck
 			if err := env.Decode(&ack); err == nil {
@@ -510,6 +560,19 @@ func (a *Agent) send(ctx context.Context, typ string, body any) error {
 	a.mu.Lock()
 	conn := a.conn
 	a.mu.Unlock()
+	return writeTo(ctx, conn, b)
+}
+
+// sendOn is send on a given connection: it fails, rather than use a newer one, when that connection is gone.
+func (a *Agent) sendOn(ctx context.Context, conn *websocket.Conn, typ string, body any) error {
+	b, err := proto.Encode(ids.New(ids.Message), typ, a.now(), body)
+	if err != nil {
+		return err
+	}
+	return writeTo(ctx, conn, b)
+}
+
+func writeTo(ctx context.Context, conn *websocket.Conn, b []byte) error {
 	if conn == nil {
 		return errors.New("not connected")
 	}
