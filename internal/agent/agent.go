@@ -418,9 +418,9 @@ func (a *Agent) session(ctx context.Context) error {
 	helloCaps := a.capsGen
 	a.mu.Unlock()
 	for _, r := range runs {
-		// Central drops the limit when the session settles below MinorUsageLimit, and the failure class and limit source
-		// below MinorAccountUsage (RunReport.ForMinor).
-		hello.Runs = append(hello.Runs, a.withHookData(r.report(a.now())))
+		// The hello carries no hook data (failure class, status-line reset): the minor is not negotiated yet, and a central
+		// below 13 would store a filled reset as the transcript's. reportAllHookData sends it after a minor-13 welcome.
+		hello.Runs = append(hello.Runs, r.report(a.now()))
 	}
 	a.mu.Lock()
 	a.conn = conn
@@ -474,6 +474,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.capsAfterHello(hbCtx, helloCaps)
+			go a.reportAllHookData(hbCtx)
 			if len(follow) > 0 {
 				go a.sendFollowUp(hbCtx, conn, follow)
 			}

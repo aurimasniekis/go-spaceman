@@ -345,8 +345,11 @@ type RunReport struct {
 	Limit *RunLimit `json:"limit,omitempty"`
 	// Minor ≥ 13: the latest non-limit StopFailure class of the run (one of FailureClasses), a run health signal. Empty
 	// carries none, so the receiver keeps what it has; always empty below minor 13 (ForMinor).
-	Failure    string    `json:"failure,omitempty"`
-	ObservedAt time.Time `json:"observed_at"`
+	Failure string `json:"failure,omitempty"`
+	// FailureCleared (minor ≥ 13) says the failure is over: the run started a new turn after it. The node repeats it on
+	// every report until another failure arrives; it never accompanies a Failure.
+	FailureCleared bool      `json:"failure_cleared,omitempty"`
+	ObservedAt     time.Time `json:"observed_at"`
 }
 
 // Reconcile is central's desired state of the node's runs, sent after hello and on demand.

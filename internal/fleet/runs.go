@@ -804,7 +804,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		// nothing: no version, no change-feed entry, so a reconnect doesn't make every open UI refetch its runs.
 		// The failure class (minor ≥ 13): a report without one keeps what is stored; an unlisted value counts as none.
 		failure := proto.FailureClass(rep.Failure)
-		failureChanged := failure != "" && failure != r.Failure
+		failureChanged := failure != "" && failure != r.Failure || failure == "" && rep.FailureCleared && r.Failure != ""
 		if sweep == nil && !limitChanged && !failureChanged && reportUnchanged(r, rep) {
 			return nil
 		}

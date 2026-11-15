@@ -169,12 +169,15 @@ func TestAccountUsageMinorDowngrade(t *testing.T) {
 	r := RunReport{RunID: "run_1", Failure: "billing_error",
 		Limit: &RunLimit{Kind: LimitUnknown, ResetsAt: &reset, Since: time.Now().UTC(), Source: LimitSourceStatusLine}}
 	old := r.ForMinor(MinorUsageLimit)
-	if old.Failure != "" || old.Limit == nil || old.Limit.Source != "" || old.Limit.ResetsAt != nil {
+	if old.Failure != "" || old.FailureCleared || old.Limit == nil || old.Limit.Source != "" || old.Limit.ResetsAt != nil {
 		t.Fatalf("minor-12 view: %+v limit %+v", old, old.Limit)
 	}
 	b, _ := json.Marshal(old)
-	if strings.Contains(string(b), `"failure"`) || strings.Contains(string(b), `"source"`) {
+	if strings.Contains(string(b), `"failure"`) || strings.Contains(string(b), `"source"`) || strings.Contains(string(b), `failure_cleared`) {
 		t.Fatalf("minor-12 wire form carries minor-13 fields: %s", b)
+	}
+	if c := (RunReport{FailureCleared: true}); c.ForMinor(MinorUsageLimit).FailureCleared || !c.ForMinor(MinorAccountUsage).FailureCleared || !c.FailureCleared {
+		t.Fatal("failure_cleared is not stripped below minor 13 or not kept at 13")
 	}
 	if r.Failure == "" || r.Limit.Source != LimitSourceStatusLine {
 		t.Fatal("ForMinor changed the receiver")

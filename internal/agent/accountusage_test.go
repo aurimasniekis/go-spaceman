@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,20 +121,19 @@ func TestStatusLineFillsWrapUpLimitOnTheWire(t *testing.T) {
 			t.Fatal(err)
 		}
 		rs := fc.collect(t, "run_wrap", 500*time.Millisecond)
+		if minor < proto.MinorAccountUsage {
+			// Today's behaviour: the hooks cause no report at all, and nothing of minor 13 is on any report.
+			if len(rs) != 0 {
+				t.Fatalf("minor %d: %d reports after the hooks", minor, len(rs))
+			}
+			continue
+		}
 		if len(rs) == 0 {
 			t.Fatalf("minor %d: no report after the hooks", minor)
 		}
 		last := rs[len(rs)-1]
 		if last.Limit == nil || last.Limit.Kind != proto.LimitUnknown {
 			t.Fatalf("minor %d: limit %+v", minor, last.Limit)
-		}
-		if minor < proto.MinorAccountUsage {
-			for _, r := range rs {
-				if r.Failure != "" || r.Limit != nil && (r.Limit.Source != "" || r.Limit.ResetsAt != nil) {
-					t.Fatalf("minor %d: report carries minor-13 data: %+v limit %+v", minor, r, r.Limit)
-				}
-			}
-			continue
 		}
 		if last.Failure != "billing_error" || last.Limit.Source != proto.LimitSourceStatusLine || last.Limit.ResetsAt == nil || !last.Limit.ResetsAt.Equal(reset) {
 			t.Fatalf("report %+v limit %+v", last, last.Limit)
@@ -156,4 +156,124 @@ func TestFailureClassesMatchTheHook(t *testing.T) {
 	if len(proto.FailureClasses) != len(harness.StopFailureErrors)-1 {
 		t.Errorf("%d classes on the wire, %d accepted by the hook", len(proto.FailureClasses), len(harness.StopFailureErrors))
 	}
+}
+
+func TestFillChanged(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	now := time.Now().UTC().Truncate(time.Second)
+	a.o.Clock = clock.NewFake(now)
+	l := &proto.RunLimit{Kind: proto.LimitUnknown, Since: now.Add(-time.Minute)}
+	snap := func(d time.Duration) harness.StatusSnapshot {
+		return harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 100, ResetsAt: now.Add(d).Unix()}}
+	}
+	if !a.fillChanged(l, harness.StatusSnapshot{}, snap(time.Hour)) {
+		t.Error("a first fill is not a change")
+	}
+	if a.fillChanged(l, snap(time.Hour), snap(time.Hour)) {
+		t.Error("an unchanged fill on the next tick is a change")
+	}
+	if !a.fillChanged(l, snap(time.Hour), snap(2*time.Hour)) {
+		t.Error("a moved fill is not a change")
+	}
+	if a.fillChanged(l, harness.StatusSnapshot{}, snap(-time.Hour)) || a.fillChanged(l, snap(time.Hour), harness.StatusSnapshot{}) {
+		t.Error("a fill outside the limit's bounds, or none, is a change")
+	}
+}
+
+// A failure ends when the run starts a new turn: the node tells central once the class is gone, and a new failure
+// replaces the clear.
+func TestFailureEndedOnNewTurn(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.failureEnded("run_1") // nothing held: nothing to clear
+	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.FailureCleared || got.Failure != "" {
+		t.Fatalf("a run without a failure reports a clear: %+v", got)
+	}
+	a.failureClasses = map[string]string{"run_1": "overloaded"}
+	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "overloaded" || got.FailureCleared {
+		t.Fatalf("held failure: %+v", got)
+	}
+	a.failureEnded("run_1")
+	for range 2 { // repeated on every report
+		if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "" || !got.FailureCleared {
+			t.Fatalf("cleared failure: %+v", got)
+		}
+	}
+	a.failureClasses["run_1"] = "server_error"
+	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "server_error" || got.FailureCleared {
+		t.Fatalf("a new failure: %+v", got)
+	}
+}
+
+// On the wire at minor 13: a failure is reported once (a repeat of the same class sends nothing), a new turn clears it,
+// and a hello carries none of it (the minor isn't known yet; a central below 13 would misread it) but the data follows
+// the welcome.
+func TestFailureOnTheWire(t *testing.T) {
+	var drops atomic.Int32
+	a, fc, runID, socket, f := startHookAgentMinor(t, proto.MinorAccountUsage, func(env proto.Envelope) bool {
+		var r proto.RunReport
+		return env.Type == proto.TypeRunReport && env.Decode(&r) == nil && r.Failure == "billing_error" && drops.Add(1) == 1
+	})
+	ctx := context.Background()
+	row := getRun(t, a, runID)
+	fc.collect(t, runID, 300*time.Millisecond)
+	send := func(class string) {
+		t.Helper()
+		if err := sendHook(ctx, socket, runID, ToolHookStopFailure, harness.StopFailure{Error: class}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The first report with the class is lost with its connection; the reconnect's hello carries no hook data, and the
+	// class follows the welcome.
+	send("billing_error")
+	waitFor(t, "connection dropped", func() bool { return drops.Load() >= 1 })
+	var hello proto.RunReport
+	deadline := time.After(15 * time.Second)
+	for hello.RunID == "" {
+		select {
+		case env := <-fc.msgs:
+			var h proto.Hello
+			if env.Type == proto.TypeHello && env.Decode(&h) == nil {
+				for _, r := range h.Runs {
+					if r.RunID == runID {
+						hello = r
+					}
+				}
+			}
+		case <-deadline:
+			t.Fatal("no reconnect")
+		}
+	}
+	if hello.Failure != "" || hello.FailureCleared {
+		t.Fatalf("hello carries hook data: %+v", hello)
+	}
+	rs := fc.collect(t, runID, time.Second)
+	if n := countFailure(rs, "billing_error"); n < 1 {
+		t.Fatalf("the class did not follow the welcome: %+v", rs)
+	}
+	// The same class again sends no report.
+	send("billing_error")
+	if rs := fc.collect(t, runID, 500*time.Millisecond); countFailure(rs, "billing_error") != 0 {
+		t.Fatalf("a repeated class was reported again: %+v", rs)
+	}
+	// A new turn clears it.
+	f.SetStatus(row.TerminalID, "idle")
+	fc.collect(t, runID, 300*time.Millisecond)
+	f.SetStatus(row.TerminalID, "working")
+	cleared := false
+	for _, r := range fc.collect(t, runID, 500*time.Millisecond) {
+		cleared = cleared || r.FailureCleared && r.Failure == ""
+	}
+	if !cleared {
+		t.Fatal("a new turn did not clear the failure")
+	}
+}
+
+func countFailure(rs []proto.RunReport, class string) int {
+	n := 0
+	for _, r := range rs {
+		if r.Failure == class {
+			n++
+		}
+	}
+	return n
 }

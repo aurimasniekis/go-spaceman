@@ -5,3 +5,6 @@
 
 -- +goose Up
 ALTER TABLE runs ADD COLUMN failure TEXT NOT NULL DEFAULT '';
+
+-- +goose Down
+SELECT 'forward-only migrations: restore the pre-migration snapshot instead';

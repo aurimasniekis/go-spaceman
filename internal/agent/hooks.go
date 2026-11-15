@@ -175,7 +175,10 @@ func (a *Agent) fillChanged(l *proto.RunLimit, prev, next harness.StatusSnapshot
 // changed in place: it points into the journal row.
 func (a *Agent) withHookData(rep proto.RunReport) proto.RunReport {
 	a.mu.Lock()
-	rep.Failure = proto.FailureClass(a.failureClasses[rep.RunID])
+	class, held := a.failureClasses[rep.RunID]
+	rep.Failure = proto.FailureClass(class)
+	// A held empty class is a failure that ended (the run started a new turn): central is told to forget it.
+	rep.FailureCleared = held && class == ""
 	snap, haveSnap := a.statusSnaps[rep.RunID]
 	a.mu.Unlock()
 	if l := rep.Limit; l != nil && !l.Cleared && l.ResetsAt == nil && haveSnap && a.now().Sub(snap.ObservedAt) <= statusMaxAge {
@@ -194,9 +197,39 @@ func (a *Agent) withHookData(rep proto.RunReport) proto.RunReport {
 // reportHookData sends a run's report again when a hook gave it something to say: a StopFailure class (when it
 // changed), or a status-line window that fills the reset of its open limit. Central stores a repeat without writing.
 func (a *Agent) reportHookData(ctx context.Context, runID string) {
+	if !a.protocolAtLeast(proto.MinorAccountUsage) {
+		return
+	}
 	r, err := a.j.getRun(ctx, runID)
 	if err != nil || ended(r.State) {
 		return
 	}
 	a.report(ctx, r)
+}
+
+// failureEnded forgets a run's failure class when it starts a new turn (status working), and keeps an empty entry so the
+// next reports tell central it is over (RunReport.FailureCleared). It runs before the report of that status.
+func (a *Agent) failureEnded(runID string) {
+	a.mu.Lock()
+	if a.failureClasses[runID] != "" {
+		a.failureClasses[runID] = ""
+	}
+	a.mu.Unlock()
+}
+
+// reportAllHookData sends the reports of the runs that hold hook data, after a welcome that settled on minor 13 (the
+// hello is built before the minor is known and carries none of it).
+func (a *Agent) reportAllHookData(ctx context.Context) {
+	a.mu.Lock()
+	ids := map[string]bool{}
+	for id := range a.failureClasses {
+		ids[id] = true
+	}
+	for id := range a.statusSnaps {
+		ids[id] = true
+	}
+	a.mu.Unlock()
+	for id := range ids {
+		a.reportHookData(ctx, id)
+	}
 }

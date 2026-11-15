@@ -127,7 +127,7 @@ func (r RunReport) ForMinor(minor int) RunReport {
 		r.Limit = nil
 	}
 	if minor < MinorAccountUsage {
-		r.Failure = ""
+		r.Failure, r.FailureCleared = "", false
 		// A reset the status line filled is dropped with its source: the limit is what the transcript alone gave.
 		if r.Limit != nil && r.Limit.Source != "" {
 			l := *r.Limit

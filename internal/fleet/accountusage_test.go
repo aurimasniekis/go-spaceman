@@ -2,6 +2,9 @@ package fleet
 
 import (
 	"log/slog"
+	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -114,6 +117,30 @@ func TestRunFailureStored(t *testing.T) {
 	e.reportFull(rep("authentication_failed"))
 	if run, _ = e.svc.GetRun(e.ctx, "run_a"); run.Failure != "authentication_failed" {
 		t.Fatalf("a newer class not stored: %q", run.Failure)
+	}
+	// An explicit clear (a new turn started) resets it, once; a clear never accompanies a class.
+	clear := rep("")
+	clear.FailureCleared = true
+	e.reportFull(clear)
+	if run, _ = e.svc.GetRun(e.ctx, "run_a"); run.Failure != "" {
+		t.Fatalf("the clear was not applied: %q", run.Failure)
+	}
+	v = e.runVersion("run_a")
+	e.reportFull(clear)
+	if got := e.runVersion("run_a"); got != v {
+		t.Fatalf("a repeated clear moved the version %d → %d", v, got)
+	}
+}
+
+// The OpenAPI enum on Run.Failure is the proto allowlist.
+func TestRunFailureEnumMatchesAllowlist(t *testing.T) {
+	f, ok := reflect.TypeOf(Run{}).FieldByName("Failure")
+	if !ok {
+		t.Fatal("no Failure field")
+	}
+	got := strings.Split(f.Tag.Get("enum"), ",")
+	if !slices.Equal(got, proto.FailureClasses) {
+		t.Fatalf("enum tag %v, allowlist %v", got, proto.FailureClasses)
 	}
 }
 
