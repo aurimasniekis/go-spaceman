@@ -183,18 +183,28 @@ func (s *Service) Reconfirm(ctx context.Context, p *auth.Principal, linkID strin
 
 // saveTimezoneIfUnset stores zone as the user's time zone unless they already have one (plan §2.5: the browser's zone
 // pre-fills an empty setting and never overwrites a chosen one). An empty or invalid zone is ignored. It reports
-// whether it saved. The stored preferences keep every other field: only "timezone" is set, and absent fields read as
-// their defaults.
+// whether it saved.
 func saveTimezoneIfUnset(ctx context.Context, tx *store.Tx, userID, zone string) (bool, error) {
 	if zone == "" { // validated by the caller, outside the transaction (loading a zone reads files)
 		return false, nil
 	}
+	return putTimezone(ctx, tx, userID, zone, true)
+}
+
+// putTimezone sets the "timezone" field of a user's notification preferences to zone ("" clears it), validated by the
+// caller outside the transaction. With onlyIfUnset it changes nothing when the user already has one. The stored
+// preferences keep every other field: only "timezone" is set, and absent fields read as their defaults. It reports
+// whether it wrote.
+func putTimezone(ctx context.Context, tx *store.Tx, userID, zone string, onlyIfUnset bool) (bool, error) {
 	raw, err := json.Marshal(zone)
 	if err != nil {
 		return false, err
 	}
 	row, err := tx.Q.GetNotificationPrefs(ctx, userID)
 	if errors.Is(err, sql.ErrNoRows) {
+		if zone == "" {
+			return false, nil
+		}
 		n, err := tx.Q.InsertNotificationPrefs(ctx, db.InsertNotificationPrefsParams{UserID: userID, PrefsJson: `{"timezone":` + string(raw) + `}`, UpdatedAt: tx.NowMicros()})
 		return n == 1, err
 	} else if err != nil {
@@ -202,14 +212,17 @@ func saveTimezoneIfUnset(ctx context.Context, tx *store.Tx, userID, zone string)
 	}
 	m := map[string]json.RawMessage{}
 	if json.Unmarshal([]byte(row.PrefsJson), &m) != nil {
-		return false, nil //nolint:nilerr // unreadable stored preferences are left for the user to fix, the link still confirms
+		if onlyIfUnset {
+			return false, nil //nolint:nilerr // unreadable stored preferences are left for the user to fix, the link still confirms
+		}
+		return false, apperr.New(apperr.CodeConflict, "your stored notification preferences can't be read; save them on the web Account page first")
 	}
 	if m == nil { // stored "null"
 		m = map[string]json.RawMessage{}
 	}
 	var cur string
 	_ = json.Unmarshal(m["timezone"], &cur)
-	if cur != "" {
+	if onlyIfUnset && cur != "" || cur == zone {
 		return false, nil
 	}
 	m["timezone"] = raw
