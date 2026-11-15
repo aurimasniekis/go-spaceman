@@ -5415,7 +5415,7 @@
 
 ### ADR-0089 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
 - **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the
-  recommended defaults; see decisions 2 and 4). Not implemented: tasks T2–T11 of [the plan](plans/2026-11-15-account-switching.md).
+  recommended defaults; see decisions 2 and 4). Not implemented: tasks T2–T11 of the plan in `docs/plans/2026-11-15-account-switching.md`.
   Real two-account evidence is open as K-17.
 - **Security-relevant because:**
   - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
