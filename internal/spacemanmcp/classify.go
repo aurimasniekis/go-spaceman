@@ -108,6 +108,8 @@ var Table = map[string]Entry{
 	// Clearing an account's holds in every space lets every space launch on it again (account:write).
 	"clear-account-usage-limits": {Dangerous, "lets every space using the account launch on it again"},
 	"list-space-accounts":        {Read, rRead},
+	"list-space-role-pools":      {Read, rRead},
+	"put-space-role-pool":        {Dangerous, "chooses which credentials a role's runs receive"},
 	"set-space-accounts":         {Dangerous, "chooses which credentials a space's runs receive"},
 
 	// Admin.

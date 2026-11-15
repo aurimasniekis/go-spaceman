@@ -34,4 +34,32 @@ SELECT count(*) FROM space_accounts WHERE account_id = ?;
 DELETE FROM space_accounts WHERE space_id = ?;
 
 -- name: InsertSpaceAccount :exec
-INSERT INTO space_accounts (space_id, account_id, harness, is_default, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO space_accounts (space_id, account_id, harness, is_default, priority, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: SetSpaceAccountPriority :exec
+UPDATE space_accounts SET priority = ? WHERE space_id = ? AND account_id = ?;
+
+-- name: BumpSpaceAccountsVersion :one
+UPDATE spaces SET accounts_version = accounts_version + 1 WHERE id = ? RETURNING accounts_version;
+
+-- name: GetSpaceAccountsVersion :one
+SELECT accounts_version FROM spaces WHERE id = ?;
+
+-- name: ListSpaceRoleAccounts :many
+SELECT * FROM space_role_accounts WHERE space_id = ? ORDER BY role, priority, created_at;
+
+-- name: DeleteSpaceRoleAccounts :exec
+DELETE FROM space_role_accounts WHERE space_id = ? AND role = ?;
+
+-- name: DeleteOrphanSpaceRoleAccounts :exec
+DELETE FROM space_role_accounts WHERE space_role_accounts.space_id = sqlc.arg(space_id)
+  AND space_role_accounts.account_id NOT IN (SELECT sa.account_id FROM space_accounts sa WHERE sa.space_id = sqlc.arg(space_id));
+
+-- name: InsertSpaceRoleAccount :exec
+INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: CountLiveRunsByAccount :many
+-- Live runs per account across spaces (the account a run launched with is in its launch spec).
+SELECT CAST(json_extract(launch_json, '$.account_ref') AS TEXT) AS account_id, count(*) AS live FROM runs
+WHERE observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') AND json_extract(launch_json, '$.account_ref') <> ''
+GROUP BY 1;

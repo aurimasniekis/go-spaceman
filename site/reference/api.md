@@ -177,6 +177,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/accounts/{account_id}` | `update-account` | Edit or rotate an account |
 | `GET` | `/accounts/{account_id}/usage-limits` | `list-account-usage-limits` | An account's open usage-limit holds in every space |
 | `POST` | `/accounts/{account_id}/usage-limits/clear` | `clear-account-usage-limits` | Clear an account's usage-limit holds in every space now |
+| `GET` | `/spaces/{space_id}/account-pools` | `list-space-role-pools` | A space's role pools |
+| `PUT` | `/spaces/{space_id}/account-pools/{role}` | `put-space-role-pool` | Set a role's pool |
 | `GET` | `/spaces/{space_id}/accounts` | `list-space-accounts` | Accounts the space's runs may use |
 | `PUT` | `/spaces/{space_id}/accounts` | `set-space-accounts` | Set the accounts the space's runs may use |
 

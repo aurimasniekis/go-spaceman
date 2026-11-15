@@ -430,7 +430,7 @@ func (q *Queries) GetRunCredential(ctx context.Context, mac []byte) (GetRunCrede
 }
 
 const getSpace = `-- name: GetSpace :one
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces WHERE id = ?
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces WHERE id = ?
 `
 
 func (q *Queries) GetSpace(ctx context.Context, id string) (Space, error) {
@@ -454,12 +454,13 @@ func (q *Queries) GetSpace(ctx context.Context, id string) (Space, error) {
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.AccountsVersion,
 	)
 	return i, err
 }
 
 const getSpaceBySlug = `-- name: GetSpaceBySlug :one
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces WHERE slug = ?
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces WHERE slug = ?
 `
 
 func (q *Queries) GetSpaceBySlug(ctx context.Context, slug string) (Space, error) {
@@ -483,6 +484,7 @@ func (q *Queries) GetSpaceBySlug(ctx context.Context, slug string) (Space, error
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.AccountsVersion,
 	)
 	return i, err
 }
@@ -1141,7 +1143,7 @@ func (q *Queries) ListRunsBySpace(ctx context.Context, arg ListRunsBySpaceParams
 }
 
 const listSpaces = `-- name: ListSpaces :many
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces ORDER BY name, id
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces ORDER BY name, id
 `
 
 func (q *Queries) ListSpaces(ctx context.Context) ([]Space, error) {
@@ -1171,6 +1173,7 @@ func (q *Queries) ListSpaces(ctx context.Context) ([]Space, error) {
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.AccountsVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -1186,7 +1189,7 @@ func (q *Queries) ListSpaces(ctx context.Context) ([]Space, error) {
 }
 
 const listSpacesByNode = `-- name: ListSpacesByNode :many
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces WHERE node_id = ? ORDER BY id
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces WHERE node_id = ? ORDER BY id
 `
 
 func (q *Queries) ListSpacesByNode(ctx context.Context, nodeID string) ([]Space, error) {
@@ -1216,6 +1219,7 @@ func (q *Queries) ListSpacesByNode(ctx context.Context, nodeID string) ([]Space,
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.AccountsVersion,
 		); err != nil {
 			return nil, err
 		}

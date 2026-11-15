@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const bumpSpaceAccountsVersion = `-- name: BumpSpaceAccountsVersion :one
+UPDATE spaces SET accounts_version = accounts_version + 1 WHERE id = ? RETURNING accounts_version
+`
+
+func (q *Queries) BumpSpaceAccountsVersion(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, bumpSpaceAccountsVersion, id)
+	var accounts_version int64
+	err := row.Scan(&accounts_version)
+	return accounts_version, err
+}
+
 const countAccountBindings = `-- name: CountAccountBindings :one
 SELECT count(*) FROM space_accounts WHERE account_id = ?
 `
@@ -18,6 +29,41 @@ func (q *Queries) CountAccountBindings(ctx context.Context, accountID string) (i
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countLiveRunsByAccount = `-- name: CountLiveRunsByAccount :many
+SELECT CAST(json_extract(launch_json, '$.account_ref') AS TEXT) AS account_id, count(*) AS live FROM runs
+WHERE observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') AND json_extract(launch_json, '$.account_ref') <> ''
+GROUP BY 1
+`
+
+type CountLiveRunsByAccountRow struct {
+	AccountID string
+	Live      int64
+}
+
+// Live runs per account across spaces (the account a run launched with is in its launch spec).
+func (q *Queries) CountLiveRunsByAccount(ctx context.Context) ([]CountLiveRunsByAccountRow, error) {
+	rows, err := q.db.QueryContext(ctx, countLiveRunsByAccount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountLiveRunsByAccountRow{}
+	for rows.Next() {
+		var i CountLiveRunsByAccountRow
+		if err := rows.Scan(&i.AccountID, &i.Live); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteAccount = `-- name: DeleteAccount :execrows
@@ -32,12 +78,36 @@ func (q *Queries) DeleteAccount(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const deleteOrphanSpaceRoleAccounts = `-- name: DeleteOrphanSpaceRoleAccounts :exec
+DELETE FROM space_role_accounts WHERE space_role_accounts.space_id = ?1
+  AND space_role_accounts.account_id NOT IN (SELECT sa.account_id FROM space_accounts sa WHERE sa.space_id = ?1)
+`
+
+func (q *Queries) DeleteOrphanSpaceRoleAccounts(ctx context.Context, spaceID string) error {
+	_, err := q.db.ExecContext(ctx, deleteOrphanSpaceRoleAccounts, spaceID)
+	return err
+}
+
 const deleteSpaceAccounts = `-- name: DeleteSpaceAccounts :exec
 DELETE FROM space_accounts WHERE space_id = ?
 `
 
 func (q *Queries) DeleteSpaceAccounts(ctx context.Context, spaceID string) error {
 	_, err := q.db.ExecContext(ctx, deleteSpaceAccounts, spaceID)
+	return err
+}
+
+const deleteSpaceRoleAccounts = `-- name: DeleteSpaceRoleAccounts :exec
+DELETE FROM space_role_accounts WHERE space_id = ? AND role = ?
+`
+
+type DeleteSpaceRoleAccountsParams struct {
+	SpaceID string
+	Role    string
+}
+
+func (q *Queries) DeleteSpaceRoleAccounts(ctx context.Context, arg DeleteSpaceRoleAccountsParams) error {
+	_, err := q.db.ExecContext(ctx, deleteSpaceRoleAccounts, arg.SpaceID, arg.Role)
 	return err
 }
 
@@ -91,6 +161,17 @@ func (q *Queries) GetAccountByName(ctx context.Context, name string) (Account, e
 	return i, err
 }
 
+const getSpaceAccountsVersion = `-- name: GetSpaceAccountsVersion :one
+SELECT accounts_version FROM spaces WHERE id = ?
+`
+
+func (q *Queries) GetSpaceAccountsVersion(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getSpaceAccountsVersion, id)
+	var accounts_version int64
+	err := row.Scan(&accounts_version)
+	return accounts_version, err
+}
+
 const insertAccount = `-- name: InsertAccount :exec
 INSERT INTO accounts (id, name, kind, description, metadata_json, secret_enc, secret_rotated_at, enabled, created_at, created_by, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -128,7 +209,7 @@ func (q *Queries) InsertAccount(ctx context.Context, arg InsertAccountParams) er
 }
 
 const insertSpaceAccount = `-- name: InsertSpaceAccount :exec
-INSERT INTO space_accounts (space_id, account_id, harness, is_default, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO space_accounts (space_id, account_id, harness, is_default, priority, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSpaceAccountParams struct {
@@ -136,6 +217,7 @@ type InsertSpaceAccountParams struct {
 	AccountID string
 	Harness   string
 	IsDefault int64
+	Priority  int64
 	CreatedAt int64
 	CreatedBy string
 }
@@ -146,6 +228,32 @@ func (q *Queries) InsertSpaceAccount(ctx context.Context, arg InsertSpaceAccount
 		arg.AccountID,
 		arg.Harness,
 		arg.IsDefault,
+		arg.Priority,
+		arg.CreatedAt,
+		arg.CreatedBy,
+	)
+	return err
+}
+
+const insertSpaceRoleAccount = `-- name: InsertSpaceRoleAccount :exec
+INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertSpaceRoleAccountParams struct {
+	SpaceID   string
+	Role      string
+	AccountID string
+	Priority  int64
+	CreatedAt int64
+	CreatedBy string
+}
+
+func (q *Queries) InsertSpaceRoleAccount(ctx context.Context, arg InsertSpaceRoleAccountParams) error {
+	_, err := q.db.ExecContext(ctx, insertSpaceRoleAccount,
+		arg.SpaceID,
+		arg.Role,
+		arg.AccountID,
+		arg.Priority,
 		arg.CreatedAt,
 		arg.CreatedBy,
 	)
@@ -194,7 +302,7 @@ func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
 }
 
 const listSpaceAccounts = `-- name: ListSpaceAccounts :many
-SELECT space_id, account_id, harness, is_default, created_at, created_by FROM space_accounts WHERE space_id = ? ORDER BY harness, created_at
+SELECT space_id, account_id, harness, is_default, created_at, created_by, priority FROM space_accounts WHERE space_id = ? ORDER BY harness, created_at
 `
 
 func (q *Queries) ListSpaceAccounts(ctx context.Context, spaceID string) ([]SpaceAccount, error) {
@@ -211,6 +319,41 @@ func (q *Queries) ListSpaceAccounts(ctx context.Context, spaceID string) ([]Spac
 			&i.AccountID,
 			&i.Harness,
 			&i.IsDefault,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.Priority,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpaceRoleAccounts = `-- name: ListSpaceRoleAccounts :many
+SELECT space_id, role, account_id, priority, created_at, created_by FROM space_role_accounts WHERE space_id = ? ORDER BY role, priority, created_at
+`
+
+func (q *Queries) ListSpaceRoleAccounts(ctx context.Context, spaceID string) ([]SpaceRoleAccount, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceRoleAccounts, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceRoleAccount{}
+	for rows.Next() {
+		var i SpaceRoleAccount
+		if err := rows.Scan(
+			&i.SpaceID,
+			&i.Role,
+			&i.AccountID,
+			&i.Priority,
 			&i.CreatedAt,
 			&i.CreatedBy,
 		); err != nil {
@@ -251,6 +394,21 @@ func (q *Queries) RotateAccountSecret(ctx context.Context, arg RotateAccountSecr
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setSpaceAccountPriority = `-- name: SetSpaceAccountPriority :exec
+UPDATE space_accounts SET priority = ? WHERE space_id = ? AND account_id = ?
+`
+
+type SetSpaceAccountPriorityParams struct {
+	Priority  int64
+	SpaceID   string
+	AccountID string
+}
+
+func (q *Queries) SetSpaceAccountPriority(ctx context.Context, arg SetSpaceAccountPriorityParams) error {
+	_, err := q.db.ExecContext(ctx, setSpaceAccountPriority, arg.Priority, arg.SpaceID, arg.AccountID)
+	return err
 }
 
 const updateAccount = `-- name: UpdateAccount :execrows
