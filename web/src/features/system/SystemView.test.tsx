@@ -93,6 +93,23 @@ describe('System page', () => {
     expect(failing).toHaveTextContent('Last delivery error')
   })
 
+  it('shows the Mini App host and a bot host the configuration overrides', () => {
+    const tg = { configured: true, enabled: true, mode: 'polling' as const, bot_id: 42, username: 'spaceman_bot', webhook_status: 'polling' as const, pending_update_count: 0,
+      miniapp_host: 'tg.example.com', miniapp_host_source: 'config' as const }
+    const { unmount } = wrap(status({ telegram: tg }))
+    const card = screen.getByTestId('system-telegram')
+    expect(card).toHaveTextContent('Mini App host tg.example.com (central configuration)')
+    expect(screen.queryByTestId('system-telegram-host-mismatch')).toBeNull()
+    unmount()
+    const r2 = wrap(status({ telegram: { ...tg, miniapp_host_ignored: 'tg.other.example.com' } }))
+    expect(screen.getByTestId('system-telegram-host-mismatch')).toHaveTextContent('tg.other.example.com differs from telegram.miniapp_host')
+    r2.unmount()
+    wrap(status({ telegram: { configured: false, enabled: false, webhook_status: 'off', pending_update_count: 0, miniapp_host: 'tg.example.com', miniapp_host_source: 'config' } }))
+    const off = screen.getByTestId('system-telegram')
+    expect(off).toHaveTextContent('No Telegram bot is configured.')
+    expect(off).toHaveTextContent('answers 404 while no bot runs')
+  })
+
   it('formats uptime and reads the writable check', () => {
     expect(uptime(0)).toBe('0s')
     expect(uptime(65)).toBe('1m 5s')

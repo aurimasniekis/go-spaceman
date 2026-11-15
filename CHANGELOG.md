@@ -79,6 +79,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   no-referrer`, the one CORS header (`https://web.telegram.org`) of the host, and `/tg-dl/<redacted>` in logs.
 
 ### Fixed
+- The Telegram Mini App host fails closed (ADR-0083): new configuration `telegram.miniapp_host`
+  (`SPACEMAN_TELEGRAM_MINIAPP_HOST`). A request for that host, or for the bot's stored `miniapp_host`, is served only
+  by the Mini App and answers 404 for everything while no bot runs or it is disabled; it never reaches the main API,
+  sign-in or web UI. When the configuration and the bot's `miniapp_host` differ, the configuration wins and the System
+  page shows the difference.
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header
   line, not only the first, so a proxy that appends its own line can't be skipped over (audit source addresses and the
   sign-in rate limit).
