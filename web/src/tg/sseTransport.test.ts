@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as session from '@/api/session'
 import type { StreamHandlers } from '@/api/transport'
-import * as tg from './session'
 import { fetchSseTransport, SseParser, type SseEvent } from './sseTransport'
 
 function parse(chunks: string[]): SseEvent[] {
@@ -71,12 +70,15 @@ describe('fetchSseTransport', () => {
     const [url, init] = f.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/api/v1/watch?live=1')
     expect(init.credentials).toBe('omit')
-    expect(init.headers).toMatchObject({ Authorization: 'Telegram tok', Accept: 'text/event-stream' })
+    const hd = new Headers(init.headers)
+    expect(hd.get('Authorization')).toBe('Telegram tok')
+    expect(hd.get('Accept')).toBe('text/event-stream')
     expect(calls).toEqual(['open', 'change|{"x":1}|7', 'closed'])
   })
 
   it('ends the session on 401 and neither reports closed nor retries', async () => {
-    const end = vi.spyOn(tg, 'endSession').mockImplementation(() => {})
+    const end = vi.fn()
+    session.setMiniAppMode(end)
     const f = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))
     vi.stubGlobal('fetch', f)
     const { calls, h } = handlers()
@@ -85,7 +87,6 @@ describe('fetchSseTransport', () => {
     expect(end).toHaveBeenCalledOnce()
     expect(calls).toEqual([])
     expect(f).toHaveBeenCalledOnce()
-    end.mockRestore()
   })
 
   it('reports another status, or a wrong content type, as closed', async () => {
@@ -108,7 +109,7 @@ describe('fetchSseTransport', () => {
     const body = new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode('data: x\n\n')), cancel: cancelled })
     const f = vi.fn().mockResolvedValue(new Response(body, { status, headers: { 'Content-Type': type } }))
     vi.stubGlobal('fetch', f)
-    const end = vi.spyOn(tg, 'endSession').mockImplementation(() => {})
+    session.setMiniAppMode(() => {})
     session.setTelegramSession('tok')
     const { h } = handlers()
     fetchSseTransport.open('/u', h)
@@ -116,7 +117,6 @@ describe('fetchSseTransport', () => {
     const init = f.mock.calls[0][1] as RequestInit
     expect(cancelled).toHaveBeenCalledOnce()
     expect(init.signal?.aborted).toBe(true)
-    end.mockRestore()
   })
 
   it('stays quiet after close()', async () => {

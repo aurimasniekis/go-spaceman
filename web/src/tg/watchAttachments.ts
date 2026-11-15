@@ -15,6 +15,7 @@ export function createAttachmentsHost(blobs: AttachmentBlobs = new AttachmentBlo
   return {
     blobs,
     resolver: (spaceId) => blobs.resolver(spaceId),
+    load: (spaceId, id) => blobs.load({ spaceId, id }),
     watch(root) {
       const waiting = new Map<Element, { ref: ReturnType<typeof refOf>; cb: (u: string | null) => void }>()
       // The attachment of each image, read from its placeholder when the body is first scanned: later its src is a blob

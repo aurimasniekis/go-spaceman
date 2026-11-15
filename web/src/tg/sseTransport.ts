@@ -1,6 +1,6 @@
 import type { StreamHandlers, WatchTransport } from '@/api/transport'
-import { telegramToken, TELEGRAM_AUTH_SCHEME } from '@/api/session'
-import { endSession, isSessionEnded } from './session'
+import { endMiniAppSession, miniAppFetchInit } from '@/api/session'
+import { isSessionEnded } from './session'
 
 /** One parsed server-sent event. */
 export interface SseEvent {
@@ -80,18 +80,13 @@ export const fetchSseTransport: WatchTransport = {
     }
     void (async () => {
       try {
-        const res = await fetch(url, {
-          headers: { Accept: 'text/event-stream', Authorization: `${TELEGRAM_AUTH_SCHEME} ${telegramToken()}` },
-          credentials: 'omit',
-          cache: 'no-store',
-          signal: ac.signal,
-        })
+        const res = await fetch(url, miniAppFetchInit({ headers: { Accept: 'text/event-stream' }, cache: 'no-store', signal: ac.signal }))
         if (res.status === 401) {
           // Step-up 401s (mfa_required) also end here. Eventually they should show a "finish MFA" message rather than
           // the generic reopen screen; TG-9b-2 and the Limited-consistency task own that. Behaviour is unchanged until then.
           discard(res)
           done = true
-          endSession()
+          await endMiniAppSession(res)
           return
         }
         if (!res.ok || !res.body || !(res.headers.get('Content-Type') ?? '').startsWith('text/event-stream')) {

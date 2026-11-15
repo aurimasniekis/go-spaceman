@@ -188,6 +188,20 @@ test('attaching a file in the new-item dialog uploads with the Telegram header a
   expect(uploads[0].idem).toBeTruthy()
 })
 
+test('an inline image uploaded in the composer previews as a blob: URL, not the cookie-only content URL', async ({ page }) => {
+  await launch(page, { path: `/spaces/${SPACE}/inbox` })
+  await page.route(`**/api/v1/spaces/${SPACE}/attachments`, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    return route.fulfill(
+      json({ id: IMG, space_id: SPACE, name: 'shot.png', mime: 'image/png', size: PNG.length, inline: true, url: `/api/v1/spaces/${SPACE}/attachments/${IMG}/content`, uri: `spaceman://attachment/${IMG}` }, 201),
+    )
+  })
+  await page.getByRole('button', { name: /new/i }).first().click()
+  await page.locator('input[type="file"]').first().setInputFiles({ name: 'shot.png', mimeType: 'image/png', buffer: PNG })
+  const img = page.locator('.ProseMirror img').first()
+  await expect(img).toHaveAttribute('src', /^blob:/)
+})
+
 test('startapp=needs opens the Needs you page, whose filters sit behind a Filter button', async ({ page }) => {
   await launch(page, { startParam: 'needs', path: '/' })
   await expect(page).toHaveURL(/\/human$/)
