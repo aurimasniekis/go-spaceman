@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -332,5 +333,20 @@ func TestWorkerInboxDedupScopedToRole(t *testing.T) {
 	restarted.RunID = "run_restarted"
 	if c := add(&restarted); c.ID != a.ID {
 		t.Fatalf("a restart of the same role created %s, want %s", c.ID, a.ID)
+	}
+}
+
+// ADR-0088: the role prefix counts against the 256-byte limit, so the longest key is 256 minus the prefix, and the error says so.
+func TestWorkerInboxDedupKeyEffectiveLimit(t *testing.T) {
+	f := newFx(t)
+	limit := inbox.MaxDedupKey - len("role:"+f.wrk.Role+":")
+	add := func(key string) error {
+		return f.call(f.wrk, "spaceman_inbox_add", map[string]any{"title": "Finding", "body": "details", "dedup_key": key}, nil)
+	}
+	must(t, add(strings.Repeat("k", limit)))
+	err := add(strings.Repeat("k", limit+1))
+	code(t, err, apperr.CodeInvalid)
+	if !strings.Contains(err.Error(), strconv.Itoa(limit)) {
+		t.Fatalf("error %q does not state the effective limit %d", err, limit)
 	}
 }
