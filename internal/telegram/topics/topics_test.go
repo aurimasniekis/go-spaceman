@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
 )
@@ -220,5 +222,52 @@ func TestSpaceOf(t *testing.T) {
 	}
 	if _, ok := m.SpaceOf(ctx, "tgl_other", a); ok {
 		t.Error("another link's lookup must not see this link's topics")
+	}
+}
+
+// Inside a sender, the topic creation is a second Bot API call, so it is charged against the chat's bucket like any other.
+func TestTopicCreationIsChargedThroughTake(t *testing.T) {
+	_, c, _, mk := setup(t)
+	clk := clock.NewFake(time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC))
+	s, err := sender.New(sender.Options{Client: c, Workers: 1, Clock: clk, After: func(d time.Duration) <-chan time.Time {
+		clk.Advance(d)
+		ch := make(chan time.Time, 1)
+		ch <- clk.Now()
+		return ch
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	m := mk()
+	start := clk.Now()
+	done := make(chan error, 1)
+	err = s.Enqueue(sender.Message{ChatID: chat, Priority: sender.NeedsYou, Done: func(err error) { done <- err },
+		Send: func(ctx context.Context, c *botapi.Client) error {
+			// The dispatch and two Takes use the chat's burst of 3; the topic creation is the next call.
+			for range 2 {
+				if err := sender.Take(ctx); err != nil {
+					return err
+				}
+			}
+			_, err := m.Send(ctx, c, "tgl_1", chat, "spc_1", botapi.SendMessageParams{Text: "x"})
+			return err
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("send did not finish")
+	}
+	// The topic creation finds an empty bucket refilling at 1/s: the creation waits a second.
+	if el := clk.Now().Sub(start); el < time.Second {
+		t.Errorf("topic creation + send took %v of virtual time, want at least 1s", el)
 	}
 }

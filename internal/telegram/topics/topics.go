@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 )
 
 // Needs is the key of the Needs-you topic; every other key is a space ID.
@@ -105,18 +106,23 @@ func clip(s string, n int) string {
 }
 
 // Send sends p to the topic key of the link's chat (key "": the main chat), creating the topic if there is none and
-// recovering from a deleted or closed one (see the package comment). p.MessageThreadID is set here.
+// recovering from a deleted or closed one (see the package comment). p.MessageThreadID is set here. The sender paid for
+// the first Bot API call; every further one (a topic creation, a resend) is charged with sender.Take.
 func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, chatID int64, key string, p botapi.SendMessageParams) (botapi.Message, error) {
 	p.ChatID = chatID
 	thread := 0
+	pay := &payer{}
 	if key != "" && m != nil {
 		var err error
-		if thread, err = m.thread(ctx, c, linkID, chatID, key); err != nil {
+		if thread, err = m.thread(ctx, c, pay, linkID, chatID, key); err != nil {
 			return botapi.Message{}, err
 		}
 	}
 	for try := 0; ; try++ {
 		p.MessageThreadID = thread
+		if err := pay.next(ctx); err != nil {
+			return botapi.Message{}, err
+		}
 		msg, err := c.SendMessage(ctx, p)
 		if err == nil || thread == 0 || !botapi.IsTopicGone(err) {
 			return msg, err
@@ -124,7 +130,7 @@ func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, cha
 		m.forget(ctx, linkID, key, thread)
 		if try == 0 {
 			var terr error
-			if thread, terr = m.thread(ctx, c, linkID, chatID, key); terr != nil {
+			if thread, terr = m.thread(ctx, c, pay, linkID, chatID, key); terr != nil {
 				return botapi.Message{}, terr
 			}
 		} else {
@@ -133,9 +139,20 @@ func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, cha
 	}
 }
 
+// payer charges the Bot API calls of one Send: the first is paid for by the sender's dispatch, each later one by Take.
+type payer struct{ calls int }
+
+func (p *payer) next(ctx context.Context) error {
+	p.calls++
+	if p.calls == 1 {
+		return nil
+	}
+	return sender.Take(ctx)
+}
+
 // thread returns the thread of a key, creating its topic; 0 when there is none to use. A rate limit (429) is returned
 // so the sender repeats the whole send after the wait, and nothing is remembered about it.
-func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, chatID int64, key string) (int, error) {
+func (m *Manager) thread(ctx context.Context, c *botapi.Client, pay *payer, linkID string, chatID int64, key string) (int, error) {
 	if m.isRefused(chatID) {
 		return 0, nil
 	}
@@ -147,6 +164,9 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 	}
 	if t := ls.threads[key]; t != 0 {
 		return t, nil
+	}
+	if err := pay.next(ctx); err != nil {
+		return 0, err
 	}
 	t, err := c.CreateForumTopic(ctx, botapi.CreateForumTopicParams{ChatID: chatID, Name: m.name(ctx, key)})
 	if err != nil {

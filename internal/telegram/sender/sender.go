@@ -156,7 +156,8 @@ type Options struct {
 	Client *botapi.Client
 	// Limits are the rate limits and bounds (zero value: DefaultLimits).
 	Limits Limits
-	// Workers is how many calls may be in flight together (default 8).
+	// Workers is how many calls may be in flight together (default 8). A quarter of them (2 by default) are kept for
+	// Interactive messages, so a few long multi-call sends waiting in Take can't delay a callback answer.
 	Workers int
 	// Clock drives the buckets (default: the system clock).
 	Clock clock.Clock
@@ -233,6 +234,7 @@ type Sender struct {
 	clk     clock.Clock
 	after   func(time.Duration) <-chan time.Time
 	workers int
+	reserve int // worker slots only Interactive messages may take
 	wake    chan struct{}
 
 	mu        sync.Mutex
@@ -279,11 +281,12 @@ func New(o Options) (*Sender, error) {
 	}
 	s := &Sender{
 		o: o, clk: o.Clock, after: o.After, workers: o.Workers,
-		wake:   make(chan struct{}, 1),
-		limits: o.Limits,
-		chats:  map[int64]*chatState{},
-		active: map[int64]*chatState{},
-		keys:   map[coalesceKey]*item{},
+		reserve: o.Workers / 4,
+		wake:    make(chan struct{}, 1),
+		limits:  o.Limits,
+		chats:   map[int64]*chatState{},
+		active:  map[int64]*chatState{},
+		keys:    map[coalesceKey]*item{},
 	}
 	s.global = newBucket(o.Limits.GlobalPerSecond, o.Limits.GlobalPerSecond, s.clk.Now())
 	return s, nil
@@ -620,7 +623,7 @@ func (s *Sender) Run(ctx context.Context) error {
 		now := s.clk.Now()
 		var next time.Time
 		for s.inflight < s.workers {
-			it, at := s.pickLocked(now)
+			it, at := s.pickLocked(now, s.inflight >= s.workers-s.reserve)
 			if it == nil {
 				next = at
 				break
@@ -672,13 +675,19 @@ func (s *Sender) publishDepthLocked() {
 }
 
 // pickLocked returns the most urgent sendable item, or nil and when the next one may become sendable (zero: none
-// queued, or every queued chat has a call in flight).
-func (s *Sender) pickLocked(now time.Time) (*item, time.Time) {
+// queued, or every queued chat has a call in flight). With urgentOnly, only an Interactive head is sendable: the last
+// worker slots are kept free for callback answers, because a multi-call SendFunc can sit in Take for seconds holding its slot.
+func (s *Sender) pickLocked(now time.Time, urgentOnly bool) (*item, time.Time) {
 	var best *item
 	var next time.Time
 	for _, c := range s.active {
 		if c.inflight {
 			continue
+		}
+		if urgentOnly {
+			if h := c.head(); h == nil || h.prio != Interactive {
+				continue
+			}
 		}
 		r := c.pausedUntil
 		if c.b != nil {
