@@ -159,7 +159,7 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 		fl.Flush()
 		return
 	}
-	heartbeat := time.NewTicker(15 * time.Second)
+	heartbeat := time.NewTicker(d.streamHeartbeat())
 	defer heartbeat.Stop()
 	for {
 		select {

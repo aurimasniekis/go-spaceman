@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
+  proxy that drops idle connections (about 100 s) never sees them idle.
 - Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
   and what waits, with status changes, placement (top, up, down, bottom) and incident decisions after a confirmation;
   `/runs` shows the live runs and stops one after a confirmation (the API requires `run:control`); `/messages` lists what
