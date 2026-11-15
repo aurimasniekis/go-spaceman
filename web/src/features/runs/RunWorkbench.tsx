@@ -179,11 +179,16 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
               {mode !== 'replay' && <Button size="xs" variant="default" onClick={() => onMode('replay')}>Replay from start</Button>}
             </Group>
           ) : operator && !r.takeover && (
+            // The safe-area padding has no effect yet: index.html has no viewport-fit=cover, so the page never extends under
+            // the iPhone home indicator. It stays so the bar clears it once the viewport meta opts in.
             <form data-testid="run-message-bar" onSubmit={(e) => { e.preventDefault(); if (inputForm.state.values.text.trim()) void inputForm.handleSubmit() }}
               style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
               <Group gap="xs" wrap="nowrap" align="flex-start">
                 <inputForm.AppField name="text">
-                  {(f) => <f.TextField flex={1} miw={0} placeholder={narrow ? `Message ${r.role}` : `Message ${r.role} (typed into its session at once; the agent acts on it when it can)`}
+                  {(f) => <f.TextField flex={1} miw={0} size={narrow ? 'sm' : undefined}
+                    // 16px on phones: iOS Safari zooms the page when an input with a smaller font gets focus.
+                    styles={narrow ? { input: { fontSize: 16 } } : undefined}
+                    placeholder={narrow ? `Message ${r.role}` : `Message ${r.role} (typed into its session at once; the agent acts on it when it can)`}
                     aria-label="Message the agent" />}
                 </inputForm.AppField>
                 <inputForm.Subscribe selector={(st) => st.values.text.trim() !== ''}>
