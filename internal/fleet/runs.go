@@ -664,9 +664,9 @@ func (svc *Service) GetRun(ctx context.Context, id string) (*Run, error) {
 	return out, nil
 }
 
-// ListRuns returns a space's runs, newest first. The limit bounds the history: every live run (pending, starting,
-// running, stopping, or wanted running) is always included however old it is, so a long-lived control run is never
-// pushed out of the list by newer ended worker runs.
+// ListRuns returns a space's runs, newest first. The limit bounds the history: every live run (observed pending,
+// starting, running, stopping or unknown; see Live) is always included however old it is, so a long-lived control run
+// is never pushed out of the list by newer ended worker runs.
 func (svc *Service) ListRuns(ctx context.Context, spaceID string, limit int) ([]*Run, error) {
 	rows, err := svc.s.R().ListRunsBySpace(ctx, db.ListRunsBySpaceParams{SpaceID: spaceID, Limit: int64(limit)})
 	if err != nil {

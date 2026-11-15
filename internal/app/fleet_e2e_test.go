@@ -724,7 +724,16 @@ func TestListRunsKeepsOldLiveRunBeyondLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "control running", func() bool { return e.run1(ctrl.ID).Observed == "running" })
+	// A second long-lived run, older than every ended worker below: both live runs must stay listed, in newest-first order.
+	time.Sleep(2 * time.Millisecond) // distinct created_at
+	long, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "dev", Harness: hns.KindClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "long run running", func() bool { return e.run1(long.ID).Observed == "running" })
+	var ended []string
 	for i := 0; i < 3; i++ {
+		time.Sleep(2 * time.Millisecond) // distinct created_at
 		w, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "dev", Harness: hns.KindClaude})
 		if err != nil {
 			t.Fatal(err)
@@ -734,17 +743,20 @@ func TestListRunsKeepsOldLiveRunBeyondLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		eventually(t, "worker ended", func() bool { o := e.run1(w.ID).Observed; return o == "exited" || o == "failed" })
-		time.Sleep(2 * time.Millisecond) // distinct created_at
+		ended = append(ended, w.ID)
 	}
 	rs, err := e.c.Fleet.ListRuns(ctx, sp.ID, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	// Limit 2 keeps the 2 newest ended workers (ended[0] is cut off); both live runs are added. Newest first by creation:
+	// the two workers, then the long run, then the control.
+	want := []string{ended[2], ended[1], long.ID, ctrl.ID}
+	var got []string
 	for _, r := range rs {
-		found = found || r.ID == ctrl.ID
+		got = append(got, r.ID)
 	}
-	if !found || len(rs) != 3 || rs[0].ID == ctrl.ID {
-		t.Fatalf("limit 2 listed %d runs, control present=%v; want the 2 newest plus the live control, newest first", len(rs), found)
+	if !slices.Equal(got, want) {
+		t.Fatalf("limit 2 listed %v; want %v (the 2 newest ended runs, then both live runs, newest first)", got, want)
 	}
 }
