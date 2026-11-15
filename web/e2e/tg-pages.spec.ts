@@ -43,11 +43,11 @@ const message = { id: 'msg_pages1', space_id: SPACE, kind: 'request', subject: '
 function basePrefs(): Record<string, unknown> {
   const d = { assigned_to_me: true, clarifications: true, digest: true, digest_time: '09:00', escalations: true, failed_runs: 'digest', inbox_items: 'digest', min_priority: 'normal', new_actions: true,
     operator_messages: true, quiet_hours: true, quiet_hours_end: '08:00', quiet_hours_start: '23:00', reminders: 'push', tasks_in_review: 'digest' }
-  return { link_id: 'tgl_1', overrides: {}, defaults: d, effective: { ...d, muted_spaces: [] }, timezone: 'Europe/Vilnius', topics: { available: false }, version: 3 }
+  return { link_id: 'tgl_1', overrides: {}, defaults: d, effective: { ...d, muted_spaces: [] }, timezone: 'Europe/Vilnius', topics: { available: true, spaces: [SPACE], refused: false }, version: 3 }
 }
 
 /** The fixtures a test can replace: the queue's tasks, the scheduled messages to control and the space's attention counts. */
-type Fixtures = { terminalWatch?: boolean; prefs?: Record<string, unknown>; putStatus?: number; role?: string; path: string; tasks?: unknown[]; scheduled?: unknown[]; attention?: Record<string, unknown> }
+type Fixtures = { terminalWatch?: boolean; prefs?: Record<string, unknown>; putStatus?: number; role?: string; path: string; tasks?: unknown[]; scheduled?: unknown[]; attention?: Record<string, unknown>; humanPending?: { items: unknown[]; counts: Record<string, number>; total: number } }
 
 async function launch(page: Page, o: Fixtures) {
   const moves: unknown[] = []
@@ -94,6 +94,7 @@ async function launch(page: Page, o: Fixtures) {
       const space = { space_id: SPACE, name: 'Pages space', slug: 'p', state: 'active', total: 0, ...o.attention }
       return route.fulfill(json({ total: space.total, checked_at: now, spaces: [space] }))
     }
+    if (p === '/human-actions') return route.fulfill(json(o.humanPending ?? { items: [], counts: {}, total: 0 }))
     if (p === `/spaces/${SPACE}/runs`) return route.fulfill(json({ items: [run] }))
     if (p === `/spaces/${SPACE}/runs/${run.id}`) return route.fulfill(json(run))
     if (p === `/telegram/spaces/${SPACE}/features`) return route.fulfill(json({ terminal_watch: o.terminalWatch === true }))
@@ -183,6 +184,33 @@ test('a viewer sees the queue without New task or drag handles', async ({ page }
 })
 
 const proposed = { ...task(4), incident_proposed_by: 'run_pages1' }
+
+/** A pending human action as the cross-space list returns it (only the fields the home reads are meaningful). */
+const pendingAction = (n: number, priority: string, created: string) => ({
+  id: `hum_page${n}`, space_id: SPACE, type: 'question', title: `Pending question ${n}`, status: 'open', priority, created_at: created, updated_at: created,
+  body: '', blocks_task: false, requester_kind: 'agent', rank: n, reminder_count: 0, request: {}, response: {}, type_version: 1, version: 1,
+})
+
+test('the home shows the cross-space Needs you total and the top items, and See all opens /human', async ({ page }) => {
+  // Five normal items and one urgent one: the urgent one comes first, and the newest normal one is left out of the five.
+  const items = [
+    pendingAction(1, 'normal', '2026-11-01T10:00:00Z'), pendingAction(2, 'normal', '2026-11-02T10:00:00Z'),
+    pendingAction(3, 'normal', '2026-11-03T10:00:00Z'), pendingAction(4, 'normal', '2026-11-04T10:00:00Z'),
+    pendingAction(5, 'normal', '2026-11-12T10:00:00Z'), pendingAction(6, 'urgent', '2026-11-14T10:00:00Z'),
+  ]
+  await launch(page, { path: '/', humanPending: { items, counts: { [SPACE]: 6 }, total: 6 } })
+  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
+  await expect(page.getByText('6', { exact: true })).toBeVisible()
+  const list = page.getByRole('list', { name: 'Human actions' })
+  await expect(list.getByRole('listitem')).toHaveCount(5)
+  await expect(list.getByRole('listitem').first()).toContainText('Pending question 6')
+  await expect(list.getByText('Pending question 5', { exact: true })).toHaveCount(0)
+  await clean(page)
+  await page.getByRole('link', { name: 'See all' }).click()
+  await expect(page).toHaveURL(/\/human$/)
+  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
+  await clean(page)
+})
 
 test('an operator confirms or dismisses an incident proposal from the sheet', async ({ page }) => {
   await launch(page, { path: `/spaces/${SPACE}/queue`, tasks: [proposed] })
@@ -296,7 +324,9 @@ test('settings: edit and save round-trips with If-Match, and topics are read-onl
   const seen = await launch(page, { path: '/settings' })
   const form = page.getByRole('form', { name: 'Notification settings' })
   await expect(form.getByText(/Per user, not per link/)).toBeVisible()
-  await expect(form.getByText('Not available yet')).toBeVisible()
+  await expect(form.getByText(/Topics are on for: Pages space/)).toBeVisible()
+  await expect(form.getByText(/turned on per space/)).toBeVisible()
+  await expect(form.getByText('Not available yet')).toHaveCount(0)
   await clean(page)
   await form.getByLabel('New inbox items').selectOption('push')
   await form.getByLabel('Pages space').check()

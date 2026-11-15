@@ -9,9 +9,10 @@ describe('parseStartParam', () => {
     expect(parseStartParam('task-spc_abc-tsk_x1')).toEqual({ to: '/spaces/$spaceId/queue', params: { spaceId: 'spc_abc' }, search: { task: 'tsk_x1' } })
     expect(parseStartParam('human-spc_abc-hum_x1')).toEqual({ to: '/spaces/$spaceId/human', params: { spaceId: 'spc_abc' }, search: { action: 'hum_x1' } })
     expect(parseStartParam('attention')).toEqual({ to: '/attention' })
+    expect(parseStartParam('needs')).toEqual({ to: '/human' })
   })
   it('ignores everything else', () => {
-    for (const bad of [undefined, '', 'x', 'space', 'space-../etc', 'space-spc_a-extra', 'inbox-spc_a', 'run-spc_a-x', 'attention-spc_a', 'admin-spc_a-inb_x', 'a-b-c-d', 'space-spc_a/b', 'space-spc_a-', 'x'.repeat(300)]) {
+    for (const bad of [undefined, '', 'x', 'space', 'space-../etc', 'space-spc_a-extra', 'inbox-spc_a', 'run-spc_a-x', 'attention-spc_a', 'needs-spc_a', 'needs-spc_a-hum_x1', 'admin-spc_a-inb_x', 'a-b-c-d', 'space-spc_a/b', 'space-spc_a-', 'x'.repeat(300)]) {
       expect(parseStartParam(bad as string | undefined)).toBeNull()
     }
   })

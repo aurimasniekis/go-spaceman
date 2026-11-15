@@ -56,11 +56,11 @@ type HumanPolicyPath struct {
 }
 
 // optionalVersion is the If-Match version when one is sent, else 0 (create or overwrite).
-func optionalVersion(m IfMatch) (int64, error) {
+func optionalVersion(m OptionalIfMatch) (int64, error) {
 	if m.IfMatch == "" {
 		return 0, nil
 	}
-	return m.Version()
+	return IfMatch(m).Version()
 }
 
 // HumanTypeDraftInput is the editable content of a type version.
@@ -429,11 +429,11 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 			Summary: "Create or update the type's draft", Description: "Without If-Match a new draft is started; with it, the draft at that version is updated.", Tags: ttags},
 			func(ctx context.Context, in *struct {
 				HumanTypePath
-				IfMatch
+				OptionalIfMatch
 				Body HumanTypeDraftInput
 			}) (*struct{ Body *human.HumanType }, error) {
 				v := int64(0)
-				if in.IfMatch.IfMatch != "" {
+				if in.IfMatch != "" {
 					var err error
 					if v, err = in.Version(); err != nil {
 						return nil, d.fail(ctx, "human_types.draft", err)
@@ -594,10 +594,10 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 			Description: "With If-Match, the stored policy must be at that version. Pending actions get their reminder and escalation times recomputed.", Tags: ptags},
 			func(ctx context.Context, in *struct {
 				HumanPolicyPath
-				IfMatch
+				OptionalIfMatch
 				Body human.PolicyFields
 			}) (*struct{ Body *human.Policy }, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "human_policies.set", err)
 				}
@@ -626,10 +626,10 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 			func(ctx context.Context, in *struct {
 				SpacePath
 				HumanPolicyPath
-				IfMatch
+				OptionalIfMatch
 				Body human.PolicyFields
 			}) (*struct{ Body *human.Policy }, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "human_policies.space_set", err)
 				}

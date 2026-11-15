@@ -63,10 +63,10 @@ func RegisterTelegramSettings(svc *settings.Service) func(api huma.API, d *Deps)
 				"configuration file. Needs system:write and a step-up.",
 			Tags: tags},
 			func(ctx context.Context, in *struct {
-				IfMatch
+				OptionalIfMatch
 				Body settings.Input
 			}) (*telegramSettingsOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "telegram.settings.put", err)
 				}
@@ -125,10 +125,10 @@ func RegisterTelegramSettings(svc *settings.Service) func(api huma.API, d *Deps)
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				IfMatch
+				OptionalIfMatch
 				Body settings.SpaceInput
 			}) (*spaceTelegramOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "telegram.space.put", err)
 				}

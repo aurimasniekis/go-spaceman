@@ -104,9 +104,9 @@ func RegisterRepositories(svc *repos.Service) func(api huma.API, d *Deps) {
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				RepositoryPath
-				IfMatch
+				OptionalIfMatch
 			}) (*repositoryOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "repos.ssh_key", err)
 				}
@@ -127,9 +127,9 @@ func RegisterRepositories(svc *repos.Service) func(api huma.API, d *Deps) {
 			Tags:        tags},
 			func(ctx context.Context, in *struct {
 				RepositoryPath
-				IfMatch
+				OptionalIfMatch
 			}) (*repositoryOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "repos.ssh_key_remove", err)
 				}
@@ -149,9 +149,9 @@ func RegisterRepositories(svc *repos.Service) func(api huma.API, d *Deps) {
 			Tags:        tags, DefaultStatus: http.StatusNoContent},
 			func(ctx context.Context, in *struct {
 				RepositoryPath
-				IfMatch
+				OptionalIfMatch
 			}) (*struct{}, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "repos.delete", err)
 				}

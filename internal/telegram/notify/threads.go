@@ -15,6 +15,8 @@ const (
 	MappingCard = "card"
 	// MappingNotice is a one-time notice to a link; its key says which (NoticeThreads).
 	MappingNotice = "notice"
+	// MappingCont is the rest of a long card body, sent as a reply to the card.
+	MappingCont = "cont"
 )
 
 // NoticeThreads is the resource type of the one-time announcement of the topic-per-space layout (ADR-0089); the

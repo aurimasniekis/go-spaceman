@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -161,4 +162,67 @@ test('a malformed start parameter is ignored', async ({ page }) => {
   await launch(page, { startParam: 'inbox-..%2F..-x', path: '/' })
   await expect(page.locator('#root')).not.toBeEmpty()
   expect(new URL(page.url()).pathname).toBe('/')
+})
+
+test('attaching a file in the new-item dialog uploads with the Telegram header and no cookie or CSRF token', async ({ page }) => {
+  const uploads: Array<{ auth?: string; cookie?: string; csrf?: string; idem?: string }> = []
+  await launch(page, { path: `/spaces/${SPACE}/inbox` })
+  // Registered after launch: the last matching route wins.
+  await page.route(`**/api/v1/spaces/${SPACE}/attachments`, async (route) => {
+    const h = await route.request().allHeaders()
+    if (route.request().method() !== 'POST') return route.fallback()
+    uploads.push({ auth: h.authorization, cookie: h.cookie, csrf: h['x-csrf-token'], idem: h['idempotency-key'] })
+    if (h.authorization !== 'Telegram spaceman_tgs_test') return route.fulfill(problem(401, 'unauthorized'))
+    return route.fulfill(
+      json({ id: IMG, space_id: SPACE, name: 'IMG_3881.png', mime: 'image/png', size: PNG.length, inline: false, url: `/api/v1/spaces/${SPACE}/attachments/${IMG}/content`, uri: `spaceman://attachment/${IMG}` }, 201),
+    )
+  })
+  await page.getByRole('button', { name: /new/i }).first().click()
+  await page.locator('input[type="file"]').first().setInputFiles({ name: 'IMG_3881.png', mimeType: 'image/png', buffer: PNG })
+  await expect(page.getByText('IMG_3881.png').first()).toBeVisible()
+  await expect(page.getByText(/authentication required|unauthorized/i)).toHaveCount(0)
+  expect(uploads).toHaveLength(1)
+  expect(uploads[0].auth).toBe('Telegram spaceman_tgs_test')
+  expect(uploads[0].cookie ?? '').toBe('')
+  expect(uploads[0].csrf).toBeUndefined()
+  expect(uploads[0].idem).toBeTruthy()
+})
+
+test('an inline image uploaded in the composer previews as a blob: URL, not the cookie-only content URL', async ({ page }) => {
+  await launch(page, { path: `/spaces/${SPACE}/inbox` })
+  await page.route(`**/api/v1/spaces/${SPACE}/attachments`, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    return route.fulfill(
+      json({ id: IMG, space_id: SPACE, name: 'shot.png', mime: 'image/png', size: PNG.length, inline: true, url: `/api/v1/spaces/${SPACE}/attachments/${IMG}/content`, uri: `spaceman://attachment/${IMG}` }, 201),
+    )
+  })
+  await page.getByRole('button', { name: /new/i }).first().click()
+  await page.locator('input[type="file"]').first().setInputFiles({ name: 'shot.png', mimeType: 'image/png', buffer: PNG })
+  const img = page.locator('.ProseMirror img').first()
+  await expect(img).toHaveAttribute('src', /^blob:/)
+  // What is stored is the attachment reference, never the blob: preview. The POST is captured and aborted, so the
+  // dialog stays open with the body it would have sent.
+  const sent: Array<{ body?: string }> = []
+  await page.route(`**/api/v1/spaces/${SPACE}/inbox`, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    sent.push(route.request().postDataJSON() as { body?: string })
+    return route.abort()
+  })
+  await page.getByRole('button', { name: 'Add to inbox' }).click()
+  await expect.poll(() => sent.length).toBe(1)
+  expect(sent[0].body).toContain(`spaceman://attachment/${IMG}`)
+  expect(sent[0].body).not.toContain('blob:')
+})
+
+test('startapp=needs opens the Needs you page, whose filters sit behind a Filter button', async ({ page }) => {
+  await launch(page, { startParam: 'needs', path: '/' })
+  await expect(page).toHaveURL(/\/human$/)
+  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
+  // The Mini App's filter bar is collapsed; the reminded/escalated toggle stays in view.
+  await expect(page.getByRole('textbox', { name: 'Search title and text' })).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: /Only reminded or escalated/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Filter' }).click()
+  await expect(page.getByRole('textbox', { name: 'Search title and text' })).toBeVisible()
+  const res = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  expect(res.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([])
 })

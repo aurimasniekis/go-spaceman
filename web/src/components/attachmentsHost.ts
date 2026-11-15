@@ -8,6 +8,8 @@ import type { AttachmentResolver } from '@/lib/markdown'
 export interface AttachmentsHost {
   /** The resolver the renderer uses for a space (stable per space, so a body renders once). */
   resolver(spaceId: string): AttachmentResolver
+  /** Loads an attachment's image into a URL an <img> can show (a blob: URL); null when it cannot be shown. */
+  load(spaceId: string, id: string): Promise<string | null>
   /** Wires a rendered body's images and links; returns the cleanup. */
   watch(root: HTMLElement): () => void
 }

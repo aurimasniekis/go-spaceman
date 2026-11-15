@@ -1,6 +1,5 @@
-import { API_PREFIX, telegramToken, TELEGRAM_AUTH_SCHEME } from '@/api/session'
+import { API_PREFIX, endMiniAppSession, miniAppFetchInit } from '@/api/session'
 import type { AttachmentResolver } from '@/lib/markdown'
-import { endSession } from './session'
 
 /**
  * The Mini App's attachments (plan §4.6). The session is a header, so an <img src> cannot carry it: an image is fetched
@@ -130,12 +129,9 @@ export class AttachmentBlobs {
     let size = 0
     try {
       const { spaceId, id } = e.ref
-      const res = await this.doFetch(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/attachments/${encodeURIComponent(id)}/content`, {
-        credentials: 'omit',
-        headers: { Authorization: `${TELEGRAM_AUTH_SCHEME} ${telegramToken()}` },
-      })
+      const res = await this.doFetch(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/attachments/${encodeURIComponent(id)}/content`, miniAppFetchInit())
       if (res.status === 401) {
-        endSession()
+        await endMiniAppSession(res)
       } else if (res.ok) {
         const type = (res.headers.get('Content-Type') ?? '').split(';')[0].trim().toLowerCase()
         const len = Number(res.headers.get('Content-Length') ?? '0')

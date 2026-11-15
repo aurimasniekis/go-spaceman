@@ -308,6 +308,13 @@ func (sn *snapshot) runningTop() int {
 
 // why returns the reasons a ready task cannot start now (empty: eligible).
 func (sn *snapshot) why(t *Task) []string {
+	out := sn.waitingOn(t)
+	return append(out, sn.capacity(t)...)
+}
+
+// waitingOn returns what the task itself waits for: unfinished dependencies and open blockers (human actions that
+// block it). Closing the task as done without running it must wait for these too.
+func (sn *snapshot) waitingOn(t *Task) []string {
 	var out []string
 	for _, d := range sn.deps[t.ID] {
 		if dt := sn.byID[d]; dt != nil && dt.Status != Done {
@@ -324,6 +331,13 @@ func (sn *snapshot) why(t *Task) []string {
 			out = append(out, "blocked")
 		}
 	}
+	return out
+}
+
+// capacity returns the reasons the task cannot start now that are about the queue, not the task: its parent, the
+// top-level limit and held resources.
+func (sn *snapshot) capacity(t *Task) []string {
+	var out []string
 	if t.ParentID != "" {
 		if p := sn.byID[t.ParentID]; p != nil && p.Status != Running {
 			out = append(out, fmt.Sprintf("parent %q is %s", p.Title, p.Status))

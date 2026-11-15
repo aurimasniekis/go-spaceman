@@ -98,7 +98,7 @@ func TestMiniAppLinkPrefsReadAndSave(t *testing.T) {
 	expect(t, r, 200)
 	var p tglink.Prefs
 	r.json(t, &p)
-	if p.LinkID != e.linkID || p.Version != 1 || r.header.Get("ETag") != `"1"` || !p.Effective.NewActions || p.Timezone != "" || p.Topics.Available {
+	if p.LinkID != e.linkID || p.Version != 1 || r.header.Get("ETag") != `"1"` || !p.Effective.NewActions || p.Timezone != "" || !p.Topics.Available || len(p.Topics.Spaces) != 0 || p.Topics.Refused {
 		t.Fatalf("read %+v (ETag %s)", p, r.header.Get("ETag"))
 	}
 	r = e.put(t, prefsPath, `"1"`, map[string]any{"new_actions": false, "quiet_hours_start": "22:00", "muted_spaces": []string{e.space, e.space},

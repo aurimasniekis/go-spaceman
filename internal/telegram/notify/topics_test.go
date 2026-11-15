@@ -482,3 +482,72 @@ func (e *env) createTopic(chat int64, name string) int {
 	}
 	return tp.MessageThreadID
 }
+
+// A long card in threads mode: the continuations are replies inside the card's topic, and they are edited and deleted
+// along with the card.
+func TestThreadsContinuationsFollowTheCardInTheTopic(t *testing.T) {
+	e, _, _ := topicsEnv(t)
+	defer e.run(e.maps)()
+	r := action("hum_1", 1, false)
+	r.Detail = longBody(12)
+	e.change("hum_1", r, 1, changefeed.Created)
+	e.waitCalls("sendMessage", 4) // the card, two continuations and the layout notice
+	cardThread := 0
+	var card botapi.Message
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		for _, m := range e.fake.Messages(1001) {
+			if m.ReplyToMessage == nil && m.Text != notify.ThreadsNotice {
+				card = m
+			}
+		}
+		if card.MessageID != 0 && len(e.fake.MessagesIn(1001, card.MessageThreadID)) == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("messages %+v, want a card and 2-3 continuations in one topic", e.fake.Messages(1001))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cardThread = card.MessageThreadID
+	if cardThread == 0 {
+		t.Fatal("the card is in the main chat, want its space's topic")
+	}
+	for _, m := range e.fake.MessagesIn(1001, cardThread) {
+		if m.MessageID != card.MessageID && (m.ReplyToMessage == nil || m.ReplyToMessage.MessageID != card.MessageID) {
+			t.Errorf("message %d is not a reply to the card", m.MessageID)
+		}
+	}
+	for _, m := range e.fake.Messages(1001) {
+		if m.Text != notify.ThreadsNotice && m.MessageThreadID != cardThread {
+			t.Errorf("%q in thread %d, want %d", m.Text[:10], m.MessageThreadID, cardThread)
+		}
+	}
+
+	r2 := action("hum_1", 2, false)
+	r2.Detail = longBody(12) + "tail"
+	e.change("hum_1", r2, 2, changefeed.Updated)
+	e.waitCalls("editMessageText", 2)
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		ms := e.fake.MessagesIn(1001, cardThread)
+		if len(ms) == 3 && strings.Contains(ms[len(ms)-1].Text, "tail") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the last continuation never got the tail: %+v", ms)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	r3 := action("hum_1", 3, true)
+	r3.Detail = "Short now."
+	e.change("hum_1", r3, 3, changefeed.Updated)
+	deadline = time.Now().Add(10 * time.Second)
+	for len(e.fake.MessagesIn(1001, cardThread)) != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d messages in the topic, want the card alone", len(e.fake.MessagesIn(1001, cardThread)))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}

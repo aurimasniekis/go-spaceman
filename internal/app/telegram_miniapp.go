@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
@@ -90,21 +88,19 @@ func (c *Central) miniAppServing(hostport string) bool {
 	return h != "" && tghost.Of(hostport) == h
 }
 
-// miniAppOrigin is the Mini App's origin: public_url's scheme and port on the Mini App host ("" when there is none).
-// Mini App mutations must come from it (api.TelegramPolicy.MiniAppOrigin).
+// miniAppOrigin is the Mini App's origin: https on the Mini App host, with no port ("" when there is none). It is the
+// URL the bot's menu button opens (https://<miniapp_host>/), not one derived from public_url, whose scheme and port
+// describe the main host and may be plain http on a LAN. Mini App mutations must come from exactly this origin
+// (api.TelegramPolicy.MiniAppOrigin).
 func (c *Central) miniAppOrigin() string {
 	if c.TelegramBot == nil {
 		return ""
 	}
 	h := c.TelegramBot.MiniAppHost()
-	u, err := url.Parse(c.Cfg.PublicURL)
-	if h == "" || err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+	if h == "" {
 		return ""
 	}
-	if p := u.Port(); p != "" {
-		h = net.JoinHostPort(h, p)
-	}
-	return u.Scheme + "://" + h
+	return "https://" + h
 }
 
 // miniAppHandler serves the Mini App host. It is an allowlist (plan §3.4.1): the API in Telegram mode (only the

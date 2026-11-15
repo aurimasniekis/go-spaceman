@@ -53,6 +53,7 @@ func (a *Agent) helloRuns(ctx context.Context) (hello, follow []runRow, err erro
 	since := a.now().Add(-helloRecentWindow).UnixMicro()
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.followSnap = map[string]int64{}
 	for _, r := range runs {
 		switch {
 		case !ended(r.State):
@@ -62,6 +63,7 @@ func (a *Agent) helloRuns(ctx context.Context) (hello, follow []runRow, err erro
 			hello = append(hello, r)
 		case a.finalSent[r.RunID] < r.UpdatedAt:
 			follow = append(follow, r)
+			a.followSnap[r.RunID] = r.UpdatedAt
 		}
 	}
 	return hello, follow, nil
@@ -112,6 +114,9 @@ func (a *Agent) sendFollowUp(ctx context.Context, conn *websocket.Conn, rs []run
 // acknowledged. An ended run central still lists as active did not get its final state applied (a restored backup, a
 // report lost with the connection, an apply failure): it is unacknowledged again and reported at once, well inside the
 // stale sweeper's grace (ADR-0074), which would otherwise end it lost and fence the real final state. It then prunes.
+// Not reported inline: a run this process has not sent yet, and a run in this connection's follow-up snapshot, sent or
+// not. Central builds the reconcile before it reads anything the follow-up sends, so such a run is still listed
+// active, and the follow-up is its one report. Neither is acknowledged or pruned.
 func (a *Agent) finalAck(ctx context.Context, rec proto.Reconcile) {
 	active := make(map[string]bool, len(rec.Runs))
 	for _, d := range rec.Runs {
@@ -128,6 +133,10 @@ func (a *Agent) finalAck(ctx context.Context, rec proto.Reconcile) {
 	}
 	for _, r := range runs {
 		if ended(r.State) && active[r.RunID] {
+			if a.finalSent[r.RunID] < r.UpdatedAt || r.UpdatedAt <= a.followSnap[r.RunID] {
+				// Not sent yet by this process, or carried by this connection's follow-up: no inline report.
+				continue
+			}
 			delete(a.finalAcked, r.RunID)
 			delete(a.finalSent, r.RunID)
 			resend = append(resend, r)

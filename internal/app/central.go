@@ -791,7 +791,9 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 	// reads, with central keeping every response): writes must make progress. A client that declares a body and doesn't
 	// send it must not hold a connection either: body reads must make progress, and a refusal doesn't drain the body.
 	// Both guards wrap both hosts (the main host and the Mini App host).
-	return httpguard.WriteProgress(httpguard.ReadProgress(h, c.Cfg.HTTP.ReadIdleTimeout.D()), c.Cfg.HTTP.WriteIdleTimeout.D())
+	return httpguard.WriteProgress(httpguard.ReadProgress(h, c.Cfg.HTTP.ReadIdleTimeout.D()), c.Cfg.HTTP.WriteIdleTimeout.D(),
+		// The only route that hijacks the connection (a WebSocket); the terminal stream is SSE and stays guarded.
+		proto.ConnectPath)
 }
 
 // mainHandler serves the main host: the API, the node protocol, the Telegram webhook and the web UI.

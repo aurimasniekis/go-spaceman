@@ -32,3 +32,4 @@ node_modules/
 # Binaries at repo root
 /spaceman
 /spaceman-agent
+/web/.e2e-stack

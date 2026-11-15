@@ -84,6 +84,51 @@ var (
 // on a retry.
 type SendFunc func(ctx context.Context, c *botapi.Client) error
 
+// Take pays for one more Bot API call inside a SendFunc that makes several: the dispatch of the message paid for the
+// first call, so every further call of the same SendFunc calls Take before it. It waits until the chat's bucket and
+// the global bucket each have a token and takes both, so a SendFunc never sends faster than the limits, however many
+// calls it makes. It returns the context's error if ctx ends while waiting. Outside a SendFunc it does nothing.
+func Take(ctx context.Context) error {
+	if t, ok := ctx.Value(takeKey{}).(*taker); ok {
+		return t.take(ctx)
+	}
+	return nil
+}
+
+type takeKey struct{}
+
+type taker struct {
+	s *Sender
+	c *chatState
+}
+
+func (t *taker) take(ctx context.Context) error {
+	s := t.s
+	for {
+		s.mu.Lock()
+		now := s.clk.Now()
+		ready := now
+		if t.c.b != nil {
+			ready = later(ready, t.c.b.readyAt(now))
+		}
+		ready = later(ready, later(s.global.readyAt(now), s.globalP))
+		if !ready.After(now) {
+			s.global.take(now)
+			if t.c.b != nil {
+				t.c.b.take(now)
+			}
+			s.mu.Unlock()
+			return nil
+		}
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.after(ready.Sub(now)):
+		}
+	}
+}
+
 // Message is one queued Bot API call.
 type Message struct {
 	// ChatID is the chat the call writes to; 0 for a call without a chat (answerCallbackQuery), which takes only a
@@ -696,7 +741,7 @@ func (s *Sender) dispatchLocked(ctx context.Context, it *item, now time.Time) {
 
 func (s *Sender) attempt(ctx context.Context, it *item) {
 	defer s.wg.Done()
-	err := it.msg.Send(ctx, s.o.Client)
+	err := it.msg.Send(context.WithValue(ctx, takeKey{}, &taker{s: s, c: it.chat}), s.o.Client)
 	s.mu.Lock()
 	done := s.finishLocked(ctx, it, err)
 	s.mu.Unlock()

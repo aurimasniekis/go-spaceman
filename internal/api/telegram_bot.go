@@ -49,10 +49,10 @@ func RegisterTelegramBot(svc *tgbot.Service) func(api huma.API, d *Deps) {
 				"The Bot API's address is not settable here (central's configuration file only). Needs system:write and a step-up.",
 			Tags: tags},
 			func(ctx context.Context, in *struct {
-				IfMatch
+				OptionalIfMatch
 				Body tgbot.Input
 			}) (*telegramBotOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "telegram.put_bot", err)
 				}

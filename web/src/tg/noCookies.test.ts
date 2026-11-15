@@ -85,4 +85,11 @@ describe('Mini App requests carry no cookies', () => {
     await vi.waitFor(() => expect(seen).toHaveLength(1))
     expectCookieless(seen[0])
   })
+
+  it('the shared attachment upload omits credentials in Mini App mode', async () => {
+    const { uploadAttachment } = await import('@/components/composer/upload')
+    await uploadAttachment('spc_1', new File(['x'], 'a.txt', { type: 'text/plain' }))
+    expect(seen).toHaveLength(1)
+    expectCookieless(seen[0])
+  })
 })
