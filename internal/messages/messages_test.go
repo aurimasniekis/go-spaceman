@@ -522,10 +522,11 @@ func TestOperatorActionsHonourVersion(t *testing.T) {
 	}
 	acked, err := f.svc.AckOperator(f.ctx, op, "spc_a", m.ID, cur.Version)
 	must(t, err)
-	_, err = f.svc.Resolve(f.ctx, op, "spc_a", m.ID, "x", cur.Version) // stale after the ack bumped it
-	if acked.Version != cur.Version {
-		code(t, err, apperr.CodePrecondition)
+	if acked.Version != cur.Version+1 {
+		t.Fatalf("ack did not bump the version: %d, want %d", acked.Version, cur.Version+1)
 	}
+	_, err = f.svc.Resolve(f.ctx, op, "spc_a", m.ID, "x", cur.Version) // stale after the ack bumped it
+	code(t, err, apperr.CodePrecondition)
 	res, err := f.svc.Resolve(f.ctx, op, "spc_a", m.ID, "done", acked.Version)
 	must(t, err)
 	if res.State != Resolved {
