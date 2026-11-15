@@ -115,7 +115,7 @@ func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, cha
 		if err == nil || thread == 0 || !botapi.IsTopicGone(err) {
 			return msg, err
 		}
-		m.forget(linkID, key, thread)
+		m.forget(ctx, linkID, key, thread)
 		if try == 0 {
 			var terr error
 			if thread, terr = m.thread(ctx, c, linkID, chatID, key); terr != nil {
@@ -169,14 +169,14 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 }
 
 // forget drops a thread that Telegram says is gone, unless another send already replaced it.
-func (m *Manager) forget(linkID, key string, thread int) {
+func (m *Manager) forget(ctx context.Context, linkID, key string, thread int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.threads[linkID][key] != thread {
 		return
 	}
 	delete(m.threads[linkID], key)
-	m.saveLocked(context.Background(), linkID)
+	m.saveLocked(ctx, linkID)
 }
 
 // Forget drops everything remembered about a link (it was revoked or moved).

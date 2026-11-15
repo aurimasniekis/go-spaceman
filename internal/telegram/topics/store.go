@@ -19,8 +19,8 @@ func (t StoreTopics) Load(ctx context.Context, linkID string) (map[string]int, e
 		return nil, err
 	}
 	out := map[string]int{}
-	if json.Unmarshal([]byte(row.TopicsJson), &out) != nil {
-		return map[string]int{}, nil
+	if err := json.Unmarshal([]byte(row.TopicsJson), &out); err != nil {
+		clear(out) // malformed content reads as none
 	}
 	return out, nil
 }
