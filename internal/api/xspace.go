@@ -79,10 +79,10 @@ func RegisterXSpace(svc *xspace.Service) func(api huma.API, d *Deps) {
 			Summary: "Edit a space's cross-space settings", Description: "Without If-Match the settings must never have been saved.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				IfMatch
+				OptionalIfMatch
 				Body xspace.SettingsInput
 			}) (*xspaceSettingsOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "xspace.settings", err)
 				}
@@ -123,10 +123,10 @@ func RegisterXSpace(svc *xspace.Service) func(api huma.API, d *Deps) {
 				"inbound flag and the source's outbound flag.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				XSpacePeerPath
-				IfMatch
+				OptionalIfMatch
 				Body xspace.PeerInput
 			}) (*xspacePeerOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "xspace.peer", err)
 				}

@@ -303,6 +303,14 @@ var (
 	json0         = json.RawMessage(`{}`)
 )
 
+// requestFields names the fields each built-in type's request takes, for the refusal of an unknown one.
+var requestFields = map[string]string{
+	TypeQuestion: "{options, allow_text}",
+	TypeApproval: "{action, details}",
+	TypeTodo:     "{steps}",
+	TypeMessage:  "{requires_ack}",
+}
+
 // validateRequest checks and normalizes a type's request.
 func validateRequest(typ string, raw json.RawMessage) (json.RawMessage, bool, error) {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -311,7 +319,12 @@ func validateRequest(typ string, raw json.RawMessage) (json.RawMessage, bool, er
 	dec := func(v any) error {
 		d := json.NewDecoder(strings.NewReader(string(raw)))
 		d.DisallowUnknownFields()
-		return d.Decode(v)
+		if err := d.Decode(v); err != nil {
+			// A field of another type's request (allow_text on an approval) is the usual mistake: say which type
+			// takes what, not just the field.
+			return fmt.Errorf("%s request: %w (a %s request takes %s)", typ, err, typ, requestFields[typ])
+		}
+		return nil
 	}
 	blocking := true
 	var out any

@@ -80,10 +80,10 @@ func RegisterHarborPilot(svc *harborpilot.Service, budgets *harborpilot.Budgets)
 				"stored) in the same request, or it is refused with 422 before any call. Needs account:write and a step-up.",
 			Tags: tags},
 			func(ctx context.Context, in *struct {
-				IfMatch
+				OptionalIfMatch
 				Body harborpilot.ConnectionInput
 			}) (*harborPilotConnectionOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "harborpilot.put_connection", err)
 				}
@@ -124,10 +124,10 @@ func RegisterHarborPilot(svc *harborpilot.Service, budgets *harborpilot.Budgets)
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				IfMatch
+				OptionalIfMatch
 				Body harborpilot.SpaceInput
 			}) (*spaceHarborPilotOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "harborpilot.put_space", err)
 				}

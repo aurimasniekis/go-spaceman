@@ -6,13 +6,35 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `telegram.webhook_base_url` (environment `SPACEMAN_TELEGRAM_WEBHOOK_BASE_URL`): the public https base URL the Telegram
+  webhook is registered under, for a deployment whose `public_url` is not reachable from the internet. Empty keeps the
+  webhook under `public_url`. The webhook path and secret-token check are unchanged.
+  A path prefix is for the reverse proxy, which must strip it before forwarding (central serves only
+  `/telegram/webhook/<id>`). The host must differ from `telegram.miniapp_host`.
+
 ### Changed
 
+- Developer tooling: `make e2e-up`, `make e2e-spec SPEC=… GREP=…` and `make e2e-down` run one e2e spec against a stack that stays up; `make e2e` and `make screenshots` stop their stack on failure and Ctrl-C; the dev stack picks free ports when the defaults are taken and drops `SPACEMAN_*` variables; `ui-overflow.spec.ts` checks its three widths in parallel (12.3 to 5.1 minutes).
 - Telegram: the chat layout is chosen per link (ADR-0089). The new `notification_defaults.threads` setting (`auto`, `on`, `off`; default `auto`, which is on when the bot has topics enabled in BotFather) and a link's own override put every message about a space, needs-you cards included, in that space's topic; the digest and the "many changes" notice stay in the chat without a topic. The shared "Needs you" topic is no longer used: the bot posts a note in it once. The per-space `topics` flag and `topics_mode_default` are deprecated and have no effect. **Topics the bot creates stay in users' chats** when the layout is turned off again: Telegram can only delete a topic together with its messages.
+- Control can close a task that never had a worker run (control did the work itself) as **done** straight from backlog or ready with `spaceman_task_set_status`, a result required; the audit event is marked `direct`. The task must have no unmet dependency and no open `blocks_task` human action. No other transition changes, and operators and workers cannot use it.
 
 ### Fixed
 
+- Telegram Mini App writes (POST, PUT, PATCH, DELETE) are no longer refused when `public_url` is plain http or has a port. The one allowed origin is now `https://<miniapp_host>`, the URL the bot's menu button opens, instead of one built from `public_url`'s scheme and port. The check is still exact: one origin, no wildcard. Mini App buttons and download links now use `https://<miniapp_host>` too.
+- The human-action lists sort before they truncate, so a top-N view (the Mini App home) shows the most urgent pending action even when more than a page is pending; before, a newer urgent item was cut off and the oldest were kept.
+- Attaching a file or image in the Telegram Mini App (new inbox item, human-action responses, messages, tasks) no longer fails with "authentication required". The upload sent a cookie and CSRF token, which the Mini App never has; it now sends the Mini App's `Authorization: Telegram` session like every other call.
+- The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
+- Admin MCP tools whose operation requires `If-Match` (`set_space_state`, `update_space`, and the other versioned writes) list `if_match` as a required argument and say so in the description, so an approved call is not refused with a 428 and approved again. Operations where it is optional (a missing version means create or overwrite, e.g. `move_task`, `set_space_limits`, the draft saves) keep it optional and make no 428 promise.
+- A question request refused with `unknown field "allow_text"` was a request of another type (approval, to-do, message), where `allow_text` is not a field. The refusal now names the type and the fields it takes, and the `spaceman_human_ask` request description says `allow_text` is for questions only.
+- Telegram cards now show a message body as formatting (bold, code, lists, links) instead of raw Markdown, and send the whole body instead of cutting it at 600 characters: what doesn't fit in the card goes in numbered reply messages ("(2/3)"), up to four messages, and the rest is left to the app. The continuation messages are edited, added or deleted when the card changes, each call within the sender's rate limits, and a deleted one is not remembered after a restart. A message card says "Unread" or "Read" instead of the internal state "stored". At content level `summary` a card still never shows a body.
+
+### Security
+
+- The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
+  that carried WebSocket upgrade headers used to be exempt from it.
 
 ## [0.1.5] - 2026-11-15
 

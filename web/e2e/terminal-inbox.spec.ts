@@ -60,6 +60,20 @@ test('an operator sends the terminal message box to the inbox', async ({ page })
       expect(bb.x + bb.width).toBeLessThanOrEqual(390)
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0)
+    // The bar's controls share one height and row, stay inside the viewport and the placeholder is short enough not to be cut.
+    for (const width of [375, 414]) {
+      await page.setViewportSize({ width, height: 844 })
+      const boxes = []
+      for (const c of [box, sendAs, page.getByRole('button', { name: 'Send', exact: true })]) boxes.push((await c.boundingBox())!)
+      for (const bb of boxes) {
+        expect(Math.abs(bb.height - boxes[0].height)).toBeLessThanOrEqual(1)
+        expect(Math.abs(bb.y - boxes[0].y)).toBeLessThanOrEqual(1)
+        expect(bb.x).toBeGreaterThanOrEqual(0)
+        expect(bb.x + bb.width).toBeLessThanOrEqual(width)
+      }
+      expect(await box.getAttribute('placeholder')).toMatch(/^Message \S+$/)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0)
+    }
     await page.setViewportSize({ width: 1280, height: 900 })
     const text = `Check the flaky upload test ${id}`
     await box.fill(text)

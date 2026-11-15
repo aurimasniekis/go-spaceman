@@ -78,7 +78,7 @@ spaceman telegram bot set --bot-token-file ~/.tg/token --enabled --mode polling
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--miniapp-host` | string |  | the Mini App's own host, e.g. tg.central.example.com (empty: Mini App off) |
-| `--mode` | string |  | webhook (default; needs an https public_url) or polling |
+| `--mode` | string |  | webhook (default; needs an https public_url or telegram.webhook_base_url) or polling |
 | `--webhook-ip-allowlist` | string, repeatable |  | CIDR the webhook accepts requests from, e.g. 149.154.160.0/20 (empty: no check) (repeatable or comma-separated) |
 
 ## spaceman telegram links

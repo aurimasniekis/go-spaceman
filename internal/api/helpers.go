@@ -220,3 +220,16 @@ func (p Page) limit() int {
 	}
 	return min(p.Limit, 200)
 }
+
+// OptionalIfMatch is the If-Match of an operation that also works without it: a missing header means create or
+// overwrite (handlers read it with optionalVersion). The MCP catalog tells it apart from the required IfMatch by the
+// "(optional)" marker in the header's description, so keep optionalIfMatchMarker in it.
+type OptionalIfMatch struct {
+	IfMatch string `header:"If-Match" doc:"The resource version this update was based on, as \"<version>\" (optional: without it the resource is created or overwritten) [optional]"`
+}
+
+// OptionalIfMatchMarker marks an optional If-Match header in the OpenAPI description (see OptionalIfMatch).
+const OptionalIfMatchMarker = "[optional]"
+
+// Version parses a sent If-Match like IfMatch.Version (for handlers that read it only when it is present).
+func (m OptionalIfMatch) Version() (int64, error) { return IfMatch(m).Version() }

@@ -27,7 +27,7 @@ Code's own question picker (`AskUserQuestion`) or plan mode (`EnterPlanMode`); s
 | `spaceman_queue_next` | The next eligible task and why others were skipped | ✓ | | | |
 | `spaceman_task_create` | Add a task (optionally from an inbox item); an incident needs a trusted trigger, else it is proposed or refused | ✓ | | | |
 | `spaceman_task_resume` | Resume a task an incident preempted | ✓ | | | |
-| `spaceman_task_set_status` | Move a task; a worker only its own task, to review or blocked | ✓ | own | | |
+| `spaceman_task_set_status` | Move a task; a worker only its own task, to review or blocked. Control may also close a never-run backlog or ready task as done, with a result | ✓ | own | | |
 | `spaceman_attachment_get` | Fetch a `spaceman://attachment/<id>` inline (text, or base64 up to 512 KiB; `offset`/`length` read a range); a larger file is never cut silently ([Large attachments](#large-attachments-and-images)) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_attachment_save` | Save a whole attachment of any size as a file in the run's own folder on the node, checked against its SHA-256; open it with the harness's own file tools ([Large attachments](#large-attachments-and-images)) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_ask` | Ask a person: question, approval, to-do or message | ✓ | ✓ | ✓ | ✓ |

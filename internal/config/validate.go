@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -136,8 +138,16 @@ func (c *Config) Validate() error {
 	if _, err := botapi.ParseBaseURL(c.Telegram.APIBaseURL); err != nil {
 		v.add("telegram.api_base_url %v", err)
 	}
+	if err := checkWebhookBaseURL(c.Telegram.WebhookBaseURL); err != nil {
+		v.add("telegram.webhook_base_url %v", err)
+	}
 	if err := tghost.Check(c.Telegram.MiniAppHost, c.PublicURL); err != nil {
 		v.add("telegram.miniapp_host %v", err)
+	}
+	if h := c.Telegram.MiniAppHost; h != "" && c.Telegram.WebhookBaseURL != "" {
+		if u, err := url.Parse(c.Telegram.WebhookBaseURL); err == nil && strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), h) {
+			v.add("telegram.webhook_base_url must not use the host of telegram.miniapp_host (%s): central would route the webhook to the Mini App, which answers 404", h)
+		}
 	}
 	return v.err()
 }
@@ -400,6 +410,33 @@ func (v *validator) publicURL(name, raw string, prod bool) {
 	if prod && u.Scheme != "https" && !isLoopback(u.Hostname()) {
 		v.add("%s must use https in production", name)
 	}
+}
+
+// checkWebhookBaseURL validates telegram.webhook_base_url: empty, or an absolute https URL (Telegram only calls HTTPS
+// webhooks) with a lower-case host and no credentials, query or fragment.
+func checkWebhookBaseURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Scheme != "https" || !strings.HasPrefix(raw, "https://") {
+		return fmt.Errorf("must be an absolute URL starting with lower-case https:// (Telegram only calls HTTPS webhooks), got %q", raw)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(raw, "?") || strings.Contains(raw, "#") {
+		return errors.New("must not contain credentials, a query or a fragment")
+	}
+	if u.Host != strings.ToLower(u.Host) {
+		return errors.New("must have a lower-case host")
+	}
+	if strings.ContainsFunc(raw, unicode.IsSpace) {
+		return errors.New("must not contain whitespace")
+	}
+	for _, seg := range strings.Split(u.Path, "/") {
+		if seg == "." || seg == ".." {
+			return errors.New("must not contain dot segments (. or ..) in the path")
+		}
+	}
+	return nil
 }
 
 func isLoopback(host string) bool {
