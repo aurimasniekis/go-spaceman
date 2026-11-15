@@ -370,6 +370,11 @@ func (svc *Service) Delete(ctx context.Context, actor audit.Actor, id string) er
 		} else if err != nil {
 			return err
 		}
+		// The delete cascades away the account's bindings and pool rows: the spaces that had them change.
+		if _, err := tx.SQL.ExecContext(ctx, `UPDATE spaces SET accounts_version = accounts_version + 1
+			WHERE id IN (SELECT space_id FROM space_accounts WHERE account_id = ? UNION SELECT space_id FROM space_role_accounts WHERE account_id = ?)`, id, id); err != nil {
+			return err
+		}
 		if _, err := tx.Q.DeleteAccount(ctx, id); err != nil {
 			return err
 		}
@@ -625,7 +630,7 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 	if pol.Avoid == nil {
 		return pick(usable, harness, ref)
 	}
-	cands, err := candidates(ctx, tx.Q, spaceID, role, usable)
+	cands, scoped, err := candidates(ctx, tx.Q, spaceID, harness, role, bs, usable)
 	if err != nil {
 		return "", err
 	}
@@ -658,6 +663,10 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 		}
 		return a.order - b.order
 	})
+	if ref == "" && scoped && len(cands) == 0 {
+		// The role's pool has accounts for this harness but none is usable: never widen to the space's accounts.
+		return "", apperr.New(apperr.CodePrecondition, "no enabled %s account of role %q's pool is usable; enable one or change the role's pool", harness, role)
+	}
 	chosen, err := pick(usable, harness, ref)
 	if ref == "" && len(cands) > 0 && cands[0].fromRole {
 		// A role with a pool uses the pool's best account, not the space's default.
@@ -692,31 +701,37 @@ type candidate struct {
 	fromRole bool
 }
 
-// candidates is the pool of a run's role (usable accounts only, with the role's priorities), or the space's usable
-// bindings when the role has no pool, or none of its pool is usable.
-func candidates(ctx context.Context, q *db.Queries, spaceID, role string, usable []Binding) ([]candidate, error) {
+// candidates is the pool of a run's role (usable accounts only, with the role's priorities) and whether the role's pool
+// governs. A role pool governs when any of its accounts is bound to the space for the harness (usable or not): it is
+// then those accounts only, even when none is usable. Only a role without such an entry uses the space's usable
+// bindings (ADR-0090 §3.2). all is every binding of the space.
+func candidates(ctx context.Context, q *db.Queries, spaceID, harness, role string, all, usable []Binding) ([]candidate, bool, error) {
 	var out []candidate
 	if role != "" {
 		rows, err := q.ListSpaceRoleAccounts(ctx, spaceID)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		scoped := false
 		for _, r := range rows {
 			if r.Role != role {
 				continue
+			}
+			if slices.ContainsFunc(all, func(b Binding) bool { return b.AccountID == r.AccountID && b.Harness == harness }) {
+				scoped = true
 			}
 			if i := slices.IndexFunc(usable, func(b Binding) bool { return b.AccountID == r.AccountID }); i >= 0 {
 				out = append(out, candidate{Binding: usable[i], priority: int(r.Priority), order: i, fromRole: true})
 			}
 		}
-		if len(out) > 0 {
-			return out, nil
+		if scoped {
+			return out, true, nil
 		}
 	}
 	for i, b := range usable {
 		out = append(out, candidate{Binding: b, priority: priorityOf(b.Priority), order: i})
 	}
-	return out, nil
+	return out, false, nil
 }
 
 // liveRuns counts the live runs of each account across spaces: the tie-break after priority and utilisation.

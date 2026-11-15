@@ -396,21 +396,6 @@ func (q *Queries) RotateAccountSecret(ctx context.Context, arg RotateAccountSecr
 	return result.RowsAffected()
 }
 
-const setSpaceAccountPriority = `-- name: SetSpaceAccountPriority :exec
-UPDATE space_accounts SET priority = ? WHERE space_id = ? AND account_id = ?
-`
-
-type SetSpaceAccountPriorityParams struct {
-	Priority  int64
-	SpaceID   string
-	AccountID string
-}
-
-func (q *Queries) SetSpaceAccountPriority(ctx context.Context, arg SetSpaceAccountPriorityParams) error {
-	_, err := q.db.ExecContext(ctx, setSpaceAccountPriority, arg.Priority, arg.SpaceID, arg.AccountID)
-	return err
-}
-
 const updateAccount = `-- name: UpdateAccount :execrows
 UPDATE accounts SET name = ?1, description = ?2, metadata_json = ?3, enabled = ?4,
   version = version + 1, updated_at = ?5

@@ -36,9 +36,6 @@ DELETE FROM space_accounts WHERE space_id = ?;
 -- name: InsertSpaceAccount :exec
 INSERT INTO space_accounts (space_id, account_id, harness, is_default, priority, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?);
 
--- name: SetSpaceAccountPriority :exec
-UPDATE space_accounts SET priority = ? WHERE space_id = ? AND account_id = ?;
-
 -- name: BumpSpaceAccountsVersion :one
 UPDATE spaces SET accounts_version = accounts_version + 1 WHERE id = ? RETURNING accounts_version;
 

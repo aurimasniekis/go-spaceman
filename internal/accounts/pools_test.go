@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -77,8 +78,8 @@ func TestResolvePools(t *testing.T) {
 			pool: map[string][]string{"rev": {"c"}}, role: "dev", held: []string{"a"}, want: "b"},
 		{name: "no role uses the space pool", bind: []Binding{{Name: "a", Default: true}, {Name: "b", Priority: 1}, {Name: "c"}},
 			pool: map[string][]string{"rev": {"c"}}, held: []string{"a"}, want: "b"},
-		{name: "role pool of disabled accounts falls back to the space pool", bind: []Binding{{Name: "a", Default: true}, {Name: "b"}, {Name: "c"}},
-			pool: map[string][]string{"rev": {"c"}}, role: "rev", disabled: []string{"c"}, held: []string{"a"}, want: "b"},
+		{name: "role pool of disabled accounts never widens to the space pool", bind: []Binding{{Name: "a", Default: true}, {Name: "b"}, {Name: "c"}},
+			pool: map[string][]string{"rev": {"c"}}, role: "rev", disabled: []string{"c"}, held: []string{"a"}, wantErr: apperr.CodePrecondition},
 		{name: "role pool all held: usual choice stands", bind: []Binding{{Name: "a", Default: true}, {Name: "c"}},
 			pool: map[string][]string{"rev": {"c"}}, role: "rev", held: []string{"c"}, want: "c"},
 		{name: "failover off ignores pools and priorities", bind: []Binding{{Name: "a", Default: true, Priority: 900}, {Name: "b", Priority: 1}},
@@ -104,7 +105,9 @@ func TestResolvePools(t *testing.T) {
 					name, prio, _ := strings.Cut(n, "=")
 					p := 0
 					if prio != "" {
-						fmt.Sscan(prio, &p)
+						var err error
+						p, err = strconv.Atoi(prio)
+						must(t, err)
 					}
 					es = append(es, PoolEntry{AccountID: ids[name], Priority: p})
 				}
@@ -229,5 +232,23 @@ func TestBindingAuditDetails(t *testing.T) {
 		if !strings.Contains(details, want) {
 			t.Fatalf("details %s lacks %s", details, want)
 		}
+	}
+}
+
+func TestRolePoolWithoutEntryForHarnessFallsBack(t *testing.T) {
+	f := newFx(t)
+	a := f.add("a", "claude_oauth_token", "tok-a")
+	b := f.add("b", "claude_oauth_token", "tok-b")
+	x := f.add("x", "openai_api_key", "tok-x")
+	_, err := f.svc.SetBindings(f.ctx, admin, "spc_a", []Binding{{AccountID: a.ID, Default: true}, {AccountID: b.ID}, {AccountID: x.ID}})
+	must(t, err)
+	// The role's only account is a codex one: for claude-code the role has no entry, so the space pool applies.
+	_, err = f.svc.SetRolePool(f.ctx, admin, "spc_a", "rev", []PoolEntry{{AccountID: x.ID}}, 0)
+	must(t, err)
+	pol := Policy{Avoid: func(id string) (bool, error) { return id == a.ID, nil }}
+	got, err := f.resolvePolicy("rev", "", pol)
+	must(t, err)
+	if got != b.ID {
+		t.Fatalf("got %s, want the space pool's b", got)
 	}
 }
