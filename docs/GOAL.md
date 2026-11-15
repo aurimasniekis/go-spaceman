@@ -135,10 +135,14 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-ACCT-001 Account catalog: name, harness/provider compatibility, encrypted secrets, non-secret metadata, enabled state. Extensible to future providers.
 - SM-ACCT-002 Supports the real Claude Code (including long-lived `setup-token` OAuth) and Codex credential mechanisms.
 - SM-ACCT-003 Space-level compatible bindings and an optional default Claude account. Resolution is deterministic, and the error is clear when no
-  account is compatible. No automatic rotation or budget arbitration.
+  account is compatible. Accounts change automatically only as SM-ACCT-007 and SM-RUN-007 allow (ADR-0090); there is no other automatic rotation,
+  and no account is chosen by cost or budget.
 - SM-ACCT-004 Secrets go only to authorized runs over authenticated encrypted transport, using a delivery mechanism chosen after inspecting runner persistence.
 - SM-ACCT-005 Secrets are write-only and excluded from logs, events, resolved manifests and API reads. Docs state that privileged node operators can read runtime secrets.
 - SM-ACCT-006 Rotation affects subsequent launches.
+- SM-ACCT-007 **Account pools.** A space's enabled bindings for a harness, in operator-set priority order and optionally narrowed per role, form
+  the pool. A launch, resume or switch uses only an enabled, bound, compatible account with no open usage-limit hold, in a deterministic order.
+  A new run never starts on an account whose known window usage leaves less than the space's configured headroom (ADR-0090).
 
 ### SM-GW — LLM gateway (Harbor Pilot; operator addition, §9; design in ADR-0060, Accepted 2026-11-08)
 - SM-GW-001 **Connection.** One Harbor Pilot connection per central holds:
@@ -212,6 +216,10 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-RUN-006 **Usage-limit status from typed records only.** Limits are detected from typed transcript fields, never from screen
   or display text; a run's limit report can hold its account for at most 8 days, and control and people are told once per
   account window (ADR-0079).
+- SM-RUN-007 **A usage limit moves a run to another account of its pool when one is eligible.** The run continues the same session under that
+  account as a resumed run of the same instance, never as an in-process credential swap. If the limited account resets within the space's wait
+  window, the run waits as SM-RUN-004 describes. Switches are bounded per instance per day, recorded and audited. Running agents are not switched
+  before they reach a limit (ADR-0090).
 
 ### SM-INBOX — Inbox
 - SM-INBOX-001 Accepts operator text and JSON, worker messages, routed human responses, dreamer findings, KB messages, cross-space requests,
@@ -447,6 +455,8 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   correlation and causation, at-least-once delivery, retry and backoff, lag and failure visibility. Human-action lifecycle events carry safe metadata only.
 - SM-OBS-005 Inbound subscriptions are distinct from outbound publication. No external publication inside a DB write transaction.
 - SM-OBS-006 Administrators see the instance's status (version and build, start time, boot ID, schema and node protocol versions, storage health, live counts) on a System page and API, without secrets; the version alone is readable by every client.
+- SM-OBS-007 Usage is recorded per run, account, role, harness and space in an hourly ledger rolled up to daily rows, with bounded retention. Each
+  account's latest subscription-window snapshot is kept. Metric labels stay bounded (ADR-0090).
 
 ### SM-STORE — Storage, backups and restore
 - SM-STORE-001 Central SQLite plus a node-local durable journal. No multi-writer or network-filesystem SQLite.
@@ -609,3 +619,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0060 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |
 | 2026-11-08 | A System page like Hallpass's, plus a version API, for v0.1.0. | SM-OBS-006 (ADR-0067) |
 | 2026-11-13 | A native Telegram bot and Mini App: a linked person handles spaces, inbox, queue and "needs you" from Telegram as their own SpaceMan user, never wider and never step-up; notifications without fan-out; the Mini App on its own cookieless host; every setting through the API and Terraform, the token write-only; digests in each user's own timezone. Design in ADR-0083 (Proposed, security-relevant change; operator answers 2026-11-14). | SM-TG-001…014 |
+| 2026-11-15 | Account switching: a usage limit moves a run to another account of its pool (the same session, resumed) unless the reset is near (then the run waits); per-run usage logged per account, role and space; a launch-time headroom gate, off by default. Design in ADR-0090 (Accepted, security-relevant change; operator answers 2026-11-15). | SM-ACCT-003 (amended), SM-ACCT-007, SM-RUN-007, SM-OBS-007 |

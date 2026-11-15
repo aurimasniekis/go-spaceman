@@ -5413,6 +5413,95 @@
 - **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`, `TestWorkerInboxDedupKeyEffectiveLimit`;
   `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
 
+> **Number gap:** ADR-0089 is reserved by the Telegram chat-threads work on another branch (its topic and thread design).
+> Both branches reach main, so this decision takes the next free number. The gap on this branch is expected.
+
+### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
+- **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the
+  recommended defaults; see decisions 2 and 4). Not implemented: tasks T2–T11 of the plan in `docs/plans/2026-11-15-account-switching.md`.
+  Real two-account evidence is open as K-17.
+- **Security-relevant because:**
+  - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
+  - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now
+    move the run to another credential;
+  - SpaceMan takes ownership of two more Claude Code settings keys that run commands (`statusLine`, a `StopFailure` hook).
+- **Context:**
+  - ADR-0079 keeps a limited run alive or parks it until its reset. Its failover (`usage_limit_failover`, off by default)
+    applies only when a run is launched or resumed, and a resume names its old account, so in practice a limited run waits.
+  - The operator wants a limited run to continue at once on another subscription account of its pool, without a proxy or
+    gateway (no Harbor Pilot, no `claude -p` behind a proxy).
+  - Claude Code fixes `CLAUDE_CODE_OAUTH_TOKEN` for the life of the process ("To replace an expired token, generate a new
+    one and restart", official env-vars docs). Codex refuses to adopt a different account's `auth.json` in a running
+    process (`codex-rs/login/src/auth/manager.rs`: reload skipped on an account-id mismatch).
+  - Sessions belong to the instance's config folder, not the credential. `--resume` under another token works against a
+    fake API (2.1.323); with two real claude.ai accounts it is not verified (K-16, K-17).
+  - Claude Code 2.1.325 has a `StopFailure` hook (fire-and-forget; `error` enum includes `rate_limit`,
+    `authentication_failed`, `billing_error` …). Its status line receives `rate_limits.{five_hour,seven_day}.
+    {used_percentage,resets_at}` for subscription accounts, plus cost and token fields (official statusline docs).
+- **Decision:**
+  1. **A switch is a park with an immediate resume on another account.** When a run's limit opens, failover is on, the run
+     had a turn, the limited account's reset is more than `usage_limit_wait_if_reset_within` away (an unknown reset counts
+     as more), and the pool has an eligible account other than the run's, central arms a switch. At the run's next idle
+     point (at most 10 min) it parks the run as ADR-0079 does, with `resume_at = now` and the target account. The resume
+     launches a new run of the same instance with `--resume <session>` under that account and a fixed prompt. Nothing is
+     sent to a running process; no credential is written to the instance folder.
+  2. **Near reset: wait.** When the limited account resets within `usage_limit_wait_if_reset_within` (default 15 min), the
+     run does not switch. It waits as ADR-0079 does: kept alive, then parked until the reset.
+  3. **Pools.** The space's bindings for the harness, ordered by `space_accounts.priority`. An optional role pool
+     (`space_role_accounts`) replaces it for that role. Eligible: enabled, bound, compatible, with no open hold in any space
+     (probe-due holds included). Order: priority, lowest known window utilisation, fewest live runs, binding order. The
+     same order applies to launches and resumes whenever failover is on.
+  4. **Launch-time headroom gate, no pre-emptive switch.** `usage_limit_min_headroom_percent` (0–100, default 0 = off). A
+     new run (a launch, a fresh resume, or a switch's resume) starts on an account only if every window with known usage
+     keeps at least that percentage free (`100 − used_pct`). An account with no known usage is not refused by the gate. When
+     no eligible account passes, the start waits, as an exhausted account does today (refused with the reset time, SM-RUN-005).
+     Running agents are never switched before they reach a limit.
+  5. **Settings.** `usage_limit_failover` (existing, default off) enables live switching too. `usage_limit_switch_max_per_day`
+     (default 6 per instance) bounds switches; beyond it ADR-0079's wait applies. `usage_limit_wait_if_reset_within`
+     (default 15 min) and `usage_limit_min_headroom_percent` as in decisions 2 and 4.
+  6. **Detection.** ADR-0079's typed transcript scan stays the only thing that opens a hold or sets a limit. A
+     SpaceMan-owned `StopFailure` hook and status-line wrapper report allowlisted typed fields over the run's authenticated
+     bridge socket. The hook kicks the scan and records the failure class. The status line supplies window utilisation and
+     resets (filling the wrap-up path's missing reset, clamped as before), the cost estimate and tokens. A profile's own
+     status line is wrapped (run with the same input; its output is shown). No display text is read or forwarded.
+  7. **History and notices.** `account_switches` records every switch (states pending → parked → resumed → succeeded |
+     failed | fell_back | cancelled), with audit (`account.switch_*`), outbox events (`fleet.account_switch.*`) and the change
+     feed. Control gets one message per switch (`account-switch:<id>`), replacing the park and resume messages of that wait.
+     People are told only when the whole pool is exhausted (one human action per space and window).
+  8. **All accounts exhausted.** ADR-0079 unchanged, except that the wait's resume time is the earliest reset in the pool,
+     and the resume re-resolves.
+  9. **Usage ledger.** `run_usage` gains account, role and harness. `usage_buckets` (hourly, rolled up to daily) holds token
+     sums and the cost estimate per space, account, role, harness and model, written from cumulative deltas in the
+     usage-report transaction. `account_windows` holds each account's latest window snapshot, with 10-minute samples.
+     Retention: hourly 90 days, daily 730 days, samples 30 days; closed holds, waits and switches 180 days.
+  10. **Codex** follows in stages after a spike with real ChatGPT logins: typed `token_count.rate_limits` detection, then the
+      same switch with `codex resume` and the login links swapped. If a resume under another account is refused, Codex
+      switching stays off.
+  11. **Numbers and GOAL.** Protocol minor 13 (`MinorAccountUsage`: usage windows, cost estimate, limit source, failure
+      class; all optional). One central migration (pools, switches, ledger). SM-ACCT-003 amended; SM-ACCT-007, SM-RUN-007 and
+      SM-OBS-007 added, with TRACEABILITY rows marked `todo` (not implemented).
+- **Alternatives:**
+  - **Route through a gateway that holds several accounts** (Harbor Pilot). Rejected by the operator: usage, caching and
+    behaviour differ from the real interactive client.
+  - **In-place swap through a stored `.credentials.json`** (the binary re-reads it on an mtime change). Keeps background
+    shells, but leaves a long-lived token in the instance folder between runs, relies on undocumented behaviour and needs a
+    stored-login shape for `setup-token` tokens. Deferred to an optional spike.
+  - **`apiKeyHelper`** printing the current token. A 429 does not re-run it, whether a subscription token works through it is
+    unverified, and it outranks the env token for every run.
+  - **Switch on the status line alone** (utilisation at 100 %). Rejected as the only signal: it is display-adjacent data from
+    a command SpaceMan runs, not a typed transcript record. It is used only to fill resets and for the headroom gate.
+  - **Always switch, however close the reset** (the draft's default for Q4). Replaced by the wait window (decision 2).
+  - **A pre-emptive switch at a utilisation threshold** (the draft's `usage_limit_switch_at_percent`). Rejected by the
+    operator (plan Q5); the headroom gate applies only when a new run starts.
+- **Consequences:**
+  - A forged transcript record can now also move a run to another account. This is bounded by the 8-day hold clamp, the
+    daily switch budget, and the fact that the target is always an operator-bound account of the same pool.
+  - A switch ends the process: background shells and subagents end, and the prompt cache starts cold under the new
+    organization (an extra uncached request).
+  - A run whose reset is near waits rather than switching, so it can be stopped for up to the reset, as today.
+  - The headroom gate only changes behaviour when set above 0; the default leaves launches unchanged.
+  - Until two real accounts are tested (K-17, plan T1), the switch is implemented and simulated only.
+
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
   on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code
@@ -5788,3 +5877,4 @@
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
 | K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
 | K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run. None had been observed when the work was documented (UL-12, 2026-11-14). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |
+| K-17 | Account switching not verified with **two real claude.ai accounts** (ADR-0090; plan S-1, T1): `--resume` of a session under a different real account; `oauthAccount` in `.claude.json` after the change; whether the status line shows the new account's `rate_limits`; whether `StopFailure` and `Notification` fire as documented at a real limit (only if one can be reached cheaply). The Codex half (plan S-2, C1) is separate. Two subscription tokens come from the operator out of band; no token, email or account identity goes into the repository, logs or attachments. | SM-RUN-007, SM-ACCT-007 (real evidence) | Recorded in `docs/contracts/harnesses.md` when plan T1 runs. Until then the switch is implemented and simulated only (AGENTS.md status rules). Covers the switch path of K-16 |
