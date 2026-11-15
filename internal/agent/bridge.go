@@ -130,6 +130,10 @@ func (a *Agent) bridgeCall(ctx context.Context, req bridgeRequest) bridgeRespons
 	switch req.Tool {
 	default:
 		return a.forwardTool(ctx, req)
+	case ToolHookStopFailure:
+		return a.stopFailureIntake(ctx, req)
+	case ToolStatusLine:
+		return a.statusLineIntake(ctx, req)
 	case proto.ToolAttachmentSave:
 		return a.saveAttachment(ctx, r, req)
 	case "whoami":
