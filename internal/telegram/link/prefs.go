@@ -140,10 +140,10 @@ func (s *Service) SetPrefs(ctx context.Context, p *auth.Principal, actor audit.A
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
-	if err := in.LinkPrefs.Validate(s.o.Settings().NotificationDefaults); err != nil {
+	if err := in.Validate(s.o.Settings().NotificationDefaults); err != nil {
 		return nil, err
 	}
-	raw := in.LinkPrefs.Marshal()
+	raw := in.Marshal()
 	var out *Prefs
 	err := s.o.Store.W().TxNamed(ctx, "telegram.link.prefs", func(tx *store.Tx) error {
 		l, err := ownLink(ctx, tx.Q, p)
