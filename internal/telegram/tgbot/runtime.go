@@ -49,6 +49,8 @@ var Commands = []botapi.BotCommand{
 	{Command: "new", Description: "Create an inbox item"},
 	{Command: "queue", Description: "Queue of the current space"},
 	{Command: "runs", Description: "Runs of the current space"},
+	{Command: "messages", Description: "Messages waiting for you"},
+	{Command: "control", Description: "Talk to the control run"},
 	{Command: "spaces", Description: "Your spaces"},
 	{Command: "space", Description: "Switch the current space"},
 	{Command: "digest", Description: "Your digest now"},

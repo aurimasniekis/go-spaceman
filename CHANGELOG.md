@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
+  and what waits, with status changes, placement (top, up, down, bottom) and incident decisions after a confirmation;
+  `/runs` shows the live runs and stops one after a confirmation (the API requires `run:control`); `/messages` lists what
+  agents sent to the operators, to reply to, acknowledge or resolve. `/control` turns plain text into drafts you send to
+  the space's control run; its replies come back to the chat. There is no task creation or run launch in chat.
 - Telegram needs-you forms (ADR-0083, TG-7-1, not usable until the bot ships): `/needsyou` lists what waits for you; questions
   (options and free text), todos (steps), messages and custom types with a simple response schema (a step-by-step wizard)
   are answered in chat as you, with the same checks as the web. Approvals stay in the app.

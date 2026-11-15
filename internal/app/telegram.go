@@ -134,6 +134,14 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			}
 			return m.SpaceID, m.Key.ID, m.LinkID, true
 		},
+		// A notifier card of a message to the operators: a Telegram reply to it is a reply to that message (TG-8b).
+		ResolveMessage: func(ctx context.Context, chatID int64, messageID int) (string, string, string, bool) {
+			m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)
+			if err != nil || m.Key.Type != notify.TypeMessage {
+				return "", "", "", false
+			}
+			return m.SpaceID, m.Key.ID, m.LinkID, true
+		},
 		// Approvals and forms too complex for the chat open in the Mini App; without its host there is no button.
 		AppURL: func(spaceID, actionID string) string {
 			o := c.miniAppOrigin()

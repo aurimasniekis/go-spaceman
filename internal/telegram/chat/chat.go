@@ -73,6 +73,10 @@ type Options struct {
 	// Resolve maps a notifier card (chat, message) to its action and the link it was sent to (the telegram_messages
 	// mapping), for a button whose data doesn't carry the action ID. Nil: such buttons are refused.
 	Resolve func(ctx context.Context, chatID int64, messageID int) (spaceID, actionID, linkID string, ok bool)
+	// ResolveMessage maps a notifier card (chat, message) of a message to the operators to its space, the message's ID
+	// and the link it was sent to, so a Telegram reply to the card is a reply to the message (TG-8b). Nil: such replies
+	// are not taken.
+	ResolveMessage func(ctx context.Context, chatID int64, messageID int) (spaceID, msgID, linkID string, ok bool)
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
 
@@ -103,6 +107,7 @@ type Handler struct {
 	albums  map[albumKey]*album    // media groups still collecting parts
 	refused map[albumKey]time.Time // media groups answered "too many albums"; their other parts are dropped quietly
 	dl      chan struct{}          // the global download semaphore (capture.go)
+	qr      qrState                // reply prompts, control drafts and control mode (messages.go)
 }
 
 var _ updates.Handler = (*Handler)(nil)
@@ -148,10 +153,21 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 				h.cmdInbox(ctx, l, arg)
 			case "needsyou":
 				h.cmdNeedsYou(ctx, l, arg)
+			case "queue":
+				h.cmdQueue(ctx, l, arg)
+			case "runs":
+				h.cmdRuns(ctx, l, arg)
+			case "messages":
+				h.cmdMessages(ctx, l, arg)
+			case "control":
+				h.cmdControl(ctx, l, arg)
 			}
 			return
 		}
-		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l)) {
+		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l) || h.qrReply(ctx, m, l)) {
+			return
+		}
+		if h.controlText(ctx, m, l) {
 			return
 		}
 		h.capture(ctx, m, l)
