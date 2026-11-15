@@ -32,3 +32,6 @@ attribution needs specific mention.
 | Debian 13 (trixie) slim base image and the packages `git`, `openssh-client` (agent image), `ca-certificates`, `tini` | Runtime of the `spaceman` and `spaceman-agent` container images (not of the release archives) | Debian packages under their own licences | Pulled at image build time, not vendored. Each package's licence is in `/usr/share/doc/<package>/copyright` inside the image. |
 | robfig/cron v3.0.1 (`github.com/robfig/cron/v3`) | Cron expression parser of space schedules (`internal/schedule`); only the parser is used | MIT | Go module dependency (ADR-0036). |
 | goldmark v1.8.7 (`github.com/yuin/goldmark`) | Markdown parser of the Telegram renderer (`internal/telegram/render`, ADR-0083): CommonMark plus the GFM and footnote extensions | MIT | Go module dependency; no dependencies of its own. Parsed into SpaceMan's own AST; no goldmark HTML output is used. |
+| @tanstack/highlight 1.2.12 | Syntax highlighting of fenced code in rendered Markdown (`web/src/lib/highlight.ts`), loaded lazily | MIT | npm dependency (ADR-0082). |
+| mermaid 11.17.2 | Diagrams from Mermaid fences in rendered Markdown (`web/src/lib/mermaid.ts`), loaded lazily, strict mode | MIT | npm dependency, the docs site's version (ADR-0082). |
+| marked-footnote 1.4.0 | GFM footnotes in rendered Markdown | MIT | npm dependency (ADR-0082). |

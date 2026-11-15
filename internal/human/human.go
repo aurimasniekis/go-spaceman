@@ -187,11 +187,15 @@ type CreateInput struct {
 	InboxItemID   string
 	CorrelationID string
 	DedupKey      string
-	BlocksTask    bool
-	Priority      string
-	DueAt         *time.Time
-	ExpiresAt     *time.Time
-	FollowUpOf    string
+	// Internal marks an action SpaceMan's own services create under a reserved dedup namespace (ReservedDedup). It is
+	// never set from request input: an API or agent caller cannot create, or be handed back, an action under a key
+	// such as approval:<id> that a service will later look up and trust (ADR-0087).
+	Internal   bool
+	BlocksTask bool
+	Priority   string
+	DueAt      *time.Time
+	ExpiresAt  *time.Time
+	FollowUpOf string
 	// AttachmentIDs are attachments of the space the request references (SM-ATT-001).
 	AttachmentIDs []string
 }
@@ -379,6 +383,27 @@ func fromRow(r db.HumanAction) *Action {
 		CreatedAt:     time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
 }
 
+// reservedDedupPrefixes are the dedup namespaces of actions SpaceMan's own services create (ADR-0087). A service
+// that adds a key of its own adds its prefix here; Create refuses an internal key outside these namespaces, so a new
+// one can't be left unreserved by mistake.
+var reservedDedupPrefixes = []string{
+	"approval:",                // approvals.ask: the human action of an enforced approval
+	"usage-limit-human:",       // control: the people notice of a long usage-limit hold
+	"control-failing:",         // control supervisor: control keeps stopping
+	"control-autostart-limit:", // control supervisor: autostart limit reached
+	"control-autostart-refused:",
+}
+
+// ReservedDedup reports whether key is in a namespace only SpaceMan's own services may use.
+func ReservedDedup(key string) bool {
+	for _, p := range reservedDedupPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // Create adds a human action. The ID is durable immediately; a dedup key that exists returns the existing action
 // (created=false). A blocking action on a task records a task blocker in the same transaction; informational messages
 // never block (SM-HUM-008/010).
@@ -393,6 +418,12 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 	}
 	if len(in.AttachmentIDs) > MaxAttachments {
 		v.Add("attachment_ids", "at most %d attachments", MaxAttachments)
+	}
+	if in.DedupKey != "" && !in.Internal && ReservedDedup(in.DedupKey) {
+		v.Add("dedup_key", "this prefix is reserved for SpaceMan")
+	}
+	if in.Internal && !ReservedDedup(in.DedupKey) {
+		return nil, false, fmt.Errorf("human: internal action with an unreserved dedup key %q", in.DedupKey)
 	}
 	var req json.RawMessage
 	canBlock := true

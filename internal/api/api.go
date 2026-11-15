@@ -62,6 +62,10 @@ type Deps struct {
 	StreamRevalidate time.Duration
 	// StreamHeartbeat is the interval of the heartbeat event on idle live streams (zero: DefaultStreamHeartbeat).
 	StreamHeartbeat time.Duration
+	// CatchUps are central's slots for reading stored recordings (terminal catch-ups, replay pages), and CatchUpWait
+	// how long a reader waits for one (http.catch_up_concurrency, http.catch_up_wait; ADR-0081). nil: no bound.
+	CatchUps    chan struct{}
+	CatchUpWait time.Duration
 	// Extra registers additional operation groups (nodes, spaces, runs…) supplied by other packages.
 	Extra []func(api huma.API, d *Deps)
 	// ExtraRules are the authorization rules of the Extra operations.

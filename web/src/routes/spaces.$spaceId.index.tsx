@@ -10,13 +10,21 @@ import { SpaceAttentionCard } from '@/features/attention/SpaceAttentionCard'
 import { SpaceRolesCard } from '@/features/catalog/SpaceRolesCard'
 import { SpaceHarborPilotCard } from '@/features/harborpilot/SpaceHarborPilotCard'
 import { SpaceMcpCard } from '@/features/mcp/SpaceMcpCard'
+import { RunLimitBadge } from '@/features/limits/LimitTime'
 import { harnessLabel, isEnded, kindLabel, RunDot, runStateText, runTitle, sortRuns } from '@/features/runs/runInfo'
 import { RelocationCard } from '@/features/spaces/RelocationCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
 import { hasGlobal } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
+import { isMiniApp } from '@/api/session'
+import { TgSpaceOverview } from '@/tg/pages/TgSpaceOverview'
 
-export const Route = createFileRoute('/spaces/$spaceId/')({ component: SpacePage })
+export const Route = createFileRoute('/spaces/$spaceId/')({ component: SpaceRoute })
+
+function SpaceRoute() {
+  const { spaceId } = Route.useParams()
+  return isMiniApp() ? <TgSpaceOverview spaceId={spaceId} /> : <SpacePage />
+}
 
 /**
  * A space's overview (UX review §3.2): what needs attention, the agents running now, then configuration and usage, and
@@ -71,7 +79,9 @@ function SpacePage() {
                     </Group>
                   </Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text></Table.Td>
-                  <Table.Td><Text size="sm">{runStateText(r)}</Text></Table.Td>
+                  <Table.Td>
+                    <Group gap={6} wrap="wrap"><Text size="sm">{runStateText(r)}</Text><RunLimitBadge run={r} /></Group>
+                  </Table.Td>
                   <Table.Td><Tooltip label={datetime(r.started_at ?? r.created_at)}><Text size="sm" c="dimmed">{ago(isSet(r.started_at) ? r.started_at : r.created_at)}</Text></Tooltip></Table.Td>
                 </Table.Tr>
               ))}

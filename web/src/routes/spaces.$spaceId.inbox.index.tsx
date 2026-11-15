@@ -2,13 +2,14 @@ import { Box, Button, Card, Group, SegmentedControl, Stack, Table, Text, Tooltip
 import { IconPaperclip, IconPlus } from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useInbox, useMe, type InboxStatus } from '@/api/queries'
+import { isMiniApp } from '@/api/session'
+import { useInbox, type InboxStatus } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { InboxStatusBadge, sourceLabel, statusLabel, UrgencyBadge } from '@/features/inbox/badges'
 import { NewItemModal } from '@/features/inbox/NewItemModal'
-import { atLeast, roleIn } from '@/lib/access'
+import { useCanCreateInboxItem } from '@/features/inbox/useNewInboxItem'
 import { ago, datetime } from '@/lib/format'
 
 export const Route = createFileRoute('/spaces/$spaceId/inbox/')({ component: InboxPage })
@@ -18,13 +19,12 @@ const FILTERS: (InboxStatus | '')[] = ['new', 'in_progress', 'deferred', 'done',
 function InboxPage() {
   const { spaceId } = Route.useParams()
   const navigate = useNavigate()
-  const me = useMe().data
   const [status, setStatus] = useState<InboxStatus | ''>('new')
   const [creating, setCreating] = useState(false)
   const inbox = useInbox(spaceId, status)
   const counts = inbox.data?.pages[0]?.counts
   const items = inbox.data?.pages.flatMap((p) => p.items) ?? []
-  const canWrite = atLeast(roleIn(me, spaceId), 'operator')
+  const canWrite = useCanCreateInboxItem(spaceId)
 
   return (
     <>
@@ -43,6 +43,24 @@ function InboxPage() {
           />
         </Box>
         <ErrorAlert error={inbox.error} />
+        {isMiniApp() ? (
+          // A phone gets cards, not a table to scroll sideways.
+          <Stack gap={6} role="list" aria-label="Inbox items">
+            {items.map((it) => (
+              <Card key={it.id} p="xs" role="listitem">
+                <Group gap={6} wrap="nowrap" align="flex-start">
+                  <UrgencyBadge urgency={it.urgency} />
+                  <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                    <AnchorLink to="/spaces/$spaceId/inbox/$itemId" params={{ spaceId, itemId: it.id }} size="sm" fw={it.status === 'new' ? 600 : 400} style={{ overflowWrap: 'anywhere' }}>{it.title}</AnchorLink>
+                    <Text size="xs" c="dimmed">{it.source_label || sourceLabel[it.source_kind]} · {ago(it.received_at)}</Text>
+                  </Stack>
+                  <InboxStatusBadge status={it.status} />
+                </Group>
+              </Card>
+            ))}
+            {inbox.isSuccess && items.length === 0 && <Text size="sm" c="dimmed" ta="center" p="md">{status ? `No ${statusLabel[status].toLowerCase()} items.` : 'The inbox is empty.'}</Text>}
+          </Stack>
+        ) : (
         <Card p={0}>
           <Table.ScrollContainer minWidth={560}>
             <Table>
@@ -78,6 +96,7 @@ function InboxPage() {
             </Table>
           </Table.ScrollContainer>
         </Card>
+        )}
         {inbox.hasNextPage && <Button variant="default" w="fit-content" loading={inbox.isFetchingNextPage} onClick={() => void inbox.fetchNextPage()}>Load older</Button>}
       </Stack>
       <NewItemModal spaceId={spaceId} opened={creating} onClose={() => setCreating(false)}
