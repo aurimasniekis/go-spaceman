@@ -107,9 +107,16 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 				return &struct{ Body *messages.Message }{Body: m}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "ack-message", Method: http.MethodPost, Path: "/spaces/{space_id}/messages/{message_id}/ack",
-			Summary: "Acknowledge a message addressed to operators", Tags: tags},
-			func(ctx context.Context, in *MessagePath) (*struct{ Body *messages.Message }, error) {
-				m, err := svc.AckOperator(ctx, Actor(ctx), in.SpaceID, in.MessageID)
+			Summary: "Acknowledge a message addressed to operators", Description: "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).", Tags: tags},
+			func(ctx context.Context, in *struct {
+				MessagePath
+				IfMatch
+			}) (*struct{ Body *messages.Message }, error) {
+				v, err := optionalVersion(in.IfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "messages.ack", err)
+				}
+				m, err := svc.AckOperator(ctx, Actor(ctx), in.SpaceID, in.MessageID, v)
 				if err != nil {
 					return nil, d.fail(ctx, "messages.ack", err)
 				}
@@ -148,14 +155,19 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 				return &struct{ Body *messages.Message }{Body: m}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "resolve-message", Method: http.MethodPost, Path: "/spaces/{space_id}/messages/{message_id}/resolve",
-			Summary: "Close a message or request", Tags: tags},
+			Summary: "Close a message or request", Description: "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).", Tags: tags},
 			func(ctx context.Context, in *struct {
 				MessagePath
+				IfMatch
 				Body struct {
 					Resolution string `json:"resolution,omitempty" maxLength:"2000"`
 				}
 			}) (*struct{ Body *messages.Message }, error) {
-				m, err := svc.Resolve(ctx, Actor(ctx), in.SpaceID, in.MessageID, in.Body.Resolution)
+				v, err := optionalVersion(in.IfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "messages.resolve", err)
+				}
+				m, err := svc.Resolve(ctx, Actor(ctx), in.SpaceID, in.MessageID, in.Body.Resolution, v)
 				if err != nil {
 					return nil, d.fail(ctx, "messages.resolve", err)
 				}

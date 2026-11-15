@@ -257,3 +257,35 @@ func redactString(s, secret string) string {
 	}
 	return strings.ReplaceAll(s, secret, "<redacted>")
 }
+
+// CreateForumTopicParams are createForumTopic's parameters (API#createforumtopic). In a private chat the bot may
+// create topics once topics are enabled for it; Name is 1–128 characters.
+type CreateForumTopicParams struct {
+	ChatID int64  `json:"chat_id"`
+	Name   string `json:"name"`
+}
+
+// ForumTopic is a created topic (API#forumtopic); MessageThreadID is what messages in the topic carry.
+type ForumTopic struct {
+	MessageThreadID int    `json:"message_thread_id"`
+	Name            string `json:"name"`
+}
+
+// CreateForumTopic creates a topic in the chat.
+func (c *Client) CreateForumTopic(ctx context.Context, p CreateForumTopicParams) (ForumTopic, error) {
+	var t ForumTopic
+	err := c.Call(ctx, "createForumTopic", p, &t)
+	return t, err
+}
+
+// IsTopicGone reports whether err says the topic a message was addressed to was deleted or closed, or never existed:
+// the caller recreates the topic or falls back to the main chat.
+func IsTopicGone(err error) bool {
+	var e *Error
+	if !errors.As(err, &e) || e.Code != 400 {
+		return false
+	}
+	d := strings.ToLower(e.Description)
+	return strings.Contains(d, "message thread not found") || strings.Contains(d, "topic_closed") ||
+		strings.Contains(d, "topic_deleted") || strings.Contains(d, "topic closed") || strings.Contains(d, "topic deleted")
+}

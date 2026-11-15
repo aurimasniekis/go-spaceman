@@ -28,6 +28,10 @@ var Excluded = map[string]string{ //nolint:gosec // G101 false positive: operati
 	"get-telegram-me": "the Telegram Mini App's own identity (the get-me document): served only on the Mini App host, to a Mini App session (ADR-0083)",
 	"create-telegram-download-link": "mints a signed, single-purpose download link for the Telegram Mini App: served only on the Mini App host, " +
 		"to a Mini App session (ADR-0083)",
+	"get-my-telegram-link-prefs": "a Telegram link's own notification preferences: served only on the Mini App host, to that link's " +
+		"Mini App session (ADR-0083 amendment TG-10-4)",
+	"set-my-telegram-link-prefs": "a Telegram link's own notification preferences: served only on the Mini App host, to that link's " +
+		"Mini App session (ADR-0083 amendment TG-10-4)",
 }
 
 // ExcludedIDs returns the excluded operation IDs, sorted.

@@ -95,6 +95,7 @@ Every other operation of the API has a command. These belong to the browser's si
 | `create-telegram-link-code` | Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused |
 | `create-telegram-session` | the Telegram Mini App's session exchange: served only on the Mini App host, from the Mini App's origin, with initData Telegram signs for the app (ADR-0083) |
 | `delete-my-telegram-link` | Telegram linking (ADR-0083): a person's own browser session on the Account page |
+| `get-my-telegram-link-prefs` | a Telegram link's own notification preferences: served only on the Mini App host, to that link's Mini App session (ADR-0083 amendment TG-10-4) |
 | `get-telegram-link-code` | Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused |
 | `get-telegram-me` | the Telegram Mini App's own identity (the get-me document): served only on the Mini App host, to a Mini App session (ADR-0083) |
 | `list-my-telegram-links` | Telegram linking (ADR-0083): a person's own browser session on the Account page |
@@ -106,6 +107,7 @@ Every other operation of the API has a command. These belong to the browser's si
 | `reconfirm-telegram-link` | Telegram linking (ADR-0083): a person's own browser session on the Account page |
 | `recovery-login` | break-glass sign-in that creates a browser session; the recovery token is used on the sign-in page |
 | `reset-password` | public and token-less: central accepts an anonymous state-changing request only from its own web origin (cross-site protection), so the user redeems the reset token on the sign-in page; `spaceman user reset-token` issues it |
+| `set-my-telegram-link-prefs` | a Telegram link's own notification preferences: served only on the Mini App host, to that link's Mini App session (ADR-0083 amendment TG-10-4) |
 | `start-oidc` | browser redirect to the identity provider (sign-in, step-up, link or test login) |
 | `verify-mfa` | second step of an interactive sign-in, on the session that login created |
 

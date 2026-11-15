@@ -32,7 +32,7 @@ type qrAPI struct {
 	calls    []string         // "METHOD path" of every write
 	bodies   []map[string]any // the bodies of those writes
 	hdrs     []http.Header    // and their headers
-	conflict bool             // the next task write answers 412
+	conflict bool             // the next task write answers 409
 	moves    []map[string]any
 
 	extraMsgs, extraPending int // filler messages and waiting ones beyond the list
@@ -116,7 +116,7 @@ func (a *qrAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch seg[4] {
 		case "status", "incident":
 			if a.conflict || r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, t.Version) {
-				out(412, map[string]any{"status": 412, "detail": "changed"})
+				out(409, map[string]any{"status": 409, "detail": "changed"})
 				return
 			}
 			if seg[4] == "status" {
@@ -129,6 +129,10 @@ func (a *qrAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			t.Version++
 		case "move":
+			if r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, t.Version) {
+				out(409, map[string]any{"status": 409, "detail": "changed"})
+				return
+			}
 			a.moves = append(a.moves, body)
 			t.Version++
 		case "resume":
@@ -176,6 +180,10 @@ func (a *qrAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m := a.msgs[seg[3]]
 		if m == nil {
 			out(404, map[string]any{"status": 404})
+			return
+		}
+		if (seg[4] == "ack" || seg[4] == "resolve") && r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, m.Version) {
+			out(409, map[string]any{"status": 409, "detail": "changed"})
 			return
 		}
 		switch seg[4] {
