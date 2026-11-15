@@ -307,6 +307,15 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     // A tail catch-up starts with what the output before it left: the size, modes, gaps (records with seq 0). A server
     // without tails sends none and the whole recording follows, as before.
     let sawTail = false
+    // The stream is over for good (ended or refused): a reload still waiting for its records never gets them, so it
+    // stops waiting (the load-earlier button comes back) rather than staying "reloading".
+    const over = (state: 'ended' | 'denied') => {
+      setState(state)
+      if (reload.current !== null) {
+        reload.current = null
+        setReloading(false)
+      }
+    }
     const handle = watchTransport().open(url, {
       // The failure count is reset by the first record, not by the open: a stream that opens and closes with nothing keeps backing off.
       onOpen: () => setState('live'),
@@ -315,13 +324,13 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
         if (closed) return
         // Refused outright (the Mini App's stream is off for this space, or the viewer may not watch): never retried.
         if (status === 403 || status === 404) {
-          setState('denied')
+          over('denied')
           return
         }
         // The server answered with an error (central busy reading recordings answers 503, ADR-0081), which the browser
         // never retries: try again, backing off, a few times.
         if (failures.current >= 8) {
-          setState('ended')
+          over('ended')
           return
         }
         setState('connecting')
@@ -355,13 +364,13 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
         } else if (type === 'end') {
           handle.close()
           const reason = endReasonOf(data)
-          if (reason === 'forbidden') setState('denied')
-          else if (reason !== 'unauthenticated') setState('ended')
+          if (reason === 'forbidden') over('denied')
+          else if (reason !== 'unauthenticated') over('ended')
           else {
             setState('connecting')
             void watchTransport().sessionStillValid().then((ok) => {
               if (closed) return
-              if (!ok || failures.current >= 8) return setState('ended')
+              if (!ok || failures.current >= 8) return over('ended')
               // Back off like any refused stream: a session the server no longer accepts must not loop.
               retry = setTimeout(() => !closed && setAttempt((n) => n + 1), Math.min(30_000, 1_000 * 2 ** failures.current++))
             })

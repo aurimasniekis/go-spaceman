@@ -17,6 +17,9 @@ const ghostty = vi.hoisted(() => {
         created.push(this)
       }
       open() {}
+      onResize() {
+        return { dispose() {} }
+      }
       dispose() {
         this.disposed = true
       }
@@ -349,5 +352,16 @@ describe('watchKeys', () => {
     expect(key(el)).toBe(false)
     setInputMode(term, false)
     expect(key(el)).toBe(true)
+  })
+})
+
+describe('resetTerminal', () => {
+  it('erases a new terminal out to the largest size the terminal has had, then back to its own size', async () => {
+    const { resetTerminal } = await import('./ghostty')
+    const calls: string[] = []
+    const term = { cols: 80, rows: 24, reset: () => calls.push('reset'), write: () => calls.push('term.write'), wasmTerm: { resize: (c: number, r: number) => calls.push(`resize ${c}x${r}`), write: () => calls.push('erase') } }
+    // No size history recorded for a terminal createTerminal did not make: its own size is the largest.
+    resetTerminal(term as never)
+    expect(calls).toEqual(['reset', 'erase'])
   })
 })
