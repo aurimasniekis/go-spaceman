@@ -96,7 +96,17 @@ func (s *Service) topicsOut(l db.TelegramLink, p *auth.Principal) TopicsPrefs {
 	}
 	out.Refused = mode != settings.ThreadsOff && s.o.TopicsRefused != nil && s.o.TopicsRefused(l.ChatID)
 	subj := p.Subjects()
+	var visible map[string]bool
+	if s.o.VisibleSpaces != nil {
+		visible = map[string]bool{}
+		for _, id := range s.o.VisibleSpaces() {
+			visible[id] = true
+		}
+	}
 	for _, id := range threadSpaces(l.TopicsJson) {
+		if visible != nil && !visible[id] {
+			continue
+		}
 		if s.o.CanRead != nil && s.o.CanRead(subj, id) {
 			out.Spaces = append(out.Spaces, id)
 		}

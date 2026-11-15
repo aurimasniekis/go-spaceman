@@ -83,12 +83,12 @@ async function launch(page: Page, o: Fixtures) {
       if (!ifMatch) return route.fulfill(json({ status: 428, code: 'precondition_required', title: 'x', detail: 'x' }, 428))
       if (conflicts-- > 0) {
         prefs = { ...prefs, version: (prefs.version as number) + 1, timezone: 'Europe/Paris' }
-        return route.fulfill({ status: 412, contentType: 'application/problem+json', body: JSON.stringify({ status: 412, code: 'version_conflict', title: 'Precondition failed', detail: 'changed' }) })
+        return route.fulfill({ status: 409, contentType: 'application/problem+json', body: JSON.stringify({ status: 409, code: 'precondition_failed', title: 'Conflict', detail: 'changed' }) })
       }
       const b = req.postDataJSON() as Record<string, unknown>
       const layout = (b.threads as string | undefined) ?? 'auto'
       prefs = { ...prefs, version: (prefs.version as number) + 1, timezone: (b.timezone as string) ?? prefs.timezone, overrides: { ...b, timezone: undefined }, effective: { ...(prefs.defaults as object), ...b, muted_spaces: b.muted_spaces ?? [] },
-        topics: topics({ mode: layout, override: b.threads, active: layout !== 'off' && (prefs.topics as { available: boolean }).available }) }
+        topics: topics({ mode: layout, override: b.threads, active: (layout === 'on' || (layout === 'auto' && (prefs.topics as { available: boolean }).available)) && !(prefs.topics as { refused: boolean }).refused }) }
       return route.fulfill(json(prefs))
     }
     if (p === `/spaces/${SPACE}/queue/next`) return route.fulfill(json({ selected: task(1), skipped: [{ task_id: T(2), title: 'Blocked one', reason: 'depends on Task number 1' }] }))
@@ -381,6 +381,22 @@ test('settings: the chat layout says when topics are unavailable', async ({ page
   await clean(page)
 })
 
+test('settings: the chat layout says when topics are on but the bot lacks them', async ({ page }) => {
+  const base = basePrefs()
+  const seen = await launch(page, { path: '/settings', prefs: { ...base, overrides: { threads: 'on' }, effective: { ...(base.effective as object), threads: 'on' }, topics: topics({ available: false, active: true, mode: 'on', override: 'on', spaces: [] }) } })
+  const form = page.getByRole('form', { name: 'Notification settings' })
+  await expect(form.getByText(/Topics are on, but the bot does not have them enabled in BotFather.*refuse/)).toBeVisible()
+  await expect(form.getByText(/Topics are not available now/)).toHaveCount(0)
+  await clean(page)
+  // The mock answers a save the way the server does: on stays active while topics are unavailable.
+  const layout = form.getByLabel('Chat layout', { exact: true })
+  await layout.selectOption({ label: 'Automatic' })
+  await expect(form.getByText('Save to apply this layout.')).toBeVisible()
+  await form.getByRole('button', { name: 'Save' }).click()
+  await expect.poll(() => seen.puts.length).toBe(1)
+  await expect(form.getByText('Save to apply this layout.')).toHaveCount(0)
+})
+
 test('settings: the chat layout says when Telegram refused topics', async ({ page }) => {
   const base = basePrefs()
   await launch(page, { path: '/settings', prefs: { ...base, topics: topics({ active: false, refused: true }) } })
@@ -412,7 +428,7 @@ test('settings: an untouched override equal to the default is kept', async ({ pa
   expect(seen.puts[0].body).toEqual({ reminders: 'push', failed_runs: 'off', inbox_items: 'push' })
 })
 
-test('settings: a stale save (412) reloads the form and shows a conflict notice', async ({ page }) => {
+test('settings: a stale save (409) reloads the form and shows a conflict notice', async ({ page }) => {
   const seen = await launch(page, { path: '/settings', putStatus: 412 })
   const form = page.getByRole('form', { name: 'Notification settings' })
   await form.getByLabel('New inbox items').selectOption('push')

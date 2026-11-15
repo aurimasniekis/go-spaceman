@@ -115,8 +115,10 @@ type Options struct {
 	TopicsEnabled   func(mode string, chatID int64) bool
 	TopicsRefused   func(chatID int64) bool
 	CanRead         func(subjects []string, spaceID string) bool
-	Clock           clock.Clock
-	Log             *slog.Logger
+	// VisibleSpaces lists the spaces enabled for Telegram; a space hidden from Telegram is not named in the chat layout state (nil: no filter).
+	VisibleSpaces func() []string
+	Clock         clock.Clock
+	Log           *slog.Logger
 }
 
 // Service runs the linking protocol.

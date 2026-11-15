@@ -167,6 +167,12 @@ func TestMiniAppLinkPrefsChatLayout(t *testing.T) {
 		t.Fatalf("on: %+v", p.Topics)
 	}
 	published("on")
+	// A threads save needs the version: none is 428, a stale one (v1, the link is at v2) 409 (precondition_failed), and neither changes the link.
+	expect(t, e.put(t, prefsPath, "", map[string]any{"threads": "off"}), 428)
+	expect(t, e.put(t, prefsPath, `"1"`, map[string]any{"threads": "off"}), 409)
+	if prefs, _, _, v := e.row(t, e.linkID); prefs != `{"threads":"on"}` || v != 2 {
+		t.Fatalf("a refused threads save changed the link: %s v%d", prefs, v)
+	}
 	r = e.put(t, prefsPath, `"2"`, map[string]any{"threads": "off"})
 	expect(t, r, 200)
 	r.json(t, &p)

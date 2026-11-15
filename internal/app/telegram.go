@@ -107,6 +107,7 @@ func (c *Central) newTelegramLink() *tglink.Service {
 		TopicsEnabled:   func(mode string, chatID int64) bool { return c.TelegramTopics.EnabledFor(mode, chatID) },
 		TopicsRefused:   func(chatID int64) bool { return c.TelegramTopics.Refused(chatID) },
 		CanRead:         func(subj []string, id string) bool { return c.Authz.AllowedAll(subj, id, authz.SpaceRead) },
+		VisibleSpaces:   c.TelegramSettings.VisibleSpaces,
 		PublicURL:       c.Cfg.PublicURL, Bus: c.Bus, Clock: c.Clock, Log: log, Notify: func(chatID int64, text string) {
 			snd := c.TelegramBot.Sender()
 			if snd == nil {

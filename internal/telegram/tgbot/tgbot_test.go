@@ -442,6 +442,12 @@ func TestTopicFlagsResetAndRefresh(t *testing.T) {
 		t.Fatalf("failed getMe: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
 	}
 
+	// Back on with the flags true again, straight into the token switch: only the reset can explain the flags it reports.
+	b = e.put(b.Version, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !e.svc.HasTopics() || !b.Health.HasTopicsEnabled || !b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("on again: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
 	// A token for another bot, which has topics off: its flags replace the old ones.
 	other := tgtest.New(t, tgtest.Options{Limits: tgtest.Limits{Disabled: true}})
 	other.SetBotTopics(false, false)

@@ -238,6 +238,12 @@ func TestLinkPrefsTopicsState(t *testing.T) {
 	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a2")); err != nil || p.Topics.Refused || len(p.Topics.Spaces) != 0 {
 		t.Fatalf("another chat: %+v, %v", p.Topics, err)
 	}
+	// A space hidden from Telegram is not listed even when the link may read it.
+	svc.o.VisibleSpaces = func() []string { return []string{"spc_01m6pepsjyef08vppza1z94q8a"} }
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || !slices.Equal(p.Topics.Spaces, []string{"spc_01m6pepsjyef08vppza1z94q8a"}) {
+		t.Fatalf("hidden space listed: %+v, %v", p.Topics, err)
+	}
+	svc.o.VisibleSpaces = nil
 	svc.o.CanRead = func([]string, string) bool { return false }
 	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || len(p.Topics.Spaces) != 0 {
 		t.Fatalf("no readable thread space: %+v, %v", p.Topics, err)
