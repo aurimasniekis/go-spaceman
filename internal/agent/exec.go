@@ -125,12 +125,14 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			return
 		}
 		a.ack(ctx, c, proto.AckAccepted, "")
-		go a.launch(context.WithoutCancel(ctx), c, p)
+		a.goTrack(func() { a.launch(context.WithoutCancel(ctx), c, p) })
 	case proto.CmdStop:
 		var p proto.StopPayload
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
-		go a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+		a.goTrack(func() {
+			a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+		})
 	case proto.CmdReposSync:
 		a.handleReposSync(ctx, c)
 		return // the sync journals its own outcome (its report) when it finishes
@@ -553,6 +555,9 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	switch {
 	case ended(row.State) && !ended(prev.State):
 		bctx := context.WithoutCancel(ctx)
+		if row.Harness == harness.KindClaude {
+			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
+		}
 		a.goTrack(func() {
 			a.mem.flush(bctx, row, "run ended")
 			a.usageFinal(bctx, row)
@@ -562,6 +567,11 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)
+	}
+	// Usage limits (ADR-0079): scanned when a turn ends (idle, done) or fails (error), never per output chunk.
+	if row.State == proto.RunRunning && row.Harness == harness.KindClaude && limitScanned(row.Status) &&
+		(prev.Status != row.Status || prev.Turn != row.Turn) {
+		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
 }
 
@@ -626,7 +636,7 @@ func (a *Agent) stopSpaceRuns(ctx context.Context, spaceID string, match func(ru
 	}
 	for _, r := range runs {
 		if r.SpaceID == spaceID && match(r) {
-			go a.stop(context.WithoutCancel(ctx), r.RunID, mode, 15*time.Second, reason)
+			a.goTrack(func() { a.stop(context.WithoutCancel(ctx), r.RunID, mode, 15*time.Second, reason) })
 		}
 	}
 }
@@ -648,7 +658,7 @@ func (a *Agent) reconcileDesired(ctx context.Context, rec proto.Reconcile) {
 			// Unknown to central (or already ended there): report; central fences and stops it if needed.
 			a.report(ctx, r)
 		case d.Desired == "stopped" || d.Generation != r.Generation:
-			go a.stop(context.WithoutCancel(ctx), r.RunID, "interrupt", 15*time.Second, "central reconcile")
+			a.goTrack(func() { a.stop(context.WithoutCancel(ctx), r.RunID, "interrupt", 15*time.Second, "central reconcile") })
 		default:
 			a.report(ctx, r)
 		}
@@ -882,13 +892,15 @@ func writeSecrets(runDir string, env map[string]string, runToken string) error {
 func (a *Agent) startRecorder(ctx context.Context, row runRow) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, ok := a.recorders[row.RunID]; ok {
+	if _, ok := a.recorders[row.RunID]; ok || a.recordersStopped {
 		return
 	}
 	rctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	rec := &recorder{cancel: cancel, sizes: make(chan [2]int, 16)}
 	a.recorders[row.RunID] = rec
+	a.recWG.Add(1) // under a.mu, with recordersStopped checked above: stopRecorders never Waits concurrently with an Add
 	go func() {
+		defer a.recWG.Done()
 		defer func() {
 			a.mu.Lock()
 			if a.recorders[row.RunID] == rec {

@@ -405,7 +405,11 @@ type CreateInput struct {
 	AssigneeRole, Workspace      string
 	OriginKind, OriginID         string
 	// DedupKey makes repeated triggers idempotent: an existing task with the key is returned unchanged (never moved).
-	DedupKey  string
+	DedupKey string
+	// Internal marks a task SpaceMan's own services create under a reserved dedup namespace (ReservedDedup). It is
+	// never set from request input, so an API or agent caller can't plant a task under a key a service will reuse
+	// (ADR-0087).
+	Internal  bool
 	DependsOn []string
 	// Triggers name who asks for an incident (kind incident), most specific first: operator, control,
 	// subscription:<id>, template:<id>. The first one the queue policy trusts raises it (SM-QUEUE-009).
@@ -462,12 +466,37 @@ func checkExclusions(xs []string) error {
 	return nil
 }
 
+// reservedDedupPrefixes are the dedup namespaces of tasks SpaceMan's own services create (ADR-0087). Create refuses
+// an internal key outside them, so a service that adds a key adds its prefix here.
+var reservedDedupPrefixes = []string{
+	"xspace:",   // xspace: the local task of an accepted cross-space request
+	"schedule:", // schedule: one occurrence of a space schedule
+}
+
+// ReservedDedup reports whether key is in a namespace only SpaceMan's own services may use.
+func ReservedDedup(key string) bool {
+	for _, p := range reservedDedupPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // Create adds a task. With a dedup key that already exists, the existing task is returned and created is false: a
 // duplicate trigger never re-promotes a task an operator moved (SM-QUEUE-002). An incident is raised only by a source
 // the space's queue policy trusts (in.Triggers); an untrusted one is refused or becomes a proposal (SM-QUEUE-009).
 func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID string, in CreateInput) (*Task, bool, error) {
 	if err := in.validate(); err != nil {
 		return nil, false, err
+	}
+	if in.Internal && !ReservedDedup(in.DedupKey) {
+		return nil, false, fmt.Errorf("queue: internal task with an unreserved dedup key %q", in.DedupKey)
+	}
+	if !in.Internal && ReservedDedup(in.DedupKey) {
+		v := &apperr.Validation{}
+		v.Add("dedup_key", "this prefix is reserved for SpaceMan")
+		return nil, false, v.Err()
 	}
 	if in.Exclusions == nil {
 		in.Exclusions = []string{}
