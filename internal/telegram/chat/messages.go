@@ -506,8 +506,8 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
-		// Neither operation takes a version, so the card's is compared with the message's: a card that went stale
-		// (acknowledged or resolved elsewhere, or changed) gets a conflict and a refresh.
+		// The card's version is compared with the message's first, and sent as If-Match too, so a change in between is a
+		// 409 conflict: a card that went stale (acknowledged or resolved elsewhere, or changed) gets a refresh.
 		if m.Version != v || !m.open() || (f[0] == "ma" && !m.waiting()) {
 			h.answer(ctx, q.ID, TextStale)
 			h.show(ctx, l.ChatID, q.Message, h.messageCard(m, s))
@@ -517,7 +517,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 		if f[0] == "mv" {
 			verb, body = "resolve", map[string]any{}
 		}
-		r := c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/messages/"+id+"/"+verb, body, nil)
+		r := c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/messages/"+id+"/"+verb, body, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, v)})
 		if !r.ok() {
 			h.answer(ctx, q.ID, failText(r))
 			if conflict(r) {

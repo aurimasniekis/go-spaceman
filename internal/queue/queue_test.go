@@ -95,7 +95,7 @@ func TestOrderingAndIncidents(t *testing.T) {
 		t.Fatalf("incident insertion: %v %s", err, f.order())
 	}
 	// The operator drags the incident down: it stays there.
-	_, err = f.svc.Move(f.ctx, op, "spc_a", inc.ID, MoveInput{To: "bottom"})
+	_, err = f.svc.Move(f.ctx, op, "spc_a", inc.ID, 0, MoveInput{To: "bottom"})
 	must(t, err)
 	if got := f.order(); got != "hot a b low outage" {
 		t.Fatalf("move: %s", got)
@@ -119,9 +119,9 @@ func TestOrderingAndIncidents(t *testing.T) {
 	// Before/after placement and many moves (rank rebalancing).
 	l, _, _ := f.svc.List(f.ctx, "spc_a")
 	for i := 0; i < 40; i++ {
-		_, err := f.svc.Move(f.ctx, op, "spc_a", l[4].ID, MoveInput{AfterID: l[0].ID})
+		_, err := f.svc.Move(f.ctx, op, "spc_a", l[4].ID, 0, MoveInput{AfterID: l[0].ID})
 		must(t, err)
-		_, err = f.svc.Move(f.ctx, op, "spc_a", l[4].ID, MoveInput{BeforeID: l[1].ID})
+		_, err = f.svc.Move(f.ctx, op, "spc_a", l[4].ID, 0, MoveInput{BeforeID: l[1].ID})
 		must(t, err)
 	}
 	if got := f.order(); got != "outage low hot a b" {
@@ -200,7 +200,7 @@ func TestStatesAndPreemption(t *testing.T) {
 	work := f.add(CreateInput{Title: "feature"})
 	_, err = f.svc.SetStatus(f.ctx, op, "spc_a", work.ID, work.Version, StatusInput{Status: Running})
 	must(t, err)
-	_, err = f.svc.Move(f.ctx, op, "spc_a", work.ID, MoveInput{To: "bottom"})
+	_, err = f.svc.Move(f.ctx, op, "spc_a", work.ID, 0, MoveInput{To: "bottom"})
 	must(t, err)
 	if f.get(work.ID).Status != Running {
 		t.Fatal("reordering changed a running task")
