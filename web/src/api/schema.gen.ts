@@ -4407,6 +4407,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/telegram/link/prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your Telegram link's notification preferences
+         * @description Mini App host only (404 elsewhere). The preferences of the Telegram link the session belongs to: its overrides, the defaults they apply to, the effective result and your time zone. There is no link ID: it is always the caller's own link.
+         */
+        get: operations["get-my-telegram-link-prefs"];
+        /**
+         * Save your Telegram link's notification preferences
+         * @description Mini App host only (404 elsewhere). Replaces the overrides of the Telegram link the session belongs to: a field left out follows the defaults again. timezone, when sent, sets your user's time zone (empty clears it). Send If-Match with the version you read. It changes nothing else: not another link, the link's role cap, spaces or grants, nor any space's or the global Telegram settings.
+         */
+        put: operations["set-my-telegram-link-prefs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/telegram/links": {
         parameters: {
             query?: never;
@@ -8685,6 +8709,88 @@ export interface components {
             /** @description Open this path in the browser to sign in at the provider and link the identity */
             url: string;
         };
+        LinkPrefs: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LinkPrefs.json
+             */
+            readonly $schema?: string;
+            /** @description The administrator's defaults the link follows where it changed nothing */
+            defaults: components["schemas"]["SettingsNotificationDefaults"];
+            /** @description What the link is notified about: the defaults with its overrides applied */
+            effective: components["schemas"]["SettingsEffectivePrefs"];
+            /** @description The link these preferences belong to: always the caller's own */
+            link_id: string;
+            /** @description What this link changed; every field left out follows the defaults */
+            overrides: components["schemas"]["SettingsLinkPrefs"];
+            /** @description Your IANA time zone, shared by your links and the web Account page (empty: unset, so the digest and quiet hours are off) */
+            timezone: string;
+            /** @description Topics mode (a topic per space in the private chat) */
+            topics: components["schemas"]["LinkTopicsPrefs"];
+            /**
+             * Format: int64
+             * @description The link's version; send it as If-Match to save
+             */
+            version: number;
+        };
+        LinkPrefsInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LinkPrefsInput.json
+             */
+            readonly $schema?: string;
+            /** @description Default true */
+            assigned_to_me?: boolean;
+            /** @description Default true */
+            clarifications?: boolean;
+            /** @description Default true */
+            digest?: boolean;
+            /** @description HH:MM, default 09:00 */
+            digest_time?: string;
+            /** @description Default true */
+            escalations?: boolean;
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            failed_runs?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            inbox_items?: "push" | "digest" | "off";
+            /**
+             * @description Default normal
+             * @enum {string}
+             */
+            min_priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Spaces whose notifications are never sent to this link */
+            muted_spaces?: string[];
+            /** @description Default true */
+            new_actions?: boolean;
+            /** @description Default true */
+            operator_messages?: boolean;
+            /** @description Default true */
+            quiet_hours?: boolean;
+            /** @description HH:MM, default 08:00 */
+            quiet_hours_end?: string;
+            /** @description HH:MM, default 23:00 */
+            quiet_hours_start?: string;
+            /**
+             * @description Default push
+             * @enum {string}
+             */
+            reminders?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            tasks_in_review?: "push" | "digest" | "off";
+            /** @description Your IANA time zone, such as Europe/Vilnius; empty clears it, left out keeps it. It is your user's, so it applies to all your links and the web */
+            timezone?: string;
+        };
         LinkTelegramUser: {
             /**
              * Format: int64
@@ -8695,6 +8801,10 @@ export interface components {
             name: string;
             /** @description Telegram username without @ (empty when the account has none) */
             username: string;
+        };
+        LinkTopicsPrefs: {
+            /** @description Whether topics mode can be turned on; false until it ships */
+            available: boolean;
         };
         "List-account-kindsResponse": {
             /**
@@ -11055,6 +11165,54 @@ export interface components {
             readonly $schema?: string;
             grants: components["schemas"]["AuthGrantInput"][];
         };
+        SettingsEffectivePrefs: {
+            /** @description An action was assigned to the user */
+            assigned_to_me: boolean;
+            /** @description Clarification requests and replies */
+            clarifications: boolean;
+            /** @description Send a daily digest */
+            digest: boolean;
+            /** @description When the digest is sent, as HH:MM in the user's time zone */
+            digest_time: string;
+            /** @description An action escalated */
+            escalations: boolean;
+            /**
+             * @description Failed or lost runs
+             * @enum {string}
+             */
+            failed_runs: "push" | "digest" | "off";
+            /**
+             * @description New inbox items
+             * @enum {string}
+             */
+            inbox_items: "push" | "digest" | "off";
+            /**
+             * @description Only new actions of at least this priority (assignments always count)
+             * @enum {string}
+             */
+            min_priority: "low" | "normal" | "high" | "urgent";
+            muted_spaces: string[];
+            /** @description New human actions in spaces the link can read */
+            new_actions: boolean;
+            /** @description Agent messages to operators */
+            operator_messages: boolean;
+            /** @description Send silently (no sound) during quiet hours */
+            quiet_hours: boolean;
+            /** @description Quiet hours end, as HH:MM in the user's time zone (before the start: they run past midnight) */
+            quiet_hours_end: string;
+            /** @description Quiet hours start, as HH:MM in the user's time zone */
+            quiet_hours_start: string;
+            /**
+             * @description Reminders of pending actions
+             * @enum {string}
+             */
+            reminders: "push" | "digest" | "off";
+            /**
+             * @description Tasks entering review
+             * @enum {string}
+             */
+            tasks_in_review: "push" | "digest" | "off";
+        };
         SettingsInboundLimits: {
             /**
              * Format: int64
@@ -11160,6 +11318,55 @@ export interface components {
             send_limits?: components["schemas"]["SettingsSendLimitsInput"];
             /** @description Default false */
             topics_mode_default?: boolean;
+        };
+        SettingsLinkPrefs: {
+            /** @description Default true */
+            assigned_to_me?: boolean;
+            /** @description Default true */
+            clarifications?: boolean;
+            /** @description Default true */
+            digest?: boolean;
+            /** @description HH:MM, default 09:00 */
+            digest_time?: string;
+            /** @description Default true */
+            escalations?: boolean;
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            failed_runs?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            inbox_items?: "push" | "digest" | "off";
+            /**
+             * @description Default normal
+             * @enum {string}
+             */
+            min_priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Spaces whose notifications are never sent to this link */
+            muted_spaces?: string[];
+            /** @description Default true */
+            new_actions?: boolean;
+            /** @description Default true */
+            operator_messages?: boolean;
+            /** @description Default true */
+            quiet_hours?: boolean;
+            /** @description HH:MM, default 08:00 */
+            quiet_hours_end?: string;
+            /** @description HH:MM, default 23:00 */
+            quiet_hours_start?: string;
+            /**
+             * @description Default push
+             * @enum {string}
+             */
+            reminders?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            tasks_in_review?: "push" | "digest" | "off";
         };
         SettingsNotificationDefaults: {
             /** @description An action was assigned to the user */
@@ -22602,6 +22809,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TelegramDownloadOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-my-telegram-link-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkPrefs"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-my-telegram-link-prefs": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkPrefsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkPrefs"];
                 };
             };
             /** @description Error */

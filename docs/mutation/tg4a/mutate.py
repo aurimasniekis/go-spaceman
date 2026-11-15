@@ -2,8 +2,8 @@ import subprocess, sys, os, shutil, importlib.util
 root = sys.argv[1]
 spec = importlib.util.spec_from_file_location("m", sys.argv[2]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 only = set(sys.argv[3:])
-pkgs = ["./internal/api/", "./internal/auth/", "./internal/app/", "./internal/store/", "./internal/telegram/"]
-pat = "Telegram|InProcess|Actor|PrincipalSubjects|StreamWatch|Approver|AutoExcluded"
+pkgs = ["./internal/api/", "./internal/auth/", "./internal/app/", "./internal/store/", "./internal/telegram/", "./internal/telegram/chat/"]
+pat = "Telegram|InProcess|Actor|PrincipalSubjects|StreamWatch|Approver|AutoExcluded|TestGroup"
 env = dict(os.environ, SM_TEST_TX_MAX="500ms", GOFLAGS="-p=2 -buildvcs=false")
 res = []
 for mid, f, old, new in m.M:

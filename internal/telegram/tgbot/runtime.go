@@ -84,7 +84,9 @@ type Status struct {
 
 // runtime is the live bot. Fields above mu are owned by Service.mu; the rest are read by Status under mu.
 type runtime struct {
-	baseCtx    context.Context // central's serving context (set by Start)
+	baseCtx    context.Context    // central's serving context (set by Start)
+	retryStop  context.CancelFunc // ends the running startup retry loop (owned by Service.mu)
+	retryDone  chan struct{}      // closed when that loop has returned (owned by Service.mu)
 	client     *botapi.Client
 	pollCancel context.CancelFunc
 	pollDone   chan struct{}
@@ -202,6 +204,14 @@ func (svc *Service) hostMismatch(stored string) string {
 	return ""
 }
 
+// Username is the bot's username without "@" from the last getMe ("" while unknown). It makes no call.
+func (svc *Service) Username() string {
+	rt := &svc.run
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.username
+}
+
 // MiniAppBot is the running bot's ID with the key its Mini App initData is signed with (miniapp.SecretKey of its
 // token; the token itself stays here), or false while no bot runs or it has no Mini App host.
 func (svc *Service) MiniAppBot() (miniapp.Bot, bool) {
@@ -221,8 +231,37 @@ func (svc *Service) Start(ctx context.Context) {
 	svc.mu.Unlock()
 	retry, gen := svc.startOnce(ctx, 0)
 	if retry {
-		go svc.retryLoop(ctx, gen)
+		svc.mu.Lock()
+		svc.startRetryLocked(ctx, gen)
+		svc.mu.Unlock()
 	}
+}
+
+// startRetryLocked ends the running retry loop, a superseded one that would otherwise sleep up to retryMax before it
+// notices, and starts one for gen when gen is not 0. Must hold svc.mu.
+func (svc *Service) startRetryLocked(base context.Context, gen uint64) {
+	if gen != 0 {
+		svc.run.mu.Lock()
+		cur := svc.run.gen
+		svc.run.mu.Unlock()
+		if gen != cur {
+			return // a write reconfigured the bot since the attempt gen and owns the retry decision
+		}
+	}
+	if svc.run.retryStop != nil {
+		svc.run.retryStop()
+		svc.run.retryStop = nil
+	}
+	if gen == 0 {
+		return
+	}
+	ctx, stop := context.WithCancel(base)
+	done := make(chan struct{})
+	svc.run.retryStop, svc.run.retryDone = stop, done
+	go func() {
+		defer close(done)
+		svc.retryLoop(ctx, gen)
+	}()
 }
 
 // retryLoop repeats the startup with a backoff (retryMin doubling to retryMax) until it works, the bot is
@@ -247,13 +286,17 @@ func (svc *Service) retryLoop(ctx context.Context, gen uint64) {
 // retrying. Must hold svc.mu (the loop's first attempt waits for it).
 func (svc *Service) retryAfterWrite(retry bool) {
 	base := svc.run.baseCtx
-	if !retry || base == nil || base.Err() != nil {
+	if base == nil {
+		return
+	}
+	if !retry || base.Err() != nil {
+		svc.startRetryLocked(base, 0) // the write applied the newest state: a loop for an older one is superseded
 		return
 	}
 	svc.run.mu.Lock()
 	gen := svc.run.gen
 	svc.run.mu.Unlock()
-	go svc.retryLoop(base, gen)
+	svc.startRetryLocked(base, gen)
 }
 
 // startOnce applies the stored configuration and reports whether it should be retried. With after set, it does

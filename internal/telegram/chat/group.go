@@ -83,7 +83,11 @@ func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Li
 	if m == nil {
 		return
 	}
-	if cmd, arg, ok := command(m.Text); ok {
+	if cmd, to, arg, ok := commandFor(m.Text); ok {
+		// A command addressed to another bot is that bot's: stay silent. An unknown own username fails closed.
+		if to != "" && !strings.EqualFold(to, h.botUsername()) {
+			return
+		}
 		switch cmd {
 		case "inbox":
 			h.cmdInbox(ctx, l, arg)

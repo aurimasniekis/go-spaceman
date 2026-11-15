@@ -186,6 +186,7 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			_, rc, err := c.Attachments.Open(ctx, spaceID, attachmentID)
 			return rc, err
 		},
+		BotUsername: c.TelegramBot.Username,
 		Bot: func() chat.Bot {
 			b, _ := d.Bot().(chat.Bot)
 			return b

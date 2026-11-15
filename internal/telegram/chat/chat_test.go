@@ -469,7 +469,8 @@ func newEnv(t *testing.T) *env {
 			}
 			return s
 		},
-		Bot: func() Bot { return recBot{Client: bc, e: e} },
+		Bot:         func() Bot { return recBot{Client: bc, e: e} },
+		BotUsername: func() string { return "spaceman_test_bot" },
 		Allow: func(id string, k updates.Kind) bool {
 			return e.allow == nil || e.allow(id, k)
 		},

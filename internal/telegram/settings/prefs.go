@@ -89,3 +89,15 @@ func ValidZone(name string) bool {
 	_, ok := LoadZone(name)
 	return ok
 }
+
+// ParseUserZone returns the "timezone" field of a user's stored notification preferences (notification_prefs.prefs_json),
+// or "" when it is unset or the document can't be read.
+func ParseUserZone(raw string) string {
+	var p struct {
+		Timezone string `json:"timezone"`
+	}
+	if json.Unmarshal([]byte(raw), &p) != nil {
+		return ""
+	}
+	return p.Timezone
+}

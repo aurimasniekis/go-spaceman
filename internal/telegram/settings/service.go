@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -329,18 +330,33 @@ func (svc *Service) liveSpaces(ctx context.Context) (map[string]bool, error) {
 // is applied leaf by leaf: the leaves that still validate keep their stored values (so a stricter link cap stays),
 // the others take their defaults, logged, rather than stopping Telegram.
 func (svc *Service) effective(r db.TelegramSetting) Settings {
-	var in Input
-	if err := json.Unmarshal([]byte(r.SettingsJson), &in); err == nil {
-		s := Resolve(in)
-		if s.Validate() == nil {
-			return s
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(r.SettingsJson), &fields); err != nil || fields == nil {
+		// Not a JSON object: nothing in it can be trusted, so the link cap is the stricter one, not the default's.
+		svc.log.Warn("telegram: the stored settings are unreadable; using the defaults")
+		s := Defaults()
+		s.LinkDefaultMaxRole = RoleViewer
+		return s
+	}
+	// Keys that differ only in case would all decode into one field (the last in document order wins), so such a row
+	// never takes the fast path: it is split into leaves, which are applied in a fixed order.
+	seen := make(map[string]bool, len(fields))
+	dup := false
+	for k := range fields {
+		lk := strings.ToLower(k)
+		dup = dup || seen[lk]
+		seen[lk] = true
+	}
+	if !dup {
+		var in Input
+		if err := json.Unmarshal([]byte(r.SettingsJson), &in); err == nil {
+			if s := Resolve(in); s.Validate() == nil {
+				return s
+			}
 		}
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(r.SettingsJson), &fields); err != nil {
-		svc.log.Warn("telegram: the stored settings are unreadable; using the defaults", slog.String("error", err.Error()))
-		return Defaults()
-	}
+	// The paths are lower-cased: encoding/json matches field names case-insensitively, so a stored "LINK_DEFAULT_MAX_ROLE"
+	// still decodes and must be recognized by its path too.
 	// One candidate per leaf: a nested object (send_limits, inbound_limits, notification_defaults) is split into its own
 	// fields, so one invalid sibling never widens a stricter stored leaf.
 	type leaf struct {
@@ -353,32 +369,85 @@ func (svc *Service) effective(r db.TelegramSetting) Settings {
 		if v[0] == '{' && json.Unmarshal(v, &sub) == nil {
 			for sk, sv := range sub {
 				raw, _ := json.Marshal(map[string]map[string]json.RawMessage{k: {sk: sv}})
-				leaves = append(leaves, leaf{k + "." + sk, raw})
+				leaves = append(leaves, leaf{strings.ToLower(k) + "." + strings.ToLower(sk), raw})
 			}
 			continue
 		}
 		raw, _ := json.Marshal(map[string]json.RawMessage{k: v})
-		leaves = append(leaves, leaf{k, raw})
+		leaves = append(leaves, leaf{strings.ToLower(k), raw})
 	}
-	slices.SortFunc(leaves, func(a, b leaf) int { return strings.Compare(a.path, b.path) })
+	// Map order is random: sort by path, then by the leaf's text, so two keys that differ only in case apply in the
+	// same order on every load.
+	slices.SortFunc(leaves, func(a, b leaf) int {
+		return cmp.Or(strings.Compare(a.path, b.path), strings.Compare(string(a.raw), string(b.raw)))
+	})
 	s := Defaults()
-	for _, l := range leaves {
-		var one Input
-		cand := s
-		if err := json.Unmarshal(l.raw, &one); err == nil {
-			cand.Apply(one)
-			if err = cand.Validate(); err == nil {
-				s = cand
-				continue
+	// A leaf is judged against everything applied so far, so a cross-field rule (queue_per_chat <= queue_total, quiet
+	// hours start != end) can reject a leaf only because its partner has not been applied yet. The rejected leaves are
+	// therefore retried until a pass applies none, and only then fall back to their defaults.
+	applied := map[string]bool{}
+	pending := leaves
+	for len(pending) > 0 {
+		var rejected []leaf
+		for _, l := range pending {
+			var one Input
+			cand := s
+			if err := json.Unmarshal(l.raw, &one); err == nil {
+				cand.Apply(one)
+				if err = cand.Validate(); err == nil {
+					s = cand
+					applied[l.path] = true
+					continue
+				}
+			}
+			rejected = append(rejected, l)
+		}
+		if len(rejected) == len(pending) {
+			break
+		}
+		pending = rejected
+	}
+	for _, l := range pending {
+		// A total below the default per-chat queue is rejected only because of that default: when per_chat is not stored
+		// (or was itself rejected), clamp it to the stored total instead of dropping the total.
+		if l.path == "send_limits.queue_total" && !applied["send_limits.queue_per_chat"] {
+			var one Input
+			cand := s
+			if json.Unmarshal(l.raw, &one) == nil {
+				cand.Apply(one)
+				cand.SendLimits.QueuePerChat = min(cand.SendLimits.QueuePerChat, cand.SendLimits.QueueTotal)
+				if cand.Validate() == nil {
+					s = cand
+					continue
+				}
 			}
 		}
 		svc.log.Warn("telegram: a stored setting is out of bounds; using its default", slog.String("field", l.path))
-		if l.path == "link_default_max_role" {
-			// An unknown cap is read as the stricter one, not the wider default.
-			s.LinkDefaultMaxRole = RoleViewer
+	}
+	s.LinkDefaultMaxRole = storedRole(fields, s.LinkDefaultMaxRole)
+	return s
+}
+
+// storedRole is the link cap for a row whose field "link_default_max_role" may be stored under any case. A row that
+// has the field is never read as the wider operator default: the cap is viewer unless every variant is exactly
+// "operator" (a malformed value, a nested object or an empty one all count as unknown), and viewer wins over operator
+// when variants disagree. A row without the field keeps def.
+func storedRole(fields map[string]json.RawMessage, def string) string {
+	role, present := RoleOperator, false
+	for k, v := range fields {
+		if !strings.EqualFold(k, "link_default_max_role") {
+			continue
+		}
+		present = true
+		var got string
+		if json.Unmarshal(v, &got) != nil || got != RoleOperator {
+			role = RoleViewer
 		}
 	}
-	return s
+	if !present {
+		return def
+	}
+	return role
 }
 
 // publish wakes every cache after the transaction commits.
