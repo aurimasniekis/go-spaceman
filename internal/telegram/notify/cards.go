@@ -31,6 +31,10 @@ type Mapping struct {
 	// Cont marks a continuation message: the rest of a long body, sent as a reply to the card (Key names the card's
 	// resource).
 	Cont bool
+	// Thread is the message_thread_id the card was sent in (0: the main chat), meaningful when ThreadKnown. A row from
+	// before the thread was recorded has ThreadKnown false.
+	Thread      int
+	ThreadKnown bool
 	// Delete removes the row of a continuation message that was deleted (Save only; set with Cont).
 	Delete bool
 }
@@ -57,6 +61,10 @@ type cardKey struct {
 type card struct {
 	messageID int
 	version   int64
+	// thread is the topic the card was sent in (0: the main chat) when threadKnown. The card's continuations and the
+	// replies to it stay in it, whatever the chat layout is by now.
+	thread      int
+	threadKnown bool
 	// conts are the continuation messages of a long body, in order.
 	conts []cont
 	// sig is the signature of what the card shows (0: unknown, after a restart).
@@ -130,7 +138,7 @@ func (c *cards) load(ctx context.Context, k Key) {
 		ck := cardKey{m.ChatID, k}
 		if _, ok := c.byCard[ck]; !ok && !m.Cont {
 			seen := m.CreatedAt.UnixMicro()
-			c.byCard[ck] = card{messageID: m.MessageID, version: m.Version, remindedSeen: seen, escalatedSeen: seen}
+			c.byCard[ck] = card{messageID: m.MessageID, version: m.Version, remindedSeen: seen, escalatedSeen: seen, thread: m.Thread, threadKnown: m.ThreadKnown}
 		}
 	}
 	for _, m := range rows { // continuations after the cards, oldest first (message IDs grow)
@@ -175,6 +183,11 @@ func (c *cards) record(m Mapping, r *Resource) {
 		cur = c.base[ck] // what was observed while the first send was on its way
 	}
 	cur.messageID, cur.version = m.MessageID, m.Version
+	if m.ThreadKnown {
+		cur.thread, cur.threadKnown = m.Thread, true
+	} else {
+		m.Thread, m.ThreadKnown = cur.thread, cur.threadKnown // a refresh keeps the thread the card was sent in
+	}
 	if r != nil {
 		cur.remindedSeen, cur.escalatedSeen = max(cur.remindedSeen, r.RemindedAt), max(cur.escalatedSeen, r.EscalatedAt)
 		if !cur.known {
@@ -293,7 +306,7 @@ func (c *cards) observe(chat int64, r *Resource) (reminded, escalated, reassigne
 // touch refreshes the stored time of a card, which is also when its reminders and escalations were last announced.
 func (c *cards) touch(linkID string, chat int64, r *Resource, now time.Time) {
 	if cd := c.get(chat, r.Key); cd != nil {
-		c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: r.SpaceID, Key: r.Key, Version: cd.version, CreatedAt: now}, nil)
+		c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: r.SpaceID, Key: r.Key, Version: cd.version, CreatedAt: now, Thread: cd.thread, ThreadKnown: cd.threadKnown}, nil)
 	}
 }
 
@@ -337,7 +350,6 @@ type sendFunc func(ctx context.Context, cl *botapi.Client, p botapi.SendMessageP
 // the card of a send that completed ahead of it in the chat's queue. parts[0] is the card; the others are its
 // continuation messages, replies to the card that are edited, sent or deleted along with it.
 func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, parts []cardPart, protect, silent bool) error {
-	sig := parts[0].sig()
 	// The sender paid for the first Bot API call of this job; every further one pays for itself (sender.Take).
 	paid := false
 	pay := func() error {
@@ -347,6 +359,40 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, li
 		}
 		return sender.Take(ctx)
 	}
+	err := c.upsertOnce(ctx, cl, pay, send, linkID, chat, r, spaceID, parts, protect, silent)
+	if errors.Is(err, errCardThreadGone) {
+		// The topic the card lives in was closed or deleted, so a part can't follow it: the card is sent again, with its
+		// continuations, the way a card whose message was deleted is.
+		c.retire(ctx, cl, pay, chat, r.Key)
+		if r.Final {
+			return nil // a settled card isn't sent again
+		}
+		err = c.upsertOnce(ctx, cl, pay, send, linkID, chat, r, spaceID, parts, protect, silent)
+	}
+	return err
+}
+
+// errCardThreadGone: a continuation could not be sent because the card's topic is closed or gone.
+var errCardThreadGone = errors.New("notify: the card's topic is gone")
+
+// retire gives up a card whose topic is gone: its continuations and the card are deleted (best effort; a deleted
+// topic took them along) and forgotten, rows included, so the card is sent again.
+func (c *cards) retire(ctx context.Context, cl *botapi.Client, pay func() error, chat int64, k Key) {
+	cd := c.get(chat, k)
+	if cd == nil {
+		return
+	}
+	_ = c.deleteConts(ctx, cl, pay, chat, k, 0)
+	if pay() == nil {
+		_ = cl.DeleteMessage(ctx, chat, cd.messageID)
+	}
+	c.forget(chat, k)
+	c.pend(Mapping{ChatID: chat, MessageID: cd.messageID, Key: k, Delete: true})
+}
+
+// upsertOnce is one try of upsert; pay charges each Bot API call after the first.
+func (c *cards) upsertOnce(ctx context.Context, cl *botapi.Client, pay func() error, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, parts []cardPart, protect, silent bool) error {
+	sig := parts[0].sig()
 	if cd := c.get(chat, r.Key); cd != nil {
 		var err error
 		if cd.sig != sig || cd.version != r.Version { // a retry after a failed continuation doesn't edit the card again (edits count against the rate limit)
@@ -355,7 +401,7 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, li
 		}
 		switch {
 		case err == nil || isNotModified(err):
-			c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now()}, r)
+			c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now(), Thread: cd.thread, ThreadKnown: cd.threadKnown}, r)
 			c.setSig(chat, r.Key, sig)
 			return c.syncConts(ctx, cl, pay, send, linkID, chat, r, spaceID, cd.messageID, parts, protect)
 		case isGone(err) && !r.Final:
@@ -376,7 +422,8 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, li
 	if err != nil {
 		return err
 	}
-	c.record(Mapping{ChatID: chat, MessageID: m.MessageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now()}, r)
+	// The thread the send reported is where the card is, wherever the layout sent it.
+	c.record(Mapping{ChatID: chat, MessageID: m.MessageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now(), Thread: m.MessageThreadID, ThreadKnown: true}, r)
 	c.setSig(chat, r.Key, sig)
 	return c.syncConts(ctx, cl, pay, send, linkID, chat, r, spaceID, m.MessageID, parts, protect)
 }
@@ -415,9 +462,14 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, pay func() err
 		if err := pay(); err != nil {
 			return err
 		}
-		m, err := send(ctx, cl, botapi.SendMessageParams{ChatID: chat, Text: p.Text, Entities: p.Entities, ReplyMarkup: p.markupAny(),
+		m, err := c.sendInCardThread(ctx, cl, send, chat, r.Key, botapi.SendMessageParams{ChatID: chat, Text: p.Text, Entities: p.Entities, ReplyMarkup: p.markupAny(),
 			ReplyParameters: &botapi.ReplyParameters{MessageID: cardID}, ProtectContent: protect, DisableNotification: true})
 		if err != nil {
+			if botapi.IsTopicGone(err) {
+				if cd := c.get(chat, r.Key); cd != nil && cd.threadKnown && cd.thread != 0 {
+					return fmt.Errorf("%w: %w", errCardThreadGone, err)
+				}
+			}
 			return err
 		}
 		c.recordCont(Mapping{ChatID: chat, MessageID: m.MessageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now(), Cont: true}, sig)
@@ -427,6 +479,21 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, pay func() err
 		return c.deleteConts(ctx, cl, pay, chat, r.Key, len(parts)-1)
 	}
 	return nil
+}
+
+// sendInCardThread sends p, a reply to a card, into the thread the card was sent in: straight to the chat with
+// MessageThreadID set, never through the layout's routing, which may by now name another topic (or none) and would
+// split the card across topics. The caller has paid for the call (sender.Take). A card whose thread is unknown (a row
+// from before the thread was recorded) goes through fallback, the current routing. Being direct, it has no recovery of
+// its own for a closed or deleted topic: the caller handles botapi.IsTopicGone (syncConts retires the card). It is the
+// call for any further message that replies to a card.
+func (c *cards) sendInCardThread(ctx context.Context, cl *botapi.Client, fallback sendFunc, chat int64, k Key, p botapi.SendMessageParams) (botapi.Message, error) {
+	cd := c.get(chat, k)
+	if cd == nil || !cd.threadKnown {
+		return fallback(ctx, cl, p)
+	}
+	p.ChatID, p.MessageThreadID = chat, cd.thread
+	return cl.SendMessage(ctx, p)
 }
 
 // deleteConts deletes a card's continuation messages from the nth on, last first, and forgets the ones deleted. A

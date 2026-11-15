@@ -1602,6 +1602,7 @@ type TelegramMessage struct {
 	ResourceID      string
 	ResourceVersion int64
 	CreatedAt       int64
+	MessageThreadID sql.NullInt64
 }
 
 type TelegramSetting struct {
