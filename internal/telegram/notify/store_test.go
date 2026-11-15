@@ -201,3 +201,43 @@ func TestStoreNoticeRows(t *testing.T) {
 		t.Errorf("a notice is not a card: Card error %v", err)
 	}
 }
+
+// The thread a card was sent in is stored (0 is the main chat, and different from unknown), survives a write that
+// doesn't know it, and a row without one reads back as unknown.
+func TestStoreCardThread(t *testing.T) {
+	ctx := context.Background()
+	m := notify.StoreMappings{S: storetest.Open(t)}
+	k := notify.Key{Type: notify.TypeHumanAction, ID: "hum_1"}
+	now := time.Now()
+	if err := m.Save(ctx, []notify.Mapping{
+		{ChatID: 9, MessageID: 1, Key: k, Version: 1, CreatedAt: now, Thread: 7, ThreadKnown: true},
+		{ChatID: 9, MessageID: 2, Key: k, Version: 1, CreatedAt: now, Thread: 0, ThreadKnown: true},
+		{ChatID: 9, MessageID: 3, Key: k, Version: 1, CreatedAt: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A later write without the thread (an older process, a refresh) leaves the stored one alone.
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 9, MessageID: 1, Key: k, Version: 2, CreatedAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.Lookup(ctx, k)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("Lookup = %+v, %v", got, err)
+	}
+	for _, r := range got {
+		switch r.MessageID {
+		case 1:
+			if !r.ThreadKnown || r.Thread != 7 || r.Version != 2 {
+				t.Errorf("card 1 = %+v, want thread 7 kept", r)
+			}
+		case 2:
+			if !r.ThreadKnown || r.Thread != 0 {
+				t.Errorf("card 2 = %+v, want the main chat, known", r)
+			}
+		case 3:
+			if r.ThreadKnown {
+				t.Errorf("card 3 = %+v, want an unknown thread", r)
+			}
+		}
+	}
+}

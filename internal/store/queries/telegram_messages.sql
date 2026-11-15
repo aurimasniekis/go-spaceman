@@ -1,15 +1,17 @@
 -- Messages the notifier sent that it may edit later (ADR-0083, plan 4.2 step 7). Written in batches.
 
 -- name: UpsertTelegramMessage :exec
-INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at, message_thread_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 -- created_at is when the message was last sent, edited or alerted: retention prunes by it, and a card loaded after a
 -- restart takes it as the time up to which reminders and escalations were already announced.
-ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at;
+-- message_thread_id is the topic a card was sent in; a write that doesn't know it keeps the one stored.
+ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at,
+  message_thread_id = COALESCE(excluded.message_thread_id, telegram_messages.message_thread_id);
 
 -- name: ListTelegramMessagesByResource :many
 -- Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
-SELECT chat_id, message_id, kind, resource_version, created_at FROM telegram_messages
+SELECT chat_id, message_id, kind, resource_version, created_at, message_thread_id FROM telegram_messages
 WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont');
 
 -- name: PruneTelegramMessages :execrows

@@ -49,7 +49,8 @@ func (m StoreMappings) Save(ctx context.Context, rows []Mapping) error {
 			}
 			if err := tx.Q.UpsertTelegramMessage(ctx, db.UpsertTelegramMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID),
 				LinkID: sql.NullString{String: r.LinkID, Valid: r.LinkID != ""}, SpaceID: sql.NullString{String: r.SpaceID, Valid: r.SpaceID != ""},
-				Kind: kindOf(r), ResourceType: r.Key.Type, ResourceID: r.Key.ID, ResourceVersion: r.Version, CreatedAt: r.CreatedAt.UnixMicro()}); err != nil {
+				Kind: kindOf(r), ResourceType: r.Key.Type, ResourceID: r.Key.ID, ResourceVersion: r.Version, CreatedAt: r.CreatedAt.UnixMicro(),
+				MessageThreadID: sql.NullInt64{Int64: int64(r.Thread), Valid: r.ThreadKnown}}); err != nil {
 				return err
 			}
 		}
@@ -75,7 +76,8 @@ func (m StoreMappings) Lookup(ctx context.Context, k Key) ([]Mapping, error) {
 	}
 	out := make([]Mapping, len(rows))
 	for i, r := range rows {
-		out[i] = Mapping{ChatID: r.ChatID, MessageID: int(r.MessageID), Key: k, Version: r.ResourceVersion, CreatedAt: time.UnixMicro(r.CreatedAt), Cont: r.Kind == MappingCont, Kind: r.Kind}
+		out[i] = Mapping{ChatID: r.ChatID, MessageID: int(r.MessageID), Key: k, Version: r.ResourceVersion, CreatedAt: time.UnixMicro(r.CreatedAt), Cont: r.Kind == MappingCont, Kind: r.Kind,
+			Thread: int(r.MessageThreadID.Int64), ThreadKnown: r.MessageThreadID.Valid}
 	}
 	return out, nil
 }

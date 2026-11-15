@@ -58,7 +58,7 @@ func (q *Queries) GetTelegramMessage(ctx context.Context, arg GetTelegramMessage
 }
 
 const listTelegramMessagesByResource = `-- name: ListTelegramMessagesByResource :many
-SELECT chat_id, message_id, kind, resource_version, created_at FROM telegram_messages
+SELECT chat_id, message_id, kind, resource_version, created_at, message_thread_id FROM telegram_messages
 WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont')
 `
 
@@ -73,6 +73,7 @@ type ListTelegramMessagesByResourceRow struct {
 	Kind            string
 	ResourceVersion int64
 	CreatedAt       int64
+	MessageThreadID sql.NullInt64
 }
 
 // Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
@@ -91,6 +92,7 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 			&i.Kind,
 			&i.ResourceVersion,
 			&i.CreatedAt,
+			&i.MessageThreadID,
 		); err != nil {
 			return nil, err
 		}
@@ -155,9 +157,10 @@ func (q *Queries) PruneTelegramMessages(ctx context.Context, arg PruneTelegramMe
 
 const upsertTelegramMessage = `-- name: UpsertTelegramMessage :exec
 
-INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at
+INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at, message_thread_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at,
+  message_thread_id = COALESCE(excluded.message_thread_id, telegram_messages.message_thread_id)
 `
 
 type UpsertTelegramMessageParams struct {
@@ -170,11 +173,13 @@ type UpsertTelegramMessageParams struct {
 	ResourceID      string
 	ResourceVersion int64
 	CreatedAt       int64
+	MessageThreadID sql.NullInt64
 }
 
 // Messages the notifier sent that it may edit later (ADR-0083, plan 4.2 step 7). Written in batches.
 // created_at is when the message was last sent, edited or alerted: retention prunes by it, and a card loaded after a
 // restart takes it as the time up to which reminders and escalations were already announced.
+// message_thread_id is the topic a card was sent in; a write that doesn't know it keeps the one stored.
 func (q *Queries) UpsertTelegramMessage(ctx context.Context, arg UpsertTelegramMessageParams) error {
 	_, err := q.db.ExecContext(ctx, upsertTelegramMessage,
 		arg.ChatID,
@@ -186,6 +191,7 @@ func (q *Queries) UpsertTelegramMessage(ctx context.Context, arg UpsertTelegramM
 		arg.ResourceID,
 		arg.ResourceVersion,
 		arg.CreatedAt,
+		arg.MessageThreadID,
 	)
 	return err
 }
