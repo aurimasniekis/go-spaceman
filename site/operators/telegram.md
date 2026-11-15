@@ -95,7 +95,7 @@ Webhook mode registers the webhook under central's `public_url`, which Telegram 
 `public_url` is a LAN address, set `telegram.webhook_base_url` (environment `SPACEMAN_TELEGRAM_WEBHOOK_BASE_URL`) in
 central's configuration to the public https address that routes to central, for example
 `https://hooks.example.com`. The webhook is then registered under it; the webhook path and the secret-token check are
-unchanged, and everything else (links, the Mini App) keeps using `public_url`. It must be https with a lower-case host
+unchanged. Links keep using `public_url`, and the Mini App uses `https://<miniapp_host>`. It must be https with a lower-case host
 and no credentials, query or fragment. Like `api_base_url` and `miniapp_host`, it lives in central's configuration, not
 in the API, the CLI or the Terraform provider, so the provider needs no change. Restart central: it registers the webhook again
 at the new address when the bot starts.
@@ -107,9 +107,6 @@ Three things to know:
 - The host must differ from `telegram.miniapp_host`: central would route the webhook to the Mini App, which answers
   404, so no update would arrive. Configuration validation and the bot API both reject the collision.
 - The scheme must be lower-case `https://`; whitespace and `.` or `..` path segments are rejected.
-
-> **Warning: the Mini App still uses `public_url`.** `telegram.webhook_base_url` only moves the webhook. The Mini App
-> derives its origin from `public_url`, so a LAN-only `public_url` still breaks the Mini App until that is fixed in code.
 
 ### Bot
 

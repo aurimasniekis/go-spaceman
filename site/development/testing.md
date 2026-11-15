@@ -93,6 +93,46 @@ exits, even when it's killed.
 | `make screenshots` | Regenerates the documentation screenshots ([details](/development/screenshots)) and audits every captured page with axe (WCAG 2.1 A/AA) in both themes; any violation fails the run |
 | `make site-check` | Builds the site, checks Mermaid diagrams and API reference drift, and audits every site page with axe in both color schemes |
 
+### A fast loop for one spec
+
+`make e2e` builds the UI and the binaries, starts a fresh stack and runs the whole suite (23 minutes on a shared 32-CPU node, 30 before the
+overflow spec ran its widths in parallel). While working on one UI behavior, keep one stack and run only the spec you are changing:
+
+```sh
+export SM_CHROMIUM_ARGS='--no-sandbox --disable-gpu --no-zygote --disable-dev-shm-usage'   # only on a host whose sandbox stops Chromium
+make e2e-up                                        # builds and starts the stack once; prints its directory (or reuses the running one)
+make e2e-spec SPEC=e2e/ui-overflow.spec.ts         # one spec, no build or stack start-up (a spec that seeds data, like the overflow one, still takes ~35 s for that)
+make e2e-spec GREP='dialog taller than the screen' # or only the tests whose title matches
+make e2e-down                                      # stops central, the agent, devpulse and devmcp, and removes the directory
+```
+
+`make e2e-spec` starts the stack when none is running. After a change to central or the UI, `scripts/e2e-loop.sh restart`
+rebuilds both and restarts central on the same data (the agent reconnects). The same script runs it without make:
+`scripts/e2e-loop.sh test e2e/FILE.spec.ts --headed`. The stack's directory is remembered in `web/.e2e-stack`.
+Notes from using it:
+
+- **Ports.** The stack uses 38180 (UI), 38181, 38422 (devpulse) and 38431 (devmcp) when they are free, and free
+  ports otherwise, so an orphaned stack no longer blocks a new one. `SM_DEV_PORT`, `SM_DEV_MANAGEMENT_PORT`,
+  `SM_DEV_PULSE_PORT` and `SM_DEV_MCP_PORT` set them; the stack's `env` file (`SM_URL`) says which were used, and
+  Playwright reads it.
+- **`SPACEMAN_*` variables.** Central refuses unknown `SPACEMAN_*` environment overrides, which is what a session (an agent
+  run, for instance) has set. `dev-stack.sh` drops every `SPACEMAN_*` variable before it starts anything. If you start
+  central by hand, run it under `env -u` for those.
+- **`--single-process`.** Don't add it to `SM_CHROMIUM_ARGS` for the app's e2e: the journey breaks with it. Only the site
+  targets (Mermaid check, axe audit) add it themselves.
+- **First-run journey.** `smoke.spec.ts` sets the stack up (root token, first user) and works once per stack; run it on
+  a fresh stack (`make e2e-down`, then up), not repeatedly. Other specs seed what they need.
+- **Cleanup.** `make e2e`, `make screenshots` and a failing or interrupted `dev-stack.sh up` stop everything they
+  started on success, failure, Ctrl-C and `kill`: central, the agent, devpulse, devmcp, the stub harness, the stack's own
+  herdr-core core, and anything else with the stack's directory in its command line. A process that ignores SIGTERM for
+  10 seconds gets SIGKILL. A TERM sent only to the script's PID doesn't stop the run at once: the script waits for the
+  Playwright command it started to exit before it runs cleanup. To stop the whole run immediately, send TERM to its
+  process group (`kill -TERM -- -<pgid>`), or press Ctrl-C. The loop's stack is the one thing that stays up, until `make e2e-down`. A stack from a run
+  that was killed with SIGKILL is stopped with `scripts/dev-stack.sh down /tmp/smdev-XXXXXX`. Only stop stacks you
+  started.
+- **Overflow spec.** `ui-overflow.spec.ts` checks every page and dialog at three widths in two themes. The widths run
+  in parallel browser contexts, so it takes about as long as the slowest width.
+
 Simulated tests use an in-memory runner that models the herdr-core behaviour SpaceMan depends on; the `real` suite checks
 that the model matches the real program. `docs/TEST_STRATEGY.md` in the repository maps every verification topic to its
 simulated and real tests. The traceability matrix on the [status page](/guide/status) keeps the two

@@ -12,21 +12,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   webhook is registered under, for a deployment whose `public_url` is not reachable from the internet. Empty keeps the
   webhook under `public_url`. The webhook path and secret-token check are unchanged.
   A path prefix is for the reverse proxy, which must strip it before forwarding (central serves only
-  `/telegram/webhook/<id>`). The host must differ from `telegram.miniapp_host`; the Mini App origin still derives from
-  `public_url`.
+  `/telegram/webhook/<id>`). The host must differ from `telegram.miniapp_host`.
 
 ### Changed
 
+- Developer tooling: `make e2e-up`, `make e2e-spec SPEC=… GREP=…` and `make e2e-down` run one e2e spec against a stack that stays up; `make e2e` and `make screenshots` stop their stack on failure and Ctrl-C; the dev stack picks free ports when the defaults are taken and drops `SPACEMAN_*` variables; `ui-overflow.spec.ts` checks its three widths in parallel (12.3 to 5.1 minutes).
 - Control can close a task that never had a worker run (control did the work itself) as **done** straight from backlog or ready with `spaceman_task_set_status`, a result required; the audit event is marked `direct`. The task must have no unmet dependency and no open `blocks_task` human action. No other transition changes, and operators and workers cannot use it.
 
 ### Fixed
 
-- Admin MCP tools whose operation requires `If-Match` (`set_space_state`, `update_space`, and the other versioned writes) list `if_match` as a required argument and say so in the description, so an approved call is not refused with a 428 and approved again. Operations where it is optional (a missing version means create or overwrite, e.g. `move_task`, `set_space_limits`, the draft saves) keep it optional and make no 428 promise.
-- A question request refused with `unknown field "allow_text"` was a request of another type (approval, to-do, message), where `allow_text` is not a field. The refusal now names the type and the fields it takes, and the `spaceman_human_ask` request description says `allow_text` is for questions only.
+- Telegram Mini App writes (POST, PUT, PATCH, DELETE) are no longer refused when `public_url` is plain http or has a port. The one allowed origin is now `https://<miniapp_host>`, the URL the bot's menu button opens, instead of one built from `public_url`'s scheme and port. The check is still exact: one origin, no wildcard. Mini App buttons and download links now use `https://<miniapp_host>` too.
+- The human-action lists sort before they truncate, so a top-N view (the Mini App home) shows the most urgent pending action even when more than a page is pending; before, a newer urgent item was cut off and the oldest were kept.
 - Attaching a file or image in the Telegram Mini App (new inbox item, human-action responses, messages, tasks) no longer fails with "authentication required". The upload sent a cookie and CSRF token, which the Mini App never has; it now sends the Mini App's `Authorization: Telegram` session like every other call.
 - The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
-- The human-action lists sort before they truncate, so a top-N view (the Mini App home) shows the most urgent pending action even when more than a page is pending; before, a newer urgent item was cut off and the oldest were kept.
+- Admin MCP tools whose operation requires `If-Match` (`set_space_state`, `update_space`, and the other versioned writes) list `if_match` as a required argument and say so in the description, so an approved call is not refused with a 428 and approved again. Operations where it is optional (a missing version means create or overwrite, e.g. `move_task`, `set_space_limits`, the draft saves) keep it optional and make no 428 promise.
+- A question request refused with `unknown field "allow_text"` was a request of another type (approval, to-do, message), where `allow_text` is not a field. The refusal now names the type and the fields it takes, and the `spaceman_human_ask` request description says `allow_text` is for questions only.
 
 ### Security
 

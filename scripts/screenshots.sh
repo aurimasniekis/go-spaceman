@@ -13,6 +13,8 @@ out=$(mkdir -p "${1:-$root/site/public/screenshots}" && cd "${1:-$root/site/publ
 command -v hc >/dev/null || { echo "screenshots need herdr-core (hc) on PATH" >&2; exit 2; }
 dir=$("$root/scripts/dev-stack.sh" up | tail -1)
 trap '"$root/scripts/dev-stack.sh" down "$dir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # shellcheck disable=SC1091
 source "$dir/env"
 cd "$root/web"
