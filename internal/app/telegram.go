@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/netip"
@@ -60,6 +61,16 @@ func (c *Central) newTelegram(ctx context.Context) {
 			OnUnauthorized: c.auditTelegramUnauthorized},
 		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter, Links: c.TelegramLinks, Linker: c.TelegramLink, Unlinker: c.TelegramLink,
 			Groups: c.TelegramSettings},
+	})
+	// Binding a group needs a bot that is a member of it: getChat only finds chats the bot is in (TG-13-2).
+	c.TelegramSettings.SetGroupVerifier(func(ctx context.Context, chatID int64) (botapi.Chat, error) {
+		b, ok := c.TelegramUpdates.Dispatcher.Bot().(interface {
+			GetChat(context.Context, int64) (botapi.Chat, error)
+		})
+		if !ok || b == nil {
+			return botapi.Chat{}, errors.New("the Telegram bot is not running")
+		}
+		return b.GetChat(ctx, chatID)
 	})
 	// link_sso_grants (ADR-0083 Q8) is read per use, so a change applies to the next principal without a restart.
 	c.TelegramSSOGrants = func() bool { return c.TelegramSettings.Current().LinkSSOGrants }
@@ -153,6 +164,15 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			}
 			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
 			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
+		},
+		// Telegram refuses web_app buttons outside private chats: a group's forms link to the Mini App with its direct
+		// link, t.me/<bot>?startapp=human-<space>-<action> (the web's deep link, web/src/tg/deeplink.ts). It needs the
+		// bot's Main Mini App (BotFather) and the Mini App host, like the button.
+		AppLink: func(spaceID, actionID string) string {
+			if c.miniAppOrigin() == "" || c.TelegramBot == nil || c.TelegramBot.Username() == "" {
+				return ""
+			}
+			return "https://t.me/" + c.TelegramBot.Username() + "?startapp=" + url.QueryEscape("human-"+spaceID+"-"+actionID)
 		},
 		// The first step of deciding an enforced approval in chat arms the respond rule's confirmation (ADR-0083 decision 14).
 		ArmApproval: c.TelegramConfirmations.Arm,

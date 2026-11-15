@@ -7,7 +7,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- Telegram group mode authorization (ADR-0083, TG-13-1; groups can't be bound yet, TG-13-2): in a forum supergroup
+- Telegram group binding (ADR-0083, TG-13-2): `put-space-telegram` takes `group_chat_id` to bind a forum supergroup to a
+  space (`0` unbinds; left out keeps it), for space admins only (`telegram_group:write`). The bot must be a member of a
+  supergroup with topics (422), a group serves one space (409), and `spaceman telegram` gets `--group-chat-id`. In a
+  group, refusals and answers to button taps are alerts only the tapper sees, a refused command gets one short reply
+  that shows nothing, forms link to the Mini App with a `t.me` direct link (Telegram refuses app buttons in groups), and
+  posts to a group take the `send_limits.group_per_minute` limit.
+- Telegram group mode authorization (ADR-0083, TG-13-1): in a forum supergroup
   bound to a space, every button tap and command acts as the tapping person's own linked account and grants, never the
   binder's or the group's. Members without a link, or whose account can't use the space, are refused; nothing outside the
   bound space is reachable; forms and confirmations belong to whoever opened them; enforced approvals are never decided

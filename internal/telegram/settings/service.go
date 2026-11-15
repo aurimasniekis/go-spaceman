@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 )
 
 // SettingsOut is the effective global settings with their storage state.
@@ -51,9 +53,59 @@ type Service struct {
 	// backup restores (archives and purges publish an event too).
 	retryMin, retryMax, reloadEvery time.Duration
 	loader                          func(context.Context) error
+	verify                          GroupVerifier
 }
 
 // New returns the service with the built-in defaults cached; Load (or Run) reads the stored state.
+// GroupVerifier asks Telegram about a chat the bot should be a member of (botapi.Client.GetChat).
+type GroupVerifier func(ctx context.Context, chatID int64) (botapi.Chat, error)
+
+// SetGroupVerifier sets how a group is checked before it is bound (nil: binding is refused, the bot isn't running).
+func (svc *Service) SetGroupVerifier(v GroupVerifier) {
+	svc.mu.Lock()
+	svc.verify = v
+	svc.mu.Unlock()
+}
+
+func fieldErr(msg string) error {
+	v := &apperr.Validation{}
+	v.Add("group_chat_id", "%s", msg)
+	return v.Err()
+}
+
+// checkGroup refuses a chat that can't serve as a space's group: not a supergroup, not in forum mode (topics), or one
+// the bot isn't a member of (getChat only finds chats the bot is in). It reaches Telegram, so it runs outside any
+// write transaction.
+func (svc *Service) checkGroup(ctx context.Context, chatID int64) error {
+	if chatID >= 0 {
+		return fieldErr("must be the negative chat ID of a supergroup (or 0 to unbind)")
+	}
+	svc.mu.RLock()
+	verify := svc.verify
+	svc.mu.RUnlock()
+	if verify == nil {
+		return apperr.New(apperr.CodeUnavailable, "the Telegram bot isn't running, so the group can't be checked: try again once it is")
+	}
+	vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	c, err := verify(vctx, chatID)
+	if err != nil {
+		var ae *botapi.Error
+		if errors.As(err, &ae) && (ae.Code == http.StatusBadRequest || ae.Code == http.StatusForbidden) {
+			return fieldErr("the bot is not a member of that group: add it first")
+		}
+		svc.log.Warn("telegram: checking a group failed", slog.String("error", err.Error()))
+		return apperr.New(apperr.CodeUnavailable, "Telegram could not be asked about the group: try again")
+	}
+	if c.ID != chatID || c.Type != botapi.ChatSupergroup {
+		return fieldErr("must be a supergroup")
+	}
+	if !c.IsForum {
+		return fieldErr("must have topics (forum mode) turned on")
+	}
+	return nil
+}
+
 func New(s *store.Store, aw *audit.Writer, bus *eventbus.Bus, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -470,12 +522,33 @@ func spaceVersionErr(exists bool, cur, sent int64) error {
 	return nil
 }
 
+// GroupChanged reports whether in would bind, rebind or unbind the space's group (the API then needs
+// telegram_group:write). A body that leaves group_chat_id out, or repeats the current one, changes nothing.
+func (svc *Service) GroupChanged(ctx context.Context, spaceID string, in SpaceInput) (bool, error) {
+	if in.GroupChatID == nil {
+		return false, nil
+	}
+	cur, err := svc.GetSpace(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
+	return cur.GroupChatID != *in.GroupChatID, nil
+}
+
 // PutSpace stores a space's settings: created with version 0 (no If-Match) or replaced at version. Fields left out
 // take their defaults.
 func (svc *Service) PutSpace(ctx context.Context, actor audit.Actor, spaceID string, version int64, in SpaceInput) (*Space, error) {
 	s, err := in.apply(spaceID)
 	if err != nil {
 		return nil, err
+	}
+	// A new binding is checked with Telegram first (no network inside the transaction below).
+	if g := in.GroupChatID; g != nil && *g != 0 {
+		if cur, err := svc.GetSpace(ctx, spaceID); err == nil && cur.GroupChatID != *g {
+			if err := svc.checkGroup(ctx, *g); err != nil {
+				return nil, err
+			}
+		}
 	}
 	err = svc.s.W().TxNamed(ctx, "telegram.space.put", func(tx *store.Tx) error {
 		if err := svc.checkSpace(ctx, tx.Q, spaceID); err != nil {
@@ -505,10 +578,20 @@ func (svc *Service) PutSpace(ctx context.Context, actor audit.Actor, spaceID str
 				return err
 			}
 		}
+		details := map[string]any{"space_id": spaceID, "enabled": s.Enabled, "content_level": s.ContentLevel, "enforced_approvals": s.EnforcedApprovals,
+			"topics": s.Topics, "terminal_watch": s.TerminalWatch}
+		// The binding is only changed when the body names it (left out, the current one stays); 0 unbinds.
+		if g := in.GroupChatID; g != nil && (!exists && *g != 0 || exists && cur.GroupChatID.Int64 != *g) {
+			val := sql.NullInt64{Int64: *g, Valid: *g != 0}
+			if _, err := tx.Q.SetSpaceTelegramGroup(ctx, db.SetSpaceTelegramGroupParams{GroupChatID: val, SpaceID: spaceID}); store.IsConstraint(err) {
+				return apperr.New(apperr.CodeConflict, "that group is already bound to another space: unbind it there first")
+			} else if err != nil {
+				return err
+			}
+			details["group_chat_id"] = *g
+		}
 		svc.publish(tx, spaceID)
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "space_telegram", ID: spaceID},
-			Details: map[string]any{"space_id": spaceID, "enabled": s.Enabled, "content_level": s.ContentLevel, "enforced_approvals": s.EnforcedApprovals,
-				"topics": s.Topics, "terminal_watch": s.TerminalWatch}})
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "space_telegram", ID: spaceID}, Details: details})
 		return err
 	})
 	if err != nil {

@@ -21,8 +21,14 @@ func member(linkID, space string) updates.Link {
 
 func (e *env) gsay(l updates.Link, text string) {
 	e.upd++
-	e.h.Handle(context.Background(), botapi.Update{UpdateID: e.upd, Message: &botapi.Message{MessageID: int(e.upd), From: &botapi.User{ID: 900},
-		Chat: botapi.Chat{ID: groupID, Type: botapi.ChatSupergroup}, Text: text}}, l)
+	e.ginject(l, botapi.Message{MessageID: int(e.upd), From: &botapi.User{ID: 900}, Chat: botapi.Chat{ID: groupID, Type: botapi.ChatSupergroup}, Text: text})
+}
+
+// ginject delivers a group message the way Telegram does: the fake knows it (so the bot can reply to it), then the handler.
+func (e *env) ginject(l updates.Link, m botapi.Message) {
+	u := botapi.Update{UpdateID: e.upd, Message: &m}
+	e.srv.Know(m)
+	e.h.Handle(context.Background(), u, l)
 }
 
 func (e *env) gtap(l updates.Link, data string, on botapi.Message) {
@@ -63,8 +69,8 @@ func TestGroupUnauthorizedTapperRefused(t *testing.T) {
 		t.Fatalf("revoked link answered %q", e.lastAnswer())
 	}
 	e.gsay(gone, "/needsyou")
-	if len(e.api.seen()) != 0 || len(e.group()) != 0 {
-		t.Fatalf("a revoked link reached the API %v or the group %d", e.api.seen(), len(e.group()))
+	if len(e.api.seen()) != 0 || len(e.group()) != 1 || e.group()[0].Text != TextGroupNoAccess {
+		t.Fatalf("a revoked link reached the API %v, or the group got %d messages", e.api.seen(), len(e.group()))
 	}
 	e.principalErr = nil
 
@@ -81,7 +87,13 @@ func TestGroupUnauthorizedTapperRefused(t *testing.T) {
 			t.Fatalf("a link without a grant got past the space check: %v", e.api.seen())
 		}
 	}
-	if len(e.group()) != 0 || e.touched(hid('2')) {
+	// Only the short refusal went to the group (one reply per command, no content).
+	for _, m := range e.group()[1:] {
+		if m.Text != TextGroupNoAccess {
+			t.Fatalf("the group got %q", m.Text)
+		}
+	}
+	if len(e.group()) != 3 || e.touched(hid('2')) {
 		t.Fatalf("sent %d messages to the group", len(e.group()))
 	}
 }
@@ -105,8 +117,9 @@ func TestGroupPinnedToBoundSpace(t *testing.T) {
 	}
 	e.gsay(m, "/spaces")
 	e.gsay(m, "/space sum")
-	if len(e.group()) != 0 {
-		t.Fatalf("/spaces or /space answered in the group: %q", e.glast().Text)
+	// They only get the fixed one-space reply (no space listed, none switched).
+	if g := e.group(); len(g) != 2 || g[0].Text != TextGroupFixed || g[1].Text != TextGroupFixed {
+		t.Fatalf("/spaces or /space answered in the group: %d messages", len(g))
 	}
 	e.gsay(m, "/inbox sum")
 	if e.glast().Text != TextUnavailable {
@@ -256,7 +269,95 @@ func TestGroupNoCapture(t *testing.T) {
 		Chat: botapi.Chat{ID: groupID, Type: botapi.ChatSupergroup}, Text: "just chatting",
 		ReplyToMessage: &botapi.Message{MessageID: 1, Chat: botapi.Chat{ID: groupID}}}}, m)
 	e.gsay(m, "/control hello")
-	if len(e.api.created) != 0 || len(e.group()) != 0 {
-		t.Fatalf("captured %v, sent %d", e.api.created, len(e.group()))
+	// /control is refused with the fixed one-space text and nothing else.
+	if g := e.group(); len(e.api.created) != 0 || len(g) != 1 || g[0].Text != TextGroupFixed {
+		t.Fatalf("captured %v, sent %d", e.api.created, len(g))
+	}
+}
+
+// TG-13-2: Telegram refuses web_app buttons outside private chats (the fake too: BUTTON_TYPE_INVALID), so a form that
+// links to the Mini App gets a plain URL button with the direct link in a group, and the web_app button in private.
+func TestGroupFormLinksToAppWithDirectLink(t *testing.T) {
+	e := newEnv(t)
+	e.h.o.AppURL = func(space, id string) string { return "https://app.example.com/a/" + id }
+	e.h.o.AppLink = func(space, id string) string { return "https://t.me/spaceman_bot?startapp=human-" + space + "-" + id }
+	e.addCustom(hid('1'), `{"type":"object","properties":{"nested":{"type":"object"}}}`, []string{"done"}, `{}`)
+	m := member("tgl_1", spA)
+	e.gtap(m, humanData('o', spA, hid('1'), -1), groupCard())
+	f := e.glast()
+	var link *botapi.InlineKeyboardButton
+	if f.ReplyMarkup != nil {
+		for _, row := range f.ReplyMarkup.InlineKeyboard {
+			for i, b := range row {
+				if b.WebApp != nil {
+					t.Fatalf("a web_app button in a group: %+v", b)
+				}
+				if b.URL != "" {
+					link = &row[i]
+				}
+			}
+		}
+	}
+	if link == nil || link.URL != "https://t.me/spaceman_bot?startapp=human-"+spA+"-"+hid('1') {
+		t.Fatalf("no direct link in the group's form: %v", f.ReplyMarkup)
+	}
+	if p := e.open(spA, hid('1')); p.ReplyMarkup == nil || p.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
+		t.Fatalf("the private form lost its web_app button: %v", p.ReplyMarkup)
+	}
+	// Without a direct link (no Main Mini App, no username) a group's form has no app button, and still works.
+	e.h.o.AppLink = nil
+	e.gtap(m, humanData('o', spA, hid('1'), -1), groupCard())
+	if g := e.glast(); strings.Contains(fmt.Sprint(g.ReplyMarkup), "startapp") {
+		t.Fatalf("a link without AppLink: %v", g.ReplyMarkup)
+	}
+}
+
+// TG-13-2: in a group every refusal of a tap and every answer with text is an alert (answerCallbackQuery with
+// show_alert), shown only to the tapper; an empty acknowledgement is not. A refused command has no callback query, so
+// it gets one short reply naming no content; a command that isn't the bot's gets nothing.
+func TestGroupEphemeralReplies(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "question", "Which one?", `{"options":["red","blue"]}`)
+	m := member("tgl_1", spA)
+	last := func() botapi.AnswerCallbackQueryParams {
+		a := e.srv.CallbackAnswers()
+		if len(a) == 0 {
+			t.Fatal("no answer")
+		}
+		return a[len(a)-1]
+	}
+
+	e.gtap(m, "sl", groupCard()) // the space list: not in a group
+	if a := last(); a.Text != TextGroupFixed || !a.ShowAlert {
+		t.Fatalf("space button: %+v", a)
+	}
+	e.gtap(m, humanData('o', spS, hid('1'), -1), groupCard()) // another space's action
+	if a := last(); a.Text != TextUnavailable || !a.ShowAlert {
+		t.Fatalf("other space: %+v", a)
+	}
+	e.principalErr = errors.New("revoked")
+	e.gtap(m, humanData('o', spA, hid('1'), -1), groupCard())
+	if a := last(); a.Text != TextGroupNoAccess || !a.ShowAlert {
+		t.Fatalf("no access: %+v", a)
+	}
+	e.principalErr = nil
+	if n := len(e.group()); n != 0 {
+		t.Fatalf("a refused tap posted %d messages to the group", n)
+	}
+
+	// Commands: replied to, in their topic, with text that shows nothing of the space.
+	e.upd++
+	e.ginject(m, botapi.Message{MessageID: 77, MessageThreadID: 5, From: &botapi.User{ID: 900},
+		Chat: botapi.Chat{ID: groupID, Type: botapi.ChatSupergroup}, Text: "/spaces"})
+	g := e.glast()
+	if g.Text != TextGroupFixed || g.ReplyToMessage == nil || g.ReplyToMessage.MessageID != 77 || g.MessageThreadID != 5 {
+		t.Fatalf("command reply %+v", g)
+	}
+	n := len(e.group())
+	e.gsay(m, "/start")
+	e.gsay(m, "/unlink")
+	e.gsay(m, "/nonsense")
+	if len(e.group()) != n {
+		t.Fatalf("a command that isn't the bot's was answered: %d messages, had %d", len(e.group()), n)
 	}
 }

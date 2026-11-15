@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
@@ -118,7 +119,9 @@ func RegisterTelegramSettings(svc *settings.Service) func(api huma.API, d *Deps)
 		huma.Register(api, huma.Operation{OperationID: "put-space-telegram", Method: http.MethodPut, Path: "/spaces/{space_id}/telegram",
 			Summary: "Set a space's Telegram settings",
 			Description: "Without If-Match this creates the settings (409 if the space has some); with it, it replaces them. A field left out takes " +
-				"its default. Needs space_config:write in the space and a step-up.",
+				"its default, except group_chat_id: left out, the space's bound group stays. Needs space_config:write in the space and a step-up; " +
+				"binding or unbinding the group (group_chat_id) also needs telegram_group:write (admins). The group must be a forum supergroup " +
+				"the bot is a member of (422 otherwise), and a group serves one space only (409 when it is bound elsewhere).",
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
@@ -128,6 +131,14 @@ func RegisterTelegramSettings(svc *settings.Service) func(api huma.API, d *Deps)
 				v, err := optionalVersion(in.IfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "telegram.space.put", err)
+				}
+				// Binding a group lets its members read the space's summaries through the bot: admins only.
+				changed, err := svc.GroupChanged(ctx, in.SpaceID, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "telegram.space.put", err)
+				}
+				if p := PrincipalFrom(ctx); changed && (d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.TelegramGroupWrite)) {
+					return nil, newProblem(http.StatusForbidden, apperr.CodeForbidden, "binding or unbinding a Telegram group needs telegram_group:write (space admins)", nil)
 				}
 				s, err := svc.PutSpace(ctx, Actor(ctx), in.SpaceID, v, in.Body)
 				if err != nil {

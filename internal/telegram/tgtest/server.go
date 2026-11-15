@@ -130,6 +130,7 @@ type Server struct {
 	chats    map[int64]botapi.Chat
 	blocked  map[int64]bool
 	messages map[int64]map[int]*botapi.Message
+	known    map[int64]map[int]*botapi.Message // messages users sent, for replies
 	nextMsg  map[int64]int
 	files    map[string]*storedFile // by file_id
 	paths    map[string]*storedFile // by file_path
@@ -172,6 +173,7 @@ func New(t testing.TB, o Options) *Server {
 		chats:     map[int64]botapi.Chat{},
 		blocked:   map[int64]bool{},
 		messages:  map[int64]map[int]*botapi.Message{},
+		known:     map[int64]map[int]*botapi.Message{},
 		nextMsg:   map[int64]int{},
 		files:     map[string]*storedFile{},
 		paths:     map[string]*storedFile{},
@@ -227,6 +229,17 @@ func (s *Server) SetChat(c botapi.Chat) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.chats[c.ID] = c
+}
+
+// Know registers a message a user sent, so the bot can reply to it (reply_parameters). It is not among Messages: those
+// are what the bot sent.
+func (s *Server) Know(m botapi.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.known[m.Chat.ID] == nil {
+		s.known[m.Chat.ID] = map[int]*botapi.Message{}
+	}
+	s.known[m.Chat.ID][m.MessageID] = &m
 }
 
 // Block makes sends to chatID fail with 403 "bot was blocked by the user" until Unblock.

@@ -622,6 +622,16 @@ func (h *Handler) formHead(a humanAction, s spaceRef, f *form, ap *enforcedAppro
 }
 
 func (h *Handler) appButton(s spaceRef, actionID, label string) []botapi.InlineKeyboardButton {
+	if s.group {
+		// web_app buttons are refused outside private chats: a group gets the Mini App's direct link.
+		if h.o.AppLink == nil {
+			return nil
+		}
+		if u := h.o.AppLink(s.ID, actionID); u != "" {
+			return []botapi.InlineKeyboardButton{{Text: label, URL: u}}
+		}
+		return nil
+	}
 	if h.o.AppURL == nil {
 		return nil
 	}

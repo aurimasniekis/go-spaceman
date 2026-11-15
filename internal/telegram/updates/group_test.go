@@ -89,7 +89,7 @@ func TestDispatcherGroupRefusesUnlinkedTapper(t *testing.T) {
 	tap := groupTap(1, 9, boundGroup)
 	srv.PushUpdate(tap)
 	d.Dispatch(ctx, tap)
-	if a := srv.CallbackAnswers(); len(a) != 1 || a[0].Text != GroupUnlinkedText {
+	if a := srv.CallbackAnswers(); len(a) != 1 || a[0].Text != GroupUnlinkedText || !a[0].ShowAlert {
 		t.Fatalf("answers %+v", a)
 	}
 	d.Dispatch(ctx, groupMsg(2, 9, boundGroup, "/needsyou"))
@@ -115,7 +115,7 @@ func TestDispatcherGroupRefusesOverdueLink(t *testing.T) {
 	if len(rec.got()) != 0 {
 		t.Fatal("an overdue link acted in a group")
 	}
-	if a := srv.CallbackAnswers(); len(a) != 1 || a[0].Text != GroupUnlinkedText {
+	if a := srv.CallbackAnswers(); len(a) != 1 || a[0].Text != GroupUnlinkedText || !a[0].ShowAlert {
 		t.Fatalf("answers %+v", a)
 	}
 }

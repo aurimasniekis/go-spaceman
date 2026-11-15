@@ -380,8 +380,8 @@ func (d *Dispatcher) dispatchGroup(ctx context.Context, u botapi.Update, g Group
 	}
 }
 
-// groupRefuse answers a bound group's update from a member who can't act: a tap gets GroupUnlinkedText as its answer
-// (only the tapper sees it); a message gets nothing, so strangers can't make the bot talk in the group.
+// groupRefuse answers a bound group's update from a member who can't act: a tap gets GroupUnlinkedText as an alert
+// (an answerCallbackQuery with show_alert, which only the tapper sees); a message gets nothing, so strangers can't make the bot talk in the group.
 func (d *Dispatcher) groupRefuse(ctx context.Context, u *botapi.Update) {
 	d.metrics.TelegramUpdate(metrics.TelegramUpdateUnlinkedDropped)
 	bot := d.client()
@@ -390,7 +390,7 @@ func (d *Dispatcher) groupRefuse(ctx context.Context, u *botapi.Update) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	if err := bot.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: u.CallbackQuery.ID, Text: GroupUnlinkedText}); err != nil {
+	if err := bot.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: u.CallbackQuery.ID, Text: GroupUnlinkedText, ShowAlert: true}); err != nil {
 		d.log.Debug("telegram: a group button tap was not answered", slog.String("error", err.Error()))
 	}
 }
@@ -481,6 +481,7 @@ func (d *Dispatcher) throttled(ctx context.Context, u *botapi.Update, l Link, wa
 		p := botapi.AnswerCallbackQueryParams{CallbackQueryID: u.CallbackQuery.ID}
 		if warn {
 			p.Text = SlowDownText
+			p.ShowAlert = l.Group != nil
 		}
 		if err := bot.AnswerCallbackQuery(ctx, p); err != nil {
 			d.log.Debug("telegram: a throttled button tap was not answered", slog.String("error", err.Error()))

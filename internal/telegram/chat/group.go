@@ -44,9 +44,16 @@ func groupOf(ctx context.Context) (updates.Group, bool) {
 func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Link) {
 	g := *l.Group
 	q := u.CallbackQuery
+	// A tap is refused with an alert only its tapper sees. A command has no callback query to answer, so it gets a
+	// short reply to it that names no content (TextGroupNoAccess, TextGroupFixed); other messages get nothing.
 	refuse := func(text string) {
-		if q != nil {
-			h.answer(ctx, q.ID, text)
+		switch {
+		case q != nil:
+			h.answer(withGroup(ctx, g), q.ID, text)
+		case u.Message != nil:
+			if _, _, ok := command(u.Message.Text); ok {
+				h.replyIn(ctx, u.Message, text)
+			}
 		}
 	}
 	if !settings.IsGroupChat(g.ChatID) || l.ChatID != g.ChatID || !spaceIDRe.MatchString(g.SpaceID) {
@@ -88,14 +95,22 @@ func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Li
 			h.cmdRuns(ctx, l, arg)
 		case "messages":
 			h.cmdMessages(ctx, l, arg)
+		case "spaces", "space", "control":
+			// They don't apply to a group; the reply shows nothing of any space.
+			h.replyIn(ctx, m, TextGroupFixed)
 		}
-		// /spaces, /space and /control don't apply to a group; nothing else is answered there.
+		// Any other command is none of the bot's: nothing is answered.
 		return
 	}
 	// A reply to one of the bot's prompts; any other message (capture, control text) is never taken in a group.
 	if m.ReplyToMessage != nil && !h.promptReply(ctx, m, l) && !h.rejectReply(ctx, m, l) {
 		h.qrReply(ctx, m, l)
 	}
+}
+
+// replyIn answers a command of a group with a short text as a reply to it, in its topic.
+func (h *Handler) replyIn(ctx context.Context, m *botapi.Message, text string) {
+	h.send(ctx, m.Chat.ID, reply{text: text, replyTo: m.MessageID, thread: m.MessageThreadID})
 }
 
 // full reports whether bodies of s may be sent: the space's content level is full and s isn't shown in a group.

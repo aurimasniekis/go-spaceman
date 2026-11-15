@@ -97,6 +97,10 @@ var (
 	// RetentionWrite changes a space's retention periods (ADR-0045): a shorter period deletes data in the next daily
 	// pass, so it is held by admins only, like recording:delete, on top of space_config:write.
 	RetentionWrite = perm("retention", "write")
+	// TelegramGroupWrite binds a Telegram group to a space or unbinds it (ADR-0083 amendment TG-13): everyone in the
+	// group may then read the space's summaries through the bot, so it is held by admins only, on top of
+	// space_config:write.
+	TelegramGroupWrite = perm("telegram_group", "write")
 
 	// Cross-space access (ADR-0038): a space's permissions per peer and its incoming and outgoing requests.
 	XSpaceRead  = perm("xspace", "read")

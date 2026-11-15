@@ -5119,9 +5119,9 @@
     complete nor spend them. **Enforced approvals are never decided in a group**: a form opened there is marked
     (`form.group`), shows no decision buttons, and `arm` refuses to arm the server's confirmation (ADR-0083 TG-7-2), so
     the server's rule refuses any decision; advisory approvals follow the tapper's own grants.
-  - **Left for TG-13-2:** refusals of commands are silent until ephemeral replies exist (a tap's refusal already reaches
-    only the tapper); `web_app` buttons are refused by Telegram outside private chats, so forms that link to the Mini App
-    need direct links in groups; the group send limit (20/min) and topics.
+  - **Left for later:** topics (a topic per space in the group; TG-13-2 keeps replies in the topic of the message they
+    answer) and the provider's `group_chat_id` (TG-12c). Binding, ephemeral replies, deep links and the group send limit
+    are the TG-13-2 amendment below.
   - **Tests:** `internal/telegram/updates` `TestDispatcherGroupUsesTheTappersOwnLink`,
     `TestDispatcherGroupRefusesUnlinkedTapper`, `TestDispatcherGroupRefusesOverdueLink`, `TestDispatcherGroupScope`;
     `internal/telegram/chat` `TestGroupUnauthorizedTapperRefused`, `TestGroupPinnedToBoundSpace`,
@@ -5132,6 +5132,43 @@
     (real dispatcher, authorization and API: unlinked, no-grant and viewer-capped members refused, another member can't
     complete a form, the operator's own tap answers, no body reaches the group of a `full` space). Each guard's mutant
     is killed (PLAN.md progress log).
+
+- **Group mode plumbing (TG-13-2, 2026-11-15, security-relevant change: binding a group is admin-only).** Builds on the
+  TG-13-1 names; its authorization logic is unchanged.
+  - **Bind and unbind.** `put-space-telegram` and `get-space-telegram` carry `group_chat_id` (the chat ID, negative).
+    Left out, a write keeps the current binding (a settings write never unbinds); `0` unbinds; any other value binds.
+    Changing it (bind, rebind, unbind) needs the new `telegram_group:write` permission, held by admins only (like
+    `retention:write`), on top of the existing step-up `space_config:write`; an operator can still write the space's other
+    settings and repeat the current value. Deleting the space's settings ends the binding with them. The write is audited
+    with the chat ID.
+  - **Checks.** A new binding is checked before the transaction (no network in a write transaction) with `getChat`
+    through the live bot: the bot must be a member (Telegram answers 400/403 otherwise: 422 "not a member"), the chat must
+    be a `supergroup` with `is_forum` true (422), and the ID must be negative (422). A bot that isn't running can't verify:
+    503, nothing bound. A group already bound to another space is 409 (the 0051 `UNIQUE` column; a pre-check isn't needed,
+    the constraint is the authority and its message names no other space). Repeating the current value skips the check.
+    Nothing re-verifies a binding later: if the bot is removed the group is unreachable anyway, and when topics are
+    turned off the binding keeps working (the check guards the act of binding).
+  - **Ephemeral replies.** In a group every answer with text to a tap is an alert (`answerCallbackQuery` with
+    `show_alert`), visible only to the tapper: the unlinked-member refusal, `TextGroupNoAccess`, `TextGroupFixed`,
+    action-specific answers and the slow-down notice. An acknowledgement without text stays silent. A command has no
+    callback query, so Telegram has no ephemeral reply for it: a refused command (`/spaces`, `/space`, `/control`, or any
+    command of a member whose account can't use the space) gets one short reply to it, in its topic, with a fixed text that
+    shows nothing of any space; a message of a member without a link, or a command that isn't one of the bot's, gets
+    nothing. The answers of the allowed commands (`/inbox`, `/needsyou`, `/queue`, `/runs`, `/messages`) are the
+    summary-only posts of TG-13-1, public to the group.
+  - **Mini App links.** Telegram refuses `web_app` buttons outside private chats, so a form in a group gets a URL button
+    with the Mini App's direct link, `https://t.me/<bot>?startapp=human-<space>-<action>` (the deep link of
+    `web/src/tg/deeplink.ts`; a routing hint that authorizes nothing). It uses the bot's Main Mini App (BotFather) and needs
+    the bot's username and the Mini App host; without them the form has no app button but still works. Private chats keep
+    the `web_app` button.
+  - **Group send limit.** `send_limits.group_per_minute` (1-20, default 20) already existed in the sender but no caller
+    set `Message.Group`. The sender now treats every negative chat ID as a group, whatever the caller set, so the
+    notifier's and the chat handler's group posts take the per-group bucket.
+  - **Tests:** `internal/app` `TestTelegramGroupBindOverHTTP` (admin-only, 403 for an operator, getChat checks against
+    the fake, 409 on a duplicate, keep/rebind/unbind, a deleted space), `internal/telegram/chat`
+    `TestGroupEphemeralReplies`, `TestGroupFormLinksToAppWithDirectLink`, `internal/telegram/updates` (the refusal alert),
+    `internal/telegram/sender` `TestNegativeChatIDGetsTheGroupLimit`, `TestGroupPerMinuteIsTheGroupBucket`,
+    `internal/telegram/botapi` `TestGetChat`.
 
 ### ADR-0084 — "Message the agent" is typed into the running session at once
 - **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.

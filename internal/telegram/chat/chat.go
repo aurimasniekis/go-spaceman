@@ -80,6 +80,9 @@ type Options struct {
 	ResolveMessage func(ctx context.Context, chatID int64, messageID int) (spaceID, msgID, linkID string, ok bool)
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
+	// AppLink is the direct Mini App link (t.me/<bot>?startapp=…) of an action, for forms in a group, where Telegram
+	// refuses web_app buttons: they get a plain URL button instead (nil or "": no button).
+	AppLink func(spaceID, actionID string) string
 	// ArmApproval arms the server's confirmation of an enforced approval for the first step of deciding it in chat
 	// (api.ApprovalConfirmations.Arm); "" or nil: enforced approvals can't be decided in chat.
 	ArmApproval func(linkID, spaceID, actionID, outcome string, version int64) string
@@ -208,6 +211,8 @@ type reply struct {
 	text   string
 	markup *botapi.InlineKeyboardMarkup
 	force  *botapi.ForceReply
+	// replyTo makes the message a reply to that message of the chat (0: none), and thread puts it in that forum topic.
+	replyTo, thread int
 	// protect sets protect_content (no forwarding or saving), for message bodies (ADR-0083 decision 13).
 	protect bool
 }
@@ -219,7 +224,11 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
-	p := botapi.SendMessageParams{ChatID: chatID, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
+	p := botapi.SendMessageParams{ChatID: chatID, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect,
+		MessageThreadID: r.thread}
+	if r.replyTo != 0 {
+		p.ReplyParameters = &botapi.ReplyParameters{MessageID: r.replyTo}
+	}
 	switch {
 	case r.force != nil:
 		p.ReplyMarkup = r.force
@@ -256,7 +265,9 @@ func (h *Handler) answer(ctx context.Context, id, text string) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
-	if err := b.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: id, Text: text}); err != nil {
+	// In a group an answer is an alert: answerCallbackQuery is shown only to the tapper, so nothing reaches the others.
+	_, inGroup := groupOf(ctx)
+	if err := b.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: id, Text: text, ShowAlert: inGroup && text != ""}); err != nil {
 		h.o.Log.Debug("telegram: a button tap was not answered", slog.String("error", err.Error()))
 	}
 }

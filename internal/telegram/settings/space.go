@@ -36,8 +36,8 @@ type Space struct {
 	Version           int64      `json:"version"`
 
 	// GroupChatID is the forum supergroup bound to the space (group mode, ADR-0083 amendment TG-13; 0: none), read
-	// from space_telegram_settings.group_chat_id. The API field and the binding come with TG-13-2.
-	GroupChatID int64 `json:"-"`
+	// from space_telegram_settings.group_chat_id.
+	GroupChatID int64 `json:"group_chat_id,omitempty" doc:"The forum supergroup bound to the space (group mode); omitted when none. Members of the group who linked their account can use the space's summaries there"`
 }
 
 // DefaultSpace is a space's settings before anyone set them.
@@ -68,6 +68,7 @@ type SpaceInput struct {
 	EnforcedApprovals *string `json:"enforced_approvals,omitempty" enum:"web_only,confirm" doc:"Default web_only"`
 	Topics            *bool   `json:"topics,omitempty" doc:"Default false"`
 	TerminalWatch     *bool   `json:"terminal_watch,omitempty" doc:"Default false"`
+	GroupChatID       *int64  `json:"group_chat_id,omitempty" doc:"Binds the forum supergroup (its chat ID, negative; the bot must be a member) to the space; 0 unbinds it. Left out, the current binding stays. Changing it needs telegram_group:write (admins); 409 when the group is bound to another space"`
 }
 
 // apply returns the defaults for spaceID with every field of in set, validated.

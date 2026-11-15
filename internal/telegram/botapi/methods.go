@@ -14,6 +14,13 @@ func (c *Client) GetMe(ctx context.Context) (User, error) {
 	return u, err
 }
 
+// GetChat returns a chat the bot is a member of (API#getchat); a chat the bot can't see is a 400 "chat not found".
+func (c *Client) GetChat(ctx context.Context, chatID int64) (Chat, error) {
+	var ch Chat
+	err := c.Call(ctx, "getChat", map[string]int64{"chat_id": chatID}, &ch)
+	return ch, err
+}
+
 // SetWebhookParams are setWebhook's parameters (API#setwebhook). SecretToken is 1–256 characters of [A-Za-z0-9_-].
 type SetWebhookParams struct {
 	URL                string   `json:"url"`
