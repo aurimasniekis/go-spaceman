@@ -11,7 +11,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `terminal_watch` in its Telegram settings, and a run page in the Mini App then shows the live terminal of that space's
   runs to links that may watch terminals (operator and up). It is read-only: no keys, paste, size or takeover, and no replay.
   The stream comes straight from central over the Mini App host, never through Telegram; the server refuses it again
-  unless the space opted in and the link holds `terminal:watch`. New `get-telegram-space-features` tells the Mini App
+  unless the space opted in and the link holds `terminal:watch`, and a stream already open ends (`forbidden`) at the next
+  re-check once the setting is turned off. New `get-telegram-space-features` tells the Mini App
   whether to show it.
 - Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
   App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
