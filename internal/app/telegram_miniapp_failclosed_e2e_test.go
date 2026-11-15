@@ -1,0 +1,221 @@
+package app_test
+
+import (
+	"log/slog"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/aurimasniekis/go-spaceman/internal/api"
+	"github.com/aurimasniekis/go-spaceman/internal/app"
+	"github.com/aurimasniekis/go-spaceman/internal/config"
+	webui "github.com/aurimasniekis/go-spaceman/web"
+)
+
+// ADR-0083 §3.4.1, SM-TG-008: the Mini App host fails closed. A request whose Host is the configured
+// telegram.miniapp_host (any case, any port, one trailing dot) is served only by the Mini App handler and never by the
+// main router, whatever the bot's state: with no bot, a disabled bot or a bot whose stored miniapp_host is another,
+// every path is a 404, including sign-in, openapi.json, the web UI and an admin operation with a valid Bearer token.
+
+// newFailClosedEnv is a Mini App environment with telegram.miniapp_host set to miniHost and both web UIs embedded (so a
+// main-host answer is told from a Mini App one and from a 404), with central's logs in the returned buffer.
+func newFailClosedEnv(t *testing.T) (*miniAppEnv, *syncBuf) {
+	t.Helper()
+	logs := &syncBuf{}
+	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	e := newMiniAppEnvFull(t, log, func(c *config.Config) { c.Telegram.MiniAppHost = miniHost }, func(c *app.Central) {
+		c.UI = webui.Handler(dlFiles)
+		c.MiniAppUI = webui.MiniAppHandler(dlFiles)
+	})
+	return e, logs
+}
+
+// failClosedCase is one request tried on a host that must answer 404.
+type failClosedCase struct {
+	method, path, body string
+	hdr                []string
+}
+
+// failClosedCases are main-router routes (each answers on the main host) and the Mini App's own routes.
+func failClosedCases(e *miniAppEnv, cookie string) []failClosedCase {
+	bearer := []string{"Authorization", "Bearer " + e.root.bearer}
+	login := `{"email":"mini@example.com","password":"correct horse battery staple"}`
+	cs := []failClosedCase{
+		{"GET", "/", "", nil},
+		{"GET", "/index.html", "", nil},
+		{"GET", "/tg.html", "", nil},
+		{"GET", "/assets/app-abc123.js", "", nil},
+		{"GET", "/spaces/x", "", nil},
+		{"GET", "/agent/connect", "", nil},
+		{"POST", "/telegram/webhook/abc", "{}", nil},
+		{"POST", api.Prefix + "/auth/login", login, nil},
+		{"GET", api.Prefix + "/auth/me", "", bearer},
+		{"GET", api.Prefix + "/openapi.json", "", nil},
+		{"GET", api.Prefix + "/openapi.yaml", "", nil},
+		{"GET", api.Prefix + "/system/info", "", bearer},
+		{"GET", api.Prefix + "/users", "", bearer},
+		{"GET", api.Prefix + "/spaces", "", bearer},
+		{"GET", api.Prefix + "/telegram/bot", "", bearer},
+		{"POST", api.Prefix + "/mcp", "{}", bearer},
+		{"POST", api.Prefix + "/telegram/session", exchangeBody(e.initData(e.tg.Token(), 42, 0)), []string{"Origin", e.origin()}},
+		{"GET", api.TelegramDownloadPath + "abc", "", nil},
+	}
+	if cookie != "" {
+		cs = append(cs, failClosedCase{"GET", api.Prefix + "/spaces", "", []string{"Cookie", cookie}},
+			failClosedCase{"GET", api.Prefix + "/auth/me", "", []string{"Cookie", cookie}})
+	}
+	return cs
+}
+
+// hostVariants are spellings of miniHost a request may carry; each is the Mini App host.
+func hostVariants(port string) []string {
+	return []string{miniHost, miniHost + ":" + port, "TG.Example.COM", "tg.EXAMPLE.com:8443", miniHost + ":443", miniHost + ".", "TG.example.com.:80"}
+}
+
+// assertAll404 sends every case to every host and fails on anything but the Mini App's plain 404.
+func assertAll404(t *testing.T, e *miniAppEnv, stage string, hosts []string, cases []failClosedCase) {
+	t.Helper()
+	for _, host := range hosts {
+		for _, c := range cases {
+			r := e.send(t, host, c.method, c.path, c.body, c.hdr...)
+			if r.status != 404 || string(r.body) != "not found\n" || len(r.header.Values("Set-Cookie")) > 0 {
+				t.Errorf("%s: Host %q %s %s: %d %q, want the Mini App host's 404", stage, host, c.method, c.path, r.status, r.body)
+			}
+		}
+	}
+}
+
+// mainSession signs a user in on the main host and returns the session cookie as a Cookie header value.
+func mainSession(t *testing.T, e *miniAppEnv) string {
+	t.Helper()
+	ui := enrolledSession(t, e.h, "mini@example.com")
+	pub, _ := url.Parse(e.h.srv.URL)
+	for _, ck := range ui.hc.Jar.Cookies(pub) {
+		if ck.Name == "sm_session" {
+			return ck.Name + "=" + ck.Value
+		}
+	}
+	t.Fatal("no session cookie")
+	return ""
+}
+
+func TestMiniAppHostFailsClosedWithoutBot(t *testing.T) {
+	t.Parallel()
+	e, _ := newFailClosedEnv(t)
+	cookie := mainSession(t, e)
+	cases := failClosedCases(e, cookie)
+
+	// The same requests reach the main router on the main host: the token, cookie and sign-in are valid there, so a
+	// 404 on the Mini App host is the host's doing.
+	expect(t, e.send(t, "", "GET", api.Prefix+"/users", "", "Authorization", "Bearer "+e.root.bearer), 200)
+	expect(t, e.send(t, "", "GET", api.Prefix+"/spaces", "", "Cookie", cookie), 200)
+	expect(t, e.send(t, "", "GET", api.Prefix+"/openapi.json", ""), 200)
+	if r := e.send(t, "", "GET", "/", ""); r.status != 200 || !strings.Contains(string(r.body), "MainUI") {
+		t.Fatalf("main UI: %d %q", r.status, r.body)
+	}
+
+	// No bot at all.
+	if e.h.c.TelegramBot.StoredMiniAppHost() != "" || e.h.c.TelegramBot.MiniAppHost() != "" {
+		t.Fatal("a Mini App host before any bot")
+	}
+	assertAll404(t, e, "no bot", hostVariants(e.port), cases)
+	// X-Forwarded-Host never moves a Mini App host request to the main router.
+	pub, _ := url.Parse(e.h.srv.URL)
+	assertAll404(t, e, "no bot, X-Forwarded-Host", []string{miniHost}, []failClosedCase{
+		{"GET", "/", "", []string{"X-Forwarded-Host", pub.Host}},
+		{"GET", api.Prefix + "/users", "", []string{"X-Forwarded-Host", pub.Host, "Authorization", "Bearer " + e.root.bearer}},
+	})
+
+	// A bot stored but disabled, with and without the same miniapp_host.
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"bot_token": e.tg.Token(), "enabled": false, "mode": "polling"}), 200)
+	assertAll404(t, e, "disabled bot", hostVariants(e.port), cases)
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": false, "mode": "polling", "miniapp_host": miniHost}, "If-Match", `"1"`), 200)
+	assertAll404(t, e, "disabled bot with the host", hostVariants(e.port), cases)
+
+	// Deleted again: still 404.
+	expect(t, e.root.do("DELETE", "/telegram/bot", nil, "If-Match", `"2"`), 204)
+	assertAll404(t, e, "deleted bot", hostVariants(e.port), cases)
+
+	// Other hosts are untouched: the main host still answers.
+	if r := e.send(t, "x."+miniHost, "GET", "/", ""); r.status != 200 || !strings.Contains(string(r.body), "MainUI") {
+		t.Errorf("another host: %d %q", r.status, r.body)
+	}
+}
+
+func TestMiniAppHostFailsClosedWithBot(t *testing.T) {
+	t.Parallel()
+	e, logs := newFailClosedEnv(t)
+	cookie := mainSession(t, e)
+	// The bot stores no miniapp_host: the configured one is served.
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"bot_token": e.tg.Token(), "enabled": true, "mode": "polling"}), 200)
+	if e.h.c.TelegramBot.MiniAppHost() != miniHost {
+		t.Fatalf("serving %q", e.h.c.TelegramBot.MiniAppHost())
+	}
+	e.startBotLinks(t)
+	tok := e.exchange(t)
+
+	// Only the Mini App's routes answer, on every spelling of the host; main-router credentials are refused.
+	for _, host := range hostVariants(e.port) {
+		if r := e.send(t, host, "GET", "/", ""); r.status != 200 || !strings.Contains(string(r.body), "MiniApp") {
+			t.Errorf("Host %q: shell %d %q", host, r.status, r.body)
+		}
+		if r := e.send(t, host, "GET", api.Prefix+"/spaces", "", "Authorization", "Telegram "+tok); r.status != 200 {
+			t.Errorf("Host %q: Mini App session %d %s", host, r.status, r.body)
+		}
+		for _, c := range []struct {
+			method, path, body string
+			hdr                []string
+			want               int
+		}{
+			{"GET", api.Prefix + "/users", "", []string{"Authorization", "Bearer " + e.root.bearer}, 401},
+			{"POST", api.Prefix + "/auth/login", `{"email":"mini@example.com","password":"correct horse battery staple"}`, nil, 404},
+			{"GET", api.Prefix + "/auth/me", "", []string{"Cookie", cookie}, 404},
+			{"GET", api.Prefix + "/openapi.json", "", nil, 404},
+			{"GET", "/agent/connect", "", nil, 404},
+			{"POST", "/telegram/webhook/abc", "{}", nil, 404},
+			{"POST", api.Prefix + "/mcp", "{}", []string{"Authorization", "Bearer " + e.root.bearer}, 404},
+		} {
+			r := e.send(t, host, c.method, c.path, c.body, c.hdr...)
+			if r.status != c.want || strings.Contains(string(r.body), "MainUI") {
+				t.Errorf("Host %q %s %s: %d, want %d: %s", host, c.method, c.path, r.status, c.want, r.body)
+			}
+		}
+	}
+
+	// A cookie, alone or with a Bearer token, is refused too (once: refusals count toward the sign-in rate limit).
+	for _, hdr := range [][]string{{"Cookie", cookie}, {"Authorization", "Bearer " + e.root.bearer, "Cookie", cookie}} {
+		if r := e.mini(t, "GET", api.Prefix+"/spaces", "", hdr...); r.status != 401 {
+			t.Errorf("Mini App host with %q: %d %s", hdr, r.status, r.body)
+		}
+	}
+
+	// A different stored miniapp_host: the configuration wins and is still served; the stored host is never the main
+	// router either (it is a Mini App host that serves nothing); the mismatch is logged and in the system status.
+	const other = "tg.other.example.com"
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": other}, "If-Match", `"1"`), 200)
+	if r := e.send(t, miniHost, "GET", api.Prefix+"/spaces", "", "Authorization", "Telegram "+tok); r.status != 200 {
+		t.Errorf("configured host with a mismatch: %d %s", r.status, r.body)
+	}
+	assertAll404(t, e, "the ignored stored host", []string{other, "TG.Other.Example.com:8443"}, failClosedCases(e, cookie))
+	if !strings.Contains(logs.String(), "differs from telegram.miniapp_host") {
+		t.Error("the mismatch is not logged")
+	}
+	var sys struct {
+		Telegram struct {
+			MiniAppHost        string `json:"miniapp_host"`
+			MiniAppHostSource  string `json:"miniapp_host_source"`
+			MiniAppHostIgnored string `json:"miniapp_host_ignored"`
+		} `json:"telegram"`
+	}
+	r := e.root.do("GET", "/system", nil)
+	expect(t, r, 200)
+	r.json(t, &sys)
+	if sys.Telegram.MiniAppHost != miniHost || sys.Telegram.MiniAppHostSource != "config" || sys.Telegram.MiniAppHostIgnored != other {
+		t.Errorf("system status %+v", sys.Telegram)
+	}
+
+	// Disabled: everything on the host is a 404 again, the shell included.
+	expect(t, e.root.do("PUT", "/telegram/bot", map[string]any{"enabled": false, "mode": "polling", "miniapp_host": miniHost}, "If-Match", `"2"`), 200)
+	assertAll404(t, e, "disabled", hostVariants(e.port), failClosedCases(e, cookie))
+	assertAll404(t, e, "disabled, Mini App session", []string{miniHost}, []failClosedCase{{"GET", api.Prefix + "/spaces", "", []string{"Authorization", "Telegram " + tok}}})
+}

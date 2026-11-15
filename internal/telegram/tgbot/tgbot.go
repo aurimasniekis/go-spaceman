@@ -19,8 +19,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +35,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tghost"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -91,6 +90,10 @@ type Options struct {
 	BaseURL string
 	// PublicURL is central's public_url: the webhook is registered under it, and the Mini App host must differ from it.
 	PublicURL string
+	// MiniAppHost is central's telegram.miniapp_host (config file only; "" when unset). When set it is the Mini App
+	// host whatever the bot's miniapp_host says: a different stored miniapp_host is ignored, logged and shown in the
+	// health (ADR-0083 §3.4.1).
+	MiniAppHost string
 	// HTTPClient sends Bot API requests (nil: a default client; every call is bounded by CallTimeout).
 	HTTPClient *http.Client
 	// CallTimeout bounds each Bot API call (default 15 s).
@@ -119,8 +122,11 @@ type Service struct {
 	mu  sync.Mutex
 	run runtime
 
-	// miniAppHost is the Mini App host of a running bot ("" when off): central's host routing reads it per request.
+	// miniAppHost is the Mini App host of a running bot ("" when off): central serves the Mini App only on it.
 	miniAppHost atomic.Pointer[string]
+	// storedHost is the stored bot's miniapp_host, enabled or not ("" with no bot): central routes it to the Mini App
+	// handler whatever the bot's state. Read per request.
+	storedHost atomic.Pointer[string]
 	// miniAppBot is the running bot's Mini App initData key (nil when off).
 	miniAppBot atomic.Pointer[miniapp.Bot]
 
@@ -148,6 +154,7 @@ func New(s *store.Store, aw *audit.Writer, kr *keyring.Keyring, o Options) *Serv
 	svc := &Service{s: s, audit: aw, kr: kr, o: o, retryMin: retryMin, retryMax: retryMax}
 	empty := ""
 	svc.miniAppHost.Store(&empty)
+	svc.storedHost.Store(&empty)
 	svc.run.state = StateOff
 	return svc
 }
@@ -193,52 +200,22 @@ func (svc *Service) out(ctx context.Context, r db.TelegramBot) *Bot {
 	if b.Health.Error != "" {
 		b.Warnings = append(b.Warnings, b.Health.Error)
 	}
+	if m := svc.hostMismatch(r.MiniappHost); m != "" {
+		b.Warnings = append(b.Warnings, MismatchWarning(svc.o.MiniAppHost, m))
+	}
 	return b
 }
 
-// reNumericLabel is a last label a browser's URL parser takes for a number (decimal, octal or 0x hex), which makes
-// the whole host an IPv4 address or invalid.
-var reNumericLabel = regexp.MustCompile(`^([0-9]+|0x[0-9a-f]*)$`)
+// MismatchWarning explains a bot miniapp_host that telegram.miniapp_host overrides.
+func MismatchWarning(configured, stored string) string {
+	return "The bot's miniapp_host " + stored + " is ignored: central's configuration sets telegram.miniapp_host to " + configured +
+		", which wins. Set the bot's miniapp_host to the same value, or leave it empty."
+}
 
-// reHostLabel is one DNS label in lower case.
-var reHostLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
-// checkMiniAppHost validates miniapp_host (plan §3.4.1): a bare lower-case DNS name with at least two labels, no
-// scheme, port, path or trailing dot, not an IP address, and not the host of central's public URL (the Mini App needs
-// its own origin, so no cookie of the main host reaches it).
+// checkMiniAppHost validates miniapp_host with the rules central's telegram.miniapp_host follows too (tghost.Check).
 func checkMiniAppHost(v *apperr.Validation, host, publicURL string) {
-	if host == "" {
-		return
-	}
-	if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
-		v.Add("miniapp_host", "must be a DNS name, not an IP address")
-		return
-	}
-	if strings.ContainsAny(host, ":/?#@ ") {
-		v.Add("miniapp_host", "must be a bare host name, without scheme, port or path (e.g. tg.central.example.com)")
-		return
-	}
-	if host != strings.ToLower(host) {
-		v.Add("miniapp_host", "must be lower case")
-		return
-	}
-	labels := strings.Split(host, ".")
-	if len(host) > 253 || len(labels) < 2 {
-		v.Add("miniapp_host", "must be a fully qualified DNS name of at most 253 characters (e.g. tg.central.example.com)")
-		return
-	}
-	for _, l := range labels {
-		if !reHostLabel.MatchString(l) {
-			v.Add("miniapp_host", "is not a valid DNS name: each label is 1-63 of a-z, 0-9 and '-', not starting or ending with '-'")
-			return
-		}
-	}
-	if reNumericLabel.MatchString(labels[len(labels)-1]) {
-		v.Add("miniapp_host", "must not end in a number: browsers read 127.1, 0x7f.1 or 0177.0.0.1 as an IPv4 address and refuse tg.123")
-		return
-	}
-	if u, err := url.Parse(publicURL); err == nil && strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), host) {
-		v.Add("miniapp_host", "must differ from the host of central's public URL: the Mini App needs its own origin")
+	if err := tghost.Check(host, publicURL); err != nil {
+		v.Add("miniapp_host", "%s", err.Error())
 	}
 }
 

@@ -717,8 +717,9 @@ func (c *Central) systemSources() *api.SystemSources {
 
 // Handler is the public listener's handler: the API under /api/ and the web UI elsewhere.
 //
-// It routes on the request's Host (ADR-0083 §3.4.1): the Mini App host (miniapp_host of the running bot) gets the Mini
-// App handler, every other host the main one. Only r.Host counts; X-Forwarded-Host is never trusted for routing.
+// It routes on the request's Host (ADR-0083 §3.4.1): the Mini App host (telegram.miniapp_host, otherwise the stored
+// bot's miniapp_host) gets the Mini App handler and nothing else, whatever the bot's state (404 while no bot serves
+// it); every other host gets the main one. Only r.Host counts; X-Forwarded-Host is never trusted for routing.
 func (c *Central) Handler(d *api.Deps) http.Handler {
 	main := c.mainHandler(d)
 	mini := c.miniAppHandler(d)

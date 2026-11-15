@@ -52,8 +52,19 @@ func newMiniAppEnv(t *testing.T) *miniAppEnv {
 // newMiniAppEnvWith is newMiniAppEnv with central logging to log and pre run on central before its handler is built.
 func newMiniAppEnvWith(t *testing.T, log *slog.Logger, pre func(*app.Central)) *miniAppEnv {
 	t.Helper()
+	return newMiniAppEnvFull(t, log, nil, pre)
+}
+
+// newMiniAppEnvFull is newMiniAppEnvWith with mod applied to central's configuration as well.
+func newMiniAppEnvFull(t *testing.T, log *slog.Logger, mod func(*config.Config), pre func(*app.Central)) *miniAppEnv {
+	t.Helper()
 	tg := tgtest.New(t, tgtest.Options{Limits: tgtest.Limits{Disabled: true}})
-	h := newHarnessFull(t, log, func(c *config.Config) { c.Telegram.APIBaseURL = tg.URL() }, pre)
+	h := newHarnessFull(t, log, func(c *config.Config) {
+		c.Telegram.APIBaseURL = tg.URL()
+		if mod != nil {
+			mod(c)
+		}
+	}, pre)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go h.c.TelegramUpdates.Run(ctx)
@@ -87,6 +98,12 @@ func (e *miniAppEnv) startBot(t *testing.T) {
 	if e.h.c.TelegramBot.MiniAppHost() != miniHost {
 		t.Fatalf("Mini App host %q", e.h.c.TelegramBot.MiniAppHost())
 	}
+	e.startBotLinks(t)
+}
+
+// startBotLinks links Telegram user 42 of the configured bot to the user (capped to operator).
+func (e *miniAppEnv) startBotLinks(t *testing.T) {
+	t.Helper()
 	botID, _, _ := strings.Cut(e.tg.Token(), ":")
 	e.exec(t, `INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, created_at, updated_at) VALUES (?, ?, ?, 42, 42, 'active', 0, 0)`,
 		e.linkID, e.userID, botID)

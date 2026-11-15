@@ -59,6 +59,12 @@ type env struct {
 // reach the inbound side's webhook at the path setWebhook registered (the registered host is not reachable).
 func newEnv(t *testing.T, public string) *env {
 	t.Helper()
+	return newEnvWith(t, public, nil)
+}
+
+// newEnvWith is newEnv with mod applied to the service's options.
+func newEnvWith(t *testing.T, public string, mod func(*Options)) *env {
+	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
 	s := storetest.Open(t, storetest.WithClock(clk))
 	kr := keyringtest.Load(t, s)
@@ -82,8 +88,12 @@ func newEnv(t *testing.T, public string) *env {
 	done := make(chan struct{})
 	go func() { defer close(done); e.up.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	e.svc = New(s, audit.NewWriter(kr), kr, Options{BaseURL: e.tg.URL(), PublicURL: public, CallTimeout: 5 * time.Second, Updates: e.up,
-		PollerOptions: updates.PollerOptions{Timeout: time.Second}, Bus: e.bus, Log: log})
+	o := Options{BaseURL: e.tg.URL(), PublicURL: public, CallTimeout: 5 * time.Second, Updates: e.up,
+		PollerOptions: updates.PollerOptions{Timeout: time.Second}, Bus: e.bus, Log: log}
+	if mod != nil {
+		mod(&o)
+	}
+	e.svc = New(s, audit.NewWriter(kr), kr, o)
 	return e
 }
 
@@ -614,5 +624,93 @@ func TestTokenEchoedByTelegramStaysOut(t *testing.T) {
 			}
 			noToken(t, token, b.Health.Error, strings.Join(b.Warnings, "\n"), e.svc.Status(context.Background()).Error, e.logs.String())
 		}
+	}
+}
+
+// ADR-0083 §3.4.1: central's telegram.miniapp_host (Options.MiniAppHost) is the Mini App host whatever the bot's
+// miniapp_host says. The running bot serves it (menu button, initData key) even with no stored host; a different
+// stored host is ignored, logged, shown in the health and the bot's warnings, and still reported as stored (central
+// routes it to the Mini App handler, which never serves it). Disabled or deleted, nothing is served.
+func TestConfiguredMiniAppHostWins(t *testing.T) {
+	t.Parallel()
+	const cfgHost, other = "tg.example.com", "tg.other.example.com"
+	e := newEnvWith(t, publicURL, func(o *Options) { o.MiniAppHost = cfgHost })
+	ctx := context.Background()
+	allow := []string{"149.154.160.0/20"}
+
+	st := e.svc.Status(ctx)
+	if e.svc.MiniAppHost() != "" || e.svc.StoredMiniAppHost() != "" || st.Configured || st.MiniAppHost != cfgHost || st.MiniAppHostSource != "config" ||
+		st.MiniAppHostIgnored != "" {
+		t.Fatalf("no bot: serving %q, stored %q, health %+v", e.svc.MiniAppHost(), e.svc.StoredMiniAppHost(), st)
+	}
+
+	// No stored host: the configured one is served.
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true, WebhookIPAllowlist: allow})
+	if e.svc.MiniAppHost() != cfgHost || e.svc.StoredMiniAppHost() != "" || len(b.Warnings) != 0 || b.Health.MiniAppHost != cfgHost ||
+		b.Health.MiniAppHostSource != "config" || b.Health.MiniAppHostIgnored != "" {
+		t.Fatalf("configured host only: serving %q, stored %q, %+v", e.svc.MiniAppHost(), e.svc.StoredMiniAppHost(), b)
+	}
+	if m := e.tg.MenuButton(); m == nil || m.Type != botapi.MenuButtonWebApp || m.WebApp.URL != "https://"+cfgHost+"/" {
+		t.Fatalf("menu button %+v", m)
+	}
+	if _, ok := e.svc.MiniAppBot(); !ok {
+		t.Fatal("no Mini App key with the configured host")
+	}
+
+	// The same host stored: no warning.
+	b = e.put(1, Input{Enabled: true, WebhookIPAllowlist: allow, MiniAppHost: cfgHost})
+	if len(b.Warnings) != 0 || b.Health.MiniAppHostIgnored != "" || strings.Contains(e.logs.String(), "differs from telegram.miniapp_host") {
+		t.Fatalf("same host: %+v", b)
+	}
+
+	// Another host stored: the configuration wins, the difference is logged and shown.
+	b = e.put(2, Input{Enabled: true, WebhookIPAllowlist: allow, MiniAppHost: other})
+	if e.svc.MiniAppHost() != cfgHost || e.svc.StoredMiniAppHost() != other || b.MiniAppHost != other || b.Health.MiniAppHost != cfgHost ||
+		b.Health.MiniAppHostSource != "config" || b.Health.MiniAppHostIgnored != other {
+		t.Fatalf("mismatch: serving %q, stored %q, %+v", e.svc.MiniAppHost(), e.svc.StoredMiniAppHost(), b)
+	}
+	if len(b.Warnings) != 1 || b.Warnings[0] != MismatchWarning(cfgHost, other) {
+		t.Fatalf("mismatch warnings %q", b.Warnings)
+	}
+	if m := e.tg.MenuButton(); m.WebApp == nil || m.WebApp.URL != "https://"+cfgHost+"/" {
+		t.Fatalf("menu button with a mismatch %+v", m)
+	}
+	if l := e.logs.String(); !strings.Contains(l, "differs from telegram.miniapp_host") || !strings.Contains(l, other) {
+		t.Fatalf("mismatch not logged: %s", l)
+	}
+
+	// Disabled: nothing is served, the stored host stays known (central keeps routing it to the Mini App handler).
+	b = e.put(3, Input{Enabled: false, MiniAppHost: other})
+	if e.svc.MiniAppHost() != "" || e.svc.StoredMiniAppHost() != other || b.Health.MiniAppHostIgnored != other {
+		t.Fatalf("disabled: serving %q, stored %q, %+v", e.svc.MiniAppHost(), e.svc.StoredMiniAppHost(), b.Health)
+	}
+	if _, ok := e.svc.MiniAppBot(); ok {
+		t.Fatal("Mini App key while disabled")
+	}
+	if err := e.svc.Delete(ctx, admin, 4); err != nil {
+		t.Fatal(err)
+	}
+	if st := e.svc.Status(ctx); e.svc.MiniAppHost() != "" || e.svc.StoredMiniAppHost() != "" || st.MiniAppHost != cfgHost || st.MiniAppHostIgnored != "" {
+		t.Fatalf("deleted: serving %q, stored %q, %+v", e.svc.MiniAppHost(), e.svc.StoredMiniAppHost(), st)
+	}
+}
+
+// Without telegram.miniapp_host the stored miniapp_host is the Mini App host, reported with source bot, and stays the
+// stored host while the bot is disabled.
+func TestStoredMiniAppHostWithoutConfig(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	ctx := context.Background()
+	if st := e.svc.Status(ctx); st.MiniAppHost != "" || st.MiniAppHostSource != "" {
+		t.Fatalf("nothing set: %+v", st)
+	}
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true, WebhookIPAllowlist: []string{"149.154.160.0/20"}, MiniAppHost: "tg.central.example.com"})
+	if e.svc.MiniAppHost() != "tg.central.example.com" || e.svc.StoredMiniAppHost() != "tg.central.example.com" || b.Health.MiniAppHostSource != "bot" ||
+		b.Health.MiniAppHost != "tg.central.example.com" || b.Health.MiniAppHostIgnored != "" || len(b.Warnings) != 0 {
+		t.Fatalf("stored host: %+v", b)
+	}
+	e.put(1, Input{Enabled: false, MiniAppHost: "tg.central.example.com"})
+	if e.svc.MiniAppHost() != "" || e.svc.StoredMiniAppHost() != "tg.central.example.com" {
+		t.Fatalf("disabled: serving %q, stored %q", e.svc.MiniAppHost(), e.svc.StoredMiniAppHost())
 	}
 }

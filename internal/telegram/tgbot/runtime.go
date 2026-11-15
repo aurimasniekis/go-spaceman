@@ -72,6 +72,10 @@ type Status struct {
 	LastErrorAt        *time.Time `json:"last_error_at,omitempty" doc:"Telegram's last failed webhook delivery"`
 	LastErrorMessage   string     `json:"last_error_message,omitempty"`
 	CheckedAt          *time.Time `json:"checked_at,omitempty" doc:"When Telegram was last asked (getWebhookInfo)"`
+	// The Mini App host (ADR-0083 §3.4.1).
+	MiniAppHost        string `json:"miniapp_host,omitempty" doc:"The host central routes to the Mini App handler only (it never reaches the rest of central; 404 for everything while no bot serves it): telegram.miniapp_host from central's configuration when set, otherwise the bot's miniapp_host"`
+	MiniAppHostSource  string `json:"miniapp_host_source,omitempty" enum:"config,bot," doc:"Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)"`
+	MiniAppHostIgnored string `json:"miniapp_host_ignored,omitempty" doc:"The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything"`
 }
 
 // runtime is the live bot. Fields above mu are owned by Service.mu; the rest are read by Status under mu.
@@ -101,7 +105,29 @@ type runtime struct {
 }
 
 // MiniAppHost is the Mini App host of the running bot, or "" when the bot is off or has none. It is read per request.
+// It is telegram.miniapp_host when that is set, whatever the bot's miniapp_host says.
 func (svc *Service) MiniAppHost() string { return *svc.miniAppHost.Load() }
+
+// StoredMiniAppHost is the stored bot's miniapp_host, enabled or not, or "" when there is no bot or it has none.
+// Central routes it to the Mini App handler whatever the bot's state, like telegram.miniapp_host; the handler serves
+// only MiniAppHost. Before Start has loaded the bot it is "".
+func (svc *Service) StoredMiniAppHost() string { return *svc.storedHost.Load() }
+
+// effectiveHost is the Mini App host for a bot whose stored miniapp_host is stored: the configured one wins.
+func (svc *Service) effectiveHost(stored string) string {
+	if svc.o.MiniAppHost != "" {
+		return svc.o.MiniAppHost
+	}
+	return stored
+}
+
+// hostMismatch is the stored miniapp_host when it differs from telegram.miniapp_host (both set), otherwise "".
+func (svc *Service) hostMismatch(stored string) string {
+	if svc.o.MiniAppHost != "" && stored != "" && stored != svc.o.MiniAppHost {
+		return stored
+	}
+	return ""
+}
 
 // MiniAppBot is the running bot's ID with the key its Mini App initData is signed with (miniapp.SecretKey of its
 // token; the token itself stays here), or false while no bot runs or it has no Mini App host.
@@ -222,7 +248,17 @@ func (svc *Service) offLocked() {
 // The poller runs on central's serving context (Start), not ctx: it outlives the write that configured it.
 func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop bool) (retry bool) { //nolint:contextcheck // see above
 	var gen uint64
+	stored := ""
+	if row != nil {
+		stored = row.MiniappHost
+	}
+	// Routing follows the stored row before anything else: a disabled or failing bot's host stays the Mini App's (404).
+	prevStored := *svc.storedHost.Swap(&stored)
 	svc.setState(func(rt *runtime) { rt.gen++; gen = rt.gen })
+	if m := svc.hostMismatch(stored); m != "" && (m != prevStored || gen == 1) {
+		svc.o.Log.Warn("telegram: the bot's miniapp_host differs from telegram.miniapp_host; the configuration wins",
+			slog.String("miniapp_host", svc.o.MiniAppHost), slog.String("bot_miniapp_host", m))
+	}
 	prev := svc.run.client
 	if row == nil || row.Enabled != 1 {
 		svc.offLocked()
@@ -280,7 +316,7 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 	svc.stopPollerLocked()
 	svc.run.client = c
 	svc.startSender(c) //nolint:contextcheck // the sender runs on central's serving context, like the poller
-	host := row.MiniappHost
+	host := svc.effectiveHost(row.MiniappHost)
 	svc.miniAppHost.Store(&host)
 	if c.BotID() == strconv.FormatInt(row.BotID, 10) {
 		// Only the configured bot's own token signs initData its links accept.
@@ -383,11 +419,18 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 // registered elsewhere, or a delivery error newer than central's setWebhook, is an error.
 func (svc *Service) Status(ctx context.Context) Status {
 	svc.refreshInfo(ctx)
+	stored := svc.StoredMiniAppHost()
 	rt := &svc.run
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	st := Status{Configured: rt.configured, Enabled: rt.enabled, Mode: rt.mode, BotID: rt.botID, Username: rt.username,
-		WebhookStatus: rt.state, Error: rt.err}
+		WebhookStatus: rt.state, Error: rt.err, MiniAppHost: svc.effectiveHost(stored), MiniAppHostIgnored: svc.hostMismatch(stored)}
+	switch {
+	case svc.o.MiniAppHost != "":
+		st.MiniAppHostSource = "config"
+	case st.MiniAppHost != "":
+		st.MiniAppHostSource = "bot"
+	}
 	if rt.state != StateOK {
 		return st
 	}
