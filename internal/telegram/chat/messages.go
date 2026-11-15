@@ -504,7 +504,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 			return
 		}
 		// The card's version is compared with the message's first, and sent as If-Match too, so a change in between is a
-		// 412 conflict: a card that went stale (acknowledged or resolved elsewhere, or changed) gets a refresh.
+		// 409 conflict: a card that went stale (acknowledged or resolved elsewhere, or changed) gets a refresh.
 		if m.Version != v || !m.open() || (f[0] == "ma" && !m.waiting()) {
 			h.answer(ctx, q.ID, TextStale)
 			h.show(ctx, l.ChatID, q.Message, h.messageCard(m, s))

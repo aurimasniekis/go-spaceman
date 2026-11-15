@@ -399,7 +399,7 @@ func (h *Handler) taskStatus(ctx context.Context, c caller, l updates.Link, q *b
 }
 
 // taskMove places a task. The card's version is checked first (a stale card gets a refresh without a call) and is sent
-// as If-Match too, so a change between the check and the move is a 412 conflict, not a move relative to a queue the
+// as If-Match too, so a change between the check and the move is a 409 conflict, not a move relative to a queue the
 // card no longer shows.
 func (h *Handler) taskMove(ctx context.Context, c caller, l updates.Link, q *botapi.CallbackQuery, s spaceRef, id, code string, version int64) {
 	all, r := h.loadQueue(ctx, c, s.ID)
