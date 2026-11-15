@@ -5,10 +5,14 @@ import (
 	"log/slog"
 	"net/netip"
 
+	"net/http"
+
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/chat"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
@@ -103,4 +107,27 @@ func (c *Central) auditTelegramUnauthorized(ctx context.Context, clientIP string
 	if err != nil {
 		c.Log.Warn("telegram: auditing refused webhook requests failed", slog.String("error", err.Error()))
 	}
+}
+
+// wireTelegramChat gives the dispatcher the chat surfaces (/spaces, /space, /inbox). They call the API through its
+// in-process handler as the link's Telegram principal, built for every update, so each read and write passes the same
+// authorization as over HTTP. A space is shown only when its Telegram settings make it visible.
+func (c *Central) wireTelegramChat(apiH http.Handler) {
+	if c.TelegramUpdates == nil || c.TelegramSettings == nil {
+		return
+	}
+	d := c.TelegramUpdates.Dispatcher
+	d.SetHandler(chat.New(chat.Options{
+		API: apiH,
+		Principal: func(ctx context.Context, linkID string) (*auth.Principal, error) {
+			return c.Auth.TelegramPrincipal(ctx, linkID, auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})
+		},
+		Space: c.TelegramSettings.Space,
+		Bot: func() chat.Bot {
+			b, _ := d.Bot().(chat.Bot)
+			return b
+		},
+		Clock: c.Clock,
+		Log:   obs.Component(c.Log, "telegram"),
+	}))
 }

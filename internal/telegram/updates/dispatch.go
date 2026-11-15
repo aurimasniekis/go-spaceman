@@ -127,7 +127,7 @@ type DispatcherOptions struct {
 //     (a 256-bit secret, or its hash in a button the bot sent) and the Telegram user's own link.
 type Dispatcher struct {
 	links   Links
-	handler Handler
+	handler atomic.Pointer[handlerRef]
 	linker  Linker
 	unlink  Unlinker
 	limiter *Limiter
@@ -160,13 +160,29 @@ func NewDispatcher(o DispatcherOptions) *Dispatcher {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	d := &Dispatcher{links: o.Links, handler: o.Handler, linker: o.Linker, unlink: o.Unlinker, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
+	d := &Dispatcher{links: o.Links, linker: o.Linker, unlink: o.Unlinker, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
 		perUser: o.UnlinkedPerUser, global: o.UnlinkedGlobal, replied: newLRU(o.UnlinkedUsers)}
 	d.SetBot(o.Bot)
+	d.SetHandler(o.Handler)
 	return d
 }
 
 type botRef struct{ Bot }
+
+type handlerRef struct{ Handler }
+
+// SetHandler replaces the handler of linked users' updates (nil: they are dropped). The chat surfaces need the API
+// and the bot, which exist after the dispatcher does.
+func (d *Dispatcher) SetHandler(h Handler) {
+	if h == nil {
+		d.handler.Store(nil)
+		return
+	}
+	d.handler.Store(&handlerRef{h})
+}
+
+// Bot returns the client the dispatcher replies with (nil: none), for the chat surfaces that reply the same way.
+func (d *Dispatcher) Bot() Bot { return d.client() }
 
 // SetBot replaces the client the dispatcher replies with (nil: send nothing).
 func (d *Dispatcher) SetBot(b Bot) {
@@ -245,8 +261,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 				d.send(ctx, from.ID, d.unlink.Unlink(ctx, l))
 				return
 			}
-			if d.handler != nil {
-				d.handler.Handle(ctx, u, l)
+			if h := d.handler.Load(); h != nil {
+				h.Handle(ctx, u, l)
 			}
 			return
 		}
