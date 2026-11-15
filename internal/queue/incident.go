@@ -191,6 +191,10 @@ func (svc *Service) preemptTx(ctx context.Context, tx *store.Tx, actor audit.Act
 		if err := tx.Q.SetTaskPreemptedBy(ctx, db.SetTaskPreemptedByParams{PreemptedBy: incidentID, ID: t.ID}); err != nil {
 			return nil, err
 		}
+		// A run parked at a usage limit on it no longer comes back for it: the task is back in the queue (ADR-0079).
+		if err := svc.settleLimitWaitsTx(ctx, tx, actor, t.ID, Ready, t.AssigneeRun); err != nil {
+			return nil, err
+		}
 		if err := tx.Q.InsertTaskPreemption(ctx, db.InsertTaskPreemptionParams{ID: ids.New(ids.Preemption), SpaceID: t.SpaceID, IncidentID: incidentID,
 			TaskID: t.ID, Action: "preempted", CreatedAt: tx.NowMicros()}); err != nil {
 			return nil, err

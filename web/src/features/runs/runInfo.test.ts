@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Run } from '@/api/client'
-import { formatDuration, runLabels, runStateText, runTitle, runTone, sortRuns } from './runInfo'
+import { agentMessageBody, formatDuration, runLabels, runStateText, runTitle, runTone, sortRuns } from './runInfo'
 
 const base = { id: 'run_1', role: 'control', kind: 'control', harness: 'claude-code', observed: 'running', desired: 'running', turn: 0,
   created_at: '2026-11-06T10:00:00Z', started_at: '2026-11-06T10:00:00Z' } as unknown as Run
@@ -24,6 +24,9 @@ describe('run display', () => {
     expect(runStateText(run({ status_kind: 'permission' }), now)).toBe('waiting for permission')
     expect(runStateText(run({ observed: 'exited', ended_at: '2026-11-06T10:10:30Z', end_reason: 'killed' }), now)).toBe('exited 2m ago · killed')
     expect(runStateText(run({ observed: 'unknown' }), now)).toBe('node offline')
+    // ADR-0079: a live run waiting for its usage limit to reset, and one that ended (parked) at it.
+    expect(runStateText(run({ status: 'idle', limit: { kind: 'five_hour', since: '2026-11-06T10:00:00Z' } }), now)).toBe('at usage limit')
+    expect(runStateText(run({ observed: 'exited', ended_at: '2026-11-06T10:10:30Z', end_reason: 'usage_limit' }), now)).toBe('exited 2m ago · usage limit')
   })
   it('formats durations in their two largest units', () => {
     expect(formatDuration(45_000)).toBe('45s')
@@ -38,5 +41,11 @@ describe('run display', () => {
     expect([...runLabels([a, b, c]).values()]).toEqual(['kb-support (1)', 'kb-support (2)', 'control'])
     const ended = run({ id: 'e', observed: 'exited', role: 'old' })
     expect(sortRuns([ended, a, c]).map((r) => r.id)).toEqual(['c', 'a', 'e'])
+  })
+})
+
+describe('message the agent', () => {
+  it('forces delivery so a busy program still receives the message', () => {
+    expect(agentMessageBody('stop and read the plan')).toEqual({ text: 'stop and read the plan', force: true })
   })
 })

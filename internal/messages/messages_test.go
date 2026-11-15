@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -502,5 +503,95 @@ func TestControlWantedAndWaiting(t *testing.T) {
 	must(t, f.n.Sweep(f.ctx))
 	if len(wanted) != 2 {
 		t.Fatalf("a human response did not ask for control: %v", wanted)
+	}
+}
+
+// ADR-0079 decision 3: a run waiting for its usage limit to reset gets no notices (typing would start a turn that fails
+// at once); its items stay stored and are noticed once the limit clears. A refusal from the queue (the limit arrived
+// after the candidates were read) is skipped quietly.
+func TestNotifierHoldsNoticesForLimitWaitingRun(t *testing.T) {
+	f := newFx(t)
+	f.exec(`UPDATE runs SET limit_kind = 'five_hour', limit_since = 1 WHERE id = '` + wrkRun + `'`)
+	m, _, err := f.svc.Send(f.ctx, op, "spc_a", From{Kind: "operator", ID: "usr_op"}, SendInput{To: "role:implementor", Subject: "Next step"})
+	must(t, err)
+	must(t, f.n.Sweep(f.ctx))
+	f.clk.Advance(10 * time.Minute)
+	must(t, f.n.Sweep(f.ctx))
+	if f.q.count(wrkRun) != 0 {
+		t.Fatalf("a limit-waiting run was noticed: %+v", f.q.notices)
+	}
+	if got, _ := f.svc.Get(f.ctx, "spc_a", m.ID); got.State != Stored {
+		t.Fatalf("held message %+v", got)
+	}
+	f.exec(`UPDATE runs SET limit_kind = '', limit_since = NULL WHERE id = '` + wrkRun + `'`)
+	must(t, f.n.Sweep(f.ctx))
+	if f.q.count(wrkRun) != 1 {
+		t.Fatalf("after the clear: %+v", f.q.notices)
+	}
+}
+
+func TestNotifierSkipsLimitRefusal(t *testing.T) {
+	f := newFx(t)
+	q := &refusingQueue{}
+	f.n = NewNotifier(f.svc, q, nil, f.clk)
+	_, _, err := f.svc.Send(f.ctx, op, "spc_a", From{Kind: "operator", ID: "usr_op"}, SendInput{To: "role:implementor", Subject: "Next step"})
+	must(t, err)
+	must(t, f.n.Sweep(f.ctx))
+	if q.calls != 1 {
+		t.Fatalf("queue calls %d", q.calls)
+	}
+}
+
+type refusingQueue struct{ calls int }
+
+func (q *refusingQueue) QueueNotice(context.Context, *store.Tx, string, string) (string, error) {
+	q.calls++
+	return "", fleet.ErrLimitWaiting
+}
+
+func (q *refusingQueue) KickRun(context.Context, string) {}
+
+// ADR-0079 decision 11: SpaceMan's notification to control is written in the caller's transaction, once per key.
+func TestNotifyControlTxOncePerKey(t *testing.T) {
+	f := newFx(t)
+	kicks := 0
+	f.svc.Kick = func() { kicks++ }
+	send := func() bool {
+		var sent bool
+		must(t, f.s.W().TxNamed(f.ctx, "notify", func(tx *store.Tx) error {
+			var err error
+			sent, err = f.svc.NotifyControlTx(f.ctx, tx, "spc_a", "usage-limit:k", "Limited", "body")
+			return err
+		}))
+		return sent
+	}
+	if !send() || send() {
+		t.Fatal("want exactly one send per key")
+	}
+	if kicks != 1 {
+		t.Fatalf("kicks %d", kicks)
+	}
+	in, err := f.svc.Fetch(f.ctx, ctrl)
+	must(t, err)
+	if len(in.Messages) != 1 || in.Messages[0].Subject != "Limited" || in.Messages[0].FromKind != "system" {
+		t.Fatalf("control inbox %+v", in.Messages)
+	}
+	// A failed transaction leaves nothing behind.
+	err = f.s.W().TxNamed(f.ctx, "notify", func(tx *store.Tx) error {
+		if _, err := f.svc.NotifyControlTx(f.ctx, tx, "spc_a", "usage-limit:rolled-back", "X", ""); err != nil {
+			return err
+		}
+		return errors.New("boom")
+	})
+	if err == nil {
+		t.Fatal("want the error")
+	}
+	var told bool
+	must(t, f.s.W().TxNamed(f.ctx, "q", func(tx *store.Tx) error {
+		told, err = f.svc.ControlNotifiedTx(f.ctx, tx, "spc_a", "usage-limit:rolled-back")
+		return err
+	}))
+	if told || kicks != 1 {
+		t.Fatalf("rolled-back notice: told %v, kicks %d", told, kicks)
 	}
 }

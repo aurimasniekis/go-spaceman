@@ -636,7 +636,7 @@ func (svc *Service) fire(ctx context.Context, r *db.SpaceSchedule, at time.Time,
 		kind = "task"
 		var t *queue.Task
 		t, created, err = svc.queue.Create(ctx, system, r.SpaceID, queue.CreateInput{Title: r.Title, Objective: r.Body, Priority: r.Priority, Status: "ready",
-			AssigneeRole: r.AssigneeRole, OriginKind: "schedule", OriginID: r.ID, DedupKey: key})
+			AssigneeRole: r.AssigneeRole, OriginKind: "schedule", OriginID: r.ID, DedupKey: key, Internal: true})
 		if err == nil {
 			targetID = t.ID
 		}
