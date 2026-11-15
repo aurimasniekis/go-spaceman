@@ -1,10 +1,12 @@
 import { Badge, Button, Card, Code, Group, Menu, Modal, Stack, Text, Title } from '@mantine/core'
 import { IconCheck, IconChevronDown, IconClockPause, IconRotate, IconX } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type InboxItem } from '@/api/client'
 import { keys, useInboxItem, useMe } from '@/api/queries'
+import { isMiniApp } from '@/api/session'
+import { mermaidSources } from '@/tg/diagrams'
 import { AnchorLink } from '@/components/AnchorLink'
 import { AttachmentList } from '@/components/AttachmentList'
 import { ErrorAlert } from '@/components/ErrorAlert'
@@ -22,6 +24,7 @@ export const Route = createFileRoute('/spaces/$spaceId/inbox/$itemId')({ compone
 function ItemPage() {
   const { spaceId, itemId } = Route.useParams()
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const item = useInboxItem(spaceId, itemId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
@@ -87,6 +90,9 @@ function ItemPage() {
         )}
       </Group>
 
+      {isMiniApp() && it.content_type !== 'application/json' && mermaidSources(it.body).length > 0 && (
+        <Button variant="light" fullWidth onClick={() => void navigate({ to: '/spaces/$spaceId/inbox/$itemId/diagram', params: { spaceId, itemId } })}>View diagram</Button>
+      )}
       <Card>
         <Group justify="space-between" mb="xs">
           <Badge variant="outline" color="gray">untrusted content</Badge>
