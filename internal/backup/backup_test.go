@@ -20,6 +20,7 @@ import (
 // SM-STORE-003/004/005: create → verify (with and without the KEK) → restore into another directory → every payload
 // file is back, role memory is a repository again, and nothing in the backup is readable without the KEK.
 func TestRoundTrip(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	out := filepath.Join(t.TempDir(), "target", "b1")
 	res := f.create(out)
@@ -111,6 +112,7 @@ func TestRoundTrip(t *testing.T) {
 
 // SM-STORE-005: verification detects tampering, missing and extra files, a modified manifest and the wrong KEK.
 func TestVerifyDetectsTampering(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	base := filepath.Join(t.TempDir(), "good")
 	m := f.create(base).Manifest
@@ -217,6 +219,7 @@ func TestVerifyDetectsTampering(t *testing.T) {
 
 // Restore refuses a non-empty data directory unless forced; forced, it moves existing data aside and deletes nothing.
 func TestRestoreTarget(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	out := filepath.Join(t.TempDir(), "b")
 	f.create(out)
@@ -259,6 +262,7 @@ func TestRestoreTarget(t *testing.T) {
 }
 
 func TestCreateRefusals(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	out := filepath.Join(t.TempDir(), "b")
 	must(t, os.MkdirAll(out, 0o700))

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -17,7 +18,7 @@ var BackupRules = map[string]Rule{
 	"list-backups":        Global(authz.SystemRead),
 	"create-backup":       Global(authz.BackupRun),
 	"verify-backup":       Global(authz.BackupRun),
-	"get-restore-state":   {Session: true},
+	"get-restore-state":   FilteredRead(),
 	"acknowledge-restore": Global(authz.SystemWrite),
 }
 
@@ -30,7 +31,7 @@ type BackupPath struct {
 type RestoreNotice struct {
 	Restored bool                 `json:"restored"`
 	State    *backup.RestoreState `json:"state,omitempty"`
-	// StillPaused counts the spaces the restore paused that are still paused (among those the caller may read).
+	// StillPaused counts the spaces the restore paused that have not been resumed since and are paused (among those the caller may read).
 	StillPaused int `json:"still_paused"`
 }
 
@@ -83,13 +84,16 @@ func RegisterBackups(svc *backup.Service) func(api huma.API, d *Deps) {
 					p := PrincipalFrom(ctx)
 					global := p != nil && d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), authz.Global, authz.SystemRead)
 					cp := *rs
-					cp.PausedSpaces = []string{}
+					cp.PausedSpaces, cp.ResumedSpaces = []string{}, []string{}
 					for _, id := range rs.PausedSpaces {
 						if !global && (p == nil || d.Authz == nil || !d.Authz.AllowedAll(p.Subjects(), id, authz.SpaceRead)) {
 							continue
 						}
 						cp.PausedSpaces = append(cp.PausedSpaces, id)
-						if sp, err := d.Store.R().GetSpace(ctx, id); err == nil && sp.State == "paused" {
+						if slices.Contains(rs.ResumedSpaces, id) {
+							cp.ResumedSpaces = append(cp.ResumedSpaces, id)
+						}
+						if sp, err := d.Store.R().GetSpace(ctx, id); err == nil && sp.State == "paused" && !slices.Contains(rs.ResumedSpaces, id) {
 							out.Body.StillPaused++
 						}
 					}

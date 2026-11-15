@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -45,7 +46,7 @@ type Options struct {
 	SkipMigrate bool
 	Logger      *slog.Logger
 	Clock       clock.Clock
-	// TxObserver, if set, receives the duration and outcome of every write transaction.
+	// TxObserver, if set, receives the lock hold time and outcome of every write transaction (see TxObserver).
 	TxObserver TxObserver
 	// Metrics, if set, records write transaction duration and results, busy retries and writer wait time
 	// (Hallpass HP-DB-003, Hallpass HP-DB-004). Nil disables metrics.
@@ -54,6 +55,9 @@ type Options struct {
 	BusyTimeout time.Duration
 	// Migrations overrides the embedded central migrations (the node agent journal and tests use their own).
 	Migrations fs.FS
+	// ReadObserver, if set, receives the SQL text of every query run through R(), before it runs. Tests only: it lets
+	// a test check which reads a code path does (storetest.WithReadObserver).
+	ReadObserver func(query string)
 }
 
 // Store is an open SpaceMan database owned exclusively by this process.
@@ -168,7 +172,11 @@ func (s *Store) open(ctx context.Context, opts Options) error {
 	s.health.mu.Lock()
 	s.health.probe = s.writer.spaceProbe
 	s.health.mu.Unlock()
-	s.reader = db.New(s.rdb)
+	if opts.ReadObserver != nil {
+		s.reader = db.New(observedDB{DBTX: s.rdb, observe: opts.ReadObserver})
+	} else {
+		s.reader = db.New(s.rdb)
+	}
 	opts.Metrics.SetStoreSizes(s.Sizes())
 	return nil
 }
@@ -180,20 +188,47 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) closeNow() {
+	// One deadline for the whole close (the checkpoint and both pools' drains), so shutdown stays inside the service
+	// manager's stop timeout (closeDrainTimeout).
+	deadline := time.Now().Add(closeDrainTimeout)
 	var errs []error
 	if s.rdb != nil {
-		errs = append(errs, s.rdb.Close())
+		errs = append(errs, s.rdb.Close(), drainConns(s.rdb, "reader", deadline))
 	}
 	if s.wdb != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		_, _ = s.wdb.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 		cancel()
-		errs = append(errs, s.wdb.Close())
+		errs = append(errs, s.wdb.Close(), drainConns(s.wdb, "writer", deadline))
 	}
 	if s.lock != nil {
 		errs = append(errs, s.lock.Release())
 	}
 	s.closeErr = errors.Join(errs...)
+}
+
+// closeDrainTimeout bounds the whole of Close: the WAL checkpoint and the wait for connections that were in use when it
+// was called, both pools sharing the one deadline. With central's shutdown.timeout (30 s by default) and the 5 s for
+// gateway mints, a stop then takes at most 43 s, inside the units' TimeoutStopSec=45s (site/operators/upgrade.md). A
+// variable so a test can shorten it.
+var closeDrainTimeout = 8 * time.Second
+
+// drainConns waits until every connection of a closed pool is closed. sql.DB.Close closes only idle connections: one
+// still in use (a query or transaction of a goroutine that has not stopped yet) closes when it is released. Until then
+// it keeps the database file open, and closing it later (the last connection of the process checkpoints the WAL under
+// an exclusive lock) races a store opened next on the same directory, so Close does not release the process lock
+// before.
+//
+// When the deadline passes first, the lock is released anyway (a stuck goroutine must not keep the node from shutting
+// down) and the error says how many connections were still in use.
+func drainConns(d *sql.DB, pool string, deadline time.Time) error {
+	for d.Stats().OpenConnections > 0 {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("close %s pool: %d connections still in use after %s", pool, d.Stats().OpenConnections, closeDrainTimeout)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil
 }
 
 // W returns the single writer.
@@ -224,8 +259,11 @@ const DefaultBusyTimeout = 5 * time.Second
 
 func baseDSN(busy time.Duration) url.Values {
 	q := url.Values{}
+	// _busy_timeout, not a _pragma: the driver runs it first, before _auto_vacuum (which reads the file) and the
+	// _pragma list. Set as a _pragma, the writer's auto_vacuum ran without a busy handler and an open failed at once
+	// with SQLITE_BUSY whenever another connection briefly held the file (for example while closing and checkpointing).
+	q.Set("_busy_timeout", strconv.FormatInt(busy.Milliseconds(), 10))
 	for _, p := range []string{
-		fmt.Sprintf("busy_timeout(%d)", busy.Milliseconds()),
 		"foreign_keys(1)",
 		"synchronous(FULL)",
 		"trusted_schema(0)",
@@ -279,4 +317,30 @@ func (s *Store) ReadTx(ctx context.Context, fn func(q *db.Queries) error) error 
 	}
 	defer func() { _ = tx.Rollback() }()
 	return classify(fn(db.New(tx)))
+}
+
+// observedDB reports each query to observe before running it on DBTX (Options.ReadObserver).
+type observedDB struct {
+	db.DBTX
+	observe func(query string)
+}
+
+func (o observedDB) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
+	o.observe(q)
+	return o.DBTX.ExecContext(ctx, q, args...)
+}
+
+func (o observedDB) PrepareContext(ctx context.Context, q string) (*sql.Stmt, error) {
+	o.observe(q)
+	return o.DBTX.PrepareContext(ctx, q)
+}
+
+func (o observedDB) QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	o.observe(q)
+	return o.DBTX.QueryContext(ctx, q, args...)
+}
+
+func (o observedDB) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {
+	o.observe(q)
+	return o.DBTX.QueryRowContext(ctx, q, args...)
 }

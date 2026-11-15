@@ -26,6 +26,7 @@ func (f *fx) deployType(t *testing.T) *HumanType {
 
 // SM-HTYPE-001/002/003: a central catalog with immutable versions, strict schemas and safe UI metadata only.
 func TestTypeCatalog(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	for name, d := range map[string]TypeDraft{
 		"not object":     {RequestSchema: json.RawMessage(`{"type":"string"}`)},
@@ -79,6 +80,7 @@ func TestTypeCatalog(t *testing.T) {
 // SM-HTYPE-002/004/005/006: spaces enable types (pinned or following, as variants); requests and responses are
 // validated server-side; actions keep their type version; custom outcomes grant nothing.
 func TestCustomActions(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	ht := f.deployType(t)
 	v1 := ht.Versions[0]

@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 
 import AxeBuilder from '@axe-core/playwright'
@@ -48,6 +50,60 @@ async function capture(page: Page, name: string, prepare: () => Promise<void>) {
     await audit(page, name, theme)
     await page.keyboard.press('Escape')
   }
+}
+
+/**
+ * A stand-in Harbor Pilot gateway for the Harbor Pilot screenshots (ADR-0060): on loopback, it answers the calls central
+ * makes to validate a connection (mint, revoke, budget status, project) and the Limits page's budget status and project
+ * usage (HP-T5) with invented data. It only exists so the connected state can be shown without a real gateway; the
+ * integration itself is tested against a real `harbor-pilot serve --demo` (make test-harbor-pilot).
+ */
+async function fakeHarborPilot(): Promise<{ url: string; server: Server; mode: (m: 'exceeded' | 'warning' | 'unavailable') => void }> {
+  let n = 0
+  let mode: 'exceeded' | 'warning' | 'unavailable' = 'exceeded'
+  // Invented budgets covering the payments space: its project's daily budget is used up, the others are not.
+  const day0 = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z')
+  const day1 = new Date(day0.getTime() + 86400_000)
+  const month0 = new Date(Date.UTC(day0.getUTCFullYear(), day0.getUTCMonth(), 1))
+  const month1 = new Date(Date.UTC(day0.getUTCFullYear(), day0.getUTCMonth() + 1, 1))
+  const budget = (id: string, name: string, scope: string, scopeID: string, period: string, start: Date, end: Date, enforcement: string, limit: number, spent: number, state: string) => ({
+    budget_id: id, name, scope, scope_id: scopeID, period, period_start: start.toISOString(), period_end: end.toISOString(), currency: 'USD', enforcement, enabled: true,
+    limit_e10: Math.round(limit * 1e10), spent_e10: Math.round(spent * 1e10), reserved_e10: 0, fraction: spent / limit, state })
+  const budgets = [
+    budget('bdg_payments_daily', 'payments-daily', 'project', 'prj_payments', 'day', day0, day1, 'block', 25, 25.42, 'exceeded'),
+    budget('bdg_acme_monthly', 'acme-monthly', 'workspace', 'wsp_acme', 'month', month0, month1, 'warn', 2000, 1312.8, 'ok'),
+    budget('bdg_spaceman_runs', 'spaceman-runs', 'binding', 'bnd_spaceman_runs', 'day', day0, day1, 'block', 150, 61.05, 'ok'),
+    budget('bdg_other_project', 'research-daily', 'project', 'prj_research', 'day', day0, day1, 'block', 10, 12, 'exceeded'),
+  ]
+  // The warning state: the project's daily budget near its limit, the workspace's warn-only budget over its own.
+  const warning = [
+    budget('bdg_payments_daily', 'payments-daily', 'project', 'prj_payments', 'day', day0, day1, 'block', 25, 21.37, 'warning'),
+    budget('bdg_acme_monthly', 'acme-monthly', 'workspace', 'wsp_acme', 'month', month0, month1, 'warn', 2000, 2104.6, 'exceeded'),
+    budget('bdg_spaceman_runs', 'spaceman-runs', 'binding', 'bnd_spaceman_runs', 'day', day0, day1, 'block', 150, 61.05, 'ok'),
+  ]
+  const server = createServer((req, res) => {
+    const json = (status: number, body: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)) }
+    req.resume()
+    if (req.method === 'POST' && req.url === '/v1/harbor/credentials') {
+      n++
+      return json(201, { credential: { id: `crd_screenshot${n}`, binding_id: 'bnd_spaceman_runs', parent_id: 'crd_parent', scopes: ['gateway:invoke', 'gateway:models'],
+        bound_refs: {}, expires_at: new Date(Date.now() + 7 * 86400_000).toISOString() }, token: `hpk_probe_${n}` })
+    }
+    if (req.method === 'DELETE' && req.url?.startsWith('/v1/harbor/credentials/')) { res.writeHead(204); return res.end() }
+    if (req.url === '/api/v1/budgets/status') {
+      if (mode === 'unavailable') return json(503, { title: 'Service Unavailable', status: 503, detail: 'the ledger is not ready' })
+      return json(200, { items: mode === 'warning' ? warning : budgets })
+    }
+    if (req.url?.startsWith('/api/v1/usage/summary')) {
+      return json(200, { from: day0.toISOString(), to: new Date().toISOString(), group_by: 'project', totals: [], groups: [{ key: 'prj_payments', label: 'payments',
+        attempts: 1843, tokens: { input: 4_210_334, output: 391_220, cache_read: 2_870_112, cache_write: 120_400, reasoning: 0, unknown_usage_attempts: 3 },
+        costs: [{ kind: 'estimated_api_charge', currency: 'USD', amount: '25.42' }] }] })
+    }
+    if (req.url === '/api/v1/projects/prj_payments') return json(200, { id: 'prj_payments', name: 'payments', spec: { workspace_id: 'wsp_acme' } })
+    return json(404, { title: 'Not Found', status: 404, detail: 'not found' })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, server, mode: (m) => { mode = m } }
 }
 
 async function enrollmentShot(browser: Browser, email: string, pw: string) {
@@ -145,7 +201,19 @@ test('documentation screenshots', async ({ page, browser }) => {
   await publishPrompt(rev.id)
   type Prof = { id: string }
   const sonnet = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'claude-default', name: 'Claude Code (default model)', harness: 'claude-code', model: '',
-    settings: { permission_mode: 'acceptEdits' }, description: 'Interactive Claude Code; edits accepted, commands asked.' })
+    settings: { permission_mode: 'acceptEdits' }, description: 'Interactive Claude Code; edits accepted, commands asked.',
+    // Claude Code settings.json keys for its runs (ADR-0059): permission rules, what auto mode may trust, one exception
+    // and one extra block rule, an environment variable and a status line.
+    claude_settings: {
+      permissions: { allow: ['Bash(make test:*)'], ask: ['Bash(git push:*)'], deny: ['Read(./secrets/**)'] },
+      autoMode: {
+        environment: ['$defaults', 'Source control: GitHub repositories of example-org; the space repositories are private.'],
+        allow: ['$defaults', 'Pushing feature branches to the space repositories is allowed; main only through pull requests.'],
+        soft_deny: ['$defaults', 'Changing settlement schedules in production.'],
+      },
+      env: { SETTLEMENT_ENV: 'staging' },
+      statusLine: { type: 'command', command: 'echo payments' },
+    } })
   const codexProf = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'codex-default', name: 'Codex (default model)', harness: 'codex', model: '', settings: {} })
   // Skills: the built-in HallPass skill and a custom runbook, both given to control.
   type Sk = { id: string; slug: string; versions: { state: string; version: number }[] }
@@ -426,6 +494,16 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByText('Live · watch-only')).toBeVisible()
     await page.waitForTimeout(1_500)
   })
+  // Scrolling back through a live terminal without taking it over: the wheel moves the scrollback, "Jump to live" returns.
+  await capture(page, 'terminal-scrollback', async () => {
+    await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
+    await expect(page.getByText('Live · watch-only')).toBeVisible()
+    const box = (await page.getByTestId('terminal').boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 200))
+    await page.mouse.wheel(0, -480)
+    await expect(page.getByTestId('jump-to-live')).toBeVisible()
+    await page.mouse.move(0, 0)
+  })
   // The Terminals workspace (UX review §4.4): every space and its agents beside the selected space's terminals.
   await capture(page, 'terminals-workspace', async () => {
     await page.goto(`/terminals?space=${payments.id}&run=${control.id}`)
@@ -464,6 +542,13 @@ test('documentation screenshots', async ({ page, browser }) => {
     const held = await api.call<{ takeover?: { id: string } }>('GET', `/spaces/${payments.id}/runs/${control.id}`)
     if (held.takeover) await api.call('POST', `/spaces/${payments.id}/runs/${control.id}/takeover/${held.takeover.id}/end`, {})
   }
+  // The terminal size menu (ADR-0075): opening it changes nothing; the run keeps its size.
+  await capture(page, 'terminal-size', async () => {
+    await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
+    await expect(page.getByText('Live · watch-only')).toBeVisible({ timeout: 20_000 })
+    await page.getByTestId('terminal-size').click()
+    await expect(page.getByTestId('terminal-size-fit')).toBeVisible()
+  })
   await capture(page, 'terminal-replay', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${finished.id}?view=replay`)
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
@@ -524,6 +609,52 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByText('github-bot', { exact: true }).click()
     await expect(page.getByText('Public key', { exact: true })).toBeVisible()
   })
+  // Harbor Pilot (ADR-0060): the connect form, the connection once validated, and a space opting in.
+  const hp = await fakeHarborPilot()
+  await capture(page, 'harbor-pilot-connect', async () => {
+    await page.goto('/harbor-pilot')
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.getByLabel('Gateway URL').fill('https://harbor-pilot.example.com')
+    await page.getByLabel('Parent token').fill('hpk_example_parent_token')
+    await page.getByLabel('Service-principal token').fill('hpa_example_service_token')
+  })
+  await api.call('PUT', '/harbor-pilot/connection', { base_url: hp.url, allow_insecure_http: true, parent_token: `hpk_${randomBytes(16).toString('hex')}`,
+    service_token: `hpa_${randomBytes(16).toString('hex')}` })
+  await api.call('PUT', `/spaces/${payments.id}/harbor-pilot`, { enabled: true, project_id: 'prj_payments', harnesses: ['codex'], ttl_seconds: 43200 })
+  await capture(page, 'harbor-pilot', async () => {
+    await page.goto('/harbor-pilot')
+    await expect(page.getByText('bnd_spaceman_runs')).toBeVisible()
+  })
+  await capture(page, 'space-harbor-pilot', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByTestId('space-harbor-pilot').getByRole('button', { name: 'Settings' }).click()
+    await expect(page.getByLabel('Harbor Pilot project id')).toHaveValue('prj_payments')
+  })
+  // HP-T5: the space's Limits page with its Harbor Pilot budgets (the project's daily budget used up).
+  await capture(page, 'space-limits-harbor-pilot', async () => {
+    await page.goto(`/spaces/${payments.id}/limits`)
+    await expect(page.getByTestId('harbor-pilot-state')).toHaveText('Budget used up: launches refused')
+    await expect(page.getByTestId('harbor-pilot-usage')).toBeVisible()
+  })
+  // The warning and unavailable states. Central reuses a budget status read for 30 s (a failed one for 5 s), so each
+  // change waits that out before the page is loaded.
+  hp.mode('warning')
+  await page.waitForTimeout(31_000)
+  await capture(page, 'space-limits-harbor-pilot-warning', async () => {
+    await page.goto(`/spaces/${payments.id}/limits`)
+    await expect(page.getByTestId('harbor-pilot-state')).toHaveText('Warning')
+    await expect(page.getByTestId('harbor-pilot-usage')).toBeVisible()
+  })
+  hp.mode('unavailable')
+  await page.waitForTimeout(31_000)
+  await capture(page, 'space-limits-harbor-pilot-unavailable', async () => {
+    await page.goto(`/spaces/${payments.id}/limits`)
+    await expect(page.getByTestId('harbor-pilot-state')).toHaveText('Status unavailable')
+  })
+  // Later shots launch runs in this space: take it off Harbor Pilot again and remove the connection.
+  await api.call('DELETE', `/spaces/${payments.id}/harbor-pilot`, undefined, { 'If-Match': '"1"' })
+  await api.call('DELETE', '/harbor-pilot/connection', undefined, { 'If-Match': '"1"' })
+  hp.server.close()
   await capture(page, 'space-accounts', async () => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Choose accounts' }).click()
@@ -560,6 +691,15 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'roles', async () => {
     await page.goto('/roles')
     await expect(page.getByRole('cell', { name: /Reviewer/ }).first()).toBeVisible()
+  })
+  await capture(page, 'claude-settings', async () => {
+    await page.goto('/roles')
+    await page.getByRole('tab', { name: /profiles/i }).click()
+    await page.getByRole('cell', { name: /Claude Code \(default model\)/ }).click()
+    await page.getByRole('button', { name: /Permissions/ }).click()
+    await page.getByRole('button', { name: /Auto mode rules/ }).click()
+    await expect(page.getByLabel('Allowed actions rule 1', { exact: true })).toHaveValue(/Pushing feature branches/)
+    await expect(page.getByLabel('Deny rule 1', { exact: true })).toHaveValue('Read(./secrets/**)')
   })
   await capture(page, 'skills', async () => {
     await page.goto('/skills')
@@ -1050,6 +1190,13 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByText(made.id)).toBeVisible()
     await expect(page.getByText(/^verified/).first()).toBeVisible()
     await expect(page.getByText('Next daily pass')).toBeVisible() // the retention card (ADR-0045)
+  })
+  await capture(page, 'ops-system', async () => {
+    await page.goto('/system')
+    await expect(page.getByTestId('system-status').getByText('Accepting writes')).toBeVisible()
+    await expect(page.getByTestId('system-status').getByText(/^boot_/)).toBeVisible()
+    // The first fetch can run before the page's own change feed connects: wait for a refetch (every 15 s) that counts it.
+    await expect(page.getByTestId('system-counts')).toContainText(/Live streams[1-9]/, { timeout: 40_000 })
   })
   mkdirSync(join(process.cwd(), 'test-results'), { recursive: true })
   writeFileSync(join(process.cwd(), 'test-results', 'a11y-report.txt'), a11y.join('\n') + '\n')

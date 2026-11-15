@@ -191,3 +191,148 @@ func TestRecordingsLocalStoreStaysInPlace(t *testing.T) {
 		t.Fatal("archived local recording")
 	}
 }
+
+// SM-UI-004, SM-AUTH-004: a live viewer only ever receives its own run's records. Viewers of two runs subscribe side by
+// side; each run's chunks reach only that run's viewers, and catch-up reads only that run's recording, so one run's
+// terminal can never be delivered on another run's stream (the web terminal reconnects per run, never per page).
+func TestRecordingsViewersAreScopedByRun(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	defer r.Close()
+	const runB = "run_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+	va, vb := r.Subscribe(recRun), r.Subscribe(runB)
+	defer r.Unsubscribe(va)
+	defer r.Unsubscribe(vb)
+	if _, err := r.apply(chunk(t, out(1, "secret of A"))); err != nil {
+		t.Fatal(err)
+	}
+	cb := chunk(t, out(1, "output of B"))
+	cb.RunID = runB
+	if _, err := r.apply(cb); err != nil {
+		t.Fatal(err)
+	}
+	got := func(v *Viewer) []string {
+		var s []string
+		for {
+			select {
+			case rec := <-v.C:
+				s = append(s, string(rec.Data))
+			default:
+				return s
+			}
+		}
+	}
+	if a, b := got(va), got(vb); len(a) != 1 || a[0] != "secret of A" || len(b) != 1 || b[0] != "output of B" {
+		t.Fatalf("viewer A got %q, viewer B got %q", a, b)
+	}
+	res, err := r.Read(context.Background(), runB, 0)
+	if err != nil || len(res.Records) != 1 || string(res.Records[0].Data) != "output of B" {
+		t.Fatalf("catch-up of B: %+v %v", res.Records, err)
+	}
+	// Unsubscribing one run's last viewer leaves the other run's viewers in place.
+	r.Unsubscribe(va)
+	if _, err := r.apply(chunk(t, out(2, "more of A"))); err != nil {
+		t.Fatal(err)
+	}
+	if b := got(vb); len(b) != 0 {
+		t.Fatalf("viewer B got A's output %q", b)
+	}
+}
+
+// SM-REC-004: a viewer's lagged flag is set by apply and read by the viewer's own goroutine; under -race this must
+// not be a data race.
+func TestRecordingsViewerLaggedNoRace(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	defer r.Close()
+	v := r.Subscribe(recRun)
+	defer r.Unsubscribe(v)
+	done := make(chan error, 1)
+	go func() {
+		for seq := uint64(1); seq <= 600; seq++ {
+			if _, err := r.apply(chunk(t, out(seq, "x"))); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	took := false
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !took && !v.TakeLagged() {
+				t.Fatal("600 records into a 512-record queue: viewer never lagged")
+			}
+			return
+		default:
+			if v.Lagged() && v.TakeLagged() {
+				took = true
+			}
+		}
+	}
+}
+
+// SM-REC-004: a viewer that lagged catches up from storage once, then streams live records again. The loop below is
+// the terminal stream's (internal/api terminalStream): it re-reads storage when the viewer lagged or a sequence is
+// missing. Before the flag was cleared, every live record after one lag triggered a full re-read of the recording.
+func TestRecordingsLaggedViewerCatchesUpOnce(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	defer r.Close()
+	v := r.Subscribe(recRun)
+	defer r.Unsubscribe(v)
+	var after uint64
+	catchUps := 0
+	catchUp := func() {
+		catchUps++
+		res, err := r.Read(context.Background(), recRun, after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rec := range res.Records {
+			after = rec.Seq
+		}
+	}
+	consume := func() {
+		for {
+			select {
+			case rec := <-v.C:
+				if rec.Seq <= after {
+					continue
+				}
+				if v.TakeLagged() || rec.Seq != after+1 {
+					catchUp()
+					continue
+				}
+				after = rec.Seq
+			default:
+				return
+			}
+		}
+	}
+	// Overflow the viewer's queue: records past its capacity are dropped and the viewer is marked lagged.
+	const overflow = 600
+	for seq := uint64(1); seq <= overflow; seq++ {
+		if _, err := r.apply(chunk(t, out(seq, "x"))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !v.Lagged() {
+		t.Fatal("viewer not lagged after overflowing its queue")
+	}
+	consume()
+	if catchUps != 1 || after != overflow || v.Lagged() {
+		t.Fatalf("after the lag: %d catch-ups (want 1), at seq %d (want %d), lagged %v", catchUps, after, overflow, v.Lagged())
+	}
+	// Live again: each new record is delivered in order with no further catch-up.
+	for seq := uint64(overflow + 1); seq <= overflow+50; seq++ {
+		if _, err := r.apply(chunk(t, out(seq, "y"))); err != nil {
+			t.Fatal(err)
+		}
+		consume()
+	}
+	if catchUps != 1 || after != overflow+50 {
+		t.Fatalf("live records after the catch-up: %d catch-ups (want 1), at seq %d (want %d)", catchUps, after, overflow+50)
+	}
+}

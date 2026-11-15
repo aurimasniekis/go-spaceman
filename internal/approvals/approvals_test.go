@@ -410,3 +410,94 @@ func TestApprovalEventsRecorded(t *testing.T) {
 		t.Fatalf("events %v", got)
 	}
 }
+
+// Require (ADR-0063): an operation that always needs an approval is gated with no policy at all, by a synthetic
+// one-use policy; a matching policy still sets the uses. Class-named SpaceMan MCP operations are valid policy patterns.
+// A decision made through a SpaceMan MCP server is refused.
+func TestRequire(t *testing.T) {
+	f := newFx(t)
+	const op = "mcp.infra.dangerous.delete_space"
+	finish, err := f.svc.Require(f.ctx, run1, op, "mcp_server:mcp_1", json.RawMessage(`{"space_id":"spc_b"}`))
+	if finish != nil || !errors.Is(err, ErrRequired) {
+		t.Fatalf("no approval yet: finish %v, %v", finish != nil, err)
+	}
+	l, err := f.svc.List(f.ctx, "spc_a", 0)
+	must(t, err)
+	if len(l) != 1 || l[0].PolicyID != RequiredPolicyID || l[0].UsesAllowed != 1 || l[0].Operation != op {
+		t.Fatalf("approvals %+v", l)
+	}
+	// No agent decides it, even holding its owner's grants.
+	act, err := f.human.Get(f.ctx, "spc_a", l[0].HumanActionID)
+	must(t, err)
+	agent := audit.Actor{Type: audit.ActorUser, ID: approver.ID, Via: audit.ViaSpacemanMCP + "atk_1", Run: "run_1"}
+	_, err = f.human.Respond(f.ctx, agent, "spc_a", act.ID, act.Version, human.RespondInput{Outcome: "approved"})
+	code(t, err, apperr.CodeForbidden)
+	if err := f.s.W().TxNamed(f.ctx, "finalize", func(tx *store.Tx) error {
+		row, err := tx.Q.GetHumanAction(f.ctx, act.ID)
+		if err != nil {
+			return err
+		}
+		return f.svc.onFinalized(f.ctx, tx, row, "resolved", "approved", agent)
+	}); apperr.CodeOf(err) != apperr.CodeForbidden {
+		t.Fatalf("decision through the SpaceMan MCP: %v", err)
+	}
+	f.decide(l[0], "approved", "")
+	finish, err = f.svc.Require(f.ctx, run1, op, "mcp_server:mcp_1", json.RawMessage(`{"space_id":"spc_b"}`))
+	if err != nil || finish == nil {
+		t.Fatalf("approved: %v", err)
+	}
+	finish(nil)
+	if _, err := f.svc.Require(f.ctx, run1, op, "mcp_server:mcp_1", json.RawMessage(`{"space_id":"spc_b"}`)); !errors.Is(err, ErrRequired) {
+		t.Fatalf("second use of a one-use approval: %v", err)
+	}
+
+	// A class pattern is a valid policy, and it sets the uses of what it matches.
+	f.policy("mcp.infra.write.*", 3)
+	_, err = f.svc.Require(f.ctx, run1, "mcp.infra.write.create_task", "mcp_server:mcp_1", json.RawMessage(`{}`))
+	if !errors.Is(err, ErrRequired) {
+		t.Fatal(err)
+	}
+	l, _ = f.svc.List(f.ctx, "spc_a", 0)
+	if l[0].Operation != "mcp.infra.write.create_task" || l[0].UsesAllowed != 3 || l[0].PolicyID == RequiredPolicyID {
+		t.Fatalf("policy-backed approval %+v", l[0])
+	}
+	for _, bad := range []string{"mcp.infra.everything.*", "mcp.infra.write.create.task"} {
+		_, err := f.svc.CreatePolicy(f.ctx, admin, PolicyInput{SpaceID: "spc_a", Operation: bad})
+		code(t, err, apperr.CodeInvalid)
+	}
+	// Exempt operations can never be required (a run must always be able to ask).
+	_, err = f.svc.Require(f.ctx, run1, "spaceman.human_ask", "spaceman", nil)
+	code(t, err, apperr.CodeInvalid)
+}
+
+// A caller that can ask people in the space must not get its own text shown as an enforced approval's request: an
+// action created under approval:<id> before the approval flow asks would otherwise be reused and linked (ADR-0087).
+func TestApprovalActionCannotBePlanted(t *testing.T) {
+	f := newFx(t)
+	f.policy("spaceman.task_create", 1)
+	args := `{"title":"Deploy"}`
+	a := f.gateRequired(run1, "spaceman.task_create", args)
+	// A crash between storing the approval and asking: the approval has no human action yet.
+	must(t, f.s.W().TxNamed(f.ctx, "unlink", func(tx *store.Tx) error {
+		if _, err := tx.SQL.ExecContext(f.ctx, `UPDATE approvals SET human_action_id = '' WHERE id = ?`, a.ID); err != nil {
+			return err
+		}
+		_, err := tx.SQL.ExecContext(f.ctx, `DELETE FROM human_actions WHERE id = ?`, a.HumanActionID)
+		return err
+	}))
+	const planted = "Harmless: approve."
+	agentActor := audit.Actor{Type: audit.ActorAgent, ID: run1.RunID}
+	_, _, plantErr := f.human.Create(f.ctx, agentActor, "spc_a", human.CreateInput{Type: human.TypeApproval, Title: "Approve spaceman.task_create",
+		Body: planted, Request: json.RawMessage(`{"action":"Run spaceman.task_create"}`), DedupKey: "approval:" + a.ID,
+		Requester: human.Requester{Kind: "agent", ID: run1.RunID, Role: run1.Role, Run: run1.RunID}})
+	again := f.gateRequired(run1, "spaceman.task_create", args)
+	if again.ID != a.ID || again.HumanActionID == "" {
+		t.Fatalf("the approval was not asked again: %+v", again)
+	}
+	act, err := f.human.Get(f.ctx, "spc_a", again.HumanActionID)
+	must(t, err)
+	if act.Body == planted || !strings.Contains(act.Body, a.ArgsDigest) {
+		t.Fatalf("the person deciding approval %s sees text the approval flow did not write: %q", a.ID, act.Body)
+	}
+	code(t, plantErr, apperr.CodeInvalid)
+}

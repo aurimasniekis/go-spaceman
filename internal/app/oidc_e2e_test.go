@@ -40,6 +40,7 @@ func seedSpace(t *testing.T, h *harness) string {
 // behaves like Porch (porch.groups, RFC 9207 iss, PKCE S256 only). A group mapping grants a space role to SSO sessions
 // only; the same user's password session does not get it (Hallpass SR-26, K-11).
 func TestOIDCSignInOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	idp := oidctest.New(t)
 	idp.Now = h.clk.Now

@@ -1,4 +1,4 @@
-import { Button, Group, Modal, SegmentedControl, Select, SimpleGrid, Stack, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
+import { Button, Group, Modal, MultiSelect, SegmentedControl, Select, SimpleGrid, Stack, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -7,6 +7,7 @@ import { keys, useQueue } from '@/api/queries'
 import { Composer } from '@/components/composer/Composer'
 import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError, required } from '@/lib/form'
+import { taskOptions } from './taskOptions'
 
 export interface TaskSeed {
   title?: string
@@ -48,7 +49,7 @@ export function TaskModal({ spaceId, seed, opened, onClose, onCreated }: { space
       }
     },
   })
-  const open = (queue.data?.tasks ?? []).filter((t) => !['done', 'cancelled', 'failed'].includes(t.status))
+  const open = taskOptions((queue.data?.tasks ?? []).filter((t) => !['done', 'cancelled', 'failed'].includes(t.status)))
   return (
     <Modal opened={opened} onClose={onClose} title={seed?.fromInboxItem ? 'Create a task from this item' : 'New task'} size="xl">
       <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
@@ -89,11 +90,10 @@ export function TaskModal({ spaceId, seed, opened, onClose, onCreated }: { space
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <form.Field name="parent">
               {(f) => <Select label="Parent task" clearable searchable value={f.state.value || null} onChange={(v) => f.handleChange(v ?? '')}
-                data={open.map((t) => ({ value: t.id, label: t.title }))} />}
+                data={open} />}
             </form.Field>
             <form.Field name="dependsOn">
-              {(f) => <TagsInput label="Depends on" description="Task titles" value={f.state.value.map((id) => open.find((t) => t.id === id)?.title ?? id)}
-                data={open.map((t) => t.title)} onChange={(titles) => f.handleChange(titles.map((x) => open.find((t) => t.title === x)?.id).filter((x): x is string => !!x))} />}
+              {(f) => <MultiSelect label="Depends on" description="Open tasks" searchable value={f.state.value} data={open} onChange={f.handleChange} />}
             </form.Field>
           </SimpleGrid>
           <form.Field name="exclusions">

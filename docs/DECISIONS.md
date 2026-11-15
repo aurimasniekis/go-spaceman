@@ -267,6 +267,8 @@
   - `connect-src data:` lets the page fetch its own inlined module. A `data:` URL carries no credentials and reaches no server, so it cannot be
     used to exfiltrate data to another origin.
   - `style-src 'unsafe-inline'` is inherited from Pulse and Hallpass (Mantine sets inline styles).
+  - *Update 2026-11-12 (ADR-0076), tightening:* the page compiles the package's `ghostty-vt.wasm`, served as a hashed
+    asset from its own origin, and no longer uses the inlined `data:` module. `connect-src` is back to `'self'` alone.
 - **Consequences:**
   - Terminal output is untrusted program output. It is rendered by the VT parser onto a canvas, never as HTML.
   - The terminal is watch-only (`disableStdin`): keystrokes in the page are never sent to the run. Operator input goes through the separate,
@@ -350,7 +352,8 @@
     for every space. The tools needed to ask and talk to people can never be gated.
   - A gated call without a matching approval returns at once with an approval request: an `approvals` row and a human
     action of type `approval` (created with a dedup key, so a crash between the two is repaired on the next call). The
-    agent is notified of the decision and calls again.
+    agent is notified of the decision and calls again. The `approval:` dedup namespace is reserved for this service,
+    and an action under it that the service did not write is never linked (ADR-0087).
   - An approval matches only the same operation, resource (MCP servers by ID), space, requesting **run** and digest:
     SHA-256 over the operation, resource and canonical JSON arguments (sorted keys, numbers kept exactly).
   - Deciding needs `approval:decide` (API). Before every execution the approver is checked again (user active, API
@@ -2062,7 +2065,12 @@
     40-400×10-200) into its core's `config.toml`; programs started afterwards use it, with no core restart. Running
     programs keep their size.
   - **Web terminal.** A terminal is reset (RIS, `ESC c`) before it is disposed; `Terminal.reset()` does not avoid the
-    hang. The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
+    hang. *Amended 2026-11-09:* the reset only hid part of the cause and is gone. ghostty-web's shared instance does not
+    clear a freed terminal's memory, so the next terminal started out with its cells (another run's lines showed
+    through, reset or not), and memory of a terminal with many styles was never reused (the page grew until the tab
+    crashed). Each terminal now runs in a WebAssembly instance of its own, released with it
+    (`web/src/features/terminal/ghostty.ts`, `wasm.test.ts`, `e2e/terminal-switch.spec.ts`; since ADR-0076 the instances
+    share one compiled module, never memory). The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
     the box before it reaches ghostty-web's scrollback.
   - **Connections.** One change-feed stream serves all tabs of a browser: the tab holding the Web Lock
     `spaceman-watch` opens it and relays it over a BroadcastChannel; another tab takes over when it closes. Without
@@ -2072,7 +2080,7 @@
   - Control and workers get notices after every turn, as SM-COMM-003 intended. The fake runner always behaved this
     way, which is why the tests did not catch it; `TestRealSendIdleOrDone` now runs against real herdr-core.
   - `make e2e` reopens a full-screen run terminal (the stub harness's `/fullscreen` prints the start-up with neutral
-    text); without the reset the journey hangs.
+    text); without the reset the journey hung (with an instance per terminal, since 2026-11-09, it needs none).
   - Existing runs keep 200×120 until relaunched; an agent restart applies the new size to later launches.
   - ghostty-web's `onRender` is declared but never fired in 0.4.0; the view follows `onCursorMove` and resizes.
 
@@ -2181,6 +2189,12 @@
   - An idle stop interrupts a program that is waiting at its prompt. Work in the middle of a turn is never stopped.
   - Not security-relevant: the launch goes through the same resolution, admission (limits and budgets) and audit as
     any launch, as a system actor.
+- **Note (2026-11-07, human responses):** a response whose requester's run has ended went to control only while a
+  control run was wanted (ADR-0032), so with no control running it became undeliverable: auto-start never saw it, and
+  a control started later was not told about it. With auto-start on, the routing now also sends it to control when the
+  space can start one (it had a control run or has a space role of kind control), as a pending, waking notification.
+  The sweep then starts control for it, and that control, or one an operator launches later, gets one notice per
+  unacknowledged response. With auto-start off, or with no control to start, it stays undeliverable as before.
 
 ### ADR-0057 — Repository SSH keys held by SpaceMan (security-relevant)
 - **Status:** Accepted, 2026-11-05 (operator decision; amends ADR-0044, which offered no SpaceMan-held Git credentials).
@@ -2252,6 +2266,2703 @@
   - Terraform manages keys as `spaceman_git_ssh_key`, with `public_key` exposed for the account's SSH key resource, and
     repositories reference them with `git_key_id`.
 
+### ADR-0059 — Claude Code settings on harness profiles (security-relevant)
+- **Status:** Accepted, 2026-11-06 (operator request: full control of a run's settings.json).
+- **Context:** SpaceMan writes only `.claude.json` into a run's `CLAUDE_CONFIG_DIR`, so runs get Claude Code's built-in
+  settings. As a result, operators couldn't tell auto mode what to trust, give permission rules, or add hooks. An
+  operator whose agents reach Git through a gateway host had auto mode refuse ordinary work (pointing a remote at the
+  gateway). Node-wide managed settings would change every Claude Code session on the machine, not only SpaceMan's runs.
+- **Decision:**
+  - **Model.** A claude-code harness profile has `claude_settings`: a JSON object of settings.json keys, any keys
+    (`permissions`, `autoMode`, `env`, `hooks`, `statusLine`, `model`, …). A codex profile can't have them. Saved
+    objects are at most 256 KiB. Only the keys SpaceMan edits are checked for shape:
+    - `permissions.allow`, `ask`, `deny` and `additionalDirectories` must be string lists;
+    - `permissions.defaultMode` must be a known mode;
+    - `autoMode.environment`, `allow` and `soft_deny` must be string lists;
+    - `env` values must be strings.
+
+    Central checks them on save and the node again before writing.
+  - **Ceiling.** `permissions.defaultMode` above central's `harness.max_permission_mode` is lowered to it when a run is
+    resolved, like the `permission_mode` setting, and the effective configuration says the policy decided. The stored
+    profile keeps what was written.
+  - **Resolution.** The settings come from the role's profile only; templates, space roles and launches don't layer them.
+    They are recorded in the run manifest after policy, shown in a role's preview, and apply to later launches.
+  - **Delivery.** The launch payload carries them (`claude_settings`, protocol minor 8). At every launch the node sets
+    each of the profile's top-level keys in the run's `$CLAUDE_CONFIG_DIR/settings.json`. It removes keys it set at an
+    earlier launch that the profile no longer has (recorded in `settings.json.spaceman-keys`), and keeps keys Claude Code
+    wrote there itself.
+  - **Old nodes.** Central fails a run with settings as `node_too_old` instead of dispatching it to a node below
+    minor 8, which would ignore them and drop what they add, deny rules included.
+  - **UI.** The profile form edits permissions (default mode, allow, ask, deny, additional directories), auto mode
+    rules (with a switch for Claude Code's defaults instead of a typed `"$defaults"`) and environment variables, and
+    every other key as JSON.
+- **Consequences:**
+  - Whoever can edit harness profiles (`prompt:write`) controls the profile's runs' Claude Code settings, hooks
+    included. Hooks and status lines run commands on the node as the agent's user, as runs themselves already can.
+    Profile changes are audited (`profile.created` and `profile.updated` record the changed top-level settings keys
+    and a sha256 of the new settings, never their values), and the settings are in every run's manifest.
+  - **Accepted risk (operator decision, 2026-11-07):** settings may set `env` (including endpoint and credential
+    variables such as `ANTHROPIC_BASE_URL`), credential helpers (`apiKeyHelper` and the like) and hooks, and only
+    `permissions.defaultMode` is held to the permission mode ceiling. Profile editors (admins) are trusted with run
+    credentials and node command execution (THREAT_MODEL T-32).
+  - Settings are stored in clear and recorded in manifests, so they must not hold secrets; accounts carry credentials.
+  - A key a run writes into its own settings.json carries over to the next launch unless the profile sets or once set
+    that key. The node records the keys it owns before writing settings.json, so an interrupted write never leaves a key
+    it set behind. A corrupt record can't say which keys those are: the node then moves settings.json and the record
+    aside (`.corrupt-<unix nanoseconds>`), logs a warning naming both, and starts from fresh settings, so no stale key
+    survives and the instance recovers without a fix on the node (Claude Code's own keys in that file are set aside
+    too).
+  - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
+    update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
+  - **Note (2026-11-07, ADR-0064):** SpaceMan adds one key of its own, `"tui": "default"` (Claude Code's classic
+    renderer), when the profile's settings have no `tui`. The full-screen renderer, Claude Code's default for a fresh
+    configuration, keeps earlier output out of the terminal, so watchers couldn't scroll back without a takeover. A
+    profile's `tui` always wins, and the profile's other keys are written unchanged.
+
+### ADR-0060 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
+- **Status:** **Accepted**, 2026-11-08 (HP-T8), with the operator's answers to Q1–Q7 of 2026-11-06 and their later
+  decisions (listed at the end; the points they settle are marked **(Qn)**). Proposed 2026-11-06. Accepted with:
+  - **Project choice: option b** (2026-11-07). Setting or changing a space's `project_id` needs `account:write`, like
+    binding an account to a space (decision 2, "Open points").
+  - **Minimum Harbor Pilot version 0.1.3** (decision 8), checked by the mint probe. **0.1.4 recommended** (2026-11-08,
+    below).
+  - **Q3 as built:** a per-space `on_budget_status_unavailable`, `proceed` by default or `refuse`. Since HP-T8 it also
+    covers SpaceMan's own failures while reading status (a token that can't be opened, a database error), with a fixed
+    reason.
+  - **Q4 stays open.** Where unscoped Harbor Pilot events go (quota, `access.request.blocked`, binding, workspace,
+    account and global budgets) is **not decided** and is not decided by this acceptance. The interim default is
+    control's proposal, not an operator answer: no automatic routing, delivery only to spaces that subscribe
+    (DECISIONS K-12).
+  - **Q7 is not met yet:** all real evidence is `serve --demo` 0.1.3 with synthetic upstreams; a real model provider
+    behind a real gateway is **not verified** (evidence map: RELEASE_READINESS §13).
+  - **Implemented:** HP-T2, the connection and space settings (decision 1; decision 2 for the stored tokens; decision 3's
+  central-side rules) and the version probe of decision 8. HP-T3: central's side of decisions 4 and 5 (routing without
+  fallback, mint-or-reuse at dispatch, revocation on every end path; see "Implementation notes (HP-T3)" below). HP-T4:
+  decision 6, delivery to the harness on the node (protocol minor 9; see "Implementation notes (HP-T4)" below). HP-T5:
+  the budget pre-check, the Limits card and per-run usage (decisions 4 and 7; see "Implementation notes (HP-T5)"
+  below). HP-T6: event templates (§7). HP-T7: Terraform resources and the combined example, in terraform-provider-spaceman.
+  HP-T8: verification, the threat model (T-03, T-05, T-34 to T-37, T-39), LIMITATIONS and release notes. Contract:
+  `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
+  the 0.1.3 re-run).
+  - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
+    by trusted ref, budget refusals as `access.request.blocked`, `system`-role messages (K-13 resolved), the minting
+    credential as `created_by`, and an optional budget check on mint. **The minimum Harbor Pilot version is 0.1.3**
+    (decision 8).
+  - **Updated 2026-11-08 for Harbor Pilot 0.1.4**, which answered SpaceMan's two later requests (PLAN §4 D-20's
+    candidates, filed through a cross-space request): a version endpoint (`GET /api/v1/system`) and budget status
+    filtered by project (`?project_id=…&binding_id=…`). Both are **closed**. SpaceMan reads the version with the
+    service-principal token and, when it answers, reads only the covering budgets; a 404 means older than 0.1.4 and
+    keeps the 0.1.3 path (every budget, workspace looked up). The minimum stays 0.1.3 (decision 8 is unchanged, its
+    probe still checks it); 0.1.4 is recommended. 0.1.4's one-time budgets (`period_end: null`, states `scheduled` and
+    `expired`) and `remaining_e10` are handled; only `exceeded` with `block` refuses, so no new state can refuse a
+    launch (decision 4 unchanged). Not a security-relevant change: no requirement, guarantee or default is relaxed.
+- **Context:**
+  - **What operators want.** Run model traffic should go through Harbor Pilot (HP), a self-hosted LLM gateway. HP gives
+    failover, hard per-project spend limits and usage for every harness.
+  - **How HP issues tokens.** It mints short-lived child tokens from a parent token that holds `tokens:mint`. Each child
+    carries trusted `bound_refs`, which HP records on every request.
+  - **SpaceMan today.** Accounts are per-harness secrets that reach the run unchanged (`accounts.SecretEnv`).
+  - **The spike showed both harnesses work with only a secret env.**
+    - Claude Code 2.1.317 runs with `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` and the ADR-0021 seed.
+    - Interactive codex-cli 0.166.0 runs with a custom `model_provider` whose `env_key` is `HARBOR_PILOT_TOKEN`,
+      without a login screen or `auth.json`.
+    - HP's request detail shows `trusted_refs.spaceman.run` for both.
+- **Decision:**
+  1. **A central integration, not an account kind.**
+     - **One connection per central.** It is a singleton `harbor_pilot_connection` row and holds:
+       - the base URL;
+       - the **parent token** (`hpk_`, scopes `gateway:invoke`, `gateway:models`, `tokens:mint`);
+       - an optional **service-principal token** (`hpa_`, `usage.read` + `config.read` for budget status and per-run
+         usage, plus `activity.read` for request activity and Harbor Pilot's events API).
+     - **Each space opts in** through `space_harbor_pilot`, which has these fields:
+       - `enabled`;
+       - `project_id` (required when enabled);
+       - `harnesses`: the list of harnesses routed through HP **(Q6)**. It is open to any harness HP can serve, not
+         only Claude Code and Codex. A harness not in the list keeps its direct accounts;
+       - `ttl_seconds`: default 86400 (24 h), min 900 (15 min), max 604800 (7 days) **(Q2)**;
+       - `on_budget_status_unavailable`: `proceed` (default) or `refuse` **(Q3)**;
+       - `allowed_model_aliases`: optional.
+     - **Why not an account kind:**
+       - an account's secret is, by construction, the value delivered to the run, so one bug would hand `tokens:mint`
+         to an agent;
+       - a kind carries one harness;
+       - project, TTL and aliases are per-space settings, not credentials;
+       - the service principal is not a harness credential.
+     - **Precedent.** The pattern follows ADR-0058 shared keys and the MCP gateway servers.
+  2. **Sealing.**
+     - **Stored tokens.** Both tokens are sealed with `keyring.PurposeCredential`, with associated data
+       `harborpilot:parent:<conn id>` and `harborpilot:sp:<conn id>`.
+     - **Write-only everywhere:** API, CLI, UI, Terraform, audit, change feed and exports. The API shows only `has_*`,
+       the version counters, and the binding id found during validation.
+     - **Never sent to a node.** Only central's HP client opens these tokens.
+     - **Run child tokens.** They are sealed the same way (`harborpilot:run:<run id>`) in `run_gateway_credentials`, so
+       an at-least-once dispatch resend reuses the token instead of minting again.
+     - **Permissions** go through Casbin:
+       - the connection needs `account:write`, and its writes (replace, delete) a step-up (recent sign-in and second
+         factor), as event connections do;
+       - space settings need `space_config:write`, except the **project**: setting or changing a space's `project_id`
+         needs `account:write` (a global administrator or the root token), because the project decides who pays, as
+         binding an account to a space does (`set-space-accounts`). The operator decided this on 2026-11-07 (option b
+         of the HP-T2 review). An empty `project_id` on an update keeps the stored project, so a space's operators can
+         still enable, disable or tune their space; the audit entry records `project_changed`;
+       - status needs space read.
+     - **Stored tokens go only to the address they were entered for.** A connection write that changes `base_url` or
+       `run_base_url` (scheme, host, port or path), or newly allows insecure HTTP, must carry `parent_token` again, and
+       `service_token` (or `remove_service_token`) when one is stored; otherwise it is refused with 422 before any
+       outbound call. Without this rule, whoever could write the connection (or a stolen administrator session) could
+       point it at their own host and receive the write-only tokens in the validation call (HP-T2 review, finding 1).
+  3. **Transport.**
+     - **Central's own client** (validation, mint, revoke, budget status): https is required unless the host is
+       loopback or `allow_insecure_http` is set (as in ADR-0035).
+     - **The run-facing base URL is checked from the node's side.** The base URL also goes to nodes
+       (`ANTHROPIC_BASE_URL`, the Codex `base_url`), and every run request carries its child token. A loopback host on
+       central means the node's own loopback on another machine, so the loopback exemption doesn't carry over:
+       - the URL delivered to runs must be https, with no loopback exemption, unless `allow_insecure_http` is set;
+       - the node checks the URL in the launch payload against the same rule before it writes the secrets file, and
+         refuses the launch otherwise. So a central that skipped the check can't make a node send a token over plain
+         HTTP;
+       - if central reaches HP on another address than runs do (a loopback HP next to central, say), a separate
+         run-facing URL is configured: the connection's optional `run_base_url` (HP-T2). Without it, runs use
+         `base_url`, which then has to pass the run-facing rule itself (a loopback `http` `base_url` is refused unless
+         `run_base_url` or `allow_insecure_http` is set).
+     - **`allow_insecure_http` exposes child tokens.** With it, every run's token crosses the network path in clear for
+       its whole TTL, as does the parent token on central's calls. It is for tests and a trusted local network only,
+       and the connection's status says it is set.
+     - Redirects are never followed, and no proxy is used (one from the environment would see every token).
+     - **SSRF stance.** `base_url` is chosen by an administrator (`account:write`). Central's client refuses to dial
+       link-local (cloud metadata), unspecified and multicast addresses, checked on the resolved address. Private and
+       loopback addresses stay allowed on purpose: a Harbor Pilot gateway usually runs on an internal network. What
+       comes back from a wrong target is bounded (status, error type and a 300-character sanitised message), and the
+       tokens are only ever sent to the address they were entered for (decision 2). THREAT_MODEL T-34 (T-33 is taken by an open branch).
+     - Errors keep HP's status, error type and its `error.message`, cut to a fixed bound and treated as untrusted text
+       (T-03), so failure reasons stay readable (SM-GW-003). Raw response bodies are never kept.
+     - Tokens are never logged.
+  4. **The gateway replaces accounts for an opted-in harness.**
+     - `LaunchRun` skips account resolution.
+     - A launch that names an account is refused (`precondition`).
+     - The resolved manifest records `{gateway: "harbor-pilot", project_id}`.
+     - If HP is unavailable (no connection, or a mint that fails), the launch or dispatch is refused. **There is never a
+       fallback to a direct account**, silent or audited **(Q1)**. A harness configured for HP goes only through HP.
+     - A launch is refused early when a blocking HP budget covering the space is `exceeded`. HP stays authoritative and
+       enforces with 429 mid-run.
+     - **The pre-launch budget check is HP's own: the dispatch mint sends `check_budget: true`** (HP 0.1.3, its
+       D-043). HP then refuses a run whose binding, project, workspace or global blocking budget is used up with 429
+       `budget_exceeded` and the `budget_id`, and the run fails with that reason before its harness starts. This uses
+       HP's own figures and scope rules instead of SpaceMan recomputing which budgets cover the space. The budget
+       status that `LaunchRun` reads still gives the earlier refusal and the Limits page (HP-T5). Two limits stay: HP
+       doesn't check account budgets at mint, and a budget with spend under its limit passes even when the first
+       request is then refused for its own estimate. A mint that fails with 502 (`could not check budgets`) is a mint
+       failure, not a budget refusal.
+     - When budget status can't be fetched, the space's `on_budget_status_unavailable` decides: `proceed` (the default;
+       the gateway still enforces) or `refuse` **(Q3)**.
+  5. **A per-run child token, minted at dispatch** (not in `LaunchRun`; see Alternatives):
+     - scopes `[gateway:invoke, gateway:models]`;
+     - the space's TTL;
+     - `bound_refs = {spaceman.space, spaceman.run, spaceman.instance, session, project_id}`, plus `spaceman.task` when
+       the run has one.
+     - **Bindings shared by many spaces must not pin `spaceman.space`.** HP refuses a bound value that differs from a
+       binding's pinned one.
+     - **Revocation.** The token is revoked on every end path (exit, failure, stop, relocation, purge, lease loss,
+       connection change) through a durable queue written in the end path's own transaction. The TTL is only a backstop.
+  6. **Delivery only through the launcher secrets file (ADR-0009).**
+     - **Claude Code** gets `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`, and no other Anthropic or Claude credential.
+     - **Codex** gets the five `-c model_provider…` overrides with `env_key = "HARBOR_PILOT_TOKEN"`, and that variable.
+       No `auth.json` is written, and the node removes any ADR-0054 API-key `auth.json` or ChatGPT-login link from that
+       instance's `CODEX_HOME`.
+     - **Node protocol.** This needs node protocol minor 9. Gateway launches to older agents are refused with a clear
+       reason.
+     - **Model choice.** The run's model must be one the HP plan routes. How the default is chosen per space is settled
+       in the implementation, through `allowed_model_aliases` or a default model. Since HP 0.1.2, Claude Code's default
+       model works: its `system`-role messages are accepted (K-13, resolved by the 0.1.3 re-run). HP forwards them
+       unchanged to models not on its no-support list, so a model without support gets the provider's own 400.
+  7. **Events and usage.**
+     - **Events.** HP events become shipped event templates. Their text is untrusted (T-03).
+       - Only project-scoped budget events map to one space.
+       - **Unscoped events stay open (Q4).** These are quota, `access.request.blocked`, and binding/workspace/global
+         budget events. **Interim default (control's proposal, not the operator's choice): no automatic routing.**
+         They reach only the spaces that explicitly subscribe with the template.
+       - **Budget refusals arrive as `access.request.blocked`** (HP 0.1.2, its D-040): one event per refused request,
+         with `reason` naming the budget, alongside the once-per-period `budget.threshold.exceeded`. The HP-T6
+         templates include it. It carries only `request_id` and `binding_id`, so it is an unscoped event under Q4. A
+         space-level mapping through the request's `trusted_refs.spaceman.space` would need an HP API read per event
+         and is not decided. Its volume (one per refused request) also argues for dedup or a digest.
+       - **Shipped (HP-T6, 2026-11-07):** `harbor-pilot-budget` (`budget.threshold.*`; optional `project_id`,
+         `budget_id`, `exceeded_only`, `blocking_only`), `harbor-pilot-quota` (`quota.window.*`; optional `account_id`,
+         `monitor_id`, `exhausted_only`) and `harbor-pilot-access-blocked` (`access.request.blocked`; optional
+         `binding_id`, `budget_only`, which matches the 0.1.3 reason prefix `budget `). Filters use ADR-0061's
+         `if_set`. Correlation: a budget and its period (warning and exhaustion group), a quota monitor (exhaustion
+         and recovery group), a binding (a burst of refusals groups); redeliveries carry the same event id and are
+         duplicates. Titles and correlation keys use only values Harbor Pilot constrains, and each template's input
+         schema enforces those formats, so an event with other text there is quarantined rather than rendered. No
+         digest yet; the interim Q4 default stands.
+     - **Usage: per-run usage is in scope (HP-T5).** HP 0.1.2 filters usage by trusted ref (its D-041).
+       - **Run-end reconcile.** After a gateway run ends, central reads
+         `GET /api/v1/usage/summary?ref=spaceman.run:<run id>&binding_id=<binding>` with the service-principal token,
+         and records the run's usage with source **`harbor-pilot`**: tokens, attempts and HP's cost categories, labelled
+         as gateway-observed figures. `binding_id` is always passed, because ref values are chosen by the minting
+         client and only the binding makes them SpaceMan's.
+       - **What it fills.** It gives Codex runs usage, which today is `unavailable`. It never overwrites usage a harness
+         reported itself (Claude's transcript usage); how both are shown for a Claude run is settled in HP-T5.
+       - **Timing.** HP writes ledger rows as requests finish, so the reconcile runs after the token is revoked (no new
+         requests) and may be retried later; a figure read before the run's last request settled is not final.
+       - **Reading fails or the connection has no service-principal token:** the run keeps its current usage, never a
+         zero.
+       - The Limits page also shows project-level HP usage, labelled with its source.
+  8. **Minimum Harbor Pilot version: 0.1.3.** SpaceMan relies on 0.1.2's ref filters, budget-refusal events and
+     `system`-role support, and on 0.1.3's `check_budget`. hptest and the contract pin v0.1.3, and the docs state the
+     minimum. No HP API that reports its own version was found at v0.1.3, so connection validation detects an older
+     gateway with a feature probe (HP-T2): the validation mint always sends `check_budget` (false). HP decodes the
+     mint body refusing unknown fields, before it checks scopes (`internal/gateway/models.go:230-235` at v0.1.3), so a
+     gateway before 0.1.3 answers 400 `invalid body: json: unknown field "check_budget"`, and the connection is
+     refused as "older than Harbor Pilot 0.1.3". An older gateway is never used without `check_budget` or per-run
+     usage. The probe can't tell a later gateway that dropped the field from an old one; HP's D-043 keeps it.
+     **Since 0.1.4** HP reports its version (`GET /api/v1/system`, `config.read`); SpaceMan reads it for display and to
+     choose the budget-status path, never to replace the probe (it needs a service-principal token, the probe doesn't).
+- **Consequences (security-relevant):**
+  - **Agents can read their own child token.** A leaked one is worth one binding's routing and budget for at most the
+    TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
+    because HP can't refresh a token inside a running harness. The 24 h default and the per-space maximum of 7 days
+    bound this **(Q2)**.
+  - **HP clamps a child's TTL to its parent's expiry** (contract: Mint). A parent that expires sooner than a space's TTL
+    silently gives that space's runs shorter tokens, and they lose model access earlier. Validation (HP-T2) learns
+    the parent's expiry by minting its probe credential with HP's maximum TTL (7 days) and reading the clamped
+    `expires_at`; the connection and the space settings then warn when the parent expires before an opted-in space's
+    TTL. The probe's token is discarded at once and the credential revoked; if the revoke fails, the credential goes to
+    the durable revocation queue.
+  - **Revoking the parent in HP cuts every live run at once.** That gives an emergency stop, and is also a single point of
+    failure.
+  - **Hard spend limits come only from HP.** SpaceMan's own budgets stay soft (ADR-0036).
+  - **An HP outage stops new runs** for the harnesses that opted in.
+  - **The parent token is long-lived and high-value.** Its protection rests on central's keyring and KEK, as for accounts.
+  - **Evidence ceiling (Q7).** Until a real upstream is available, evidence is "real `serve --demo` 0.1.3 with
+    synthetic upstreams" (0.1.1 for the first spike). A live run against a real HP and provider is a placeholder in TRACEABILITY (SM-GW-010); the
+    operator says one is coming soon.
+- **Alternatives:**
+  - **An account kind:** rejected (above).
+  - **One parent token per space:** more secrets, no gain.
+  - **Minting in `LaunchRun`, before its transaction:** rejected. Relocation may clear the session id inside the launch
+    transaction, and a node that stays offline past the TTL would receive an expired token. Early refusal comes from a
+    pre-check instead.
+- **Open points:**
+  - ~~**HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces?**~~ **Settled in HP-T4
+    (2026-11-08) by control's instruction that no other Anthropic or Claude credential may sit next to the gateway's:
+    the second option, refused, done on the node** (see "Implementation notes (HP-T4)"). Kept as built at acceptance
+    (2026-11-08).
+    - ADR-0059 lets a claude-code profile's `claude_settings.env` set any variable, `ANTHROPIC_BASE_URL` included. The
+      operator accepted this on 2026-11-07 (ADR-0059 accepted risk, THREAT_MODEL T-32).
+    - In a space with HP enabled for Claude Code, a profile `env` could point a run's model traffic away from HP or
+      replace its token. Those requests would escape HP's hard budgets and its per-run attribution, so this is a
+      budget-bypass consideration, not only a configuration one.
+    - The options for HP-T4 are:
+      - the node lets the gateway's `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`HARBOR_PILOT_*` win;
+      - central refuses such profiles for gateway harnesses;
+      - or both stay as they are, documented as the operator's choice.
+    - Whoever edits profiles can already run hooks on the node (ADR-0059), so the decision is about budget
+      enforcement, not about a new privilege.
+  - ~~**Who may choose a space's project?**~~ **Resolved: the operator's decision of 2026-11-07 (option b).**
+    - HP-T2 first let `space_config:write` set the project, so a space's operators could point their space at any
+      project the connection's binding allows, another space's project included, and charge that project's budget.
+    - Now setting or changing `project_id` needs `account:write`, like binding an account to a space (decision 2). The
+      check runs before the project probe (an unauthorised caller causes no call to Harbor Pilot) and again in the
+      write transaction against the stored project.
+    - **Residual risk (accepted, not changed):** a space's operators can still disable Harbor Pilot for their space,
+      or delete its settings. Its runs then go back to the space's direct accounts and SpaceMan's soft budgets
+      (ADR-0036), outside Harbor Pilot's hard limits. Q1 forbids a per-run fallback while the space is enabled, not
+      this. If it matters, `enabled` going from true to false could need `account:write` too.
+- **Implementation notes (HP-T3, 2026-11-07).** Choices made while implementing decisions 4 and 5; none weakens them.
+  - **Hook shape.** `fleet.Options.Gateway` (`fleet.Gateway`, implemented by `harborpilot.Lifecycle`) has three parts:
+    `PreLaunch` before the launch transaction (no connection; the budget part is a `BudgetChecker` that HP-T5 fills),
+    `Route` inside it (instead of account resolution for a routed harness), and `Token` at dispatch. The gateway and
+    project are stored in the run's launch spec (`launch.gateway`) and manifest, so a dispatch uses what the launch
+    decided, and a space that later disables Harbor Pilot doesn't move its pending runs to an account.
+  - **Allowed aliases.** With a non-empty list, a launch must name one of the models; a launch with no model (the
+    harness default) is refused, since central can't tell what it would use.
+  - **Session.** A fresh Claude Code gateway run gets its session ID from central (a UUID chosen after the relocation
+    check), sent with `resume: false`; the run row learns it from the node's report as before, so a run that never
+    started has none and isn't resumed. Codex and resumed runs bind their own session; a fresh Codex run binds the run ID.
+  - **Token storage.** The sealed child token is dropped as soon as its revocation is queued (not when the revocation
+    is done): nothing needs it after its run's end. A row without a token means the run's token is gone, and a later
+    dispatch of that run fails as `gateway_unavailable` instead of minting again. A token minted for a run that was
+    stopped meanwhile is queued for revocation at once.
+  - **Revoker.** It runs on central's deadline timer (ADR-0036), woken by the commit that queued a revocation, at most
+    10 revocations per round with 5 s per call. 204 settles as revoked. 404 and 401 settle as revoked only when the
+    parent that asked is the one that minted the credential (a 401 then means the parent itself is revoked or expired,
+    which ended its children; audited). From any other parent they prove nothing and settle as failed. 403 and other
+    refusals settle as failed. Failed rows are audited (`harbor_pilot.revocation.failed`), logged, counted in the
+    connection's `failed_revocations` and on its page, and in the `spaceman_gateway_revocations_failed` gauge. Network
+    failures, 5xx and 429 are retried after 1 s, ×4 each time, at most 5 min, until the credential expires. No human
+    action is raised yet.
+  - **Which parent minted a credential (review F1, 2026-11-07).** `run_gateway_credentials` and `gateway_revocations`
+    record `parent_fp`, the first 8 bytes of a domain-separated SHA-256 of the minting parent token, hex-encoded. The
+    tokens are random, so this reveals nothing usable. NULL means unknown, and only a 204 counts for such a row. The
+    columns are in migration 0040, which is not released yet, so no migration was added.
+  - **Parent rotation.** Harbor Pilot answers 404 to a parent revoking another parent's child, so queueing these for
+    later would record them as done while they stay valid. Replacing the parent therefore revokes with the old parent,
+    at the stored address, everything it minted that may still be valid: live run tokens and pending revocations (for
+    example ones queued while Harbor Pilot was unreachable). This happens before the new parent is saved. The outcomes
+    are recorded, and the warning says those runs have no model access until restarted. One that can't be revoked is
+    recorded as failed with the advice to revoke the old parent in Harbor Pilot (its cascade ends the children). The
+    window where a run token is minted during the rotation is closed from both sides:
+    - the connection write's transaction lists the old parent's credentials again and, if one is new, runs another
+      revocation round (at most 3, then the write fails with "retry");
+    - a mint whose store transaction finds the parent version changed revokes its own credential with the old parent
+      (queueing it if that fails) and mints again with the new one.
+    If the connection write fails after the revocations (a version conflict, another binding while spaces use Harbor
+    Pilot), the old parent stays and those runs keep tokens that no longer work. That fails safe:
+    `TestParentRotationWriteFailureFailsSafe`.
+  - **Lease loss.** Runs a node left `unknown` keep their tokens while it may come back; once the space's lease has
+    expired by the disconnect grace plus one minute (the node's interrupt grace), the node's lease guard has stopped
+    them and the sweep queues their revocation. The runs stay `unknown`.
+  - **Agents before HP-T4 are refused (review F2, 2026-11-07).** A node whose agent doesn't know
+    `SPACEMAN_GATEWAY_TOKEN` drops it, and the harness then starts on whatever login the node user has. That is a
+    fallback to a direct account, which Q1 forbids. A gateway launch to a node below `proto.MinorGatewayToken` (9)
+    therefore fails as `agent_too_old`, before anything is minted: "gateway runs need protocol minor 9, which delivers
+    the run's token to the harness; the node negotiated 8: upgrade its agent". HP-T4 raised `MaxMinor` to 9 and removed
+    the test-only `GatewayMinMinor` seam that HP-T3 needed before any agent spoke minor 9.
+  - **A mint holds up dispatch for at most 5 s (review F3).** A node's dispatch loop waits at most 5 s
+    (`fleet.Options.GatewayMintWait`) for a new launch's token. A slower mint (Harbor Pilot retries take about 75 s at worst) goes
+    on in the background, once per run and bounded to 2 min. The launch stays pending, the node's other commands
+    (stops and kills included) are sent, and the finished mint kicks the loop, which then reuses the stored token.
+    Only the pass that starts a mint waits for it; while it runs, later passes skip that launch at once, so many slow
+    mints don't add up before a stop (HP-T3 review N1, fixed in HP-T4). Central's shutdown waits up to 5 s for
+    background mints, then cancels the rest and waits for them before it closes the store. A cancelled mint that already
+    reached Harbor Pilot still queues its credential for revocation (N3).
+  - **Failed revocations decay (HP-T3 review N2, fixed in HP-T4).** `failed_revocations` and the gauge count only
+    failed rows whose token hasn't expired yet. The deadline timer also wakes at the next such expiry, so the gauge
+    drops back without other activity. The rows are kept for the record.
+  - **Known gaps.** A crash between a successful mint and the transaction that stores the token leaves a child that
+    SpaceMan doesn't track; it stays valid until its TTL. The deadline timer that runs the revoker and the lease-loss
+    sweep runs only in `spaceman serve`; anything queued by another process is done at the next `serve` start. Both
+    are in LIMITATIONS.
+- **Implementation notes (HP-T4, 2026-11-08).** Decision 6 on the node; none weakens it.
+  - **Wire shape (minor 9).** At dispatch, central adds `gateway: {kind: "harbor-pilot", base_url, allow_insecure_http}`
+    to the launch next to `secrets[SPACEMAN_GATEWAY_TOKEN]`. `base_url` is the connection's `run_base_url`, or its
+    `base_url`. The plan's `kind: anthropic | openai-responses` was not used: the harness, not the gateway, decides the
+    API, so the kind names the gateway. The address is read at dispatch (`fleet.Gateway.Address`), after the token.
+    Moving the gateway needs the parent token again, which revokes every run token (decision 2), so a launch never
+    carries a token to an address it wasn't minted for. Both are dispatch-time only: the stored command has neither.
+  - **The node checks before it writes the secrets file.** `proto.GatewayLaunch.Origin`: absolute https, no
+    credentials, query or fragment; plain http only with `allow_insecure_http`, and no loopback exemption. A launch
+    whose token and address don't travel together, or that carries any other secret or names an account, is refused
+    (`build launch`). That would be a central bug, and the node doesn't guess.
+  - **Claude Code.** `SecretEnv` is exactly `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`. The shim scrubs every
+    inherited `ANTHROPIC_*`, and now also `HARBOR_PILOT_TOKEN` and `SPACEMAN_GATEWAY_TOKEN`. The ADR-0021 seed is kept.
+    A stored login (`$CLAUDE_CONFIG_DIR/.credentials.json`, from a `/login` inside an earlier run) is removed before
+    the launch. A profile whose `claude_settings` would add another credential or endpoint fails the launch with the
+    key named. That covers `apiKeyHelper`, `proxyAuthHelper`, `awsCredentialExport`, `awsAuthRefresh`, `gcpAuthRefresh`
+    and `forceLoginMethod` (from the 2.1.317 settings schema), and `env` entries `ANTHROPIC_*` and every
+    `CLAUDE_CODE_*` but an allowlist of output and UI switches (2.1.317 has over 800, among them OAuth tokens, key file
+    descriptors, host-managed auth, base URLs, proxies, client certificates and Bedrock/Vertex/Foundry switches; the
+    HP-T4 review asked for the allowlist shape so new ones are refused), plus `HTTP(S)_PROXY`/`ALL_PROXY` in either
+    case, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_OPTIONS`.
+    The check is on the node, so it holds whatever central sent.
+  - **Codex.** The five `-c model_provider…` overrides from the HP-T1 spike, `base_url = <origin>/v1`, and
+    `HARBOR_PILOT_TOKEN` in `SecretEnv`. No `auth.json` is written. Any `auth.json` in the instance's `CODEX_HOME` is
+    removed, and the launch fails if it is still there. That covers an ADR-0054 API-key file, and a link to an ADR-0053
+    login, whose `auth.lock` link goes too.
+  - **Codex's shell snapshot is off for every Codex run** (`-c features.shell_snapshot=false`). The real HP-T4 run found
+    that codex-cli 0.166.0 writes the run's environment, `HARBOR_PILOT_TOKEN` and `SPACEMAN_RUN_TOKEN` included, to
+    `$CODEX_HOME/shell_snapshots/*.sh`, where it outlives the run (`docs/contracts/harnesses.md`, THREAT_MODEL T-36).
+    Every Codex launch, gateway or not, also removes the `shell_snapshots` folder an earlier run left
+    (`Launch.RemoveDirs`: a link is removed itself, `os.RemoveAll` never follows one inside, and the launch fails if it
+    is still there): on earlier releases it could hold a direct account's API key, which a later gateway run of the
+    same instance must not start next to (HP-T4 review F1). Operators rotate such keys (CHANGELOG).
+  - **Codex `config.toml` and the provider (HP-T4 review).** With codex-cli 0.166.0 the `-c model_provider…` overrides
+    win over a `config.toml` root `model_provider`, a `<name>.config.toml` profile (even under `--profile`) and a
+    `[model_providers.harbor-pilot]` table there; a legacy `profile =` key makes Codex refuse to start. So no
+    `-c profile=` is passed and nothing is refused (LIMITATIONS).
+  - **Model choice.** Not changed. Codex's own default model may not be routed by the plan (the demo refuses it with
+    403), so a gateway Codex run needs the role's model or the space's allowed aliases. This is in LIMITATIONS.
+  - **Evidence.** Unit tests (`internal/harness`, `internal/proto`, `internal/agent`, `internal/fleet`), the fleet e2e
+    test with the real node agent (`TestHarborPilotGatewayDeliveryOnNode`), and real Claude Code 2.1.317 and codex-cli
+    0.166.0 runs through SpaceMan against `serve --demo` v0.1.3 (`TestRealHarborPilotGatewayRuns`, 2026-11-08).
+- **Operator questions and answers (asked and answered 2026-11-06):**
+  - **Q1, fallback to a direct account:** never.
+  - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.
+  - **Q3, budget status unavailable:** a per-space setting, defaulting to proceed.
+  - **Q4, unscoped events:** **undecided (open)**; the operator was not sure. The interim default is control's proposal,
+    not an operator answer: they are not routed automatically and go only to spaces that explicitly subscribe.
+  - **Q5, upstream issues:** yes, through cross-space requests to the Harbor Pilot space in SpaceMan once it exists.
+    These cover a ref filter for usage, a service-principal token resource in its provider, project-id outputs in
+    scenario 07, the doc mismatches and the K-13 protocol gap. Harbor Pilot 0.1.2 (2026-11-07) answered the ref
+    filter, the doc mismatches and K-13; 0.1.3 added `check_budget` on mint.
+  - **Q6, per-harness opt-in:** yes, with a `harnesses` list open to any harness HP can serve.
+  - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` (0.1.1, then 0.1.3), with a
+    placeholder kept for a live run.
+
+- **Implementation notes (HP-T5, 2026-11-08).** Decisions 4 and 7; none weakens them.
+  - **Which budgets cover a space.** Budget status has no filters, so central selects: `project` = the space's
+    project, `workspace` = that project's workspace (looked up with `config.read` only when a workspace budget exists,
+    cached 10 min), `binding` = the connection's client binding (every run token is minted under it, so its trusted
+    refs carry it), and `global`. `account` budgets are left out: they cover whichever upstream account serves a
+    request, not a space, and Harbor Pilot doesn't check them at mint either. A disabled budget is shown as disabled.
+  - **Cache.** One budget status read per connection, reused for 30 s (a failed read for 5 s), single flight, read
+    outside any transaction. A cached read is keyed on the connection's id, version, service-token version and
+    address, so a connection write is never answered from an older read.
+  - **Refusal.** A covering budget that is enabled, enforced with `block` and `exceeded` refuses the launch in
+    `PreLaunch` with `rate_limited`, for example: `Harbor Pilot budget "daily" (project prj_web) is used up for
+    this day: 0.12 of 0.10 USD spent; it resets at 2026-11-09T00:00:00Z`. Names and ids are Harbor Pilot's text, so they
+    are sanitised and bounded (T-37). Warn-only budgets never refuse. Control's auto-start already turns a launch
+    error into "Control could not start" with the error, so nothing was added there. Status that can't be read (no
+    service-principal token, a failed read, a failed workspace lookup) follows `on_budget_status_unavailable`:
+    `proceed` logs and goes on, `refuse` answers `unavailable` with the reason.
+  - **Mint check.** The dispatch mint sends `check_budget: true`. Harbor Pilot's 429 `budget_exceeded` is not retried
+    and fails the run as `gateway_unavailable` with Harbor Pilot's message. Its 502 "could not check budgets" is
+    retried like any 5xx, then fails the run the same way (decision 4: a mint failure, not a budget refusal).
+  - **Status API.** `GET /spaces/{id}/harbor-pilot/status` (space configuration read): the overall state (`off`, `ok`,
+    `warning`, `exceeded`, `unavailable`), the covering budgets with decimal amounts, and the project's usage from
+    `usage/summary?group_by=project` since the start of the project budget's current period (the last 30 days
+    without one). The usage is labelled `clients: all`.
+  - **Per-run usage: how both are shown for a Claude run (the point decision 7 left to HP-T5).** The read-back is kept
+    in its own table (`run_gateway_usage`, migration 0043) and returned as `gateway` on the run's usage, next to
+    what the harness reported. It is written into `run_usage` (source `harbor-pilot`) only when that row is missing
+    or `unavailable`, or is its own earlier fill. A harness's report replaces a fill, even a final one, and a node's
+    `unavailable` report never replaces a fill. A node can't claim the `harbor-pilot` source.
+  - **When.** The end path's transaction queues the read-back next to the revocation (every path that queues a
+    revocation, and also when the token was already given up), first due 15 s later. Reads are at 15 s, 2 min and
+    10 min after the end; each replaces the last, and the third is final. A network failure, 5xx or 429 is retried
+    (30 s, doubling, at most 5 min) until an hour after the end, then the row fails. A refusal fails it at once. No
+    service-principal token or connection settles it as `unavailable`. The reads run on central's deadline timer, at
+    most 10 per round with 10 s per call, like the revoker. Query: `group_by=model`, `ref=spaceman.run:<run>`, the
+    connection's `binding_id`, and `from`/`to` around the run's lifetime. A model whose every request had no
+    reported usage gets unknown (nil) token counts. The cost estimate is Harbor Pilot's `actual_api_charge` in USD if
+    present, else its `estimated_api_charge`, labelled with its source.
+  - **Numbers.** Migration 0043. 0042 is retired and never used: the admin MCP branch (#18) took 0044, and goose runs without `AllowMissing`, so a 0042 landing after 0043 had been applied would fail to migrate. THREAT_MODEL T-37. PLAN D-18.
+
+### ADR-0061 — More shipped GitHub event templates; optional filters and the `absent` operator
+- **Status:** Accepted, 2026-11-07 (operator request: spaces should react to pull request conversation, reviews, CI and
+  issue comments).
+- **Context:** SpaceMan shipped only `github-issue` and `github-pull-request`. go-pulse-github v0.1.0 publishes every
+  webhook it receives on `evt.github.<account>.webhook.<event>.<action>` with GitHub's payload unchanged, so comments,
+  reviews and CI completions were available but nothing presented them. The template engine could not express what
+  such templates need: a filter that a subscription turns on (one repository or owner, one author to ignore) or off
+  (bots, successful runs), and "this field is missing" (GitHub sends comments on issues and on pull requests as one
+  `issue_comment` event; only a pull request's has `issue.pull_request`).
+- **Decision:**
+  - **Engine.** A filter may name a variable in `if_set` (it applies only when that variable has a value) or
+    `unless_set` (only when it has none). Bind drops the filters a subscription's values turn off, so the bound
+    subscription and its preview show the filters that really apply. A new operator `absent` is the inverse of
+    `exists` (missing or JSON null). Both names must be variables of the definition; the web editor checks the same.
+    Filters still only narrow what a subscription accepts: the subject is untouched (SM-EVT-010), variables are still
+    pattern-checked, and instructions still see only variables.
+  - **Six new built-in templates,** seeded as version 1 at central's start when missing (existing installations get
+    them on upgrade; existing templates are not touched): `github-pr-comment` and `github-issue-comment`
+    (`issue_comment.created`, split on `issue.pull_request`), `github-pr-review` (`pull_request_review.submitted`),
+    `github-pr-review-comment` (`pull_request_review_comment.created`), `github-workflow-run`
+    (`workflow_run.completed`) and `github-check-suite` (`check_suite.completed`).
+  - **Variables.** All six take `account_key` (required) and optional `repository`, `owner` and `exclude_author`
+    (the actor's login, for a space's own agent account). Conversation templates ignore bot actors unless
+    `include_bots` is `true`; CI templates keep them unless `exclude_bots` is `true` (a bot's pull request can fail CI
+    too) and accept only `failure`, `timed_out`, `cancelled` and `startup_failure` unless `include_successes` is
+    `true`. `github-check-suite` has an optional `app` (the suite's app slug). Flags accept only `true`.
+  - **Untrusted text (T-03).** Item titles carry only values GitHub constrains: repository, number, login, review
+    state, CI conclusion and trigger, app slug and a short SHA. Issue and pull request titles, comments, review
+    bodies, file paths, workflow, app and branch names go only into the body (as text or inline code) and the raw
+    payload attachment. Instructions use only variables, as before.
+  - **Correlation and dedup.** Conversation items correlate on `github:<owner>/<repo>#<number>`, the key the
+    `github-pull-request` and `github-issue` templates use, so a pull request's events, comments and reviews group.
+    CI items correlate on `github:<owner>/<repo>@<head_sha>`, so reruns and both CI templates for one commit group.
+    A redelivery is the same event ID and is deduplicated by ingestion as before. Edits and deletions are other
+    actions, which these subjects do not match.
+  - **Not added.** `check_run` and `workflow_job` (one item per job; the suite and the run summarise them),
+    `pull_request_review_thread`, discussions, releases and deployments. Pull request and issue lifecycle actions
+    (closed and merged, reopened, ready_for_review, review_requested, assigned, labeled) are already matched by the
+    existing templates' `*` action and are not duplicated; their rendering stays as it is, because changing a
+    published built-in needs a new version that existing installations would not get.
+- **Consequences:**
+  - The Terraform provider's typed definition (`TemplateFilter`) lacks `if_set` and `unless_set`, and it refuses
+    unknown fields: custom definitions using them cannot be written through it yet, and the new built-ins'
+    definitions lose the fields when read through its data source. That is a provider follow-up.
+  - The existing `github-issue` and `github-pull-request` templates still put the issue or pull request title into
+    the item title. Moving it to the body needs a new published version of each.
+  - **Follow-up (2026-11-08, ADR-0072):** `github-pull-request` version 2 adds `exclude_author`, `ignore_updates`
+    and the optional scope filters and moves the title to the body; built-ins can now gain versions on existing
+    installations. The provider's `TemplateFilter` gained `if_set` and `unless_set` in terraform-provider-spaceman
+    v0.1.0, and its acceptance test round-trips them (checked against version 2 as well). `github-issue` is unchanged.
+  - The fixtures are derived from GitHub's documented payload shapes and pulse-github's normalisation code, not
+    captured from a live pulse-github (SM-EVT-002 notes).
+
+### ADR-0062 — CI scope: 250 ms write-transaction guard on hosted runners, path-gated site audit, fuzzing nightly and at release
+- **Status:** Accepted, 2026-11-07 (operator decisions Q1 b, Q2 b and Q3 "nightly and release", after the CI duration
+  investigation on PR #15).
+- **Context:**
+  - `storetest` fails a test when a successful write transaction takes longer than `MaxTxDuration`: Hallpass
+    HP-DB-004's short-transaction rule, 100 ms by default.
+  - On GitHub's hosted runners the non-race coverage job failed it intermittently on unchanged code, at 101–178 ms. It
+    failed on `main` before PR #15 as well, so each such run needed a manual rerun. The hosted runners run the same
+    tests about 1.7× slower than a developer machine.
+  - With the Go checks split into parallel jobs, the site job's axe audit (one Playwright test, about 4.5 minutes) is
+    the longest step of most pull requests, including ones that change no page.
+  - Fuzz smoke (13 targets × 10 s plus their builds) ran on every pull request and push. Nightly CI already fuzzed each
+    target for 10 minutes. The release workflow ran neither fuzzing nor the site audit.
+- **Decision:**
+  - **Q1 b: the guard is 250 ms on hosted CI.** `SM_TEST_TX_MAX=250ms` is set for the non-race coverage step in
+    `ci.yaml` and in the release workflow's test gate. Both run on GitHub-hosted runners, and the release gate flaked
+    the same way, so it takes the same value. `make check` and plain `go test` keep the 100 ms default. The race steps
+    keep their own relaxed limits (1 s in CI, 500 ms in `make race`). The HP-DB-004 evidence is therefore
+    "100 ms locally, 250 ms on hosted CI".
+  - **Q2 b: on pull requests the axe audit runs only when the site can change.** The audit runs when the PR changes
+    `site/`, `docs/` (included into site pages), `web/` (the audit spec and its tooling), `api/` (the API reference is
+    generated from `api/openapi.json`), `CHANGELOG.md` (the changelog page), the `Makefile` or `ci.yaml`. The changed
+    files are the diff between the PR's merge commit and its base (first parent), computed in the job with `git`. No
+    third-party path-filter action is added. The site build, dead links, screenshot references, Mermaid and the
+    API/CLI/configuration reference drift (`make site-verify`) still run on every PR. Pushes to `main`, the nightly run
+    and the release workflow always run the full audit (`make site-check`).
+  - **Q3: fuzzing runs nightly and at release only.** The PR/push workflow no longer fuzzes. The nightly run fuzzes
+    every target for 10 minutes. The release workflow runs the 10 s smoke as a gate.
+  - **The release workflow gates on all of them.** It builds no archive or image until vet, race tests, the coverage
+    floor (250 ms guard), fuzz smoke and the full site check with the audit have passed.
+- **Alternatives:**
+  - **Keep 100 ms and rerun failed jobs:** a manual step on most days, and it teaches people to rerun red CI.
+  - **Turn the guard off in CI:** it would then be enforced only by whoever runs `make check`.
+  - **The audit on every PR, as before**, or **only nightly:** the first keeps the slowest step on PRs that change no
+    page; the second finds a site regression a day late.
+  - **`dorny/paths-filter`:** one more third-party action with access to the job token, for a single `git diff`.
+- **Consequences:**
+  - A transaction that takes between 100 and 250 ms on a hosted runner no longer fails CI. That is roughly 60–150 ms
+    on a developer machine, and `make check` still fails it there.
+  - What the guard exists to catch still fails at 250 ms: network or file I/O, a wait or an unbounded scan inside a
+    write transaction costs far more than that. I/O in a transaction is also rejected statically by the `txscope`
+    analyzer in every run.
+  - A PR that breaks a page's accessibility only through a file outside the list (say, a Go change that alters
+    generated reference pages without their regenerated output) is caught by the drift check on that PR and by the
+    audit on the next push to `main`, the nightly run or the release.
+  - A fuzz regression is found by the nightly run, at the latest by the release gate.
+  - When a release fails its coverage step with `write transaction … took … (> 250ms …)`, rerun the job first.
+    If it fails again, run that package locally with `make coverage`, which uses the 100 ms default
+    (`site/development/testing.md`).
+  - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
+    enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
+- **Update, 2026-11-08 (gate wait time, T9):** the Q2 b path rule moved from `ci.yaml` into
+  `scripts/site-affected.sh`, its one home; the list is unchanged except that the script itself is added. CI calls it
+  with `HEAD^1` on a pull request. A local `make site-check` calls it against the merge base with `main` (committed,
+  uncommitted and untracked files) and skips the audit when nothing site-affecting changed; it runs the audit when it
+  can't tell, and `SM_SITE_A11Y=1` forces it (the release workflow sets it, so the release still always audits). The
+  audit itself is sharded over `SM_A11Y_SHARDS` parallel tests and workers (two in CI) and waits for VitePress to
+  hydrate instead of for network idle; it audits the same pages, schemes and rules.
+- **Update, 2026-11-09 (every hosted Go test job):** Q1 b covers every non-race job on a hosted runner that opens a
+  store, not only the coverage steps. The login-timing jobs (ADR-0071, `ci.yaml` and the release gate) and the fuzz
+  jobs (nightly and the release smoke; `internal/keyring`'s targets open a store) ran with the 100 ms default. The
+  login-timing job failed on it with `auth.login_failed` holding the lock 120–186 ms while its timing check passed.
+  They now set `SM_TEST_TX_MAX=250ms` too. The race steps keep 1 s. Not security-relevant, for the reasons above.
+- **Update, 2026-11-13, coverage at 1 s (operator decision):** during the v0.1.2 merges the hosted coverage job
+  failed repeatedly on transactions holding the lock 260–750 ms in packages the pull requests didn't touch (auth,
+  human, oidc, keyring, messages), and passed on rerun. Shared runners vary more than the 250 ms margin allows. The
+  coverage step in `ci.yaml` and in the release gate now sets `SM_TEST_TX_MAX=1s`, the same as the race steps. Local
+  runs keep the 100 ms default and the full gate (`SM_TEST_TX_MAX=500ms make check`) keeps 500 ms, so a slow
+  transaction is still caught before a pull request; I/O in a transaction is still rejected by `txscope`. The
+  login-timing and fuzz jobs keep 250 ms. Not security-relevant, for the reasons above.
+- **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
+  the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
+  tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock
+  waits never counted), the callback and commit split, and the transaction's own on-CPU time (thread CPU time). The
+  work inside the transactions was small: under `-race`, p50 8 ms and p99 32 ms of CPU. `keyring.load` used 12 ms
+  (its AES-GCM work is negligible); `touch_session`, a single primary-key UPDATE already debounced to once a minute,
+  used about 1 ms. About 60% of the in-transaction CPU was SQLite compiling statements. The holds came from three
+  causes.
+  - **The first commit flushed the seeded database.** `storetest.Seed` copied a 1.2 MB migrated database without
+    syncing it. The store's first commit (`keyring.load`, in every test) creates the WAL, and SQLite fsyncs the new
+    WAL and its directory. On ext4 that flushed the whole fresh copy while the lock was held. This node's `/tmp` is
+    tmpfs, which hid it; hosted runners use ext4. With `TMPDIR` on ext4, 4 CPUs, `-race`, `keyring.load` commit took
+    up to 320 ms, and 23 ms once `Seed` fsyncs its copy and directory.
+  - **CPU starvation.** On 1 CPU, holds were 10–25 times the transaction's CPU: the goroutine was runnable but not
+    running. More than half of the test processes' CPU went to `store.Open`, where every reader connection
+    (`max(4, GOMAXPROCS)`) parses the whole schema, and about a quarter to `checkptr` instrumentation of modernc's
+    transpiled SQLite. `checkptr` also accounted for half of the CPU inside transactions. Test stores now open
+    `storetest.Readers` (2) reader connections; internal/store still tests the production size. `scripts/race.sh`
+    passes `-gcflags=modernc.org/...=-d=checkptr=0`: the race detector stays on everywhere, and `checkptr` stays on
+    for our own packages. Non-race runs have no `checkptr`.
+  - **Argon2id inside two transactions.** `auth.breakglass` (new administrator) and the `auth.login` rehash of an old
+    parameter version derived the key while holding the lock. They now hash first.
+  - **Result:** `-race` over auth, oidc, human, messages, keyring and audit (`-p 4 -parallel 4`, pinned with
+    `taskset`), hold p50 / p99 / max in ms:
+
+    | disk, CPUs | before | after |
+    |---|---|---|
+    | ext4, 4 | 28 / 144 / 418 | 18 / 86 / 145 |
+    | ext4, 1 | 98 / 581 / 817 | 70 / 331 / 526 |
+    | tmpfs, 4 | 21 / 140 / 218 | 11 / 71 / 106 |
+    | tmpfs, 1 | 82 / 519 / 799 | 35 / 300 / 391 |
+
+    The remaining holds on one CPU are scheduling waits, not work. The heaviest transactions (`human.*`) use about
+    15 ms of CPU.
+  - `synchronous` stays `FULL`, and no limit changes. Committed transactions must survive a power loss (HP-DB-004
+    is about holding the lock briefly, not about durability), and a test that waits for an fsync measures what
+    production does.
+  - Not done, recorded as follow-ups: a prepared-statement cache on the writer (statement compilation is most of the
+    remaining in-transaction CPU), and batching `touch_session` (its cost is the commit, not work).
+  - Not security-relevant: tests and the race run's build flags only, plus two auth paths that now hash before
+    their transaction, with the same parameters and stored result.
+
+### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
+- **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
+  question numbers (Q1–Q9) refer to the questions of the admin MCP plan. The operator's decisions of 2026-11-08 on the
+  security review (SR-MCP-01) and the final review (F1, F2, F6) are listed under §Operator decisions on the reviews
+  below; none of them changes behaviour.
+  Implemented so far: migration 0044, the internal token and its principal, the audit attribution and the approver
+  exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4); the gateway kind with its
+  create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5); the CLI (AM-6); the
+  external endpoint (AM-10, §External endpoint below); the web (AM-7); the end-to-end test over the run bridge, the
+  CHANGELOG and the security review entry (AM-8). The Terraform resource (AM-9) is in terraform-provider-spaceman
+  PR #12. Requirements SM-MCP-005..009; threats T-33, T-38.
+- **Context:**
+  - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
+    manage tasks, limits, roles, schedules and the other things an administrator does with the CLI or the API. Today an
+    agent only has the built-in `spaceman_*` tools (ADR-0012), which are scoped to its own space and run, and the
+    gateway's external HTTP servers (ADR-0023).
+  - Everything the CLI can do is an API operation (ADR-0040), and every operation has an authorization `Rule`. API
+    tokens act for their creator with grants covered by the creator's, are authorized as both token and creator, and
+    skip re-authentication and MFA (only a browser session can step up). There are no service principals.
+  - This hands administrator power to agents, so it is security-relevant: prompt injection into such a space reaches
+    everything the server's grants reach (T-33).
+- **Decision:**
+  1. **Placement.** A new gateway server kind, `spaceman` (`mcp_servers.kind`, default `http`). It runs **in central,
+     in process**. Agents reach it through the existing `spaceman-agent mcp-bridge` → node connection → central tool
+     path, granted per space and role with the existing `mcp_grants`. No new binary, transport or node protocol minor.
+  2. **Identity: a secretless internal API token** (`api_tokens.purpose = 'spaceman_mcp'`), one per server.
+     - Created with the server, in the same transaction, by an administrator. Owner: the creator. Parent: the
+       creator's API token when a token created it. Its grants must be covered by the owner's current grants and, when a
+       token creates it, by that token's grants. A token issued by another token, the root token and an internal
+       principal cannot create one (`auth.CreateInternalTokenTx`).
+     - It has **no secret**: its stored MAC is over a random value that is discarded, and `AuthenticateAPIToken`
+       refuses any row with a purpose, so it can never be presented as a bearer token. There is nothing to mint, store,
+       rotate, deliver or leak: nothing reaches nodes, runs, configuration, the secrets file, the manifest, logs, the
+       audit log, exports, backups or Terraform state.
+     - Per call, central builds the principal from the token ID (`auth.InternalPrincipal`): it fails like a bad bearer
+       token when the token is unknown, not internal, revoked or expired, or its owner is disabled. The principal carries
+       the run (`Principal.RunID`) and is authorized as token **and** owner, as every API token is, so it loses what its
+       owner loses. Revoking the token (Tokens page, or revoking its parent), disabling the owner, deleting the server
+       (revokes the token in the same transaction, `auth.RevokeAPITokenTx`), disabling the server (its tools are hidden
+       and calls refused; the token stays, so re-enabling needs no re-issue), revoking the grant or reaching the expiry
+       stops it on the next call.
+     - A child token never outlives its parent: when a token creates the server, the internal token's expiry is capped
+       at that token's (a "never" request becomes the parent's expiry). Revocation also cascades from parent to child.
+     - "Re-issue" revokes the token and mints a new one in one transaction: for grant changes, owner transfer and expiry
+       renewal.
+  3. **Audit.** Calls are attributed to the owner, with `via: spaceman_mcp:<token id>` and `run: <run id>`
+     (`audit.Actor.Run`, `api.Actor`). The gateway's `mcp_server.tool_called` event also gains the operation and class
+     (AM-5).
+  4. **Never an approver.** The approver re-check (SM-APPR-003) refuses any `spaceman_mcp:` actor and any internal
+     token named as an API token. (A decision's stored actor carries no run, so the check keys on `via`.) The approval
+     operations themselves are excluded (below).
+  5. **Tool surface: one tool per API operation** (operator decision on plan question Q8), generated from the build's in-memory API
+     document and the `Rule` table, named `<slug>__<operation_id>`. A reviewed classification puts each operation in
+     `read`, `write`, `dangerous`, `sensitive-read` or `excluded`, and `TestEveryOperationIsClassified` keeps it
+     complete (AM-3). Calls run through the API's own handler chain (authorization, validation, idempotency, audit)
+     with the internal principal (AM-4).
+     - Presets (`internal/spacemanmcp`):
+       - `read`: read tools, viewer grants on one space;
+       - `operate`: read and write tools, operator grants on one space;
+       - `admin`: the default, labelled "infra". Read, write **and dangerous** tools, with `admin@*` (operator
+         decision: full admin, with dangerous operations available and each one approved by a person);
+       - `custom`: only the tools named.
+     - `read` and `operate` add dangerous tools only by name. No preset includes sensitive-read tools; a server adds
+       them by name. Every dangerous tool is flagged approval-required whatever the preset (`Tool.ApprovalRequired`,
+       enforced in AM-5).
+     - The catalog also hides tools that the token's grants can never reach.
+     - Calls run only with an internal token's principal: the in-process handler and the executor refuse any other
+       (a bearer token's would skip step-up). Path values `.` and `..` are refused, and any status from 300 up is a tool
+       error. A create's idempotency key needs the run.
+     - Session-rule reads filtered by the principal are read tools. These operations allow "any signed-in principal,
+       filtered by grants", such as `list-spaces`, event connections and templates, and attention; their rule carries
+       `Filtered` (`api.FilteredRead`, AM-5). The API refuses internal principals on every other Session rule, so
+       personal operations (sign-in, MFA, own session, own tokens and preferences) stay excluded.
+     - Creates get an `Idempotency-Key` derived from the run, the token, the operation and the canonical arguments, so
+       a retried call returns the first result. Problems become tool errors; results above the server's cap are
+       replaced by their size and a note.
+  6. **Hard exclusions (kept, operator decision).** Never exposed, whatever the server's settings:
+     - every operation whose rule is Public, Session, UserOnly, Reauth or MFA (sign-in, own account, step-up, token
+       creation, user writes, root token, break-glass). The API also refuses an internal principal on these rules
+       directly, although bearer tokens skip step-up (`authorizeOps`);
+     - approvals and approval-policy writes; responding to, assigning, moving or commenting on human actions;
+     - takeover and terminal input;
+     - operations that return a one-time secret (node enrollment);
+     - sign-in provider writes;
+     - SpaceMan MCP management (`create-spaceman-mcp`, `update-spaceman-mcp`, `reissue-spaceman-mcp`), token operations,
+       and gateway operations that target a `spaceman` server: the gateway service refuses an actor acting through a
+       SpaceMan MCP server on a `spaceman` server (grant, revoke, check, delete), and `update-mcp-server` refuses a
+       `spaceman` server for everyone;
+     - restore acknowledgement.
+  7. **Defaults (operator decisions for a trusted infra space).**
+     - **Preset: full admin on all spaces** (`admin@*`), labelled "infra" in the UI. Narrower presets (read-only or
+       operate, one space or all) stay available.
+     - **Grant: the control role** of the chosen space.
+     - **Approvals: none by default, but dangerous tools always need one** (operator decision on plan question Q3): deletes and purges, retention runs,
+       harness profile settings (T-32), diagnostic launches, SSH key generation and rotation, account and event
+       connection secrets, prompt, skill, role template and human-type publication, space role saves, HTTP MCP server
+       and grant writes, node state and updates, relocations, and launches of diagnostic runs (`launch_run` with
+       `kind: diagnostic` is classed dangerous per call). `approvals.Require` gates them with a matching policy or,
+       without one, a synthetic one-use policy (policy ID `required`). A stored `mcp.*` policy that matches replaces
+       the synthetic one, so a policy with `uses` above 1 lets one approval cover repeats of the identical call (the
+       digest binds the arguments); policies are written by people only. The approval operation is
+       `mcp.<slug>.<class>.<tool>`, so a policy can name a class (`mcp.infra.write.*`).
+       - **A diagnostic launch is gated on its resolved kind.** The gateway classes a call by its arguments, but
+         `launch-run` may leave `kind` out and take it from the space role's template, which only the API resolves.
+         So the API refuses a diagnostic launch by an internal principal unless the call's context carries the
+         gateway's mark (`gateway.WithApprovedCall`, set only after `approvals.Require` succeeded for that exact
+         dangerous `launch-run` call). A role-only diagnostic launch is refused with a hint to pass
+         `kind: diagnostic`, which the gateway then gates. No other operation resolves a run's kind on the server:
+         schedules and subscriptions create inbox items and tasks, and dream and KB runs have fixed kinds.
+       - **Saving a space role is dangerous** (`save-space-role`). A space role picks the template (its kind),
+         profile, permission mode and settings every launch by that role inherits, so a save can make a role
+         diagnostic or widen its runs' access with no later launch naming it. All saves are gated, not only the
+         widening ones: whether a template is diagnostic or a profile or setting widens access depends on other
+         catalog entries that can change after the check, and a per-field comparison would be a second, weaker
+         policy to keep in step. Deleting a space role was already dangerous.
+       - **`launch-run` stays a write, also with overrides** (operator decision 2026-11-08, final-review F2). A
+         launch may override the role's `settings.permission_mode` (still held to the installation's
+         `harness.max_permission_mode` ceiling) or its `account_ref`. Unlike a role save, such an override affects
+         only the run being launched, which the call names and the audit records; it can't make a later launch
+         diagnostic or widen runs nobody asked for, and a diagnostic launch is still gated on its resolved kind. A
+         role save is persistent and reaches every later launch by that role, so it is dangerous; a launch's
+         override is not. Accepted residual risk under T-33.
+       - **Who approves in-run calls** (operator decision 2026-11-08, final-review F1). An in-run call's approval is
+         requested in the run's own space, so anyone with `approval:decide` there may approve it, also when the call
+         acts on another space or on an installation-wide target (an `admin@*` server's dangerous tools). This is
+         deliberate for a trusted infra space, whose operators are trusted with the server's reach; accepted residual
+         risk under T-33.
+       - A server's `approval` is `none` (default) or `writes` (every write tool needs
+       an approval too). Without an approval gate, such calls are refused (fail closed). Human-action responses and
+       approval decisions refuse an actor acting through a SpaceMan MCP server at the service level as well.
+     - **Expiry: never** by default (operator decision on plan question Q5); 1–366 days on request.
+     - Only control and worker runs get the tools; KB, dreamer and diagnostic runs never do.
+  8. **External endpoint in this release** (operator decision on plan question Q9; AM-10, SM-MCP-009). Central also serves the tool surface at
+     `/api/v1/mcp` for operators' own MCP clients, authenticated with a bearer API token (never an internal one), with
+     the same classification, exclusions and approval rules. The rules are in §External endpoint below.
+  9. **API (AM-5):** `create-spaceman-mcp` (`POST /mcp-servers/spaceman`), `update-spaceman-mcp`
+     (`PUT /mcp-servers/{id}/spaceman`: tools, approval mode, limits) and `reissue-spaceman-mcp`
+     (`POST /mcp-servers/{id}/reissue`: new grants, expiry or owner), all `StepUp(mcp:write)`. Servers carry `kind` and,
+     for a spaceman server, its settings and token (ID, owner, grants, expiry, state). The run manifest's `mcp_servers`
+     entries gain `kind`. A spaceman server can't take the slug `spaceman` (it would read as a built-in `spaceman_*`
+     tool). The database requires a token exactly for the spaceman kind.
+  10. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed
+      token ID, owner, expiry and effective tools; no secret attributes), granted with the existing `spaceman_mcp_grant`
+      (AM-9).
+  11. **Numbers:** migration 0044 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
+      `api_tokens.purpose`, forward-only like every migration; numbered 0041 until the control reminders took that
+      number, then 0042 until Harbor Pilot's usage migration took 0043), T-33, T-38 (external endpoint),
+      SM-MCP-005..009. No protocol minor.
+- **External endpoint (AM-10, SM-MCP-009, threat T-38).** `/api/v1/mcp` (`api.MCPPath`) serves the same catalog and
+  executor over streamable HTTP to an operator's own MCP client (`internal/spacemanmcp` `Endpoint`). It is not an API
+  operation: it is absent from the OpenAPI document and the CLI.
+  - **On by default, no switch** (operator decision 2026-11-08, final-review F6). Every user API token can use the
+    endpoint, within its own grants; there is no configuration setting or per-token flag to turn it off. A token
+    already reaches the same operations on the API, so the endpoint adds no authority; an operator who doesn't want
+    it can keep `/api/v1/mcp` out of the reverse proxy. Accepted with T-38.
+  - **Who can call it:** a user's bearer API token, acting as itself (token **and** owner, as on the API). The guard
+    (`api.Deps.mcpEndpoint`) refuses a session cookie and the root token (403). Internal tokens
+    (`purpose = 'spaceman_mcp'`) never authenticate as bearers (`AuthenticateAPIToken` refuses any purpose, 401), and
+    the guard refuses a principal with a purpose as well. The guard passes on a copy of the principal marked
+    `MCPEndpoint`; only the guard sets it.
+  - **Same rails as the in-run tools** (`auth.Principal.ViaMCP` covers both): the API refuses Session (unless
+    `Filtered`), UserOnly, Reauth and MFA rules for such a principal, although bearer tokens otherwise skip step-up;
+    the hard exclusions keep the same operations out of the catalog; the in-process handler and the executor accept
+    this principal (and an internal one) only. Human-action responses and approval decisions refuse an actor on the
+    `mcp_endpoint` channel at the service level (`audit.Actor.MCP`), although the catalog never offers them. As defence
+    in depth the other service-level refusals written for internal tokens cover the endpoint too: issuing API or
+    internal tokens (`Principal.ViaMCP`), and creating, editing, re-issuing, granting, checking or deleting a SpaceMan
+    MCP server (`audit.Actor.MCP`); none of these is in the endpoint's catalog.
+  - **Tool selection: the token's grants as they are.** The endpoint offers the `admin` preset's classes (read, write,
+    dangerous) filtered by what the token's grants can reach. Of the two options (a preset stored on the token, or the
+    grants as they are), this is the simpler one: it needs no migration, no token setting, no UI or Terraform attribute,
+    and the grants are already the scope the operator chose for that token; a narrower client gets a narrower token.
+    Two kinds of tool are left out: sensitive reads (recordings, transcripts), which no preset includes; and dangerous
+    tools that act on no space (accounts, Git SSH keys, HTTP MCP servers and grants, harness profiles, role templates,
+    publishing, installation-wide human policies, node writes), because an approval belongs to a space. Those stay on
+    the API, the CLI and the web UI.
+  - **Approvals: dangerous calls always need one, decided by another person.** A dangerous tool, and a `launch_run`
+    asking for `kind: diagnostic`, goes through `approvals.RequireFor` with the operation
+    `mcp.endpoint.dangerous.<tool>`, the resource `api_token:<token id>` and the requester key `api_token:<token id>`
+    (role `mcp_endpoint`): only calls with the same token and the identical arguments can use the approval. A stored
+    policy for that operation sets the uses and lifetimes; without one a synthetic one-use policy does (one hour after
+    the decision, a day to decide). Before asking, the endpoint checks that the token may use the tool in that space,
+    so nobody is asked about a call the API would refuse. Read and write calls run at once, as the same token's calls
+    on the API would.
+    - **Rule: the token's own user never approves it.** Not through the token, not in a browser session, not with
+      another of their tokens: `onFinalized` refuses an approving decision when the deciding user owns the requesting
+      token, and the gate revokes an approval that such a user decided anyway. The token acts for its user, so the user
+      approving their own client's call adds no second check; a stolen token plus that user's session would otherwise
+      approve itself. That user may still **deny** or **withdraw** (cancel) their own client's pending request from
+      a session or the API (not through the MCP channel, which never decides): that only stops the call. Consequence:
+      an installation with one administrator can't run dangerous tools through the endpoint with a user's decision;
+      that person uses the API, CLI or web UI for them.
+    - **The root token may approve a token's request** (operator decision 2026-11-08, SR-MCP-01: kept). The rule
+      above matches user decisions only (`audit.ActorUser`), so an approval decided with the root token is accepted.
+      This is the documented path for a single-administrator installation, where no second user exists to approve the
+      endpoint's dangerous calls. The root token is itself refused on the endpoint, so it can't make the call it
+      approves.
+  - **Diagnostic launch gate:** `authorizeLaunchKind` refuses a diagnostic launch by any `ViaMCP` principal unless the
+    call carries `gateway.WithApprovedCall("launch-run")`, which the endpoint sets only after `RequireFor` succeeded
+    for that call. A launch by a space role whose template is diagnostic, without `kind`, is refused with the hint.
+  - **Edge protection:** the API's own middleware (security headers, request IDs, the body limit
+    `http.max_body_bytes`, the failed-bearer limit of 20 per minute per address) and, per token, 5 requests per second
+    with bursts of 50 (429). The limit counts calls because a request carries exactly one JSON-RPC message: a batch
+    (a body whose first non-space byte is `[`) is refused with 400 before any message in it runs, and so is an
+    `Mcp-Protocol-Version` older than 2025-06-18 (the version that dropped batching; the go SDK accepts batches for
+    older or missing versions). A request without the header is accepted, as a client's first request may not send
+    it. A request with an `Origin` or `Sec-Fetch-*` header (a browser) is refused, and no CORS
+    headers are ever sent. The MCP SDK's localhost DNS-rebinding check is off: central normally sits behind a reverse
+    proxy on the same host, and rebinding needs a browser, which is refused, plus a bearer token, which a page doesn't
+    have. The server is stateless (no `Mcp-Session-Id`; GET and DELETE answer 405) and answers in JSON.
+  - **No derived idempotency key.** A run's retries are deduplicated (decision 5); on the endpoint a person drives the
+    client and a repeated create is meant, as with a CLI command without `--idempotency-key`.
+  - **Audit:** every operation is attributed to the token's user with `via: api_token:<id>` and `channel:
+    mcp_endpoint` (`audit.Actor.Channel`). Each tool call is also audited as `mcp_endpoint.tool_called` (target the
+    token; tool, operation, class, result, duration, and the space of a dangerous call; never arguments or results).
+    Approval requests and uses carry the same actor.
+- **Alternatives:**
+  - **A first-class service principal** (`svc:<id>`), independent of any person. Access would survive admin turnover
+    without a re-issue, but it roughly doubles the authentication work (new subject kind, grants, management, audit) and
+    adds an identity nobody is accountable for. Rejected for now (plan question Q1).
+  - **Register central's own HTTP API as an ordinary `http` server**, with a bearer token in its sealed headers. It
+    needs a private-address exemption for loopback, keeps a real admin secret at rest, and adds a network hop to itself.
+  - **A node-side binary with the token in the run's secrets file.** It puts an administrator secret within the agent's
+    reach on the node, needs a protocol minor and collides with Harbor Pilot's secrets delivery (ADR-0060).
+  - **Three meta-tools** (search, describe, call) instead of one tool per operation: smaller catalogs, but every call
+    is opaque to approval policies and to the harness's own tool permissions. Revisit if `admin@*` (about 150 tools)
+    strains a harness's context (plan question Q8).
+  - **Read-only, one space, 90-day expiry and writes gated by default** (the plan's recommendation): safer defaults,
+    but the operator chose full admin, no expiry and no approvals for their trusted infra space; dangerous tools stay
+    gated either way.
+- **Consequences:**
+  - With the defaults, an agent in the infra space can do what its owner can, except the hard exclusions and without a
+    person's approval for anything but dangerous tools. Prompt injection into that space is accepted risk T-33.
+  - Access depends on a person: if the owner is disabled or loses grants, the server stops until someone re-issues it.
+  - Tools granted later reach runs launched afterwards; revocation applies on the next call, while a revoked server's
+    tools stay listed until the harness restarts.
+  - A future operation added without a classification fails `TestEveryOperationIsClassified`; a misclassified one is a
+    review risk.
+  - Secrets that an agent writes through these tools (account keys, event connection secrets) pass through the model's
+    context; those operations are dangerous and need an approval.
+  - The external endpoint gives an operator's MCP client what the operator's token can do on the API, short of the
+    hard exclusions and with dangerous calls approved by someone else or the root token (T-38).
+- **Operator decisions on the reviews (2026-11-08).** All four keep the behaviour as built:
+  1. **Root approval kept (SR-MCP-01).** The root token may approve dangerous calls made through `/api/v1/mcp`; this
+     is the documented path for single-administrator installations (§External endpoint).
+  2. **F1, accepted as is.** In-run dangerous calls are approved in the run's own space: any operator there with
+     `approval:decide` may approve admin-scope calls (other spaces, installation-wide targets) made by the infra
+     space's SpaceMan MCP server. Deliberate for the trusted infra space; part of T-33's accepted risk (decision 7).
+  3. **F2, accepted as is.** `launch-run` stays a write, also when it overrides `settings.permission_mode` (up to the
+     installation ceiling) or `account_ref`; diagnostic launches stay gated. Accepted residual risk under T-33; the
+     reasoning beside `save-space-role` (dangerous) is in decision 7.
+  4. **F6, accepted as is.** `/api/v1/mcp` is on by default for every user API token, with no switch (§External
+     endpoint; T-38).
+
+### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
+- **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a
+  takeover the wheel showed "Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll").
+- **Context:**
+  - Without a `tui` setting, Claude Code 2.1.317 chooses its renderer itself. It picks the full-screen one for a recent
+    install (`fresh_install_on`, once `.claude.json` has a `firstStartVersion`, which every launch after an instance's
+    first has) or when a server-side feature flag says so. The operator's runs used it. That renderer draws in the alternate screen with mouse tracking (DEC modes
+    1000/1002/1003, SGR 1006) and keeps its own virtualized scrollback. The terminal itself never holds earlier output:
+    the recording, the live stream and the browser's terminal have only the current screen.
+  - A watch-only viewer sends no input (SM-UI-004), so they can't ask the program to scroll. The operator had to switch
+    to Replay to read a long reply, and Replay shows the same screens.
+  - ghostty-web 0.4.0 turns every wheel event in an alternate screen into `ESC[A`/`ESC[B` arrow keys, whatever mouse
+    mode the program asked for. In watch mode nothing listens, so the wheel did nothing. During a takeover the arrows
+    reached Claude Code, which answers them with the warning above instead of scrolling.
+  - On a normal screen ghostty-web keeps a 10,000-line scrollback, but it jumps to the bottom on every write, so a
+    viewer reading earlier output was pulled back about once a second.
+- **Decision:**
+  - **Claude Code runs get `"tui": "default"`** (the classic renderer) in the run's `settings.json`, unless the
+    profile's Claude Code settings (ADR-0059) set `tui`. The classic renderer writes to the normal screen, so the
+    output goes into the terminal's scrollback, the recording and the live stream. A profile that sets
+    `"tui": "fullscreen"` keeps the full-screen renderer and accepts that watchers can't scroll back. Verified in the
+    2.1.317 binary: the `tui` setting is checked before the fresh-install default (`settings_off`).
+  - **The node applies the default**, where it writes the run's `settings.json` (`internal/harness/claude.go`), not
+    central. It therefore needs the agent from SpaceMan 0.1.0 or later; a run on an older node keeps Claude
+    Code's own choice of renderer. The resolved `claude_settings` that central's API returns are the profile's own and
+    don't show the default.
+  - **The web view handles the wheel and touch itself** (`web/src/features/terminal/scroll.ts`). Scrolling up moves
+    the box around the terminal first, then the scrollback; scrolling down goes back the same way. In an alternate
+    screen, a watch-only viewer sends nothing. A takeover holder sends what a terminal would: SGR (or X10) mouse-wheel
+    reports while the program tracks the mouse, arrow keys only under xterm's alternate-scroll mode 1007 (`ESC O A`/
+    `ESC O B` when the program set application cursor keys, DECCKM; `ESC [ A`/`ESC [ B` otherwise), else nothing.
+    ghostty-web's arrow keys never reach anyone.
+  - The view keeps a scrolled-up viewer on the same lines while output arrives, and shows **Jump to live** until they
+    return to live output.
+- **Alternatives:**
+  - **(a) A client-side scrollback rebuilt from the stream:** a full-screen renderer repaints its screen in place, so
+    lines that scroll out of its view never pass through the terminal as scrolled-off lines. Rebuilding them means
+    guessing from screen diffs, and the guesses would be wrong for any redraw that isn't a plain scroll.
+  - **(b) A server-side scrollback snapshot:** the node has the same screens as the browser; there is nothing more to
+    snapshot.
+  - **(c) A "recent output" pane fed by the transcript:** it would show the conversation, not the terminal, and needs
+    its own view and its own access rules for transcripts in the terminal page.
+  - **`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` in the run's environment:** it has the same effect, but a profile
+    couldn't opt back in without a new setting. `tui` already is one.
+- **Consequences:**
+  - Watchers can scroll back through everything a Claude Code run printed, up to the browser terminal's 10,000-line
+    scrollback, on desktop and on a phone (touch). No input is sent.
+  - Claude Code's classic renderer repaints its input area on the normal screen. The recording is somewhat larger than
+    with the full-screen renderer and the screen may flicker briefly during a repaint. Runs started before this change
+    keep the renderer they started with until they are relaunched.
+  - The `tui` key is SpaceMan's in the run's `settings.json` (ADR-0059): a `/tui fullscreen` typed during a takeover is
+    undone at the next launch. Set it in the profile instead.
+  - Other full-screen programs (and Claude Code with `"tui": "fullscreen"`) still can't be scrolled back while
+    watching; in a takeover the wheel scrolls them the way it would in a desktop terminal (LIMITATIONS, Web UI).
+  - Not security-relevant: watch mode still sends no input, and a takeover holder's wheel reports go through the same
+    audited takeover input as their keys.
+
+### ADR-0065 — Control schedules reminders to itself: scheduled messages to control
+- **Status:** Accepted, 2026-11-07 (operator request: control asks to be woken later, e.g. in 6 h, when the inbox and
+  queue are empty and it has stopped).
+- **Context:**
+  - With control auto-start and idle stop (ADR-0056), an idle control stops and is started again only for waiting work:
+    a stored message to control, or a pending human response that wakes it. Control had no way to have itself woken
+    later to check on something nobody will report, such as a deploy, a slow review or an answer that should arrive.
+  - The `schedule` package runs recurring schedules (cron with missed-run policies) that create inbox items. A
+    one-off, agent-set time doesn't fit it, and an inbox item would be work for people too.
+  - Messages already carry everything else: the dedup key, audit, the notifier's terminal notice, the "a new control is
+    told once" path (SM-COMM-003), and the auto-start sweep (`ListSpacesWantingControl`).
+- **Decision:**
+  - **A scheduled message is a message to `control` with `deliver_at`** (migration 0041, a new nullable column with a
+    partial index on pending ones). `spaceman_message_send` takes `deliver_at` (RFC 3339) or `delay` (a Go duration),
+    from 1 minute to 30 days ahead. Only control runs may schedule (`forbidden` otherwise), only `to: control`, and not
+    replies. Operators don't schedule. The API's send operation is unchanged.
+  - **Until it is due, it does not exist for delivery.** `ListMessagesFor` (fetch, notices, `Waiting` for idle stop)
+    and `ListSpacesWantingControl` (auto-start) skip messages whose `deliver_at` is in the future. A pending reminder
+    therefore doesn't keep control running and doesn't start it.
+  - **When it is due, it is an ordinary stored message to control.** A running idle control gets the usual notice; with
+    none running, the notifier's sweep asks the supervisor to start control within `control_autostart` and its hourly
+    cap; a control started later is told about it once. A run never receives its own messages, *except* a scheduled
+    one: the control that set a reminder and is still running receives it. `deliver_at` stays set after delivery, so
+    the UI keeps showing "scheduled for".
+  - **The notifier wakes for the earliest due reminder** (`NextScheduledMessage`), instead of waiting up to its
+    one-minute sweep. Due times come from `messages.Service.Clock` (default: the store's clock), so tests inject a
+    fake clock.
+  - **Limits:** at most 50 pending per space (`rate_limited`). A `dedup_key` on a scheduled send returns the pending
+    reminder with that key from any sender, so a later control run re-scheduling is idempotent. A key the sender
+    already used for a message that is not a pending reminder (one already delivered, or a plain message) is a
+    `conflict`, so a reminder is never silently dropped. Moving one means cancel and send again.
+  - **Listing and cancelling:** control has `spaceman_message_scheduled` and `spaceman_message_cancel`. Operators use
+    `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel` (`message:write`), and the Messages page's
+    Scheduled view. A cancelled reminder is resolved as "cancelled before delivery". Audit: `message.sent` carries
+    `deliver_at`, and a cancel is `message.cancelled`.
+- **Alternatives:**
+  - **A future `available_at`:** no migration, but `available_at` is overwritten at delivery, so nothing would mark the
+    message as scheduled afterwards, and the control that set it would never receive it.
+  - **One-shot schedules in the `schedule` package:** they create inbox items for everyone rather than a note for
+    control, and they need a second listing and cancelling surface.
+  - **Deferred tasks (`spaceman_task_create` with `not_before`):** the request asks for a wake-up rather than queued
+    work. Recorded as a possible follow-up.
+- **Consequences:** the change adds no new authority. Scheduling is limited to control writing to control, the
+  existing message permissions cover the operator operations, and the content stays untrusted data that is never
+  typed into a terminal. The limits on reminders (50 pending, 30 days, auto-start's hourly cap) mean a control can't
+  wake itself in a tight loop.
+
+### ADR-0066 — Agents ask people only through human actions: Claude Code's terminal question picker and plan mode denied by default
+- **Status:** Accepted, 2026-11-08 (operator request: a control run asked the operator through Claude Code's
+  AskUserQuestion picker in its terminal and then waited there; "we should somehow limit agents from doing this").
+- **Context:**
+  - Claude Code's `AskUserQuestion` tool draws a picker in the run's terminal and waits for an answer typed there.
+    SpaceMan runs are unattended: nobody may be watching the terminal, nothing reminds anyone, and the run stalls
+    silently. It also holds its slot and its idle-stop timer.
+  - `spaceman_human_ask` (SM-HUM-008) does the same job durably: the action is listed under Needs you, people are
+    reminded per policy, and the answer wakes the agent (SM-HUM-009).
+  - Claude Code drops a tool that a whole-tool `permissions.deny` rule names from the tools it sends to the model
+    (`filterToolsByDenyRules`). Verified with Claude Code 2.1.317 (2026-11-08, throwaway config dir, a local fake API
+    that recorded each request's tool list): an interactive session offered `AskUserQuestion` and `EnterPlanMode` in
+    every request without the rule, and neither with it. In print mode Claude Code doesn't offer `AskUserQuestion` at
+    all. The operator checked the same on Claude Code 2.1.319: a denied tool isn't offered to the model.
+  - `EnterPlanMode` switches the run into plan mode, which ends in `ExitPlanMode`'s plan-approval dialog in the
+    terminal. An unattended run waits there too.
+- **Decision:**
+  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets `AskUserQuestion` and
+    `EnterPlanMode` in `permissions.deny` of the run's own `settings.json`. The model never sees the tools, so it never
+    tries them.
+  - **Merge, never replace.** The adapter appends them to the profile's own `permissions.deny` (ADR-0059): the profile's
+    rules come first, in their order, duplicates are dropped (profiles that already deny these tools get each once),
+    and the other permission keys (`allow`, `ask`, `additionalDirectories`, `defaultMode`) are kept as they are. The
+    profile's stored settings are not changed.
+  - **Opt-in, per tool:** a profile that lists one of them in its own `permissions.allow` gets no deny for it (a deny
+    would win over its allow). That is the only way back; the default is not a setting.
+  - **Prompts:** SpaceMan's own orientation (the first section of every run's system text) and the starter role prompts
+    say "Never ask through an interactive terminal prompt; use spaceman_human_ask". The orientation reaches existing
+    installations; starter prompts already seeded are not rewritten (ADR-0051).
+  - **Codex:** codex-cli 0.166.0 has its own question tool, `request_user_input`, offered in Plan mode and in Default
+    mode only with a feature flag (`default_mode_request_user_input`); found in the binary's strings, not run. Runs start
+    in Default mode, and the orientation tells Codex agents the same. SpaceMan sets no override for it yet (unverified
+    against a live session; LIMITATIONS).
+- **Alternatives:**
+  - **`--disallowedTools AskUserQuestion` on the command line:** the same effect, but a profile could not opt back in,
+    and the run's settings would not show it.
+  - **Prompt guidance only:** the operator's run already had human actions and used the picker anyway.
+  - **Detecting a waiting picker and raising an attention item:** useful for prompts SpaceMan can't deny (a harness's
+    own permission dialog, Codex), but it needs a reliable "waiting for input" signal from the terminal. A follow-up
+    (LIMITATIONS).
+- **Consequences:** no new authority, no protocol change. The deny is written by the node when it builds the launch,
+  so it takes nodes on this release or later; runs on older nodes still see the tool, and the profile's resolved
+  settings in the API don't show the deny. Claude Code's own permission dialogs are unchanged: they follow the
+  permission mode, and `skipAutoPermissionPrompt` only skips the one-time notice shown when auto mode starts (auto mode
+  still asks for `ask` rules, reads outside the working directories, and when its classifier falls back after repeated
+  blocks). A built-in PermissionRequest hook for those is a separate follow-up (since done: ADR-0068). A run whose permission mode is `plan`
+  (a profile setting) still starts in plan mode and ends in the `ExitPlanMode` dialog.
+
+### ADR-0067 — The System page: an administrator's view of the instance; the version stays public
+- **Status:** Accepted, 2026-11-08 (operator request for v0.1.0: a System page like Hallpass's, and a version API).
+- **Context:**
+  - Hallpass's System page shows lockdown, storage, break-glass, version, boot ID, policy version and live counts;
+    Harbor Pilot's "This instance" shows version, public URL, start time, data directory, key ID and schema versions.
+    SpaceMan had the pieces (build info, readiness checks, the attention summary's storage section, `/system/info`) but
+    no single view of the instance.
+  - The public, unauthenticated `get-system-info` (`GET /system/info`) has returned the version since M1: the
+    sign-in and setup pages need it before anyone signs in.
+- **Decision:**
+  - **`get-system` (`GET /system`) needs `system:read`**, which only administrators (and the root token) hold. It
+    returns build info (version, commit, build date, Go version, platform), the start time and uptime, a **boot ID**
+    (`boot_…`, new at every start of central; it is never persisted), the applied and newest database migration, the
+    node protocol range (major, min and max minor), the attention summary's storage section plus the database and WAL
+    sizes, and counts: spaces not archived, active and connected nodes, runs starting/running/stopping, open human
+    actions and connected live-event streams. Counts come from one SQL query; nodes from the fleet's live connection
+    state; migration 0045 adds a partial index for the running-runs count. A section whose source fails (the schema
+    version, the counts query, the node state) is reported as `unavailable` instead of failing the whole response.
+    Central logs the boot ID in its `spaceman serving` line.
+  - **No secrets:** no key material, no KEK source or path, no keyring IDs, no tokens. The public URL and the data
+    directory path are shown, because only administrators can read the endpoint.
+  - **The version alone stays public** in `get-system-info`, as before: it is not a relaxation, and the web UI shows it
+    to every signed-in user in the account menu. Hiding it would not hide much (the OpenAPI document carries it too),
+    and the sign-in page needs it.
+  - The admin MCP classifies `get-system` as a read. CLI: `spaceman system status`. Web: **System** under Access,
+    shown to global administrators.
+- **Alternatives:** extending `get-system-info` with an authenticated detail section (one operation with two shapes
+  for two audiences, hard to describe in OpenAPI); serving the detail on the management listener (unauthenticated,
+  private address: no UI, and it would expose the data directory to anything that reaches it).
+- **Consequences:** a new admin-only read with no new authority. The boot ID lets an operator tell a restart from a
+  long-running instance and match logs to a start.
+
+### ADR-0068 — No permission dialogs in SpaceMan's Claude Code runs: a deny-only PermissionRequest hook and the run's own space folder
+- **Status:** Accepted, 2026-11-08 (operator request for v0.1.0). **Security-relevant change:** each run's file tools may
+  now read and write its own space folder without asking (they previously stopped at a dialog), and every permission
+  dialog is answered with a deny.
+- **Context:**
+  - Every SpaceMan run is unattended, so a Claude Code permission dialog stalls it: nobody types an answer into its
+    terminal, nothing reminds anyone, and the run holds its slot.
+  - In auto mode, Claude Code still shows a dialog in three cases: for an `ask` rule, for a read outside the working
+    directories, and when its classifier falls back to asking after repeated blocks (3 in a row or 20 in total).
+    `skipAutoPermissionPrompt` doesn't help with any of them: it only skips the one-time notice shown when auto mode
+    starts.
+  - Claude Code runs a `PermissionRequest` hook before it shows a dialog. Its input carries `hook_event_name`,
+    `tool_name`, `tool_input` and `permission_suggestions`; its output
+    `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"…"}}}` denies
+    the request and hands the message to the model as the tool's result (`interrupt` unset, so the turn continues). In
+    auto mode a hook can't approve anything (Claude Code ignores an allow there). Checked in Claude Code 2.1.317's
+    hook schema and live (docs/contracts/harnesses.md).
+  - Runs start in a checkout (`worktrees/…`) or in `work/`, so reading the space's own files (plans and notes under
+    `work/`, other checkouts) was a read outside the working directories, and so a dialog.
+  - The operator worked around both through the profiles' `claude_settings` (a PermissionRequest hook script and the
+    node's whole `spaces/` folder as an additional directory). The product should do this itself, and more narrowly.
+- **Decision:**
+  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets a `hooks.PermissionRequest`
+    entry (`matcher` `*`) in its own `settings.json`. The entry runs `'<agent binary>' hook permission-request`, a
+    subcommand of the node agent binary, so nothing extra has to be installed on the node.
+  - **The hook only denies.** Whatever its input (none, malformed, any event), it writes a deny whose message says the
+    run is unattended, not to retry or work around it, and to ask a person with `spaceman_human_ask` or tell its control
+    with `spaceman_message_send`. It names the tool only when the name looks like a tool name. It can never answer
+    "allow", so it can't widen what a run may do. It reads nothing but its input and needs no configuration.
+  - **The run's own space folder** (`<data_dir>/spaces/<space-dir>`, its real path) is added to
+    `permissions.additionalDirectories`, and only that folder, never the node's whole `spaces/` folder.
+  - **Its login files are denied.** The space folder also holds the instances' harness config dirs, which can hold a
+    Claude Code login (`instances/*/claude/.credentials.json`) or a Codex login (`instances/*/codex/auth.json`). Those
+    two paths get `Read` and `Edit` deny rules (verified: such a read fails with "denied by your permission settings").
+  - **Other instances and every instance's harness configuration are not writable** (review fix M1). Adding the space
+    folder let a run's file tools write other instances' `instances/*/claude/settings.json` with no dialog and no
+    classifier (verified live with Claude Code 2.1.317 in `acceptEdits`), and a key planted there (`disableAllHooks`,
+    `env.ANTHROPIC_BASE_URL`, `apiKeyHelper`, …) took effect at that instance's next launch. Now:
+    - every instance folder other than the run's own that exists at launch gets `Edit(//<space>/instances/<id>/**)`,
+      up to 50 of them. With more, a run gets none of them, so the settings stay bounded, and only the next measures
+      apply;
+    - every instance, the run's own included, gets `Edit` deny rules (`harness.ClaudeSpaceProtectedFiles`) for
+      everything in its config dir that Claude Code loads, runs or restores at a later launch or resume, whatever the
+      number of instances. These also cover an instance created after the launch. They, and the login-file rules, are
+      anchored on the node's spaces folder (`Edit(//<data_dir>/spaces/*/instances/*/claude/...)`), so they cover every
+      space's instances: a profile may add the whole spaces folder as a directory (operators did, before this ADR), and
+      another space's instance configuration must not be writable then either (round-2 re-review, verified live). The list mirrors the entries Claude
+      Code 2.1.317 protects in its own config dir, for every instance: `claude/settings.json`, `settings.local.json`,
+      the keys record, `.claude.json`, the cached `remote-settings.json*` and `policy-limits.json*`, the instructions
+      (`CLAUDE.md`, `rules/`, `agents/`, `commands/`, `skills/`, `output-styles/`, `workflows/`, `routines/`,
+      `loop.md`), `plugins/`, `cowork_plugins/`, `hooks/`, `scheduled_tasks.json`, `launch.json`, `daemon.json`,
+      `daemon/`, `shell-snapshots/` and `session-env/` (sourced by its Bash tool), `projects/` (auto memory and
+      transcripts), `agent-memory/`, `backups/`, `tasks/`, `teams/`, `todos/`, `file-history/`, and all of `codex/`
+      (review round 2: F1 added `rules/`, F2 `projects/` and the rest, F3 the cached remote and policy settings);
+    - **the run's own auto memory is moved out of the space folder** (round-2 F2). Claude Code loads an instance's auto
+      memory (`MEMORY.md`) into its next run, so writing another instance's memory was persistent prompt injection: a
+      worker reading untrusted text could poison control. The node sets `autoMemoryDirectory` (a key only the profile
+      or SpaceMan may set) to `<data_dir>/automemory/<space-id>/<instance>/projects/<project key>/memory`, outside the
+      space folder and every glob a run can write. Claude Code lets the run's file tools write and read its own auto
+      memory folder there without a dialog, and loads `MEMORY.md` from it (verified live with Claude Code 2.1.317).
+      The project key is Claude Code's own (the main checkout for a linked worktree; non-alphanumerics become `-`). At
+      the instance's first launch on this release the node copies the memory it kept in its config dir
+      (`claude/projects/*/memory`) there under the same keys, folders and regular files only (never symbolic links),
+      and marks the folder done only after a full copy; the old copy stays. A partly copied file never stays: each file is
+      written to a temporary name and renamed into place. A profile's own `autoMemoryDirectory` is ignored, with a
+      warning in the node's log: a fixed folder shared by the profile's instances would bring cross-instance memory
+      poisoning back. A relocation's release retains or deletes `automemory/<space-id>` with the space folder;
+    - the rule is not the simpler `Edit(//<space>/instances/**)`: the run's own file tools still write its plan files
+      (`plans/`, plan mode) and background job folder (`jobs/`) in its config dir, a deny rule wins over Claude Code's
+      carve-out for them (verified), and permission-rule globs have no "all but one" form (`[!x]` is not negation
+      there). No `Read` deny is added for `instances/**`: Claude Code reads its own tool results there.
+    - A space folder that holds a glob character (`* ? [ ] { } \ !`) gets no directory and no rules, since the rules
+      could not be written exactly (N2). A folder under `instances/` named with one is not an instance (SpaceMan's IDs
+      never hold one) and is skipped.
+  - **Defence in depth: the node strips dangerous settings keys at every launch.** Before the harness starts, the node
+    removes from the instance's `settings.json` every top-level key that runs commands, adds credentials or
+    environment, or changes what hooks, plugins, the sandbox or the classifier allow, unless the profile or SpaceMan
+    set it (`harness.ClaudeUnsafeSettingsKeys`: `disableAllHooks`, `hooks`, `env`, `*Helper`, `*Helpers`,
+    `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `processWrapper`, `statusLine`, `subagentStatusLine`,
+    `fileSuggestion`, `sshHostCommands`, `permissions`, `autoMode`, `sandbox`, the plugin and project-MCP keys,
+    `allowedHttpHookUrls`, `httpHookAllowedEnvVars`, `autoMemoryDirectory`). Keys Claude Code keeps there itself
+    (`feedbackSurveyState`, `model` and the like) stay. A removal is logged with the key names, never the values. It
+    doesn't depend on the keys record, so settings planted in a new instance's folder before its first launch are
+    stripped at that launch too.
+  - **The hook fails closed** (review fix S1). The command is
+    `'<agent>' hook permission-request 2>/dev/null || printf '%s' '<fixed deny>'`. When the binary is missing, crashes or
+    exits non-zero, the run still gets a deny, not a dialog: Claude Code shows the dialog for a failed hook, and exit
+    code 2 doesn't deny this event. A hook that runs past its 30 s timeout still ends at the dialog.
+  - **Merge, never replace** (as in ADR-0066). The profile's own hooks of every event come first, in their order, and
+    SpaceMan's entry is appended to `PermissionRequest` (and not added again when the profile already has it). The
+    profile's directories and deny rules come first, and duplicates are dropped. The profile's stored settings are not
+    changed. A `hooks` value that isn't valid Claude Code settings (not an object, or a `PermissionRequest` value that
+    isn't a list) is replaced.
+- **Alternatives:**
+  - **Prompt guidance only:** the dialog comes from Claude Code, not the model; the model can't avoid an `ask` rule.
+  - **A hook that allows** (approving the dialog's request): it would turn every `ask` rule into an allow and bypass
+    the classifier's fallback. Approval stays with people, through human actions.
+  - **The whole `spaces/` folder** (the operator's workaround): it would let one space's runs read every other space.
+  - **Turning off `permissions.blockReadsOutsideWorkingDirectories` or the sandbox:** much wider than one folder.
+  - **A shell script shipped next to the binary:** another file to install and keep in step.
+- **Consequences:**
+  - A run never waits at a Claude Code permission dialog. A denied request reaches the model as a tool error that
+    names `spaceman_human_ask`.
+  - What was "ask a person in the terminal" (who was usually not there) is now "denied". An `ask` rule therefore
+    works like a deny in SpaceMan runs; a profile that wants the call to happen must allow it.
+  - **What a run's file tools reach.** They reach the run's own space without a dialog. They can read and write the
+    space's checkouts and `work/`. They can read other instances' transcripts (`projects/*.jsonl`), settings and
+    memory, but not the two login files. They can't write other instances' folders, or any instance's harness
+    configuration, instructions, memory or transcripts (M1 above). They write their own auto memory outside the space
+    folder. This is wider than before. The shell runs as the same OS user, but every shell command
+    goes through auto mode's classifier (or a dialog in other modes), so the shell did not already reach these files
+    without a check. File tools inside a working directory skip both.
+  - **Accepted residuals.**
+    - Reading other instances' transcripts and memory.
+    - Writing what Claude Code doesn't load at launch in the folder of an instance created after the run launched, or
+      of every other instance in a space with more than 50 of them: plan files, background job output and the like.
+      Their settings, instructions, memory and transcripts are never writable this way (round 2 closed cross-instance
+      memory poisoning).
+    - The protected list and `ClaudeUnsafeSettingsKeys` are deny-lists checked against Claude Code 2.1.317: an entry or
+      key a later Claude Code version adds is not covered until it is added (F4; an allow-list is a follow-up in
+      PLAN.md).
+  - **Hook precedence and profile hooks** (S2). A profile that sets `disableAllHooks` turns SpaceMan's hook off too.
+    When the profile has its own `PermissionRequest` hook, Claude Code runs both. Outside auto mode the first answer
+    wins, so a profile hook that allows can win over SpaceMan's deny. In auto mode Claude Code ignores any hook's
+    allow. A profile editor is trusted with this (T-32).
+  - The node writes both when it builds the launch, so they take nodes on this release or later. The profile's
+    resolved settings in the API don't show them. Codex is unchanged.
+
+### ADR-0069 — Tiered local gates, a one-run coverage floor and cached CI tools
+- **Status:** Accepted, 2026-11-08 (gate wait-time work, subtasks T1, T2, T10, and T7 and T8 below). Not a relaxation: every check in
+  `make check` and in CI still runs. The coverage floor applies to the same packages with the same rules.
+- **Context:**
+  - Agents spent much of their time waiting for `make check` (about 13.5 minutes on a 32-core node). It ran a median
+    of twice and up to nine times per task.
+  - The coverage floor ran 28 packages one `go test` at a time (154 s); the same packages in one invocation take
+    about 20 s.
+  - CI's lint job failed whole runs on GitHub 504s while downloading golangci-lint or sqlc release assets.
+- **Decision:**
+  - **Two local gates.** `make check-fast` is for iterating: vet, custom vet, lint, traceability, the analyzer tests
+    and `go test ./...` without `-race` and with the test cache, plus `sqlc-check`/`api-check` when their inputs
+    changed since the merge base. `make check` is the pre-push gate. It runs once per task on the final tree and
+    checks what it checked before, now fail-fast: vet, custom vet, lint, traceability, analyzer tests, coverage,
+    race. AGENTS.md "Gates" says which to run when.
+  - **Coverage floor in one invocation.** `scripts/coverage-floor.sh` runs one `go test -count=1 -cover` and reads
+    each package's summary line. A package fails when go test reports it failed (tests, build or setup), when it
+    has no coverage line, or when its coverage is below the floor. A non-zero exit that no package explains fails
+    too. `COVERAGE_PARALLEL` (go test `-p`) bounds how many packages run their tests at once. The default is a
+    quarter of the CPUs, at least 1 and at most 8. CI and the release workflow set 1, the concurrency they had
+    before. All 28 at once exceeded the 250 ms write-transaction guard on a 4-core hosted runner, so the guard's
+    calibration (ADR-0062) is kept. The test binaries are built first with full parallelism.
+  - **CI tools from caches.** `bin/sqlc` is cached under the hash of `scripts/install-sqlc.sh`, which holds the
+    pinned version and SHA-256 sums. A miss installs it as before (checksum verified), with curl retries.
+    golangci-lint is built with `go install …@<pinned version>` through the Go module proxy (modules verified
+    against the checksum database), cached per version, OS, architecture and Go toolchain. A step checks the
+    binary's version before the action runs it (`install-mode: none`). The release workflow downloads neither tool.
+  - **The race run's critical path (T7).** `internal/app` (about an hour of test time under `-race`) alone took about
+    9 minutes at `-parallel 4`, with most of a many-core machine idle. Its ~20 serial tests alone take about 260 s,
+    since go test runs them one after another before any parallel test. `scripts/race.sh` runs it as its own `go test
+    -race` invocation, started first, with `RACE_APP_PARALLEL` (default `min(16, nproc/2)`, at least 4), and on 16 or
+    more CPUs splits it into two concurrent processes, the serial tests (`-run`) and the rest (`-skip`, the same
+    pattern, so each test runs exactly once; `RACE_APP_SPLIT`), alongside one
+    invocation for every other package at `RACE_PARALLEL` (4, unchanged: the small packages starve when everything runs
+    at full load). CI and the release workflow set `RACE_APP_PARALLEL=4`, the cap they had.
+  - **A node-wide heavy-gate semaphore (T8).** Several agents' full suites on one node slowed each other down and
+    tripped the write-transaction guard and timing tests. `scripts/gate-slot.sh` runs `race`, `coverage`, `site-a11y`,
+    `e2e`/`e2e-browsers` and `screenshots` while holding one of `SM_GATE_SLOTS` `flock` slots in `SM_GATE_LOCK_DIR`
+    (defaults: 2 slots on 16 or more CPUs, otherwise 1; `${XDG_CACHE_HOME:-~/.cache}/spaceman-gates`). `make check`
+    takes one slot for coverage and race together. A waiting run prints one line naming the holders. The kernel
+    releases a lock when its holder exits, a `kill -9` included. `SM_GATE_SLOTS=0` disables it, and it is off when
+    `CI=true`.
+- **Alternatives:** `install-mode: goinstall` in the action (it rebuilds golangci-lint from source on every run,
+  because the Go module cache key doesn't cover it); caching the golangci-lint release archive (still a GitHub release
+  download on a miss); making local `make race` use the test cache (operator question Q1 of the plan, not decided
+  here); deriving `RACE_PARALLEL` from the CPU count for every package (T7: the small packages starve their leases and
+  write transactions under full load); a semaphore inside SpaceMan, a per-node "heavy job" capacity exposed to runs (a
+  possible product follow-up, out of scope).
+- **Consequences:**
+  - A cached sqlc binary is not re-verified on a hit: the checksum covers the release archive, which a hit doesn't
+    download. The cache entry was written by a run of this repository after verification. Actions caches are
+    scoped to the branch, so a pull request can't plant one for `main` (THREAT_MODEL T-41).
+  - `check-fast` passing is not a pre-push signal: race tests and the strict coverage run happen only in `make check`
+    and CI.
+  - A heavy gate can wait for minutes behind other agents' runs; that wait costs no CPU. The slots only coordinate runs
+    that share `SM_GATE_LOCK_DIR`. Killing only the wrapper releases the slot while its command goes on; stopping
+    the process group stops both.
+
+### ADR-0070 — The write-transaction guard measures lock hold time; local race runs use the test cache (security-relevant change)
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, questions Q1 and Q2; subtask T3).
+  **Security-relevant change:** it changes what the evidence for Hallpass HP-DB-004 (short write transactions)
+  measures. The limits and the rule are unchanged.
+- **Context:**
+  - `storetest` fails a test when a successful write transaction takes longer than `MaxTxDuration` (100 ms by default,
+    `SM_TEST_TX_MAX`; ADR-0062). The duration it got from `store.Writer.TxNamed` started before the first attempt, so
+    it also counted the wait for the single writer connection (`MaxOpenConns(1)`), the wait for `BEGIN IMMEDIATE` to
+    acquire the database lock, and every `SQLITE_BUSY` retry with its backoff sleep.
+  - HP-DB-004 is about how long a transaction *holds* the writer: a long hold blocks every other write. Waiting for the
+    writer is a different property, already metered (HP-DB-003: `spaceman_store_writer_wait_seconds`,
+    `spaceman_store_writer_queue_depth`, `spaceman_store_tx_busy_retries_total`).
+  - Under CPU contention (parallel packages and tests, Argon2 in the auth tests, several gates on one node) the queueing
+    made short transactions look long. The guard failed on unchanged code, locally and on hosted runners, in whichever
+    transaction happened to queue behind another one.
+  - The race run passed `-count=1`, so every local `make race` (and `make check`) reran every package, even after a
+    merge that touched no Go code.
+- **Decision:**
+  - **The observer gets the lock hold time (Q2).** `store.TxObserver` now receives the longest lock hold of the
+    transaction's attempts: for each attempt, the time from `BEGIN IMMEDIATE` returning (the lock is held) to the end
+    of its commit or rollback, callback and commit included. Taking the longest, not the last, keeps an attempt that
+    held the writer for long and then rolled back on `SQLITE_BUSY` from being hidden by a quick retry. It is zero when
+    no attempt got the lock. The `storetest` guard compares it with `MaxTxDuration`, and its message now says `held the
+    write lock for`. The guard checks failed transactions too (it checked only successful ones), except those that
+    ended because their context was canceled or timed out.
+  - **What is observed:** only transactions run through `Writer.Tx` and `Writer.TxNamed`. `Writer.Exec`
+    (maintenance statements such as checkpoints), migrations and snapshots (`VACUUM INTO`) are not, so the guard does
+    not cover them.
+  - **Wait and retries stay in metrics.** `spaceman_store_tx_duration_seconds` keeps the end-to-end duration, retries
+    and waits included (its help text already said so); writer wait, queue depth and busy retries are unchanged.
+  - **Local race runs use go test's cache (Q1).** `make race` passes `-count` only when `RACE_COUNT` is set. CI's race
+    job and the release workflow run `make race RACE_COUNT=1`, so every test runs there on every commit; their build
+    cache is restored from earlier runs, and a cached pass must not stand in for a run on the commit under test.
+- **Alternatives:**
+  - **Keep measuring from before the first attempt and raise the limit:** it would hide real long holds in exactly the
+    runs where contention is low.
+  - **Measure from the start of the successful attempt**, pool wait included: still counts queueing for the in-process
+    writer connection, the larger share under `t.Parallel`.
+  - **Keep `-count=1` locally:** every rerun of `make check` repays the full race run (about 10 minutes on this
+    project's development nodes) for packages that didn't change.
+- **Consequences:**
+  - A transaction that waits behind another writer for longer than the limit no longer fails a test; one that holds
+    the writer for longer still does (`internal/store/storetest` `TestGuardCountsLockHoldNotWait`, `internal/store`
+    `TestTxObserverGetsLockHoldTime`, `internal/store/storetest` `TestGuardCountsTheLongestAttempt`,
+    `TestGuardChecksFailedTransactions`). Starvation and queueing show up in the writer-wait metrics instead, and in tests
+    only when they make something time out.
+  - The full non-race suite passes at the 100 ms default (PLAN.md §3). Hold time still includes the commit's fsync
+    (`synchronous(FULL)`) and any time the holding goroutine is descheduled, so a heavily loaded machine can still
+    trip the guard: on a node where several other suites ran, single-statement transactions held 100–270 ms.
+    Those are real holds and the guard reports them.
+  - A local cached race pass can come from an earlier run of the same package build and inputs. A flaky test is judged
+    with `-count=1` (AGENTS.md "Gates").
+  - **Follow-up: re-evaluate ADR-0062's 250 ms on hosted CI and the race relaxations** (500 ms in `make race`, 1 s in
+    CI's race job and the release gate). Those values were set against the old measurement, whose failures were
+    mostly queueing. Collect the guard's failures (if any) and the hold times of the slowest transactions on hosted CI
+    over a couple of weeks of runs with this change; if the coverage job holds 100 ms there and the race jobs hold
+    their limits with margin, lower them in a separate ADR. Until then they stay as they are.
+
+### ADR-0071 — The login timing comparison runs on its own; unknown accounts do the same reads (security-relevant change)
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, subtask T5).
+  **Security-relevant change:** it changes where the wall-clock evidence for Hallpass HP-AUTH-005 (login response time
+  does not reveal whether an account exists) is collected. The guarantee and the deterministic check are unchanged,
+  and the product change makes the two paths more alike.
+- **Context:**
+  - `internal/auth` `TestLoginThrottlingAndEnumeration` checked HP-AUTH-005 two ways: deterministically (exactly one
+    Argon2id verification per failed attempt, for an unknown account against a dummy hash with the account's
+    parameters), then on the clock (median of 21 interleaved failed logins per kind within 0.75–1.33, best of three
+    rounds). The clock half failed under coverage and parallel load on unchanged code, with ratios of 1.34–1.41.
+  - Measured per segment (median of 60 interleaved failed logins each; idle node, then while a race run of
+    `internal/app`, `internal/store` and `internal/events` loaded the 32-core node to a load average of 57–101):
+    - **total ratio known/unknown:** idle 0.84–1.10, loaded 0.68–1.10, in both directions from run to run, under
+      plain, `-race` and `-cover` builds alike;
+    - **Argon2id verification alone:** the same spread (idle 0.84–1.11, loaded 0.67–1.05). The two hashes have the
+      same parameters, so this is CPU scheduling noise on a CPU-bound function;
+    - **everything except the verification (database reads, the failure transaction, audit):** known minus unknown
+      +0.05 ms idle (about 1 ms per attempt), at most ±2.7 ms under load and `-race`, in both directions;
+    - **the reads before the verification:** consistently slower for a known account (+0.02–0.06 ms idle, +1–3 ms
+      under `-race` and load), because only that path looked up the local credential.
+  - So there is one small real asymmetry, an extra read on the known path, and it is far below the noise the clock
+    check sees. The failures came from the verification's own run time under load, which no product change can make
+    equal.
+- **Decision:**
+  - **Same reads on both paths.** `Login` looks up the local credential for unknown accounts too, by an ID no user
+    has. After the change the pre-verification delta is 0.02–0.25 ms in plain, `-race` and `-cover` builds (from
+    0.06–3.2 ms). The failure transaction already did the same writes on both paths (one throttle upsert per key, one
+    audit row).
+  - **The deterministic check stays in every suite** (`TestLoginThrottlingAndEnumeration`: `make test`, `race`,
+    `coverage`, `check-fast`, `check`, CI and the release gate).
+  - **The wall-clock comparison moves to `TestLoginTimingWallClock`**, with the same rounds and band. It runs only with
+    `SPACEMAN_LOGIN_TIMING=1` (`make test-login-timing`), and skips under `-race` and `-cover`. CI runs it as its own
+    job (`login-timing`) on every pull request and push, alone on its runner, and the release workflow runs the same
+    job as a gate before `binaries` and `images`.
+  - **The equal reads are tested deterministically.** `TestLoginReadsSameForUnknownAccounts` records every query a
+    failed login runs through the store's readers (`storetest.WithReadObserver`) for a known and an unknown account,
+    and requires the same sequence, including the `GetLocalCredential` read. With that read removed from the unknown
+    path again, it fails.
+- **Alternatives:**
+  - **Widen the band:** a band wide enough for a loaded node (0.6–1.6) no longer tells a real asymmetry from noise
+    either. What matters, a missing or cheaper dummy hash (orders of magnitude), the deterministic check already
+    catches.
+  - **More samples or more rounds:** the skew comes from load that persists for seconds, so it moves every sample of a
+    round. It would also slow the suite further.
+  - **Skip it only under `-race` and `-cover`:** the plain `make test` and `check-fast` runs share the CPU with every
+    other package too.
+- **Consequences:**
+  - A local `make check` no longer measures login timing. CI's `login-timing` job does, on every change. Locally,
+    `make test-login-timing` on a quiet machine.
+  - A change that makes one path much faster or slower still fails the deterministic check, unless it keeps exactly one
+    same-parameter verification. A small asymmetry outside the verification (like the extra read fixed here) shows
+    only in the clock job, and only once it exceeds the band. An extra or missing read before the verification also
+    fails `TestLoginReadsSameForUnknownAccounts`.
+  - **Residual risk (accepted, not changed):**
+    - **Argon2id verification variance.** The verification is CPU-bound and its run time varies with scheduling and
+      load (0.67–1.11 between two same-parameter hashes in the measurements above). That noise hides small
+      differences rather than revealing the account, but it also means the clock check only bounds the asymmetry, it
+      does not prove it is zero.
+    - **Network and remote timing are not measured.** The ±25% band is checked in-process on a quiet runner. Timing as
+      seen over the network, through proxies, or on a loaded production host is not tested; the bound only applies on
+      a quiet machine.
+    - **Accounts hashed with older parameters.** The dummy hash uses `CurrentParams`. An account whose stored hash
+      still has an older parameter set verifies at that set's cost until its next successful login rehashes it, so
+      for such an account a failed login can take measurably longer or shorter than one for an unknown account. This
+      lasts only while older-parameter hashes remain, and the deterministic check covers accounts on the current set.
+
+### ADR-0072 — `github-pull-request` version 2: ignore your own agent's pushes and edits; built-ins gain versions on existing installations
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate-wait plan's T12 and T13).
+- **Context:** In one space, about 95 of roughly 130 pull request inbox items in 2.5 days were `synchronize` or
+  `edited` events that the space's own agent account caused (its pushes and pull request body edits). Each woke
+  control for a minute or more. The six ADR-0061 templates take `exclude_author`, but `github-pull-request` version 1
+  has no author or action filter, and it puts the pull request title into the item title. Changing a published
+  built-in needs a new version, and `SeedBuiltins` only created missing templates, so existing installations would
+  never have received one (ADR-0061 consequences).
+- **Decision:**
+  - **Version 2 of `github-pull-request`.** Same subject (`evt.github.<account>.webhook.pull_request.*`) and
+    correlation. It takes the ADR-0061 scope variables: `repository` (now optional), `owner` and `exclude_author`
+    (the webhook sender's login, normally the space's agent account). A new flag `ignore_updates` (only `true`) adds
+    `data.github.action ne synchronize` and `ne edited`, so new commits and title, body or base edits are dropped and
+    every other action (opened, closed, reopened, ready_for_review, review_requested, …) still passes. Bots are kept
+    (a bot's pull request can need review). The item title holds only the repository, number, action and login; the
+    pull request title moves to the body as inline code (T-03).
+  - **Built-ins gain later versions.** `builtinLaterVersions` lists a built-in's versions after version 1. At every
+    start `SeedBuiltins` publishes the missing ones in order, as `system`, and only on top of the built-in's own
+    newest version: if an administrator has made their own version or draft of the built-in, that version is never
+    replaced or renumbered, and seeding stops there with a warning. Version 1 and subscriptions pinned to it are not
+    touched. Subscriptions that follow the latest version move to the new version when it binds with their variables
+    and keeps their subject, exactly as on Publish (SM-EVT-006). A version 1 subscription's variables bind to
+    version 2 unchanged, so followers move. They then get the new title format, but their filters stay as before
+    until they set the new variables. The publication is audited as `event_template.published` by the system actor.
+- **Consequences:**
+  - Existing installations get version 2 at their next start. Pinned subscriptions must be switched by hand
+    (`spaceman event subscription update --template-version …`, or the API). The web UI cannot change a subscription's
+    template version or variables yet: switching there means a new subscription, which needs a new Pulse grant.
+  - On releases without version 2 (v0.1.0-rc.9 and later), a custom template with exactly version 2's definition
+    gives the same result (site guide: Events, "Ignoring your own agent's pull requests").
+  - Not solved here: several events on one pull request still wake control once each (coalescing by correlation is
+    a separate, optional follow-up).
+
+### ADR-0073 — Attachments of any size reach a run as a file in its own folder; the inline read never truncates silently
+- **Status:** Accepted, 2026-11-08 (operator request: screenshots over 512 KiB could not reach agents).
+  **Security-relevant change:** the node agent now writes attachment content (untrusted, named by its uploader) into
+  the run's own instance folder.
+- **Context:**
+  - `spaceman_attachment_get` returned at most 512 KiB, with only a `truncated` flag that was easy to miss, as ~700k
+    characters of base64. For an operator's 668 KB screenshot, the agent got 524 288 bytes it could not decode. The
+    result was also too large for Claude Code's tool output, so it spilled to a temporary file anyway.
+  - One node-protocol envelope is at most 4 MiB (`proto.MaxMessage`), and uploads go up to 25 MiB by default, so a
+    whole attachment can't travel in one tool result.
+  - The run's file tools read its own space folder without a dialog (ADR-0068), and Claude Code's Read tool shows
+    images (scaling large ones down itself).
+- **Decision:**
+  - **Ranged inline reads.** `spaceman_attachment_get` takes optional `offset` and `length` (at most 1 MiB,
+    `proto.AttachmentChunkBytes`; 512 KiB when no range is given). Every result says `truncated`, `offset`,
+    `returned_bytes`, `next_offset` when more follows, and a `note` on how to get the rest. `offset` given (0
+    included) makes a ranged read. `next_offset` is present exactly when `truncated` is; after a ranged or partial
+    read it is past `offset`, so following it always makes progress (review S2: a short `length` on multibyte text
+    once returned 0 bytes; now a chunk that can't be cut on a character boundary goes whole, as base64).
+    - A **binary** file over 512 KiB asked for without a range is **not returned inline**: just its record,
+      `truncated: true`, and a note pointing to `spaceman_attachment_save`.
+    - **Text** comes back in chunks cut on a character boundary.
+  - **`spaceman_attachment_save`, served by the node.** The MCP bridge offers it when the run's catalog has
+    `spaceman_attachment_get` (so the same run kinds may use it), and the node agent does the work:
+    - It copies the attachment through the existing `tool.call` path in ranged reads, so central authenticates and
+      authorizes every chunk exactly as for the inline tool. There is no protocol change and no new central route.
+    - The file is `<space folder>/instances/<instance>/attachments/<run>/<attachment>/<name>`, mode 0600 in 0700
+      folders. It is inside the space folder the run may read (ADR-0068) and outside every protected config path.
+    - The size and SHA-256 are checked against central's record before the temporary file is renamed into place. A
+      chunk from a different record, a wrong range or a mismatch fails the call and leaves no file.
+    - The result is the real path, size, SHA-256, MIME type and name.
+    - One save is at most 50 MiB (above central's default 25 MiB upload limit), so a run can't fill the node's disk
+      through it. A larger attachment is refused before anything is written; ranged reads still work.
+  - **Untrusted names.**
+    - The uploader's name is reduced to one plain element: the last element (either separator), `[A-Za-z0-9._-]`
+      (anything else becomes `_`), no leading dot, at most 100 bytes keeping a short extension, and `attachment` when
+      nothing is left.
+    - The attachment ID must be a valid `att_` ID, and the run and instance IDs valid too.
+    - **No run-writable folder is resolved by path** (review M1). The run can rename folders and plant links
+      anywhere in its space folder: its file tools may write there (ADR-0068) and its shell runs as the node's user.
+      The first version checked the attachments folder with `Lstat` and then opened it by path, and a run that swapped
+      the folder for a link between the two won the race (the save wrote into the link's target; the prune emptied
+      it). Now the node opens an `os.Root` on its own `<data_dir>/spaces` folder (outside every space folder; a run's
+      file tools are not given it) and walks `<space>`, `instances`, `<instance>` and `attachments` one level at a
+      time, each relative to the open handle above. Each level is opened first and checked after: `Lstat` through the
+      parent handle must show a real folder and `os.SameFile` must match the opened handle, so a link in place before,
+      between or after the two steps is refused, never followed (an `os.Root` alone would follow a link that stays
+      inside it, for example to the instance's own `claude/` folder). Every later mkdir, write, rename, listing and
+      removal is relative to the final handle. Residual: a run that can rename folders can move the opened folder
+      elsewhere while a save is writing; the save then writes the attachment's bytes, under its sanitized name, into
+      that moved folder, and a prune removes only entries of that folder. Both are things such a run could already do
+      itself.
+  - **Cleanup.** The run's folder is removed when the run ends, including runs the node finds lost or never started
+    when it reconciles with its runner after a restart (review S1). A save re-checks that the run is still running
+    before and after renaming its file into place, and removes it when the run has ended meanwhile (S4), and one save
+    is bounded as a whole by `saveTimeout`, 10 minutes (S3). A launch of the instance removes the folders of runs
+    that ended or that the journal no longer knows. The folder is per run because nothing stops two runs of one
+    instance.
+  - The built-in orientation tells every run to use `spaceman_attachment_save` for images and anything over 512 KiB.
+    The same tools serve every attachment reference: inbox items, tasks, human actions and messages list attachment
+    records and `spaceman://attachment/<id>` links.
+- **Alternatives:**
+  - **Chunked reads only** (the model reassembles base64 itself): the data passes through the model's context
+    and is easily corrupted. An earlier agent dropped about 2 KB retyping one by hand.
+  - **A server-side downscaled preview** (≤ 2000 px, re-encoded): needs an image library or a hand-written resampler
+    in central, decodes untrusted images in central, and puts the preview into the context on every call. Claude Code's
+    Read already scales images down, and Codex views local images. It can be added to the inline result later if a
+    harness can't read files.
+  - **A signed short-lived URL** the agent fetches: a new authenticated HTTP surface and a bearer credential in the
+    model's context, and the agent's shell would need network access to central.
+  - **Central writes the file:** central has no access to the node's filesystem. The node already holds the run's
+    authenticated connection.
+- **Consequences:**
+  - Attachments of any size (up to the upload limit) reach a run whole, checked, and readable with its own tools
+    without a dialog. Verified live with Claude Code 2.1.319: Read shows a saved 2.8 MB PNG as an image in
+    `acceptEdits` and `default` modes, while the same file outside the space folder is denied by SpaceMan's hook.
+  - A saved file takes node disk space until the run ends, at most the attachment sizes the run saved.
+  - A node agent from before this release doesn't offer the save tool. A newer node with an older central answers
+    "upgrade central".
+  - Other runs of the space can read a saved file through the space folder (ADR-0068), as they could fetch the
+    attachment themselves. They can't write it: other instances' folders are denied for `Edit`.
+
+### ADR-0074 — Concurrency limits count live runs only; a stale-run sweeper ends runs whose process is gone
+- **Status:** Accepted, 2026-11-09 (operator request after a node agent restart left its runs holding slots).
+  **Security-relevant change:** a disconnected node's runs no longer stay `unknown` indefinitely: once the space's
+  lease, the disconnect grace and a 15-minute margin have passed, central records them as `lost` (SM-NODE-005 refined
+  below). A run swept wrongly is killed by the fence at its next report, so the safeguards below are part of the decision.
+- **Context:**
+  - The space concurrency limit and the node capacity counted runs with `desired = 'running' OR observed IN (pending,
+    starting, running, stopping, unknown)`. A run that ends on its own (exits, fails, or is reported lost after a node
+    agent restart) keeps `desired = 'running'`, so it held its slot until an operator stopped it, while
+    `spaceman_runs_list`, which hides exited, failed and lost runs, showed nothing to explain the refusal.
+  - A run central still records as live but which its node never had (a launch lost with the agent's state) is not in
+    the node's journal, so no report ever ends it: it stays `running` or `unknown` and holds a slot forever.
+  - The node agent reports every run in its journal in its hello, and central applies those reports before anything
+    else (SM-NODE-009). Without central, the node's lease guard stops a space's runs once its lease and the disconnect
+    grace pass (SM-NODE-007); `SweepGatewayLeases` already relies on that to revoke gateway tokens.
+- **Decision:**
+  - **Live runs.** A run is live while its observed state is pending, starting, running, stopping or unknown
+    (`fleet.Live`); desired is not part of it. `spaceman_runs_list`, the space limit and the node capacity all use that
+    one definition (`ListLiveWorkRunsInSpace`, `ListLiveWorkRunsOnNode`; a store test checks they agree for every
+    observed and desired state). Which kinds count is unchanged: worker and diagnostic runs; control, KB support and
+    dreamer runs have their own pools (SM-LIMIT-002).
+  - **Refusals name what they count.** The space refusal lists the counted runs (ID, kind, role, observed state); the
+    node refusal counts other spaces' runs without naming them and lists this space's. Both say which runs don't count.
+  - **Stale-run sweeper** (`fleet/stale.go`, on the deadline timer, woken on node connect and disconnect). Its rule:
+    it must never end a run whose process exists or might still start; when in doubt, it doesn't sweep. It ends a
+    run as `lost` on one of two signals:
+    - **`stale_not_on_node`**: the node is connected, and its hello reports every run in its journal. The
+      `fleet.node_connect` transaction reads the node's live runs (with their versions), and the session records the
+      run IDs the hello contained. A run is swept only if it was live at connect, the hello didn't contain it, its
+      version hasn't changed since connect, and `staleRunGrace` (2 minutes) has passed since the connection, measured
+      on the clock's monotonic reading (a wall-clock step doesn't move it). No stored timestamp is compared. If any
+      hello report failed to apply, the sweeper leaves that connection's runs alone entirely. A run created after the
+      connection began is never a candidate.
+    - **`stale_lease_lost`**: the node isn't connected, and the space's lease on that node expired more than the
+      disconnect grace plus `staleLeaseMargin` (15 minutes) ago. The grace is the larger of the one the lease was last
+      granted with (stored on the lease, migration 0046) and the current one, so lowering the grace in the config
+      doesn't shorten the wait. The node's lease guard has stopped the process by then.
+    - Never candidates: pending runs; runs with an unacknowledged launch command (`pending` or `sent`: the dispatch
+      loop may still deliver it); runs no node has ever reported (`observed_at` is NULL: a pending launch turns
+      `unknown` on disconnect without one); runs whose space now belongs to another node (relocation ends them).
+  - **Clock assumption.** The node's lease guard compares central's lease expiry with the node's own clock, with no
+    skew correction. `stale_lease_lost` therefore assumes the clocks of central and the nodes are synchronised (NTP).
+    The 15-minute margin is far beyond any plausible skew of a synchronised clock; a node whose clock runs more than
+    that behind central's could still be running a process when central records it lost.
+  - **End transaction.** Each run ends in its own transaction, which re-checks the signal: the run's version is
+    unchanged since it was chosen, it is still live past its launch and has no unacknowledged launch, and for
+    `stale_not_on_node` the node's connection is still the one whose hello didn't contain it, for `stale_lease_lost`
+    the node is still not connected. A report, a reconnect or a queued launch at the same time wins. The run then ends
+    through the node-report path: credentials and gateway tokens revoked, `run_ended` published, `OnRunEnded` called.
+    The same transaction cancels every undelivered or unacknowledged command of the run and sets its desired state to
+    `stopped`, so `sendReconcile` stops listing it to the node, and archive and relocation aren't blocked by it. The
+    sweep is idempotent (an ended run is no longer a candidate). A central restart mid-sweep finds the remaining runs
+    again on the new connections, after a new grace.
+  - **Safety, and what a false positive costs.** The sweeper itself never sends a stop or a kill. But once a run is
+    swept, any later report of it is fenced, and a report that it is still running is answered with the fence's
+    `stop kill` (SM-NODE-006). So a run swept wrongly is killed at the node's next report of it. The safeguards
+    against that are the rules above: only runs that were live at connect and missing from a hello that applied in
+    full, never a pending launch or one never reported, a monotonic grace, a 15-minute margin on a lost lease with the
+    largest grace, and the re-check in the end transaction.
+  - **Visibility.** The run shows end reason `stale_not_on_node` or `stale_lease_lost` and an explanation in its error.
+    An audit record `run.reconciled_stale` names the reason and the previous state, and
+    `spaceman_runs_reconciled_stale_total{reason}` counts sweeps.
+- **Consequences:**
+  - **One-time effect on upgrade:** runs that had already ended but kept `desired = 'running'` stop counting at once.
+    Spaces that were refused may admit new workers right after the upgrade.
+  - **One-time sweep on the first deploy.** Every historic run left `running` or `unknown` that meets the rules (after
+    the nodes reconnect and the grace passes, or 15 minutes past a lost lease) is ended in the first sweeps. Each one
+    publishes `run_ended`, has its credentials and gateway tokens revoked and its desired state set to `stopped`, and
+    goes through `OnRunEnded`. For a worker run, that tells the space's control the run ended and names its task;
+    control may then re-queue or relaunch that task, so old tasks can come back to life. Operators should look at
+    these notices (audit action `run.reconciled_stale`) and close tasks that are no longer wanted. A swept control run
+    isn't restarted by the control supervisor (its desired state is `stopped`), so a space whose control is swept
+    needs control launched again.
+  - **Fencing trade-off.** Once swept, a run stays exactly as the sweeper ended it: any later report for it is fenced.
+    A node that reconnects after `stale_lease_lost` and reports the run's real exit (its exit code) doesn't change the
+    record.
+  - SM-NODE-005 is refined, not withdrawn: execution on a disconnected node is `unknown` while it may still be running.
+    It is never recorded as `failed`, and it becomes `lost` only once the lease guard must have stopped it.
+  - Migration 0046 adds `execution_leases.grace_us`. No node-protocol change.
+  - ~~Follow-up: `ListActiveRunsBySpace` and `ListActiveRunsByNode` still count ended runs with `desired = 'running'` as
+    active.~~ Resolved by the amendment below.
+- **Amendment (2026-11-09, review follow-ups of #28):**
+  - **Active runs are live runs.** `ListActiveRunsBySpace` and `ListActiveRunsByNode` use the live predicate
+    (`fleet.Live`), not `desired`. A run that ended on its own no longer blocks archiving the space, a relocation without
+    `stop_runs` or a relocation's drain, and isn't counted in "N active run(s)". Pausing with interrupt or emergency no
+    longer queues a stop for such a run. `sendReconcile` needs nothing else: the node reports every journal run whether
+    or not it is listed and only acts on runs listed as `stopped` or with another generation, and an ended run with
+    `desired = 'running'` was listed as `running`, which the node treats like an unlisted run.
+  - **Only active leases count for `stale_lease_lost`.** `RevokeLease` stores the revoke time as the expiry, but the
+    node keeps the expiry it was last given, up to `lease_ttl` later. A revoked lease is therefore not a basis for the
+    sweep: those runs wait for the node to report them. `nodes.lease_ttl` is also bounded at 10 minutes
+    (`config.MaxLeaseTTL`), well inside the 15-minute margin.
+  - **A replaced connection's end records nothing.** Before, when a node reconnected while its old connection was
+    still open, the old connection's end still recorded a disconnect and marked the node's runs `unknown`, over the new
+    connection's state. Each connection now gets a sequence number and claims the node in its `fleet.node_connect`
+    transaction; the disconnect transaction records the disconnect only if its connection is still the node's newest.
+    Write transactions are serialized, so a disconnect and a reconnect can't interleave.
+  - No migration and no protocol change.
+
+### ADR-0075 — Run terminal sizes: per run, held by the node through an attach that never types
+- **Status:** Accepted, 2026-11-09 (operator request for v0.1.1: "configurable terminal size from web"; design agreed
+  with control before building).
+- **Context:**
+  - herdr-core's `terminal.run` takes no size. A program starts at the core's `headless` size, which the node sets
+    from `runner.terminal_size` (default 160×48, S-6). The web view scaled the font to fit a run's columns, but the
+    size itself could not change.
+  - An interactive attach resizes a program only while it is open. Once it closes, the program goes back to the
+    headless size. With two interactive attaches open, the newer one (or its later resize) sets the size, and closing
+    it brings the other one's size back. `events.subscribe` reports each change as `size {cols, rows}`. These
+    behaviours were verified on hc 0.1.17 (docs/contracts/herdr-core.md S-7, `TestRealTerminalSizeHold`).
+  - The recorder attached as an observer and wrote a `size` record only when it re-attached. A live resize would
+    therefore have replayed at the wrong size.
+- **Decision:**
+  - **The size belongs to the run, not to a viewer.** An operator with `terminal:takeover` in the run's space sets it,
+    the same permission as takeover, because it changes what the agent's program sees. While the terminal is taken
+    over, only the holder may change it. With two operators, the last change wins. Every viewer sees the run at its
+    real size, and the browser scales the font to the viewer's window or scrolls horizontally, as before. Viewers
+    without the permission get no control. Operators see it disabled, with the reason.
+  - **Central stores it.** Migration 0047 adds `runs.terminal_cols` and `terminal_rows`. Both are NULL (the node's
+    default) or both set, with 40–400 columns and 10–200 rows, the bounds of `runner.terminal_size`.
+    `PUT /spaces/{space}/runs/{run}/terminal-size` sets the size and `DELETE` clears it. Both are audited as
+    `run.terminal_resized`, with the previous size. The run's `terminal_size` shows it, and `terminal_sizing` says
+    whether the run's node can hold a size now. The admin MCP excludes both operations (a person's at the keyboard,
+    like takeover).
+  - **Node protocol minor 10, additive.** Central sends `terminal.sizes`, the complete set of the node's sized runs
+    (space, run, generation, cols, rows), after the node connects and on every change, the same pattern as
+    `takeover.state`. For each listed run whose space lease and generation are valid, the node opens an interactive
+    attach on a connection of its own (`runner.Takeover`, at the current size) and resizes it. The hold **never
+    writes**: no input reaches the program through it. The node closes a hold when the run leaves the set, when the
+    run ends, when the space's lease is revoked or expires (fencing), and at shutdown. A run that is not live yet is
+    held once it is. A failed attach is retried while the size is still wanted. An open takeover attach is resized
+    along with the hold, and back to the node's default when the hold closes. A node below minor 10 is never sent the
+    set, and resizing one of its runs fails with **409**.
+  - **Recordings.** The recorder writes a `size` record for every change. The node notes the size itself before it
+    resizes or releases a hold, so the program's redraw for the new size follows the record. The runner's `size`
+    events note changes the node did not make (a takeover attach, a hold that dropped). A pending size note is written
+    before the next output chunk. Replay already redraws at `size` records.
+  - **Default for new runs:** the space limits `terminal_cols` and `terminal_rows` (installation defaults in
+    `limits:`, 0 = the node's default). A size applies only when both are set. Each must be 0 or within the bounds.
+    Launch resolution copies them to the new run, and the node holds it from the start. A node connected below minor
+    10 cannot hold it, so its new runs keep no size (they would show one they don't have). **Changing either key needs
+    `terminal:takeover`** in the space, like resizing a live run: `set-space-limits` otherwise needs only
+    `space_config:write`, which operators hold, and that would let them set every new run's held size. A change that
+    leaves both keys as they are needs only `space_config:write`, the same way retention periods need
+    `retention:write` (review of PR #33, S1).
+  - **Node holds are race-free.** `reconcileHolds` plans under the agent's lock and opens holds after unlocking, so
+    `startHold` checks again under the lock before it records a hold: the size is still wanted exactly as planned,
+    the space's lease is valid and the agent has not stopped. Otherwise it opens nothing. Central serializes its
+    `terminal.sizes` pushes per node session (read and send under one lock), so an older set is never sent after a
+    newer one.
+  - **Web:** the live terminal has a size menu: Fit to window (the terminal area at the regular font size, refitted
+    after the window changes while it stays applied), 80×24, 120×40, 160×50, 200×60, Custom… and Node default. The
+    browser remembers the last choice and shows it selected, but **never applies it on its own**, so opening a run's
+    page never resizes it for everyone else.
+    - Fit refits only when the browser's window or visual viewport changes size, never when the terminal box does:
+      the box follows the run's size, so refitting on it undid other people's resizes. Once the run's size differs
+      from the last size this browser sent (someone else resized or cleared it), the browser stops fitting and shows
+      the run's size as the selected choice.
+    - The fit measures the regular cell the way ghostty-web 0.4.0's renderer does (`measureText("M")` at the
+      regular font size), not by scaling the cell shown now, so the same window always fits to the same size.
+    - When the viewer can't resize, the control stays focusable (`aria-disabled`) and its reason is its accessible
+      description. The choices are `menuitemradio` items with `aria-checked`.
+- **Alternatives:**
+  - Sizing tied to a takeover. This needs no migration, but the size is lost on release and resizing needs a takeover
+    that pauses automated input. Rejected by control.
+  - Per-viewer sizing. A program has one size, so viewers would fight over it.
+  - Restarting the core with a new `headless` size. That changes every new program on the node and never a running one.
+- **Consequences:**
+  - One extra herdr-core connection per sized run on the node.
+  - This is not a security relaxation: the permission is takeover's, the hold types nothing, and the size is bounded
+    and audited.
+  - CLI: `spaceman run terminal-size set|clear` resizes a live run. `spaceman limits set --set terminal_cols=… --set
+    terminal_rows=…` takes the new limits as they are (its keys are generic).
+  - Terraform: the provider's `spaceman_space_limits` resource declares one attribute per known limit, so it cannot
+    set these two yet. Its data source shows them in `values`. Adding the attributes is a follow-up in the provider
+    (PLAN.md).
+
+### ADR-0076 — The web terminal loads stored output in slices and works around ghostty-web 0.4.0's per-row viewport parse
+- **Status:** Accepted, 2026-11-12 (operator report on v0.1.1: opening Terminals or Spaces on a fresh cache froze the
+  whole tab for about a minute, and for minutes on a phone).
+- **Context:**
+  - A cold-cache Chromium trace with CPU throttling (2026-11-12) found the cause. It was neither the WebAssembly loading
+    nor the chunk-reload logic: it was the stored output a terminal applies when it opens.
+  - A live terminal's stream starts with the run's whole recording (catch-up), which is tens of megabytes for a long
+    Claude Code session. Each record was applied in the task that delivered it, with a React render per record. A
+    replay applied the whole recording in one task (the former `renderTo`).
+  - ghostty-web 0.4.0's `GhosttyTerminal.getLine(y)` copies and parses the whole viewport to return one row, and its
+    renderer calls it for every row it draws. A full redraw therefore costs rows × rows × columns cell parses (2.9
+    million at 200×120). Output that scrolls changes every row, so each frame during catch-up redrew the whole
+    screen. The renderer also calls `fillText` for every blank cell.
+  - For a 22 MB recording at 4× throttling, the main thread was saturated for 33 s: 123 long tasks, the longest
+    933 ms. With 5 MB (`e2e/terminal-load.spec.ts`), the longest task was 917 ms live and 1.5 s in a replay (5.0 s at
+    6×), and a key press waited up to 2.8 s.
+  - #27 (ADR-0052's 2026-11-09 amendment) gave every terminal its own WebAssembly instance through `Ghostty.load()`. That
+    fetched and compiled the module again from a 560 kB `data:` URL for every terminal. Compiling is asynchronous, so
+    this was not the freeze, but the work was repeated for nothing.
+- **Decision** (`web/src/features/terminal/`):
+  - **Stored output is applied in slices** (`records.ts` `feed`). Records are queued and applied in slices of about
+    12 ms, then the page gets the main thread back. Consecutive output records go to the terminal in one write of at
+    most 32 kB. The badges update twice a second, and "Loading output…" shows until the terminal has caught up. A
+    replay seek works the same way, and playback waits for it to finish. A replay reads its recording in pages of
+    1000 records, so each response parses in a short task.
+  - **No drawing while catching up** (`ghostty.ts` `holdDrawing`). The terminal's renderer is paused from the
+    stream's first record, or while a backlog remains, and draws once in full when the backlog is gone. `fitFont`
+    holds drawing the same way while it steps through font sizes.
+  - **Two patches to ghostty-web 0.4.0's prototypes**, applied once:
+    - `cacheViewport` keeps the parsed viewport until the terminal changes (`write`, `resize`, `free`) or the current
+      task ends, so a redraw parses the viewport once.
+    - `skipBlankCells` skips the text call for a blank cell unless it is underlined, struck through or part of a
+      hovered link. A blank cell has no ink, and its background is drawn separately.
+
+    Both patches are checked against the real module (`viewport.test.ts`) or the 0.4.0 renderer's contract
+    (`ghostty.test.ts`). They must be re-checked when ghostty-web is upgraded. Upstream ghostty-web has the defects;
+    these are our side's smallest fixes (upstream report pending: drafted, not filed; the operator decides).
+
+    The patches are applied only when the installed ghostty-web is exactly 0.4.0 (`patchGhostty`, against the
+    version Vite reads from the package at build time). On any other version they are skipped with a console warning:
+    drawing is slower again, never wrong. `version.test.ts` fails while the package is not 0.4.0, so an upgrade
+    re-verifies them first.
+  - **The module is compiled once per page** from the package's `ghostty-vt.wasm`, served as a hashed, immutable asset.
+    Each terminal still instantiates it. The module defines its own memory and imports nothing but a log function, so
+    every terminal keeps a fresh, zeroed memory of its own and no shared state, as #27 requires.
+    `check-dist` fails a build without the asset.
+  - **ghostty-web's inlined copy of the module is stripped from the build.** Its `Ghostty.load()` carries the module
+    as a base64 `data:application/wasm` URL (564 kB of the terminal's chunk), which the page never uses. A Vite
+    transform (`vite.config.ts` `stripGhosttyInlineWasm`) replaces it with a URL that fails to load, so a stray
+    `Ghostty.load()` falls back to the package's `./ghostty-vt.wasm`. The `RunWorkbench` chunk goes from 687 kB
+    (204 kB gzipped) to 122 kB (37 kB). The transform fails the build when it finds nothing to strip, and `check-dist`
+    fails it when any `data:application/wasm` is left in `dist`.
+- **Consequences:**
+  - At 4× CPU throttling on a cold cache, with 5 MB of stored output, the longest task is now 96–129 ms while a live
+    terminal loads and 111–131 ms in a replay. At 6× they are 174 ms and 228 ms. A key press is handled within
+    0.6 s at 4× (2.8 s before). With 22 MB, the 33 s of blocked main thread became tasks of at most about 0.26 s
+    (the longest is the page's own first render), and the page answers input while the output loads.
+  - A terminal shows its previous picture and "Loading output…" until it has caught up, instead of drawing each
+    intermediate screen.
+  - Opening a page still costs React's render: Spaces takes 140–250 ms at 4× (the same before and after), and the
+    Terminals page's first render about 420 ms. The change feed's refetch burst on load is one task. Neither is
+    terminal work. They are the next things to measure if pages still feel slow on a phone.
+  - ADR-0020's `connect-src data:` is no longer needed and is removed (see its update).
+- *Update 2026-11-13, stale glyphs (operator report on v0.1.1: a watched 160×48 control run showed older lines of the
+  same session through its new lines, character by character):*
+  - **Root cause: ghostty-web 0.4.0's WebAssembly module, not the renderer.** The run's recording was complete
+    (11,407 records, no sequence gaps, no size changes). Fed to the 0.4.0 module alone, with no canvas, it produced
+    the screenshot's rows in the terminal's own cells. Replayed record by record against xterm.js, it first diverged
+    when rows scrolled in at the bottom: they still held cells of output from hundreds of lines earlier. Upstream
+    ghostty-web #180 (`bec9e16`, first released in 0.4.0-next.18): `Screen.cursorDownScroll()` cleared a newly grown
+    row only when the cursor's style had a background colour. After `ESC[0m`, the row kept whatever its reused page
+    memory held.
+  - Claude Code shows this because of how it writes a line: it places each word with a column move (`CSI n G`) and
+    skips the cells between words, which it expects a fresh row to have blank. Those cells showed the stale text, as
+    in `losparseeline 14xxxx…`. Truecolour output that ends each line in a reset triggers it after a few hundred
+    lines (`scrolled.test.ts`). Not the cause: glyph overhang between rows, the dirty-row redraw set, the scaled
+    fixed size, the device pixel ratio, or catch-up slicing. A simulated renderer drew exactly the module's cells.
+  - **Decision:** the terminal keeps ghostty-web 0.4.0's JavaScript and loads the WebAssembly module of
+    `ghostty-web@0.4.0-next.21.g640db46` (2026-10-28), which contains the fix. It comes in as the pinned package
+    alias `ghostty-web-vt` (`web/package.json`; the lockfile holds its integrity hash), and no binary is committed.
+    The module exports everything 0.4.0's does, plus two hyperlink functions, imports only the same log function,
+    and takes the same configuration layout. Replayed under 0.4.0's JavaScript, the whole control recording matches
+    xterm.js after every record.
+
+    The JavaScript is not upgraded. Its about 2,000 changed lines include a new input handler (beforeinput, mouse
+    tracking), which would need a fresh review of watch-only (SM-UI-004), and the prototype patches above are
+    verified only on 0.4.0. `version.test.ts` pins both versions, so changing either fails until the pairing is
+    re-verified. `vtmodule.test.ts` checks the pairing automatically: the module exports every function 0.4.0's
+    JavaScript calls, imports only the log function, and reads the configuration in 0.4.0's layout (colours,
+    palette, scrollback limit). The pairing is temporary. It goes away when the terminal upgrades to an upstream
+    ghostty-web release that contains the fix: a follow-up task, with a fresh SM-UI-004 review of the new input
+    handler and the prototype patches re-verified.
+  - **Tests:** `scrolled.test.ts` runs the stub's pattern against the shipped module (blank rows) and against 0.4.0's
+    module (the defect). `e2e/terminal-stale.spec.ts` drives the stub harness's new `/sparse 1000` line live and in
+    replay, at DPR 1 and 2, and at the node's 160×48 both unscaled and scaled down to fit. It checks that every row's
+    cells read what the program wrote, and that the canvas has only background after each row's text. Both checks
+    fail on 0.4.0's module. The browser test probe now reads an empty cell as a space: ghostty-web's
+    `translateToString` drops it, which shifted the rest of the row.
+  - **Side finding, not changed:** ghostty's `scrollbackLimit` is in bytes, but ghostty-web passes the `scrollback`
+    option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns. Fixed in ADR-0080
+    (24 MiB, at least 10,000 rows at 160 columns).
+
+### ADR-0077 — Node-managed Claude Code versions (security-relevant change)
+- **Status:** Accepted, 2026-11-13 (the operator chose the managed design and authorized shipping it in v0.1.2;
+  proposed 2026-11-13). The operator decided on 2026-11-12: always use the latest version, unless the harness profile
+  pins one; then use that version, downloading it if it is missing or reverting to it. Implemented in PRs #41–#44
+  (PLAN.md, CC). This ADR is security-relevant because **the node downloads and executes
+  vendor binaries** that no operator installed by hand.
+- **Context (code, at v0.1.1):**
+  - SpaceMan doesn't manage Claude Code. The node runs whatever `claude` the run's `PATH` resolves to
+    (`harness.claude_binary`, default `"claude"`). `Detect` resolves it on the agent's `PATH` when the node connects,
+    but the launch shim resolves it again on the herdr-core core's `PATH`, so the reported version and the binary a run
+    executes can differ.
+  - The reported version is refreshed only on a reconnect more than 5 minutes after the last detection. The run
+    manifest's `dependencies.claude-code` copies that value when central creates the run, not what the node launched.
+  - SpaceMan never sets `DISABLE_AUTOUPDATER`, so every interactive Claude run updates itself into the node agent's
+    `HOME` (about 340 MB per version). The spike below shows this happens even when the binary was launched from
+    elsewhere.
+  - No profile or node setting can choose a version.
+  - Release metadata (contract: `docs/contracts/harnesses.md`, Distribution): channel pointers `latest` and `stable`,
+    a per-version `manifest.json` with each platform's SHA-256 `checksum` and `size`, and two signature sidecars.
+    Older versions stay downloadable.
+- **Decision:**
+  1. **Resolution precedence: the profile pin, then the node channel, then `latest`.**
+     - A new typed profile field `harness_version` (for `claude-code`; keyed by harness kind so Codex can follow)
+       takes `""` (follow the node), `latest`, `stable` or an exact `X.Y.Z` checked with a strict regexp. API, web
+       and Terraform validate it. Central passes the pin to the node as `LaunchPayload.harness_version`.
+     - The node's `harness.claude.channel` (default `latest`) accepts the same values.
+     - The node resolves, because it owns the network, the cache and the platform. An exact version is used as is
+       and downloaded first if it is missing (the run waits in `starting`), so a pin "reverts" by being launched
+       again. A channel is resolved with `GET {base_url}/{channel}`, validated as strict semver and memoised for
+       `refresh` (default 15 min). A background loop re-resolves and prefetches. If a channel's target isn't cached
+       yet or the pointer can't be fetched, the run uses the newest verified cached version and reports both the
+       requested and the actual version. With nothing cached, the launch waits up to `download_timeout`.
+  2. **A fixed HTTPS host; `base_url` is operator-only.** The default is
+     `https://downloads.claude.ai/claude-code-releases`, the same base compiled into Claude Code. `base_url` is node
+     configuration only (so an operator can mirror it), must be `https`, and is never settable from a profile, space,
+     API or MCP. Request paths are built only from a validated version and a platform from `runtime.GOOS/GOARCH`
+     (plus a musl check on Linux), never from response text.
+  3. **Integrity: SHA-256 and size against the manifest; no signature check yet.**
+     - Fetch `{base_url}/{version}/manifest.json` and require `manifest.version == version`.
+     - Stream the binary through SHA-256 with a hard cap at the manifest's `size`; it must equal both.
+     - This is the integrity Claude Code's own updater has whenever its server-side signature enforcement is off
+       (`manifestSignatureEnforcement: "flag"`). The manifest's signature is **not** verified: the raw-signature
+       format and key are not documented publicly, so checking it would copy constants out of a vendor binary, and
+       OpenPGP for the `.sig` sidecar is outside the Go standard library and `x/crypto` (AGENTS.md). Open item
+       **K-14**; LIMITATIONS says "checksum-verified, not signature-verified". Anyone who controls the release host
+       or `base_url` controls the binary, the same as for Claude Code's own updater.
+  4. **An immutable cache, with GC.**
+     - Layout `<data_dir>/harness/claude-code/<version>/claude` (0755 inside the 0700 data dir) plus `verified.json`
+       (`version`, `platform`, `sha256`, `size`, `manifest_sha256`, `fetched_at`).
+     - A download goes into a temporary directory, is verified, `fsync`ed and renamed into place. A version directory
+       never changes after the rename. A failed check deletes the temporary directory and raises a node event, so
+       nothing partial is ever executable. A per-version singleflight and a `flock` serialize downloads.
+     - At start the agent re-checks size and SHA-256 of the versions it will use against `verified.json`.
+     - **Tamper check at launch.** When a launch acquires its version, the node compares the binary's stat
+       fingerprint (device, inode, size, mode, ctime) with the one recorded when it last hashed the file, at install
+       or at the startup check. It re-hashes only when the fingerprint changed, and removes and re-downloads a version
+       that fails. **Accepted:** runs share the node's uid, so a same-uid process can still replace the binary between
+       that check (`Acquire`/`HoldCached`) and the exec. The window includes the launch preparation done after the
+       hold: building the launch and writing its files. A same-uid process can already change much else the node
+       runs, and re-hashing every launch wouldn't close the window either.
+     - GC keeps the newest `cache_keep` (default 3), every version a profile seen by the node pins, and every version
+       a live or adoptable run in the journal uses. Nothing goes under `~/.local`.
+  5. **Absolute-path launch with the updater off.**
+     - The node passes the cached binary's **absolute path** as the harness binary, so the core's `PATH` no longer
+       matters.
+     - `Claude.Build` sets **both `DISABLE_AUTOUPDATER=1` and `DISABLE_UPDATES=1`** in the run's (non-secret,
+       hc-persisted) environment. The spike showed that `DISABLE_AUTOUPDATER=1` stops the background updater, but an
+       explicit `claude update` (which an agent can run from its shell) still installs a native copy into `HOME` and
+       switches `installMethod` to `native`. `DISABLE_UPDATES=1` refuses that too ("Updates are disabled by your
+       administrator"). The launch shim's `inherited()` must keep not scrubbing these names.
+     - A profile's `claude_settings` `autoUpdatesChannel`, `minimumVersion` or `env.DISABLE_*` have no effect on the
+       version under managed mode; nothing launches a self-updated copy. The node warns when a profile sets them.
+  6. **The `manage: false` escape hatch.** `harness.claude.manage: false` keeps today's behaviour (`claude_binary`
+     through `PATH`) for operators who install Claude Code themselves. The node still sets both updater variables
+     unless `harness.claude.self_update: true`. A profile pin that differs from the detected version then **fails the
+     launch** ("this node does not manage Claude Code versions"); it never silently runs another version. Central
+     likewise never sends a pin to a node below protocol minor 11: such a launch fails with a clear error.
+  7. **Live runs keep their binary.** A version change affects new runs only. A run's version directory is protected
+     from GC while the run is live or adoptable (and on Linux a deleted file's inode lives on for its process anyway).
+     herdr-core has no method that re-executes a terminal with a new binary, so moving a conversation onto a new
+     version would mean stopping the run and launching it again with `--resume`. The spike shows that works from
+     2.1.317 to 2.1.322 in print mode; an automatic `on_update: resume_when_idle` policy for control runs is left out
+     of this decision.
+  8. **Reporting.**
+     - `RunReport.harness_version` and `harness_requested`, sent with the first `starting` report, stored on the run
+       (`runs.harness_version`) and shown in the run detail and API. Adopted runs take the version from the agent's
+       journal, which gains a column.
+     - The manifest stays the configuration resolved at creation: `dependencies["claude-code"]` becomes
+       `{requested, node_default}`; the run row holds what ran. Pre-11 nodes keep today's string.
+     - A new node→central `node.capabilities` message carries the full capabilities when the cache or a channel
+       resolution changes, and at least every 30 minutes. `HarnessInfo` gains `managed`, `channel`, `resolved`,
+       `cached` and `cache_bytes`; `version`/`path` then mean "what a new run would get now". Unmanaged nodes re-run
+       detection on the same timer. Central stores a report only from the node's current connection; migration
+       0049 adds `nodes.capabilities_updated_at`, shown with a stale hint after an hour (CC-5).
+  9. **Protocol minor 11 and migration 0048.** Minor 11 adds `LaunchPayload.harness_version`, the two `RunReport`
+     fields, `node.capabilities` and the `HarnessInfo` fields, all additive. Migration 0048 adds
+     `harness_profiles.harness_version` and `runs.harness_version` (`TEXT NOT NULL DEFAULT ''`).
+- **Alternatives:**
+  - **Leave installation to configuration management** (a node-wide pin plus `DISABLE_AUTOUPDATER`). It is the
+    interim, but it can't pin per profile and its version report stays stale.
+  - **Let Claude Code update itself** (`~/.local/bin` first in `PATH`). Every run downloads, concurrent runs race,
+    the version can change between two runs of one task without anyone deciding, and a profile's
+    `autoUpdatesChannel` would steer every run sharing the `HOME`.
+  - **Verify the manifest signature now.** Rejected until the key and procedure are documented (K-14).
+- **Consequences:**
+  - The node makes outbound HTTPS requests to one host and runs what it downloads. That is a new trust in the release
+    host (and, if set, the operator's mirror), bounded by the checksum, the size cap, the version check and the
+    fixed path shape; THREAT_MODEL gains a row when the downloader lands.
+  - About 340 MB per cached version (2.1.322 linux-x64), so about 1 GB by default; the cache size is reported.
+  - Runs stop writing self-updates into the agent's `HOME`.
+  - Evidence so far is the contract and the spike (`docs/contracts/harnesses.md`, Distribution); none of the
+    decision is implemented yet (SM-HARN-005..008 are `todo`).
+
+- **Implementation notes (CC-4, 2026-11-13):**
+  - Migration 0048 adds the pin to `harness_profiles.harness_version` (decision 9 now names that table). Runs gain
+    `harness_version`, `harness_requested` and `harness_fallback`, and run reports carry all three
+    (`harness_fallback` is added to decision 8's fields).
+  - On an unmanaged node a channel pin (`latest`, `stable`) also fails, because such a node can't resolve a channel.
+    An exact pin that matches runs by the absolute path that was checked, so the core's `PATH` can't substitute
+    another binary.
+  - The node learns pins only from launches. GC keeps the exact versions that profiles pinned on runs the node
+    started (in this process, or in the journal) in the last 30 days, at most `harness.claude.cache_keep_pinned`
+    (default 5) of them, the most recently launched. A launch that failed before its run started doesn't count.
+    Versions in use by live or adoptable runs are always kept and don't count against the cap (PR #43 review S1).
+  - The `{requested, node_default}` manifest dependency is for managed Claude Code only; unmanaged Claude Code and
+    other harnesses keep the plain string. Central stores a reported `harness_requested` only when it is a valid
+    request and `harness_fallback` only when it is a known reason, and drops anything else (PR #43 review S2, N2).
+  - An API update that leaves `harness_version` out keeps the stored pin, so an older Terraform provider never
+    clears it; `""` clears it.
+
+### ADR-0078 — Changes must not fan out: no-op run reports, lean run lists, a live change feed, coalesced and cached UI queries, progress-bounded responses
+- **Status:** Accepted, 2026-11-13 (incident: nodes lost their connection every 15 s after central restarted while a
+  web UI tab was open; the operator stayed on v0.1.1 until the fix). Shipped in v0.1.3 (2026-11-13).
+- **Context (code, at v0.1.2; v0.1.1 behaves the same):**
+  - A node's hello reports every run in its journal, ended ones included; the journal is never pruned. Central applied
+    each report in its own write transaction, always bumping the run's version and writing a change-feed entry, so a
+    node of 2500 runs emitted 2500 `run` changes per connect. The apply took about 9 s on a disk, with the session
+    reading nothing from the node meanwhile.
+  - The web UI invalidated a space's runs list on every `run` change. Invalidation cancels the fetch in flight and
+    starts another, but the runs query ignored the abort signal, so the cancelled request stayed open. A tab ended up
+    holding hundreds of `runs?limit=200` requests it never read.
+  - Each listed run carried its manifest and launch prompt and system text: a list of 200 runs with a realistic role
+    prompt was 2.2 MB. Central kept each response until the client read it; there was no write deadline.
+  - The memory and TCP-buffer pressure clamped every socket's receive window, including the nodes'. A node's write
+    that could not complete in 15 s closed its connection; the node reconnected and the cycle started again.
+- **Decision:**
+  1. A run report that would change nothing stored (only `observed_at` would move) writes nothing: no version bump and
+     no change entry. Fencing, real transitions, and a stop for a run central wants stopped are unchanged. The
+     stale-run sweeper relies on the hello's run IDs, not on version bumps. A hello stops applying once its
+     connection has ended; the next hello reports every run again.
+  2. Run lists leave out `manifest`, `launch.prompt` and `launch.system` unless `include=manifest` or `include=prompt`
+     asks for them. A single run's GET is unchanged. This is an API change, listed under **Changed**.
+  3. The web UI collects change-feed invalidations for 250 ms and applies each distinct key once with
+     `cancelRefetch: false`. Query functions that can be superseded pass the abort signal to `fetch`.
+  4. Every response write must make progress: each piece of at most 32 KiB gets `http.write_idle_timeout` (default
+     1m, 1s to 10m) to reach the client. A client that stops reading is disconnected. The bound is on progress, not
+     the whole response, so no route is exempted: downloads, exports, backups, attachments, recordings and event
+     streams that keep moving are unaffected. WebSocket upgrades (nodes, terminals) are passed through untouched; they
+     keep their own timeouts.
+  5. A fresh tab doesn't replay history. `GET /watch?live=1` without a position starts at the newest change and sends
+     a first `position` event (with its id, so EventSource resumes from it). The tab refreshes its active queries once
+     on that event, which covers what changed between loading its data and the position. Without `live=1` the feed
+     still replays from the start (the CLI's `spaceman watch` relies on it).
+  6. Cached queries are fresh for 60 s (was 5 s): the change feed is the freshness signal, so mounts and navigation
+     reuse the cache. Every query function passes TanStack Query's abort signal to its requests.
+  - Measured: with 60 space and 60 human-action changes in the history, a fresh tab visiting the inbox, overview,
+    terminals and spaces pages made 318 API requests (122 `human-actions`, 64 `spaces`, 62 `system/restore`) before
+    and 21 after (`web/e2e/ui-request-budget.spec.ts`).
+- **Consequences:** an idle node's reconnect costs central one read per journaled run and no writes. A list of 200
+  runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
+  reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
+- **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
+- **Follow-up (journal prune and hello slicing, 2026-11-14):**
+  - No protocol minor bump and no journal migration. Central already answers a hello with a reconcile that lists the
+    node's runs it still considers active, after it applied the hello's reports. The agent treats an ended run it sent
+    and that central no longer lists as acknowledged (memory only; after a restart nothing is acknowledged until the
+    next connection went through the exchange).
+  - The hello carries live and adoptable runs, plus ended runs not yet acknowledged that ended within 24 hours. Older
+    unacknowledged ended runs follow the welcome as `run.report` in slices of 100 every 250 ms, outside the connect
+    deadline. Acknowledged ended runs are not sent at all, so the hello is bounded by live and recent runs.
+  - The journal deletes an ended run after `journal_retention` (default 30 days, never below the 30-day pin window of
+    ADR-0077, at most 1 year) only when central acknowledged its final state, its recording is fully acknowledged and no
+    recorder or kept-back records remain, no transcript upload is unfinished and no dream's evidence positions refer to
+    it. Live and adoptable runs are never deleted. A run's recording files stay on disk.
+  - Not covered: central's apply of a hello still costs one read per reported run, so the hello of a node that was offline
+    with many unacknowledged runs is as large as before once, then small.
+  - An ended run that central's reconcile lists as active is unacknowledged again (the agent forgets that it sent it) and
+    its final state is reported at once, whatever the agent counted before: a central restored from a backup, a
+    follow-up report lost with the connection or one central failed to apply would otherwise never be resent, and the
+    stale sweeper (ADR-0074) would end the run `lost` two minutes after the reconcile and fence its real final state.
+  - Consequences: restoring central from a backup older than the retention loses the runs pruned since: they are swept
+    `lost` if central still lists them, and their recordings are not shipped again. Every agent restart resends all
+    ended runs once as follow-up (acknowledgements are memory only). Pruning runs only on the reconcile, once per
+    connection, not on a timer. Recording directories of pruned runs are not garbage-collected yet (backlog).
+
+### ADR-0080 — The web terminal's scrollback is a byte limit: 24 MiB, at least 10,000 rows at 160 columns
+- **Status:** Accepted, 2026-11-13 (follow-up to ADR-0076's side finding).
+- **Context (code, at v0.1.3; measured against both WebAssembly modules):**
+  - `createTerminal` set `scrollback: 10_000`, meant as lines. ghostty-web 0.4.0's JavaScript passes the option
+    unchanged into the module's configuration as `scrollbackLimit` (`Terminal.buildWasmConfig`, then a `u32` in
+    `GhosttyTerminal`'s config block). Both the 0.4.0 module and the 0.4.0-next.21 module the page loads (ADR-0076)
+    read it as ghostty's `scrollback-limit`: the most bytes the pages of rows above the screen may hold. Pages are
+    dropped whole from the top past the limit; 0 means no limit. The typings and README don't name a unit.
+  - With 10,000 bytes a terminal kept a page's worth: about 1,100 rows at 80 columns and 290 to 470 at 160 (the
+    node's default width). A viewer scrolling back in a long Claude Code reply lost it after a few screens.
+  - A row costs about 13 bytes per column (its cells plus the page's room for styles, graphemes and links), up to
+    14.5 when nearly every row has a 24-bit colour of its own. Both modules measure the same.
+- **Decision:** the scrollback is `SCROLLBACK_BYTES` = 24 MiB, in one place (`web/src/features/terminal/scrollback.ts`),
+  with `scrollbackRows(cols)`, a conservative estimate of the rows kept (15 bytes per cell), for code that needs a
+  row count (a catch-up that writes only the tail). 24 MiB rather than 20 MiB, which keeps about 10,100 plain rows at
+  160 columns, so that output in per-row colours keeps 10,000 too. Rows kept, measured at the lowest and highest
+  point of the page cycle (plain text / per-row 24-bit colours):
+  - 160 columns: 12,090-12,380 / 10,900-11,200;
+  - 80 columns: 24,100-24,690 / 21,750-22,330;
+  - 200 columns: 9,670-9,900 / 8,720-8,960.
+- **Memory per terminal (WebAssembly memory, which never shrinks while the terminal is open):**
+  - Plain text, or output in a few dozen styles: about 30 MiB with a full scrollback (about 7 MiB before). It grows
+    with the output until the scrollback is full, so a short run costs what it did before.
+  - Output whose lines each have a style of their own grows the memory by about 3.5 MiB per 1,000 lines at 160
+    columns **whatever the limit**: 12,000 such lines of the stub's `/sparse` took 49.1 MiB in Chromium with 10,000
+    bytes and with 24 MiB alike. This is the module's style memory, not the scrollback, and is not changed here.
+  - The Terminals page and the run page mount one terminal at a time; switching disposes the previous terminal and
+    its instance (ADR-0076, `terminal-switch.spec.ts`). N browser tabs with a terminal each hold N times the above,
+    e.g. four tabs of full plain-text terminals about 120 MiB.
+- **Consequences:** a terminal keeps at least 10,000 rows at 160 columns. The catch-up (ADR-0076) still writes the
+  whole recording; rows past the limit are dropped as before, so its cost is unchanged. `scrollback.test.ts` checks
+  the unit and the rows kept against the shipped module (and that 0.4.0's JavaScript passes the value through);
+  `e2e/terminal-scrollback.spec.ts` checks at least 10,000 rows in a live terminal at 160×48 in Chromium (it fails
+  with the old value: 485 rows).
+- **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
+
+### ADR-0081 — A terminal shows the end of its recording first: tail catch-up with a mode prelude, earlier output on demand
+- **Status:** Accepted, 2026-11-13 (follows ADR-0076 and ADR-0080). No recording format change, no node protocol
+  change, no migration.
+- **Context (code, at v0.1.3 plus ADR-0080):**
+  - A live terminal's catch-up streamed the run's whole stored recording from seq 0, and the page applied it in slices
+    (ADR-0076). The tab stayed responsive, but a long run (tens of MB) downloaded and replayed everything before the
+    current screen was right: slow on a phone, and wasted bandwidth.
+  - Central read the whole recording into memory for each viewer's catch-up (`Recordings.Read`), and once per replay
+    page.
+  - Terminal output can't be read from the middle without the state before it. So the question was whether
+    recordings have natural checkpoints. Five real Claude Code recordings on a node (8 to 16 MB of output each) were
+    replayed in a reference emulator (xterm headless), and each final screen was compared with one drawn from only
+    the tail, at 25, 50, 75, 90 and 100% of each recording:
+    - **No usable clears.** One ED2 at the start, no ED3, no RIS.
+    - **Sync frames don't help.** Nearly every record opens a synchronized update (`CSI ? 2026 h`), but the classic
+      renderer repaints only its prompt area: a tail of quiet stretches holds the spinner and none of the text above
+      it.
+    - **The one exact checkpoint is rare.** The repaint after each recorder reattach (herdr-core's first paint, a
+      `gap` record followed by a reset of modes and the visible screen).
+  - Results of the comparison:
+    - **Classic renderer** (which SpaceMan sets with `tui: "default"`, ADR-0064): **1 MiB of tail drew the same 48 rows
+      as the whole recording at every point**. 256 KiB was wrong at about a third of them; 64 KiB at nearly all.
+    - **Modes matter.** A run that left the alternate screen at its end was drawn wrong from the tail, until the
+      DEC private modes in effect before it were restored.
+    - **The full-screen renderer** (alternate screen, differential repaint): 43–45 of 48 rows. Rows it never repaints,
+      such as the prompt's borders and the status line, are in no tail.
+- **Options considered:**
+  - (a) Snapshots in the recording (screen and modes, e.g. a periodic herdr-core first paint): exact for any program,
+    but a new record kind, a node change and a protocol minor. **Recorded as the follow-up for the full-screen
+    renderer; not built.**
+  - (b) **Tail catch-up with a mode prelude: chosen.** It needs no format or protocol change, and the measurements show
+    it is exact for the renderer SpaceMan runs.
+  - (c) Replay seeks use the same tail.
+- **Decision:**
+  - **Server** (`internal/recording`, `internal/api`):
+    - `ScanSegments` reads a recording one record at a time. `TailSegments` keeps only a window of the last N bytes of
+      output (at least one record, at most `MaxTailBytes` = 16 MiB). Records leaving the window pass through a
+      `ModeTracker`, which follows `CSI ? Pm h/l` (split across records too) and RIS for an allowlist: cursor keys (1),
+      origin (6), autowrap (7), cursor visibility (25), the alternate screens (47, 1047, 1049), mouse reporting
+      (1000–1006, 1015) and bracketed paste (2004).
+    - `GET …/terminal?tail=<bytes>` applies only to a fresh catch-up (no `after`, no `Last-Event-ID`). It first sends
+      an `event: tail` with `{from, skipped_bytes, cols, rows, modes[], gaps, truncated}` (what the output before the
+      tail left), then the tail's records, then live output. Reconnects resume after the last record, as before.
+    - `GET …/recording?tail=<bytes>` returns the same tail as one page, with `tail` set.
+    - **A tail starts at a character.** The tracker follows every CSI and string sequence (OSC, DCS, APC, PM, SOS) to
+      its end. When the cut falls inside one, the rest of it goes through the tracker (a mode it completes counts)
+      and is cut from the tail, and so are UTF-8 continuation bytes of a character that began before it. Replay does
+      the same (`ReplayIndex.tail`).
+    - Catch-ups without a tail, gap re-reads and plain pages now stream: a page keeps only its own records, and its
+      read stops after the page (its `gaps` cover the range read). `httpguard` (ADR-0078) still bounds writes to a
+      client that stops reading.
+    - **Bounded concurrency.** Every read of a stored recording (a terminal's catch-up or gap re-read, a recording
+      page or tail) takes one of `http.catch_up_concurrency` slots (default 8). It waits up to `http.catch_up_wait`
+      (default 5 s), then gets 503 with `Retry-After`; it never waits without bound. The live terminal reopens a
+      refused stream with back-off (a browser never retries an `EventSource` that got an error status), and replay
+      asks again for a refused page.
+  - **Live terminal** (`web/src/features/terminal`):
+    - Asks for a 1 MiB tail (`TAIL_BYTES`). It applies the `tail` event as records with seq 0 (size, the mode prelude,
+      gaps), then the tail, still in #37's slices.
+    - **Earlier output:** when the viewer is at the top of the scrollback (or the scrollback is empty) and output was
+      left out, it offers **Load earlier output**. That reconnects with 4× the tail: 1, then 4, then 16 MiB, and after
+      16 MiB the whole recording through the streamed, untailed path. It redraws on a clean terminal while the old
+      picture stays (`holdDrawing`), then returns the viewer to the lines they were reading.
+    - It stops offering once the scrollback holds `scrollbackRows(cols)` rows (ADR-0080): the terminal could not keep
+      earlier output anyway, and Replay has all of it.
+  - **Replay:**
+    - Fetches the tail first and draws the run's last screen from it. The full record list then loads page by page for
+      play and seeking, and isn't drawn again when it ends in the same record.
+    - A seek draws at most 1 MiB of output before its position, after the size and modes there (`ReplayIndex`: mode
+      checkpoints every 512 records, indexed a slice at a time), instead of everything from the start.
+  - **Compatibility:** only optional fields are added to the API.
+    - An older UI sends no `tail` and gets the whole recording as before.
+    - This UI against an older central gets no `tail` event or field, and draws the whole recording as before.
+    - Existing recordings are read unchanged.
+- **Measurements:** see the table below (`e2e/terminal-tail.spec.ts`, `SM_E2E_TAIL_MEASURE=1`).
+  The table shows time from navigation until the end of the output is on screen, and bytes received by then. It
+  covers a running run (live) and a finished one (replay). Each run is Claude-like output from the stub's `/redraw`:
+  about 5 MB and 22 MB, i.e. 7,000 and 31,000 repaints. Each measurement uses a fresh browser context in headless
+  Chromium on Linux, with central on the same machine, 2026-11-13. Before is the base of this change (ADR-0080) with
+  the shipping fix below applied, so that its central had the whole recording.
+
+  | Output | View | Device | Before: screen, received | After: screen, received |
+  |---|---|---|---|---|
+  | 5 MB | live | desktop 1× | 1.1 s, 6.7 MB | 0.9 s, 1.4 MB |
+  | 5 MB | live | desktop 4× CPU | 5.1 s, 6.7 MB | 3.6 s, 1.4 MB |
+  | 5 MB | live | phone 390 px, 4× | 5.2 s, 6.7 MB | 3.4 s, 1.4 MB |
+  | 5 MB | replay | desktop 1× | 1.0 s, 6.7 MB | 1.2 s, 8.1 MB¹ |
+  | 5 MB | replay | desktop 4× | 5.2 s, 6.7 MB | 4.0 s, 8.1 MB¹ |
+  | 5 MB | replay | phone 390 px, 4× | 5.1 s, 6.7 MB | 3.9 s, 8.1 MB¹ |
+  | 22 MB | live | desktop 1× | 3.2 s, 29.8 MB | 0.9 s, 1.4 MB |
+  | 22 MB | live | desktop 4× | 13.8 s, 29.8 MB | 3.3 s, 1.4 MB |
+  | 22 MB | live | phone 390 px, 4× | 13.7 s, 29.8 MB | 3.6 s, 1.4 MB |
+  | 22 MB | replay | desktop 1× | 2.8 s, 29.8 MB | 0.9 s, 21.6 MB¹ |
+  | 22 MB | replay | desktop 4× | 12.1 s, 29.8 MB | 3.5 s, 21.6 MB¹ |
+  | 22 MB | replay | phone 390 px, 4× | 12.0 s, 29.8 MB | 3.4 s, 21.6 MB¹ |
+
+  ¹ A replay draws its last screen from the 1.4 MB tail, but goes on to load the whole recording for play and seeking.
+  Over the local connection most of that arrived while the tail was being drawn. Everything was loaded after
+  4.9 s at 4×, against 12.2 s before; that is 31.2 MB, i.e. the 1.4 MB tail on top of the recording. A live
+  terminal stops at its tail.
+  - **What's left doesn't grow with the recording.** After the change, the 5 MB and 22 MB times are the same (3.3 to
+    3.6 s at 4×). What remains is the same for any length of output: the page, its chunks and the terminal starting,
+    plus drawing 1 MiB.
+  - **Found while measuring:** the node shipped a second's records to central as one message. A burst over the
+    protocol's 4 MiB message limit closed the connection, and those records never reached central's copy. The 22 MB
+    run kept only its last megabyte. Fixed separately: the node splits shipments into messages of at most 1 MiB.
+- **Consequences:**
+  - The current screen of a long run appears after about 1 MiB of output, whatever the run's length. Central holds
+    about one tail per viewer in memory: 3.9 MiB of heap while scanning a 50 MiB recording (`TestTailMemoryBounded`).
+  - Each catch-up still decompresses the whole recording on central, which costs CPU (under a second for 50 MiB in the
+    test) but not memory. The catch-up slots bound how many run at once. An index of checkpoints per segment would
+    remove the cost; it is not needed yet.
+  - The full-screen renderer's never-repainted rows can be missing from a tail until the viewer loads earlier output.
+    The fix is option (a), a follow-up.
+  - Colours are not part of the prelude: a tail that starts inside coloured text draws its first characters
+    uncoloured. This was invisible in every comparison.
+- **Not a security-relevant change:** nothing is relaxed. The same `terminal:watch` and `recording:read` checks apply,
+  and less output reaches the browser.
+
+### ADR-0082 — Rich Markdown rendering: GFM, lazily loaded code highlighting and Mermaid in strict mode (security-relevant change)
+- **Status:** Accepted, 2026-11-14 (operator request 2026-11-13: render Mermaid, highlighted code and all Markdown
+  features in the inbox, queue and needs-you views).
+- **Context:** `web/src/lib/markdown.ts` (marked + DOMPurify) renders every untrusted body: inbox items, task objectives,
+  acceptance criteria and results, human-action bodies, details, answers and comments, messages, cross-space requests,
+  knowledge answers, dreams, memory files, prompts and the event preview. It already did GFM tables and task lists. It
+  forbade `<svg>`, showed fenced code as plain text and had no bound on nesting: a body of 2,000 nested list levels kept
+  marked busy for minutes, 8,000 unmatched `*a ` for 15 s.
+- **Decision:**
+  - The shared renderer adds footnotes (`marked-footnote` 1.4.0), heading anchors (GitHub-style slugs, unique per body)
+    and per-view ID prefixes (`user-content-<hash>-`, from an FNV-1a hash of the body so a link to a heading still works
+    after a reload or in a new tab; a second view of the same body on the page gets `user-content-<hash>-1-` once
+    mounted), so two bodies on a page never share an ID and no ID can clobber a DOM property. A body scrolls to the
+    heading or footnote the address names once it renders. In-page links stay in the tab; every other link keeps
+    `target="_blank"` and `rel="noopener noreferrer nofollow"`.
+  - Sanitizing uses a DOMPurify instance of its own, so its hooks never touch mermaid's sanitizing (the shared
+    instance). Images render only when they are attachment content URLs (`/api/v1/spaces/<space>/attachments/att_…/content`,
+    exact pattern) or URLs the renderer's attachment resolver produced; any other image becomes a link (http/https) or
+    its alt text. Forbidden in addition to before: `frame`, `button`, `textarea`, `select`, `link`, `meta`, `base`, the
+    `srcset` and `sizes` attributes, and every `input` except task-list checkboxes. Attachment references are resolved
+    in the sanitizer hook (one function, `AttachmentResolver`, so another transport such as the Telegram Mini App can
+    supply blob: URLs), no longer by rewriting the source text. DOMPurify's URI allow-list has no `blob:`; a `blob:`
+    URL is kept only when it is exactly one the resolver produced for this body, so a `blob:` URL written in a body is
+    still removed.
+  - Bounds before parsing, outside fenced code: indentation at most 64 columns, at most 16 stacked block markers per
+    line, and a paragraph with more than 256 emphasis delimiters has them escaped (shown literally). A parser failure
+    renders the body as escaped text.
+  - Code: fences with a language are highlighted after mount with **@tanstack/highlight 1.2.12** (MIT; class-based,
+    synchronous, about 15 kB for core plus the module, each of its 78 grammars a separate lazy chunk). Tokens are built
+    as text nodes, never parsed as HTML. At most 50 blocks of at most 20,000 characters each, one at a time, yielding
+    between blocks. Colors are app tokens (`--sm-code-*`, Night Owl / Light Owl like the docs site, each checked at
+    4.5:1 in `contrast.test.ts`). Every block gets a copy button (Clipboard API; on an insecure origin the text is
+    selected instead), and its `<pre>` is focusable for keyboard scrolling. Compared with Shiki (TextMate grammars plus a
+    regex engine, much larger, colors inlined per theme) and highlight.js or Prism (class-based too, but not
+    the package the operator asked for), TanStack Highlight is small, emits classes that follow both themes through
+    CSS, and is synchronous and SSR-safe.
+  - Mermaid: `mermaid` 11.17.2, the version the docs site uses (its configuration there is mermaid's defaults, so only
+    the version is shared), loaded only when a body has a diagram and only once the diagram is near the viewport.
+    `securityLevel: 'strict'`, `maxTextSize` 10,000 and `maxEdges` 500, at most 20 diagrams per body, renders serialized,
+    temporary render elements removed on failure, and a queued render whose view went away (unmounted, or its source or
+    theme changed) is skipped before mermaid starts. The returned SVG is sanitized again (DOMPurify SVG and HTML
+    profiles with mermaid's own `foreignobject` addition; scripts, `<a>`, `<image>`, `<img>`, `<animate>`, `<set>`,
+    `srcset` and handlers removed) before it reaches the DOM: an `<img>` in an HTML label would otherwise load any URL,
+    with the session cookie on the same origin, or a tracking pixel where no CSP applies. Theme: mermaid's `base`
+    theme with Night Owl or Light Owl colors, following the app's color scheme; `theme`, `themeVariables`, `themeCSS`,
+    `darkMode` and the font are added to mermaid's `secure` keys, so a diagram's `%%{init}%%` or front matter can't
+    change them.
+  - Main-thread work: the size limits alone don't bound it. 4,000 bare node IDs fit in 10,000 characters and took
+    7 seconds in one task; 21 such diagrams in one body, 66 seconds. Measured in Chromium (mermaid 11.17.2, node of
+    2026-11-14), a render costs about 2.5-5 ms per node for flowcharts, class, state, ER and block diagrams and more for
+    mind maps (50 nodes about 0.7 s, 100 about 1.4 s). So: a diagram has at most 500 statements (lines, `;` and `&`
+    separated parts) and a body's diagrams at most 25,000 characters of source in all; a diagram over either renders
+    as its source with the reason. A diagram of at most 50 statements and 2,500 characters renders on its own when
+    near the viewport; a larger one shows a "Render diagram" button and renders only when clicked.
+    `e2e/ui-markdown-diagrams.spec.ts` renders the slowest kinds at the automatic limit and checks that no long task
+    runs 1 s or more. A failed render shows a one-line message and the source; the source is always available under the
+    diagram as its text alternative. `MermaidDiagram` renders one diagram from source on its own (for a future "view
+    diagram" page).
+  - Bundle: the eager JS stays where it was (+2.0 kB raw, +1.1 kB gzip, from chunk reshuffling and the theme's token
+    variables); the MarkdownView chunks grow by 10.9 kB raw (4.7 kB gzip); the lazy highlighter is 14.8 kB (4.9 kB gzip) plus one small chunk per grammar, lazy mermaid 614 kB (148 kB gzip) plus its per-diagram-type chunks. `scripts/check-dist.mjs` fails the build when
+    mermaid or the highlighter appears in an eagerly loaded chunk, and prints the sizes.
+- **Security-relevant change:** SVG generated by mermaid from untrusted source now reaches the DOM (bodies still cannot
+  contain `<svg>`). It is bounded by mermaid's strict mode, a second sanitizing pass and the UI's CSP (`script-src 'self'`,
+  `img-src 'self' data: blob:`), which also stops a diagram's style from loading remote content. Everything else in
+  this decision tightens the sanitizer. Hostile inputs are tested in `markdown.test.ts` (XSS vectors, pathological
+  nesting and delimiters, huge bodies and diagrams, `blob:` URLs), `mermaid.test.ts` (configuration and secure keys,
+  SVG sanitizing including label images, statement limit, skipped renders) and `highlight.test.ts` (tokens as text).
+- **Consequences:** a body over the bounds still renders, just with less structure; pathological bodies take at most a
+  few seconds to render rather than minutes (raw HTML nesting has no separate depth limit). A diagram renders on the
+  main thread (mermaid needs the DOM): automatically up to about 1 s each, larger ones only on a click, and none over
+  the statement limit or the body's budget.
+
+### ADR-0084 — "Message the agent" is typed into the running session at once
+- **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
+- **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while
+  the program works (`ErrBusy`) and acknowledges it as rejected; central does not retry a rejected `run.input`. A message
+  sent while control was busy was therefore lost. The durable message path (Messages page, agent tools) is not affected:
+  its terminal notice is refused while busy but the item stays stored and is announced at the next idle report.
+- **Decision:** The box sends `force: true`: the text is typed into the session immediately and the harness decides when to
+  act on it (the fake runner queues typed input; real Claude Code and Codex are unverified). Safe input stays the rule for automated input (notices). Takeover
+  still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
+- **Consequences:** The text may sit in the harness's own queue while it works. A harness that reports `blocked` refuses
+  the text (hc refuses a blocked program without its own force) and the text is dropped, and the operator is not told yet;
+  central answers 202 when it queues the command, so the box says "Queued for the agent". The risk that a modal takes
+  the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
+  `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
+- **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.
+
+### ADR-0085 — Central bounds request bodies by progress and by a total (security-relevant change)
+- **Status:** Accepted, 2026-11-14. **Security-relevant change:** it adds limits to central's public listener, and the
+  security review of the first version (`httpguard.ReadProgress`, PR #78) found that version weakened one and bypassed
+  another; both are corrected here.
+- **Context:** the listener had no `ReadTimeout`: a client that declared a body and sent none, or trickled it, held a
+  connection and goroutine (T-43). A whole-request `ReadTimeout` would cut event streams, the agent WebSocket and
+  slow uploads. The first version gave every body read `http.read_idle_timeout` (30 s). The review found two defects:
+  - **Upgrade bypass (high).** It skipped any request whose headers said `Connection: Upgrade` and `Upgrade:
+    websocket`. A client adding those to `POST /api/v1/spaces` or `POST /` with a `Content-Length` and no body held the
+    connection indefinitely, on any route. `WriteProgress` had the same header-only skip.
+  - **Lost total bound (high).** huma gives every operation `BodyReadTimeout` (5 s total unless set) and applies it
+    as a read deadline; the guard reset the deadline to now+30 s on every read and so overrode it. A login body sent
+    one byte per 29 s was held for up to 1 MiB × 29 s (`http.max_body_bytes` is 1 MiB), where main answered 408 at
+    5.7 s.
+- **Decision:**
+  - Only a real WebSocket handshake is passed through (`websocketHandshake`): a body-less HTTP/1.1 `GET` with the
+    upgrade headers and no `Transfer-Encoding`. `ReadProgress` guards every request that has a body, whatever its
+    headers; `WriteProgress` skips only a real handshake.
+  - Progress and total are both enforced. The guard's response writer implements `SetReadDeadline`, which huma
+    finds by unwrapping: the deadline is recorded as the total cap, and each read waits for the sooner of now+idle and
+    the cap. JSON operations keep huma's 5 s. `upload-attachment` sets `BodyReadTimeout` to 10 minutes
+    (`api.UploadBodyReadTimeout`): 25 MiB (`http.max_upload_bytes`) at a floor of about 43 KiB/s, with the idle bound still
+    applying to every read.
+  - A body whose handler sets no deadline (routes outside huma: `/agent/v1/enroll`, unauthenticated, and the MCP endpoint's
+    batch check) gets `httpguard.DefaultBodyBound` (5 s, huma's default) from its first read; a handler raises or clears it
+    through `SetReadDeadline`. (Round 2 of the review: a 1-byte/400 ms trickle on enrolment was still held after 15 s.)
+  - No new setting: the total is the operation's own bound.
+- **Consequences (numbers per connection):** a JSON operation, the enrolment endpoint or the MCP endpoint: at most 5 s, ≤ 1 MiB buffered. An upload (it requires an
+  authenticated caller; the body is read after authentication): at most 10 min, ≤ 25 MiB. A stalled client is cut at
+  30 s regardless. There is **no per-IP or global connection cap**: N connections hold N goroutines for up to those
+  bounds, which is the residual in T-43. A client slower than 43 KiB/s can't upload 25 MiB, and gets a 408; a slower link
+  needs smaller files.
+- **Evidence:** `TestSlowOrEmptyBodyCannotHoldConnection` (upgrade-header rows), `TestTrickledBodyMeetsTotalBound` (408 at
+  about 5 s), `TestBodyGuardKeepsStreamsAndUploads`, and in `internal/httpguard` `TestUpgradeHeadersWithBodyAreStillGuarded`,
+  `TestHandlerDeadlineIsATotalBound`, `TestDefaultBodyBoundApplies`, `TestOnlyWebSocketUpgradesPassThrough`, and `TestTrickledEnrollBodyMeetsDefaultBound`. The bypass and trickle probes fail on 80a7f5f.
+
+### ADR-0086 — Central ignores a run report that is behind the recorded state
+- **Status:** Accepted, 2026-11-14. No migration, no node protocol change. Not a security-relevant change: no check,
+  limit or default is relaxed; central applies fewer reports.
+- **Context:** central re-sends an unacknowledged launch on every kick. The node acknowledges the repeat as a duplicate
+  and reports the run's journal row from its session goroutine (`agent.command`), while the launch goroutine moves the
+  row to `running` and reports that. The two reports are not ordered. A duplicate's `starting` report, read before the
+  launch finished, could reach central after `running`. `applyRunReport` only refused live reports for an ended run, so
+  it applied the stale one: the run went back to `starting` and `UpdateRunObserved` cleared its `terminal_id` while the
+  terminal was live (seen in CI as a HarborPilot node e2e flake). Two places could fix it: the node could order its
+  reports per run (re-read under the run's lock, or a sequence number), or central could refuse a report that goes
+  backwards.
+- **Decision:** central refuses it (`staleReport` in `internal/fleet/runs.go`). Within one run row the node's state
+  only moves forward: `pending`, `starting`, `running`, `stopping`, then an ended state, and a row's generation never
+  changes (a relaunch is a new run row). A live report whose state ranks below the recorded live state is ignored. So is
+  a live report without a terminal when central already has one, because no node path clears a live run's terminal.
+  Central's own `unknown` (node disconnected) ranks below every live state, so a reconnecting node's re-reported journal
+  replaces it. An ignored report is not fenced, since fencing sends a kill and the run is live. If central wants the run
+  stopped, the stop command is still queued, as for any live report.
+- **Why central, not the node:** the guard covers every path that can deliver an old row: the duplicate launch, a
+  hello's journal re-report racing a live report, and older agents in the fleet, which need no upgrade. Ordering on the
+  node would mean either blocking the session goroutine on the run's lock (held while the runner starts the program,
+  which stalls every other command for that node) or adding a per-run sequence to the protocol and the journal (a
+  protocol minor and a migration). Neither is minimal.
+- **Transitions checked:** the forward path, including a managed launch reporting `starting` twice; stopped before
+  start (`starting` to `exited` with no terminal); a reconnect after `unknown`; adoption after a node restart (`unknown`
+  to `running` with a new terminal); relaunch, which gets a new run and generation, so the existing generation fence
+  applies; the stale-run sweeper and node `exited`/`failed`/`lost`, which are ended states and keep their own guards
+  (ADR-0074).
+- **Consequences:** if a node ever needs a run to move backwards within a generation (for example, restarting a program
+  in place), that needs a new generation or an explicit protocol change, not a plain report.
+- **Evidence:** `TestStaleStartingReportDoesNotOverwriteRunning` (failed on main), `TestRunReportOrderGuard` and
+  `TestStaleReportStillStopsUnwantedRun` in `internal/fleet/run_report_order_test.go`.
+
+### ADR-0087 — SpaceMan's own dedup namespaces are reserved
+- **Status:** Accepted, 2026-11-15. No migration, no API schema change. A tightening, not a relaxation: callers lose
+  the use of a few key prefixes.
+- **Context:** human actions and tasks are deduplicated per space on `(space_id, dedup_key)`, whatever the type or
+  requester, and `human.Create` / `queue.Create` return an existing row with the key. Several services rely on that
+  to repair a crash between two writes, and trust the row they get back: `approvals.ask` links the action under
+  `approval:<approval id>` to an enforced approval (ADR-0024), control raises its supervisor and usage-limit notices
+  under `control-failing:`, `control-autostart-*:` and `usage-limit-human:` keys, an accepted cross-space request
+  creates its task under `xspace:<request id>`, and a schedule creates each occurrence's task under
+  `schedule:<id>:<unix>`. The same keys could be supplied by any caller allowed to create in the space (the human
+  actions and tasks API, `spaceman_human_ask`, `spaceman_task_create`). A row created first under such a key would be
+  reused by the service: an enforced approval could be linked to an action whose title and body the service never
+  wrote, and the surfaces that render the action's body (the web, notifications) would show that text to the person
+  deciding. Surfaces that read the approval row (the Telegram card) were not affected. A supervisor notice or a
+  delegated task could be replaced the same way.
+- **Decision:**
+  - Each package keeps the list of its reserved prefixes (`human.ReservedDedup`, `queue.ReservedDedup`): human actions
+    `approval:`, `usage-limit-human:`, `control-failing:`, `control-autostart-limit:`, `control-autostart-refused:`;
+    tasks `xspace:`, `schedule:`.
+  - `CreateInput.Internal` marks a row a SpaceMan service creates. It is set only in code, never from request input.
+    `Create` refuses a reserved key without it (`validation_failed` on `dedup_key`), so an outside caller can neither
+    plant a row under a service's key nor be handed back the service's row. The reverse is refused too: an internal
+    key outside the list is an error, so a service that adds a key must reserve its prefix. The default is safe: a new
+    API or tool that passes a caller's key through can't reach a reserved namespace.
+  - `approvals.ask` also checks what it gets back: an action that isn't of type `approval` or whose title or body
+    differ from what it writes (one stored before this change) is never linked. The approval is revoked ("its human
+    action did not match the approval") and the call fails with `conflict`; the next call asks again under a new
+    approval ID.
+- **Alternatives:** requiring the same type and requester for reuse doesn't help: the requester of an enforced
+  approval's action is the run that asked, the same run that could plant it, and a system notice would still be
+  blocked by a planted row (the unique index refuses the second insert). Scoping every caller's key to its requester
+  would change what `spaceman_human_ask` dedup returns to agents and needs a data migration; kept out of this fix.
+- **Checked, not affected:** inbox items are deduplicated per `(space, source_kind)` (`response:`, `undeliverable:`,
+  `xspace:` items have their own source kinds), messages per sender, cross-space requests per requesting run.
+- **Consequences:** a caller that used a key starting with one of these prefixes for its own rows now gets
+  `validation_failed`. Rows stored before this change under a reserved key are only checked on the approval path,
+  which refuses them. Elsewhere they are still reused: a supervisor or usage-limit notice is suppressed once (for that
+  window or hold), a schedule occurrence is skipped, and accepting a cross-space request links the existing task. A
+  token requester's display name changing between a crash and the repair also makes the approval's own action differ;
+  it is revoked and asked again, which is harmless.
+- **Evidence:** `internal/approvals` `TestApprovalActionCannotBePlanted` (failed on main: the person deciding saw the
+  planted body), `TestApprovalRefusesForeignActionUnderItsKey`; `internal/human` `TestReservedDedupNamespaces`;
+  `internal/queue` `TestReservedTaskDedupNamespaces`; `internal/agenttools` `TestAttachmentsAndHuman`.
+
+### ADR-0088 — Worker inbox dedup keys are scoped to the role; accepting a cross-space request checks the task's origin
+- **Status:** Accepted, 2026-11-15. No migration, no API schema change. Follow-ups from the review of ADR-0087.
+- **Context:** inbox items are deduplicated on `(space, source_kind, dedup_key)`. Every worker run reports source kind
+  `worker`, so two roles (or two unrelated workers) using the same `dedup_key` in `spaceman_inbox_add` were handed each
+  other's item instead of creating their own. Separately, ADR-0087 left rows stored before it under `xspace:<request id>`
+  reusable: accepting a cross-space request with a task linked whatever task `queue.Create` returned for that key.
+- **Decision:**
+  - `spaceman_inbox_add` stores a worker's key as `role:<role>:<key>`. The same role keeps deduplicating across runs and
+    restarts, a different role no longer collides. Dreamer and KB items already have their own source kinds and one role
+    each, so their keys are unchanged. Items without a key are unaffected. The stored key is 256 bytes at most. The
+    `role:<role>:` prefix takes 7–54 bytes (role names are at most 48 bytes), so a worker key longer than 202–249 bytes,
+    depending on the role, now fails validation; the error states the limit for that role.
+  - `xspace.Accept` links the task only if its origin is `xspace_request` with this request's ID. Otherwise it fails with
+    `conflict` and the request stays pending. It does not create a second task: the unique key is taken.
+- **Alternatives:** a new source kind per role needs a schema change; a hash of the role would hide the key in the UI.
+- **Consequences:** `spaceman_inbox_add` dedup now means "per role" for workers. Worker items stored before this change
+  keep their bare key; a retry of one after the upgrade creates a new item once. A planted legacy task blocks accepting
+  that request with a task until an operator removes or re-keys the row.
+- **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`, `TestWorkerInboxDedupKeyEffectiveLimit`;
+  `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
+
+### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
+- **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
+  on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code
+  runs, direct and through Harbor Pilot; Codex runs are not covered, and the Terraform attributes (UL-11) remain.
+  Tested with simulated evidence only: no live subscription limit has been observed on a SpaceMan run (K-16); the
+  gateway side also ran against a real Harbor Pilot demo with a scripted node (TRACEABILITY SM-RUN-004..006). Labelled
+  security-relevant not because it relaxes a requirement but because **content of a run's own transcript (untrusted)
+  now drives central scheduling**: it can park the run and hold an account.
+- **Context:**
+  - A claude.ai subscription has a 5-hour and a weekly window. When one is exhausted, Claude Code ends the turn and,
+    for waits under 24 h, arms its own timer and continues about a minute after the reset (contract
+    `docs/contracts/harnesses.md`, "Claude Code usage limits", 2.1.317–2.1.323). On SpaceMan runs that works only while
+    nothing ends the process: control's idle stop, control replacing a worker that looks stuck, a node restart (run
+    `lost`, ADR-0074) or control relaunching into the same limit. Of 21 armed waits in the examined transcripts, 16
+    fired; weekly waits (more than 24 h out) never arm at all.
+  - **The signal is in typed transcript fields, never the screen** (SM-RUN-002):
+    - **Error path:** an assistant record with `apiError: "usage_limit_reached"`, `quotaLimits.resetsAt` (epoch
+      seconds) and `rateLimitType` (`five_hour`, `seven_day`, …).
+    - **Wrap-up path:** a meta user record `usageLimitNote: "wrap_up"`, then the auto-continue arm record; **no reset
+      time and no kind** anywhere. Twelve of the 21 waits came this way.
+    - **Cleared:** the "reset" informational record and the `auto-continuation` turn, or any later assistant message
+      with usage.
+  - Gateway runs (Harbor Pilot, `ANTHROPIC_AUTH_TOKEN`) never arm auto-continue. When every candidate account is
+    exhausted, HP answers 429 `rate_limit_error` "no eligible account is available for model …" **without
+    `Retry-After`**, and Claude Code records it as a plain API-error message with that text and no typed kind or reset
+    (contracts `harbor-pilot.md`, "Quota board and the all-exhausted 429", and `harnesses.md`, "Gateway runs"). A
+    blocking budget's 429 differs only by its message. The reset can be estimated from HP's `GET /api/v1/quota/board`
+    `account_health[].until`, which has no project filter.
+  - A typed SpaceMan nudge while armed does not cancel the timer, but its request is refused at once and the nudge is
+    not acted on until the reset (contract, 4 cases). A process that exits or is relaunched loses the timer; a session
+    resumed with `--resume` needs a prompt to continue.
+  - `--resume` of a session under a different token works (live, fake API, 2.1.323); with two real claude.ai accounts
+    it is **not verified** (K-16).
+- **Decision:**
+  1. **Detection on the node.** On the OSC 7501 status turning `idle` or `error`, and once at run end, the node agent
+     tail-scans the run's transcript from a persisted offset and reads only typed fields: `type`, `subtype`, `error`,
+     `apiError`, `apiErrorStatus`, `quotaLimits.{resetsAt,rateLimitType,status}` (falling back to
+     `apiErrorParams.rate_limit_info`), `usageLimitNote`, `origin.kind` and `timestamp`.
+     - **Limit set** by a `usage_limit_reached` record, or an auto-continue arm record (wrap-up path), newer than the
+       last typed user turn.
+     - **Gateway limit set** by an API-error record with `apiErrorStatus: 429` whose text, after the fixed
+       `API Error: Request rejected (429) · ` prefix, starts with HP's `no eligible account is available for model `
+       (`gateway_quota`) or matches `budget <name> is exhausted ` (`gateway_budget`). Patterns are anchored and come
+       from the HP contract; anything else is not a limit.
+     - **Limit cleared** by the reset informational record, an `auto-continuation` turn, or a later assistant message
+       with non-zero usage.
+     - No screen text and no display wording is ever parsed for status or time (SM-RUN-002); the arm record counts by
+       its record type, not its text.
+     - **Amended 2026-11-13 (UL-3):** the arm and the reset informational records share their `type`, `subtype` and
+       `level` and differ only in wording, so neither is used. The wrap-up path is keyed on the typed meta record
+       `usageLimitNote: "wrap_up"`, which comes first in the same turn; the replies the turn finishes with on its grace
+       allowance don't clear it, and a later turn's reply with usage or an `auto-continuation` turn does. A typed turn
+       alone doesn't clear a limit (a nudge while armed is refused at once). While the limit stays open, `since` stays
+       that of the first record; kind and reset follow the newest.
+  2. **The reported limit.** `RunReport.limit {kind, resets_at, since, cleared}` (protocol minor 12,
+     `MinorUsageLimit`). `kind` is from an allowlist (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
+     `seven_day_overage_included`, `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path
+     reports `unknown`). `since` is bounded to `[now − 8 days, now + 5 min]` (missing, or further ahead: now; the 5 min allow a node clock slightly ahead, so repeats compare equal); `resets_at` is kept when it lies in
+     `(since, since + 8 days]`, even if it has already passed, otherwise null; a report with neither a kind nor
+     `cleared` is not a limit (`proto.RunLimit.Normalized`). **No transcript text crosses the wire or reaches a log.**
+     A node below minor 12 never reports limits, and central drops a limit on any report from a session negotiated
+     below 12 (`RunReport.ForMinor`), so everything behaves as before.
+  3. **Keep-alive for short waits.** When the reset is known and within `keep_alive_max` (default 6 h), or unknown on
+     a subscription run, the process stays up and Claude Code continues by itself. Meanwhile the run is
+     *limit-waiting*: it is excluded from the **space** limit but still counts against the **node** limit (Q4);
+     SpaceMan's idle-gated notices are held (the Notifier skips it and `QueueNotice` refuses idle-gated input; operator
+     force-input still works) and delivered after the clear; control's idle stop is not armed for a limit-waiting
+     control run.
+  4. **Park for long waits.** A wait beyond `keep_alive_max`, an unknown subscription reset still open after
+     `keep_alive_max`, an unknown gateway reset after 30 min, or a process that ends or is lost while limit-waiting,
+     ends the run with `end_reason = 'usage_limit'` and writes a durable **limit wait** in the same transaction. Its
+     resume is a **new run** of the same instance under the current lease generation with `--resume <session>`
+     (when the old run had a turn) and a fixed prompt telling the agent the limit reset and to continue. Ended runs are
+     never reopened, so fencing, the sweeper and the single-control index are unchanged.
+     Since UL-4, central records `end_reason = 'usage_limit'` (also on `run_ended` and in the end-reason metric) for a
+     run that ends while its limit is open, unless central had asked it to stop (`desired = stopped`) or the stale-run
+     sweeper ended it; a later `cleared` report doesn't change it. The `run_ended` event keeps the node's own reason as
+     `node_reason`. The limit wait itself comes with parking (UL-7).
+     - **Amended 2026-11-14 (UL-7).**
+       - **When.** A live run at its limit is parked when its known reset is more than `keep_alive_max` after its
+         `since` (at once), when a gateway limit has no reset after 30 min, and otherwise when the limit is still open
+         `keep_alive_max` after its `since`.
+       - **How.** The limit-wait job stops the run (interrupt, `desired = stopped`) and writes its wait in the same
+         transaction. The run's later end is recorded as `usage_limit`, because the run has a wait.
+       - **Ended, lost or swept runs.** A run that ends, is lost or is swept while at its limit, and that nobody asked to
+         stop, gets its wait in the report (or sweep) transaction. A swept run keeps the sweeper's end reason.
+       - **Kinds.** Only control, worker and diagnostic runs are parked (control's decision, 2026-11-14). KB support and
+         dreamer runs are short-lived and started on demand by their schedulers, which start them again when needed,
+         so they are neither stopped at the keep-alive nor resumed.
+       - **What the wait records.** The session (only when the run finished a turn), the task (only while it is assigned
+         to the run and running, blocked or in review), the space's open hold, and the run's launch.
+       - **Re-park.** When a resumed run parks again, the new wait carries its predecessor's `release_at`, `attempts`
+         and original prompt forward, so the maximum wait and the backoff don't start again. An active wait another run
+         of the same instance left is superseded (cancelled).
+  5. **Resume job.** A deadline-timer job resumes due waits at `resets_at` + 2 min (unknown: retried with backoff from
+     1 h, each attempt re-detected and re-parked without new notices). A paused space, a still-open account limit, a
+     node with no lease or a full space keeps the wait waiting; node hello kicks it. An open hold with an **unknown
+     reset** does not block its own retry: it is **probed** at the hold's `usage_limits.check_at` (decision 7), and
+     the retry that the probe lets through is that attempt. Resumes go through `Admit`; when
+     several are due, control first, then the oldest task, and a resume never pre-empts a launch already admitted
+     (Q6). A space that relocated resumes without a session, and control is told.
+     - **Amended 2026-11-14 (UL-7).** The job is the `limit_waits` deadline on central's shared timer, batched and
+       bounded after the 2026-11-13 incident.
+       - **A round.** It recovers stuck resumes, releases waits past their maximum wait, parks runs that are due, and
+         resumes due waits: control first, then the oldest, at most 5 per round. When more are due, the next round
+         waits 10 s.
+       - **No writes when nothing is due.** A round with nothing due only reads (indexed). A wait put off again for the
+         same reason at the same time writes nothing.
+       - **Resume time.** The reset plus 2 min. With an unknown reset, the hold's `check_at` (the T6 probe, which the
+         resume claims in its launch transaction, like any launch). With no hold, back off from 1 h, doubling with each
+         attempt, capped at `keep_alive_max`.
+       - **Checks.** Each resume claims the wait (`waiting` → `resuming`) after reading:
+         - the parked run must have ended; until then the wait retries in 2 min (`run_not_ended`);
+         - the space: archived gives the wait up; paused retries in 1 h; relocating retries in 2 min;
+         - the task must still be the run's; otherwise the wait is cancelled (`task_moved`);
+         - no other live run of the instance may exist (`superseded`);
+         - the lease: no valid lease retries in 15 min (`node_offline`).
+       - **Launch refusals.** A held account defers the wait to the hold's free time. A full space retries in 2 min; a
+         resume never pre-empts another run. A control conflict cancels the wait. Any other refusal retries in 10 min.
+         All of these are fixed reasons, never raw text.
+       - **One transaction.** The launch inserts the new run (same instance, current lease generation,
+         `LaunchPayload.Resume` with the session) and marks the wait `resumed`. It re-points the task through the
+         queue, and tells control. So a wait still `resuming` never started a run: the first round of a process, and
+         later rounds for rows resuming longer than 10 min, return such waits to `waiting` (UL-2 review follow-up).
+       - **Relocation.** It is detected by the space's node differing from the wait's. The run then starts a fresh
+         session with its original prompt and a fixed note; control's message says so, or a resumed control's own
+         prompt does.
+       - **Brought forward.** The node's hello (after its leases are granted) and a space's resume bring waits put off
+         for that reason forward; they read first and write only when such a wait exists.
+       - **The parked run** is set to `desired = stopped` in the claim, so a parked control releases the single-control
+         slot even if the supervisor didn't settle it.
+       - **Auto-start** leaves a space whose control has an active wait alone; the wait brings control back.
+       - **Not done.** The probe isn't reserved for a resume over a plain launch: the first launch at `check_at` takes
+         it, as in UL-6. The deadline job doesn't clear holds whose reset passed: such holds no longer refuse anything.
+       - **PR #59 review.**
+         - **A hold that clears wakes its waits.** Clear-now, an account clear, evidence, or a probe that made progress
+           sets `resume_at = now`, in the clear's transaction, for two kinds of waiting wait: those parked under the hold
+           (`usage_limit_id`), and those put off as `account_held` whose launch uses the hold's account (or gateway). The
+           job resumes them on its next round; the clear launches nothing.
+         - **The launch transaction re-checks** that the instance has no other live run. One started between the claim and
+           the launch supersedes the wait (`superseded`).
+         - **A failed `--resume`.** A resumed run that ends `failed`, or `exited`, before its first turn (the resume
+           didn't work) gets a new wait due at once. It carries no session and the original prompt (the fresh-session
+           path), and control is told once (`limit-wait-resume-failed:<wait id>`). Only a resume that used a session gets
+           this, so a wait has at most one fresh retry.
+         - **The supervisor** neither restarts nor counts a control that has a limit wait (swept at its limit, or a failed
+           resume).
+  6. **Release.** A worker's wait is released after `max_wait` (default 7 days, Q2): the task returns to `ready`
+     with its assignee cleared and control is told. A control wait is never released.
+     - **Amended 2026-11-14 (UL-7).**
+       - **The setting.** `max_wait` is the space limit `usage_limit_max_wait_hours` (1–720, default 168), following
+         UL-6's settings. It applies to worker and diagnostic waits parked after it changes. Control's wait has no
+         `release_at`.
+       - **The release.** One transaction marks the wait `released` (`max_wait`). The queue sets the task `ready` and
+         clears `assignee_run`, only while it is still the parked run's, with its outbox event and audit. Control is
+         told once (dedup `limit-wait-released:<wait id>`); the queue's own "task ready" notice isn't sent.
+       - **A task in review** (PR #59 review) stays in review on a release, with only its assignee cleared; control's
+         message says it still waits for acceptance. The message says "back in the queue" only when the task really
+         went back to ready.
+       - **Task changes** (UL-2 review follow-up). A task that becomes done, failed, cancelled, ready or backlog, or
+         is assigned to another run, cancels its waiting waits (`task_moved`) in the same queue transaction, through
+         the `limit_waits(task_id)` index. An incident's preemption, which returns running tasks to ready, does the same.
+       - **Operator actions.** `POST /spaces/{id}/limit-waits/{wait_id}/resume` resumes a wait now, whatever its resume
+         time. The usual checks apply; a refusal returns the reason and leaves the wait as it was.
+         `POST /spaces/{id}/limit-waits/{wait_id}/release` gives a wait up now; control's too, after which only
+         auto-start brings control back. Both need `run:control` in the space, like clear-now, are audited
+         (`limit_wait.resumed`, `limit_wait.released`), and have CLI commands (`spaceman limits resume`,
+         `spaceman limits release`).
+  7. **Account hold.** A limit report opens a `usage_limits` row for the run's resolved account (or gateway
+     reference). While it is open, a launch or resume on that account is refused in the launch transaction (a DB read
+     only) with `CodeRateLimited` and the reset time in UTC. The hold applies **to every space bound to that account**;
+     control is notified per space (Q8). Control autostart is deferred silently to the reset, and the supervisor
+     neither restarts nor counts a control run that ended `usage_limit`. The hold clears when `resets_at` passes, a
+     node reports `cleared` on any run of the account, any other run on the account makes progress (an assistant
+     message with usage), the quota board shows a gateway account available, or an operator clears it.
+     - **Unknown resets are probed, so a hold never deadlocks** (amended 2026-11-13, UL-2 review). A hold without
+       `resets_at` refuses everything except a **probe**: at the hold's `usage_limits.check_at`, exactly one resume
+       (or, with none waiting, one launch) on the account is let through. A probe that makes progress clears the
+       hold; one that hits the limit again moves `check_at` on with backoff (from 1 h, doubling, capped at
+       `keep_alive_max`). The gateway re-check of decision 9 uses the same column.
+     - **Scope of a hold** (amended 2026-11-13, UL-4). A direct run holds its resolved account (`scope = 'account'`).
+       A Harbor Pilot run holds a gateway reference whose granularity follows the cause: a quota exhaustion (`gateway_quota`,
+       or any kind other than a budget) is connection-wide, `gateway_ref = 'harbor-pilot'`, because no account behind the
+       one connection is eligible; a blocking budget (`gateway_budget`) belongs to one project,
+       `gateway_ref = 'harbor-pilot:project:<project id>'`, and holds only the spaces charged to it. A report opens a
+       row in the reporting space only. Every other space that binds the account (or routes through the same connection or
+       project) sees it as a **shared** hold, without the other space's identifiers. An unknown reset gets
+       `check_at = now + 1 h`; a later known reset fills the row in and drops the probe.
+     - **Model-specific weekly limits hold the whole account** (control's conservative default, 2026-11-13):
+       `seven_day_opus` and `seven_day_sonnet` hold the account for every model, not only the exhausted one.
+     - **Clearing a hold across spaces** (control's decision, 2026-11-13). Accounts are global objects, so "clear
+       now" on an account hold clears **every open row for that account and kind in all spaces**, and needs
+       **account-level permission** (the same as managing accounts). An operator with only space-level permission
+       clears **their space's row only**: that does not lift the hold in other spaces (the hold is read across
+       spaces), and the UI says so. Every clear is audited; each other space whose row was cleared has its control
+       told once.
+     - **Evidence clears** (UL-4, PR #55 review). A node's `cleared` report is evidence that the account works again.
+       It is separate from the operator's "clear now" above, whose permission rule it doesn't change.
+       - The clear names the `since` of the limit it ends. A clear of an older `since` than the run's stored limit is
+         late (the node repeats it on every later report) and changes nothing. A newer limit (another `since`) also
+         ends the stored one.
+       - Only rows of that kind first seen no later than the ended limit's `since` count. So a new window always gets
+         a row of its own: an open row whose reset passed before the new limit was seen is cleared, never reused.
+       - The same limit reclassified (the same `since`, a newer record of another kind, such as the wrap-up path's
+         `unknown` then a typed kind) supersedes the hold the run opened for the old kind.
+     - **Trust decision: nodes are trusted for their own runs; cross-space effects are limited to scheduling a probe.**
+       - The run's own space's rows are cleared, with `cleared_by = run:<id>`.
+       - Another space's row is cleared only when its reset has passed (within 2 min) or is unknown. It gets
+         `cleared_by = evidence` and is correlated on the hold, so that space never sees this space's run.
+       - A row whose reset is still ahead gets `check_at = now`: one probe launch decides.
+     - **Events and visibility.**
+       - Each cleared row publishes one `fleet.usage_limit.cleared` event in its own space, and each opened row one
+         `fleet.usage_limit.reached` event.
+       - A report that changes nothing writes nothing.
+       - A space's listing shows other spaces' open holds as one shared row per account (or gateway reference) and
+         kind, so it doesn't reveal how many spaces hit the limit.
+     - **At launch** (amended 2026-11-13, UL-6). A hold whose reset has passed no longer refuses, whether or not the
+       deadline job has cleared it yet. A hold due for its probe lets the launch through and is claimed in the same
+       transaction: an unknown reset's `check_at` moves on by the time since the hold was seen, at least 1 h and at most
+       `keep_alive_max` (so 1 h, 2 h, 4 h … from the first probe); a known reset's `check_at` is set to none (one probe,
+       then the reset decides). Any hold that is neither refuses, and the refusal writes nothing. Its text names the
+       account (or the Harbor Pilot connection or project) and the time the last hold lets a launch through, never
+       another space. Until UL-7 adds resumes, the probe goes to the first launch.
+     - **Control** (UL-6). A control restart or auto-start refused by a hold defers auto-start until that time; later
+       sweeps only read the hold, so a clear (operator or evidence) lets control start at the next sweep. Nobody is asked
+       to look.
+     - **Clear now** (UL-6). The space-level clear needs `run:control` in the space (the permission that launches runs
+       there; operators and admins) and returns `held_elsewhere`; the account-level clear needs `account:write` and takes
+       an optional kind (none: every kind, as the opus/sonnet holds hold the whole account). Control is told with dedup
+       key `usage-limit-cleared:<usage_limits id>`, the key decision 11's clear message uses, so one hold is announced
+       once.
+  8. **Failover is opt-in.** With the space setting `usage_limit.failover = true` (default **false**), `Resolve` picks
+     the next bound account for the same harness without an open limit, for launches and resumes. SpaceMan never falls
+     back from a gateway binding to a direct account (Q1). (UL-6: the settings `failover` and `keep_alive_max` are the
+     space limits `usage_limit_failover`, a switch, and `usage_limit_keep_alive_max_minutes`, 1–1,440, default 360, so
+     they get installation defaults, per-space overrides, audit and the limits API with no new table. Failover avoids an
+     account with any open hold whose reset hasn't passed, a probe-due one included; the default comes first, then
+     binding order; with every account held the usual choice stands and is refused.)
+  9. **Gateway waits.** The reset is an **estimate**: the earliest `until` among the quota board's unavailable
+     accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
+     cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9). The
+     re-check is scheduled by the hold's `usage_limits.check_at`, as is the probe of decision 7.
+     - **Amended 2026-11-14 (UL-8).**
+       - **The job.** `gateway_waits` runs on central's shared deadline timer. It reads every open gateway hold of every
+         space (indexed, at most 200). A hold without an estimate yet is read at once; an estimated one at its
+         `check_at`. One board read serves the quota hold of every space, and one budget read serves each project.
+         Reads use the connection's service-principal token outside any transaction. The board is cached for 60 s;
+         budget status keeps its own 30 s cache, shared with the launch check.
+       - **The estimate.** Quota: the earliest future `until` among the board's unavailable accounts. Budget: the
+         latest `period_end` among the covering blocking budgets. It is stored as the hold's `resets_at`, with
+         `source` `quota_board` or `budget_status` and `check_at = now + 15 min`. Waits parked under the hold are
+         re-timed to the estimate plus the 2-minute slack. A gateway wait put off as `account_held` is moved only
+         earlier. An estimate the hold already has writes nothing (no version, `check_at` or change event); the job
+         keeps the next re-read in memory.
+       - **An estimated hold's `check_at` is the re-read, never a probe.** The hold refuses launches until its
+         reset, and the refusal says "until about `<time>` (estimated from Harbor Pilot's quota board …)" or "until
+         `<time>`, when the budget's period ends". The probe of decision 7 stays in charge while Harbor Pilot names no
+         reset: the board lists no account at all (an empty, missing or renamed `account_health` is no evidence, never
+         a recovery), every unavailable account has a null or past `until`, a blocking one-time budget has no end, a
+         blocking budget's `period_end` has passed (Harbor Pilot hasn't rolled the period yet), or Harbor Pilot can't
+         be read. Such a hold is read again after 15 minutes, or after 2 minutes when a read failed or a period end
+         has passed. A
+         node's evidence from another space sets `check_at = now` as before. On an estimated hold that means "read
+         again now".
+       - **Recovery.** The board lists every account of the installation, including ones the space's plan never
+         routes to. For example, the demo's local model has no monitor and is always available. So "any account
+         available" is no signal. With each board estimate the job remembers the accounts behind it (those whose
+         `until` is the estimate), in memory, for the hold's id and version. A quota hold clears when no account is
+         unavailable any more, or when one of those accounts is available again. An account behind the estimate that
+         is still out with a moved `until` re-times the hold to the new earliest `until`; it never clears it. When the
+         job doesn't know the accounts (after a restart, or the hold changed meanwhile), it only re-estimates. A newly
+         exhausted account with an earlier `until` moves the estimate earlier. A budget hold clears when no covering
+         budget blocks any more. The clear has `cleared_by` `quota_board` or `budget_status` and wakes the waits, as
+         other clears do.
+       - **Kick.** `events.Options.OnAccepted` is called after an event becomes a new item. When the subscription
+         uses the built-in `harbor-pilot-quota` template and the subject is
+         `evt.harborpilot.quota.window.recovered`, central drops the cached board and makes every quota hold due.
+         A board read already in flight when the kick arrives is neither cached nor used: it is read again. The
+         event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
+         alone applies.
+       - **A gateway run parked after its hold cleared** resumes at once, not after the 1-hour backoff. The gateway hold
+         opens with the limit, so a missing hold means Harbor Pilot recovered, or the hold was cleared. A run still
+         kept alive when the hold clears is parked only at its 30-minute keep-alive (not changed here).
+       - **No migration.** `usage_limits.source` already allowed both sources (0050). The protocol is unchanged.
+  10. **Operator answers (2026-11-13, all proposed defaults accepted).**
+      - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.
+      - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.
+      - **Q3 keep-alive versus park:** keep alive up to 6 h, park longer waits.
+      - **Q4 node capacity:** a kept-alive run counts against the node limit, not the space limit.
+      - **Q5 people:** one human action (type `message`, priority `normal`) to the affected space's operators, once per
+        account window, only for waits over 12 h.
+      - **Q6 priority:** control first, then the oldest task; a resume never pre-empts a launch already running.
+      - **Q7 early stop:** a later, optional step (T13, a separate amendment): stop new launches on an account at
+        ≥ 95 % of a window, from a SpaceMan-owned statusline. Not part of this decision.
+      - **Q8 cross-space:** the hold applies to every space bound to the account.
+      - **Q9 gateway estimate:** accepted (earliest reset, re-checked every 15 min); no per-project board view requested.
+  11. **Telling control and people once.** Control gets one durable message per space and account window when a
+      limit opens and one when it clears or resumes (dedup keys from the `usage_limits` id); worker `run-ended` notices
+      for `usage_limit` ends are folded in. People get the single action of Q5.
+      - **Amended 2026-11-13 (UL-5, control's decision):** the keep-alive messages are per **run and limit window**:
+        one "at its usage limit" and one "usage limit cleared" per (run, `since`), written inside the report
+        transaction that changes the run's limit window, never per report. A "cleared" message goes out only for a
+        window control was told about. Control isn't told about its own limit, and a run that ends at its limit is
+        reported by its run-ended notice. The per-account-window message with the parked runs and the folding of
+        run-ended notices come with parking (UL-7).
+      - **Amended 2026-11-14 (UL-7):** parked runs are announced **per wait**, written in the transaction of the change:
+        one "parked" message (`limit-wait:<wait id>`) with the resume and release times, one "resumed" message
+        (`limit-wait-resumed:<wait id>`), and one "given up" message (`limit-wait-released:<wait id>`). They replace
+        the run-ended notice of a parked run. A re-park, and later resumes of the same chain (an unknown reset probed
+        again), aren't announced again; a fresh-session resume always is. Control's own wait isn't announced to it. A
+        per-account-window summary isn't sent.
+      - **Amended 2026-11-14 (UL-9):** the people notice of Q5 is one human action (type `message`, priority `normal`,
+        not blocking, requester `system` "Usage limits") per **hold row**: per space and account (or gateway reference)
+        window, deduplicated on `usage-limit-human:<usage_limits id>`, and recorded in `usage_limits.notified_humans_at`.
+        It is raised for an open hold whose known reset is further away than the space's
+        `usage_limit_notify_after_hours` (default 12), by a job on the shared deadline timer (a limit report wakes it);
+        not for an unknown reset, and not in an archived space. A hold whose reset later moves past the threshold is
+        announced then. The action is created first and the hold marked after, so a crash in between raises it once.
+        "The space's operators" are the people who see the space's human actions; no message to the operators' inbox is
+        sent in addition. A space that has too many open human actions gets it on a later round.
+  12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind` without a CHECK,
+      so a new kind never needs a runs-table rebuild, `limit_resets_at`, `limit_since`; tables `usage_limits`, with
+      `check_at` and the kind CHECK, and `limit_waits`); agent
+      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_since`, `limit_offset`; `limit_since` added in UL-2
+      so a restarted agent re-reports the same `since`). Space setting
+      `usage_limit {failover, keep_alive_max, max_wait, notify_humans_after}`.
+      **Amended 2026-11-14 (UL-6, UL-7):** these are space limits, not a settings object: `usage_limit_failover`
+      (switch, default off), `usage_limit_keep_alive_max_minutes` (1–1,440, default 360) and
+      `usage_limit_max_wait_hours` (1–720, default 168: Q2's 7 days). `notify_humans_after` comes with UL-9.
+      **Amended 2026-11-14 (UL-9):** `notify_humans_after` is the space limit `usage_limit_notify_after_hours` (0–720,
+      default 12; 0: never). These four keys are the names the Terraform provider uses (T11).
+- **Alternatives:**
+  - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and
+    dateless under 24 h, and server-overridable wording.
+  - **Always park.** Simpler and frees memory, but discards in-memory state (background shells) and Claude Code's own
+    timer, which already handles the common 5-hour case (Q3).
+  - **A new `observed`/`waiting` run state.** Rejected: it would touch every literal live-state list, the sweeper and
+    the single-control index; columns plus two tables avoid that.
+  - **`StopFailure` hook or statusline `rate_limits`.** The hook carries no reset time and the statusline needs an
+    unsafe settings key; kept for T13 as accelerators, not the source.
+  - **Trust `Retry-After` for gateway runs.** HP doesn't send it in this case.
+- **Consequences:**
+  - A run's transcript can now park that run and hold its account. A forged record can block an account for at most
+    8 days (the clamp); only typed fields are read, no free text is stored, the kind is allowlisted, progress by any
+    other run on the account clears the hold, and an operator can clear it. THREAT_MODEL gains a row when the
+    detector lands.
+  - Claude Code's record format is undocumented; a rename silently stops detection and falls back to today's
+    behaviour. The contract records the versions, ADR-0077's managed versions let a fixture test follow the pinned
+    version, and a bounded metric counts unclassified 429 records.
+  - The wrap-up path gives no reset time, so more than half the subscription waits seen run with an unknown reset:
+    keep-alive covers them while the process lives, and a parked one is resumed by backoff.
+  - A gateway reset is an estimate and may resume early (re-detected, re-parked, no new notice) or up to 15 min late.
+  - A real subscription limit can't be forced in tests; until one is observed on a SpaceMan run, real evidence stays
+    empty (K-16).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -2260,10 +4971,15 @@
 | K-2 | ~~Whether hc persists `env`.~~ **Resolved 2026-11-02:** yes, plaintext `restart_env` → ADR-0009 shim required. | — | done |
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
-| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). 2026-11-03 (ADR-0046): `term.options.disableStdin` is read on every key, `onData` delivers typed input and `focus()` exists (checked in the 0.4.0 dist). | — | done |
+| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020; since ADR-0076 the page compiles the package's `ghostty-vt.wasm` asset instead). 2026-11-03 (ADR-0046): `term.options.disableStdin` is read on every key, `onData` delivers typed input and `focus()` exists (checked in the 0.4.0 dist). | — | done |
 | K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | ~~llm-knowledge-base-template layout and licence; Piebald dream prompts licence.~~ **Resolved 2026-11-02:** KB template in `docs/contracts/kb-template.md`. Piebald-AI/claude-code-system-prompts is MIT, but its files are extracted Claude Code prompts whose text the repository licence may not cover; SpaceMan's dream prompt is written from the brief's principles and copies none of it (ADR-0027). | — | done |
 | K-9 | ~~Codex ChatGPT-login token materialization (`auth.json`) vs API key.~~ **Resolved 2026-11-03:** the `codex_chatgpt_login` kind, one live copy per account linked into each `CODEX_HOME` (ADR-0053); a real ChatGPT login is not verified (no account). | SM-ACCT-002 | done |
 | K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
+| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
+| K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
+| K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
+| K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
+| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run. None had been observed when the work was documented (UL-12, 2026-11-14). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |

@@ -59,7 +59,91 @@ Claude Code's permission mode. A **role template** says what a role is: its run 
 
 Editing a profile or template creates a new **revision**; it applies to launches from then on.
 
-Templates can also give a role [skills](./skills): guidance files the harness loads.
+### Claude Code settings
+
+A Claude Code profile also controls its runs' **Claude Code settings**, the keys of Claude Code's `settings.json`.
+SpaceMan sets them in each run's own `settings.json` when it launches, and removes keys you take out at the next
+launch. The profile form has a section for each kind of setting:
+
+- **Permissions:**
+  - the default permission mode;
+  - tool rules such as `Bash(make test:*)` or `Read(./secrets/**)`: **Allow** runs without asking, **Ask** always
+    asks first, **Deny** is refused;
+  - additional directories the run may use.
+- **Auto mode rules** are used when the permission mode is `auto`. Each rule is a sentence for Claude Code's
+  classifier:
+  - **Environment** says what it may trust, such as your Git host, repositories and services;
+  - **Allowed actions** are exceptions to the block rules;
+  - **Block rules** are more actions to block.
+
+  Your rules are added to Claude Code's defaults. Switch on **Replace Claude Code's default rules** to use only yours.
+- **Environment variables** are set for the Claude Code session.
+- **Other settings** takes any other key as JSON, such as `hooks`, `statusLine` or `model`.
+
+<Shot name="claude-settings" alt="The Claude Code profile's settings: permission rules, auto mode environment and allowed actions, and the other sections" caption="Claude Code settings on a profile" />
+
+Things to know:
+
+- **Hooks and status lines run commands** on the node as the agent's user. Anyone who can edit profiles controls them.
+- **Don't put secrets here.** Settings are stored in clear and recorded in each run's manifest; use
+  [harness accounts](/operators/accounts) for credentials.
+- **The central ceiling still applies.** A default permission mode above `harness.max_permission_mode` is lowered to
+  it, and the profile's `permission_mode` setting, when set, wins over the default mode.
+- **Nodes need SpaceMan 0.1.0-rc.9 or later.** On an older node, a run of the profile fails (`node_too_old`) rather
+  than starting without its settings.
+- **In Terraform** they are the profile's `claude_settings`, written with `jsonencode`.
+- **Runs use Claude Code's classic renderer** (`"tui": "default"`) unless the profile sets `tui`, so everything a run
+  prints stays in its terminal and watchers can [scroll back](/operators/terminals#scrolling-back) without taking it
+  over. To use the full-screen renderer instead, add `"tui": "fullscreen"` under **Other settings**; watchers then see
+  only the current screen (ADR-0064). The node adds this default when it writes the run's settings, so it needs
+  SpaceMan 0.1.0 or later on the node: a run on an older node keeps Claude Code's own choice of renderer. The
+  profile's resolved settings in the API don't show the default; they show only what the profile sets.
+- **Agents can't ask in the terminal.** Every run gets `AskUserQuestion` and `EnterPlanMode` in its
+  `permissions.deny`, after the profile's own **Deny** rules (each rule once; your other permission settings stay as
+  they are). Claude Code then never offers its question picker or plan mode, whose plan ends in an approval dialog: a
+  run waiting there would wait for an answer typed into its terminal, which nobody may be watching. Agents ask through
+  [human actions](./human-actions#agents-ask-here-not-in-the-terminal) instead. To allow one anyway, add it to the
+  profile's **Allow** rules (ADR-0066). Like the renderer default, the node adds this, and the resolved settings don't
+  show it.
+- **Runs never wait at a permission dialog.** Even in auto mode, Claude Code asks in the terminal in three cases: for
+  **Ask** rules, for reads outside the run's working directories, and when its classifier falls back to asking after
+  repeated blocks (3 in a row or 20 in total). `skipAutoPermissionPrompt` doesn't change that: it only skips the
+  one-time notice shown when auto mode starts. So SpaceMan adds two things to every run's settings (ADR-0068):
+  - **A PermissionRequest hook** (`spaceman-agent hook permission-request`, part of the node agent) that answers every
+    dialog with "deny" and tells the agent to ask through [human actions](./human-actions#agents-ask-here-not-in-the-terminal)
+    instead of retrying. It can only deny, never allow, so an **Ask** rule works like a **Deny** rule: to let runs do
+    something, put it under **Allow**.
+  - **The run's own space folder** in `additionalDirectories` (only that space's folder), so reading the space's plans
+    and notes from a checkout doesn't raise a dialog. The Claude Code and Codex login files in it are denied. Other
+    instances' folders, and every instance's settings, instructions (`CLAUDE.md`, rules), memory and transcripts,
+    can't be edited. Each instance's Claude Code auto memory lives outside the space folder, in
+    `<data_dir>/automemory/<space-id>/<instance>` on the node, so no other run can write what it remembers.
+
+  Both are added after the profile's own hooks, **Deny** rules and directories, which stay as they are (each entry
+  once). Like the other defaults, the node adds these, and the resolved settings don't show them. Three more things
+  to know:
+  - **Key stripping.** At every launch the node removes settings keys that run commands or change hooks, credentials
+    or permissions (`hooks`, `env`, `*Helper`, `statusLine`, `disableAllHooks`, …) from the instance's settings
+    unless the profile set them. So set such keys in the profile, not by editing an instance's file.
+  - **`disableAllHooks`.** A profile that sets it also turns SpaceMan's hook off.
+  - **A profile's own PermissionRequest hook.** Claude Code runs it alongside SpaceMan's. Outside auto mode the first
+    answer wins, so a profile hook that allows can override SpaceMan's deny. Give it only to profiles whose editors
+    you trust with that (profile editors are trusted with run credentials anyway).
+
+### Claude Code version
+
+A claude-code profile can pin the Claude Code version its runs get with **Claude Code version** (`harness_version` in
+the API; the Terraform provider attribute follows separately):
+
+- empty: the node's own channel (by default `latest`);
+- `latest` or `stable`: that release channel;
+- an exact version such as `2.1.322`: exactly that version. A node that manages Claude Code downloads it if needed
+  and never runs another version instead. Any other node runs the launch only if its installed version matches.
+
+A pin needs the node agent at protocol 1.11 or later; on an older node the run fails as `node_too_old`. An API update
+that leaves `harness_version` out keeps the pin, and `""` clears it. See
+[Managed Claude Code](/operators/claude-code#pinning-a-version-per-profile) for how nodes resolve, download and keep
+versions.
 
 ## Space roles
 
@@ -89,6 +173,7 @@ Field by field:
 | Harness | From the profile, otherwise from the launch. A launch cannot contradict the profile. |
 | Model | The last layer that sets one wins. |
 | Settings | Merged key by key; the last layer that sets a key wins. |
+| Claude Code version | From the profile only (empty: the node's channel). |
 | System text | Concatenated in order: SpaceMan's orientation, the role prompt, the template's memory conventions, the space's goals and standing instructions, the space role's instructions, then the launch's text. |
 
 **Policy ceilings** apply last, whatever layer set the value. The central setting `harness.max_permission_mode`
@@ -100,6 +185,7 @@ the run's configuration shows that the policy decided.
 Each run stores a manifest of what it started with: the prompt version and its content, the profile, template and
 space-role revisions, every effective value with its origin, the account reference, the versions of SpaceMan, the
 node agent, the runner and the harness, and the policy version. Secrets are never part of it. The run page shows it
-under **Configuration at launch**.
+under **Configuration at launch**. From node protocol 1.11 on, the run also records the Claude Code version it actually
+launched (**Version** on the run page; `harness_version`, `harness_requested` and `harness_fallback` in the API).
 
 <Shot name="run-manifest" alt="A run's configuration at launch: role, template, profile and prompt versions with effective values and dependency versions" caption="A run's configuration at launch" />

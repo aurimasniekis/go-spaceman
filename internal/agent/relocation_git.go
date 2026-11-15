@@ -124,9 +124,13 @@ func firstNonEmpty(s ...string) string {
 	return ""
 }
 
-// redactURL removes user information (credentials) from a remote URL.
+// redactURL removes user information (credentials) from a remote URL. An SSH URL keeps a user name without a password
+// (ssh://git@host/…): it names the account to log in as, not a credential, and the URL does not work without it.
 func redactURL(raw string) (string, bool) {
 	if u, err := url.Parse(raw); err == nil && u.User != nil && u.Scheme != "" {
+		if _, hasPassword := u.User.Password(); !hasPassword && proto.IsSSHURL(raw) {
+			return raw, false
+		}
 		u.User = nil
 		return u.String(), true
 	}
@@ -503,7 +507,10 @@ func (g *projectGit) exportRepo(ctx context.Context, space, rel, out string) (pr
 }
 
 // cloneRepo materializes a repository whose state is pushed: a clone from its remote at the source's commit, with the
-// source's local branches and worktrees. The destination node's own Git authentication is used.
+// source's local branches and worktrees. A repository with a SpaceMan SSH key (rr.Source carries it) is cloned from its
+// configured URL with that key and its pinned host keys, as a normal clone is (ADR-0057); any other repository with the
+// destination node's own Git authentication. The clone is the only step that reaches the remote: the checkout,
+// branches, upstreams and worktrees that follow are local.
 func (g *projectGit) cloneRepo(ctx context.Context, space string, rr proto.RelocateRepo) (proto.PreparedRepo, error) {
 	dir := filepath.Join(space, filepath.FromSlash(rr.Path))
 	if len(rr.Remotes) == 0 {
@@ -515,21 +522,39 @@ func (g *projectGit) cloneRepo(ctx context.Context, space string, rr proto.Reloc
 			origin = r
 		}
 	}
+	src, keyed := relocSource(rr)
+	from := origin
+	if keyed {
+		// The key is only ever used with the configured URL: clone from the remote that has it, else from that URL under
+		// origin's name, whose URL is set back to the source's after the clone.
+		from = proto.GitRemote{Name: origin.Name, URL: src.URL}
+		for _, r := range rr.Remotes {
+			if r.URL == src.URL {
+				from = r
+				break
+			}
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return proto.PreparedRepo{}, err
 	}
-	args := []string{"clone", "--quiet", "--origin", origin.Name}
+	args := []string{"clone", "--quiet", "--origin", from.Name}
 	if rr.Head != "" {
 		args = append(args, "--no-checkout")
 	} else if rr.Branch != "" {
 		args = append(args, "--branch", rr.Branch)
 	}
-	if _, err := g.runEnv(ctx, space, 30*time.Minute, nil, append(args, "--", origin.URL, dir)...); err != nil {
-		return proto.PreparedRepo{}, fmt.Errorf("clone %s: %w", rr.Path, err)
+	if err := g.cloneWith(ctx, space, src, append(args, "--", from.URL, dir)); err != nil {
+		return proto.PreparedRepo{}, fmt.Errorf("clone %s: %w", rr.Path, sshError(err, keyed))
 	}
 	for _, r := range rr.Remotes {
-		if r.Name != origin.Name {
+		switch {
+		case r.Name != from.Name:
 			if _, err := g.run(ctx, dir, "remote", "add", r.Name, r.URL); err != nil {
+				return proto.PreparedRepo{}, err
+			}
+		case r.URL != from.URL:
+			if _, err := g.run(ctx, dir, "remote", "set-url", r.Name, r.URL); err != nil {
 				return proto.PreparedRepo{}, err
 			}
 		}
@@ -559,6 +584,26 @@ func (g *projectGit) cloneRepo(ctx context.Context, space string, rr proto.Reloc
 		return proto.PreparedRepo{}, err
 	}
 	return g.prepared(ctx, rr.Path, dir, false, len(rr.Worktrees))
+}
+
+// relocSource is the configured repository whose SpaceMan SSH key a relocated repository clones with, and whether it has one.
+func relocSource(rr proto.RelocateRepo) (proto.RepoSource, bool) {
+	if rr.Source == nil || rr.Source.SSHKey == "" || rr.Source.URL == "" {
+		return proto.RepoSource{}, false
+	}
+	return *rr.Source, true
+}
+
+// cloneWith runs a clone with the repository's key (newRepoAuth: a private agent, the pinned host keys and an ssh
+// without configuration) when src has one, else with the node's own Git authentication.
+func (g *projectGit) cloneWith(ctx context.Context, space string, src proto.RepoSource, args []string) error {
+	auth, err := newRepoAuth(ctx, src)
+	if err != nil {
+		return err
+	}
+	defer auth.Close()
+	_, err = g.runEnv(ctx, space, 30*time.Minute, auth.Env(), args...)
+	return err
 }
 
 func (g *projectGit) setUpstream(ctx context.Context, dir string, b proto.BranchCheck) error {

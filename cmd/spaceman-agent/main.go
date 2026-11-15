@@ -27,6 +27,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/hc"
@@ -45,7 +46,7 @@ func newRoot() *cobra.Command {
 	g := &globals{}
 	root := &cobra.Command{Use: "spaceman-agent", Short: "SpaceMan node agent", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVarP(&g.configPath, "config", "c", os.Getenv("SPACEMAN_AGENT_CONFIG"), "configuration file (env SPACEMAN_AGENT_CONFIG)")
-	root.AddCommand(versionCmd(), enrollCmd(g), runCmd(g), launchCmd(), leaseGuardCmd(), mcpBridgeCmd())
+	root.AddCommand(versionCmd(), enrollCmd(g), runCmd(g), launchCmd(), leaseGuardCmd(), mcpBridgeCmd(), hookCmd())
 	return root
 }
 
@@ -83,6 +84,25 @@ func httpClient(cfg *config.AgentConfig) (*http.Client, error) {
 		return nil, errors.New("central.ca_file: no certificates")
 	}
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}}}, nil
+}
+
+// claudeOptions opens the managed Claude Code cache (<data_dir>/harness/claude-code) when harness.claude.manage is on
+// (ADR-0077).
+func claudeOptions(cfg *config.AgentConfig, log *slog.Logger) (agent.ClaudeOptions, error) {
+	cc := cfg.Harness.Claude
+	o := agent.ClaudeOptions{Channel: cc.Channel, DownloadTimeout: cc.DownloadTimeout.D(), KeepPinned: cc.CacheKeepPinned, SelfUpdate: cc.SelfUpdate}
+	if !cc.Manage {
+		return o, nil
+	}
+	m, err := dist.New(dist.Options{
+		Dir: filepath.Join(cfg.DataDir, "harness", "claude-code"), BaseURL: cc.BaseURL, Keep: cc.CacheKeep,
+		Refresh: cc.Refresh.D(), DownloadTimeout: cc.DownloadTimeout.D(), Log: obs.Component(log, "claude-code"),
+	})
+	if err != nil {
+		return o, fmt.Errorf("harness.claude: %w", err)
+	}
+	o.Dist = m
+	return o, nil
 }
 
 func enrollCmd(g *globals) *cobra.Command {
@@ -178,12 +198,20 @@ func runCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defCols, defRows, _ := config.ParseTerminalSize(cfg.Runner.TerminalSize) // validated with the configuration
+			claude, err := claudeOptions(cfg, log)
+			if err != nil {
+				return err
+			}
+			if claude.Dist != nil {
+				defer claude.Dist.Close() // after the agent: launches waiting for a download fail
+			}
 			a := agent.New(j, agent.Options{
 				DataDir: cfg.DataDir, CentralURL: cfg.Central.URL, Credential: strings.TrimSpace(string(cred)), HTTPClient: hcl, Runner: rn,
 				RunnerInfo:      proto.RunnerInfo{Kind: "herdr-core", Version: client.Hello().Version, CoreID: client.Hello().Core.ID},
 				HarnessBinaries: map[string]string{harness.KindClaude: cfg.Harness.ClaudeBinary, harness.KindCodex: cfg.Harness.CodexBinary},
-				AgentBinary:     self, BridgeSocket: filepath.Join(filepath.Dir(cfg.Runner.Socket), "bridge.sock"), Capacity: cfg.Capacity,
-				ReconnectMax: cfg.Central.ReconnectMax.D(), Log: log,
+				AgentBinary:     self, BridgeSocket: filepath.Join(filepath.Dir(cfg.Runner.Socket), "bridge.sock"), Capacity: cfg.Capacity, JournalRetention: cfg.JournalRetention.D(),
+				ReconnectMax: cfg.Central.ReconnectMax.D(), Log: log, DefaultCols: defCols, DefaultRows: defRows, Claude: claude,
 			})
 			log.Info("spaceman-agent starting", slog.String("central", cfg.Central.URL), slog.String("hc_core", client.Hello().Core.ID),
 				slog.String("hc_version", client.Hello().Version))
@@ -240,5 +268,18 @@ func mcpBridgeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&run, "run", "", "run ID")
 	cmd.Flags().StringVar(&socket, "socket", "", "agent bridge socket")
+	return cmd
+}
+
+func hookCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "hook", Short: "Internal: hooks SpaceMan sets in the harnesses it launches", Hidden: true}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "permission-request",
+		Short: "Claude Code PermissionRequest hook: deny every permission dialog and point the model at spaceman_human_ask (ADR-0068)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return harness.ClaudePermissionRequestHook(cmd.InOrStdin(), cmd.OutOrStdout())
+		},
+	})
 	return cmd
 }

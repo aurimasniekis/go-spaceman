@@ -1,5 +1,5 @@
-import { ActionIcon, Alert, Badge, Button, Card, Checkbox, Drawer, Group, Modal, MultiSelect, NumberInput, Select, SimpleGrid, Stack, Table, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
-import { IconPlugConnected, IconPlus, IconTrash } from '@tabler/icons-react'
+import { ActionIcon, Alert, Anchor, Badge, Button, Card, Checkbox, Drawer, Group, Modal, MultiSelect, NumberInput, Select, SimpleGrid, Stack, Table, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
+import { IconExternalLink, IconPlugConnected, IconPlus, IconTrash } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -8,6 +8,8 @@ import { api, check, ifMatch, unwrap, type McpDiscovered, type McpServer } from 
 import { keys, useMcpGrants, useMcpServers, useMe, useSpaces } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
+import { AddSpacemanMcpModal } from '@/features/mcp/AddSpacemanMcpModal'
+import { SpacemanMcpDetail } from '@/features/mcp/SpacemanMcpDetail'
 import { hasGlobal } from '@/lib/access'
 import { notifyError, notifyOk } from '@/lib/notify'
 
@@ -19,11 +21,17 @@ function McpServersPage() {
   const canWrite = hasGlobal(useMe().data, 'admin')
   const [editing, setEditing] = useState<McpServer | 'new' | null>(null)
   const [open, setOpen] = useState<string | null>(null)
+  const [addingSpaceman, setAddingSpaceman] = useState(false)
   const current = servers.data?.find((s) => s.id === open) ?? null
   return (
     <>
       <PageHeader title="MCP servers" description="External MCP servers agents reach through SpaceMan. Each run gets its own upstream session; headers are sealed and never shown again."
-        actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add server</Button>} />
+        actions={canWrite && (
+          <Group gap="xs">
+            <Button variant="default" leftSection={<IconPlus size={14} />} onClick={() => setAddingSpaceman(true)}>Add SpaceMan MCP</Button>
+            <Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add server</Button>
+          </Group>
+        )} />
       <ErrorAlert error={servers.error} />
       <Card p={0}>
         <Table highlightOnHover>
@@ -32,10 +40,10 @@ function McpServersPage() {
             {(servers.data ?? []).map((s) => (
               <Table.Tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setOpen(s.id)}>
                 <Table.Td>
-                  <Group gap="xs"><Text size="sm" fw={500}>{s.name}</Text>{!s.enabled && <Badge size="xs" color="gray">disabled</Badge>}{s.allow_private && <Badge size="xs" color="owlYellow" variant="light">private network</Badge>}</Group>
+                  <Group gap="xs"><Text size="sm" fw={500}>{s.name}</Text>{s.kind === 'spaceman' && <Badge size="xs" color="owlPurple" variant="light">SpaceMan</Badge>}{!s.enabled && <Badge size="xs" color="gray">disabled</Badge>}{s.allow_private && <Badge size="xs" color="owlYellow" variant="light">private network</Badge>}</Group>
                   <Text size="xs" c="dimmed" className="mono">{s.slug}__…</Text>
                 </Table.Td>
-                <Table.Td><Text size="xs" className="mono" style={{ wordBreak: 'break-all' }}>{s.url}</Text></Table.Td>
+                <Table.Td>{s.kind === 'spaceman' ? <Text size="xs" c="dimmed">in central{s.spaceman ? ` · ${s.spaceman.preset ?? 'admin'} preset` : ''}</Text> : <Text size="xs" className="mono" style={{ wordBreak: 'break-all' }}>{s.url}</Text>}</Table.Td>
                 <Table.Td><Text size="xs" className="mono">{s.header_names.join(', ') || '—'}</Text></Table.Td>
                 <Table.Td>{s.grants}</Table.Td>
                 <Table.Td><Text size="xs">{s.call_timeout_ms / 1000}s · {s.max_concurrency} at once · {Math.round(s.max_result_bytes / 1024)} KiB</Text></Table.Td>
@@ -47,9 +55,19 @@ function McpServersPage() {
           <Text size="sm" c="dimmed" ta="center" p="lg">No MCP servers yet. Add one, check its tools, then grant it to the space roles that need it.</Text>
         )}
       </Card>
+      <Text size="xs" c="dimmed" mt="sm">
+        Your own MCP client (Claude Code, an IDE) can use SpaceMan’s tools with your API token through the external endpoint{' '}
+        <span className="mono">/api/v1/mcp</span>:{' '}
+        <Anchor href="https://aurimasniekis.github.io/go-spaceman/guide/mcp-endpoint" target="_blank" rel="noreferrer" size="xs" underline="always">
+          see the guide <IconExternalLink size={10} />
+        </Anchor>.
+      </Text>
+      <AddSpacemanMcpModal opened={addingSpaceman} onClose={() => setAddingSpaceman(false)} onCreated={(srv) => setOpen(srv.id)} />
       {editing && <ServerModal server={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
       <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size="xl" title={current?.name ?? ''}>
-        {current && <ServerDetail server={current} canWrite={canWrite} onEdit={() => setEditing(current)} onDeleted={() => setOpen(null)} />}
+        {current && (current.kind === 'spaceman'
+          ? <SpacemanMcpDetail server={current} canWrite={canWrite} onDeleted={() => setOpen(null)} grants={<ServerGrants server={current} canWrite={canWrite} toolOptions={[]} />} />
+          : <ServerDetail server={current} canWrite={canWrite} onEdit={() => setEditing(current)} onDeleted={() => setOpen(null)} />)}
       </Drawer>
     </>
   )
@@ -163,24 +181,8 @@ function ServerModal({ server, onClose }: { server: McpServer | null; onClose: (
 
 function ServerDetail({ server, canWrite, onEdit, onDeleted }: { server: McpServer; canWrite: boolean; onEdit: () => void; onDeleted: () => void }) {
   const qc = useQueryClient()
-  const grants = useMcpGrants(server.id)
-  const spaces = useSpaces()
   const [found, setFound] = useState<McpDiscovered | null>(null)
   const [checking, setChecking] = useState(false)
-  const grantForm = useForm({
-    defaultValues: { space_id: '', role: '*', tools: [] as string[] },
-    onSubmit: async ({ value, formApi }) => {
-      try {
-        unwrap(await api.POST('/mcp-servers/{server_id}/grants', { params: { path: { server_id: server.id } }, body: value }))
-        formApi.reset()
-        refresh()
-        notifyOk('Granted')
-      } catch (e) {
-        notifyError(e, 'Could not grant the server')
-      }
-    },
-  })
-  const spaceName = (id: string) => spaces.data?.find((s) => s.id === id)?.name ?? id
   const runCheck = async () => {
     setChecking(true)
     try {
@@ -189,18 +191,6 @@ function ServerDetail({ server, canWrite, onEdit, onDeleted }: { server: McpServ
       notifyError(e, 'Could not check the server')
     } finally {
       setChecking(false)
-    }
-  }
-  const refresh = () => {
-    void qc.invalidateQueries({ queryKey: keys.mcpGrants(server.id) })
-    void qc.invalidateQueries({ queryKey: keys.mcpServers })
-  }
-  const revoke = async (id: string) => {
-    try {
-      check(await api.DELETE('/mcp-servers/{server_id}/grants/{grant_id}', { params: { path: { server_id: server.id, grant_id: id } } }))
-      refresh()
-    } catch (e) {
-      notifyError(e, 'Could not revoke the grant')
     }
   }
   const remove = async () => {
@@ -238,43 +228,80 @@ function ServerDetail({ server, canWrite, onEdit, onDeleted }: { server: McpServ
           </Table>
         </Card>
       ) : <Alert color="owlRed" title="Connection failed">{found.error}</Alert>)}
-      <Stack gap="xs">
-        <Text fw={600}>Grants</Text>
-        <Text size="xs" c="dimmed">Runs of a granted space role see the server's tools. Each call checks the grant again, so revoking takes effect on the next call.</Text>
-        <Table>
-          <Table.Thead><Table.Tr><Table.Th>Space</Table.Th><Table.Th>Role</Table.Th><Table.Th>Tools</Table.Th><Table.Th /></Table.Tr></Table.Thead>
-          <Table.Tbody>
-            {(grants.data ?? []).map((x) => (
-              <Table.Tr key={x.id}>
-                <Table.Td>{spaceName(x.space_id)}</Table.Td>
-                <Table.Td className="mono">{x.role === '*' ? 'every role' : x.role}</Table.Td>
-                <Table.Td><Text size="xs" className="mono">{x.tools.length ? x.tools.join(', ') : 'all offered'}</Text></Table.Td>
-                <Table.Td>{canWrite && <ActionIcon variant="subtle" aria-label={`Revoke the grant to ${x.role} in ${spaceName(x.space_id)}`} onClick={() => void revoke(x.id)}><IconTrash size={14} /></ActionIcon>}</Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-        {grants.isSuccess && grants.data.length === 0 && <Text size="sm" c="dimmed">Not granted to any space yet.</Text>}
-        {canWrite && (
-          <form onSubmit={(e) => { e.preventDefault(); void grantForm.handleSubmit() }}>
-            <Group align="flex-end" gap="xs">
-              <grantForm.Field name="space_id">
-                {(f) => <Select label="Space" placeholder="Choose a space" data={(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }))} value={f.state.value || null}
-                  onChange={(x) => f.handleChange(x ?? '')} />}
-              </grantForm.Field>
-              <grantForm.Field name="role">
-                {(f) => <TextInput label="Space role" description="* for every role" classNames={{ input: 'mono' }} w={140} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-              </grantForm.Field>
-              <grantForm.Field name="tools">
-                {(f) => <MultiSelect label="Tools" placeholder="All offered" data={toolOptions} value={f.state.value} onChange={(tools) => f.handleChange(tools)} searchable w={220} />}
-              </grantForm.Field>
-              <grantForm.Subscribe selector={(st) => [st.values.space_id, st.isSubmitting] as const}>
-                {([space, busy]) => <Button type="submit" disabled={!space} loading={busy}>Grant</Button>}
-              </grantForm.Subscribe>
-            </Group>
-          </form>
-        )}
-      </Stack>
+      <ServerGrants server={server} canWrite={canWrite} toolOptions={toolOptions} />
+    </Stack>
+  )
+}
+
+/** The spaces and space roles a server is granted to (both server kinds). */
+function ServerGrants({ server, canWrite, toolOptions }: { server: McpServer; canWrite: boolean; toolOptions: string[] }) {
+  const qc = useQueryClient()
+  const grants = useMcpGrants(server.id)
+  const spaces = useSpaces()
+  const grantForm = useForm({
+    defaultValues: { space_id: '', role: '*', tools: [] as string[] },
+    onSubmit: async ({ value, formApi }) => {
+      try {
+        unwrap(await api.POST('/mcp-servers/{server_id}/grants', { params: { path: { server_id: server.id } }, body: value }))
+        formApi.reset()
+        refresh()
+        notifyOk('Granted')
+      } catch (e) {
+        notifyError(e, 'Could not grant the server')
+      }
+    },
+  })
+  const spaceName = (id: string) => spaces.data?.find((s) => s.id === id)?.name ?? id
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: keys.mcpGrants(server.id) })
+    void qc.invalidateQueries({ queryKey: keys.mcpServers })
+    void qc.invalidateQueries({ queryKey: ['space-mcp'] })
+  }
+  const revoke = async (id: string) => {
+    try {
+      check(await api.DELETE('/mcp-servers/{server_id}/grants/{grant_id}', { params: { path: { server_id: server.id, grant_id: id } } }))
+      refresh()
+    } catch (e) {
+      notifyError(e, 'Could not revoke the grant')
+    }
+  }
+  return (
+    <Stack gap="xs">
+      <Text fw={600}>Grants</Text>
+      <Text size="xs" c="dimmed">Runs of a granted space role see the server's tools. Each call checks the grant again, so revoking takes effect on the next call.</Text>
+      <Table>
+        <Table.Thead><Table.Tr><Table.Th>Space</Table.Th><Table.Th>Role</Table.Th><Table.Th>Tools</Table.Th><Table.Th /></Table.Tr></Table.Thead>
+        <Table.Tbody>
+          {(grants.data ?? []).map((x) => (
+            <Table.Tr key={x.id}>
+              <Table.Td>{spaceName(x.space_id)}</Table.Td>
+              <Table.Td className="mono">{x.role === '*' ? 'every role' : x.role}</Table.Td>
+              <Table.Td><Text size="xs" className="mono">{x.tools.length ? x.tools.join(', ') : 'all offered'}</Text></Table.Td>
+              <Table.Td>{canWrite && <ActionIcon variant="subtle" aria-label={`Revoke the grant to ${x.role} in ${spaceName(x.space_id)}`} onClick={() => void revoke(x.id)}><IconTrash size={14} /></ActionIcon>}</Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+      {grants.isSuccess && grants.data.length === 0 && <Text size="sm" c="dimmed">Not granted to any space yet.</Text>}
+      {canWrite && (
+        <form onSubmit={(e) => { e.preventDefault(); void grantForm.handleSubmit() }}>
+          <Group align="flex-end" gap="xs">
+            <grantForm.Field name="space_id">
+              {(f) => <Select label="Space" placeholder="Choose a space" data={(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }))} value={f.state.value || null}
+                onChange={(x) => f.handleChange(x ?? '')} />}
+            </grantForm.Field>
+            <grantForm.Field name="role">
+              {(f) => <TextInput label="Space role" description="* for every role" classNames={{ input: 'mono' }} w={140} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+            </grantForm.Field>
+            <grantForm.Field name="tools">
+              {(f) => <MultiSelect label="Tools" placeholder="All offered" data={toolOptions} value={f.state.value} onChange={(tools) => f.handleChange(tools)} searchable w={220} />}
+            </grantForm.Field>
+            <grantForm.Subscribe selector={(st) => [st.values.space_id, st.isSubmitting] as const}>
+              {([space, busy]) => <Button type="submit" disabled={!space} loading={busy}>Grant</Button>}
+            </grantForm.Subscribe>
+          </Group>
+        </form>
+      )}
     </Stack>
   )
 }

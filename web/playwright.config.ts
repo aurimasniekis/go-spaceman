@@ -6,6 +6,10 @@ const extraBrowsers = (process.env.SM_E2E_BROWSERS ?? '')
   .map((s) => s.trim())
   .filter((s) => s in engines)
 
+// Extra Chromium launch arguments, space-separated, for hosts whose sandbox stops Chromium from starting (for example
+// SM_CHROMIUM_ARGS='--no-sandbox --disable-gpu --no-zygote' inside a container). Unset by default, so CI is unchanged.
+const chromiumArgs = (process.env.SM_CHROMIUM_ARGS ?? '').split(/\s+/).filter(Boolean)
+
 // Runs against a stack from `scripts/dev-stack.sh up` (SM_URL and friends come from its env file).
 export default defineConfig({
   testDir: './e2e',
@@ -29,7 +33,7 @@ export default defineConfig({
     colorScheme: 'dark',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, ...(chromiumArgs.length ? { launchOptions: { args: chromiumArgs } } : {}) } },
     // Opt-in engines (`make e2e-browsers`, SM_E2E_BROWSERS=firefox,webkit): the default runs, screenshots and the site
     // audit stay on Chromium only.
     ...extraBrowsers.map((name) => ({ name, use: { ...devices[engines[name]], viewport: { width: 1440, height: 900 } } })),

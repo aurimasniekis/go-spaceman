@@ -33,9 +33,12 @@ func NewGit() (*Git, error) {
 // Identity is the author of memory commits.
 type Identity struct{ Name, Email string }
 
+// safeOpts also keeps automatic housekeeping (gc --auto, maintenance run --auto) inside the git call: detached, it
+// would keep writing into the repository after the call returned.
 var safeOpts = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always",
 	"-c", "transfer.fsckObjects=true", "-c", "commit.gpgSign=false", "-c", "core.autocrlf=false", "-c", "init.defaultBranch=main",
-	"-c", "advice.detachedHead=false", "-c", "merge.conflictStyle=merge"}
+	"-c", "advice.detachedHead=false", "-c", "merge.conflictStyle=merge",
+	"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false"}
 
 // Run executes git in dir and returns stdout.
 func (g *Git) Run(ctx context.Context, dir string, id *Identity, args ...string) (string, error) {

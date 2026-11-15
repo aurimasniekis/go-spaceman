@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/agent"
 	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
@@ -26,6 +28,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 // fleetEnv is a central on a real HTTP server (restartable on the same data directory) plus a node agent with an
@@ -45,11 +48,23 @@ type fleetEnv struct {
 	done     chan struct{}
 	// bridge is the agent's MCP bridge socket (short path: unix socket limit).
 	bridge string
+	// staleGrace overrides the stale-run sweeper's grace on the next startCentral (0: the default, ADR-0074).
+	staleGrace time.Duration
+	// clk is central's clock (nil: the system clock); newFleetEnvClock sets a fake one.
+	clk clock.Clock
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
-// central or the agent under the race detector never outlives a lease; tests of lease expiry pass shortLease.
+// the agent under the race detector never outlives a lease; tests whose runs must survive restartCentral pass
+// longLease, and tests of lease expiry pass shortLease.
 func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
+	t.Helper()
+	return newFleetEnvClock(t, nil, opts...)
+}
+
+// newFleetEnvClock is newFleetEnv with central on clk (the store's transactions, leases and the deadline jobs read it).
+// Nodes keep their own real clock.
+func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config)) *fleetEnv {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
@@ -73,11 +88,13 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sock) })
-	e := &fleetEnv{t: t, cfg: cfg, run: runnertest.New(), agentDir: filepath.Join(dir, "agent"), bridge: filepath.Join(sock, "b.sock")}
+	e := &fleetEnv{t: t, cfg: cfg, run: runnertest.New(), agentDir: filepath.Join(dir, "agent"), bridge: filepath.Join(sock, "b.sock"), clk: clk}
 	e.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { (*e.handler.Load()).ServeHTTP(w, r) }))
 	cfg.PublicURL = "http://" + e.srv.Listener.Addr().String()
 	e.startCentral()
 	e.srv.Start()
+	onTimeout(t, e.dump)
+	onProgress(t, e.progress)
 	t.Cleanup(func() {
 		e.stopAgent()
 		e.srv.Close()
@@ -88,6 +105,12 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	return e
 }
 
+// longLease makes leases last 30 s, for tests whose runs must survive restartCentral. With StoreReaders: 4 a restart
+// takes about 1 s even under the race detector, so the default 5 s lease is normally enough; the long lease is a margin
+// for a loaded host, where the node's reconnects are refused until the store is open and a short lease could expire
+// and the node stop the space's runs.
+func longLease(cfg *config.Config) { cfg.Nodes.LeaseTTL = config.Duration(30 * time.Second) }
+
 // shortLease makes leases expire quickly (1 s plus a 0.5 s grace) for tests of what happens without central.
 func shortLease(cfg *config.Config) {
 	cfg.Nodes.LeaseTTL = config.Duration(time.Second)
@@ -95,19 +118,32 @@ func shortLease(cfg *config.Config) {
 }
 
 func (e *fleetEnv) startCentral() {
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}})
+	storetest.Seed(e.t, e.cfg.DataDir)
+	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
+	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace, Clock: e.clk})
 	if err != nil {
 		e.t.Fatal(err)
+	}
+	// The reader pool must stay small (see above); asserted after every open, so the regression shows as a count, not as
+	// a restart that a loaded host happened to make slow.
+	if n := c.Store.ReadDB().Stats().MaxOpenConnections; n != 4 {
+		e.t.Fatalf("central's store has %d reader connections, want 4: check app.Options.StoreReaders", n)
 	}
 	e.c = c
 	h := c.Handler(c.APIDeps())
 	e.handler.Store(&h)
 }
 
-// restartCentral closes central (dropping every node connection) and opens it again on the same data directory.
+// restartCentral closes central (dropping every node connection) and opens it again on the same data directory. Close
+// returns only once the store's connections are closed, so a Close error (a connection still in use after the drain
+// timeout) fails the test here rather than as SQLITE_BUSY in the next open.
 func (e *fleetEnv) restartCentral() {
+	e.t.Helper()
 	e.srv.CloseClientConnections()
-	_ = e.c.Close()
+	if err := e.c.Close(); err != nil {
+		e.t.Fatalf("close central: %v", err)
+	}
 	e.startCentral()
 }
 
@@ -163,16 +199,21 @@ func (e *fleetEnv) stopAgent() {
 	}
 }
 
+// eventually waits for cond. Most tests here run in parallel (t.Parallel) and every state change goes through the one
+// SQLite writer queue, so under the race detector on a small runner a condition can take far longer than a fixed
+// deadline (a CI run took 35 s for a launch that takes 0.5 s idle). The wait is therefore for progress, not for wall
+// time: it keeps waiting while the fleet env's state advances (onProgress) and gives up after eventuallyStall with no
+// change, or after eventuallyMax whatever happens (eventuallyProgress). On a timeout it prints the test's state dumps
+// (onTimeout; every fleetEnv registers one).
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	eventuallyProgress(t, what, eventuallyStall, eventuallyMax, cond)
 }
+
+const (
+	eventuallyStall = 30 * time.Second
+	eventuallyMax   = 5 * time.Minute
+)
 
 func (e *fleetEnv) run1(id string) *fleet.Run {
 	r, err := e.c.Fleet.GetRun(context.Background(), id)
@@ -185,7 +226,8 @@ func (e *fleetEnv) run1(id string) *fleet.Run {
 // SM-NODE-001…009, SM-SPACE-002/003, SM-INV-002/006: enrollment, connection, leases, launch, duplicate delivery,
 // agent and central restarts without duplicate execution, stop, control uniqueness and fencing.
 func TestFleetLifecycle(t *testing.T) {
-	e := newFleetEnv(t)
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
+	e := newFleetEnv(t, longLease)
 	ctx := context.Background()
 	e.enroll()
 	e.startAgent()
@@ -246,6 +288,31 @@ func TestFleetLifecycle(t *testing.T) {
 			t.Fatal("credential in the runner argv")
 		}
 	}
+	// ADR-0068: the run's settings.json has SpaceMan's deny-only PermissionRequest hook, run by the shipped agent binary,
+	// and the run's own space folder (its real path), nothing wider, as an additional directory; every instance's memory
+	// is denied, and the run's own auto memory is outside the space folder.
+	spaceDir, _ := filepath.EvalSymlinks(filepath.Join(e.agentDir, "spaces", sp.Workdir))
+	raw, err := os.ReadFile(filepath.Join(spaceDir, "instances", e.run1(ctrl.ID).InstanceID, "claude", "settings.json"))
+	var settings struct {
+		Hooks struct {
+			PermissionRequest []struct {
+				Hooks []struct{ Command string } `json:"hooks"`
+			} `json:"PermissionRequest"`
+		} `json:"hooks"`
+		Permissions struct {
+			AdditionalDirectories []string `json:"additionalDirectories"`
+			Deny                  []string `json:"deny"`
+		} `json:"permissions"`
+		AutoMemoryDirectory string `json:"autoMemoryDirectory"`
+	}
+	if err != nil || json.Unmarshal(raw, &settings) != nil || len(settings.Hooks.PermissionRequest) != 1 ||
+		settings.Hooks.PermissionRequest[0].Hooks[0].Command != hns.ClaudePermissionHookCommand("/usr/bin/true") ||
+		!slices.Equal(settings.Permissions.AdditionalDirectories, []string{spaceDir}) ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+filepath.Dir(spaceDir)+"/*/instances/*/claude/settings.json)") ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+filepath.Dir(spaceDir)+"/*/instances/*/claude/projects/**)") ||
+		!strings.HasPrefix(settings.AutoMemoryDirectory, filepath.Join(e.agentDir, "automemory", sp.ID, e.run1(ctrl.ID).InstanceID, "projects")+"/") {
+		t.Fatalf("run settings %s %v", raw, err)
+	}
 	if e.run1(ctrl.ID).Launch.AccountRef != accts["claude_oauth_token"] {
 		t.Fatalf("run account %q", e.run1(ctrl.ID).Launch.AccountRef)
 	}
@@ -265,8 +332,16 @@ func TestFleetLifecycle(t *testing.T) {
 	starts := e.run.Starts
 	e.startAgent()
 	eventually(t, "runs running again", func() bool { return e.run1(ctrl.ID).Observed == "running" && e.run1(worker.ID).Observed == "running" })
-	// Central restart: pending/sent commands are re-delivered and acknowledged as duplicates.
+	// Central restart: pending/sent commands are re-delivered and acknowledged as duplicates. The restart must stay
+	// inside the lease: once lease + grace pass without central, the agent stops the runs (SM-NODE-007), which is
+	// correct, and they never come back to running.
+	restartAt := time.Now()
 	e.restartCentral()
+	// startCentral asserts the reader pool itself; this loose bound only catches a restart gone pathologically slow
+	// (a reader pool per CPU took 5-7 s under -race; a loaded host can take over 5 s even with 4 readers).
+	if d := time.Since(restartAt); d >= 15*time.Second {
+		t.Fatalf("central restart took %v, not less than 15 s: check app.Options.StoreReaders (each reader parses the schema on open)", d)
+	}
 	eventually(t, "reconnected after central restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
 	eventually(t, "runs running after central restart", func() bool { return e.run1(worker.ID).Observed == "running" })
 	time.Sleep(500 * time.Millisecond)
@@ -298,8 +373,31 @@ func TestFleetLifecycle(t *testing.T) {
 	}
 }
 
+// Central restarts back to back on the same data directory while a node is connected and reconnecting. Each Close
+// races the node's in-flight requests; the next open must still find the database free (it failed with "storage busy:
+// open database ... SQLITE_BUSY" when Close released the directory before connections still in use had closed, and the
+// writer's first pragma ran without a busy timeout).
+func TestCentralRestartBackToBack(t *testing.T) {
+	// Not parallel: like TestFleetLifecycle, the restarts must stay inside the node lease.
+	e := newFleetEnv(t, longLease)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	nodeID := nodes[0].ID
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
+	for i := range 5 {
+		e.restartCentral()
+		if i%2 == 1 { // every other restart lands while the node is still reconnecting
+			eventually(t, "reconnected after central restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
+		}
+	}
+	eventually(t, "reconnected after the last restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
+}
+
 // SM-NODE-007: without central, the node starts no work and stops running work after lease + grace.
 func TestDisconnectEnforcement(t *testing.T) {
+	// Not parallel: short leases (shortLease) expire if parallel tests starve the node.
 	e := newFleetEnv(t, shortLease)
 	ctx := context.Background()
 	e.enroll()
@@ -333,6 +431,7 @@ func ptr[T any](v T) *T { return &v }
 // SM-REC-002/004, SM-UI-004: node recordings reach central, replay through the API and stream live to watch-only
 // viewers (with the terminal:watch permission).
 func TestRecordingShippedReplayedAndStreamed(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()
@@ -453,6 +552,7 @@ func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) 
 // A report that arrives after a run ended (the node sends reports concurrently) must not reopen the run: it would end
 // it a second time and publish a second run_ended event. The late report is fenced and the node told to stop it.
 func TestLateReportDoesNotReopenEndedRun(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()
@@ -508,6 +608,7 @@ func TestLateReportDoesNotReopenEndedRun(t *testing.T) {
 // refreshed login survives later launches; a rotation in central replaces it. The login never reaches the launcher
 // shim's file, the runner's environment or its argv.
 func TestCodexChatGPTLoginIsSharedByInstances(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()

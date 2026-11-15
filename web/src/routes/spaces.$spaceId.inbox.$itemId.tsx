@@ -50,8 +50,9 @@ function ItemPage() {
   return (
     <Stack gap="md">
       <AnchorLink to="/spaces/$spaceId/inbox" params={{ spaceId }} size="sm">← All inbox items</AnchorLink>
-      <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Stack gap={4}>
+      {/* The actions move under the title on a phone instead of pushing the page sideways. */}
+      <Group justify="space-between" align="flex-start">
+        <Stack gap={4} style={{ flex: '1 1 320px', minWidth: 0 }}>
           <Group gap="xs"><Title order={3}>{it.title}</Title><UrgencyBadge urgency={it.urgency} /><InboxStatusBadge status={it.status} /><ProvenanceBadges item={it} /></Group>
           <Text size="sm" c="dimmed">
             {sourceLabel[it.source_kind]}{it.source_label ? ` · ${it.source_label}` : ''} · received {datetime(it.received_at)}

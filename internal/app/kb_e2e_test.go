@@ -36,6 +36,7 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 // is refused without changing anything, and read-only KBs take no proposals. One requester is a Codex run served by a
 // Claude Code KB session (SM-KB-004: harness-independent request/reply through SpaceMan's tools).
 func TestKBSupportSessions(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}

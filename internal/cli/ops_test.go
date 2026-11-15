@@ -19,6 +19,7 @@ const sp = "/spaces/" + spaceID
 // Updates of resources without a get operation read the object from their list, merge the flags given and send its
 // version as If-Match; a slug is replaced by the ID.
 func TestUpdateFromList(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	f.json("GET "+sp+"/dreams", 200, map[string]any{"items": []any{
 		map[string]any{"id": "drm_1", "slug": "nightly", "name": "Nightly", "space_role": "dreamer", "interval_hours": 24, "version": 4, "next_due_at": "x"}}})
@@ -77,6 +78,7 @@ func TestUpdateFromList(t *testing.T) {
 // One-time secrets of the new commands are shown only on request: --show-secret prints them once, --secret-file writes
 // them (and every field that reveals them) to a new 0600 file; without either the call is never made.
 func TestSecretsOnRequest(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	f.json("POST /users/usr_1/reset-token", 200, map[string]any{"token": "spaceman_rs_secret1", "expires_at": "2026-11-04T00:00:00Z"})
 	f.json("POST /users/usr_1/link-invite", 200, map[string]any{"token": "lnk_secret2", "url": "https://c/link?t=lnk_secret2", "expires_at": "x"})
@@ -144,6 +146,7 @@ func TestSecretsOnRequest(t *testing.T) {
 
 // Downloads go to --out (never a terminal), refuse to overwrite without --force and never leave a partial file.
 func TestDownloadsAndUploads(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	content := []byte("\x89PNG\r\n\x1a\nbinary\x00\x1b[2J")
 	f.on("GET "+sp+"/attachments/att_1/content", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
@@ -247,6 +250,7 @@ func TestDownloadsAndUploads(t *testing.T) {
 // The change feed is printed one line per change until --count, as JSON Lines with -o json; gaps go to stderr and an
 // ended stream exits 2.
 func TestWatch(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	end := false
 	f.on("GET /watch", func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
@@ -292,6 +296,7 @@ func TestWatch(t *testing.T) {
 // Commands that build their bodies: queue policy (read just before), dependencies, assignment, space accounts, skills
 // from a directory, OIDC providers, identities and quarantine.
 func TestBodyBuilders(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	echo := func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) }
 	e := f.env()

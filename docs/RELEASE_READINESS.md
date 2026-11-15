@@ -4,6 +4,21 @@
 > This report makes **no production-readiness claim**. SpaceMan is feature-complete against the brief with the gaps
 > recorded here and in [LIMITATIONS.md](LIMITATIONS.md). It has not been released, published or run by anyone but its
 > developer, and several dependencies have only simulated evidence.
+>
+> **v0.1.0 final (2026-11-08):** §14 records the final release: what it contains since rc.9, its migrations, node
+> protocol and tested Claude Code version, the known issues it ships with and the accepted risks.
+>
+> **v0.1.1 (2026-11-09):** §15 records the patch release: what it contains since v0.1.0, its migrations, node
+> protocol, upgrade notes and the known issues it ships with.
+>
+> **v0.1.2 (2026-11-13):** §16 records the patch release: what it contains since v0.1.1, its migrations, node
+> protocol, upgrade notes and the known issues it ships with.
+>
+> **v0.1.3 (2026-11-13):** §17 records the patch release: what it contains since v0.1.2, its upgrade notes (also from
+> v0.1.1, since v0.1.2 was rolled back) and the known issues it ships with.
+>
+> **v0.1.4 (2026-11-14):** §18 records the patch release: what it contains since v0.1.3, its upgrade notes and the
+> known issues it ships with.
 
 ## 1. Verdict
 
@@ -48,7 +63,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 
 ## 3. Architecture decisions
 
-58 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
+59 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
 
 | ADR | Decision |
 |---|---|
@@ -78,6 +93,8 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0056 | Control starts for waiting work when no control run is live, and stops after an idle timeout (two space limits). |
 | 0057 | Repository SSH keys held by SpaceMan: sealed in central, sent only with a clone or fetch, served from an in-memory agent on the node against pinned host keys; agents never receive them. |
 | 0058 | Shared Git SSH keys: one administrator-managed key on a Git account, scoped to listed spaces, that repositories choose instead of their own deploy key. |
+| 0059 | Claude Code settings on harness profiles: the profile's settings.json keys (permissions, auto mode, hooks, any key) set in each run's settings.json, defaultMode under the ceiling, protocol minor 8. |
+| 0060 | Harbor Pilot gateway (Accepted 2026-11-08): one central connection with sealed write-only tokens, spaces opt in per harness, a child token per run minted at dispatch and revoked on every end path, no fallback to accounts, Harbor Pilot budgets as an early refusal, protocol minor 9. See §13. |
 
 ## 4. Commits
 
@@ -186,3 +203,294 @@ Status: 218 implemented, 1 partial, 1 n/a. The brief's §40 verification topics 
 3. Close or accept the open security findings, ideally with an external review.
 4. Push to a remote, run the release workflow, publish images, SBOMs and checksums, and publish the site.
 5. Collect the missing real evidence (SM-VER-002), at least a real Codex run, or state the gaps in the release notes.
+
+## 13. Addendum: Harbor Pilot gateway (PR #17, HP-T8, 2026-11-08)
+
+Written for the combined pull request that adds the Harbor Pilot gateway (ADR-0060, **Accepted** 2026-11-08 with Q4
+open). Sections 1 to 12 above are the 2026-11-03 report and are not restated. **No production claim:** every real run
+below used Harbor Pilot's own demo gateway with synthetic upstreams. A real model provider behind a real Harbor Pilot has
+**not** been used (Q7: the operator will provide one).
+
+**Release impact.** Migrations 0040 (connection, space settings, run tokens, revocation queue) and 0043 (run-end usage
+reads), forward-only; 0042 is retired and never used. Node protocol minor 9: only spaces that opt in need updated
+agents; a gateway launch to an older agent fails as `agent_too_old` before a token is minted. Minimum Harbor Pilot
+0.1.3. The Terraform resources come in the provider's next release (provider PR #12), which needs this release.
+
+**Evidence labels.** *contract-tested (fake)*: automated tests against `internal/harborpilot/hpfake` or a stand-in, run
+by `make check` and CI. *real-demo-tested*: the opt-in suites against a real `harbor-pilot serve --demo` **0.1.3**
+binary (`go install`, checked by buildinfo), run on 2026-11-08 for this addendum. *not verified*: no evidence.
+
+| Done-when item (operator request, 2026-11-06) | contract-tested (fake) | real-demo-tested (serve --demo 0.1.3) | not verified |
+|---|---|---|---|
+| Claude Code and Codex runs each get their own token | `TestRunTokenMintOnceAndReuse`, `TestRunTokenSingleFlight`, `TestClaudeGatewayBuild`, `TestCodexGatewayBuild`, `TestHarborPilotGatewayDeliveryOnNode` | `TestRealHarborPilotGatewayRuns` (`make test-real-harbor-pilot`: real Claude Code and codex-cli through central, agent, herdr-core and the shim) | — |
+| Their requests show up under the SpaceMan client with trusted refs | `TestRunTokenMintOnceAndReuse` (bound refs sent) | `TestRealHarborPilotRunToken` (bound refs on the credential), `TestRealHarborPilotGatewayRuns` (request detail: the binding, `spaceman.space`, `spaceman.run`, `session`; one session per run) | requests to a real provider |
+| Tokens are revoked at run end | one test per end path in `internal/fleet/gateway_test.go`, `TestRevokerOutcomes`, `TestRevocationSurvivesRestart`, `TestHarborPilotRevocationAfterRestart` | `TestRealHarborPilotRunToken` (401 after the reported end), `TestRealHarborPilotGatewayRuns` (401 after a stop, by `serve`'s own timer) | relocation, purge and lease loss against the real gateway (fake only) |
+| Emergency stop: revoking the parent cuts every run (T-39) | `TestParentRotationRevokesLiveRunTokens` | `TestRealHarborPilotRunToken` (a live run's token gets 401 at once; the next launch fails as `gateway_unavailable`) | — |
+| Never a silent fallback to a direct account | `TestRouteAndPreLaunch`, `TestHarborPilotRunTokenLifecycle`, `TestGatewayLaunchNeedsAgentMinor` | `TestRealHarborPilotRunToken` (revoked parent: the run fails, no account used) | — |
+| A space with an exhausted budget can't launch and says why | `TestCheckBudgetRefusesUsedUpBlockingBudget`, `TestCheckBudgetStatusUnavailable`, `TestCheckBudgetOwnFailureFollowsPolicy`, `TestHarborPilotBudgetRefusesLaunch`, `TestHarborPilotBudgetRefusalRaisesControlCouldNotStart` | `TestRealHarborPilotBudgetAndUsage` (a used-up tiny budget: the refusal names it, its spend and reset; Harbor Pilot refuses the `check_budget` mint) | the "Control could not start" path against the real gateway |
+| The Limits page shows Harbor Pilot budget status | `HarborPilotLimitsCard.test.tsx` (ok, warning, exceeded, unavailable, error), `TestSpaceStatusStates`; screenshots against a stand-in gateway | the status API in `TestRealHarborPilotBudgetAndUsage` | the page rendered against a real gateway |
+| Events arrive as inbox items for the right space | `TestHarborPilotTemplates`, `TestHarborPilotEventsReachTheRightSpace` (fixtures captured from the real demo) | `TestRealHarborPilotEventsThroughPulse` (Harbor Pilot's relay into a Pulse-shaped JetStream test server) | a real `pulsed`; a live `quota.window.*` event; routing of unscoped events (Q4 open) |
+| Codex usage filled only with real data, source labelled | `TestReadDueUsageFillsUnavailableUsage`, `TestReadDueUsageKeepsHarnessUsage`, `TestReadDueUsageFailures`, `TestReadDueUsageEmptyIsNotZero`, `TestHarborPilotRunUsageReadBack` | `TestRealHarborPilotBudgetAndUsage` (a run's two requests read back, source `harbor-pilot`) | usage of a real provider |
+| Terraform acceptance tests pass, the combined example included | provider unit tests | provider PR #12 `make acc-harbor-pilot`: `TestAccHarborPilot`, `TestAccHarborPilotExample` (with the `harborpilot` provider), 26/26 | a production deployment |
+| Tests run against a real `serve --demo` binary | — | every row above; the plan named 0.1.1, the pinned minimum is now 0.1.3 | — |
+| A real upstream model provider behind Harbor Pilot | — | — | **not verified** (Q7) |
+| Status recorded honestly (contract-tested vs live-verified) | — | — | this table; [TRACEABILITY.md](TRACEABILITY.md) SM-GW-001…010 keep the columns apart |
+
+**Gates for this addendum** (2026-11-08, Linux, the head named in PR #17): `make check` (umask 022,
+`SM_TEST_TX_MAX=500ms`), `make web-check`, `make site-check`, `SPACEMAN_HARBOR_PILOT=1 make test-harbor-pilot`,
+`make test-real-harbor-pilot` and CI. Results are in the PR description and PLAN §3.
+
+**Open:** Q4 (unscoped event routing, DECISIONS K-12); a run against a real provider (Q7); the limitations in
+[LIMITATIONS.md](LIMITATIONS.md#harbor-pilot-gateway), first among them that a Harbor Pilot outage stops every
+opted-in space's routed harnesses, by design (no fallback).
+
+## 14. v0.1.0 final (2026-11-08)
+
+The operator authorized the final v0.1.0 release on 2026-11-08. It is cut from the merge of PR #18 into `main` and
+tagged `v0.1.0`; the release workflow builds the archives, images and SBOMs into a draft release that the operator
+publishes. It still makes **no production-readiness claim**: §1's verdict stands (ready for evaluation by a trusted
+team), now with the release workflow as the path that builds and publishes it.
+
+**Contents since v0.1.0-rc.9:** the Harbor Pilot gateway (ADR-0060, §13), the SpaceMan admin MCP and the external
+`/api/v1/mcp` endpoint (ADR-0063, Accepted), Claude Code's classic renderer by default (ADR-0064), control
+reminders (ADR-0065), the terminal-prompt deny (ADR-0066), the System page (ADR-0067), the deny-only permission hook
+with instance protection and the auto-memory relocation (ADR-0068), and the store busy/close fix. The full list is in
+`CHANGELOG.md` `[0.1.0]`.
+
+| Item | v0.1.0 |
+|---|---|
+| Migrations since rc.9 | 0040–0045, forward-only: 0040 Harbor Pilot connection, space settings, run tokens and revocation queue; 0041 `messages.deliver_at`; 0042 retired, never used; 0043 Harbor Pilot run-end usage reads; 0044 SpaceMan MCP servers and internal tokens; 0045 the partial index `ix_runs_observed_live`. Take a backup before upgrading; central also writes a pre-migration snapshot. |
+| Node protocol | 1.9 (`proto.MaxMinor = 9`; minor 9 is the Harbor Pilot gateway token). Agents back to 1.0 still connect; a gateway launch to an agent older than 1.9 fails as `agent_too_old`, and the node-side Claude Code changes (ADR-0064, 0066, 0068) take effect only on agents of this release. |
+| Claude Code tested | 2.1.317: the real Claude Code suites, `make test-real-claude-cli` (ADR-0068 deny rules, 52 instances, the auto-memory migration) and the Harbor Pilot gateway runs. |
+| Codex tested | codex-cli 0.166.0 without a real model credential (§7). |
+| Harbor Pilot | 0.1.3 or later, verified against `serve --demo` only (§13). |
+
+**Upgrade notes from rc.9** (also in the CHANGELOG):
+- Upgrade central first, then every node agent (site page Operators → Upgrade and rollback).
+- Each instance's Claude Code auto memory moves to `<data_dir>/automemory/<space>/<instance>/…` and is copied there at
+  the instance's first launch on this release (the old copy stays in place).
+- Deny rules protect every space's instance files from a run's file tools, also when a profile adds the whole
+  `spaces/` folder.
+- A `PermissionRequest` hook denies every permission dialog; an `ask` rule now works like a deny.
+- A profile's own `autoMemoryDirectory` is ignored (the node logs a warning).
+- Closing the store waits at most 8 s (WAL checkpoint and connections still in use), inside the units'
+  `TimeoutStopSec=45s`. (Since PR #74, unreleased: node connection work waits inside the 5 s for gateway mints, so
+  the worst case stays 30 + 5 + 8 = 43 s.)
+- Operators should remove any profile `additionalDirectories` entry that grants the node's whole `spaces/` folder, and
+  any dialog-denying hook script: v0.1.0 adds the run's own space folder and the hook automatically.
+- If a node ran Codex with an API-key account on an earlier release, rotate that key.
+
+**Known issues it ships with** (open in [LIMITATIONS.md](LIMITATIONS.md); the §7 list still applies):
+- No real Codex model turn, no AWS S3/R2, no physical Linux host or amd64 under systemd, no real Google or GitHub
+  accounts (SM-VER-002 stays `partial`).
+- Harbor Pilot: no real model provider behind it (Q7); unscoped events are routed nowhere (Q4); an outage stops every
+  opted-in space's routed harnesses, by design (no fallback).
+- SpaceMan MCP: no real harness has driven the tools through a model yet (tested in process over the real bridge);
+  the Terraform resource waits for the provider's next release; the external endpoint takes bearer tokens only (no
+  OAuth).
+- Claude Code runs: an `ask` rule works like a deny; the protected paths and stripped settings keys are deny-lists
+  checked against Claude Code 2.1.317 (an allow-list is a follow-up); a run can read other instances' transcripts,
+  settings and memory.
+- Agent restarts under the shipped systemd unit end the node's runs.
+
+**Accepted risks** (operator decisions, [THREAT_MODEL.md](THREAT_MODEL.md), [SECURITY_REVIEW.md](SECURITY_REVIEW.md)):
+
+| ID | Risk | Decision |
+|---|---|---|
+| T-33 | An agent with SpaceMan MCP tools uses its owner's administrator authority (default preset `admin@*`, no expiry, approvals for dangerous tools only). | Accepted 2026-11-07 for a trusted infra space. |
+| T-38 | An operator's own MCP client on `/api/v1/mcp` uses that token's full grants; reads and writes run without approval. | Residuals accepted 2026-11-08 (F6, SR-MCP-01). |
+| T-40 | Dialog handling: `ask` rules become denies; reads of other instances' files; deny-lists tied to the tested Claude Code version; a profile editor can still widen a run. | Residuals accepted with ADR-0068. |
+| F1 | In-run dangerous calls are approved in the run's own space, also when they act on other spaces. | Accepted 2026-11-08. |
+| F2 | `launch-run` stays a write with `settings.permission_mode` or `account_ref` overrides. | Accepted 2026-11-08. |
+| F6 | `/api/v1/mcp` is on for every user API token, with no switch. | Accepted 2026-11-08. |
+| SR-MCP-01 | The root token may approve the external endpoint's dangerous calls. | Kept 2026-11-08 (single-administrator path). |
+
+**Gates** (Linux, umask 022, `SM_TEST_TX_MAX=500ms`, at the PR #18 head named in the PR description):
+`make check`, `make site-check` and CI on PR #18, all passing before the PR left draft; the results and the head
+commit are in the PR description.
+
+## 15. v0.1.1 (2026-11-09)
+
+The operator authorized the v0.1.1 release on 2026-11-09. It is cut from `main` after PRs #19–#33 were merged
+in order (the release-prep PR follows them). It is tagged `v0.1.1`, and the release workflow builds the archives,
+images and SBOMs into a draft release that the operator publishes. It still makes **no production-readiness claim**:
+§1's verdict stands.
+
+**Contents since v0.1.0:**
+- concurrency limits that count live runs only, and a stale-run sweeper (ADR-0074, migration 0046);
+- per-run terminal sizes (ADR-0075, SM-UI-007, migration 0047, protocol minor 10);
+- attachments of any size reaching a run as a file (ADR-0073, T-42);
+- `github-pull-request` version 2, and built-ins that gain versions on existing installations (ADR-0072);
+- Harbor Pilot 0.1.4 support;
+- the web terminal lifecycle and lagged-viewer fixes, the scrollbar fixes, and the chunk-load recovery;
+- gate and CI changes: tiered gates and a one-run coverage floor (ADR-0069, T-41), the write-transaction guard
+  measuring lock hold time (ADR-0070), and the login timing comparison running in its own job (ADR-0071);
+- flaky-test fixes.
+
+The full list is in `CHANGELOG.md` `[0.1.1]`.
+
+| Item | v0.1.1 |
+|---|---|
+| Migrations since v0.1.0 | 0046 (the disconnect grace on each lease) and 0047 (a run's terminal size). Both are forward-only. Take a backup before upgrading; central also writes a pre-migration snapshot. |
+| Node protocol | 1.10 (`proto.MaxMinor = 10`; minor 10 is run terminal sizes). Agents back to 1.0 still connect; their runs can't be resized (the API answers 409). |
+| Configuration | `nodes.lease_ttl` must be at most 10m (ADR-0074); central refuses to start with a longer value. |
+| Claude Code tested | The real Claude Code suites last ran against 2.1.317 (v0.1.0). The new live attachment test, `TestRealClaudeCLIReadsSavedAttachment`, ran against 2.1.319. |
+| Harbor Pilot | 0.1.3 or later; 0.1.4 recommended. Verified against `serve --demo` only (§13). |
+
+**Upgrade notes from v0.1.0** (also in the CHANGELOG):
+- Upgrade central first, then every node agent.
+- Check `nodes.lease_ttl` (and `SPACEMAN_NODES_LEASE_TTL`) is at most 10m.
+- The first deploy's stale-run sweep ends every historic run that central still counted as live but whose process is
+  gone. It revokes their credentials and gateway tokens and reports them as ended. For worker runs, the space's
+  control may then re-queue or relaunch their tasks. Review the `run.reconciled_stale` audit events and close the
+  tasks you no longer want.
+
+**Known issues it ships with:** the §14 list still applies (see [LIMITATIONS.md](LIMITATIONS.md)). In addition:
+- The CI `login timing` job runs with the default 100 ms write-transaction guard, which can trip on hosted runners
+  (seen once while preparing this release, passing on rerun).
+- `make e2e` takes about 13 minutes longer because of the UI overflow guard.
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, at `main` after the last merge, PR #32): `SM_TEST_TX_MAX=500ms make check`,
+`make web-check`, `make e2e` and `make site-check`, plus CI on every merged PR head. The results are in the
+release-prep PR description.
+
+## 16. v0.1.2 (2026-11-13)
+
+The operator authorized the v0.1.2 release on 2026-11-13. It is cut from `main` after PRs #35–#45 were merged in
+order (#38 first, #45 before #44; the release-prep PR follows them). It is tagged `v0.1.2`, and the release workflow
+builds the archives, images and SBOMs into a draft release that the operator publishes. It still makes **no
+production-readiness claim**: §1's verdict stands.
+
+**Contents since v0.1.1:**
+- node-managed Claude Code versions (ADR-0077, SM-HARN-005…008): a verified per-version cache, launches by absolute
+  path, per-profile version pins, per-run versions and the current versions on each node (migrations 0048 and 0049,
+  agent journal migrations 0006 and 0007, protocol minor 11);
+- Claude Code's self-update turned off in every run, managed or not;
+- the web terminal's fresh-cache freeze and stale-glyph fixes (ADR-0076);
+- the New inbox item dialog's scrollbar with writing-assistant extensions;
+- Go 1.27.4 (GO-2026-6859);
+- CI: the write-transaction guard at 250 ms for the hosted login-timing and fuzz jobs and 1 s for the hosted coverage
+  step (ADR-0062 updates).
+
+The full list is in `CHANGELOG.md` `[0.1.2]`.
+
+| Item | v0.1.2 |
+|---|---|
+| Migrations since v0.1.1 | Central: 0048 (a profile's Claude Code version pin and each run's version) and 0049 (when a node last reported its capabilities). Node agent journal: 0006 (each run's Claude Code version and path) and 0007 (an index for the cache's GC). All are forward-only. Take a backup before upgrading; central also writes a pre-migration snapshot. |
+| Node protocol | 1.11 (`proto.MaxMinor = 11`; minor 11 is pinned launches, per-run versions and capability re-reports). Older agents still connect; a pinned launch to one fails as `node_too_old`, and they report harness versions only when they connect. |
+| Configuration | New node agent settings `harness.claude.{manage, channel, base_url, cache_keep, cache_keep_pinned, refresh, download_timeout, self_update}`. `manage` is off by default. Claude Code's self-update is off in every run unless `self_update: true` on an unmanaged node. |
+| Disk | A managed node's cache takes about 340 MB per Claude Code version: about 1 GB with the default `cache_keep` (3), plus up to `cache_keep_pinned` (5) pinned versions. |
+| Web terminal | The terminal's WebAssembly module comes from the pinned ghostty-web prerelease 0.4.0-next.21; its JavaScript stays on 0.4.0 (ADR-0076). |
+| Go | 1.27.4 (GO-2026-6859), in `go.mod`, `tools/go.mod` and both Dockerfiles' build image. |
+| Claude Code tested | The real Claude Code suites last ran against 2.1.317 (v0.1.0) and the live attachment test against 2.1.319 (v0.1.1). The ADR-0077 spike checked 2.1.322's updater and resuming a 2.1.317 session on 2.1.322 in print mode against a fake API. |
+
+**Upgrade notes from v0.1.1** (also in the CHANGELOG):
+- Take a backup, then upgrade central first, then every node agent.
+- Nodes whose `claude` stayed current only through Claude Code's self-update stay on their current version until
+  `harness.claude.manage: true` is set or they are updated with your own tooling.
+- On managed nodes, size the agent's data directory for the cache, and check `harness.claude.*`. A profile's
+  `harness_version` pin is honoured: an exact pin is downloaded and never falls back to another version.
+
+**Known issues it ships with:** the §15 list still applies (see [LIMITATIONS.md](LIMITATIONS.md), including Harness
+distribution). In addition:
+- Downloaded Claude Code binaries are checked against the manifest's SHA-256 and size only, not a signature (K-14).
+- Hosted CI runners intermittently held SQLite's write lock for 260–750 ms in untouched packages; several merges
+  needed one rerun of the coverage or race job, and the hosted coverage step now uses 1 s (ADR-0062 update).
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, at `main` after the last merge, PR #44): `SM_TEST_TX_MAX=500ms make check`,
+`make web-check`, `make e2e` and `SM_SITE_A11Y=1 make site-check`, plus CI on every merged PR head. The results are
+in the release-prep PR description.
+
+## 17. v0.1.3 (2026-11-13)
+
+v0.1.2 was deployed on 2026-11-13 and rolled back to v0.1.1 the same day: nodes lost their connection about 15 s after
+every connect while central's memory grew to gigabytes. v0.1.3 fixes that. The operator authorized the release on
+2026-11-13 at 19:30Z (publish on tag). It is cut from `main` after PR #47 and PR #49 (the release-prep PR follows them)
+and tagged `v0.1.3`; the release workflow builds the archives, images and SBOMs, and the release is published once
+the workflow is green. It still makes **no production-readiness claim**: §1's verdict stands.
+
+**Contents since v0.1.2:**
+- the incident fix (ADR-0078, PR #49): a node reconnect could trigger a refetch storm in open browser tabs that
+  exhausted server memory. Unchanged run reports write nothing. Run lists leave out manifests and launch prompts
+  (`include=` opt-in). Every response must make progress (`http.write_idle_timeout`). A fresh tab starts the change
+  feed live (`watch?live=1`). The web UI batches, caches and aborts its queries;
+- the login rehash race (PR #47): a concurrent login could undo a password change or reset;
+- no Argon2id hashing inside the write lock (break-glass recovery, login rehash), and steadier tests under the
+  write-transaction guard (PR #47).
+
+The full list is in `CHANGELOG.md` `[0.1.3]`.
+
+| Item | v0.1.3 |
+|---|---|
+| Migrations since v0.1.2 | None. From v0.1.1: central 0048 and 0049, agent journal 0006 and 0007 (§16), all forward-only. |
+| Node protocol | 1.11, unchanged from v0.1.2. |
+| Configuration | New central setting `http.write_idle_timeout` (default `1m`, 1s to 10m). |
+| API | Run lists omit `manifest`, `launch.prompt` and `launch.system` unless `include=manifest,prompt`; `GET /watch?live=1`; a run's `observed_at` moves only on a change. |
+| Go | 1.27.4, unchanged. |
+
+**Upgrade notes** (also in the CHANGELOG):
+- From v0.1.1, the production version after the rollback: §16's notes apply in full (backup, central first, Claude
+  Code's self-update off on every node, managed-mode settings and disk).
+- From v0.1.2: no migration or protocol change.
+- API clients that read `manifest` or `launch.prompt` from run lists must pass `include=`.
+
+**Known issues it ships with:** §16's list still applies. In addition:
+- A node's journal is never pruned, so its hello still lists every run it has ever had. A reconnect now writes
+  nothing for unchanged runs, but reading them still grows with the node's history (follow-up).
+- The incident fix was verified on a local dev stack (simulated: a node with up to 2500 runs, non-reading clients,
+  Playwright request budgets), not against the production deployment.
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, at `main` after the last merge): `SM_TEST_TX_MAX=500ms make check`, `make web-check`,
+`make e2e` and `SM_SITE_A11Y=1 make site-check`, plus CI on every merged PR head. The results are in the release-prep
+PR description.
+
+## 18. v0.1.4 (2026-11-14)
+
+A patch release of three fixes on top of v0.1.3. The operator authorized it on 2026-11-14 (publish on tag): PR #51,
+PR #53 and PR #56, combined in one release PR with this prep, which merges all three. It is tagged `v0.1.4` on that
+merge; the release workflow builds the archives, images and SBOMs, and the release is published once the workflow is
+green. It still makes **no production-readiness claim**: §1's verdict stands.
+
+**Contents since v0.1.3:**
+- recordings over the message limit (PR #56): a burst of terminal output larger than the protocol's 4 MiB message
+  limit was sent as one message, central closed the connection, and the records were never sent again. The node now
+  splits recording shipments into messages of at most 1 MiB. After a reconnect it re-sends everything central has
+  not acknowledged before any newer output of that run, one catch-up at a time, so records sent just before a
+  disconnect no longer go missing either;
+- the web terminal's scrollback (ADR-0080, PR #53): ghostty-web's `scrollback` is a byte limit, so the old value of
+  10,000 kept about 300 rows at 160 columns. It is now 24 MiB: at least 10,000 rows at 160 columns;
+- missing lower migrations (PR #51): central and the node agent's journal refuse to open a database that already ran
+  a higher migration than a lower one in the binary, naming each missing migration, instead of skipping it silently
+  and failing the next upgrade with goose's "missing (out-of-order) migration".
+
+The full list is in `CHANGELOG.md` `[0.1.4]`.
+
+| Item | v0.1.4 |
+|---|---|
+| Migrations since v0.1.3 | None. Central stays at 0049, the agent journal at 0007. |
+| Node protocol | 1.11, unchanged. |
+| Configuration | No new setting. |
+| API | No change. |
+| Go | 1.27.4, unchanged. |
+
+**Upgrade notes** (also in the CHANGELOG):
+- From v0.1.3: no migration, protocol or setting change.
+- Upgrade central first and check that it starts (`/readyz`) before any node: a database with a missing lower
+  migration now refuses to start with `database is missing migrations lower than its schema version`. A database that
+  only ever ran released versions has none. The fix is a restore from below the lowest missing version, never a hand
+  edit of the version table. Each node agent runs the same check on its journal when it restarts.
+- From v0.1.1 or v0.1.2: §17's notes apply as well.
+
+**Known issues it ships with:** §17's list still applies.
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, on the release branch with all three PRs merged): `GOFLAGS=-p=2 SM_TEST_TX_MAX=500ms
+make check`, `make check-fast`, `make web-check`, `make site-check`, and the recording-shipment tests under the race
+detector three times, plus CI on the release PR's head. The results are in the release PR description.

@@ -87,7 +87,8 @@ func (svc *Service) requesterEnded(ctx context.Context, tx *store.Tx, a db.Human
 }
 
 // fallback is where a response goes when its run is gone: a live run of the successor role, else the space's control
-// when one is wanted (running, or being restarted by the supervisor), else the operators. Never to another run.
+// when one is wanted (running, or being restarted by the supervisor) or can be started for it (auto-start on and the
+// space has a control role or had a control run, ADR-0056), else the operators. Never to another run.
 func (svc *Service) fallback(ctx context.Context, tx *store.Tx, a db.HumanAction, p PolicyFields, notRun string) (route, error) {
 	if p.SuccessorRole != "" {
 		id, err := tx.Q.LiveRunOfRole(ctx, db.LiveRunOfRoleParams{SpaceID: a.SpaceID, Role: p.SuccessorRole, NotRun: notRun})
@@ -100,6 +101,11 @@ func (svc *Service) fallback(ctx context.Context, tx *store.Tx, a db.HumanAction
 	n, err := tx.Q.CountWantedControlRuns(ctx, a.SpaceID)
 	if err != nil {
 		return route{}, err
+	}
+	if n == 0 && svc.ControlAutostart != nil && svc.ControlAutostart(ctx, tx.Q, a.SpaceID) {
+		if n, err = tx.Q.SpaceHasControl(ctx, a.SpaceID); err != nil {
+			return route{}, err
+		}
 	}
 	if n > 0 {
 		return route{kind: TargetControl, role: "control"}, nil

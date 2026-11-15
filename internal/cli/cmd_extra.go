@@ -168,8 +168,21 @@ func (a *App) runExtra() []*cobra.Command {
 		a.cmd(opts{use: "end", short: "End a takeover (yours, or another operator's); automated input resumes", op: "end-takeover", scoped: true,
 			args: pos("run", "takeover")}),
 	)
+	// A run's terminal size (ADR-0075): per run, shared by every viewer, needs terminal:takeover.
+	termSize := group("terminal-size", "Resize a running run's terminal, or return it to the node's default (needs terminal:takeover)", nil,
+		a.cmd(opts{use: "set", short: "Hold a running run's terminal at a size (40-400 columns, 10-200 rows)", op: "set-terminal-size", scoped: true,
+			args: pos("run"), done: "Terminal resized.",
+			long: "The node resizes the program's terminal, so the agent's program redraws for it; everyone watching sees the run at this size. " +
+				"While the terminal is taken over only the holder resizes. The size lasts until it is cleared or the run ends. Audited.",
+			example: "spaceman run terminal-size set --space payments run_01… --cols 120 --rows 40",
+			form: func(f *form) {
+				f.integer("cols", "cols", "columns, 40-400 (required)").integer("rows", "rows", "rows, 10-200 (required)")
+			}}),
+		a.cmd(opts{use: "clear", short: "Return a run's terminal to the node's default size", op: "clear-terminal-size", scoped: true,
+			args: pos("run"), done: "Terminal back at the node's default size."}),
+	)
 	return []*cobra.Command{
-		takeover,
+		takeover, termSize,
 		a.cmd(opts{use: "input", short: "Send input to a run (delivered only while the program is idle, unless --force)", op: "send-input", scoped: true,
 			args: pos("run"), done: "Input accepted.",
 			form: func(f *form) {

@@ -50,7 +50,10 @@ for (const b of blocks) {
   }
 }
 const mermaidJS = createRequire(import.meta.url).resolve('mermaid/dist/mermaid.min.js');
-const browser = await chromium.launch();
+// SM_CHROMIUM_ARGS: extra launch arguments, space-separated, for hosts whose sandbox stops Chromium from starting (the
+// same hook as web/playwright.config.ts). Unset by default.
+const args = (process.env.SM_CHROMIUM_ARGS ?? '').split(/\s+/).filter(Boolean);
+const browser = await chromium.launch(args.length ? { args } : {});
 const page = await browser.newPage();
 await page.setContent('<!doctype html><html><body></body></html>');
 await page.addScriptTag({ path: mermaidJS });

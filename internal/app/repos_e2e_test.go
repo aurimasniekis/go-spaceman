@@ -26,6 +26,7 @@ import (
 // fetches and reports the remote, heads, changes, untracked files, unpushed commits and the worktree's owner, agents
 // read it through spaceman_repos_list, and removing a repository leaves its folder.
 func TestSpaceRepositoriesEndToEnd(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}

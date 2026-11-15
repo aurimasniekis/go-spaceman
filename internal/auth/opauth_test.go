@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,10 +41,10 @@ type fx struct {
 	kr  *keyring.Keyring
 }
 
-func newFx(t *testing.T) *fx {
+func newFx(t *testing.T, opts ...storetest.Option) *fx {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC))
-	s := storetest.Open(t, storetest.WithClock(clk))
+	s := storetest.Open(t, append([]storetest.Option{storetest.WithClock(clk)}, opts...)...)
 	kr := keyringtest.Load(t, s)
 	return &fx{t: t, ctx: context.Background(), clk: clk, s: s, kr: kr,
 		svc: New(s, kr, audit.NewWriter(kr), eventbus.New(), mustAuthz(t, s), Options{Clock: clk})}
@@ -128,6 +129,7 @@ func (f *fx) loginEnrolled(email string) (string, *Principal) {
 
 // HP-AUTH-002/003
 func TestPasswordHashing(t *testing.T) {
+	t.Parallel()
 	pw, err := NormalizePassword(strongPW, 12)
 	must(t, err)
 	h, err := HashPassword(pw, CurrentParams)
@@ -169,6 +171,7 @@ func TestPasswordHashing(t *testing.T) {
 }
 
 func TestArgon2Production(t *testing.T) {
+	t.Parallel()
 	p := ParamSets[1]
 	if p.Memory < 64*1024 || p.Time < 3 {
 		t.Fatalf("production parameters weakened: %+v", p)
@@ -188,6 +191,7 @@ func TestArgon2Production(t *testing.T) {
 
 // RFC 6238 Appendix B vectors (SHA-1), truncated to 6 digits.
 func TestTOTPVectors(t *testing.T) {
+	t.Parallel()
 	secret := []byte("12345678901234567890")
 	for ts, want := range map[int64]string{59: "287082", 1111111109: "081804", 1111111111: "050471", 1234567890: "005924", 2000000000: "279037", 20000000000: "353130"} {
 		if got := TOTPCode(secret, ts/30); got != want {
@@ -214,6 +218,7 @@ func TestTOTPVectors(t *testing.T) {
 
 // HP-AUTH-001/008: bootstrap once; first admin must enroll MFA before using the console.
 func TestBootstrapAndForcedEnrollment(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	if !slices.Equal(roles(op), []authz.Role{RoleAdministrator}) || op.Email != "admin@example.com" || !op.MFARequired || op.ProvisionedVia != "bootstrap" {
@@ -243,6 +248,7 @@ func TestBootstrapAndForcedEnrollment(t *testing.T) {
 }
 
 func TestLoginThrottlingAndEnumeration(t *testing.T) {
+	// Not parallel: it swaps the package-level loginVerify.
 	f := newFx(t)
 	f.bootstrap()
 	n := 0
@@ -271,7 +277,7 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 	must(t, f.svc.ClearThrottle(f.ctx, audit.System, op.ID))
 	// Unknown accounts do the same work as known ones: exactly one Argon2id verification, against a hash with the
 	// same parameters (memory, time, threads, key length) as the real account's (HP-AUTH-005). This is the
-	// deterministic check; the timing comparison below confirms it on the clock.
+	// deterministic check, run everywhere; TestLoginTimingWallClock confirms it on the clock when opted in (ADR-0071).
 	var verified []string
 	loginVerify = func(pw []byte, phc string) (bool, error) {
 		verified = append(verified, phc)
@@ -298,16 +304,64 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 	if params(verified[0]) != params(verified[1]) {
 		t.Fatalf("dummy hash parameters %s differ from the account's %s", params(verified[1]), params(verified[0]))
 	}
-	loginVerify = VerifyPassword
-	must(t, f.svc.ClearThrottle(f.ctx, audit.System, op.ID))
+}
 
-	// Timing: medians of interleaved attempts must be within 25% (Hallpass HP-AUTH-005). Interleaving makes load drift
-	// affect both kinds alike; a machine under very heavy load (load average above 100 was seen) can still skew one
-	// round, so up to three rounds are measured and one in range passes. A missing dummy hash would make unknown
-	// accounts orders of magnitude faster in every round, which the check above also rules out.
-	if testing.Short() {
-		return
+// TestLoginReadsSameForUnknownAccounts checks that a failed login runs the same database reads, in the same order,
+// whether or not the account exists, including the local credential lookup (Hallpass HP-AUTH-005, ADR-0071). A read
+// on the known path only would make unknown accounts measurably faster.
+func TestLoginReadsSameForUnknownAccounts(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var reads []string
+	recording := false
+	f := newFx(t, storetest.WithReadObserver(func(q string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if recording {
+			name, _, _ := strings.Cut(strings.TrimPrefix(q, "-- name: "), " ")
+			reads = append(reads, name)
+		}
+	}))
+	f.bootstrap()
+	failed := func(email, ip string) []string {
+		mu.Lock()
+		reads, recording = nil, true
+		mu.Unlock()
+		if _, err := f.svc.Login(f.ctx, LoginInput{Email: email, Password: "wrong password!!", Meta: SessionMeta{IP: ip}}); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("login %s: %v, want invalid credentials", email, err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		recording = false
+		return reads
 	}
+	known, unknown := failed("admin@example.com", "203.0.113.1"), failed("nobody@example.com", "203.0.113.2")
+	if !slices.Contains(known, "GetLocalCredential") {
+		t.Fatalf("known-account login reads %v, want a GetLocalCredential read", known)
+	}
+	if !slices.Equal(known, unknown) {
+		t.Fatalf("failed-login reads differ:\nknown   %v\nunknown %v", known, unknown)
+	}
+}
+
+// TestLoginTimingWallClock compares the wall-clock time of failed logins for a known and an unknown account (Hallpass
+// HP-AUTH-005). It is opt-in (`make test-login-timing`, SPACEMAN_LOGIN_TIMING=1) and runs only without the race
+// detector and coverage instrumentation, alone on the machine (ADR-0071): on a loaded machine the CPU-bound Argon2id
+// check varies by more than the 25% band in either direction, so the result says more about the load than about the
+// code. The deterministic check in TestLoginThrottlingAndEnumeration (exactly one verification, against a dummy hash
+// with the account's parameters) runs everywhere.
+func TestLoginTimingWallClock(t *testing.T) {
+	if os.Getenv("SPACEMAN_LOGIN_TIMING") != "1" {
+		t.Skip("wall-clock timing comparison is opt-in: make test-login-timing (ADR-0071)")
+	}
+	if raceEnabled || testing.CoverMode() != "" {
+		t.Skip("wall-clock timing comparison runs without -race and -cover (ADR-0071)")
+	}
+	f := newFx(t)
+	f.bootstrap()
+	// Medians of interleaved attempts must be within 25%. Interleaving makes load drift affect both kinds alike; up to
+	// three rounds are measured and one in range passes. A missing dummy hash would make unknown accounts orders of
+	// magnitude faster in every round.
 	round := func(r int) (known, unknown time.Duration) {
 		var kd, ud []time.Duration
 		for i := range 21 {
@@ -338,6 +392,7 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 }
 
 func TestSessionLifecycle(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	tok, p := f.loginEnrolled("admin@example.com")
@@ -394,6 +449,7 @@ func TestSessionLifecycle(t *testing.T) {
 
 // HP-AUTH-015: the last enabled administrator cannot be disabled or demoted.
 func TestLastAdminProtection(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -415,6 +471,7 @@ func TestLastAdminProtection(t *testing.T) {
 
 // HP-AUTH-009/010/011: invitations, reset, change and session invalidation.
 func TestInviteResetChange(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -458,6 +515,7 @@ func TestInviteResetChange(t *testing.T) {
 
 // HP-AUTH-007: recovery codes are single use.
 func TestRecoveryCodes(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	res, err := f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW})
@@ -494,6 +552,7 @@ func TestRecoveryCodes(t *testing.T) {
 
 // HP-AUTH-016: break-glass issues a recovery login; it is audited.
 func TestBreakGlass(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	tok, _, err := f.svc.IssueRecoveryLogin(f.ctx, "", "rescue@example.com")
@@ -536,6 +595,7 @@ func TestBreakGlass(t *testing.T) {
 
 // HP-AUTH-018: secrets never appear in audit details or stored plaintext.
 func TestNoSecretsStored(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	f.loginEnrolled("admin@example.com")
@@ -557,6 +617,7 @@ func TestNoSecretsStored(t *testing.T) {
 }
 
 func TestMisc(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -594,6 +655,7 @@ func itoa(n int) string {
 }
 
 func TestIPThrottle(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	var err error
@@ -608,6 +670,7 @@ func TestIPThrottle(t *testing.T) {
 // HP-AUTH-011: pending invitations are listed (never with the token) and can be revoked; a revoked invitation cannot
 // be accepted, and revocation is audited.
 func TestInvitationRevocation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	token, _, err := f.svc.Invite(f.ctx, audit.System, "new@example.com", grants(RoleViewer))
@@ -634,5 +697,100 @@ func TestInvitationRevocation(t *testing.T) {
 	}
 	if err := f.svc.RevokeInvitation(f.ctx, audit.System, "zz-not-hex"); err == nil {
 		t.Fatal("malformed id accepted")
+	}
+}
+
+// A password hash stored with older parameters is replaced at the next successful login. The new hash is computed
+// before the login's write transaction, which only stores it (HP-DB-004).
+func TestLoginRehashesOldParams(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	op := f.bootstrap()
+	old, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+	must(t, err)
+	// A light hash labeled with another parameter version (the production set would only slow the test down).
+	phc, err := HashPassword([]byte(strongPW), CurrentParams)
+	must(t, err)
+	must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+		return tx.Q.UpsertLocalCredential(f.ctx, db.UpsertLocalCredentialParams{UserID: op.ID, PasswordPhc: phc,
+			ParamsVersion: int64(CurrentParams.Version) + 1, ChangedAt: old.ChangedAt, MustChange: old.MustChange})
+	}))
+
+	_, err = f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW})
+	must(t, err)
+	cred, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+	must(t, err)
+	if cred.ParamsVersion != int64(CurrentParams.Version) || cred.PasswordPhc == phc {
+		t.Fatalf("credential not rehashed: version %d, same hash %v", cred.ParamsVersion, cred.PasswordPhc == phc)
+	}
+	if ok, err := VerifyPassword([]byte(strongPW), cred.PasswordPhc); !ok || err != nil {
+		t.Fatalf("rehashed password does not verify: %v %v", ok, err)
+	}
+	if cred.ChangedAt != old.ChangedAt {
+		t.Fatal("a rehash changed the password's changed_at")
+	}
+}
+
+// A password change or reset that commits after a login verified the old password, but before the login's
+// transaction, wins: the login fails without opening a session, and its hash upgrade never writes the old password
+// back. The change is made from the verification hook, so it lands exactly in that window. Not parallel: it replaces
+// loginVerify.
+func TestLoginLosesToConcurrentPasswordChange(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rehash bool
+	}{{"current parameters", false}, {"old parameters (rehash)", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFx(t)
+			op := f.bootstrap()
+			old, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+			must(t, err)
+			if tc.rehash {
+				must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+					return tx.Q.UpsertLocalCredential(f.ctx, db.UpsertLocalCredentialParams{UserID: op.ID, PasswordPhc: old.PasswordPhc,
+						ParamsVersion: int64(CurrentParams.Version) + 1, ChangedAt: old.ChangedAt})
+				}))
+			}
+			const newPW = "a completely different passphrase"
+			newPHC, err := HashPassword([]byte(newPW), CurrentParams)
+			must(t, err)
+
+			var changed bool
+			loginVerify = func(pw []byte, phc string) (bool, error) {
+				ok, err := VerifyPassword(pw, phc)
+				if !changed {
+					changed = true
+					must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+						if err := tx.Q.UpsertLocalCredential(f.ctx, db.UpsertLocalCredentialParams{UserID: op.ID, PasswordPhc: newPHC,
+							ParamsVersion: int64(CurrentParams.Version), ChangedAt: tx.NowMicros()}); err != nil {
+							return err
+						}
+						return f.svc.revokeUserSessionsTx(f.ctx, tx, op.ID, "password_reset", nil)
+					}))
+				}
+				return ok, err
+			}
+			t.Cleanup(func() { loginVerify = VerifyPassword })
+
+			if _, err := f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW}); !errors.Is(err, ErrInvalidCredentials) {
+				t.Fatalf("login with the replaced password: %v, want ErrInvalidCredentials", err)
+			}
+			if !changed {
+				t.Fatal("the password was never changed during the login")
+			}
+			cred, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+			must(t, err)
+			if ok, _ := VerifyPassword([]byte(newPW), cred.PasswordPhc); !ok {
+				t.Fatal("the new password no longer verifies: the login wrote the old one back")
+			}
+			if ok, _ := VerifyPassword([]byte(strongPW), cred.PasswordPhc); ok {
+				t.Fatal("the old password verifies after the change")
+			}
+			var sessions int
+			must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT COUNT(*) FROM web_sessions WHERE user_id = ?`, op.ID).Scan(&sessions))
+			if sessions != 0 {
+				t.Fatalf("%d sessions created by a login with the replaced password", sessions)
+			}
+		})
 	}
 }

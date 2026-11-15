@@ -27,6 +27,11 @@ type Deadline struct {
 // idleWait bounds the wait when nothing is scheduled; any change kicks the loop earlier.
 const idleWait = time.Hour
 
+// retryFirst and retryMax bound the backoff after a round in which a job failed: what it left undone (a stranded
+// response, an expiry) is tried again soon, not only at the next deadline or kick, which can be an hour away, and a
+// job that keeps failing is not retried in a tight loop. While backing off, other deadlines wait for the retry too.
+var retryFirst, retryMax = time.Second, time.Minute
+
 // Kick asks the deadline loop to look again (after a commit that may have changed the earliest deadline, a run that
 // ended or turned idle). It never blocks.
 func (svc *Service) Kick() {
@@ -42,6 +47,7 @@ func (svc *Service) Kick() {
 func (svc *Service) Run(ctx context.Context, extra ...Deadline) {
 	t := time.NewTimer(0)
 	defer t.Stop()
+	retry := time.Duration(0)
 	for {
 		select {
 		case <-ctx.Done():
@@ -55,8 +61,17 @@ func (svc *Service) Run(ctx context.Context, extra ...Deadline) {
 			}
 		case <-t.C:
 		}
-		svc.Tick(ctx, extra...)
-		t.Reset(svc.untilNext(ctx, extra))
+		// After a failed round the backoff alone sets the wait: the failing job's deadline is usually still due, so
+		// waiting for the earliest deadline would run the next round at once, over and over. A kick still wakes it.
+		var wait time.Duration
+		if svc.tick(ctx, extra...) {
+			retry = min(max(2*retry, retryFirst), retryMax)
+			wait = retry
+		} else {
+			retry = 0
+			wait = svc.untilNext(ctx, extra)
+		}
+		t.Reset(wait)
 	}
 }
 
@@ -69,18 +84,23 @@ func (svc *Service) logger() *slog.Logger {
 
 // Tick does everything that is due now: expiry, reminders, escalation, routing of stranded notifications, and the
 // extra deadlines.
-func (svc *Service) Tick(ctx context.Context, extra ...Deadline) {
+func (svc *Service) Tick(ctx context.Context, extra ...Deadline) { svc.tick(ctx, extra...) }
+
+// tick is Tick, reporting whether a job failed.
+func (svc *Service) tick(ctx context.Context, extra ...Deadline) (failed bool) {
 	log := svc.logger()
 	jobs := []Deadline{{Name: "expire", Due: svc.Expire}, {Name: "remind", Due: svc.Remind}, {Name: "escalate", Due: svc.Escalate},
 		{Name: "reroute", Due: svc.reroute}}
 	for _, j := range append(jobs, extra...) {
 		n, err := j.Due(ctx)
 		if err != nil && ctx.Err() == nil {
+			failed = true
 			log.Warn("human deadline", slog.String("job", j.Name), obs.Err(err))
 		} else if n > 0 {
 			log.Info("human deadline", slog.String("job", j.Name), slog.Int("count", n))
 		}
 	}
+	return failed
 }
 
 // NextDeadline is the earliest expiry, reminder, escalation or notification hold; zero when nothing is scheduled.

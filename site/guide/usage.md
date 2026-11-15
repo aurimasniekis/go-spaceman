@@ -13,7 +13,13 @@ SpaceMan keeps three records of a run apart:
 - **Claude Code**: SpaceMan reads the run's session transcript and counts tokens per model: input, output, cache
   writes and cache reads. Claude Code also records its own **cost estimate**; SpaceMan shows it with what it assumes
   (API list prices; subscription accounts are not billed per token). SpaceMan has no price list of its own.
-- **Codex**: its records are not verified yet, so its usage is **unknown**.
+- **Codex**: its records are not verified yet, so its usage is **unknown**, unless the run went through the Harbor
+  Pilot gateway (below).
+- **Runs through [Harbor Pilot](/operators/harbor-pilot#budgets-and-usage)**: after the run ends, SpaceMan reads what
+  the gateway recorded for it (requests, tokens per model, Harbor Pilot's cost) and shows it as **gateway-observed**.
+  It becomes the run's usage, labelled "from Harbor Pilot", only when the harness reported none (Codex); Claude Code's
+  own figures are kept and the gateway's are shown beside them. It is read a few times over the first 10 minutes after
+  the end and is final after the last read.
 
 Unknown usage is never shown as zero. While a run is going its usage is "so far"; it is final when the run ends.
 

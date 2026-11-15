@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -37,10 +38,14 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/dream"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/events"
+	eventtemplate "github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	"github.com/aurimasniekis/go-spaceman/internal/gitkeys"
+	"github.com/aurimasniekis/go-spaceman/internal/harborpilot"
+	"github.com/aurimasniekis/go-spaceman/internal/httpguard"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/kb"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
@@ -58,6 +63,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/retention"
 	"github.com/aurimasniekis/go-spaceman/internal/schedule"
 	"github.com/aurimasniekis/go-spaceman/internal/spaceexport"
+	"github.com/aurimasniekis/go-spaceman/internal/spacemanmcp"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
@@ -66,19 +72,22 @@ import (
 
 // Central holds the running central service.
 type Central struct {
-	Cfg     *config.Config
-	Log     *slog.Logger
-	Clock   clock.Clock
-	Store   *store.Store
-	Keyring *keyring.Keyring
-	Audit   *audit.Writer
-	Authz   *authz.Engine
-	Auth    *auth.Service
-	Bus     *eventbus.Bus
-	Changes *changefeed.Recorder
-	Metrics *metrics.Metrics
-	Health  *health.Checker
-	Fleet   *fleet.Service
+	// StartedAt is when this central opened; BootID identifies this start (the System page, SM-OBS-006).
+	StartedAt time.Time
+	BootID    string
+	Cfg       *config.Config
+	Log       *slog.Logger
+	Clock     clock.Clock
+	Store     *store.Store
+	Keyring   *keyring.Keyring
+	Audit     *audit.Writer
+	Authz     *authz.Engine
+	Auth      *auth.Service
+	Bus       *eventbus.Bus
+	Changes   *changefeed.Recorder
+	Metrics   *metrics.Metrics
+	Health    *health.Checker
+	Fleet     *fleet.Service
 	// Artifacts is the artifact store (SM-STORE-002, ADR-0048): attachment content, finished recordings and transcripts.
 	Artifacts artifacts.Store
 	// Attachments stores uploaded files (SM-ATT-*).
@@ -96,10 +105,20 @@ type Central struct {
 	Supervisor *control.Supervisor
 	// GitKeys holds shared Git SSH keys (ADR-0058).
 	GitKeys *gitkeys.Service
+	// HarborPilot holds the Harbor Pilot connection and space settings (ADR-0060).
+	HarborPilot *harborpilot.Service
+	// HarborPilotRuns is the run-token lifecycle: routing, mint-or-reuse at dispatch, revocation (ADR-0060, HP-T3).
+	HarborPilotRuns *harborpilot.Lifecycle
+	// HarborPilotBudgets reads Harbor Pilot budget status: the early launch refusal and the Limits page (ADR-0060, HP-T5).
+	HarborPilotBudgets *harborpilot.Budgets
+	// HarborPilotWaits estimates gateway usage-limit holds from the quota board and budget status (ADR-0079 decision 9).
+	HarborPilotWaits *harborpilot.GatewayWaits
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
 	Gateway *gateway.Service
+	// mcpEndpoint serves api.MCPPath (ADR-0063); set by wireSpacemanMCP.
+	mcpEndpoint *spacemanmcp.Endpoint
 	// Approvals gates operations that policies make need a person's approval (ADR-0024).
 	Approvals *approvals.Service
 	// Memory preserves role memory synced from nodes (ADR-0025).
@@ -147,6 +166,11 @@ type Options struct {
 	Environ []string
 	// StoreBusyTimeout overrides SQLite's busy timeout (fault tests of lock contention; 0 keeps the default).
 	StoreBusyTimeout time.Duration
+	// StoreReaders overrides the store's reader pool size (0 keeps the default, max(4, GOMAXPROCS)). Opening the store
+	// opens and checks every reader connection, which on a many-core host under the race detector takes seconds.
+	StoreReaders int
+	// StaleRunGrace overrides the stale-run sweeper's grace period (tests; 0 keeps the default, ADR-0074).
+	StaleRunGrace time.Duration
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -159,11 +183,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	m := metrics.New()
 	st, err := store.Open(ctx, store.Options{DataDir: cfg.DataDir, Logger: obs.Component(log, "store"), Clock: o.Clock, Metrics: m,
-		BusyTimeout: o.StoreBusyTimeout, AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
+		BusyTimeout: o.StoreBusyTimeout, Readers: o.StoreReaders, AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
 	if err != nil {
 		return nil, err
 	}
-	c := &Central{Cfg: cfg, Log: log, Clock: o.Clock, Store: st, Metrics: m, Bus: eventbus.New()}
+	c := &Central{Cfg: cfg, Log: log, Clock: o.Clock, Store: st, Metrics: m, Bus: eventbus.New(), StartedAt: o.Clock.Now().UTC(), BootID: ids.New(ids.Boot)}
 	ob := cfg.Events.Outbound
 	c.Outbox = outbox.New(st, outbox.Options{Enabled: ob.Enabled, Source: ob.Source, URL: ob.URL, Clock: o.Clock, Metrics: m, Log: log,
 		Retention: ob.Retention.D()})
@@ -203,9 +227,18 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		_ = st.Close()
 		return nil, err
 	}
+	// Queued gateway revocations are done on the deadline timer, woken after the commit that queued them.
+	wakeDeadlines := func() {
+		if c.Human != nil {
+			c.Human.Kick()
+		}
+	}
+	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{Log: obs.Component(log, "harborpilot"), Wake: wakeDeadlines})
+	c.HarborPilotBudgets = harborpilot.NewBudgets(c.HarborPilot, harborpilot.BudgetsOptions{})
+	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{Metrics: m, Budget: c.HarborPilotBudgets})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
-		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
+		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock, WakeDeadlines: wakeDeadlines, StaleRunGrace: o.StaleRunGrace,
 		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
@@ -218,14 +251,20 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				return nil, err
 			}
 			in.Kind, in.Harness, in.Model, in.Settings, in.SystemText = r.Kind, r.Harness, r.Model, r.Settings, r.SystemText
+			in.ClaudeSettings, in.HarnessVersion = r.ClaudeSettings, r.HarnessVersion
 			in.RecordingMaxBytes = c.Limits.Value(ctx, st.R(), spaceID, limits.RecordingQuota)
+			if lv, err := c.Limits.For(ctx, st.R(), spaceID); err == nil {
+				if cols, rows, ok := lv.TerminalSize(); ok {
+					in.TerminalSize = &fleet.TerminalSize{Cols: cols, Rows: rows}
+				}
+			}
 			in.Skills = nil
 			for _, sk := range r.Skills {
 				in.Skills = append(in.Skills, proto.Skill{Name: sk.Slug, Version: sk.Number, SHA256: sk.SHA256, Files: sk.Files})
 			}
 			if c.Gateway != nil {
 				// What the role is granted at launch; every call is checked again against the grants of that moment.
-				mcp, err := c.Gateway.ForManifest(ctx, spaceID, in.Role)
+				mcp, err := c.Gateway.ForManifest(ctx, spaceID, in.Role, in.Kind)
 				if err != nil {
 					return nil, err
 				}
@@ -240,6 +279,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		OnSpacePurged: func(ctx context.Context, runIDs []string) {
 			if c.Usage != nil {
 				c.Usage.PurgeTranscripts(ctx, runIDs)
+			}
+		},
+		OnRunLaunched: func(string) {
+			if c.Human != nil {
+				c.Human.Kick() // a response held for the run's instance goes to it (SM-HUM-009)
 			}
 		},
 		OnRunEnded: func(runID string) {
@@ -272,6 +316,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			if c.Supervisor != nil {
 				c.Supervisor.OnSpaceState(spaceID, state) // notices deferred while paused go out on resume
 			}
+			if state == "active" && c.Notifier != nil {
+				c.Notifier.Kick() // work that waited while paused starts control now, not at the next slow sweep (ADR-0056)
+			}
 		},
 		OnRunIdle: func(runID string) {
 			if c.Notifier != nil {
@@ -283,6 +330,25 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			if c.Human != nil {
 				c.Human.Kick() // a resumed instance may take a held response
 			}
+		},
+		OnRunLimitTx: func(ctx context.Context, tx *store.Tx, r *fleet.Run, ended, opened *fleet.RunLimit) error {
+			if c.Supervisor == nil {
+				return nil
+			}
+			return c.Supervisor.OnRunLimitTx(ctx, tx, r, ended, opened) // control told once per limit (ADR-0079)
+		},
+		// Parked runs (ADR-0079 decisions 4–6): control told once per park, resume and release; the task follows its run.
+		OnLimitWaitTx: func(ctx context.Context, tx *store.Tx, ev fleet.LimitWaitEvent) error {
+			if c.Supervisor == nil {
+				return nil
+			}
+			return c.Supervisor.OnLimitWaitTx(ctx, tx, ev)
+		},
+		RepointTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, fromRun, toRun string) (bool, error) {
+			return c.Queue.RepointRunTaskTx(ctx, tx, actor, taskID, fromRun, toRun)
+		},
+		ReleaseTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (string, error) {
+			return c.Queue.ReleaseRunTaskTx(ctx, tx, actor, taskID, runID, reason)
 		},
 		OnCommandAck: func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error {
 			if kind == proto.CmdDreamDone {
@@ -296,7 +362,27 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return c.Notifier.OnCommandAck(ctx, tx, commandID, result)
 		},
-		Outbox: c.Outbox, Admit: c.Limits.Admit})
+		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines,
+		// ADR-0079: failover and the probe backoff cap are space limits.
+		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
+			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter}
+			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
+				out.Failover = v.Get(limits.UsageLimitFailover) != 0
+				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
+					out.KeepAliveMax = time.Duration(m) * time.Minute
+				}
+				if h := v.Get(limits.UsageLimitMaxWait); h > 0 {
+					out.MaxWait = time.Duration(h) * time.Hour
+				}
+				out.NotifyAfter = time.Duration(v.Get(limits.UsageLimitNotifyAfter)) * time.Hour // 0: never
+			}
+			return out
+		},
+		OnHoldsCleared: func(hs []fleet.ClearedHold) {
+			if c.Supervisor != nil {
+				c.Supervisor.OnHoldsCleared(hs)
+			}
+		}})
 	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
 	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
 		if run.Launch.AccountRef == "" {
@@ -327,6 +413,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return v.Get(limits.HumanPending), v.Get(limits.HumanPendingPerRun)
 	}
 	c.Human.Log = obs.Component(log, "human")
+	// A response whose run is gone goes to a control auto-start can start (ADR-0056).
+	c.Human.ControlAutostart = func(ctx context.Context, q *db.Queries, spaceID string) bool {
+		v, err := c.Limits.For(ctx, q, spaceID)
+		return err == nil && v.Get(limits.ControlAutostart) != 0
+	}
 	c.Messages = messages.New(st, c.Audit, c.Changes)
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
@@ -427,7 +518,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
 		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
-	evOpts := events.Options{Clock: o.Clock, Metrics: m, RateFor: func(ctx context.Context, spaceID string) int64 {
+	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)
+	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), OnAccepted: c.gatewayQuotaKick, RateFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
 	}, DepthFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.EventDepth) // bounded automation across installations (SM-EVT-016)
@@ -456,7 +548,45 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	)
 	_ = m.Register(c.Health.Collector())
 	m.ObserveFilesystem(metrics.VolumeData, cfg.DataDir)
+	// SpaceMan MCP servers (ADR-0063): SpaceMan's own API as gateway tools, run in process with each server's internal
+	// token. Built last, from the complete API.
+	if err := c.wireSpacemanMCP(); err != nil { //nolint:contextcheck // builds handlers; each request brings its own context
+		_ = st.Close()
+		return nil, fmt.Errorf("spaceman mcp: %w", err)
+	}
 	return c, nil
+}
+
+// SpacemanCatalog returns the SpaceMan MCP tool catalog (nil before wireSpacemanMCP).
+func (c *Central) SpacemanCatalog() *spacemanmcp.Catalog {
+	if c.mcpEndpoint == nil {
+		return nil
+	}
+	return c.mcpEndpoint.Cat
+}
+
+// wireSpacemanMCP gives the gateway its SpaceMan MCP backend: the tool catalog generated from this build's API and the
+// in-process handler that runs the tools.
+func (c *Central) wireSpacemanMCP() error {
+	d := c.APIDeps()
+	cat, err := spacemanmcp.Build(api.Register(http.NewServeMux(), d).OpenAPI(), d.RuleFor)
+	if err != nil {
+		return err
+	}
+	c.Gateway.Tokens = c.Auth
+	h := d.InProcessHandler()
+	c.Gateway.Spaceman = &spacemanmcp.Backend{Cat: cat, Handler: h, Tokens: c.Auth}
+	// The external MCP endpoint (ADR-0063 §External endpoint): the same catalog and executor for operators' own MCP
+	// clients, behind the API's guard (api.MCPPath).
+	c.mcpEndpoint = &spacemanmcp.Endpoint{Cat: cat, Handler: h, Tokens: c.Auth, Approvals: c.Approvals, Authz: c.Authz,
+		Log: obs.Component(c.Log, "mcp_endpoint"),
+		Record: func(ctx context.Context, ev audit.Event) error {
+			return c.Store.W().TxNamed(ctx, "mcp_endpoint.call", func(tx *store.Tx) error {
+				_, err := c.Audit.Append(ctx, tx, ev)
+				return err
+			})
+		}}
+	return nil
 }
 
 func (c *Central) openKeyring(ctx context.Context, environ []string) error {
@@ -477,6 +607,12 @@ const (
 	dataReservePercent = 2
 )
 
+// shutdownGrace is how long Close lets background gateway mints, node connections and the work those started (memory
+// syncs, usage, transcripts, tool calls) finish before it cancels the mints and closes the store. The two waits run
+// side by side under this one grace, so a stop takes at most shutdown.timeout (30 s by default) + 5 s + the store's
+// 8 s = 43 s, inside the units' TimeoutStopSec=45s.
+const shutdownGrace = 5 * time.Second
+
 // Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
 	if c.Backups != nil {
@@ -486,7 +622,11 @@ func (c *Central) Close() error {
 		c.Retention.Wait()
 	}
 	if c.Fleet != nil {
-		c.Fleet.Hub().CloseAll("central shutting down")
+		hub := c.Fleet.Hub()
+		var wg sync.WaitGroup
+		wg.Go(func() { hub.StopMints(shutdownGrace) })
+		hub.Shutdown("central shutting down", shutdownGrace)
+		wg.Wait()
 		c.Fleet.Recordings().Close()
 	}
 	if c.Gateway != nil {
@@ -507,11 +647,15 @@ func (c *Central) APIDeps() *api.Deps {
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
+		CatchUps: make(chan struct{}, max(1, c.Cfg.HTTP.CatchUpConcurrency)), CatchUpWait: c.Cfg.HTTP.CatchUpWait.D(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources())},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
+	if c.mcpEndpoint != nil {
+		d.MCP = c.mcpEndpoint
+	}
 	return d
 }
 
@@ -553,6 +697,35 @@ func (c *Central) attentionSources() *api.AttentionSources {
 	}
 }
 
+// systemSources are the inputs of the System page (SM-OBS-006): what central learned at start, node connections, storage
+// health and live streams. No key material or key paths.
+func (c *Central) systemSources() *api.SystemSources {
+	return &api.SystemSources{
+		StartedAt: c.StartedAt, BootID: c.BootID, PublicURL: c.Cfg.PublicURL, DataDir: c.Cfg.DataDir,
+		Schema: func(ctx context.Context) (int64, int64, error) {
+			return store.SchemaVersions(ctx, c.Store.ReadDB(), store.EmbeddedMigrations())
+		},
+		Nodes: func(ctx context.Context) (active, connected int, err error) {
+			l, err := c.Fleet.ListNodes(ctx)
+			if err != nil {
+				return 0, 0, err
+			}
+			for _, n := range l {
+				if n.State == "active" {
+					active++
+					if n.Connected {
+						connected++
+					}
+				}
+			}
+			return active, connected, nil
+		},
+		Storage:     c.attentionSources(),
+		StoreSizes:  c.Store.Sizes,
+		LiveStreams: c.Metrics.SSEClients,
+	}
+}
+
 // Handler is the public listener's handler: the API under /api/ and the web UI elsewhere.
 func (c *Central) Handler(d *api.Deps) http.Handler {
 	mux := http.NewServeMux()
@@ -567,7 +740,10 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 		})
 	}
 	mux.Handle("/", ui)
-	return mux
+	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
+	// reads, with central keeping every response): writes must make progress. A client that declares a body and doesn't
+	// send it must not hold a connection either: body reads must make progress, and a refusal doesn't drain the body.
+	return httpguard.WriteProgress(httpguard.ReadProgress(mux, c.Cfg.HTTP.ReadIdleTimeout.D()), c.Cfg.HTTP.WriteIdleTimeout.D())
 }
 
 // ManagementHandler serves /healthz, /readyz and /metrics (SM-OBS-002). Bind it to a private address.
@@ -579,14 +755,21 @@ func (c *Central) ManagementHandler() http.Handler {
 	return mux
 }
 
-// Serve runs every listener until ctx ends, then shuts down gracefully within the configured timeout.
-func (c *Central) Serve(ctx context.Context) error {
-	d := c.APIDeps()
-	srv := &http.Server{Addr: c.Cfg.HTTP.Listen, Handler: c.Handler(d), ReadHeaderTimeout: c.Cfg.HTTP.ReadHeaderTimeout.D(), //nolint:contextcheck // handlers take their context from each request
+// publicServer is the public listener's server. It has no whole-request ReadTimeout or WriteTimeout, which would cut
+// event streams: the handler bounds body reads and response writes by progress instead (httpguard), and IdleTimeout
+// bounds a kept-alive connection waiting for its next request.
+func (c *Central) publicServer(ctx context.Context) *http.Server {
+	srv := &http.Server{Addr: c.Cfg.HTTP.Listen, Handler: c.Handler(c.APIDeps()), ReadHeaderTimeout: c.Cfg.HTTP.ReadHeaderTimeout.D(), IdleTimeout: c.Cfg.HTTP.IdleTimeout.D(), //nolint:contextcheck // handlers take their context from each request
 		ErrorLog: slog.NewLogLogger(obs.Component(c.Log, "http").Handler(), slog.LevelWarn), BaseContext: func(net.Listener) context.Context { return ctx }}
 	if c.Cfg.HTTP.TLSCertFile != "" {
 		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
+	return srv
+}
+
+// Serve runs every listener until ctx ends, then shuts down gracefully within the configured timeout.
+func (c *Central) Serve(ctx context.Context) error {
+	srv := c.publicServer(ctx)
 	errc := make(chan error, 2)
 	go func() {
 		var err error
@@ -629,6 +812,19 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "schedules", Next: c.Schedules.Next, Due: c.Schedules.Due},
 		human.Deadline{Name: "task_deadlines", Next: c.Limits.NextDeadline, Due: c.Limits.Deadlines},
 		human.Deadline{Name: "xspace", Next: c.XSpace.NextDeadline, Due: c.XSpace.Expire},
+		// Harbor Pilot run tokens (ADR-0060): queued revocations, and runs a node left unknown past its lease.
+		human.Deadline{Name: "gateway_revocations", Next: c.HarborPilotRuns.NextRevocation, Due: c.HarborPilotRuns.RevokeDue},
+		human.Deadline{Name: "gateway_lease_sweep", Next: c.Fleet.NextGatewayLeaseSweep, Due: c.Fleet.SweepGatewayLeases},
+		// Runs counted as live whose process is gone (a node agent restart, a lost lease) end as lost (ADR-0074).
+		human.Deadline{Name: "stale_run_sweep", Next: c.Fleet.NextStaleRunSweep, Due: c.Fleet.SweepStaleRuns},
+		// Runs at a usage limit: parked after the keep-alive, resumed at the reset, released after the maximum wait (ADR-0079).
+		human.Deadline{Name: "limit_waits", Next: c.Fleet.NextLimitWait, Due: c.Fleet.LimitWaitsDue},
+		// Gateway usage-limit holds: their reset estimated from Harbor Pilot, re-read every 15 minutes (ADR-0079 decision 9).
+		human.Deadline{Name: "gateway_waits", Next: c.HarborPilotWaits.Next, Due: c.HarborPilotWaits.Due},
+		// Holds whose reset is far away: the space's people get one human action each (ADR-0079 Q5). A limit report wakes it.
+		human.Deadline{Name: "usage_limit_people", Due: c.Supervisor.TellLongHolds},
+		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
+		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
 		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
 	go c.Notifier.Run(ctx)
@@ -651,7 +847,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	}
 	c.Health.MarkReady()
 	c.Log.Info("spaceman serving", slog.String("listen", c.Cfg.HTTP.Listen), slog.String("management", c.Cfg.HTTP.ManagementListen),
-		slog.String("public_url", c.Cfg.PublicURL))
+		slog.String("public_url", c.Cfg.PublicURL), slog.String("boot_id", c.BootID))
 
 	var runErr error
 	select {
@@ -710,13 +906,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.RetentionRules, api.AttentionRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules} {
 		for k, v := range m {
 			out[k] = v
 		}
@@ -740,6 +936,10 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		}
 		subjects = []string{auth.RootSubject(by.ID)}
 	case audit.ActorUser:
+		if strings.HasPrefix(by.Via, auth.ViaSpacemanMCP) {
+			// An agent acting through a SpaceMan MCP server is never an approver (ADR-0063).
+			return false
+		}
 		u, err := c.Store.R().GetUser(ctx, by.ID)
 		if err != nil || u.DisabledAt.Valid {
 			return false
@@ -751,7 +951,7 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		}
 		if tok, ok := strings.CutPrefix(by.Via, "api_token:"); ok {
 			t, err := c.Store.R().GetAPIToken(ctx, tok)
-			if err != nil || t.RevokedAt.Valid {
+			if err != nil || t.RevokedAt.Valid || t.Purpose != "" {
 				return false
 			}
 			subjects = append([]string{auth.TokenSubject(tok)}, subjects...)
@@ -772,4 +972,12 @@ type usageWithBudgets struct {
 func (u usageWithBudgets) Report(ctx context.Context, nodeID string, rep proto.UsageReport) {
 	u.Service.Report(ctx, nodeID, rep)
 	u.limits.OnUsage(ctx, rep.RunID)
+}
+
+// gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts
+// Harbor Pilot's quota.window.recovered (ADR-0079 decision 9). The event only says "read the board again".
+func (c *Central) gatewayQuotaKick(slug string, e eventtemplate.Event) {
+	if slug == "harbor-pilot-quota" && e.Subject == "evt.harborpilot.quota.window.recovered" && c.HarborPilotWaits != nil {
+		c.HarborPilotWaits.Kick()
+	}
 }

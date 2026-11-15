@@ -13,6 +13,7 @@ import (
 // outgoing and decline incoming requests; each space sees the request from its side only; global administrators list
 // everything; a viewer reads but changes nothing.
 func TestCrossSpaceOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

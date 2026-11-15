@@ -17,6 +17,8 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -135,7 +137,8 @@ func (svc *Service) relocStep(ctx context.Context, r db.Relocation) (bool, error
 			return true, svc.blockRelocation(ctx, r, "prepare", err.Error())
 		}
 		return true, svc.s.W().TxNamed(ctx, "fleet.relocation_prepare", func(tx *store.Tx) error {
-			cmd, err := svc.queueRelocationCommand(ctx, tx, r.DestNodeID, r.SpaceID, r.GenerationBefore+1, r.ID, proto.CmdRelocatePrepare, payload)
+			// The stored payload never holds a repository key: the hub adds it to the wire message (materialize).
+			cmd, err := svc.queueRelocationCommand(ctx, tx, r.DestNodeID, r.SpaceID, r.GenerationBefore+1, r.ID, proto.CmdRelocatePrepare, payload.Redacted())
 			if err != nil {
 				return err
 			}
@@ -514,6 +517,15 @@ func (svc *Service) preparePayload(ctx context.Context, r db.Relocation) (proto.
 				Branches: []proto.BranchCheck{}, Worktrees: []proto.ExportedWorktree{}})
 		}
 	}
+	if len(p.Repos) > 0 {
+		configured, err := svc.s.R().ListSpaceRepositories(ctx, r.SpaceID)
+		if err != nil {
+			return p, err
+		}
+		for i := range p.Repos {
+			p.Repos[i].Source = keyedSource(p.Repos[i], configured)
+		}
+	}
 	cols, err := svc.s.R().ListMemoryCollections(ctx, r.SpaceID)
 	if err != nil {
 		return p, err
@@ -549,6 +561,40 @@ func (svc *Service) preparePayload(ctx context.Context, r db.Relocation) (proto.
 		}
 	}
 	return p, nil
+}
+
+// keyedSource returns the configured repository a relocated one matches, by path and else by a remote's URL, when it
+// has a SpaceMan SSH key (its own or a shared one, ADR-0057/0058); nil otherwise, so the destination clones with its
+// own Git authentication as before. The source carries no key: the hub adds it to the wire message only.
+func keyedSource(rr proto.RelocateRepo, configured []db.SpaceRepository) *proto.RepoSource {
+	match := func(cr db.SpaceRepository) bool {
+		return cr.Url != "" && (len(cr.SshKeyEnc) > 0 || cr.GitKeyID != "") && proto.IsSSHURL(cr.Url)
+	}
+	for _, cr := range configured {
+		if cr.Path == rr.Path {
+			if !match(cr) {
+				return nil
+			}
+			return repoSource(cr)
+		}
+	}
+	for _, cr := range configured {
+		if !match(cr) {
+			continue
+		}
+		for _, rm := range rr.Remotes {
+			if rm.URL == cr.Url {
+				return repoSource(cr)
+			}
+		}
+	}
+	return nil
+}
+
+// repoSource is a configured repository as the node receives it, without its key (repos.Source, which fleet cannot import).
+func repoSource(cr db.SpaceRepository) *proto.RepoSource {
+	return &proto.RepoSource{ID: cr.ID, Name: cr.Name, Path: cr.Path, URL: cr.Url, DefaultBranch: cr.DefaultBranch, ClonePolicy: cr.ClonePolicy,
+		KnownHosts: cr.KnownHosts}
 }
 
 func (svc *Service) applyPrepare(ctx context.Context, r db.Relocation, rep proto.RelocationReport) error {
@@ -608,6 +654,7 @@ func (svc *Service) applyPrepare(ctx context.Context, r db.Relocation, rep proto
 // source's runs, commands and reports. The space stays paused. The source is told to retain or delete its folder.
 func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) error {
 	var gen int64
+	var lostRuns []db.Run
 	err := svc.s.W().TxNamed(ctx, "fleet.relocation_finalize", func(tx *store.Tx) error {
 		sp, err := tx.Q.GetSpace(ctx, r.SpaceID)
 		if err != nil {
@@ -638,14 +685,32 @@ func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) err
 			return err
 		}
 		lost := int64(0)
+		lostRuns = nil
 		if r.Mode == RelocSourceUnavailable {
+			// The source's runs end here, like runs a node reports ended: counted, run_ended published and OnRunEnded
+			// called after the commit (it used to mark them lost silently).
+			if lostRuns, err = tx.Q.ListRunsLostForRelocation(ctx, db.ListRunsLostForRelocationParams{SpaceID: r.SpaceID, NodeID: r.SourceNodeID}); err != nil {
+				return err
+			}
 			if lost, err = tx.Q.MarkRunsLostForRelocation(ctx, db.MarkRunsLostForRelocationParams{Now: tx.NowMicros(), SpaceID: r.SpaceID,
 				NodeID: r.SourceNodeID}); err != nil {
 				return err
 			}
+			for _, run := range lostRuns {
+				svc.opts.Metrics.RunEnded(metrics.Harness(run.Harness), metrics.RunLost)
+				if err := svc.endRunTakeoverTx(ctx, tx, run); err != nil {
+					return err
+				}
+				if err := svc.runEvent(ctx, tx, run, outbox.RunEnded{Run: outboxRun(run), State: proto.RunLost, EndReason: relocatedSourceUnavailable}); err != nil {
+					return err
+				}
+			}
 		}
 		if _, err := tx.Q.RevokeSpaceRunCredentials(ctx, db.RevokeSpaceRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 			SpaceID: r.SpaceID}); err != nil {
+			return err
+		}
+		if err := svc.queueSpaceGatewayRevocations(ctx, tx, r.SpaceID, RevokeRelocated); err != nil {
 			return err
 		}
 		action := proto.ReleaseRetain
@@ -683,10 +748,18 @@ func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) err
 	if err != nil {
 		return err
 	}
+	if svc.opts.OnRunEnded != nil {
+		for _, run := range lostRuns {
+			svc.opts.OnRunEnded(run.ID)
+		}
+	}
 	svc.removeMemoryBlobs(r.ID)
 	svc.retainKick()
 	return nil
 }
+
+// relocatedSourceUnavailable is the end reason of runs a source-unavailable relocation marks lost.
+const relocatedSourceUnavailable = "relocated_source_unavailable"
 
 // applyRelease records what a node did with a space's folder after a relocation finished (source) or was cancelled
 // (destination).

@@ -24,7 +24,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // Options configure the service.
@@ -46,8 +48,16 @@ type Options struct {
 	// RecordingStore keeps finished recordings (ADR-0048). Nil: a local store rooted at RecordingsDir.
 	RecordingStore artifacts.Store
 	// ResolveAccount picks the account a launch uses inside the launch transaction (SM-ACCT-003); it returns the
-	// account ID stored with the run. Nil: launches carry no account.
-	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (string, error)
+	// account ID stored with the run. Nil: launches carry no account. avoid, when set, names accounts to pass over for
+	// another usable one (usage-limit failover, ADR-0079 decision 8); when every account is to be avoided, the usual
+	// choice stands.
+	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string, avoid func(accountID string) (bool, error)) (string, error)
+	// UsageLimitSettings returns a space's usage-limit settings inside the launch transaction (failover and the probe
+	// backoff cap, ADR-0079). Nil: failover off, the default cap.
+	UsageLimitSettings func(ctx context.Context, q *db.Queries, spaceID string) UsageLimitSettings
+	// OnHoldsCleared is called after an operator's "clear now" committed, with every hold it cleared: each space's
+	// control is told once (ADR-0079 decision 7). Nil: nobody is told.
+	OnHoldsCleared func(holds []ClearedHold)
 	// ResolveLaunch fills a launch from the space's configured role and catalogs (kind, harness, model, settings, system
 	// text) before validation, and returns what the run manifest records about it (SM-PROMPT-003/004). Nil: launches are
 	// used as given.
@@ -58,10 +68,28 @@ type Options struct {
 	// OnSpacePurged is called after a space was purged, with its runs' IDs, to delete artifacts kept elsewhere
 	// (transcripts). Nil: nothing more is deleted.
 	OnSpacePurged func(ctx context.Context, runIDs []string)
+	// OnRunLaunched is called after a launch committed (the run exists, pending): a response held for the run's agent
+	// instance can be pinned to it at once.
+	OnRunLaunched func(runID string)
 	// OnRunEnded is called after a run was recorded as ended (exited, failed or lost).
 	OnRunEnded func(runID string)
-	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.
+	// OnRunIdle is called after a run's program reported idle or done (turn finished), or a usage limit cleared while it
+	// was idle: pending deliveries can go out.
 	OnRunIdle func(runID string)
+	// OnRunLimitTx is called inside the report transaction when a run's usage limit changes window: ended is the limit
+	// that ended (nil: none) and opened the one that opened (nil: none); a newer window ends the old one and opens the
+	// new one in one call. A repeat or a reclassified limit (the same since) is no change. r is the run as the report
+	// left it. It is how control is told once per limit (ADR-0079 decision 11). Nil: nobody is told.
+	OnRunLimitTx func(ctx context.Context, tx *store.Tx, r *Run, ended, opened *RunLimit) error
+	// OnLimitWaitTx is called inside the transaction that parks a run, resumes it or releases its wait (ADR-0079
+	// decisions 4–6), so control is told once per change. Nil: nobody is told.
+	OnLimitWaitTx func(ctx context.Context, tx *store.Tx, ev LimitWaitEvent) error
+	// RepointTaskTx points a parked run's task at the run that resumed it, inside the launch transaction; false when the
+	// task is no longer the parked run's (the resume is then given up). Nil: tasks are not touched.
+	RepointTaskTx func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, fromRun, toRun string) (bool, error)
+	// ReleaseTaskTx gives a parked run's task back when its wait is released: ready and unassigned, or, in review, only
+	// unassigned. It returns the task's status after the change ("" when it changed nothing). Nil: tasks are not touched.
+	ReleaseTaskTx func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (string, error)
 	// OnSpaceState is called after an operator paused, resumed, archived or restored a space (SetSpaceState), with
 	// the new state: deferred work can go out on resume, and subscriptions that stop while paused stop or start.
 	OnSpaceState func(spaceID, state string)
@@ -79,6 +107,22 @@ type Options struct {
 	// Admit decides inside the launch transaction whether a launch may start (limits and budgets, SM-LIMIT-001); an
 	// error refuses it. Nil: every launch the space and lease allow starts.
 	Admit func(ctx context.Context, tx *store.Tx, a Admission) error
+	// Gateway routes the runs of the harnesses a space opted in through an LLM gateway (Harbor Pilot, ADR-0060). Nil:
+	// every run uses the space's direct accounts.
+	Gateway Gateway
+	// OnGatewayRevocation is called after a commit that queued gateway token revocations (it wakes the revoker).
+	OnGatewayRevocation func()
+	// GatewayMintWait bounds how long a node's dispatch loop waits for a gateway run's token (default 5 s). A mint that
+	// takes longer goes on in the background; the launch stays pending, the loop moves on to the node's other commands
+	// (only the pass that starts a mint waits for it), and the node is kicked when the mint is done.
+	GatewayMintWait time.Duration
+	// WakeDeadlines wakes the deadline timer (the stale-run sweep's due time moves when a node connects or
+	// disconnects). Nil: the timer finds the change on its next round.
+	WakeDeadlines func()
+	// StaleRunGrace overrides staleRunGrace (tests; 0 keeps the default).
+	StaleRunGrace time.Duration
+	// StaleLeaseMargin overrides staleLeaseMargin (tests; 0 keeps the default).
+	StaleLeaseMargin time.Duration
 }
 
 // Admission is a launch about to be admitted.
@@ -99,11 +143,14 @@ type Service struct {
 	rec     *Recordings
 	reloc   relocEngine
 	tko     takeovers
+	lw      limitWaitJob
 	// MemoryExport writes central's role memory for a relocation's destination (nil: spaces with memory cannot relocate).
 	MemoryExport MemoryExporter
 	// Grants removes a purged space's role grants and reloads the authorization engine after commit (the auth
 	// service). Nil only in fleet-only tests: purge then deletes the rows but cannot reload an engine it does not know.
 	Grants GrantRemover
+	// onReport, when set (tests only), sees every run report as it is applied, after the session's minor filtered it.
+	onReport func(proto.RunReport)
 }
 
 // GrantRemover deletes every role grant of one domain inside a write transaction and refreshes authorization after
@@ -123,11 +170,20 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	if o.DisconnectGrace < 0 {
 		o.DisconnectGrace = 0
 	}
+	if o.GatewayMintWait <= 0 {
+		o.GatewayMintWait = 5 * time.Second
+	}
 	if o.EnrollmentTTL <= 0 {
 		o.EnrollmentTTL = 24 * time.Hour
 	}
 	if o.CredentialRecheck <= 0 {
 		o.CredentialRecheck = 30 * time.Second
+	}
+	if o.StaleRunGrace <= 0 {
+		o.StaleRunGrace = staleRunGrace
+	}
+	if o.StaleLeaseMargin <= 0 {
+		o.StaleLeaseMargin = staleLeaseMargin
 	}
 	if o.Clock == nil {
 		o.Clock = clock.System{}
@@ -137,6 +193,7 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	}
 	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o, reloc: relocEngine{retain: make(chan struct{}, 1)},
 		tko: takeovers{meters: map[string]*takeoverMeter{}, wake: make(chan struct{}, 1)}}
+	svc.lw.started = o.Clock.Now()
 	svc.hub = newHub(svc)
 	svc.rec = newRecordings(o.RecordingsDir, o.RecordingStore, obs.Component(o.Log, "recordings"), o.Clock.Now)
 	return svc
@@ -149,6 +206,12 @@ func (svc *Service) Recordings() *Recordings { return svc.rec }
 func (svc *Service) Hub() *Hub { return svc.hub }
 
 func (svc *Service) now() time.Time { return svc.opts.Clock.Now().UTC() }
+
+func (svc *Service) wakeDeadlines() {
+	if svc.opts.WakeDeadlines != nil {
+		svc.opts.WakeDeadlines()
+	}
+}
 
 func (svc *Service) record(ctx context.Context, tx *store.Tx, spaceID, typ, id, action string, version int64) error {
 	if svc.changes == nil {

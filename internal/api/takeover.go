@@ -19,6 +19,10 @@ var TakeoverRules = map[string]Rule{
 	"renew-takeover": InSpace(authz.TerminalTakeover),
 	"takeover-input": InSpace(authz.TerminalTakeover),
 	"end-takeover":   InSpace(authz.TerminalTakeover),
+	// Resizing a run's terminal (ADR-0075) changes what the agent's program sees, like typing into it, so it needs the
+	// same permission; while the terminal is taken over only the holder resizes (checked by the service).
+	"set-terminal-size":   InSpace(authz.TerminalTakeover),
+	"clear-terminal-size": InSpace(authz.TerminalTakeover),
 }
 
 // TakeoverPath identifies a takeover of a run.
@@ -88,5 +92,37 @@ func registerTakeover(api huma.API, d *Deps, f *fleet.Service) {
 				return nil, d.fail(ctx, "runs.takeover_end", err)
 			}
 			return &struct{ Body *fleet.Takeover }{Body: t}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "set-terminal-size", Method: http.MethodPut, Path: "/spaces/{space_id}/runs/{run_id}/terminal-size",
+		Summary: "Resize a run's terminal",
+		Description: "Holds the running run's terminal at this size (40-400 columns, 10-200 rows), so the agent's program redraws for it; " +
+			"everyone watching sees the run at this size, scaled to their window. While the terminal is taken over only the holder resizes. " +
+			"The size lasts until it is cleared or the run ends. 409 when the run's node agent predates node protocol 1.10. Audited.", Tags: tags},
+		func(ctx context.Context, in *struct {
+			RunPath
+			Body fleet.TerminalSize
+		}) (*struct{ Body *fleet.Run }, error) {
+			if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
+				return nil, err
+			}
+			size := in.Body
+			r, err := f.SetTerminalSize(ctx, Actor(ctx), in.RunID, &size)
+			if err != nil {
+				return nil, d.fail(ctx, "runs.terminal_size", err)
+			}
+			return &struct{ Body *fleet.Run }{Body: r}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "clear-terminal-size", Method: http.MethodDelete, Path: "/spaces/{space_id}/runs/{run_id}/terminal-size",
+		Summary:     "Return a run's terminal to the node's default size",
+		Description: "The node stops holding the size and the terminal goes back to the node's default size (runner.terminal_size). Audited.", Tags: tags},
+		func(ctx context.Context, in *RunPath) (*struct{ Body *fleet.Run }, error) {
+			if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
+				return nil, err
+			}
+			r, err := f.SetTerminalSize(ctx, Actor(ctx), in.RunID, nil)
+			if err != nil {
+				return nil, d.fail(ctx, "runs.terminal_size", err)
+			}
+			return &struct{ Body *fleet.Run }{Body: r}, nil
 		})
 }

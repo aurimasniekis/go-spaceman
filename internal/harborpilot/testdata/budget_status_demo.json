@@ -1,0 +1,104 @@
+{
+    "items": [
+        {
+            "budget_id": "bdg_01m6wddh42m49mtbhmmnfcjgkr",
+            "name": "acme-monthly",
+            "scope": "workspace",
+            "scope_id": "wsp_01m6wddh213g8w09t4anhzm9z1",
+            "period": "month",
+            "period_start": "2026-11-01T00:00:00Z",
+            "period_end": "2026-12-01T00:00:00Z",
+            "currency": "USD",
+            "cost_kinds": [
+                "actual_api_charge",
+                "estimated_api_charge"
+            ],
+            "enforcement": "warn",
+            "enabled": true,
+            "limit_e10": 500000000000,
+            "spent_e10": 630000000,
+            "reserved_e10": 614550000,
+            "by_kind_e10": {
+                "estimated_api_charge": 630000000
+            },
+            "fraction": 0.0024891,
+            "warn_at": 0.8,
+            "projected_spend_e10": 2671514901,
+            "state": "ok"
+        },
+        {
+            "budget_id": "bdg_01m6wddh43jsp6b6gjm67a2b14",
+            "name": "ci-daily",
+            "scope": "binding",
+            "scope_id": "cbn_01m6wddh3fxdf4hgv3fb1412a5",
+            "period": "day",
+            "period_start": "2026-11-08T00:00:00Z",
+            "period_end": "2026-11-09T00:00:00Z",
+            "currency": "USD",
+            "cost_kinds": [
+                "actual_api_charge",
+                "estimated_api_charge"
+            ],
+            "enforcement": "block",
+            "enabled": true,
+            "limit_e10": 20000000000,
+            "spent_e10": 0,
+            "reserved_e10": 0,
+            "by_kind_e10": {},
+            "fraction": 0,
+            "warn_at": 0.8,
+            "projected_spend_e10": 0,
+            "state": "ok"
+        },
+        {
+            "budget_id": "bdg_01m6wddmhnr5yx9v0qj8zbkgy8",
+            "name": "spaceman-hpt5-tiny",
+            "scope": "project",
+            "scope_id": "prj_01m6wddh22bhq7j7eva61npxb7",
+            "period": "day",
+            "period_start": "2026-11-08T00:00:00Z",
+            "period_end": "2026-11-09T00:00:00Z",
+            "currency": "USD",
+            "cost_kinds": [
+                "actual_api_charge",
+                "estimated_api_charge"
+            ],
+            "enforcement": "block",
+            "enabled": true,
+            "limit_e10": 10000,
+            "spent_e10": 630000000,
+            "reserved_e10": 614550000,
+            "by_kind_e10": {
+                "estimated_api_charge": 630000000
+            },
+            "fraction": 124455,
+            "warn_at": 0.8,
+            "projected_spend_e10": 8440776184,
+            "state": "exceeded"
+        },
+        {
+            "budget_id": "bdg_01m6wddjzbz3dy860tvmfphajv",
+            "name": "spaceman-test-tiny",
+            "scope": "project",
+            "scope_id": "prj_01m6wddh24nkdjjkqacgpkfane",
+            "period": "day",
+            "period_start": "2026-11-08T00:00:00Z",
+            "period_end": "2026-11-09T00:00:00Z",
+            "currency": "USD",
+            "cost_kinds": [
+                "actual_api_charge",
+                "estimated_api_charge"
+            ],
+            "enforcement": "block",
+            "enabled": true,
+            "limit_e10": 10000,
+            "spent_e10": 0,
+            "reserved_e10": 0,
+            "by_kind_e10": {},
+            "fraction": 0,
+            "warn_at": 0.8,
+            "projected_spend_e10": 0,
+            "state": "ok"
+        }
+    ]
+}

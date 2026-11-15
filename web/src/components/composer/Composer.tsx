@@ -33,6 +33,8 @@ interface Props {
   onSubmit?: () => void
   minHeight?: number
   ariaLabel?: string
+  /** Focus the editor on mount; inside a Mantine modal its focus trap focuses it (data-autofocus) instead of the first field. */
+  autoFocus?: boolean
 }
 
 function Tool({ label, icon: Icon, active, onClick, disabled }: { label: string; icon: typeof IconBold; active?: boolean; onClick: () => void; disabled?: boolean }) {
@@ -88,7 +90,7 @@ function Toolbar({ editor, onAttach }: { editor: Editor; onAttach: () => void })
  * Markdown (never HTML). Pasted, dropped or attached files are uploaded to the space; images are placed inline, other
  * files as links and listed below the editor.
  */
-export function Composer({ spaceId, initialMarkdown = '', placeholder = 'Write in Markdown, paste or drop images and files…', onChange, onSubmit, minHeight = 140, ariaLabel = 'Message' }: Props) {
+export function Composer({ spaceId, initialMarkdown = '', placeholder = 'Write in Markdown, paste or drop images and files…', onChange, onSubmit, minHeight = 140, ariaLabel = 'Message', autoFocus = false }: Props) {
   const [files, setFiles] = useState<UploadedAttachment[]>([])
   const [uploading, setUploading] = useState(0)
   const [error, setError] = useState('')
@@ -144,10 +146,11 @@ export function Composer({ spaceId, initialMarkdown = '', placeholder = 'Write i
         onDrop: (e, list, pos) => void uploadRef.current(e, list, pos),
       }),
     ],
+    autofocus: autoFocus ? 'end' : false,
     content: resolveAttachments(initialMarkdown, spaceId),
     contentType: 'markdown',
     editorProps: {
-      attributes: { 'aria-label': ariaLabel, 'aria-multiline': 'true', role: 'textbox', class: 'sm-composer-content' },
+      attributes: { 'aria-label': ariaLabel, 'aria-multiline': 'true', role: 'textbox', class: 'sm-composer-content', ...(autoFocus ? { 'data-autofocus': 'true' } : {}) },
       handleKeyDown: (_view, event) => {
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && submitRef.current) {
           submitRef.current()

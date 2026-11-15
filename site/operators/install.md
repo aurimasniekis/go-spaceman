@@ -35,6 +35,9 @@ Without `git`, central still starts. It logs `role memory cannot be stored centr
 backups then leave role memory out (with a warning in the manifest), and restores of backups that contain role memory
 are refused. Without `hc`, `spaceman-agent run` refuses to start.
 
+A node can download and verify Claude Code itself instead of using the one you installed: see
+[Managed Claude Code](./claude-code).
+
 ## Release archives
 
 Each release has one archive per platform, `spaceman_<version>_linux_<arch>.tar.gz`. Each archive contains:

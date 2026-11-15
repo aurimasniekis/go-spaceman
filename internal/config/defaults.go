@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
+)
 
 // Default returns the central configuration defaults (site/reference/configuration.md).
 func Default() *Config {
@@ -10,11 +14,16 @@ func Default() *Config {
 		PublicURL: "",
 		KEK:       KEKConfig{Source: "file", File: "/etc/spaceman/kek"},
 		HTTP: HTTPConfig{
-			Listen:            ":8080",
-			ManagementListen:  "127.0.0.1:9090",
-			MaxBodyBytes:      1 << 20,
-			MaxUploadBytes:    25 << 20,
-			ReadHeaderTimeout: Duration(10 * time.Second),
+			Listen:             ":8080",
+			ManagementListen:   "127.0.0.1:9090",
+			MaxBodyBytes:       1 << 20,
+			MaxUploadBytes:     25 << 20,
+			ReadHeaderTimeout:  Duration(10 * time.Second),
+			WriteIdleTimeout:   Duration(time.Minute),
+			CatchUpConcurrency: 8,
+			CatchUpWait:        Duration(5 * time.Second),
+			ReadIdleTimeout:    Duration(30 * time.Second),
+			IdleTimeout:        Duration(2 * time.Minute),
 		},
 		Log: defaultLog(),
 		Auth: AuthConfig{
@@ -38,7 +47,8 @@ func Default() *Config {
 		Backups:   BackupsConfig{Interval: Duration(24 * time.Hour), KeepLast: 7, Target: "local"},
 		Limits: LimitsConfig{MaxConcurrentRuns: 8, MaxTopLevelTasks: 1, MaxKBSessions: 8, SupportDepth: 1, MaxHumanPending: 500,
 			MaxHumanPendingPerRun: 25, MaxToolCallsPerRun: 5000, IngestPerMinute: 600, EventDepth: 8, BudgetWarnPercent: 80, RecordingQuotaBytes: 512 << 20,
-			ExportMaxBytes: 2 << 30, ControlAutostart: 1, ControlIdleStopMinutes: 30},
+			ExportMaxBytes: 2 << 30, ControlAutostart: 1, ControlIdleStopMinutes: 30,
+			UsageLimitKeepAliveMaxMinutes: 360, UsageLimitMaxWaitHours: 168, UsageLimitNotifyAfterHours: 12},
 		Shutdown: ShutdownConfig{Timeout: Duration(30 * time.Second)},
 	}
 }
@@ -64,8 +74,18 @@ func DefaultAgent() *AgentConfig {
 			ClaudeBinary: "claude",
 			CodexBinary:  "codex",
 			GitBinary:    "git",
+			Claude: ClaudeCodeConfig{
+				Manage:          false, // operators opt in (ADR-0077)
+				Channel:         dist.ChannelLatest,
+				BaseURL:         dist.DefaultBaseURL,
+				CacheKeep:       dist.DefaultKeep,
+				CacheKeepPinned: dist.DefaultKeepPinned,
+				Refresh:         Duration(dist.DefaultRefresh),
+				DownloadTimeout: Duration(dist.DefaultDownloadTimeout),
+			},
 		},
-		Log:      defaultLog(),
-		Capacity: 4,
+		Log:              defaultLog(),
+		Capacity:         4,
+		JournalRetention: Duration(30 * 24 * time.Hour),
 	}
 }

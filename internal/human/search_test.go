@@ -21,6 +21,7 @@ func joinTitles(l []*Action) string {
 // SM-HUM-006, SM-HUI-001: search over title and body, filters by status, assignee, priority, requester and due date,
 // and display sorts that never rewrite the durable rank (SM-HUI-004).
 func TestSearchFiltersAndSorts(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	due := f.clk.Now().Add(time.Hour)
 	a := f.create(CreateInput{Type: TypeTodo, Title: "Rotate the API key", Body: "The **staging** key expires Friday.", Priority: "high", DueAt: &due})
@@ -104,6 +105,7 @@ func TestSearchFiltersAndSorts(t *testing.T) {
 // SM-HUM-006/009: a clarification request keeps the action pending, is not a response, and reaches the agent
 // requester as a durable clarification notification; the requester replies, other runs cannot.
 func TestClarificationRequest(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	q := f.create(CreateInput{Type: TypeQuestion, Title: "Which DB?", Request: json.RawMessage(`{"allow_text":true}`)})
 	a, err := f.svc.RequestClarification(f.ctx, op, "spc_a", q.ID, CommentInput{Body: "For which service?", Label: "Op"})
@@ -140,6 +142,7 @@ func TestClarificationRequest(t *testing.T) {
 
 // SM-ATT-001: requests, responses and comments reference attachments of their own space only.
 func TestActionAttachments(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	must(t, f.s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
 		for _, q := range []string{

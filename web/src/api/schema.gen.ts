@@ -64,6 +64,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}/usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An account's open usage-limit holds in every space */
+        get: operations["list-account-usage-limits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/usage-limits/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear an account's usage-limit holds in every space now
+         * @description Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose hold was cleared has its control told once.
+         */
+        post: operations["clear-account-usage-limits"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/break-glass": {
         parameters: {
             query?: never;
@@ -816,6 +853,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/harbor-pilot/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Harbor Pilot connection (never its tokens) */
+        get: operations["get-harbor-pilot-connection"];
+        /**
+         * Connect Harbor Pilot, or replace the connection
+         * @description Without If-Match this creates the connection; with it, it replaces it. Every write is validated against Harbor Pilot first: the parent token mints (and at once revokes) a probe credential, which shows it holds tokens:mint, which client binding it belongs to, when it expires and that the gateway is Harbor Pilot 0.1.3 or later; a service-principal token must read budget status and projects. Tokens are sealed and never returned (ADR-0060). Stored tokens are only sent to the address they were entered for: a change of base_url or run_base_url, or newly allowing insecure HTTP, needs parent_token (and service_token or remove_service_token when one is stored) in the same request, or it is refused with 422 before any call. Needs account:write and a step-up.
+         */
+        put: operations["put-harbor-pilot-connection"];
+        post?: never;
+        /**
+         * Remove the Harbor Pilot connection
+         * @description Refused while any space routes runs through Harbor Pilot, or unexpired tokens (run or validation) are live or waiting to be revoked. Needs account:write and a step-up.
+         */
+        delete: operations["delete-harbor-pilot-connection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/harbor-pilot/gateway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The connected Harbor Pilot's version
+         * @description Read with the connection's service-principal token from Harbor Pilot's GET /api/v1/system (0.1.4 or later; source system). A gateway without it is older than 0.1.4 (source legacy): the connection's check_budget probe showed it is 0.1.3 or later. Without a service-principal token, or when Harbor Pilot can't be read, source is unknown with the reason. project_filter says whether budget status is read filtered by project. Reused for 10 minutes.
+         */
+        get: operations["get-harbor-pilot-gateway"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/harness-profiles": {
         parameters: {
             query?: never;
@@ -1029,6 +1111,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mcp-servers/spaceman": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a SpaceMan MCP server
+         * @description SpaceMan's own API as MCP tools for a space's control and worker runs (ADR-0063). The server acts through a new internal API token owned by you, with grants covered by yours (default: admin on every space) and no secret. Dangerous tools always need a person's approval. Grant the server to a space role for its runs to see the tools.
+         */
+        post: operations["create-spaceman-mcp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/spaceman/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tools a SpaceMan MCP server can offer
+         * @description Every tool of this build's SpaceMan MCP catalog, marked with what a preset, named tools and token grants would make of it, and how many tools runs would see. It reads no state; the API still checks every call.
+         */
+        get: operations["list-spaceman-mcp-tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mcp-servers/{server_id}": {
         parameters: {
             query?: never;
@@ -1104,6 +1226,46 @@ export interface paths {
          * @description Calls in flight finish; the next call of an affected run is refused.
          */
         delete: operations["revoke-mcp-grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}/reissue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-issue a SpaceMan MCP server's token
+         * @description Revokes the server's internal token and mints a new one owned by you, in one step: for new grants, a new expiry or a new owner.
+         */
+        post: operations["reissue-spaceman-mcp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}/spaceman": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Edit a SpaceMan MCP server
+         * @description Changes the tools, the approval mode and the limits. The internal token is unchanged: re-issue the server to change its grants, expiry or owner.
+         */
+        put: operations["update-spaceman-mcp"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1846,6 +2008,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's Harbor Pilot settings */
+        get: operations["get-space-harbor-pilot"];
+        /**
+         * Set a space's Harbor Pilot settings
+         * @description Without If-Match this creates the settings; with it, it replaces them. Enabling needs the connection, and the project is checked against Harbor Pilot: it must be the connection's binding project or one of its allowed projects. For the listed harnesses the gateway replaces accounts; there is no fallback to a direct account (ADR-0060). The rest needs space_config:write, but setting or changing project_id (who pays) needs account:write; an empty project_id on an update keeps the stored project.
+         */
+        put: operations["put-space-harbor-pilot"];
+        post?: never;
+        /** Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) */
+        delete: operations["delete-space-harbor-pilot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/harbor-pilot/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's Harbor Pilot budget status and project usage
+         * @description The Harbor Pilot budgets covering the space (its project, the project's workspace, the connection's client binding and global budgets; account budgets are left out), with their state, spend, limit and reset time, and the project's usage over all Harbor Pilot clients. Budgets enforced with block are hard limits: a used-up one refuses launches, and Harbor Pilot refuses the requests. Read with the connection's service-principal token and reused for 30 s; state unavailable says why it can't be read.
+         */
+        get: operations["get-space-harbor-pilot-status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/human-actions": {
         parameters: {
             query?: never;
@@ -2327,6 +2531,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/limit-waits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's runs parked at a usage limit, waiting to resume */
+        get: operations["list-space-limit-waits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/limit-waits/{wait_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give up on a run parked at a usage limit
+         * @description Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and unassigned, and control is told. Audited.
+         */
+        post: operations["release-limit-wait"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/limit-waits/{wait_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a run parked at a usage limit now
+         * @description Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space or a node that isn't connected refuses it, and the wait keeps waiting. Audited.
+         */
+        post: operations["resume-limit-wait"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/limits": {
         parameters: {
             query?: never;
@@ -2542,6 +2803,26 @@ export interface paths {
         put?: never;
         /** Acknowledge a message addressed to operators */
         post: operations["ack-message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/messages/{message_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a scheduled message before it is due
+         * @description It is resolved as cancelled and never delivered (ADR-0065).
+         */
+        post: operations["cancel-message"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3064,6 +3345,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/runs/{run_id}/terminal-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Resize a run's terminal
+         * @description Holds the running run's terminal at this size (40-400 columns, 10-200 rows), so the agent's program redraws for it; everyone watching sees the run at this size, scaled to their window. While the terminal is taken over only the holder resizes. The size lasts until it is cleared or the run ends. 409 when the run's node agent predates node protocol 1.10. Audited.
+         */
+        put: operations["set-terminal-size"];
+        post?: never;
+        /**
+         * Return a run's terminal to the node's default size
+         * @description The node stops holding the size and the terminal goes back to the node's default size (runner.terminal_size). Audited.
+         */
+        delete: operations["clear-terminal-size"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/runs/{run_id}/transcript": {
         parameters: {
             query?: never;
@@ -3548,6 +3853,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's usage-limit holds
+         * @description The holds the space's runs opened when they reached a usage limit (newest first, cleared ones included), then the open holds other spaces opened on the accounts this space binds or the gateway it routes through: those hold this space too, and are marked shared, without the other space's identifiers.
+         */
+        get: operations["list-space-usage-limits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/usage-limits/{limit_id}/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear one of the space's usage-limit holds now
+         * @description Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write (clear-account-usage-limits).
+         */
+        post: operations["clear-space-usage-limit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/xspace/peers": {
         parameters: {
             query?: never;
@@ -3700,6 +4045,26 @@ export interface paths {
          * @description SpaceMan adds the starter profiles, prompts and role templates once, on the first start; operators edit or delete them. POST /spaces/{space_id}/starter-roles gives a space a role for each starter role whose template still exists.
          */
         get: operations["list-starter-roles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This instance's status
+         * @description Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.
+         */
+        get: operations["get-system"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4569,6 +4934,7 @@ export interface components {
             name: string;
             never_expires: boolean;
             parent_token_id?: string;
+            purpose?: string;
             /** Format: date-time */
             revoked_at?: string;
             revoked_by?: string;
@@ -4781,6 +5147,7 @@ export interface components {
             pending_approvals: number;
             /** Format: date-time */
             restored_at: string;
+            resumed_spaces: string[];
             /** Format: int64 */
             run_credentials_revoked: number;
             /** Format: int64 */
@@ -4839,6 +5206,13 @@ export interface components {
              */
             at?: string;
         };
+        BuildinfoInfo: {
+            commit?: string;
+            date?: string;
+            go_version: string;
+            platform: string;
+            version: string;
+        };
         "Cancel-human-actionRequest": {
             /**
              * Format: uri
@@ -4874,9 +5248,15 @@ export interface components {
              * @example /api/v1/schemas/CatalogProfile.json
              */
             readonly $schema?: string;
+            /** @description Claude Code settings.json keys for the profile's runs (claude-code profiles only); {} for none */
+            claude_settings: {
+                [key: string]: unknown;
+            };
             description?: string;
             /** @enum {string} */
             harness: "claude-code" | "codex";
+            /** @description The Claude Code version the profile's runs get (claude-code profiles only): empty follows the node's channel; latest, stable or an exact X.Y.Z overrides it */
+            harness_version: string;
             id: string;
             model?: string;
             name: string;
@@ -5081,6 +5461,19 @@ export interface components {
             readonly $schema?: string;
             current: string;
             new: string;
+        };
+        "Clear-account-usage-limitsRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Clear-account-usage-limitsRequest.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Only holds of this kind; every kind when absent
+             * @enum {string}
+             */
+            kind?: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "unknown";
         };
         CodeInBody: {
             /**
@@ -5763,6 +6156,12 @@ export interface components {
             /** @description Also give the space the starter roles (control, planner, implementor, reviewer, kb, dreamer) whose templates still exist */
             starter_roles?: boolean;
         };
+        FleetGatewaySpec: {
+            /** @enum {string} */
+            kind: "harbor-pilot";
+            /** @description The Harbor Pilot project the run is charged to */
+            project_id: string;
+        };
         FleetIssue: {
             /** @enum {string} */
             code: "dirty" | "untracked" | "unpushed" | "stash" | "detached" | "no_remote" | "worktree" | "loose_files" | "memory_unsynced" | "recordings_pending" | "transcripts_pending" | "active_runs" | "inspect_error";
@@ -5807,11 +6206,14 @@ export interface components {
         };
         FleetLaunchSpec: {
             account_ref?: string;
+            gateway?: components["schemas"]["FleetGatewaySpec"];
             model?: string;
+            /** @description Omitted from run lists unless include=prompt */
             prompt?: string;
             settings?: {
                 [key: string]: string;
             };
+            /** @description Omitted from run lists unless include=prompt */
             system?: string;
             workspace?: string;
             worktree?: components["schemas"]["ProtoWorktree"];
@@ -5824,6 +6226,45 @@ export interface components {
             node_id: string;
             state: string;
             valid: boolean;
+        };
+        FleetLimitWait: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetLimitWait.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            attempts: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            id: string;
+            instance_id: string;
+            last_error?: string;
+            new_run_id?: string;
+            node_id: string;
+            /**
+             * Format: date-time
+             * @description When a worker's task is given back to the queue; absent for control
+             */
+            release_at?: string;
+            /** Format: date-time */
+            resume_at: string;
+            role: string;
+            run_id: string;
+            /** @enum {string} */
+            run_kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            space_id: string;
+            /** @enum {string} */
+            state: "waiting" | "resuming" | "resumed" | "released" | "cancelled" | "failed";
+            task_id?: string;
+            /** Format: date-time */
+            updated_at: string;
+            usage_limit_id?: string;
+            /** Format: int64 */
+            version: number;
         };
         FleetLossReport: {
             /**
@@ -5862,6 +6303,8 @@ export interface components {
             readonly $schema?: string;
             agent_version?: string;
             capabilities: components["schemas"]["ProtoCapabilities"];
+            /** Format: date-time */
+            capabilities_updated_at?: string;
             /** Format: int64 */
             capacity: number;
             connected: boolean;
@@ -5978,7 +6421,7 @@ export interface components {
             branch?: string;
             /** @description Folder relative to the space folder */
             path: string;
-            /** @description Clone URL; the destination node's own Git authentication is used (no credentials in the URL) */
+            /** @description Clone URL (no credentials in the URL); the destination node's own Git authentication is used, or the SpaceMan SSH key of the configured repository at this folder or URL */
             url: string;
         };
         FleetRetryRelocationInput: {
@@ -6008,6 +6451,7 @@ export interface components {
             created_by: string;
             /** @enum {string} */
             desired: "running" | "stopped";
+            /** @description Why the run ended: the node's reason (exited, stopped, killed, lease_expired, …), usage_limit when it ended while at a usage limit, or central's stale_not_on_node, stale_lease_lost or relocated_source_unavailable */
             end_reason?: string;
             /** Format: date-time */
             ended_at?: string;
@@ -6021,16 +6465,28 @@ export interface components {
             generation: number;
             /** @enum {string} */
             harness: "claude-code" | "codex";
+            /** @description Why another version than the request's target ran (a node-managed channel whose target was not cached yet or unavailable); absent when the target ran */
+            harness_fallback?: string;
+            /** @description What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z) */
+            harness_requested?: string;
+            /** @description The harness version the run launched, as its node reported it (node protocol 1.11 or later) */
+            harness_version?: string;
             id: string;
             instance_id: string;
             /** @enum {string} */
             kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
             launch: components["schemas"]["FleetLaunchSpec"];
-            manifest: unknown;
+            /** @description The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset */
+            limit?: components["schemas"]["FleetRunLimit"];
+            /** @description Omitted from run lists unless include=manifest */
+            manifest?: unknown;
             node_id: string;
             /** @enum {string} */
             observed: "pending" | "starting" | "running" | "stopping" | "exited" | "failed" | "lost" | "unknown";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the node last reported a change to the run (a report that changes nothing, such as a reconnect re-reporting it, doesn't move it)
+             */
             observed_at?: string;
             /** Format: int64 */
             pid?: number;
@@ -6045,10 +6501,28 @@ export interface components {
             /** @description The terminal takeover in force: an operator types into the terminal and automated input is paused */
             takeover?: components["schemas"]["FleetTakeover"];
             terminal_id?: string;
+            /** @description The size the run's terminal is held at; absent: the node's default size */
+            terminal_size?: components["schemas"]["FleetTerminalSize"];
+            /** @description Whether the run's node is connected at node protocol 1.10 or later, so its terminal can be resized (set on a single run) */
+            terminal_sizing?: boolean;
             /** Format: int64 */
             turn: number;
             /** Format: int64 */
             version: number;
+        };
+        FleetRunLimit: {
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "gateway_quota" | "gateway_budget" | "unknown";
+            /**
+             * Format: date-time
+             * @description When the limit resets; absent when unknown (Claude Code's wrap-up path and gateway limits carry none)
+             */
+            resets_at?: string;
+            /**
+             * Format: date-time
+             * @description When the node first saw the limit
+             */
+            since: string;
         };
         FleetSpace: {
             /**
@@ -6147,6 +6621,18 @@ export interface components {
             /** Format: date-time */
             started_at: string;
         };
+        FleetTerminalSize: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetTerminalSize.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            cols: number;
+            /** Format: int64 */
+            rows: number;
+        };
         FleetUpdateNodeInput: {
             /**
              * Format: uri
@@ -6174,6 +6660,55 @@ export interface components {
             goals: string;
             name: string;
             standing_instructions: string;
+        };
+        FleetUsageLimit: {
+            account_id?: string;
+            /**
+             * Format: date-time
+             * @description When a hold with an unknown reset is next probed
+             */
+            check_at?: string;
+            /** Format: date-time */
+            cleared_at?: string;
+            /** @description run:<id> (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it */
+            cleared_by?: string;
+            first_run_id?: string;
+            /** @description harbor-pilot (a quota exhaustion: the whole connection) or harbor-pilot:project:<id> (a project's budget) */
+            gateway_ref?: string;
+            /** @description Absent on a shared hold */
+            id?: string;
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "gateway_quota" | "gateway_budget" | "unknown";
+            /**
+             * Format: date-time
+             * @description Absent when unknown
+             */
+            resets_at?: string;
+            /** @enum {string} */
+            scope: "account" | "gateway";
+            /** Format: date-time */
+            seen_at: string;
+            /** @description Opened by another space's run on an account or gateway this space uses; it holds this space too */
+            shared?: boolean;
+            /** @enum {string} */
+            source: "transcript" | "quota_board" | "budget_status" | "operator";
+            /** @description The space whose run opened it; absent on a shared hold */
+            space_id?: string;
+            /** Format: int64 */
+            version?: number;
+        };
+        FleetUsageLimitClear: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetUsageLimitClear.json
+             */
+            readonly $schema?: string;
+            /** @description The holds this request cleared */
+            cleared: components["schemas"]["FleetUsageLimit"][];
+            /** @description Other spaces still hold the account or gateway reference, so launches here may still be refused */
+            held_elsewhere: boolean;
+            note?: string;
         };
         "Fork-promptRequest": {
             /**
@@ -6247,6 +6782,11 @@ export interface components {
             headers_version: number;
             id: string;
             /**
+             * @description http: an external server; spaceman: SpaceMan's own API, served in central (ADR-0063)
+             * @enum {string}
+             */
+            kind: "http" | "spaceman";
+            /**
              * Format: int64
              * @description Calls in flight to this server across all runs
              */
@@ -6256,11 +6796,12 @@ export interface components {
             name: string;
             /** @description Namespace of the server's tools: <slug>__<tool> */
             slug: string;
+            spaceman?: components["schemas"]["GatewaySpacemanInfo"];
             /** @description Upstream tools offered to agents; empty offers every tool */
             tools: string[];
             /** Format: date-time */
             updated_at: string;
-            /** @description Streamable HTTP endpoint */
+            /** @description Streamable HTTP endpoint; empty for a spaceman server */
             url: string;
             /** Format: int64 */
             version: number;
@@ -6268,11 +6809,164 @@ export interface components {
         GatewaySpaceServer: {
             enabled: boolean;
             grant_id: string;
+            /** @enum {string} */
+            kind: "http" | "spaceman";
             name: string;
             role: string;
             server_id: string;
             slug: string;
             tools: string[];
+        };
+        GatewaySpacemanInfo: {
+            /**
+             * @description none (the default): only dangerous tools need a person's approval; writes: every write tool does too
+             * @enum {string}
+             */
+            approval?: "none" | "writes";
+            /** Format: date-time */
+            expires_at?: string;
+            grants: components["schemas"]["AuthGrantInput"][];
+            never_expires: boolean;
+            /** @description The administrator whose authority the token carries */
+            owner_user_id: string;
+            /**
+             * @description Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)
+             * @enum {string}
+             */
+            preset?: "read" | "operate" | "admin" | "custom";
+            /** @description The internal API token the server acts through */
+            token_id: string;
+            /**
+             * @description active, or why the server's tools are refused: re-issue it
+             * @enum {string}
+             */
+            token_state: "active" | "revoked" | "expired" | "owner_disabled";
+            /** @description Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset) */
+            tools?: string[];
+        };
+        GatewaySpacemanInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description none (the default): only dangerous tools need a person's approval; writes: every write tool does too
+             * @enum {string}
+             */
+            approval?: "none" | "writes";
+            /**
+             * Format: int64
+             * @description 1000-20000; default 20000
+             */
+            call_timeout_ms?: number;
+            description?: string;
+            /** @description Default true */
+            enabled?: boolean;
+            /**
+             * Format: int64
+             * @description 1-366; omitted: the token never expires (the default)
+             */
+            expires_in_days?: number;
+            /** @description The token's grants, covered by yours; default admin on every space (preset admin), required otherwise */
+            grants?: components["schemas"]["AuthGrantInput"][];
+            /**
+             * Format: int64
+             * @description 1-32; default 4
+             */
+            max_concurrency?: number;
+            /**
+             * Format: int64
+             * @description 1 KiB-4 MiB; default 256 KiB
+             */
+            max_result_bytes?: number;
+            name: string;
+            /**
+             * @description Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)
+             * @enum {string}
+             */
+            preset?: "read" | "operate" | "admin" | "custom";
+            /** @description Namespace of the server's tools (<slug>__<tool>); fixed after creation */
+            slug: string;
+            /** @description Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset) */
+            tools?: string[];
+        };
+        GatewaySpacemanToken: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanToken.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description 1-366; omitted: the token never expires (the default)
+             */
+            expires_in_days?: number;
+            /** @description The token's grants, covered by yours; default admin on every space (preset admin), required otherwise */
+            grants?: components["schemas"]["AuthGrantInput"][];
+        };
+        GatewaySpacemanTool: {
+            /**
+             * @description Dangerous tools always need a person's approval per call
+             * @enum {string}
+             */
+            class: "read" | "write" | "dangerous" | "sensitive-read";
+            /** @description The preset offers it without naming it */
+            in_preset: boolean;
+            /** @description Tool name without the slug */
+            name: string;
+            /** @description Some grant can satisfy its authorization rule */
+            reachable: boolean;
+            /** @description The preset offers it or it is named */
+            selected: boolean;
+            summary: string;
+            /** @description The API operation's tags */
+            tags: string[];
+        };
+        GatewaySpacemanTools: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanTools.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Tools runs would see: selected and reachable by the grants
+             */
+            count: number;
+            items: components["schemas"]["GatewaySpacemanTool"][];
+        };
+        GatewaySpacemanUpdate: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanUpdate.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description none (the default): only dangerous tools need a person's approval; writes: every write tool does too
+             * @enum {string}
+             */
+            approval?: "none" | "writes";
+            /** Format: int64 */
+            call_timeout_ms?: number;
+            description?: string;
+            enabled: boolean;
+            /** Format: int64 */
+            max_concurrency?: number;
+            /** Format: int64 */
+            max_result_bytes?: number;
+            name: string;
+            /**
+             * @description Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)
+             * @enum {string}
+             */
+            preset?: "read" | "operate" | "admin" | "custom";
+            /** @description Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset) */
+            tools?: string[];
         };
         "Get-memory-fileResponse": {
             /**
@@ -6334,6 +7028,284 @@ export interface components {
             name: string;
             repository_id: string;
             space_id: string;
+        };
+        HarborpilotConnection: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotConnection.json
+             */
+            readonly $schema?: string;
+            /** @description Plain http is allowed: tokens then cross the network in clear text */
+            allow_insecure_http: boolean;
+            /** @description The gateway origin central calls (mint, revoke, budget status) */
+            base_url: string;
+            /** @description The parent token's client binding, learnt when the connection was validated */
+            binding_id: string;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** @description Spaces that route runs through Harbor Pilot */
+            enabled_spaces: string[];
+            /**
+             * Format: int64
+             * @description Run and validation tokens whose revocation failed: each stays valid until it expires unless it, or the parent that minted it, is revoked in Harbor Pilot (see the audit log)
+             */
+            failed_revocations: number;
+            has_parent_token: boolean;
+            has_service_token: boolean;
+            id: string;
+            /**
+             * Format: date-time
+             * @description When the parent token expires, if it does
+             */
+            parent_expires_at?: string;
+            /**
+             * Format: int64
+             * @description Incremented each time a parent token is written
+             */
+            parent_token_version: number;
+            /** @description The origin runs reach the gateway on; empty means base_url */
+            run_base_url: string;
+            /**
+             * Format: int64
+             * @description Incremented each time a service-principal token is written or removed
+             */
+            service_token_version: number;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            /** Format: date-time */
+            validated_at: string;
+            /** Format: int64 */
+            version: number;
+            warnings: string[];
+        };
+        HarborpilotConnectionInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotConnectionInput.json
+             */
+            readonly $schema?: string;
+            /** @description Allow plain http (tests and trusted local networks only: every token then crosses the network in clear text) */
+            allow_insecure_http?: boolean;
+            /** @description The gateway origin, e.g. https://harbor-pilot.example.com (https unless the host is loopback or allow_insecure_http is set) */
+            base_url: string;
+            /** @description A Harbor Pilot gateway credential (hpk_…) with gateway:invoke, gateway:models and tokens:mint. Required on create and when the gateway address changes; otherwise empty keeps the current one. Never returned */
+            parent_token?: string;
+            /** @description Remove the service-principal token */
+            remove_service_token?: boolean;
+            /** @description The origin runs reach the gateway on, when it differs from base_url. It needs https (no loopback exemption) unless allow_insecure_http is set */
+            run_base_url?: string;
+            /** @description A Harbor Pilot service-principal token (hpa_…) with usage.read and config.read, for budget status and project checks. Empty keeps the current one, except when the gateway address changes (then send it again or set remove_service_token). Never returned */
+            service_token?: string;
+        };
+        HarborpilotCostAmount: {
+            amount: string;
+            currency: string;
+            kind: string;
+        };
+        HarborpilotCovering: {
+            /** @description Enabled, enforced with block, and used up: launches are refused */
+            blocking: boolean;
+            budget_id: string;
+            currency: string;
+            /**
+             * @description block: Harbor Pilot refuses requests once it is used up (a hard limit); warn: it only warns
+             * @enum {string}
+             */
+            enforcement: "block" | "warn";
+            /**
+             * Format: double
+             * @description (spent + reserved) / limit
+             */
+            fraction: number;
+            limit: string;
+            /** @description Harbor Pilot's budget name (untrusted text) */
+            name: string;
+            period: string;
+            /**
+             * Format: date-time
+             * @description When the current period ends and the budget resets; for a one-time budget (period once), when its window ends; absent when it has no end
+             */
+            period_end?: string;
+            /** Format: date-time */
+            period_start: string;
+            /** @description What is left of the limit: limit - spent - reserved, never below 0 */
+            remaining: string;
+            /** @description Estimated cost of requests in flight */
+            reserved: string;
+            /**
+             * @description What the budget covers: every request, the project's workspace, the space's project, or SpaceMan's client binding
+             * @enum {string}
+             */
+            scope: "global" | "workspace" | "project" | "binding";
+            scope_id: string;
+            spent: string;
+            /**
+             * @description scheduled: a one-time budget whose window has not started; expired: one whose window ended (it no longer applies); unknown: a state this SpaceMan doesn't know. Only exceeded can refuse launches
+             * @enum {string}
+             */
+            state: "ok" | "warning" | "exceeded" | "disabled" | "scheduled" | "expired" | "unknown";
+        };
+        HarborpilotGatewayInfo: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotGatewayInfo.json
+             */
+            readonly $schema?: string;
+            commit?: string;
+            /**
+             * Format: date-time
+             * @description When Harbor Pilot was read (reused for 10 minutes)
+             */
+            fetched_at?: string;
+            /** @description The oldest Harbor Pilot SpaceMan supports */
+            min_version: string;
+            /** @description Budget status is read filtered by project (Harbor Pilot 0.1.4 or later) instead of reading every budget */
+            project_filter: boolean;
+            /** @description The Harbor Pilot SpaceMan recommends */
+            recommended_version: string;
+            /** Format: int64 */
+            schema_version?: number;
+            /**
+             * @description system: read from GET /api/v1/system (Harbor Pilot 0.1.4 or later); legacy: the gateway has no such endpoint, so it is older than 0.1.4 (the connection's check_budget probe showed it is at least 0.1.3); unknown: it could not be read
+             * @enum {string}
+             */
+            source: "system" | "legacy" | "unknown";
+            /** Format: date-time */
+            started_at?: string;
+            /** @description Why the version could not be read */
+            unavailable?: string;
+            /** @description Harbor Pilot's version as it reports it (untrusted text) */
+            version?: string;
+        };
+        HarborpilotProjectUsage: {
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /**
+             * @description Always all: every client of the project, not only this space's runs
+             * @enum {string}
+             */
+            clients: "all";
+            /** @description Per category and currency; categories are never summed */
+            costs: components["schemas"]["HarborpilotCostAmount"][];
+            /** Format: date-time */
+            from: string;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            project_id: string;
+            /** Format: int64 */
+            requests: number;
+            /** Format: date-time */
+            to: string;
+            /**
+             * Format: int64
+             * @description Requests whose usage the provider did not report (not counted as zero)
+             */
+            unknown_usage_requests: number;
+            /** @description What From covers: the current period of the project's budget (e.g. day), once (since a one-time budget started counting), or last_30_days */
+            window: string;
+        };
+        HarborpilotSpaceInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotSpaceInput.json
+             */
+            readonly $schema?: string;
+            /** @description Model aliases runs may use; empty: any */
+            allowed_model_aliases?: string[];
+            enabled?: boolean;
+            /** @description Harness kinds routed through Harbor Pilot (any harness it can serve); empty: claude-code and codex */
+            harnesses?: string[];
+            /**
+             * @description proceed (default; the gateway still enforces its budgets) or refuse
+             * @enum {string}
+             */
+            on_budget_status_unavailable?: "proceed" | "refuse" | "";
+            /** @description The Harbor Pilot project id (required when enabled); it must be the connection's binding project or one of its allowed projects. Setting or changing it needs account:write; empty on an update keeps the stored project */
+            project_id?: string;
+            /**
+             * Format: int64
+             * @description Lifetime of a run's token: 900 to 604800 seconds; 0: 86400 (24 h)
+             */
+            ttl_seconds?: number;
+        };
+        HarborpilotSpaceSettings: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotSpaceSettings.json
+             */
+            readonly $schema?: string;
+            /** @description Models runs may use; empty: any model the binding's plan routes */
+            allowed_model_aliases: string[];
+            /** @description A Harbor Pilot connection exists */
+            connected: boolean;
+            enabled: boolean;
+            /** @description Harnesses whose runs go through Harbor Pilot; the others keep their direct accounts */
+            harnesses: string[];
+            /**
+             * @description What a launch does when Harbor Pilot budget status can't be read
+             * @enum {string}
+             */
+            on_budget_status_unavailable: "proceed" | "refuse";
+            /** @description The Harbor Pilot project the space's runs are charged to */
+            project_id: string;
+            space_id: string;
+            /** @description false: the defaults (not opted in) */
+            stored: boolean;
+            /**
+             * Format: int64
+             * @description Lifetime of a run's token
+             */
+            ttl_seconds: number;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /** Format: int64 */
+            version: number;
+            warnings: string[];
+        };
+        HarborpilotSpaceStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotSpaceStatus.json
+             */
+            readonly $schema?: string;
+            /** @description Budgets covering the space: its project, the project's workspace, the connection's client binding, and global ones */
+            budgets: components["schemas"]["HarborpilotCovering"][];
+            connected: boolean;
+            enabled: boolean;
+            /**
+             * Format: date-time
+             * @description When Harbor Pilot was read (status is reused for 30 s)
+             */
+            fetched_at?: string;
+            harnesses: string[];
+            /** @enum {string} */
+            on_budget_status_unavailable: "proceed" | "refuse";
+            project_id: string;
+            /** @enum {string} */
+            source: "harbor-pilot";
+            space_id: string;
+            /**
+             * @description exceeded: a covering blocking budget is used up and launches are refused
+             * @enum {string}
+             */
+            state: "off" | "ok" | "warning" | "exceeded" | "unavailable";
+            /** @description Why budget status can't be read */
+            unavailable?: string;
+            usage?: components["schemas"]["HarborpilotProjectUsage"];
+            usage_unavailable?: string;
         };
         HttpCookie: {
             Domain: string;
@@ -7189,7 +8161,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "hours" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** @description 0 means no limit */
             zero_means_none: boolean;
         };
@@ -7274,7 +8246,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "hours" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** Format: int64 */
             value: number;
             /** @description 0 means no limit */
@@ -7320,6 +8292,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AccountsKind"][];
+        };
+        "List-account-usage-limitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-account-usage-limitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetUsageLimit"][];
         };
         "List-approval-policiesResponse": {
             /**
@@ -7566,6 +8547,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["HumanSpaceType"][];
         };
+        "List-space-limit-waitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-limit-waitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetLimitWait"][];
+        };
         "List-space-mcp-grantsResponse": {
             /**
              * Format: uri
@@ -7583,6 +8573,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["CatalogSpaceRole"][];
+        };
+        "List-space-usage-limitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-usage-limitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetUsageLimit"][];
         };
         "List-spacesResponse": {
             /**
@@ -7807,6 +8806,11 @@ export interface components {
             correlation_id?: string;
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: date-time
+             * @description Scheduled for this time: not delivered before it
+             */
+            deliver_at?: string;
             /** @enum {string} */
             delivered_via?: "" | "terminal_notice" | "mcp_fetch" | "operator_view";
             from_id?: string;
@@ -8203,10 +9207,14 @@ export interface components {
              * @example /api/v1/schemas/Preview.json
              */
             readonly $schema?: string;
+            claude_settings?: {
+                [key: string]: unknown;
+            };
             effective: {
                 [key: string]: components["schemas"]["CatalogField"];
             };
             harness: string;
+            harness_version?: string;
             kind: string;
             model?: string;
             prompt?: components["schemas"]["CatalogPromptRef"];
@@ -8283,9 +9291,15 @@ export interface components {
              * @example /api/v1/schemas/ProfileInput.json
              */
             readonly $schema?: string;
+            /** @description Claude Code settings.json keys for the profile's runs (claude-code profiles only); omitted on an update keeps the current ones, {} clears them */
+            claude_settings?: {
+                [key: string]: unknown;
+            };
             description?: string;
             /** @enum {string} */
             harness?: "claude-code" | "codex";
+            /** @description Pin the Claude Code version the profile's runs get (claude-code profiles only): latest, stable or an exact X.Y.Z; empty follows the node's channel; omitted on an update keeps the current pin */
+            harness_version?: string;
             model?: string;
             name: string;
             settings?: {
@@ -8360,11 +9374,24 @@ export interface components {
         };
         ProtoHarnessInfo: {
             available: boolean;
+            /** Format: int64 */
+            cache_bytes?: number;
+            cached?: string[];
             capabilities: string[];
+            channel?: string;
             error?: string;
             kind: string;
+            managed?: boolean;
             path?: string;
+            resolved?: {
+                [key: string]: components["schemas"]["ProtoHarnessResolved"];
+            };
             version?: string;
+        };
+        ProtoHarnessResolved: {
+            /** Format: date-time */
+            resolved_at?: string;
+            version: string;
         };
         ProtoInstanceCheck: {
             /** Format: int64 */
@@ -8767,6 +9794,11 @@ export interface components {
             code?: string;
             password: string;
         };
+        RecordingMode: {
+            /** Format: int64 */
+            mode: number;
+            on: boolean;
+        };
         RecordingPage: {
             /**
              * Format: uri
@@ -8776,7 +9808,7 @@ export interface components {
             readonly $schema?: string;
             /**
              * Format: int64
-             * @description Sequence discontinuities and explicit gap records
+             * @description Sequence discontinuities and explicit gap records up to the end of this page (the read stops after it)
              */
             gaps: number;
             more: boolean;
@@ -8786,7 +9818,9 @@ export interface components {
              */
             next_after: number;
             records: components["schemas"]["RecordingRecord"][];
-            /** @description A segment ended in an incomplete frame (interrupted writer) */
+            /** @description Set when the page is a tail (tail=): what comes before its records */
+            tail?: components["schemas"]["RecordingTail"];
+            /** @description A segment read for this page ended in an incomplete frame (interrupted writer) */
             truncated: boolean;
         };
         RecordingRecord: {
@@ -8808,6 +9842,37 @@ export interface components {
              */
             t: number;
             why?: string;
+        };
+        RecordingTail: {
+            /**
+             * Format: int64
+             * @description Terminal columns where the tail starts (0 when no size was recorded before it)
+             */
+            cols: number;
+            /**
+             * Format: int64
+             * @description Sequence number of the tail's first record (0 when the recording is empty)
+             */
+            from: number;
+            /**
+             * Format: int64
+             * @description Gap records before the tail
+             */
+            gaps: number;
+            /** @description DEC private modes the output before the tail set (on) or reset, in the order they last changed */
+            modes: components["schemas"]["RecordingMode"][];
+            /**
+             * Format: int64
+             * @description Terminal rows where the tail starts
+             */
+            rows: number;
+            /**
+             * Format: int64
+             * @description Bytes of output before the tail; 0 when the tail is the whole recording
+             */
+            skipped_bytes: number;
+            /** @description Whether a truncation record comes before the tail */
+            truncated: boolean;
         };
         "Recovery-loginRequest": {
             /**
@@ -9733,6 +10798,34 @@ export interface components {
              */
             while_paused?: "defer" | "wake" | "stop";
         };
+        SystemCounts: {
+            error?: string;
+            /**
+             * Format: int64
+             * @description Open and in-progress human actions
+             */
+            human_pending: number;
+            /**
+             * Format: int64
+             * @description Connected live-event streams (change feed, terminals, recordings)
+             */
+            live_streams: number;
+            /** Format: int64 */
+            nodes_active: number;
+            /** Format: int64 */
+            nodes_connected: number;
+            nodes_error?: string;
+            /**
+             * Format: int64
+             * @description Runs starting, running or stopping
+             */
+            runs_running: number;
+            /**
+             * Format: int64
+             * @description Spaces that are not archived
+             */
+            spaces: number;
+        };
         SystemInfo: {
             /**
              * Format: uri
@@ -9746,6 +10839,70 @@ export interface components {
             local_login_disabled: boolean;
             ready: boolean;
             version: string;
+        };
+        SystemProtocol: {
+            /** Format: int64 */
+            major: number;
+            /** Format: int64 */
+            max_minor: number;
+            /** Format: int64 */
+            min_minor: number;
+        };
+        SystemSchema: {
+            /** Format: int64 */
+            current: number;
+            error?: string;
+            /** Format: int64 */
+            latest: number;
+        };
+        SystemStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SystemStatus.json
+             */
+            readonly $schema?: string;
+            /** @description Changes at every start of central */
+            boot_id: string;
+            build: components["schemas"]["BuildinfoInfo"];
+            counts: components["schemas"]["SystemCounts"];
+            /** @description Central's data directory on its host */
+            data_dir: string;
+            protocol: components["schemas"]["SystemProtocol"];
+            public_url: string;
+            schema: components["schemas"]["SystemSchema"];
+            /** Format: date-time */
+            started_at: string;
+            storage: components["schemas"]["SystemStorage"];
+            /** Format: int64 */
+            uptime_seconds: number;
+        };
+        SystemStorage: {
+            below_reserve: boolean;
+            checks: components["schemas"]["AttentionCheck"][];
+            /** Format: int64 */
+            db_bytes: number;
+            /** Format: int64 */
+            disk_available_bytes: number;
+            disk_error?: string;
+            /**
+             * Format: int64
+             * @description Free space below this degrades readiness
+             */
+            disk_reserve_bytes: number;
+            /** Format: int64 */
+            disk_total_bytes: number;
+            /** Format: double */
+            disk_used_percent: number;
+            /** @description Readiness is not ready, the database is not ok, or free space is below the reserve */
+            problem: boolean;
+            /** @description ready, degraded, failed, starting or stopping */
+            readiness: string;
+            store_reason?: string;
+            /** @enum {string} */
+            store_state: "ok" | "degraded" | "failed";
+            /** Format: int64 */
+            wal_bytes: number;
         };
         TOTPEnrollment: {
             /**
@@ -9807,10 +10964,14 @@ export interface components {
             variables: components["schemas"]["TemplateVariable"][];
         };
         TemplateFilter: {
+            /** @description Apply the filter only when this variable has a value */
+            if_set?: string;
             /** @enum {string} */
-            op: "eq" | "ne" | "in" | "exists" | "prefix";
+            op: "eq" | "ne" | "in" | "exists" | "absent" | "prefix";
             /** @description Dotted path into the event, e.g. data.repository.full_name */
             path: string;
+            /** @description Apply the filter only when this variable has no value */
+            unless_set?: string;
             value?: string;
             values?: string[];
         };
@@ -9879,6 +11040,8 @@ export interface components {
             readonly $schema?: string;
             estimate?: components["schemas"]["ProtoCostEstimate"];
             final: boolean;
+            /** @description What the LLM gateway (Harbor Pilot) observed for a gateway run, read back after it ended */
+            gateway?: components["schemas"]["UsageGatewayUsage"];
             harness?: string;
             kind?: string;
             /** @description Token counts are known */
@@ -9894,6 +11057,37 @@ export interface components {
             transcript?: components["schemas"]["UsageTranscript"];
             /** Format: date-time */
             updated_at: string;
+        };
+        UsageGatewayCost: {
+            /** @description Decimal amount */
+            amount: string;
+            currency: string;
+            kind: string;
+        };
+        UsageGatewayUsage: {
+            /** @description Harbor Pilot's cost totals per category and currency (categories are never summed) */
+            costs: components["schemas"]["UsageGatewayCost"][];
+            models: components["schemas"]["ProtoModelUsage"][];
+            note?: string;
+            /** Format: date-time */
+            read_at?: string;
+            /**
+             * Format: int64
+             * @description Attempts Harbor Pilot recorded
+             */
+            requests: number;
+            /** @description Always harbor-pilot */
+            source: string;
+            /**
+             * @description pending: more reads are due, figures may still grow; final: the last read is stored; failed and unavailable: see note
+             * @enum {string}
+             */
+            state: "pending" | "final" | "failed" | "unavailable";
+            /**
+             * Format: int64
+             * @description Attempts whose token usage the provider did not report (not counted as zero)
+             */
+            unknown_usage_requests: number;
         };
         UsageSummary: {
             /**
@@ -10329,6 +11523,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-account-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-account-usage-limitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-account-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Clear-account-usage-limitsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetUsageLimitClear"];
+                };
             };
             /** @description Error */
             default: {
@@ -11999,6 +13259,132 @@ export interface operations {
             };
         };
     };
+    "get-harbor-pilot-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotConnection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-harbor-pilot-connection": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HarborpilotConnectionInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotConnection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-harbor-pilot-connection": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-harbor-pilot-gateway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotGatewayInfo"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-harness-profiles": {
         parameters: {
             query?: never;
@@ -12531,6 +13917,79 @@ export interface operations {
             };
         };
     };
+    "create-spaceman-mcp": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewaySpacemanInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-spaceman-mcp-tools": {
+        parameters: {
+            query?: {
+                /** @description Default admin */
+                preset?: "read" | "operate" | "admin" | "custom";
+                /** @description Tools named by name, comma-separated */
+                tools?: string[];
+                /** @description Token grants as role@domain, comma-separated (domain: a space ID or *) */
+                grants?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewaySpacemanTools"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-mcp-server": {
         parameters: {
             query?: never;
@@ -12746,6 +14205,84 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reissue-spaceman-mcp": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewaySpacemanToken"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-spaceman-mcp": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewaySpacemanUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
             };
             /** @description Error */
             default: {
@@ -14596,6 +16133,140 @@ export interface operations {
             };
         };
     };
+    "get-space-harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotSpaceSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-space-harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HarborpilotSpaceInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotSpaceSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-space-harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-harbor-pilot-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotSpaceStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-human-actions": {
         parameters: {
             query?: {
@@ -15768,6 +17439,101 @@ export interface operations {
             };
         };
     };
+    "list-space-limit-waits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-limit-waitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "release-limit-wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                wait_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetLimitWait"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resume-limit-wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                wait_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetLimitWait"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-space-limits": {
         parameters: {
             query?: never;
@@ -16098,6 +17864,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description Only scheduled messages to control that are not yet due, earliest first */
+                scheduled?: boolean;
             };
             header?: never;
             path: {
@@ -16198,6 +17966,38 @@ export interface operations {
         };
     };
     "ack-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagesMessage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-message": {
         parameters: {
             query?: never;
             header?: never;
@@ -17081,6 +18881,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text */
+                include?: ("manifest" | "prompt")[];
             };
             header?: never;
             path: {
@@ -17220,6 +19022,8 @@ export interface operations {
                 /** @description Return records with seq greater than this */
                 after?: number;
                 limit?: number;
+                /** @description Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after. */
+                tail?: number;
             };
             header?: never;
             path: {
@@ -17436,6 +19240,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetTakeover"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-terminal-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetTerminalSize"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRun"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-terminal-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRun"];
                 };
             };
             /** @description Error */
@@ -18601,6 +20473,69 @@ export interface operations {
             };
         };
     };
+    "list-space-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-usage-limitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-space-usage-limit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                limit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetUsageLimitClear"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-xspace-peers": {
         parameters: {
             query?: never;
@@ -18966,6 +20901,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StarterRolesOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
                 };
             };
             /** @description Error */

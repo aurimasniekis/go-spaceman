@@ -222,6 +222,14 @@ func (svc *Service) launch(ctx context.Context, k db.KbRepo, sess db.KbSession) 
 	if sess.HarnessSession != "" {
 		in.Prompt = "You are resuming as the support session for " + sess.RequesterLabel + ". Check spaceman_messages for new requests."
 	}
+	// The space role decides the kind: anything but kb is refused before a run exists (the check after launch below
+	// stays for a launcher without the hook).
+	in.AuthorizeKind = func(kind string) error {
+		if kind != "kb" {
+			return apperr.New(apperr.CodePrecondition, "the space role %s does not run as kind kb", k.SpaceRole)
+		}
+		return nil
+	}
 	run, err := svc.fleet.LaunchRun(ctx, system, k.SpaceID, in)
 	if err != nil {
 		svc.setState(ctx, sess, "failed", "launch: "+err.Error(), 1)

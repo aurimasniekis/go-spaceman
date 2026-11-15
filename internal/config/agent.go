@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // AgentConfig is the node `spaceman-agent` configuration.
@@ -21,6 +22,10 @@ type AgentConfig struct {
 	ManagementListen string `yaml:"management_listen"`
 	// Capacity is the maximum number of concurrent runs this node accepts (SM-LIMIT-001; 1-256).
 	Capacity int `yaml:"capacity"`
+	// JournalRetention is how long the journal keeps an ended run after its final state: older ended runs are deleted once
+	// central acknowledged their final state, their recording is fully shipped and their transcript upload is finished
+	// (30 days to 1 year; default 30 days, the harness pin window of ADR-0077).
+	JournalRetention Duration `yaml:"journal_retention"`
 }
 
 // CentralConfig locates the central service and the node credential.
@@ -56,7 +61,34 @@ type HarnessConfig struct {
 	// CodexBinary is the Codex executable (name on PATH or absolute path).
 	CodexBinary string `yaml:"codex_binary"`
 	// GitBinary is accepted but not read by this build: the agent runs "git" from PATH.
-	GitBinary string `yaml:"git_binary"`
+	GitBinary string           `yaml:"git_binary"`
+	Claude    ClaudeCodeConfig `yaml:"claude"`
+}
+
+// ClaudeCodeConfig configures node-managed Claude Code (ADR-0077): the node resolves a version, downloads it into a
+// verified per-version cache under data_dir, keeps the newest few, and launches runs from it by absolute path.
+type ClaudeCodeConfig struct {
+	// Manage turns node-managed Claude Code on: runs launch the verified cached binary by absolute path. Off (default):
+	// runs use claude_binary through the herdr-core core's PATH.
+	Manage bool `yaml:"manage"`
+	// Channel is the node's default version: latest (default), stable or an exact X.Y.Z.
+	Channel string `yaml:"channel"`
+	// BaseURL is the release server (https only; redirects must stay on its host); change it only to use a mirror.
+	BaseURL string `yaml:"base_url"`
+	// CacheKeep is how many of the newest versions the cache keeps besides pinned and in-use ones (1-50).
+	CacheKeep int `yaml:"cache_keep"`
+	// CacheKeepPinned is how many versions profiles pinned the cache keeps at most, the most recently launched ones
+	// within 30 days (1-50). A version a live or adoptable run uses is always kept, whatever the cap.
+	CacheKeepPinned int `yaml:"cache_keep_pinned"`
+	// Refresh is how long a channel is memoised and how often the node re-resolves, prefetches it and collects the
+	// cache's garbage (1m to 24h).
+	Refresh Duration `yaml:"refresh"`
+	// DownloadTimeout bounds one version download, and how long a launch waits in starting when no version it may run
+	// is cached (30s to 2h).
+	DownloadTimeout Duration `yaml:"download_timeout"`
+	// SelfUpdate lets Claude Code update itself in runs when manage is off. Off (default): every Claude Code run gets
+	// DISABLE_AUTOUPDATER=1 and DISABLE_UPDATES=1. It can't be on with manage, whose runs never update themselves.
+	SelfUpdate bool `yaml:"self_update"`
 }
 
 // IsProduction reports whether the agent runs in production mode.
@@ -79,8 +111,9 @@ func ParseTerminalSize(s string) (cols, rows int, err error) {
 	if _, err := fmt.Sscanf(s, "%dx%d", &cols, &rows); err != nil || fmt.Sprintf("%dx%d", cols, rows) != s {
 		return 0, 0, fmt.Errorf("must be COLSxROWS, like 160x48 (got %q)", s)
 	}
-	if cols < 40 || cols > 400 || rows < 10 || rows > 200 {
-		return 0, 0, fmt.Errorf("must be 40-400 columns and 10-200 rows (got %s)", s)
+	if proto.CheckTerminalSize(cols, rows) != nil {
+		return 0, 0, fmt.Errorf("must be %d-%d columns and %d-%d rows (got %s)", proto.TerminalMinCols, proto.TerminalMaxCols,
+			proto.TerminalMinRows, proto.TerminalMaxRows, s)
 	}
 	return cols, rows, nil
 }

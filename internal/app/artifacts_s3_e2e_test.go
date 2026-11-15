@@ -21,6 +21,7 @@ import (
 // still reads the same); its transcript is uploaded once received; a backup copies them into the backup; deleting
 // the recording and the transcript removes their objects.
 func TestS3ArtifactStoreEndToEnd(t *testing.T) {
+	t.Parallel()
 	srv := s3test.New(t, "AKIDTEST")
 	keys := t.TempDir()
 	write := func(name, v string) string {
@@ -169,6 +170,7 @@ func TestS3ArtifactStoreEndToEnd(t *testing.T) {
 
 // With the local store a purge deletes the space's recordings and transcripts from the data directory too.
 func TestPurgeDeletesLocalArtifacts(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()

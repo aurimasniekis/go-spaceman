@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -37,6 +38,11 @@ func attachmentOut(a *attachments.Attachment) *AttachmentOut {
 		URI: attachments.URIScheme + a.ID}
 }
 
+// UploadBodyReadTimeout is the total time an attachment upload's body may take to arrive. Every other operation keeps
+// huma's 5 s default; an upload of up to http.max_upload_bytes (25 MiB by default) needs more, and 10 minutes is a
+// floor of about 43 KiB/s at that size. The idle bound (http.read_idle_timeout) still applies to each read within it.
+const UploadBodyReadTimeout = 10 * time.Minute
+
 // RegisterAttachments registers the upload and metadata operations.
 func RegisterAttachments(svc *attachments.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
@@ -44,7 +50,7 @@ func RegisterAttachments(svc *attachments.Service) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "upload-attachment", Method: http.MethodPost, Path: "/spaces/{space_id}/attachments",
 			Summary: "Upload an attachment", Description: "A multipart form with one `file` field. The media type is sniffed from the content. " +
 				"Reference the returned `uri` (or `id`) from the item that uses it; unreferenced uploads are removed after 24 hours.",
-			Tags: tags, DefaultStatus: http.StatusCreated},
+			Tags: tags, DefaultStatus: http.StatusCreated, BodyReadTimeout: UploadBodyReadTimeout},
 			func(ctx context.Context, in *struct {
 				SpacePath
 				IdempotencyKey

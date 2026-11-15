@@ -50,14 +50,30 @@ attention:
   proposed an incident, and an incident that ended with the preempted tasks that wait or were resumed (see
   [Incidents](./queue#incidents)).
 
-When control's program is idle it is told that messages are waiting. A control run started later is told about them
+To talk to a running control at once, use the message box under its terminal: the text is typed into the session
+immediately, and control acts on it when it can. When control's program is idle it is told that messages are waiting. A control run started later is told about them
 too, including ones an earlier control was told about but never acknowledged.
+
+When a run reaches its Claude usage limit and SpaceMan keeps it alive until the reset, control gets **one** message
+saying which run, which limit and when it resets, and **one** more when the limit clears. Meanwhile that run gets no
+notices (messages to it wait until the clear) and doesn't count against the space's concurrency limit. Control isn't
+told about its own limit; it can't act on it before the reset.
+
+When a run is **parked** at its usage limit instead (its wait is longer than the keep-alive, or it ended at its limit; see
+[Long waits: parked](./usage-limits#long-waits-parked)), control gets one message saying when it resumes and when its task would be given
+back, in place of the run-ended notice. It gets one more when the run resumes (saying when it started a fresh session
+because the space moved node), or when SpaceMan gave up on it and its task is back in the queue. Don't relaunch or
+reassign a parked run's task: its wait brings it back. A parked control is not started for new work either; its wait
+brings it back, with its session, at the reset.
 
 ## Starting and stopping on its own
 
 You do not have to keep control running. When work waits for control and no control run is live, SpaceMan **starts
 control** itself. It does not need a new event: anything waiting for control that no control has seen yet counts, such
-as a new inbox item, a task to decide on, a worker that ended or a message from an agent.
+as a new inbox item, a task to decide on, a worker that ended, a message from an agent, or a person's response to a
+[human action](./human-actions) whose requester has ended (for example control's own question, answered after control
+was stopped). The control that starts, or one an operator launches later, is told once about each response it has
+not acknowledged yet.
 
 - It **resumes the last control run**: the same role, harness, instance and account, and the same session when the
   last run finished at least one turn. A space that never had a control run gets its control role (the space role
@@ -70,8 +86,8 @@ as a new inbox item, a task to decide on, a worker that ended or a message from 
 
 A control run that has been **idle** (its turn finished) for 30 minutes is **stopped**. SpaceMan does not count this as
 a failure and does not restart it. The next work starts control again, resuming its session. Control stays running
-while it works, while an operator has [taken over its terminal](/operators/terminals#taking-over-a-terminal), and while something waits for it that it has
-not been told about yet.
+while it works, while an operator has [taken over its terminal](/operators/terminals#taking-over-a-terminal), while something waits for it that it has
+not been told about yet, and while it waits for its usage limit to reset (its idle time starts once the limit clears).
 
 Both behaviours are [limits](./limits) of the space. Turn **Start control on new work** (`control_autostart`) off to
 start control only by hand. Set **Stop idle control** (`control_idle_stop_minutes`) to 0 to keep an idle control

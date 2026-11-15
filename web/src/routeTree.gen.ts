@@ -19,6 +19,7 @@ import { Route as BackupsRouteImport } from './routes/backups'
 import { Route as CrossSpaceRouteImport } from './routes/cross-space'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as GitKeysRouteImport } from './routes/git-keys'
+import { Route as HarborPilotRouteImport } from './routes/harbor-pilot'
 import { Route as HumanRouteImport } from './routes/human'
 import { Route as HumanTypesRouteImport } from './routes/human-types'
 import { Route as LoginRouteImport } from './routes/login'
@@ -31,6 +32,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInProvidersRouteImport } from './routes/sign-in-providers'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as SpacesRouteImport } from './routes/spaces'
+import { Route as SystemRouteImport } from './routes/system'
 import { Route as TerminalsRouteImport } from './routes/terminals'
 import { Route as TokensRouteImport } from './routes/tokens'
 import { Route as UsersRouteImport } from './routes/users'
@@ -109,6 +111,11 @@ const GitKeysRoute = GitKeysRouteImport.update({
   path: '/git-keys',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HarborPilotRoute = HarborPilotRouteImport.update({
+  id: '/harbor-pilot',
+  path: '/harbor-pilot',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HumanRoute = HumanRouteImport.update({
   id: '/human',
   path: '/human',
@@ -167,6 +174,11 @@ const SkillsRoute = SkillsRouteImport.update({
 const SpacesRoute = SpacesRouteImport.update({
   id: '/spaces',
   path: '/spaces',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SystemRoute = SystemRouteImport.update({
+  id: '/system',
+  path: '/system',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TerminalsRoute = TerminalsRouteImport.update({
@@ -321,6 +333,7 @@ export interface FileRoutesByFullPath {
   '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
   '/git-keys': typeof GitKeysRoute
+  '/harbor-pilot': typeof HarborPilotRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -333,6 +346,7 @@ export interface FileRoutesByFullPath {
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
+  '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -371,6 +385,7 @@ export interface FileRoutesByTo {
   '/backups': typeof BackupsRoute
   '/cross-space': typeof CrossSpaceRoute
   '/git-keys': typeof GitKeysRoute
+  '/harbor-pilot': typeof HarborPilotRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -382,6 +397,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
+  '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -419,6 +435,7 @@ export interface FileRoutesById {
   '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
   '/git-keys': typeof GitKeysRoute
+  '/harbor-pilot': typeof HarborPilotRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -431,6 +448,7 @@ export interface FileRoutesById {
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
+  '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -472,6 +490,7 @@ export interface FileRouteTypes {
     | '/cross-space'
     | '/events'
     | '/git-keys'
+    | '/harbor-pilot'
     | '/human'
     | '/human-types'
     | '/login'
@@ -484,6 +503,7 @@ export interface FileRouteTypes {
     | '/sign-in-providers'
     | '/skills'
     | '/spaces'
+    | '/system'
     | '/terminals'
     | '/tokens'
     | '/users'
@@ -522,6 +542,7 @@ export interface FileRouteTypes {
     | '/backups'
     | '/cross-space'
     | '/git-keys'
+    | '/harbor-pilot'
     | '/human'
     | '/human-types'
     | '/login'
@@ -533,6 +554,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in-providers'
     | '/skills'
+    | '/system'
     | '/terminals'
     | '/tokens'
     | '/users'
@@ -569,6 +591,7 @@ export interface FileRouteTypes {
     | '/cross-space'
     | '/events'
     | '/git-keys'
+    | '/harbor-pilot'
     | '/human'
     | '/human-types'
     | '/login'
@@ -581,6 +604,7 @@ export interface FileRouteTypes {
     | '/sign-in-providers'
     | '/skills'
     | '/spaces'
+    | '/system'
     | '/terminals'
     | '/tokens'
     | '/users'
@@ -621,6 +645,7 @@ export interface RootRouteChildren {
   CrossSpaceRoute: typeof CrossSpaceRoute
   EventsRoute: typeof EventsRouteWithChildren
   GitKeysRoute: typeof GitKeysRoute
+  HarborPilotRoute: typeof HarborPilotRoute
   HumanRoute: typeof HumanRoute
   HumanTypesRoute: typeof HumanTypesRoute
   LoginRoute: typeof LoginRoute
@@ -633,6 +658,7 @@ export interface RootRouteChildren {
   SignInProvidersRoute: typeof SignInProvidersRoute
   SkillsRoute: typeof SkillsRoute
   SpacesRoute: typeof SpacesRouteWithChildren
+  SystemRoute: typeof SystemRoute
   TerminalsRoute: typeof TerminalsRoute
   TokensRoute: typeof TokensRoute
   UsersRoute: typeof UsersRoute
@@ -710,6 +736,13 @@ declare module '@tanstack/react-router' {
       path: '/git-keys'
       fullPath: '/git-keys'
       preLoaderRoute: typeof GitKeysRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/harbor-pilot': {
+      id: '/harbor-pilot'
+      path: '/harbor-pilot'
+      fullPath: '/harbor-pilot'
+      preLoaderRoute: typeof HarborPilotRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/human': {
@@ -794,6 +827,13 @@ declare module '@tanstack/react-router' {
       path: '/spaces'
       fullPath: '/spaces'
       preLoaderRoute: typeof SpacesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/system': {
+      id: '/system'
+      path: '/system'
+      fullPath: '/system'
+      preLoaderRoute: typeof SystemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/terminals': {
@@ -1090,6 +1130,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrossSpaceRoute: CrossSpaceRoute,
   EventsRoute: EventsRouteWithChildren,
   GitKeysRoute: GitKeysRoute,
+  HarborPilotRoute: HarborPilotRoute,
   HumanRoute: HumanRoute,
   HumanTypesRoute: HumanTypesRoute,
   LoginRoute: LoginRoute,
@@ -1102,6 +1143,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInProvidersRoute: SignInProvidersRoute,
   SkillsRoute: SkillsRoute,
   SpacesRoute: SpacesRouteWithChildren,
+  SystemRoute: SystemRoute,
   TerminalsRoute: TerminalsRoute,
   TokensRoute: TokensRoute,
   UsersRoute: UsersRoute,

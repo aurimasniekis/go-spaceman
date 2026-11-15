@@ -12,6 +12,7 @@ import (
 // optimistic, audited, keeps emails unique and lower-cased, keeps a password user's email (their sign-in name), ends
 // their sessions when it changes, and never lifts MFA that policy forces.
 func TestUpdateProfile(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}

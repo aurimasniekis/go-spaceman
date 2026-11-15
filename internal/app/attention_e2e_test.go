@@ -15,6 +15,7 @@ import (
 // SM-UI-003 over HTTP: one attention summary of human actions, blocked tasks and storage, filtered per category by
 // the caller's permissions (a viewer of one space sees only that space and no installation-wide sections).
 func TestAttentionOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
@@ -83,6 +84,7 @@ func TestAttentionOverHTTP(t *testing.T) {
 // attachments on comments, responses, tasks and messages (only the space's own), and per-user notification
 // preferences (SM-HUI-006) with optimistic concurrency.
 func TestHumanSearchClarifyAttachmentsAndPrefsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

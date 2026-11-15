@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Installs the pinned sqlc release binary into bin/ and verifies its SHA-256 (sums computed from the v1.31.1 release).
+# Transient GitHub errors (5xx, resets) are retried; CI caches bin/sqlc keyed on this file's hash, so a cache hit makes no
+# request at all (the version check below returns early).
 set -euo pipefail
 VERSION="1.31.1"
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -17,7 +19,7 @@ if [[ -x bin/sqlc ]] && bin/sqlc version | grep -q "v${VERSION}"; then exit 0; f
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 file="sqlc_${VERSION}_${os}_${arch}.tar.gz"
-curl -fsSL -o "$tmp/$file" "https://github.com/sqlc-dev/sqlc/releases/download/v${VERSION}/${file}"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "$tmp/$file" "https://github.com/sqlc-dev/sqlc/releases/download/v${VERSION}/${file}"
 echo "${sum}  $tmp/$file" | shasum -a 256 -c - >/dev/null
 tar -xzf "$tmp/$file" -C "$tmp"
 mv "$tmp/sqlc" bin/sqlc

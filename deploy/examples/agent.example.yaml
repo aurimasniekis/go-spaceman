@@ -17,8 +17,11 @@ runner:
   socket: /run/spaceman-agent/hc.sock           # RuntimeDirectory of spaceman-agent.service; at most 103 bytes
 
 harness:
-  claude_binary: claude                         # Claude Code, installed by the operator
+  claude_binary: claude                         # Claude Code, installed by the operator (when claude.manage is off)
   codex_binary: codex                           # Codex, installed by the operator
+  claude:
+    manage: false                               # true: the node downloads, verifies and runs Claude Code itself
+    channel: latest                             # with manage: latest, stable or an exact X.Y.Z
   # git is looked up on PATH; harness.git_binary is accepted but not used yet (docs/LIMITATIONS.md).
 
 # management_listen is accepted but the agent serves no health endpoint yet (docs/LIMITATIONS.md).

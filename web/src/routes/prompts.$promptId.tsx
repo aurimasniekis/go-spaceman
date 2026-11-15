@@ -99,7 +99,7 @@ function DraftCard({ prompt, draft, canWrite }: { prompt: Prompt; draft?: Prompt
   })
   const extendsPrompt = useSelector(form.store, (st) => st.values.extendsPrompt)
   const parent = useQuery({ queryKey: keys.prompt(extendsPrompt ?? ''), enabled: !!extendsPrompt,
-    queryFn: async () => unwrap(await api.GET('/prompts/{prompt_id}', { params: { path: { prompt_id: extendsPrompt! } } })) })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/prompts/{prompt_id}', { params: { path: { prompt_id: extendsPrompt! } }, signal })) })
   // A newly saved draft (another version) becomes the form's starting point.
   useEffect(() => { form.reset(initial()) }, [draft?.id, draft?.version])
   const publish = async () => {
@@ -161,7 +161,7 @@ function DraftCard({ prompt, draft, canWrite }: { prompt: Prompt; draft?: Prompt
 function DiffModal({ versions, initial, onClose }: { versions: PromptVersion[]; initial: { from: string; to: string }; onClose: () => void }) {
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
-  const diff = useQuery({ queryKey: ['prompt-diff', from, to], queryFn: async () => unwrap(await api.GET('/prompt-diff', { params: { query: { from, to } } })).lines })
+  const diff = useQuery({ queryKey: ['prompt-diff', from, to], queryFn: async ({ signal }) => unwrap(await api.GET('/prompt-diff', { params: { query: { from, to } }, signal })).lines })
   const opts = versions.map((v) => ({ value: v.id, label: v.state === 'draft' ? 'Draft' : `Version ${v.number}` }))
   const color = { add: 'var(--mantine-color-owlGreen-light)', del: 'var(--mantine-color-owlRed-light)', same: 'transparent' } as const
   return (

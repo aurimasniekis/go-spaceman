@@ -47,15 +47,16 @@ Every command accepts these.
 | [`spaceman dream`](./dream) | Dream configurations of a space: list, create, update, start and runs (--space) |
 | [`spaceman event`](./event) | Events: Pulse connections, templates and subscriptions |
 | [`spaceman git-key`](./git-key) | Shared Git SSH keys (ADR-0058): generate, list, show, edit, rotate and delete |
+| [`spaceman harbor-pilot`](./harbor-pilot) | The Harbor Pilot gateway (ADR-0060): the connection and a space's settings |
 | [`spaceman human`](./human) | Human actions: list, create, respond, assign, comment and cancel; types and policies |
 | [`spaceman identity`](./identity) | Your linked sign-in identities: list and unlink (a user's: `spaceman user identity`) |
 | [`spaceman inbox`](./inbox) | A space's inbox: list, show, add and triage items (--space) |
 | [`spaceman kb`](./kb) | A space's knowledge bases: list, show, create, update; requests and proposals (--space) |
 | [`spaceman keys`](./keys) | Key-encryption key management |
-| [`spaceman limits`](./limits) | Space limits: show, override and list definitions |
+| [`spaceman limits`](./limits) | Space limits: show, override and list definitions; usage-limit holds and waits |
 | [`spaceman mcp`](./mcp) | Central MCP gateway: servers, grants and a space's servers |
 | [`spaceman memory`](./memory) | Role memory of a space: collections, sync status, files, history and conflicts (--space) |
-| [`spaceman message`](./message) | Durable messages between agents, control and operators: list, show, send, reply, ack and resolve (--space) |
+| [`spaceman message`](./message) | Durable messages between agents, control and operators: list, show, send, reply, ack, resolve and cancel (--space) |
 | [`spaceman mfa`](./mfa) | Your second factor: TOTP enrollment and recovery codes |
 | [`spaceman node`](./node) | Nodes: list, enroll, edit, disable, enable and revoke |
 | [`spaceman notifications`](./notifications) | Your notification preferences: what the web UI announces to you |
@@ -72,7 +73,7 @@ Every command accepts these.
 | [`spaceman session`](./session) | Your sign-in sessions: list and revoke |
 | [`spaceman skill`](./skill) | Skill catalog: list, show, create, draft and publish |
 | [`spaceman space`](./space) | Spaces: create, edit, pause, archive, purge, relocate and usage |
-| [`spaceman system`](./system) | A running central: version, backups, outbox, restore and break-glass notices, root token |
+| [`spaceman system`](./system) | A running central: version, status, backups, outbox, restore and break-glass notices, root token |
 | [`spaceman task`](./task) | The execution queue: tasks, blockers, dependencies, escalation, decisions and policy (--space) |
 | [`spaceman token`](./token) | API tokens: list, create and revoke |
 | [`spaceman user`](./user) | Users: list, show, create, disable, enable, grants, reset tokens and identities |

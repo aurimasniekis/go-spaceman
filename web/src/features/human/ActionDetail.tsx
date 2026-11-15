@@ -23,7 +23,7 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
   const qc = useQueryClient()
   // Lists omit comments, notifications and the custom type spec: the drawer reads the full action.
   const full = useQuery({ queryKey: ['human-action', listed.space_id, listed.id, listed.version],
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-actions/{action_id}', { params: { path: { space_id: listed.space_id, action_id: listed.id } } })) })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/human-actions/{action_id}', { params: { path: { space_id: listed.space_id, action_id: listed.id } }, signal })) })
   const action = full.data && full.data.version >= listed.version ? full.data : listed
   const enforced = useActionApproval(action)
   const me = useMe().data

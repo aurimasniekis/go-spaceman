@@ -7,6 +7,7 @@ import { api, unwrap, type QueuePolicy, type Run, type Task } from '@/api/client
 import { keys, useMe, useNext, useQueue, useRuns } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
+import { LocalErrorAlert, LocalErrorBoundary } from '@/components/LocalErrorBoundary'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { TaskPriority, TaskRowState } from '@/features/queue/badges'
 import { dropOn, step } from '@/features/queue/order'
@@ -20,6 +21,8 @@ export const Route = createFileRoute('/spaces/$spaceId/queue')({
   // ?task=<id> opens that task's drawer (links from human actions and the attention view, SM-HUI-006).
   validateSearch: (s: Record<string, unknown>): { task?: string } => (typeof s.task === 'string' ? { task: s.task } : {}),
   component: QueuePage,
+  // A failure inside the queue stays in the queue: the space's header and navigation keep working.
+  errorComponent: ({ error, reset }) => <LocalErrorAlert error={error} title="The queue could not be shown" reset={reset} />,
 })
 
 function QueuePage() {
@@ -76,9 +79,10 @@ function QueuePage() {
         )} />
       <ErrorAlert error={queue.error} />
       <Card mb="sm" p="sm">
-        <Group gap="xs" wrap="nowrap">
+        {/* Wraps on a phone, so the next task's title keeps a readable width. */}
+        <Group gap="xs">
           <Text size="sm" fw={600}>Next:</Text>
-          {next.data?.selected ? <Text size="sm" truncate>{next.data.selected.title}</Text> : <Text size="sm" c="dimmed">nothing can start now</Text>}
+          {next.data?.selected ? <Text size="sm" truncate style={{ minWidth: 'min(160px, 100%)' }}>{next.data.selected.title}</Text> : <Text size="sm" c="dimmed">nothing can start now</Text>}
           {(next.data?.skipped ?? []).length > 0 && (
             <Tooltip multiline w={420} label={(next.data?.skipped ?? []).slice(0, 8).map((s) => `${s.title}: ${s.reason}`).join('\n')} style={{ whiteSpace: 'pre-line' }}>
               <Text size="sm" c="dimmed" td="underline" style={{ textDecorationStyle: 'dotted', cursor: 'help', whiteSpace: 'nowrap' }}>
@@ -124,9 +128,16 @@ function QueuePage() {
         ))}
         {queue.isSuccess && tasks.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">The queue is empty. Tasks are created here or from inbox items.</Text>}
       </Stack>
-      <TaskModal spaceId={spaceId} opened={creating} onClose={() => setCreating(false)} />
-      <TaskDrawer spaceId={spaceId} task={all.find((t) => t.id === open) ?? null} tasks={all} canWrite={canWrite} onClose={() => setOpen(null)} />
-      {queue.data && policyOpen && <PolicyModal spaceId={spaceId} policy={queue.data.policy} onClose={() => setPolicyOpen(false)} />}
+      {/* One failing dialog or drawer must not take the queue list down with it. */}
+      <LocalErrorBoundary title="The new-task form could not be shown">
+        <TaskModal spaceId={spaceId} opened={creating} onClose={() => setCreating(false)} />
+      </LocalErrorBoundary>
+      <LocalErrorBoundary key={open ?? ''} title="This task could not be shown">
+        <TaskDrawer spaceId={spaceId} task={all.find((t) => t.id === open) ?? null} tasks={all} canWrite={canWrite} onClose={() => setOpen(null)} />
+      </LocalErrorBoundary>
+      <LocalErrorBoundary title="The queue policy could not be shown">
+        {queue.data && policyOpen && <PolicyModal spaceId={spaceId} policy={queue.data.policy} onClose={() => setPolicyOpen(false)} />}
+      </LocalErrorBoundary>
     </>
   )
 }

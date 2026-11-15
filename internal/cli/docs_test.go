@@ -11,6 +11,7 @@ import (
 )
 
 func TestGenerateDocs(t *testing.T) {
+	t.Parallel()
 	root := newRootFor(&App{SpecSource: specOnce})
 	root.AddCommand(&cobra.Command{Use: "hidden", Hidden: true, Run: func(*cobra.Command, []string) {}})
 	files := GenerateDocs(root)

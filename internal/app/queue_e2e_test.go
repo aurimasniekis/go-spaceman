@@ -14,6 +14,7 @@ import (
 // SM-QUEUE-*, SM-INBOX-003 over HTTP: an inbox item becomes a task (the item is linked and done), operator moves,
 // the next eligible task with skip reasons, If-Match on state changes, and read-only viewers.
 func TestQueueOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

@@ -37,6 +37,9 @@ export const theme = createTheme({
   spacing: { xs: '6px', sm: '8px', md: '12px', lg: '16px', xl: '24px' },
   cursorType: 'pointer',
   components: {
+    // Descriptions go under the field, not between the label and the field, so inputs in one row stay aligned whether or
+    // not they have a description. The error comes last, under the description.
+    InputWrapper: { defaultProps: { inputWrapperOrder: ['label', 'input', 'description', 'error'] } },
     Button: { defaultProps: { size: 'xs' } },
     // 28 px row actions: 22 px was under the WCAG 2.5.8 target size.
     ActionIcon: { defaultProps: { size: 'md', variant: 'subtle', color: 'gray' } },
@@ -53,8 +56,19 @@ export const theme = createTheme({
     Tooltip: { defaultProps: { openDelay: 300, fz: 'xs' } },
     NavLink: { defaultProps: { py: 5 } },
     // Close buttons have no visible text; give them a name (axe button-name).
-    Modal: { defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } }, styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' } } },
-    Drawer: { defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' } }, styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' } } },
+    // Dialogs scroll vertically only. Mantine's content box sets overflow-y: auto, and CSS then makes overflow-x auto as
+    // well, so anything a pixel wider than the dialog (or a node a browser extension adds next to the editor) gave the
+    // dialog a horizontal scrollbar and, with it, a vertical one. Long unbreakable values (IDs, fingerprints, URLs) wrap;
+    // wide content (tables, code) scrolls in its own box; e2e/ui-overflow.spec.ts fails when a dialog's content is wider
+    // than the dialog.
+    Modal: {
+      defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } },
+      styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, content: { overflowX: 'hidden' }, body: { overflowWrap: 'break-word' } },
+    },
+    Drawer: {
+      defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' } },
+      styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, content: { overflowX: 'hidden' }, body: { overflowWrap: 'break-word' } },
+    },
   },
 })
 
@@ -84,6 +98,20 @@ export const LIGHT_DIMMED = '#5c6670'
 // Readable on the hovered or selected row too (#1d3b53, 4.6:1), not only on the body and cards.
 export const DARK_DIMMED = '#93a6b4'
 
+/**
+ * Syntax highlighting colors (the classes @tanstack/highlight emits, components/markdown/markdown.css), from Night Owl
+ * and Light Owl like the documentation site's code. Light Owl shades are darkened where they were under 4.5:1 on the
+ * code block's white surface; contrast.test.ts checks every token on its scheme's surface.
+ */
+export const CODE_TOKENS = {
+  light: { token: lightOwl.fg, comment: LIGHT_DIMMED, keyword: lightOwl.purple, string: '#06805d', number: lightOwl.orange, function: '#3b66c4',
+    type: '#b35a58', property: '#0b7f83', operator: '#0b7f83', deleted: '#c62828' },
+  dark: { token: nightOwl.fg, comment: DARK_DIMMED, keyword: nightOwl.purple, string: nightOwl.green, number: nightOwl.orange, function: nightOwl.blue,
+    type: nightOwl.yellow, property: nightOwl.teal, operator: nightOwl.teal, deleted: '#ff6b68' },
+}
+
+const codeVariables = (c: Record<string, string>) => Object.fromEntries(Object.entries(c).map(([k, v]) => [`--sm-code-${k}`, v]))
+
 /** Exact Night Owl / Light Owl surfaces as CSS variables (body, borders, dimmed text). */
 export const cssVariablesResolver: CSSVariablesResolver = () => ({
   variables: { '--sm-mono': 'var(--mantine-font-family-monospace)' },
@@ -97,6 +125,7 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--sm-on-filled': '#ffffff',
     '--sm-accent-purple': lightOwl.purple,
     '--sm-accent-teal': lightOwl.teal,
+    ...codeVariables(CODE_TOKENS.light),
   },
   dark: {
     '--mantine-color-body': nightOwl.bg,
@@ -107,6 +136,7 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--sm-on-filled': nightOwl.bg,
     '--sm-accent-purple': nightOwl.purple,
     '--sm-accent-teal': nightOwl.teal,
+    ...codeVariables(CODE_TOKENS.dark),
     ...darkLightVariants(),
   },
 })

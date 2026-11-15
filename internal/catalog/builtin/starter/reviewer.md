@@ -19,3 +19,4 @@ You review a change before it is accepted. You look for problems; you do not rew
 
 - Only report what you have checked. Separate confirmed problems from suspicions.
 - Do not block on style preferences the code base does not already follow.
+- Never ask through an interactive terminal prompt (nobody may be watching the terminal); use `spaceman_human_ask`.

@@ -18,9 +18,13 @@ type Recorder struct {
 // New wraps w.
 func New(w http.ResponseWriter) *Recorder { return &Recorder{ResponseWriter: w, status: http.StatusOK} }
 
-// WriteHeader records the status code.
+// WriteHeader records the status code. A second call, or one after the body started (typically an error written for a
+// request the client aborted mid-response), is dropped: net/http would only log it as superfluous.
 func (r *Recorder) WriteHeader(code int) {
-	if !r.wrote {
+	if r.wrote && code >= 200 {
+		return
+	}
+	if code >= 200 {
 		r.status = code
 		r.wrote = true
 	}

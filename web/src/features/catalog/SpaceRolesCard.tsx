@@ -4,10 +4,11 @@ import { useForm, useSelector } from '@tanstack/react-form'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, unwrap, type SpaceRole } from '@/api/client'
-import { keys, useMe, useRoleOptions, useSpaceMcp, useSpaceRoles } from '@/api/queries'
+import { keys, useMe, useRoleOptions, useSpaceRoles } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { atLeast, roleIn } from '@/lib/access'
 import { notifyError, notifyOk } from '@/lib/notify'
+import { claudeSettingsKeys } from './claudeSettings'
 import { SettingsEditor } from './SettingsEditor'
 
 const originColor: Record<string, string> = { builtin: 'gray', profile: 'owlBlue', template: 'owlPurple', space_role: 'owlGreen', launch: 'owlYellow', policy: 'owlRed' }
@@ -20,7 +21,6 @@ export function SpaceRolesCard({ spaceId }: { spaceId: string }) {
   const [editing, setEditing] = useState<SpaceRole | 'new' | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const tplName = (id: string) => options.data?.templates.find((t) => t.id === id)?.name ?? id
-  const mcp = useSpaceMcp(spaceId).data ?? []
   const qc = useQueryClient()
   const [adding, setAdding] = useState(false)
   // Starter roles (ADR-0051): ready-made control, planner, implementor, reviewer, kb and dreamer roles from the starter templates.
@@ -71,11 +71,6 @@ export function SpaceRolesCard({ spaceId }: { spaceId: string }) {
           </Table.Tbody>
         </Table>
       )}
-      {mcp.length > 0 && (
-        <Text size="xs" c="dimmed" mt="xs">
-          MCP servers: {mcp.map((m) => `${m.name} (${m.role === '*' ? 'every role' : m.role}${m.enabled ? '' : ', disabled'})`).join(' · ')}
-        </Text>
-      )}
       {editing && <RoleModal spaceId={spaceId} role={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
       <Drawer opened={preview !== null} onClose={() => setPreview(null)} position="right" size="xl" title={`Role ${preview ?? ''}`}>
         {preview && <RolePreview spaceId={spaceId} name={preview} />}
@@ -86,28 +81,36 @@ export function SpaceRolesCard({ spaceId }: { spaceId: string }) {
 
 function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
   const q = useQuery({ queryKey: ['role-preview', spaceId, name],
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/roles/{name}/preview', { params: { path: { space_id: spaceId, name } } })) })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/roles/{name}/preview', { params: { path: { space_id: spaceId, name } }, signal })) })
   if (q.error) return <ErrorAlert error={q.error} />
   if (!q.data) return null
   const p = q.data
   return (
     <Stack gap="sm">
       <Text size="sm" c="dimmed">What a launch of this role gets now, and where each value comes from. Later layers override earlier ones; policy ceilings apply last.</Text>
-      <Table>
-        <Table.Thead><Table.Tr><Table.Th>Field</Table.Th><Table.Th>Value</Table.Th><Table.Th>From</Table.Th></Table.Tr></Table.Thead>
-        <Table.Tbody>
-          {Object.entries(p.effective).sort(([a], [b]) => a.localeCompare(b)).map(([k, f]) => (
-            <Table.Tr key={k}>
-              <Table.Td><Text size="xs" className="mono">{k}</Text></Table.Td>
-              <Table.Td><Text size="xs" className="mono">{f.value.length > 40 ? `${f.value.slice(0, 40)}…` : f.value}</Text></Table.Td>
-              <Table.Td><Badge size="xs" variant="light" color={originColor[f.origin]}>{f.origin.replace('_', ' ')}</Badge></Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
+      <Table.ScrollContainer minWidth={520}>
+        <Table>
+          <Table.Thead><Table.Tr><Table.Th>Field</Table.Th><Table.Th>Value</Table.Th><Table.Th>From</Table.Th></Table.Tr></Table.Thead>
+          <Table.Tbody>
+            {Object.entries(p.effective).sort(([a], [b]) => a.localeCompare(b)).map(([k, f]) => (
+              <Table.Tr key={k}>
+                <Table.Td><Text size="xs" className="mono">{k}</Text></Table.Td>
+                <Table.Td><Text size="xs" className="mono">{f.value.length > 40 ? `${f.value.slice(0, 40)}…` : f.value}</Text></Table.Td>
+                <Table.Td><Badge size="xs" variant="light" color={originColor[f.origin]}>{f.origin.replace('_', ' ')}</Badge></Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
       {p.prompt && <Text size="sm">Prompt <b>{p.prompt.slug}</b> v{p.prompt.number} ({p.prompt.pinned ? 'pinned' : 'follows the latest'})</Text>}
       {p.skills.length > 0 && (
         <Text size="sm">Skills: {p.skills.map((sk) => `${sk.slug} v${sk.number}${sk.pinned ? ' (pinned)' : ''}`).join(', ')}</Text>
+      )}
+      {claudeSettingsKeys(p.claude_settings).length > 0 && (
+        <>
+          <Text size="sm" fw={600}>Claude Code settings.json (from the profile, after policy)</Text>
+          <Code block className="mono" tabIndex={0} aria-label="Claude Code settings" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(p.claude_settings, null, 2)}</Code>
+        </>
       )}
       <Text size="sm" fw={600}>System text</Text>
       <Code block className="mono" tabIndex={0} aria-label="System text" style={{ whiteSpace: 'pre-wrap' }}>{p.system_text}</Code>

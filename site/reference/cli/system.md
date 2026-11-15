@@ -2,7 +2,7 @@
 
 # spaceman system
 
-A running central: version, backups, outbox, restore and break-glass notices, root token.
+A running central: version, status, backups, outbox, restore and break-glass notices, root token.
 
 | Subcommand | Description |
 |---|---|
@@ -14,6 +14,7 @@ A running central: version, backups, outbox, restore and break-glass notices, ro
 | [`spaceman system restore`](#spaceman-system-restore) | The notice a central shows after a restore |
 | [`spaceman system retention`](#spaceman-system-retention) | Retention: installation defaults, audit retention and the daily pass |
 | [`spaceman system root-token`](#spaceman-system-root-token) | The root token: show its metadata, rotate or revoke it |
+| [`spaceman system status`](#spaceman-system-status) | This instance's status: version, uptime, boot ID, schema and protocol versions, storage, counts (admins) |
 
 ## spaceman system attention
 
@@ -239,4 +240,14 @@ spaceman system root-token rotate --yes --secret-file ./root.token
 | `--secret-file` | string |  | write the one-time secret to this new file (mode 0600) instead of printing it |
 | `--show-secret` | bool |  | print the one-time secret (shown once; without this or --secret-file the command refuses to run) |
 | `--yes` | bool |  | confirm: rotate the root token (the current one stops working) |
+
+## spaceman system status
+
+This instance's status: version, uptime, boot ID, schema and protocol versions, storage, counts (admins).
+
+```sh
+spaceman system status [flags]
+```
+
+API: `get-system` ([HTTP API](../api)).
 

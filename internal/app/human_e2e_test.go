@@ -15,6 +15,7 @@ import (
 // view filtered to readable spaces, and approval decisions that need approval:decide. SM-INV-011: human actions stay
 // out of the inbox and the queue.
 func TestHumanActionsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
@@ -50,6 +51,8 @@ func TestHumanActionsOverHTTP(t *testing.T) {
 	expect(t, root.do("POST", base+"/human-actions/"+q.ID+"/comments", map[string]any{"body": "Postgres is overkill here"}), 201)
 	expect(t, root.do("POST", base+"/human-actions/"+q.ID+"/respond", map[string]any{"outcome": "answered", "answer": "SQLite"}), 428)
 	expect(t, root.do("POST", base+"/human-actions/"+q.ID+"/respond", map[string]any{"outcome": "approved"}, "If-Match", `"1"`), 422)
+	// ADR-0087: the API never marks a row internal, so a reserved dedup_key is refused (kills a mutant that passes Internal).
+	expect(t, root.do("POST", base+"/human-actions", map[string]any{"type": "todo", "title": "Planted", "dedup_key": "approval:x"}), 422)
 	var ans human.Action
 	r = root.do("POST", base+"/human-actions/"+q.ID+"/respond", map[string]any{"outcome": "answered", "answer": "SQLite"}, "If-Match", `"1"`)
 	expect(t, r, 200)
@@ -108,6 +111,7 @@ func TestHumanActionsOverHTTP(t *testing.T) {
 // SM-HUM-009/011 over HTTP: installation defaults and space overrides with their effective sources, If-Match on
 // policies, and routing an undeliverable response to control.
 func TestHumanPoliciesOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

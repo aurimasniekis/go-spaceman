@@ -33,6 +33,11 @@ INSERT INTO user_local_credentials (user_id, password_phc, params_version, chang
 ON CONFLICT (user_id) DO UPDATE SET password_phc = excluded.password_phc, params_version = excluded.params_version,
   changed_at = excluded.changed_at, must_change = excluded.must_change;
 
+-- name: RehashLocalCredential :execrows
+-- Replaces a password hash made with older parameters, only while the stored hash is still the one that was verified.
+UPDATE user_local_credentials SET password_phc = sqlc.arg(new_phc), params_version = sqlc.arg(params_version)
+WHERE user_id = sqlc.arg(user_id) AND password_phc = sqlc.arg(old_phc);
+
 -- name: GetTOTP :one
 SELECT * FROM mfa_totp WHERE user_id = ?;
 
@@ -144,8 +149,8 @@ WHERE hash = sqlc.arg(hash) AND kind = 'invite' AND used_at IS NULL AND expires_
 SELECT * FROM one_time_tokens WHERE hash = ? AND kind = 'invite';
 
 -- name: InsertAPIToken :exec
-INSERT INTO api_tokens (id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO api_tokens (id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, purpose)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetAPITokenByMAC :one
 SELECT * FROM api_tokens WHERE mac = ?;

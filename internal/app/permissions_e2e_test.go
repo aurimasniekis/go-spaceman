@@ -18,6 +18,7 @@ import (
 // ask with a type restricted to admins, and cannot answer a type whose responders are admins; agents of an unlisted
 // role are refused when they ask. Admins keep everything.
 func TestHumanTypePermissionsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
@@ -113,6 +114,7 @@ func TestHumanTypePermissionsOverHTTP(t *testing.T) {
 // If-Match is required and checked, the change is audited, a space admin is refused, and the effective MFA
 // requirement stays forced by policy when the setting is cleared.
 func TestUserProfileOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

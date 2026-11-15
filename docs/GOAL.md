@@ -140,6 +140,50 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-ACCT-005 Secrets are write-only and excluded from logs, events, resolved manifests and API reads. Docs state that privileged node operators can read runtime secrets.
 - SM-ACCT-006 Rotation affects subsequent launches.
 
+### SM-GW — LLM gateway (Harbor Pilot; operator addition, §9; design in ADR-0060, Accepted 2026-11-08)
+- SM-GW-001 **Connection.** One Harbor Pilot connection per central holds:
+  - the base URL;
+  - a parent token with `tokens:mint`;
+  - an optional read-only service-principal token.
+
+  Both tokens are sealed and write-only (API, CLI, UI, Terraform, audit, change feed, exports, logs). They never reach a
+  node. Central's client needs https unless the host is loopback or insecure HTTP is explicitly allowed, and redirects
+  are not followed. The URL delivered to runs carries their tokens, so it needs https with no loopback exemption, unless
+  insecure HTTP is explicitly allowed; the node checks it too.
+- SM-GW-002 **Space opt-in.** A space opts in with:
+  - a Harbor Pilot project id;
+  - a `harnesses` list: any harness Harbor Pilot can serve, while the others keep their direct accounts;
+  - a token TTL: 24 h by default, 15 min to 7 days;
+  - optional allowed model aliases.
+
+  For a listed harness, the gateway replaces accounts: a launch that names an account is refused.
+- SM-GW-003 **Run token.** Each run of an opted-in harness gets its own child token, minted at dispatch:
+  - scopes: invoke and models only;
+  - bound refs: space, run, instance, session, project id, and the task when the run has one.
+
+  A resend reuses the run's token. If minting fails, the run fails with a readable reason. A harness configured for Harbor
+  Pilot never falls back to a direct account (operator decision, 2026-11-06).
+- SM-GW-004 **Delivery.** The token reaches the run only through the launcher secrets file (ADR-0009):
+  - Claude Code gets `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`;
+  - Codex gets a custom `model_provider` with `env_key = HARBOR_PILOT_TOKEN`.
+
+  No other harness credential is delivered. Agents too old for the gateway are refused with a clear reason.
+- SM-GW-005 **Revocation.** The run token is revoked on every end path: exit, failure, stop, relocation, purge, lease loss
+  and connection change. A durable queue survives a central crash; the TTL is only a backstop.
+- SM-GW-006 **Budgets.** The Limits page shows the status of the Harbor Pilot budgets that cover the space, labelled as
+  hard limits enforced by Harbor Pilot. A launch is refused early, naming the budget, its spend and its reset time, when a
+  blocking covering budget is exhausted. When budget status can't be fetched, a per-space setting decides: proceed (the
+  default; the gateway still enforces) or refuse.
+- SM-GW-007 **Events.** Harbor Pilot events on Pulse (`evt.harborpilot.>`) arrive as inbox items for the right space
+  through shipped event templates. Their text is untrusted. Events that are not scoped to a project are delivered only to
+  spaces that explicitly subscribe; how to route them automatically is open (DECISIONS K-12).
+- SM-GW-008 **Usage.** Usage taken from Harbor Pilot is real data with its source labelled. Usage that Harbor Pilot
+  cannot attribute to a run is never presented as per-run usage.
+- SM-GW-009 **Terraform.** Terraform manages the connection (write-only tokens) and per-space settings. A combined example
+  with the `harborpilot` provider applies cleanly.
+- SM-GW-010 **Evidence.** Gateway behaviour is tested against a real `harbor-pilot serve --demo` (pinned version, opt-in).
+  Status keeps contract-tested, real-demo-tested and externally verified apart.
+
 ### SM-HARN — Harness adapters
 - SM-HARN-001 Launch and resume. Space-specific configuration and session dirs, with instance overlays. Prompt and memory integration. Account
   materialization. SpaceMan MCP bootstrap. Skills. Native transcripts. Usage extraction. Notifications and interruption. Supporting-session
@@ -147,11 +191,27 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-HARN-002 No native configuration or session leaks across spaces.
 - SM-HARN-003 Every harness advertises its capabilities explicitly (resume, native messaging, approval hooks, usage, transcripts).
 - SM-HARN-004 Native mechanisms (such as Claude SendMessage) are used only where the actual session topology supports them, integrated with the durable contract.
+- SM-HARN-005 **Managed Claude Code versions.** A node resolves the Claude Code version for each run: the profile's pin, else the
+  node's channel, else `latest`. A pin is honoured exactly or the launch fails; it never silently runs another version. Runs start
+  the resolved binary by absolute path with Claude Code's self-updates off (ADR-0077).
+- SM-HARN-006 **Verified binary cache.** Claude Code is downloaded only from the release host or an operator-configured HTTPS
+  mirror, accepted only when its SHA-256 and size match the version's manifest, and kept in an immutable per-version cache whose
+  garbage collection never removes a version a pin or a live run uses.
+- SM-HARN-007 **Per-run harness version.** Every run records the harness version it actually ran and the version it requested.
+- SM-HARN-008 **Current node versions.** A node reports its harness versions and cache again whenever they change and periodically,
+  not only when it connects.
 
 ### SM-RUN — Runner adapter
 - SM-RUN-001 Start, inspect, attach, read, input, resize, stop, kill, process identity, attachment recovery, stream continuity and gap reporting.
 - SM-RUN-002 Uses only verified herdr-core APIs. Never screen-text heuristics for agent status.
 - SM-RUN-003 Managed worker creation goes only through SpaceMan.
+- SM-RUN-004 **A usage limit never loses a run's session.** When a run reaches its account's usage limit, SpaceMan keeps it alive
+  until the reset or parks it and resumes the same session after the reset; it never treats the limit as a failure (ADR-0079).
+- SM-RUN-005 **No launch into a known exhausted account.** While an account has an open usage limit, launches and resumes on it
+  are refused with the reset time, unless the space opted into failover to another bound account (ADR-0079).
+- SM-RUN-006 **Usage-limit status from typed records only.** Limits are detected from typed transcript fields, never from screen
+  or display text; a run's limit report can hold its account for at most 8 days, and control and people are told once per
+  account window (ADR-0079).
 
 ### SM-INBOX — Inbox
 - SM-INBOX-001 Accepts operator text and JSON, worker messages, routed human responses, dreamer findings, KB messages, cross-space requests,
@@ -275,6 +335,23 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-MCP-003 Built-in tools: inbox/messages, tasks, artifacts/attachments, memory, control orchestration, KB support, human actions, cross-space requests.
 - SM-MCP-004 Skills are central, versioned, assignable and harness-materialized, including the Hallpass skill. Skills give guidance, not permission.
   No arbitrary install hooks without a trust policy.
+- SM-MCP-005 An administrator can give a space's runs SpaceMan itself as an MCP server (kind `spaceman`): SpaceMan's own
+  API operations as tools, served by central through the gateway and the existing bridge, with no new node protocol.
+  It is managed through the API, CLI, the UI ("Add SpaceMan MCP") and Terraform (`spaceman_admin_mcp_server`) (ADR-0063).
+- SM-MCP-006 A SpaceMan MCP server acts through a secretless internal API token owned by the admin who created it, with
+  role@domain grants covered by the owner's (and by the issuing token's). It can never be presented as a bearer token,
+  is authorized as both token and owner on every call, and stops on the next call when it is revoked or expires, its
+  owner is disabled or loses the grants, or the server is disabled or deleted. No secret reaches nodes, runs,
+  configuration, logs or Terraform state. Its calls are audited with the owner, the token and the run.
+- SM-MCP-007 Tools are one per API operation, generated from the build's API document and a reviewed classification
+  (read, write, dangerous, sensitive-read, excluded) that a test keeps complete. Operations that need a person at the
+  keyboard (sign-in, own account, step-up, tokens, users, approvals and approval policies, human-action responses,
+  takeover and terminal input) and SpaceMan MCP self-management are never exposed. Calls run through the API's own
+  authorization, validation, idempotency and audit. Only control and worker runs get the tools.
+- SM-MCP-008 Dangerous tools always need a human approval, whatever the server's settings; other approvals are a
+  per-server choice. An agent acting through a SpaceMan MCP server never counts as an approver.
+- SM-MCP-009 Central also serves the SpaceMan MCP tool surface at `/api/v1/mcp` to operators' own MCP clients,
+  authenticated with a bearer API token, with the same classification, exclusions and approval rules.
 
 ### SM-MEM — Memory
 - SM-MEM-001 Memory is keyed by (space_id, agent_kind). All instances of a kind share history. KB sessions share KB memory by default with separate conversations.
@@ -316,6 +393,10 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-PROMPT-005 A new installation has starter roles: example harness profiles, prompts and role templates for control, planning,
   implementation, review, knowledge-base support and dreaming, added once and editable or deletable, and a space can be given
   ready-to-launch roles from them on request (operator request 2026-11-03, §9).
+- SM-PROMPT-006 A Claude Code harness profile controls its runs' Claude Code settings.json (any keys: permissions,
+  auto mode rules, environment, hooks, …). The UI edits permissions, auto mode and environment variables in
+  dedicated fields and other keys as JSON, Terraform manages them, and the permission mode ceiling still applies
+  (operator request 2026-11-06, §9).
 
 ### SM-XSPACE — Cross-space collaboration
 - SM-XSPACE-001 Discovery, questions, delegation, disclosure and knowledge permissions are separate.
@@ -341,6 +422,9 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-UI-004 Terminals are watch-only by default. Takeover needs explicit permission, is visibly shown, is audited, pauses automated input and is enforced server-side.
 - SM-UI-005 Task entry belongs in the inbox UI. External and agent content is treated as untrusted.
 - SM-UI-006 Accessibility, keyboard sorting, responsive layouts, useful errors, live views that reconnect.
+- SM-UI-007 A run's terminal size is configurable from the web: a live run can be resized (fit to window, presets, custom
+  size) by someone with takeover permission, the size is per run and shared by every viewer, bounded and audited, and
+  recordings follow it. A space sets the size new runs start at.
 
 ### SM-REC — Recordings, transcripts and usage
 - SM-REC-001 Terminal recordings, native transcripts and normalized metadata are kept distinct.
@@ -362,6 +446,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-OBS-004 Outbound publication goes through a transactional outbox using the verified Pulse contract: stable IDs, versioned payloads,
   correlation and causation, at-least-once delivery, retry and backoff, lag and failure visibility. Human-action lifecycle events carry safe metadata only.
 - SM-OBS-005 Inbound subscriptions are distinct from outbound publication. No external publication inside a DB write transaction.
+- SM-OBS-006 Administrators see the instance's status (version and build, start time, boot ID, schema and node protocol versions, storage health, live counts) on a System page and API, without secrets; the version alone is readable by every client.
 
 ### SM-STORE — Storage, backups and restore
 - SM-STORE-001 Central SQLite plus a node-local durable journal. No multi-writer or network-filesystem SQLite.
@@ -455,3 +540,6 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-02 | UI component base follows the sibling projects (Pulse, Porch, Deed): Mantine 8. | SM-UI-001 (ADR-0005) |
 | 2026-11-03 | The Terraform provider lives in its own repository (`../terraform-provider-spaceman`, module `github.com/aurimasniekis/terraform-provider-spaceman`), not in this one; this repository's build does not depend on it. | SM-API-004/005 (ADR-0047) |
 | 2026-11-03 | A new installation comes with starter roles (control, planner, implementor, reviewer, kb, dreamer) as editable, deletable examples, so a first space can launch agents without configuring every role by hand. | SM-PROMPT-005 (ADR-0051) |
+| 2026-11-06 | Claude Code runs get their settings.json from their harness profile, with full control (permissions, auto mode, hooks, any key), a proper UI rather than raw JSON for the common parts, and a Terraform provider attribute. | SM-PROMPT-006 (ADR-0059) |
+| 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0060 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |
+| 2026-11-08 | A System page like Hallpass's, plus a version API, for v0.1.0. | SM-OBS-006 (ADR-0067) |

@@ -224,6 +224,9 @@ func TestRedactURL(t *testing.T) {
 		"https://user:tok3n@example.test/a.git": "https://example.test/a.git",
 		"https://example.test/a.git":            "https://example.test/a.git",
 		"git@example.test:a/b.git":              "git@example.test:a/b.git",
+		"ssh://git@example.test/a/b.git":        "ssh://git@example.test/a/b.git",
+		"ssh://git:pw@example.test/a/b.git":     "ssh://example.test/a/b.git",
+		"https://user@example.test/a.git":       "https://example.test/a.git",
 		"/srv/git/a.git":                        "/srv/git/a.git",
 	} {
 		got, _ := redactURL(in)

@@ -156,3 +156,18 @@ Run on 2026-11-03 with hc 0.1.16 on macOS against an isolated core (own `HC_SESS
 - **An interactive attach resizes only while attached.** At another size it resizes the program at once (the program's
   `stty size` changes); once the attach's connection closes, the program is back at the headless size. An observer
   never resizes. `TestRealTerminalSize`.
+
+### S-7: holding a size, several interactive attaches and size events (2026-11-09, hc 0.1.17, isolated core)
+Method: a temporary probe and then `internal/runner/hc` `TestRealTerminalSizeHold` (`go test -tags real`) against an
+isolated core, with a program that prints `stty size` in a loop.
+- **RESIZE frames on an open interactive attach** (kind 3, u16 LE cols, u16 LE rows, S-3) resize the program at once,
+  as often as they are sent. The size lasts as long as that attach's connection is open.
+- **The newest interactive attach sets the size.** With one attach held at 90×25, a second interactive attach (at the
+  same size) that resizes to 70×20 sets 70×20. Closing it brings back 90×25. After all interactive attaches close,
+  the program is back at the headless size.
+- **`events.subscribe` reports every change** as `{"type":"size","terminal":"t1","data":{"cols":N,"rows":M}}`,
+  including the fallback when an attach closes.
+- **An open interactive attach that never writes does not hold back `terminal.send`.** With a hold open, a
+  `terminal.send` was delivered about 1 s later (the quiet rule counts typed keys, S-5, S-6).
+→ ADR-0075: the node holds a run's size through `runner.Takeover` plus RESIZE, never writes to it, and records sizes
+from its own resizes and from these events.

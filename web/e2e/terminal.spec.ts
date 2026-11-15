@@ -5,8 +5,9 @@ import { Api, env, startAgent } from './stack'
 
 /**
  * The live terminal of a full-screen program survives being left and reopened inside the app (no reload). With
- * ghostty-web 0.4.0, disposing a terminal that drew Claude Code's full-screen start-up made the next terminal's resize
- * hang the tab (Chrome: RESULT_CODE_HUNG); the view resets a terminal before disposing it. The stub harness's
+ * ghostty-web 0.4.0's shared WebAssembly instance, disposing a terminal that drew Claude Code's full-screen start-up
+ * made the next terminal's resize hang the tab (Chrome: RESULT_CODE_HUNG); each terminal now has an instance of its
+ * own (ghostty.ts, ADR-0052 as amended; terminal-switch.spec.ts switches between terminals). The stub harness's
  * "/fullscreen" line prints that start-up. The wheel also scrolls a terminal taller than its box.
  */
 test('reopening a full-screen run terminal', async ({ page }) => {

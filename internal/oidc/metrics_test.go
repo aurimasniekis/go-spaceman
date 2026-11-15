@@ -12,6 +12,7 @@ import (
 // Ported from go-hallpass (HP-OBS-004): SSO login completions are counted by provider slug and outcome (login purpose
 // only).
 func TestOIDCLoginMetrics(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	m := metrics.New()
 	f.svc.opts.Metrics = m

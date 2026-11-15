@@ -1,6 +1,7 @@
 package backup_test
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -9,12 +10,15 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/backup"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 // SM-STORE-006: the first start after a restore comes up paused with new execution authority, keeps unresolved human
 // actions and pending approvals, revokes approvals whose later use is unknown, and does all of it exactly once.
 func TestApplyPendingRestore(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	out := filepath.Join(t.TempDir(), "b")
 	m := f.create(out).Manifest
@@ -96,5 +100,20 @@ func TestApplyPendingRestore(t *testing.T) {
 	}
 	if rs, err := backup.AcknowledgeRestore(f.ctx, fresh, aw, ch, audit.System); err != nil || rs != nil {
 		t.Fatalf("fresh acknowledge: %+v %v", rs, err)
+	}
+}
+
+// A notice written before resumed_spaces existed loads with [] (never nil), so it serialises as [] not null.
+func TestLoadRestoreStateNormalisesNilLists(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	if err := st.W().TxNamed(ctx, "test.seed", func(tx *store.Tx) error {
+		return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: backup.SettingRestored, Value: `{"backup_id":"bkp_old"}`, UpdatedAt: tx.NowMicros()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := backup.LoadRestoreState(ctx, st.R())
+	if err != nil || rs == nil || rs.ResumedSpaces == nil || rs.PausedSpaces == nil {
+		t.Fatalf("loaded %+v %v", rs, err)
 	}
 }

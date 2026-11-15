@@ -9,6 +9,13 @@ import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError } from '@/lib/form'
 
 const ROLE_RE = /^[a-z][a-z0-9-]{0,47}$/
+// The "another role" choice; the colon keeps it apart from every valid role name (a space role may be called custom).
+const CUSTOM_ROLE = ':custom'
+
+/** The space-role picker's options: each configured role by name, then the choice to name another role. */
+export function spaceRoleOptions(roles: { name: string }[]): { value: string; label: string }[] {
+  return [...roles.map((r) => ({ value: r.name, label: r.name })), { value: CUSTOM_ROLE, label: 'Another role (choose kind and harness)' }]
+}
 
 type Kind = NonNullable<LaunchInput['kind']>
 type Harness = NonNullable<LaunchInput['harness']>
@@ -67,8 +74,8 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
           {roles.length > 0 && (
             <form.Field name="spaceRole">
               {(f) => <Select label="Space role" description="A configured role brings its template, profile and prompt" allowDeselect={false}
-                value={f.state.value || 'custom'} onChange={(v) => f.handleChange(v === 'custom' || !v ? '' : v)}
-                data={[...roles.map((r) => ({ value: r.name, label: r.name })), { value: 'custom', label: 'Another role (choose kind and harness)' }]} />}
+                value={f.state.value || CUSTOM_ROLE} onChange={(v) => f.handleChange(v === CUSTOM_ROLE || !v ? '' : v)}
+                data={spaceRoleOptions(roles)} />}
             </form.Field>
           )}
           <form.Subscribe selector={(st) => st.values.spaceRole}>

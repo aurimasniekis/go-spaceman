@@ -38,6 +38,7 @@ type ApiToken struct {
 	LastUsedIp    sql.NullString
 	RevokedAt     sql.NullInt64
 	RevokedBy     sql.NullString
+	Purpose       string
 }
 
 type Approval struct {
@@ -340,6 +341,22 @@ type ExecutionLease struct {
 	GrantedAt  int64
 	RenewedAt  int64
 	ExpiresAt  int64
+	GraceUs    int64
+}
+
+type GatewayRevocation struct {
+	CredentialID  string
+	RunID         string
+	SpaceID       string
+	Reason        string
+	ExpiresAt     int64
+	State         string
+	Attempts      int64
+	NextAttemptAt int64
+	LastError     string
+	RequestedAt   int64
+	DoneAt        sql.NullInt64
+	ParentFp      sql.NullString
 }
 
 type GitSshKey struct {
@@ -362,19 +379,41 @@ type GitSshKeySpace struct {
 	SpaceID string
 }
 
+type HarborPilotConnection struct {
+	ID                  string
+	Singleton           int64
+	BaseUrl             string
+	RunBaseUrl          string
+	AllowInsecureHttp   int64
+	ParentTokenEnc      []byte
+	ParentTokenVersion  int64
+	ServiceTokenEnc     []byte
+	ServiceTokenVersion int64
+	BindingID           string
+	ParentExpiresAt     sql.NullInt64
+	ValidatedAt         int64
+	CreatedAt           int64
+	CreatedBy           string
+	UpdatedAt           int64
+	UpdatedBy           string
+	Version             int64
+}
+
 type HarnessProfile struct {
-	ID           string
-	Slug         string
-	Name         string
-	Harness      string
-	Model        string
-	SettingsJson string
-	Description  string
-	Revision     int64
-	CreatedAt    int64
-	CreatedBy    string
-	UpdatedAt    int64
-	Version      int64
+	ID                 string
+	Slug               string
+	Name               string
+	Harness            string
+	Model              string
+	SettingsJson       string
+	Description        string
+	Revision           int64
+	CreatedAt          int64
+	CreatedBy          string
+	UpdatedAt          int64
+	Version            int64
+	ClaudeSettingsJson string
+	HarnessVersion     string
 }
 
 type HumanAction struct {
@@ -652,6 +691,30 @@ type KeyringKey struct {
 	UpdatedAt int64
 }
 
+type LimitWait struct {
+	ID           string
+	SpaceID      string
+	RunID        string
+	TaskID       string
+	RunKind      string
+	Role         string
+	NodeID       string
+	InstanceID   string
+	Harness      string
+	SessionID    string
+	LaunchJson   string
+	UsageLimitID string
+	ResumeAt     int64
+	ReleaseAt    sql.NullInt64
+	State        string
+	NewRunID     string
+	Attempts     int64
+	LastError    string
+	Version      int64
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
 type LoginThrottle struct {
 	Key           string
 	Failures      int64
@@ -688,6 +751,9 @@ type McpServer struct {
 	CreatedBy       string
 	UpdatedAt       int64
 	Version         int64
+	Kind            string
+	ApiTokenID      sql.NullString
+	SpacemanJson    string
 }
 
 type MemoryCollection struct {
@@ -739,6 +805,7 @@ type Message struct {
 	Resolution     string
 	CreatedAt      int64
 	Version        int64
+	DeliverAt      sql.NullInt64
 }
 
 type MfaTotp struct {
@@ -757,23 +824,24 @@ type MfaTotpPending struct {
 }
 
 type Node struct {
-	ID               string
-	Name             string
-	Description      string
-	State            string
-	LabelsJson       string
-	AgentVersion     string
-	ProtocolMinor    int64
-	CapabilitiesJson string
-	Capacity         int64
-	LastSeenAt       sql.NullInt64
-	LastConnectAt    sql.NullInt64
-	LastDisconnectAt sql.NullInt64
-	LastIp           string
-	Version          int64
-	CreatedAt        int64
-	CreatedBy        string
-	UpdatedAt        int64
+	ID                    string
+	Name                  string
+	Description           string
+	State                 string
+	LabelsJson            string
+	AgentVersion          string
+	ProtocolMinor         int64
+	CapabilitiesJson      string
+	Capacity              int64
+	LastSeenAt            sql.NullInt64
+	LastConnectAt         sql.NullInt64
+	LastDisconnectAt      sql.NullInt64
+	LastIp                string
+	Version               int64
+	CreatedAt             int64
+	CreatedBy             string
+	UpdatedAt             int64
+	CapabilitiesUpdatedAt sql.NullInt64
 }
 
 type NodeCommand struct {
@@ -1061,6 +1129,14 @@ type Run struct {
 	ObservedAt         sql.NullInt64
 	UpdatedAt          int64
 	RecordingDeletedAt sql.NullInt64
+	TerminalCols       sql.NullInt64
+	TerminalRows       sql.NullInt64
+	HarnessVersion     string
+	HarnessRequested   string
+	HarnessFallback    string
+	LimitKind          string
+	LimitResetsAt      sql.NullInt64
+	LimitSince         sql.NullInt64
 }
 
 type RunCredential struct {
@@ -1069,6 +1145,33 @@ type RunCredential struct {
 	CreatedAt int64
 	RevokedAt sql.NullInt64
 	TokenEnc  []byte
+}
+
+type RunGatewayCredential struct {
+	RunID        string
+	SpaceID      string
+	CredentialID string
+	TokenEnc     []byte
+	ExpiresAt    int64
+	CreatedAt    int64
+	ParentFp     sql.NullString
+}
+
+type RunGatewayUsage struct {
+	RunID         string
+	SpaceID       string
+	State         string
+	EndedAt       int64
+	Reads         int64
+	Failures      int64
+	NextAttemptAt int64
+	ReadAt        sql.NullInt64
+	ModelsJson    string
+	CostsJson     string
+	Attempts      int64
+	UnknownUsage  int64
+	LastError     string
+	UpdatedAt     int64
 }
 
 type RunTakeover struct {
@@ -1191,6 +1294,21 @@ type SpaceAccount struct {
 	IsDefault int64
 	CreatedAt int64
 	CreatedBy string
+}
+
+type SpaceHarborPilot struct {
+	SpaceID                   string
+	Enabled                   int64
+	ProjectID                 string
+	HarnessesJson             string
+	TtlSeconds                int64
+	OnBudgetStatusUnavailable string
+	AllowedModelAliasesJson   string
+	CreatedAt                 int64
+	CreatedBy                 string
+	UpdatedAt                 int64
+	UpdatedBy                 string
+	Version                   int64
 }
 
 type SpaceHumanType struct {
@@ -1397,6 +1515,27 @@ type TaskPreemption struct {
 	ResumedAt  sql.NullInt64
 	ResumedBy  string
 	Outcome    string
+}
+
+type UsageLimit struct {
+	ID                string
+	SpaceID           string
+	Scope             string
+	AccountID         string
+	GatewayRef        string
+	Kind              string
+	ResetsAt          sql.NullInt64
+	CheckAt           sql.NullInt64
+	Source            string
+	FirstRunID        string
+	SeenAt            int64
+	ClearedAt         sql.NullInt64
+	ClearedBy         string
+	NotifiedControlAt sql.NullInt64
+	NotifiedHumansAt  sql.NullInt64
+	Version           int64
+	CreatedAt         int64
+	UpdatedAt         int64
 }
 
 type User struct {

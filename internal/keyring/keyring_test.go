@@ -263,7 +263,11 @@ func TestLoadKEKSources(t *testing.T) {
 		t.Fatalf("missing file: %v", err)
 	}
 	loose := filepath.Join(dir, "loose")
-	if err := os.WriteFile(loose, EncodeKEK(k), 0o644); err != nil {
+	if err := os.WriteFile(loose, EncodeKEK(k), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Chmod explicitly: WriteFile's mode is filtered by the umask (077 leaves 0600).
+	if err := os.Chmod(loose, 0o644); err != nil { //nolint:gosec // the test needs a world-readable file
 		t.Fatal(err)
 	}
 	if _, err := LoadKEK(Source{Kind: "file", File: loose, Production: true}); !errors.Is(err, ErrBadKEKFile) {

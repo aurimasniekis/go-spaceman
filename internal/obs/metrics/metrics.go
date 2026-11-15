@@ -9,7 +9,6 @@
 package metrics
 
 import (
-	"context"
 	"errors"
 	"maps"
 	"net/http"
@@ -19,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/fsstat"
@@ -72,6 +72,8 @@ type Metrics struct {
 	runsActive      *prometheus.GaugeVec
 	runsStarted     *prometheus.CounterVec
 	runsEnded       *prometheus.CounterVec
+	runsStale       *prometheus.CounterVec
+	gwRevokeFailed  prometheus.Gauge
 	ingest          ingestMetrics
 	fs              *fsCollector
 	handlerTimeout  time.Duration
@@ -131,6 +133,8 @@ func New() *Metrics {
 	m.runsActive = f.gaugeVec("runs_active", "Runs currently observed live, by harness.", "harness")
 	m.runsStarted = f.counterVec("runs_started_total", "Run launches by harness and result.", "harness", "result")
 	m.runsEnded = f.counterVec("runs_ended_total", "Runs ended by harness and reason.", "harness", "reason")
+	m.runsStale = f.counterVec("runs_reconciled_stale_total", "Runs central's stale-run sweeper moved to lost, by end reason (ADR-0074).", "reason")
+	m.gwRevokeFailed = f.gauge("gateway_revocations_failed", "LLM gateway (Harbor Pilot) credential revocations that failed: each credential stays valid until it expires unless a person revokes it, or its parent, in the gateway.")
 	m.ingest = newIngestMetrics(f)
 
 	reg.MustRegister(
@@ -186,24 +190,6 @@ func (m *Metrics) StoreTx(name string, d time.Duration, r TxResult) {
 	n := m.txNames.norm(name)
 	m.txDuration.WithLabelValues(n).Observe(d.Seconds())
 	m.txTotal.WithLabelValues(n, enumTxResult.norm(string(r))).Inc()
-}
-
-// TxObserver adapts StoreTx to internal/store.TxObserver's signature; classify maps errors to a TxResult
-// (nil error → TxOK is handled here). A nil classify maps every error to TxError.
-func (m *Metrics) TxObserver(classify func(error) TxResult) func(name string, d time.Duration, err error) {
-	return func(name string, d time.Duration, err error) {
-		r := TxOK
-		switch {
-		case err == nil:
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			r = TxCanceled
-		case classify != nil:
-			r = classify(err)
-		default:
-			r = TxError
-		}
-		m.StoreTx(name, d, r)
-	}
 }
 
 // StoreTxBusyRetry counts a write attempt retried after SQLITE_BUSY.
@@ -364,6 +350,18 @@ func (m *Metrics) SSEClientDisconnected() {
 	m.sseClients.Dec()
 }
 
+// SSEClients returns the number of connected live-event (SSE) streams: watch and recording streams (the System page).
+func (m *Metrics) SSEClients() int64 {
+	if m == nil {
+		return 0
+	}
+	var d dto.Metric
+	if m.sseClients.Write(&d) != nil || d.Gauge == nil {
+		return 0
+	}
+	return int64(d.Gauge.GetValue())
+}
+
 // --- User authentication ---
 
 // OIDCLogin counts an OIDC login completion. provider is the configured provider slug (bounded).
@@ -432,12 +430,28 @@ func (m *Metrics) RunStarted(h Harness, r RunStartResult) {
 	m.runsStarted.WithLabelValues(enumHarness.norm(string(h)), enumRunStart.norm(string(r))).Inc()
 }
 
+// SetGatewayRevocationsFailed sets the number of gateway credential revocations that failed (refreshed from the store).
+func (m *Metrics) SetGatewayRevocationsFailed(n int64) {
+	if m == nil {
+		return
+	}
+	m.gwRevokeFailed.Set(float64(n))
+}
+
 // RunEnded counts a run end.
 func (m *Metrics) RunEnded(h Harness, r RunEndReason) {
 	if m == nil {
 		return
 	}
 	m.runsEnded.WithLabelValues(enumHarness.norm(string(h)), enumRunEnd.norm(string(r))).Inc()
+}
+
+// RunReconciledStale counts a run the stale-run sweeper ended.
+func (m *Metrics) RunReconciledStale(r StaleReason) {
+	if m == nil {
+		return
+	}
+	m.runsStale.WithLabelValues(enumStaleReason.norm(string(r))).Inc()
 }
 
 // --- Filesystems ---

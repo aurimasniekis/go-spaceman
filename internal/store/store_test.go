@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ func putSetting(ctx context.Context, s *Store, k, v string) error {
 }
 
 func TestOpenLayoutAndPermissions(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	fi, err := os.Stat(s.Dir())
 	if err != nil || fi.Mode().Perm() != 0o700 {
@@ -61,6 +63,7 @@ func TestOpenLayoutAndPermissions(t *testing.T) {
 
 // Hallpass HP-DB-010: group/world-accessible data dirs are refused.
 func TestRefusesOpenPermissions(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -76,6 +79,7 @@ func TestRefusesOpenPermissions(t *testing.T) {
 
 // Hallpass HP-DB-002: pragmas on every pooled connection; readers are read-only.
 func TestPragmasEveryConnection(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{Readers: 6})
 	ctx := context.Background()
 	if err := VerifyPragmas(ctx, s.rdb, 6, true, DefaultBusyTimeout); err != nil {
@@ -93,8 +97,27 @@ func TestPragmasEveryConnection(t *testing.T) {
 	}
 }
 
+// Without Options.Readers a store opens the production reader pool, max(4, GOMAXPROCS) connections, and checks the
+// pragmas on every one of them. Store-backed tests elsewhere use a smaller pool (storetest.Readers), so this is where
+// the default size stays covered.
+func TestDefaultReaderPool(t *testing.T) {
+	t.Parallel()
+	s := openTest(t, Options{})
+	want := max(4, runtime.GOMAXPROCS(0))
+	if got := s.rdb.Stats().MaxOpenConnections; got != want {
+		t.Fatalf("reader pool of %d connections, want max(4, GOMAXPROCS) = %d", got, want)
+	}
+	if got := s.rdb.Stats().OpenConnections; got != want {
+		t.Fatalf("%d reader connections open after Open, want all %d (VerifyPragmas opens every one)", got, want)
+	}
+	if err := VerifyPragmas(context.Background(), s.rdb, want, true, DefaultBusyTimeout); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Hallpass HP-DB-006: a second process owner is refused.
 func TestSecondOwnerRefused(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	_, err := Open(context.Background(), Options{DataDir: s.Dir()})
 	if !errors.Is(err, ErrLocked) {
@@ -112,6 +135,7 @@ func TestSecondOwnerRefused(t *testing.T) {
 
 // Hallpass HP-DB-003: concurrent writers never surface SQLITE_BUSY.
 func TestConcurrentWriters(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	var wg sync.WaitGroup
@@ -134,6 +158,7 @@ func TestConcurrentWriters(t *testing.T) {
 }
 
 func TestTxRollbackAndHooks(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	var hooks atomic.Int32
@@ -161,6 +186,7 @@ func TestTxRollbackAndHooks(t *testing.T) {
 }
 
 func TestConstraintClassified(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	err := s.W().Tx(ctx, func(tx *Tx) error {
@@ -199,6 +225,7 @@ func holdWriteLock(t *testing.T, path string, d time.Duration) (released chan st
 
 // Hallpass HP-DB-003: bounded retries with backoff recover from short contention and give up with ErrBusy.
 func TestBusyRetryAndGiveUp(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{BusyTimeout: 5 * time.Millisecond})
 	ctx := context.Background()
 	<-holdWriteLock(t, s.Path(DBFile), 0) // warm up
@@ -216,6 +243,7 @@ func TestBusyRetryAndGiveUp(t *testing.T) {
 }
 
 func TestSnapshotRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	if err := putSetting(ctx, s, "snap", "value"); err != nil {
@@ -261,6 +289,7 @@ const (
 
 // Hallpass HP-DB-005: failing migrations roll back, leave the prior version, and a pre-migration snapshot exists.
 func TestMigrationFailureAndSnapshot(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: migFS(map[string]string{"0001_a.sql": mig1})})
@@ -293,6 +322,7 @@ func TestMigrationFailureAndSnapshot(t *testing.T) {
 
 // Hallpass HP-DB-005: a database migrated by a newer binary is refused.
 func TestSchemaTooNewRefused(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
 	s, err := Open(ctx, Options{DataDir: dir})
@@ -314,6 +344,7 @@ func TestSchemaTooNewRefused(t *testing.T) {
 }
 
 func TestPruneSnapshots(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, ts := range []string{"20260101T000000Z", "20260102T000000Z", "20260103T000000Z", "20260104T000000Z"} {
 		if err := os.WriteFile(filepath.Join(dir, "pre-migrate-0001-0002-"+ts+".db"), nil, 0o600); err != nil {
@@ -329,6 +360,7 @@ func TestPruneSnapshots(t *testing.T) {
 
 // Hallpass HP-DB-008: corruption is detected at startup and the store refuses to open.
 func TestCorruptionRefused(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
 	s, err := Open(ctx, Options{DataDir: dir})
@@ -359,6 +391,7 @@ func TestCorruptionRefused(t *testing.T) {
 }
 
 func TestHealthTransitions(t *testing.T) {
+	t.Parallel()
 	fc := clock.NewFake(time.Unix(1_800_000_000, 0))
 	h := newHealth(fc)
 	h.Observe(fmt.Errorf("%w: x", ErrBusy))
@@ -416,6 +449,7 @@ func TestHealthTransitions(t *testing.T) {
 }
 
 func TestTxObserverAndIncrementalVacuum(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int32
 	s := openTest(t, Options{TxObserver: func(string, time.Duration, error) { calls.Add(1) }})
 	ctx := context.Background()
@@ -445,6 +479,7 @@ func TestTxObserverAndIncrementalVacuum(t *testing.T) {
 // Hallpass HP-DB-011: deleted rows leave free pages; bounded incremental vacuum returns them in steps and the file shrinks
 // once the WAL is checkpointed.
 func TestIncrementalVacuumReturnsFreePages(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	big := strings.Repeat("x", 8<<10)
@@ -499,4 +534,123 @@ func TestIncrementalVacuumReturnsFreePages(t *testing.T) {
 	if after, _ := s.Sizes(); after >= full/2 {
 		t.Fatalf("database did not shrink: %d -> %d bytes", full, after)
 	}
+}
+
+// holdExclusiveFileLock holds an EXCLUSIVE lock on the database file (locking_mode=EXCLUSIVE, as SQLite takes while
+// the last connection of a pool closes and checkpoints the WAL) for d, so that every other connection gets SQLITE_BUSY
+// until its busy handler outlasts it.
+func holdExclusiveFileLock(t *testing.T, path string, d time.Duration) (released chan struct{}) {
+	t.Helper()
+	other, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := other.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"PRAGMA locking_mode=EXCLUSIVE", "BEGIN EXCLUSIVE", "COMMIT"} {
+		if _, err := conn.ExecContext(context.Background(), q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	released = make(chan struct{})
+	go func() {
+		time.Sleep(d)
+		_ = conn.Close()
+		_ = other.Close()
+		close(released)
+	}()
+	return released
+}
+
+// Opening waits out a short lock on the database file instead of failing with SQLITE_BUSY: busy_timeout must be set
+// before the first statement that reads the file (auto_vacuum on the writer), not as one of the _pragma list, which
+// the driver applies after it. Seen as "storage busy: open database" when central reopened its data directory right
+// after closing it.
+func TestOpenWaitsForFileLock(t *testing.T) {
+	t.Parallel()
+	migs := migFS(map[string]string{"0001_a.sql": mig1}) // the full schema only slows these down under -race
+	s := openTest(t, Options{Migrations: migs})
+	if _, err := s.wdb.ExecContext(context.Background(), "INSERT INTO t1 (id) VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	released := holdExclusiveFileLock(t, s.Path(DBFile), 300*time.Millisecond)
+	s2, err := Open(context.Background(), Options{DataDir: s.Dir(), Migrations: migs})
+	if err != nil {
+		t.Fatalf("open while another connection briefly holds the file: %v", err)
+	}
+	<-released
+	_ = s2.Close()
+}
+
+// Close returns only after every connection is closed, including those still in use when it was called; until then
+// the process lock is held, so that a store opened next on the same directory never meets the old connections.
+func TestCloseWaitsForConnectionsInUse(t *testing.T) {
+	t.Parallel()
+	migs := migFS(map[string]string{"0001_a.sql": mig1})
+	s := openTest(t, Options{Migrations: migs})
+	ctx := context.Background()
+	// A connection checked out with no transaction open: the WAL checkpoint in Close does not wait for it.
+	conn, err := s.ReadDB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned (%v) while a reader connection was in use", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := Open(ctx, Options{DataDir: s.Dir(), Migrations: migs}); !errors.Is(err, ErrLocked) {
+		t.Fatalf("process lock released before the connections closed: %v", err)
+	}
+	_ = conn.Close()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not return after the reader was released")
+	}
+	s2, err := Open(ctx, Options{DataDir: s.Dir(), Migrations: migs})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	_ = s2.Close()
+}
+
+// S3: Close has one deadline for the checkpoint and both pools' drains. When a connection is still in use at the
+// deadline, Close returns an error saying so, releases the process lock anyway and the directory can be opened again.
+// Not parallel: it shortens the package's deadline (parallel tests start only after it has restored it).
+func TestCloseDrainDeadline(t *testing.T) {
+	old := closeDrainTimeout
+	closeDrainTimeout = 300 * time.Millisecond
+	defer func() { closeDrainTimeout = old }()
+	migs := migFS(map[string]string{"0001_a.sql": mig1})
+	s := openTest(t, Options{Migrations: migs})
+	ctx := context.Background()
+	reader, err := s.ReadDB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	start := time.Now()
+	err = s.Close()
+	if err == nil || !strings.Contains(err.Error(), "reader pool: 1 connections still in use") {
+		t.Fatalf("Close: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("Close took %s past a %s deadline", took, closeDrainTimeout)
+	}
+	s2, err := Open(ctx, Options{DataDir: s.Dir(), Migrations: migs})
+	if err != nil {
+		t.Fatalf("reopen after a timed-out close: %v", err)
+	}
+	_ = s2.Close()
 }

@@ -24,6 +24,8 @@ import (
 // opened it is revoked. Revoking a viewer never stops the run itself, and a stopped run's credential fails the next
 // tool call.
 func TestTerminalStreamEndsOnRevocation(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease and the fleet tests' wall-clock bounds (such as
+	// the 5 s restart check), which parallel tests can starve.
 	e := newFleetEnv(t)
 	e.cfg.Auth.StreamRevalidate = config.Duration(time.Minute) // only the event-driven path meets revocationBound
 	e.restartCentral()
@@ -84,6 +86,39 @@ func TestTerminalStreamEndsOnRevocation(t *testing.T) {
 		ends(t, ch, api.EndForbidden)
 		if _, err := e.c.Auth.SetGrants(ctx, sys, vic.ID, operator); err != nil {
 			t.Fatal(err)
+		}
+	})
+
+	// The stream is scoped by the run and the caller's grant in the run's own space: a grant in another space opens
+	// neither this run under that space's path nor under its own (both are "not found", never another run's output).
+	t.Run("another space's grant", func(t *testing.T) {
+		other, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "elsewhere", Name: "Elsewhere", NodeID: nodes[0].ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		elsewhere := []auth.GrantInput{{Role: authz.RoleOperator, Domain: other.ID}}
+		eve, err := e.c.Auth.Create(ctx, sys, auth.CreateInput{Email: "eve@example.com", DisplayName: "Eve", Grants: elsewhere})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, secret, err := e.c.Auth.CreateAPIToken(ctx, &auth.Principal{User: eve}, "term", elsewhere, 24*time.Hour, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range []string{
+			e.srv.URL + api.Prefix + "/spaces/" + other.ID + "/runs/" + r.ID + "/terminal",
+			termURL,
+		} {
+			req, _ := http.NewRequest(http.MethodGet, u, nil)
+			req.Header.Set("Authorization", "Bearer "+secret)
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = res.Body.Close()
+			if res.StatusCode != http.StatusNotFound || res.Header.Get("Content-Type") == "text/event-stream" {
+				t.Fatalf("%s: %d %s", u, res.StatusCode, res.Header.Get("Content-Type"))
+			}
 		}
 	})
 
@@ -168,6 +203,8 @@ func (e *fleetEnv) reenroll(nodeID string) {
 // SM-AUTH-007, SM-NODE-001: a node connection whose credential expired (or was revoked outside central) is closed by
 // the periodic re-check, and the node cannot reconnect with it; disabling the node closes it at once.
 func TestNodeConnectionEndsWithItsCredential(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease and the fleet tests' wall-clock bounds (such as
+	// the 5 s restart check), which parallel tests can starve.
 	e := newFleetEnv(t)
 	e.cfg.Auth.StreamRevalidate = config.Duration(time.Second)
 	e.restartCentral()

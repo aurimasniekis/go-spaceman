@@ -15,6 +15,7 @@ import (
 // flush was attempted; the offline CLI records that it could not ask the nodes; manifests without the record (older
 // backups) still verify.
 func TestServiceRecordsMemoryFlush(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	dir := filepath.Join(t.TempDir(), "backups")
 	var calls int

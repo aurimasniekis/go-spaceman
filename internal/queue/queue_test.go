@@ -81,6 +81,7 @@ func (f *fx) get(id string) *Task {
 // SM-QUEUE-001/002: priority decides insertion, operator moves are authoritative, incidents go to the top by policy, a
 // duplicate trigger never re-promotes a demoted incident, and escalation reorders only when the policy allows it.
 func TestOrderingAndIncidents(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.add(CreateInput{Title: "a"})
 	f.add(CreateInput{Title: "b"})
@@ -131,6 +132,7 @@ func TestOrderingAndIncidents(t *testing.T) {
 // SM-QUEUE-004/005/006/007: cycles are rejected; blocked, dependent and excluded tasks are skipped with reasons while
 // the next eligible task is selected; the default allows one running top-level task.
 func TestEligibility(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.add(CreateInput{Title: "deploy", Exclusions: []string{"env:staging"}})
 	b := f.add(CreateInput{Title: "migrate", DependsOn: []string{a.ID}})
@@ -191,6 +193,7 @@ func TestEligibility(t *testing.T) {
 // SM-QUEUE-008/009/010: preemption returns work to ready (counted, not failed); reordering does not change state;
 // nothing is accepted automatically; illegal transitions are refused.
 func TestStatesAndPreemption(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	_, err := f.svc.SetPolicy(f.ctx, op, "spc_a", Policy{MaxActive: 1, IncidentInsertion: "top", IncidentPreempts: true})
 	must(t, err)
@@ -229,6 +232,7 @@ func TestStatesAndPreemption(t *testing.T) {
 // SM-OBS-004: task creation and every status change, including an incident's preemption, are recorded in the same
 // transaction for publication, with the task as correlation and without its title, objective or result.
 func TestTaskEventsRecorded(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true})
 	_, err := f.svc.SetPolicy(f.ctx, op, "spc_a", Policy{MaxActive: 1, IncidentInsertion: "top", IncidentPreempts: true})
@@ -264,6 +268,7 @@ func TestTaskEventsRecorded(t *testing.T) {
 // SM-EVT-016, ADR-0049: a task created from an inbox item inherits the item's automation depth, a subtask its parent's
 // (the deeper wins), and the task's events carry it; a task with no origin item starts at 0.
 func TestTasksInheritAutomationDepth(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true})
 	must(t, f.s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
@@ -290,6 +295,7 @@ func TestTasksInheritAutomationDepth(t *testing.T) {
 // SM-LIMIT-001/002: the installation's top-level task limit applies to spaces without a queue policy; lowering the
 // limit never returns running tasks to ready, it only stops further selection until the space is below it.
 func TestTopLevelLimitDefaultAndLowering(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.DefaultMaxActive = 2
 	if _, p, _ := f.svc.List(f.ctx, "spc_a"); p.MaxActive != 2 {

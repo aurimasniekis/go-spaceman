@@ -185,6 +185,7 @@ var globalViewer = map[string]string{"role": "viewer", "domain": "*"}
 // SM-AUTH-007: every kind of revocation ends an open change-feed stream at once (well inside the 60 s periodic
 // re-check), with reason "unauthenticated", and the credential is refused on the next request.
 func TestWatchStreamEndsOnRevocation(t *testing.T) {
+	t.Parallel()
 	h := newHarnessWith(t, func(c *config.Config) { c.Auth.StreamRevalidate = config.Duration(time.Minute) })
 	ctx := context.Background()
 	rootSecret, _, err := h.c.Auth.IssueRootToken(ctx)
@@ -301,6 +302,7 @@ func TestWatchStreamEndsOnRevocation(t *testing.T) {
 // SM-AUTH-007: a removed grant hides a space's changes from an open stream at once, without closing a stream whose
 // credential is still valid; and the periodic re-check (the backstop) ends streams whose session or token expired.
 func TestWatchStreamFiltersAndExpires(t *testing.T) {
+	t.Parallel()
 	h := newHarnessWith(t, func(c *config.Config) { c.Auth.StreamRevalidate = config.Duration(time.Second) })
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
@@ -355,6 +357,7 @@ func TestWatchStreamFiltersAndExpires(t *testing.T) {
 // SM-AUTH-007, brief §40: revocation never undoes completed actions. Work done with a credential stays done, and stays
 // attributed to it in the audit log, after the credential is revoked; only later requests are refused.
 func TestRevocationDoesNotUndoCompletedActions(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, rt, _ := h.c.Auth.IssueRootToken(ctx)

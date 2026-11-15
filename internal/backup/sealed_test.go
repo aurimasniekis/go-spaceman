@@ -49,6 +49,7 @@ var kindDB = SealedKindFile(DBFile)
 
 // Ported from go-hallpass internal/backup/sealed_test.go at bdd8329.
 func TestSealedRoundTrip(t *testing.T) {
+	t.Parallel()
 	kek := testKEK(t)
 	for _, n := range []int{0, 1, sealedFrameMax - 1, sealedFrameMax, sealedFrameMax + 1, 3 * sealedFrameMax, 3*sealedFrameMax + 7} {
 		data := make([]byte, n)
@@ -65,6 +66,7 @@ func TestSealedRoundTrip(t *testing.T) {
 }
 
 func TestSealedRejects(t *testing.T) {
+	t.Parallel()
 	kek := testKEK(t)
 	data := make([]byte, 2*sealedFrameMax+100)
 	_, _ = rand.Read(data)

@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // ValidationError aggregates every configuration problem found.
@@ -55,6 +57,13 @@ func (c *Config) Validate() error {
 	}
 	v.positive64("http.max_body_bytes", c.HTTP.MaxBodyBytes)
 	v.positive64("http.max_upload_bytes", c.HTTP.MaxUploadBytes)
+	v.durationRange("http.write_idle_timeout", c.HTTP.WriteIdleTimeout, time.Second, 10*time.Minute)
+	if c.HTTP.CatchUpConcurrency < 1 || c.HTTP.CatchUpConcurrency > 256 {
+		v.add("http.catch_up_concurrency must be within 1..256, got %d", c.HTTP.CatchUpConcurrency)
+	}
+	v.durationRange("http.catch_up_wait", c.HTTP.CatchUpWait, 0, time.Minute)
+	v.durationRange("http.read_idle_timeout", c.HTTP.ReadIdleTimeout, time.Second, 10*time.Minute)
+	v.durationRange("http.idle_timeout", c.HTTP.IdleTimeout, time.Second, time.Hour)
 	v.logConfig(c.Log)
 
 	v.durationRange("auth.session_idle", c.Auth.SessionIdle, time.Minute, 24*time.Hour)
@@ -71,6 +80,9 @@ func (c *Config) Validate() error {
 	v.durationRange("nodes.heartbeat_interval", c.Nodes.HeartbeatInterval, time.Second, time.Minute)
 	if c.Nodes.LeaseTTL.D() < 3*c.Nodes.HeartbeatInterval.D() {
 		v.add("nodes.lease_ttl must be at least 3× nodes.heartbeat_interval so one missed heartbeat does not expire leases")
+	}
+	if c.Nodes.LeaseTTL.D() > MaxLeaseTTL {
+		v.add("nodes.lease_ttl must be at most %s: a node holds a lease that long after central last renewed or revoked it", MaxLeaseTTL)
 	}
 	v.durationRange("nodes.disconnect_grace", c.Nodes.DisconnectGrace, 0, time.Hour)
 	v.durationRange("nodes.enrollment_ttl", c.Nodes.EnrollmentTTL, time.Minute, 30*24*time.Hour)
@@ -226,7 +238,22 @@ var LimitRanges = map[string][2]int64{
 	// Control lifecycle (ADR-0056): a switch (0 off, 1 on) and minutes (0: never).
 	"control_autostart":         {0, 1},
 	"control_idle_stop_minutes": {0, 10_080},
+	// A new run's terminal size (ADR-0075): 0 is the node's runner.terminal_size; otherwise the terminal size bounds
+	// (TerminalLimitFloor).
+	"terminal_cols": {0, proto.TerminalMaxCols},
+	"terminal_rows": {0, proto.TerminalMaxRows},
+	// Usage limits (ADR-0079): a switch, and minutes a limited run is kept alive (at most a day: Claude Code's own
+	// auto-continue never arms for longer waits).
+	"usage_limit_failover":               {0, 1},
+	"usage_limit_keep_alive_max_minutes": {1, 1440},
+	// Hours a parked worker waits before its task is released (at most 30 days).
+	"usage_limit_max_wait_hours": {1, 720},
+	// Hours a hold's reset must be away for the space's people to be told (0: never).
+	"usage_limit_notify_after_hours": {0, 720},
 }
+
+// TerminalLimitFloor is the smallest value other than 0 that the terminal_cols and terminal_rows limits accept.
+var TerminalLimitFloor = map[string]int64{"terminal_cols": proto.TerminalMinCols, "terminal_rows": proto.TerminalMinRows}
 
 // LimitValues returns the installation default of every limit, keyed like LimitRanges.
 func (c *Config) LimitValues() map[string]int64 {
@@ -240,7 +267,10 @@ func (c *Config) LimitValues() map[string]int64 {
 		"retention_recordings_days": l.RetentionRecordingsDays, "retention_transcripts_days": l.RetentionTranscriptsDays,
 		"retention_attachments_days": l.RetentionAttachmentsDays, "retention_human_actions_days": l.RetentionHumanActionsDays,
 		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
-		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes}
+		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes,
+		"terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows,
+		"usage_limit_failover": l.UsageLimitFailover, "usage_limit_keep_alive_max_minutes": l.UsageLimitKeepAliveMaxMinutes,
+		"usage_limit_max_wait_hours": l.UsageLimitMaxWaitHours, "usage_limit_notify_after_hours": l.UsageLimitNotifyAfterHours}
 }
 
 func (v *validator) limits(c *Config) {
@@ -253,6 +283,8 @@ func (v *validator) limits(c *Config) {
 		}
 		if n < r[0] || n > r[1] {
 			v.add("%s must be within %d..%d, got %d", name, r[0], r[1], n)
+		} else if floor := TerminalLimitFloor[k]; n != 0 && n < floor {
+			v.add("%s must be 0 (the node's default) or within %d..%d, got %d", name, floor, r[1], n)
 		}
 	}
 }
@@ -296,11 +328,33 @@ func (c *AgentConfig) Validate() error {
 	if c.ManagementListen != "" {
 		v.listen("management_listen", c.ManagementListen)
 	}
+	v.durationRange("journal_retention", c.JournalRetention, 30*24*time.Hour, 365*24*time.Hour)
 	if c.Capacity < 1 || c.Capacity > 256 {
 		v.add("capacity must be within 1..256")
 	}
+	v.claudeCode(c.Harness.Claude)
 	v.logConfig(c.Log)
 	return v.err()
+}
+
+func (v *validator) claudeCode(c ClaudeCodeConfig) {
+	if !dist.ValidTarget(c.Channel) {
+		v.add("harness.claude.channel must be latest, stable or an exact X.Y.Z version, got %q", c.Channel)
+	}
+	if _, err := dist.ParseBaseURL(c.BaseURL); err != nil {
+		v.add("harness.claude.base_url: %v", err)
+	}
+	if c.CacheKeep < 1 || c.CacheKeep > 50 {
+		v.add("harness.claude.cache_keep must be within 1..50, got %d", c.CacheKeep)
+	}
+	if c.CacheKeepPinned < 1 || c.CacheKeepPinned > 50 {
+		v.add("harness.claude.cache_keep_pinned must be within 1..50, got %d", c.CacheKeepPinned)
+	}
+	v.durationRange("harness.claude.refresh", c.Refresh, time.Minute, 24*time.Hour)
+	v.durationRange("harness.claude.download_timeout", c.DownloadTimeout, 30*time.Second, 2*time.Hour)
+	if c.Manage && c.SelfUpdate {
+		v.add("harness.claude.self_update can't be on with harness.claude.manage: managed runs never update themselves")
+	}
 }
 
 func defaultLog() obs.LogConfig { return obs.LogConfig{Level: "info", Format: "json"} }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
@@ -72,6 +74,7 @@ func (a *Agent) revoke(ctx context.Context, r proto.LeaseRevoke) {
 	if mode != "kill" {
 		mode = "interrupt"
 	}
+	a.stopSpaceHolds(r.SpaceID)
 	a.stopSpaceRuns(ctx, r.SpaceID, func(runRow) bool { return true }, mode, "lease revoked: "+r.Reason)
 }
 
@@ -122,12 +125,14 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			return
 		}
 		a.ack(ctx, c, proto.AckAccepted, "")
-		go a.launch(context.WithoutCancel(ctx), c, p)
+		a.goTrack(func() { a.launch(context.WithoutCancel(ctx), c, p) })
 	case proto.CmdStop:
 		var p proto.StopPayload
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
-		go a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+		a.goTrack(func() {
+			a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+		})
 	case proto.CmdReposSync:
 		a.handleReposSync(ctx, c)
 		return // the sync journals its own outcome (its report) when it finishes
@@ -172,7 +177,7 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 // exists (a repeated delivery, or a restart between start and journal update) it is adopted (SM-NODE-004/009).
 func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPayload) {
 	log := a.log.With(slog.String(obs.FieldRunID, c.RunID), slog.String(obs.FieldSpaceID, c.SpaceID))
-	l, _ := a.lease(c.SpaceID, c.Generation)
+	l, ok := a.lease(c.SpaceID, c.Generation)
 	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, Kind: p.Kind, Role: p.Role, Harness: p.Harness, InstanceID: p.InstanceID,
 		TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending, SessionID: p.SessionID}
 	if err := a.j.insertRun(ctx, row); err != nil {
@@ -188,7 +193,17 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		a.observe(ctx, row, found[0], true)
 		return
 	}
+	// abandoned re-reads the run before a step that would act on it: when it was stopped meanwhile (stop journaled
+	// desired stopped and ended it) the launch must neither start it nor overwrite that.
+	abandoned := func() bool {
+		r, err := a.j.getRun(ctx, c.RunID)
+		return err == nil && (r.Desired == "stopped" || ended(r.State))
+	}
 	fail := func(msg string, err error) {
+		if abandoned() {
+			log.Info("launch abandoned: the run was stopped before it started", slog.String("at", msg))
+			return
+		}
 		row.State, row.Error = proto.RunFailed, msg
 		if err != nil {
 			row.Error = msg + ": " + err.Error()
@@ -197,21 +212,96 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		a.report(ctx, row)
 		log.Warn("launch failed", slog.String("reason", msg), obs.Err(err))
 	}
+	// stillWanted is checked after every wait: the run was not stopped, and the space's lease still authorizes this
+	// generation (central may have fenced it meanwhile).
+	stillWanted := func() bool {
+		if abandoned() {
+			log.Info("launch abandoned: the run was stopped before it started")
+			return false
+		}
+		fresh, valid := a.lease(c.SpaceID, c.Generation)
+		if !valid {
+			fail("no valid lease for this space and generation", nil)
+			return false
+		}
+		l = fresh
+		return true
+	}
+	if !ok {
+		fail("no valid lease for this space and generation", nil)
+		return
+	}
 	h, err := harness.Get(p.Harness)
 	if err != nil {
 		fail("unknown harness", err)
 		return
 	}
 	bin := a.o.HarnessBinaries[p.Harness]
-	if bin == "" {
+	selfUpdate := a.o.Claude.SelfUpdate
+	managed := p.Harness == harness.KindClaude && a.managedClaude()
+	var (
+		want      dist.Resolution // the Claude Code version the managed launch waited for
+		waitLimit time.Duration
+	)
+	wctx := ctx // a managed launch bounds its waits for the version by download_timeout, together (claudeWait)
+	if p.HarnessVersion != "" && p.Harness != harness.KindClaude {
+		fail("pinned harness versions are supported for claude-code only", nil)
+		return
+	}
+	requested := a.claudeRequest(p) // the profile's pin overrides the node's channel (ADR-0077)
+	if p.Harness == harness.KindClaude && (managed || !selfUpdate) {
+		warnClaudeUpdateSettings(log, p.ClaudeSettings)
+	}
+	if managed {
+		// Node-managed Claude Code (ADR-0077): the run waits in starting while its version is resolved, and downloaded
+		// when nothing it may run is cached. The wait holds nothing (no guard lock, no version), so a long download
+		// blocks no other launch of the space; the version is held, from the cache only, right before the launch is
+		// built (see below).
+		selfUpdate = false
+		row.State = proto.RunStarting
+		_ = a.j.updateRun(ctx, row)
+		a.report(ctx, row)
+		var cancel context.CancelFunc
+		wctx, cancel, waitLimit = a.claudeWait(ctx)
+		defer cancel()
+		if want, err = a.waitClaude(wctx, waitLimit, requested); err != nil {
+			fail("resolve the Claude Code version", err)
+			return
+		}
+		a.stage("waited", want)
+		if !stillWanted() {
+			return
+		}
+	}
+	if bin == "" && !managed { // a managed launch takes the cached binary's path below
 		fail("harness not installed on this node", nil)
 		return
+	}
+	if !managed && p.HarnessVersion != "" {
+		// An unmanaged node runs a pinned launch only when the installed version is the pin, and then by the absolute
+		// path it checked, so the core's PATH can't substitute another binary (ADR-0077).
+		info, err := a.checkUnmanagedPin(ctx, bin, p.HarnessVersion)
+		if err != nil {
+			fail("pinned Claude Code version", err)
+			return
+		}
+		bin = info.Path
+		row.Bin = harnessRun{Version: info.Version, Path: info.Path, Requested: p.HarnessVersion}
+		if err := a.j.setRunHarness(ctx, c.RunID, row.Bin); err != nil {
+			fail("journal the Claude Code version", err)
+			return
+		}
 	}
 	// The space's guard lock is held until the run is started under the guard, so retiring an idle space's guard
 	// (retireGuard) never ends it under a starting run.
 	gl := a.guardLock(c.SpaceID)
 	gl.Lock()
-	defer gl.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			gl.Unlock()
+		}
+	}()
 	guard, err := a.ensureGuard(ctx, c.SpaceID)
 	if err != nil {
 		fail("lease guard unavailable", err)
@@ -252,9 +342,15 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	// Saved attachments of this instance's earlier runs that ended without cleaning up (ADR-0073).
+	a.pruneAttachments(ctx, l.Workdir, p.InstanceID, c.RunID)
 	// Harnesses key per-directory state by the real path (macOS: /tmp is /private/tmp).
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
+	}
+	spaceReal := space
+	if real, err := filepath.EvalSymlinks(space); err == nil {
+		spaceReal = real
 	}
 	// Role memory (ADR-0025): the instance's checkout, refreshed from the shared history at this safe boundary. A node
 	// without git runs without memory rather than not at all.
@@ -268,8 +364,78 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if memDir != "" && !p.Resume {
 		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(memDir, p.Role))
 	}
+	// Claude Code's auto memory is kept outside the space folder, where no other run's file tools reach (ADR-0068).
+	var autoMem string
+	if p.Harness == harness.KindClaude {
+		if _, set := p.ClaudeSettings["autoMemoryDirectory"]; set {
+			log.Warn("the profile's autoMemoryDirectory is ignored: SpaceMan keeps each instance's auto memory in its own folder")
+		}
+		autoMem, err = PrepareAutoMemory(filepath.Join(space, "instances", p.InstanceID, "claude"), a.autoMemoryDir(c.SpaceID, p.InstanceID), work)
+		if err != nil {
+			fail("prepare auto memory", err)
+			return
+		}
+	}
+	if managed {
+		// The version is held as late as practical (after clone, worktree and memory preparation), so the tamper
+		// check's gap is only the build, the launch files and the start (ADR-0077). It runs the verified cached binary
+		// by absolute path, so the core's PATH no longer matters. The version is held against GC until the journal
+		// records it; from then on GC keeps it while the run is live or adoptable.
+		//
+		// Under the guard lock the hold is cache-only and never waits: when the version waited for is gone meanwhile
+		// (the channel moved on, GC removed a fallback, or it failed its launch check), the lock is released and the
+		// launch waits again, within the same download_timeout, at most claudeHoldAttempts times.
+		var release func()
+		for attempt := 1; ; attempt++ {
+			release, err = a.o.Claude.Dist.HoldCached(wctx, want.Version)
+			if err == nil {
+				break
+			}
+			if attempt >= claudeHoldAttempts || wctx.Err() != nil {
+				fail(fmt.Sprintf("hold Claude Code %s for the launch", want.Version), err)
+				return
+			}
+			log.Info("claude code: the version waited for is no longer usable; waiting again", slog.String("version", want.Version), obs.Err(err))
+			gl.Unlock()
+			locked = false
+			a.stage("unlocked", want)
+			if want, err = a.waitClaude(wctx, waitLimit, requested); err != nil {
+				fail("resolve the Claude Code version", err)
+				return
+			}
+			a.stage("waited", want)
+			if !stillWanted() {
+				return
+			}
+			gl.Lock()
+			locked = true
+			// The guard may have been retired while the lock was released (no live run in the space).
+			if guard, err = a.ensureGuard(ctx, c.SpaceID); err != nil {
+				fail("lease guard unavailable", err)
+				return
+			}
+		}
+		res := want
+		a.stage("acquired", res)
+		row.Bin = harnessRun{Version: res.Version, Path: res.Path, Requested: res.Requested, Fallback: res.Fallback}
+		err = a.j.setRunHarness(ctx, c.RunID, row.Bin)
+		a.stage("recorded", res) // the hold is still taken here (review N2: released only after the journal has it)
+		release()
+		a.stage("released", res)
+		if err != nil {
+			fail("journal the Claude Code version", err)
+			return
+		}
+		if res.Fallback != "" {
+			log.Warn("claude code: the run gets another version than its channel's target", slog.String("requested", res.Requested),
+				slog.String("target", res.Target), slog.String("version", res.Version), slog.String("fallback", res.Fallback))
+		}
+		log.Info("claude code version resolved", slog.String("requested", res.Requested), slog.String("version", res.Version))
+		bin = res.Path
+	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
-		WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir})
+		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir,
+		AutoMemoryDir: autoMem, SelfUpdate: selfUpdate})
 	if err != nil {
 		fail("build launch", err)
 		return
@@ -286,6 +452,12 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	for path, keys := range built.OwnJSON {
+		if err := OwnJSONKeysFile(log, path, keys, built.StripJSON[path]...); err != nil {
+			fail("write harness settings", err)
+			return
+		}
+	}
 	if built.SkillsRoot != "" {
 		if err := syncSkills(built.SkillsRoot, p.Skills); err != nil {
 			fail("write skills", err)
@@ -298,6 +470,14 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("write login", err)
 		return
 	}
+	if err := removeCredentialFiles(built.RemoveFiles); err != nil { // after the login links are gone
+		fail("remove stored credentials", err)
+		return
+	}
+	if err := removeCredentialDirs(built.RemoveDirs); err != nil {
+		fail("remove stored credentials", err)
+		return
+	}
 	if err := writeSecretFiles(built.SecretFiles); err != nil { // after the login links are gone
 		fail("write login", err)
 		return
@@ -308,12 +488,21 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	argv := a.wrap(rd, built)
+	// The last check before the start, under the run's lock, which stop also takes: a stop either is seen here, or
+	// waits until the program is started and recorded and then stops it.
+	unlock := a.runLock(c.RunID)
+	defer unlock()
+	if !stillWanted() {
+		_ = os.Remove(filepath.Join(rd, SecretsFile))
+		return
+	}
 	row.State, row.SessionID = proto.RunStarting, built.SessionID
 	_ = a.j.updateRun(ctx, row)
 	a.report(ctx, row)
 	proc, err := a.o.Runner.Start(ctx, runner.Spec{Name: row.TerminalName, Argv: argv, Cwd: work, Env: built.Env, Labels: labels, Parent: guard})
 	if errors.Is(err, runner.ErrNameTaken) {
 		if found, lerr := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); lerr == nil && len(found) > 0 {
+			a.notePin(p.HarnessVersion)
 			a.observe(ctx, row, found[0], true)
 			return
 		}
@@ -323,6 +512,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("start", err)
 		return
 	}
+	a.notePin(p.HarnessVersion) // only a started run protects its pin from GC (claudePinned)
 	a.observe(ctx, row, *proc, false)
 }
 
@@ -357,42 +547,60 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	a.report(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
+		if a.holdWanted(row.RunID) {
+			a.reconcileHolds(ctx)
+		}
 	}
 	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
 	switch {
 	case ended(row.State) && !ended(prev.State):
 		bctx := context.WithoutCancel(ctx)
+		if row.Harness == harness.KindClaude {
+			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
+		}
 		a.goTrack(func() {
 			a.mem.flush(bctx, row, "run ended")
 			a.usageFinal(bctx, row)
 		})
 		a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
+		a.goTrack(func() { a.removeRunAttachments(bctx, row) })
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)
+	}
+	// Usage limits (ADR-0079): scanned when a turn ends (idle, done) or fails (error), never per output chunk.
+	if row.State == proto.RunRunning && row.Harness == harness.KindClaude && limitScanned(row.Status) &&
+		(prev.Status != row.Status || prev.Turn != row.Turn) {
+		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
 }
 
 // stop ends a run: interrupt, then kill if still live after grace; or kill at once.
 func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duration, reason string) {
+	// Under the run's lock: a launch about to start the run either sees this stop, or has started and recorded it.
+	unlock := a.runLock(runID)
 	row, err := a.j.getRun(ctx, runID)
 	if err != nil {
+		unlock()
 		return
 	}
 	row.Desired = "stopped"
 	if ended(row.State) {
 		_ = a.j.updateRun(ctx, row)
+		unlock()
 		a.report(ctx, row)
 		return
 	}
 	if row.TerminalID == "" {
 		row.State, row.Reason = proto.RunExited, "stopped before start"
 		_ = a.j.updateRun(ctx, row)
+		unlock()
 		a.report(ctx, row)
 		return
 	}
 	row.State = proto.RunStopping
 	_ = a.j.updateRun(ctx, row)
+	unlock()
 	a.report(ctx, row)
 	if mode != "kill" {
 		_, _ = a.o.Runner.Interrupt(ctx, row.TerminalID)
@@ -428,7 +636,7 @@ func (a *Agent) stopSpaceRuns(ctx context.Context, spaceID string, match func(ru
 	}
 	for _, r := range runs {
 		if r.SpaceID == spaceID && match(r) {
-			go a.stop(context.WithoutCancel(ctx), r.RunID, mode, 15*time.Second, reason)
+			a.goTrack(func() { a.stop(context.WithoutCancel(ctx), r.RunID, mode, 15*time.Second, reason) })
 		}
 	}
 }
@@ -450,7 +658,7 @@ func (a *Agent) reconcileDesired(ctx context.Context, rec proto.Reconcile) {
 			// Unknown to central (or already ended there): report; central fences and stops it if needed.
 			a.report(ctx, r)
 		case d.Desired == "stopped" || d.Generation != r.Generation:
-			go a.stop(context.WithoutCancel(ctx), r.RunID, "interrupt", 15*time.Second, "central reconcile")
+			a.goTrack(func() { a.stop(context.WithoutCancel(ctx), r.RunID, "interrupt", 15*time.Second, "central reconcile") })
 		default:
 			a.report(ctx, r)
 		}
@@ -483,9 +691,11 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 			// re-delivery is a duplicate, so mark it failed rather than starting it silently.
 			r.State, r.Error = proto.RunFailed, "agent restarted before the process started"
 			_ = a.j.updateRun(ctx, r)
+			a.removeRunAttachments(ctx, r)
 		default:
 			r.State, r.Reason = proto.RunLost, "process not found in the runner"
 			_ = a.j.updateRun(ctx, r)
+			a.removeRunAttachments(ctx, r)
 		}
 	}
 	return nil
@@ -509,6 +719,14 @@ func (a *Agent) monitor(ctx context.Context) {
 			case "snapshot", "missed", "restarted", "lost":
 				if err := a.reconcileRunner(ctx); err != nil {
 					a.log.Warn("runner reconcile", obs.Err(err))
+				}
+			case "size":
+				// The recording notes every size change (an operator's resize, a takeover, a hold that closed), so
+				// replay redraws at the size the output was drawn for (ADR-0075).
+				if cols, rows, ok := runnerSize(ev.Data); ok && ev.TerminalID != "" {
+					if row, err := a.j.runByTerminal(ctx, ev.TerminalID); err == nil {
+						a.recordSize(row.RunID, cols, rows)
+					}
 				}
 			case "finished", "status", "turn":
 				if ev.TerminalID == "" {
@@ -550,6 +768,7 @@ func (a *Agent) enforce(ctx context.Context) {
 		a.mu.Unlock()
 		for _, l := range expired {
 			a.log.Warn("lease expired without central; stopping the space's runs", slog.String(obs.FieldSpaceID, l.SpaceID), slog.String("policy", l.DisconnectPolicy))
+			a.stopSpaceHolds(l.SpaceID)
 			a.stopSpaceRuns(ctx, l.SpaceID, func(runRow) bool { return true }, l.DisconnectPolicy, "central unreachable beyond lease and grace")
 		}
 		select {
@@ -588,6 +807,34 @@ func (a *Agent) ensureGuard(ctx context.Context, spaceID string) (string, error)
 }
 
 // guardLock returns the lock that serializes a space's lease guard.
+// runLock locks one run against a concurrent launch and stop (the launch's last check and start, the stop's state
+// change) and returns its unlock. Entries are dropped when nobody holds or waits for them.
+func (a *Agent) runLock(runID string) func() {
+	a.mu.Lock()
+	l := a.runLocks[runID]
+	if l == nil {
+		l = &refMutex{}
+		a.runLocks[runID] = l
+	}
+	l.refs++
+	a.mu.Unlock()
+	l.mu.Lock()
+	return sync.OnceFunc(func() {
+		l.mu.Unlock()
+		a.mu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(a.runLocks, runID)
+		}
+		a.mu.Unlock()
+	})
+}
+
+// refMutex is a mutex with the number of its holders and waiters (runLock).
+type refMutex struct {
+	mu   sync.Mutex
+	refs int
+}
+
 func (a *Agent) guardLock(spaceID string) *sync.Mutex {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -645,18 +892,39 @@ func writeSecrets(runDir string, env map[string]string, runToken string) error {
 func (a *Agent) startRecorder(ctx context.Context, row runRow) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, ok := a.recorders[row.RunID]; ok {
+	if _, ok := a.recorders[row.RunID]; ok || a.recordersStopped {
 		return
 	}
 	rctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	a.recorders[row.RunID] = cancel
+	rec := &recorder{cancel: cancel, sizes: make(chan [2]int, 16)}
+	a.recorders[row.RunID] = rec
+	a.recWG.Add(1) // under a.mu, with recordersStopped checked above: stopRecorders never Waits concurrently with an Add
 	go func() {
+		defer a.recWG.Done()
 		defer func() {
 			a.mu.Lock()
-			delete(a.recorders, row.RunID)
+			if a.recorders[row.RunID] == rec {
+				delete(a.recorders, row.RunID)
+			}
 			a.mu.Unlock()
 			cancel()
 		}()
-		a.record(rctx, row)
+		a.record(rctx, row, rec.sizes)
 	}()
+}
+
+// spaceInstances lists the instance folders of a space (the names in <space>/instances), for the harness's rules that keep a
+// run out of the other instances' folders (ADR-0068). A folder that can't be listed has none.
+func spaceInstances(space string) []string {
+	entries, err := os.ReadDir(filepath.Join(space, "instances"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	return out
 }

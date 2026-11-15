@@ -49,6 +49,11 @@ type Context struct {
 	BridgeSocket string
 	// ConfigDir is the instance's harness config root (per space and instance).
 	ConfigDir string
+	// SpaceDir is the run's own space folder (<data_dir>/spaces/<space-dir>); WorkDir is inside it.
+	SpaceDir string
+	// SpaceInstances are the names of the instance folders in the space's instances folder at launch (the run's own
+	// included), so a harness can keep the run's file tools out of the other instances' folders (ADR-0068).
+	SpaceInstances []string
 	// WorkDir is where the program runs (inside the space folder).
 	WorkDir string
 	RunID   string
@@ -59,6 +64,12 @@ type Context struct {
 	Payload proto.LaunchPayload
 	// MemoryDir is the instance's checkout of its role memory ("" when memory is unavailable on the node).
 	MemoryDir string
+	// AutoMemoryDir is the folder for the instance's own Claude Code auto memory of this launch's project, outside the
+	// space folder so no other run's file tools may write it ("" keeps Claude Code's default, ADR-0068).
+	AutoMemoryDir string
+	// SelfUpdate lets the harness update itself (harness.claude.self_update). Off, a Claude Code run gets
+	// DISABLE_AUTOUPDATER=1 and DISABLE_UPDATES=1 (ADR-0077).
+	SelfUpdate bool
 }
 
 // Launch is a built launch.
@@ -70,6 +81,14 @@ type Launch struct {
 	// MergeJSON patches JSON object files the harness itself also writes (keys are absolute paths): objects are merged
 	// recursively and other values are set, everything else in the file is kept. A missing file is created (0600).
 	MergeJSON map[string]map[string]any
+	// OwnJSON are the top-level keys SpaceMan owns in JSON object files the harness also writes (keys are absolute
+	// paths): each is set, keys SpaceMan set at an earlier launch and no longer gives are removed, and every other key
+	// is kept; a missing file is created (0600). So a key removed from a profile is gone on the next launch (ADR-0059).
+	OwnJSON map[string]map[string]any
+	// StripJSON are top-level keys removed from the same files (keys are absolute paths) unless OwnJSON sets them: patterns
+	// as path.Match takes them ("*Helper"). They are the settings only the profile or SpaceMan may define, so a key planted
+	// in the file between launches (by another run's file tools, say) is gone before the harness reads it (ADR-0068).
+	StripJSON map[string][]string
 	// SkillsRoot is where the harness loads per-user skills from (<root>/<name>/SKILL.md); empty when the harness's skill
 	// loading is not verified, and then skills are not materialized.
 	SkillsRoot string
@@ -85,6 +104,15 @@ type Launch struct {
 	// node's shared login folder. With Login they are linked to the account's live copy; without it, links left from
 	// an earlier login are removed (a regular file there is the harness's own and is kept).
 	LoginLinks map[string]string
+	// RemoveFiles are credential files that must not exist for this launch (absolute paths in the harness's config dir):
+	// a gateway run's harness gets the gateway's token and nothing else (ADR-0060 decision 6). Each is removed (a link
+	// itself, never its target) before the secrets file is written, and the launch fails if one is still there.
+	RemoveFiles []string
+	// RemoveDirs are folders in the harness's config dir that must not exist for this launch, because they may hold
+	// credentials an earlier launch left (Codex's shell snapshots, with an account's API key from a run before
+	// features.shell_snapshot=false). Each is removed with its contents, never following a link (a link is removed
+	// itself), before the secrets file is written, and the launch fails if one is still there.
+	RemoveDirs []string
 	// SessionID is the conversation ID when the harness lets SpaceMan choose it.
 	SessionID string
 }

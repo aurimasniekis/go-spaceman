@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { api, check, unwrap } from '@/api/client'
-import { useHumanPending, useMe } from '@/api/queries'
+import { useHumanPending, useMe, useSystem } from '@/api/queries'
 import { useWatch } from '@/api/watch'
 import { RestoreBanner } from '@/features/backup/RestoreBanner'
 import { NotificationWatcher } from '@/features/notifications/NotificationWatcher'
@@ -33,7 +33,7 @@ function LiveIndicator() {
  */
 function BreakGlassBanner() {
   const qc = useQueryClient()
-  const status = useQuery({ queryKey: ['break-glass'], queryFn: async () => unwrap(await api.GET('/admin/break-glass')), refetchInterval: 60_000 })
+  const status = useQuery({ queryKey: ['break-glass'], queryFn: async ({ signal }) => unwrap(await api.GET('/admin/break-glass', { signal })), refetchInterval: 60_000 })
   if (!status.data?.alert) return null
   const ack = async () => {
     try {
@@ -55,6 +55,7 @@ function BreakGlassBanner() {
 
 function UserMenu() {
   const me = useMe().data
+  const version = useSystem().data?.version
   const qc = useQueryClient()
   const name = me?.root ? 'root token' : (me?.user?.display_name ?? '—')
   return (
@@ -76,6 +77,13 @@ function UserMenu() {
         >
           Sign out
         </Menu.Item>
+        {version && (
+          <>
+            <Menu.Divider />
+            {/* The version is public (/system/info); administrators find the rest on the System page. */}
+            <Menu.Label data-testid="app-version">SpaceMan <span className="mono">{version}</span></Menu.Label>
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   )
@@ -102,7 +110,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
               <IconLayoutSidebarLeftExpand size={16} />
             </ActionIcon>
             <Logo />
-            <Text fw={600} size="md">SpaceMan</Text>
+            {/* On a phone the logo alone names the app: the page's own header (a space called SpaceMan, say) is right below. */}
+            <Text fw={600} size="md" visibleFrom="sm">SpaceMan</Text>
+            <VisuallyHidden hiddenFrom="sm">SpaceMan</VisuallyHidden>
           </Group>
           <Group gap="sm" wrap="nowrap">
             <LiveIndicator />

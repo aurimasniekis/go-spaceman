@@ -11,8 +11,8 @@ export function useActionApproval(action: HumanAction) {
   return useQuery({
     queryKey: ['approval', action.space_id, action.id, action.version],
     enabled: action.type === 'approval',
-    queryFn: async (): Promise<Approval | null> => {
-      const r = await api.GET('/spaces/{space_id}/human-actions/{action_id}/approval', { params: { path: { space_id: action.space_id, action_id: action.id } } })
+    queryFn: async ({ signal }): Promise<Approval | null> => {
+      const r = await api.GET('/spaces/{space_id}/human-actions/{action_id}/approval', { params: { path: { space_id: action.space_id, action_id: action.id } }, signal })
       if (r.response.status === 404) return null
       return unwrap(r)
     },

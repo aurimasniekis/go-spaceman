@@ -17,6 +17,7 @@ import (
 // API, a second control run is refused while one is live, an active space cannot be archived or purged, editing a
 // space cannot change its pinned node, and a paused space admits no launch.
 func TestRootDoesNotBypassExecutionSafety(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()

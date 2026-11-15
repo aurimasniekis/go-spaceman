@@ -30,8 +30,12 @@ const (
 	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044); 5: memory flush
 	// before a backup (memory.flush / memory.flushed, ADR-0045); 6: terminal takeover (takeover.state, takeover.input,
 	// takeover.ended; SM-UI-004, ADR-0046); 7: repository SSH keys (ssh_key and known_hosts on repository sources,
-	// ADR-0057)
-	MaxMinor = 7
+	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059); 9: gateway runs (the launch's gateway
+	// address and its child token in the secrets, delivered to the harness; ADR-0060); 10: run terminal sizes
+	// (terminal.sizes, ADR-0075); 11: harness versions (the profile's pin on launches, the launched version on run
+	// reports and node-managed harness details in capabilities, ADR-0077); 12: usage limits (the limit a node detected
+	// in a run's transcript on run reports, ADR-0079)
+	MaxMinor = 12
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -58,6 +62,7 @@ const (
 	TypeRepoStatus       = "repos.status"      // minor ≥ 4: the state of a space's configured repositories
 	TypeMemoryFlushed    = "memory.flushed"    // minor ≥ 5: the outcome of a memory.flush
 	TypeTakeoverEnded    = "takeover.ended"    // minor ≥ 6: the node could not hold a takeover (attach failed, terminal closed)
+	TypeNodeCapabilities = "node.capabilities" // minor ≥ 11: the node's current capabilities, re-reported between hellos
 
 	// central → node
 	TypeWelcome             = "welcome"
@@ -121,7 +126,9 @@ func (e Envelope) Decode(v any) error {
 	return json.Unmarshal(e.Body, v)
 }
 
-// Capabilities is the node's inventory, reported in hello (SM-NODE-002).
+// Capabilities is the node's inventory, reported in hello (SM-NODE-002) and, from minor 11 on, re-reported in
+// node.capabilities (NodeCapabilities) whenever a node-managed harness's cache or channel targets change and at least
+// every 30 minutes, so central's copy stays current between connections.
 type Capabilities struct {
 	OS        string          `json:"os"`
 	Arch      string          `json:"arch"`
@@ -140,7 +147,9 @@ type RunnerInfo struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// HarnessInfo describes one installed harness and its advertised capabilities (SM-HARN-003).
+// HarnessInfo describes one installed harness and its advertised capabilities (SM-HARN-003). Version and Path are what
+// a new run of the harness would get at the time of the report: the detected binary on an unmanaged node, the node's
+// channel target (else its newest cached version) on a managed one.
 type HarnessInfo struct {
 	Kind         string   `json:"kind"` // claude-code, codex
 	Version      string   `json:"version,omitempty"`
@@ -148,6 +157,15 @@ type HarnessInfo struct {
 	Available    bool     `json:"available"`
 	Error        string   `json:"error,omitempty"`
 	Capabilities []string `json:"capabilities"`
+	// Minor ≥ 11 (ADR-0077), node-managed harnesses only: Managed is set, Channel is the node's default (latest,
+	// stable or X.Y.Z), Resolved the memoised channel targets (latest, stable) with when they were resolved, Cached
+	// the verified cached versions (newest first) and CacheBytes their size on disk. Version and Path are then what a
+	// new run of the node's channel would get now.
+	Managed    bool                       `json:"managed,omitempty"`
+	Channel    string                     `json:"channel,omitempty"`
+	Resolved   map[string]HarnessResolved `json:"resolved,omitempty"`
+	Cached     []string                   `json:"cached,omitempty"`
+	CacheBytes int64                      `json:"cache_bytes,omitempty"`
 }
 
 // ToolInfo describes a tool binary.
@@ -298,22 +316,32 @@ const (
 
 // RunReport is the node's observation of a run (SM-NODE-005). It carries the lease generation the run belongs to.
 type RunReport struct {
-	RunID      string    `json:"run_id"`
-	SpaceID    string    `json:"space_id"`
-	Generation int64     `json:"generation"`
-	State      string    `json:"state"`
-	TerminalID string    `json:"terminal_id,omitempty"`
-	CoreID     string    `json:"core_id,omitempty"`
-	Identity   string    `json:"identity,omitempty"`
-	PID        int       `json:"pid,omitempty"`
-	ExitCode   *int      `json:"exit_code,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	Status     string    `json:"status,omitempty"` // program-reported (OSC 7501): idle, working, done, blocked, error
-	StatusKind string    `json:"status_kind,omitempty"`
-	Turn       uint64    `json:"turn,omitempty"`
-	SessionID  string    `json:"session_id,omitempty"` // harness conversation id when known
-	Adopted    bool      `json:"adopted,omitempty"`    // an existing process was adopted instead of launching
+	RunID      string `json:"run_id"`
+	SpaceID    string `json:"space_id"`
+	Generation int64  `json:"generation"`
+	State      string `json:"state"`
+	TerminalID string `json:"terminal_id,omitempty"`
+	CoreID     string `json:"core_id,omitempty"`
+	Identity   string `json:"identity,omitempty"`
+	PID        int    `json:"pid,omitempty"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Status     string `json:"status,omitempty"` // program-reported (OSC 7501): idle, working, done, blocked, error
+	StatusKind string `json:"status_kind,omitempty"`
+	Turn       uint64 `json:"turn,omitempty"`
+	SessionID  string `json:"session_id,omitempty"` // harness conversation id when known
+	Adopted    bool   `json:"adopted,omitempty"`    // an existing process was adopted instead of launching
+	// Minor ≥ 11 (ADR-0077), once the node knows them (the starting report after the version is resolved, and every
+	// report after it): the harness version the run launched, what was requested (the profile's pin, else the node's
+	// channel) and, when another version than the request's target ran, the fallback reason.
+	HarnessVersion   string `json:"harness_version,omitempty"`
+	HarnessRequested string `json:"harness_requested,omitempty"`
+	HarnessFallback  string `json:"harness_fallback,omitempty"`
+	// Minor ≥ 12 (ADR-0079): the run's open usage limit on every report while the node knows of one, and Cleared once
+	// it is over. Nil carries no limit information, so the receiver keeps what it has; always nil below minor 12
+	// (ForMinor).
+	Limit      *RunLimit `json:"limit,omitempty"`
 	ObservedAt time.Time `json:"observed_at"`
 }
 
@@ -372,8 +400,19 @@ type LaunchPayload struct {
 	Repository *RepoSource `json:"repository,omitempty"`
 	// Skills are materialized into the harness's own skills folder when the harness supports it (SM-MCP-004).
 	Skills []Skill `json:"skills,omitempty"`
+	// ClaudeSettings are the profile's Claude Code settings.json keys (minor ≥ 8, ADR-0059), set in the run's own
+	// settings.json. Central dispatches a launch that has them only to a node that negotiated minor 8.
+	ClaudeSettings ClaudeSettings `json:"claude_settings,omitempty"`
+	// HarnessVersion is the profile's harness version pin (minor ≥ 11, ADR-0077): latest, stable or an exact X.Y.Z;
+	// empty follows the node's channel. It overrides the node's channel; an exact version is downloaded when missing
+	// and never falls back to another one. Central dispatches a pinned launch only to a node that negotiated minor 11.
+	HarnessVersion string `json:"harness_version,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
 	AccountRef string `json:"account_ref,omitempty"`
+	// Gateway is set, at dispatch only, when the run's model traffic goes through an LLM gateway (minor ≥ 9, ADR-0060):
+	// the harness is pointed at its address with the child token in Secrets[SecretGatewayToken], and no other
+	// credential. It is not secret.
+	Gateway *GatewayLaunch `json:"gateway,omitempty"`
 	// Dream asks the node to prepare a dream workspace (minor ≥ 2, ADR-0027).
 	Dream *DreamSpec `json:"dream,omitempty"`
 	// RecordingMaxBytes bounds the run's terminal recording on the node (the space's recording_quota_bytes limit,
@@ -384,6 +423,31 @@ type LaunchPayload struct {
 	// file, which the launcher shim reads and unlinks before exec (ADR-0009); they never reach the runner's env.
 	Secrets  map[string]string `json:"secrets,omitempty"`
 	RunToken string            `json:"run_token,omitempty"`
+}
+
+// SecretGatewayToken is the LaunchPayload.Secrets key of a gateway run's child token (Harbor Pilot, ADR-0060). Central
+// sets it at dispatch, only for a node at MinorGatewayToken or later, together with LaunchPayload.Gateway; the harness
+// adapters turn it into the harness's own variable (ANTHROPIC_AUTH_TOKEN, HARBOR_PILOT_TOKEN), never forwarding it
+// under this name.
+const SecretGatewayToken = "SPACEMAN_GATEWAY_TOKEN"
+
+// MinorGatewayToken is the first minor version whose agent delivers SecretGatewayToken to the harness (HP-T4). An older
+// agent would drop it and start the harness on whatever login the node user has, a fallback to a direct account that
+// ADR-0060 forbids (Q1), so central fails a gateway launch to such a node as agent_too_old before minting.
+const MinorGatewayToken = 9
+
+// GatewayHarborPilot is the GatewayLaunch kind of a Harbor Pilot gateway.
+const GatewayHarborPilot = "harbor-pilot"
+
+// GatewayLaunch is where a gateway run's harness sends its model traffic (ADR-0060 decisions 3 and 6).
+type GatewayLaunch struct {
+	Kind string `json:"kind"`
+	// BaseURL is the gateway origin runs reach (the connection's run_base_url, or its base_url): Anthropic's API is at
+	// BaseURL, the OpenAI Responses API at BaseURL/v1.
+	BaseURL string `json:"base_url"`
+	// AllowInsecureHTTP lets BaseURL be plain http. Without it the node refuses anything but https, with no loopback
+	// exemption: a loopback host on central is the node's own loopback here.
+	AllowInsecureHTTP bool `json:"allow_insecure_http,omitempty"`
 }
 
 // DefaultRecordingMaxBytes is the recording bound a node applies when the launch names none (512 MiB).
@@ -507,6 +571,17 @@ type ToolCall struct {
 
 // ToolCatalog is the reserved tool name that lists a run's tools.
 const ToolCatalog = "_catalog"
+
+// ToolAttachmentGet is central's attachment read. Its offset/length arguments read a range (at most
+// AttachmentChunkBytes); the node's ToolAttachmentSave uses them to copy a whole attachment into the run's folder.
+const ToolAttachmentGet = "spaceman_attachment_get"
+
+// ToolAttachmentSave is served by the node's MCP bridge, not by central: it writes a whole attachment to a file in the
+// run's own folder (ADR-0073). The node offers it when the run's catalog has ToolAttachmentGet.
+const ToolAttachmentSave = "spaceman_attachment_save"
+
+// AttachmentChunkBytes bounds one ranged attachment read: its base64 must fit one envelope (MaxMessage).
+const AttachmentChunkBytes = 1 << 20
 
 // ToolResult answers a ToolCall. Code is an apperr code when OK is false.
 type ToolResult struct {
@@ -640,6 +715,9 @@ type DreamSpec struct {
 const (
 	UsageClaudeTranscript = "claude-transcript" // Claude Code's native session transcript (verified, spike S-7)
 	UsageUnavailable      = "unavailable"       // the harness keeps no usage SpaceMan can read
+	// UsageHarborPilot is usage central read back from the Harbor Pilot gateway for a gateway run (ADR-0060 decision 7):
+	// gateway-observed, never reported by a node, and only where the harness reported none.
+	UsageHarborPilot = "harbor-pilot"
 )
 
 // ModelUsage is one model's token counts. A nil count is unknown, never zero.

@@ -53,7 +53,7 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
   return (
     <>
       {selectable.length > 0 && (
-        <Group gap="xs" mb={6} justify="space-between">
+        <Group gap="xs" mb={6} justify="space-between" preventGrowOverflow={false}>
           <Checkbox size="xs" label={chosen.length ? `${chosen.length} selected` : 'Select all'} checked={chosen.length > 0 && chosen.length === selectable.length}
             indeterminate={chosen.length > 0 && chosen.length < selectable.length}
             onChange={(e) => setPicked(e.currentTarget.checked ? selectable.map((a) => a.id) : [])} />
@@ -69,13 +69,14 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
         {actions.map((a) => (
           <Card key={a.id} p="xs" role="listitem" tabIndex={0} aria-label={`${a.type}: ${a.title}, ${a.status}`} style={{ cursor: 'pointer' }}
             onClick={() => setOpen(a.id)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(a.id) }}>
-            <Group gap="xs" wrap="nowrap">
+            {/* The row wraps on a phone, so the title keeps a readable width instead of shrinking to nothing. */}
+            <Group gap="xs">
               {isPending(a) && can(a) && (
                 <Checkbox size="xs" aria-label={`Select ${a.title}`} checked={picked.includes(a.id)} onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setPicked(e.currentTarget.checked ? [...picked, a.id] : picked.filter((x) => x !== a.id))} />
               )}
               <TypeBadge type={a.type} slug={a.type_slug} />
-              <Text size="sm" style={{ flex: 1 }} truncate>{a.title}</Text>
+              <Text size="sm" style={{ flex: '1 1 200px', minWidth: 0 }} truncate>{a.title}</Text>
               <PriorityBadge priority={a.priority} />
               {isPending(a) && <FollowUpBadges action={a} />}
               {a.type === 'message' && !(a.request as MessageReq)?.requires_ack && isPending(a) && <Badge variant="outline" color="gray">FYI</Badge>}

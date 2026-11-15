@@ -10,6 +10,16 @@ counted.
 
 <Shot name="human-global" alt="Needs you page listing a blocking question, an approval, two to-dos and an informational message across two spaces" caption="Everything waiting for a person, across spaces" />
 
+## Agents ask here, not in the terminal
+
+An agent that needs a person asks with `spaceman_human_ask`. The request is kept, shows up under **Needs you**, reminds
+people per the space's policy, and the answer wakes the agent. SpaceMan tells every run so in its orientation, and
+denies Claude Code's own terminal question picker (`AskUserQuestion`) and plan mode (`EnterPlanMode`, whose plan ends
+in an approval dialog) by default: a run waiting there would wait, silently, for an answer typed into its terminal
+(ADR-0066, and [Claude Code settings](./roles-and-prompts#claude-code-settings) to allow them). Claude Code's own
+permission dialogs are answered with "deny" by a hook SpaceMan adds, whose message points the agent here
+(ADR-0068). Codex's permission dialogs still appear in the terminal; the approval policy decides when.
+
 ## Search, filters and sorting
 
 Both lists have a search box and filters above them. The search runs on the server over the title and the Markdown
@@ -154,7 +164,8 @@ their SpaceMan tools and never wait in a loop: they are told when a response arr
 - When the requester's run has **ended** (it exited, failed, was lost, or ends before acknowledging the response), the
   policy decides:
   - **On at once** (`reroute`, the default): to a running run of the policy's **successor role**, else to the space's
-    **control** (also while the supervisor restarts it), else nobody.
+    **control** (also while the supervisor restarts it, or while no control runs but
+    [auto-start](./control#starting-and-stopping-on-its-own) can start one for it), else nobody.
   - **To its next run** (`next_launch`): kept for the next run of the same agent instance, a resumed session such as a
     restarted control or a sleeping knowledge-base session, for the policy's hold time; then on as above.
 - If no agent can take it, the action shows the response as **undeliverable**, operators get a message, and **Send to

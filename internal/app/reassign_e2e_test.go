@@ -13,6 +13,7 @@ import (
 // task's version, is visible on the task, is audited with the previous and new assignee, and never points at another
 // space's run. (Viewers cannot edit tasks: update-task needs queue:write, TestQueueOverHTTP and the rules table.)
 func TestOperatorReassignsTask(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()

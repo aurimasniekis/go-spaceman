@@ -1,7 +1,7 @@
 -- name: InsertMCPServer :exec
 INSERT INTO mcp_servers (id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json,
-  call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, kind, api_token_id, spaceman_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetMCPServer :one
 SELECT * FROM mcp_servers WHERE id = ?;
@@ -22,6 +22,11 @@ WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
 UPDATE mcp_servers SET headers_enc = sqlc.arg(headers_enc), header_names_json = sqlc.arg(header_names_json), headers_version = headers_version + 1,
   updated_at = sqlc.arg(now), version = version + 1
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
+
+-- name: SetMCPServerSpaceman :execrows
+UPDATE mcp_servers SET spaceman_json = sqlc.arg(spaceman_json), api_token_id = sqlc.arg(api_token_id), updated_at = sqlc.arg(now),
+  version = version + 1
+WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND kind = 'spaceman';
 
 -- name: DeleteMCPServer :execrows
 DELETE FROM mcp_servers WHERE id = ?;

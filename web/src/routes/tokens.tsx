@@ -52,6 +52,9 @@ function TokensPage() {
   )
 }
 
+/** Internal tokens (ADR-0063) belong to a SpaceMan MCP server: they have no secret and are never a bearer token. */
+const isInternal = (t: APIToken) => (t.purpose ?? '') !== ''
+
 function TokenTable({ tokens, revoke }: { tokens: APIToken[]; revoke: 'mine' | 'any' }) {
   const qc = useQueryClient()
   const doRevoke = async (t: APIToken) => {
@@ -80,8 +83,13 @@ function TokenTable({ tokens, revoke }: { tokens: APIToken[]; revoke: 'mine' | '
           {tokens.map((t) => (
             <Table.Tr key={t.id} opacity={isSet(t.revoked_at) ? 0.5 : 1}>
               <Table.Td>
-                <Text size="sm" fw={500}>{t.name}</Text>
-                <Text size="xs" c="dimmed" className="mono">…{t.hint}</Text>
+                <Group gap={6}>
+                  <Text size="sm" fw={500}>{t.name}</Text>
+                  {isInternal(t) && <Badge size="xs" color="owlPurple" variant="light">SpaceMan MCP · internal</Badge>}
+                </Group>
+                {isInternal(t)
+                  ? <Text size="xs" c="dimmed">No secret: it can’t be copied or sent as a bearer token. Revoking it stops its MCP server.</Text>
+                  : <Text size="xs" c="dimmed" className="mono">…{t.hint}</Text>}
               </Table.Td>
               <Table.Td><Group gap={4}>{t.grants.map((g) => <Badge key={`${g.role}@${g.domain}`} color="gray">{g.role} · {g.domain === '*' ? 'all' : g.domain}</Badge>)}</Group></Table.Td>
               <Table.Td><Text size="xs">{t.never_expires ? 'never' : datetime(t.expires_at)}</Text></Table.Td>

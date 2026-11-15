@@ -154,6 +154,27 @@ type LimitsConfig struct {
 	// it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at
 	// most 10080).
 	ControlIdleStopMinutes int64 `yaml:"control_idle_stop_minutes"`
+	// TerminalCols is the width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the
+	// node's runner.terminal_size. A size applies only when terminal_rows is set too.
+	TerminalCols int64 `yaml:"terminal_cols"`
+	// TerminalRows is the height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's
+	// runner.terminal_size. A size applies only when terminal_cols is set too.
+	TerminalRows int64 `yaml:"terminal_rows"`
+	// UsageLimitFailover lets a launch or resume whose account is held at a usage limit use another account bound to
+	// the space for the same harness that is not held (1: on; 0: off, the default). A space routed through an LLM
+	// gateway never falls back to a direct account (ADR-0079 decision 8).
+	UsageLimitFailover int64 `yaml:"usage_limit_failover"`
+	// UsageLimitKeepAliveMaxMinutes is how long a run at a usage limit waits for the reset with its process kept alive,
+	// and the longest gap between checks of a hold whose reset time is unknown (1-1440, default 360; ADR-0079).
+	UsageLimitKeepAliveMaxMinutes int64 `yaml:"usage_limit_keep_alive_max_minutes"`
+	// UsageLimitMaxWaitHours is how long a worker or diagnostic run parked at a usage limit waits to be resumed before
+	// its task goes back to the queue, ready and unassigned (1-720, default 168: 7 days; control is never given up on;
+	// ADR-0079 Q2).
+	UsageLimitMaxWaitHours int64 `yaml:"usage_limit_max_wait_hours"`
+	// UsageLimitNotifyAfterHours is how far away a usage-limit hold's reset must be for the space's people to get one
+	// human action about it, once per account window (0-720, default 12: weekly limits, not 5-hour ones; 0: never;
+	// ADR-0079 Q5).
+	UsageLimitNotifyAfterHours int64 `yaml:"usage_limit_notify_after_hours"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual
@@ -234,6 +255,28 @@ type HTTPConfig struct {
 	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
 	// ReadHeaderTimeout bounds how long a client may take to send request headers.
 	ReadHeaderTimeout Duration `yaml:"read_header_timeout"`
+	// WriteIdleTimeout bounds how long one piece (32 KiB) of a response may wait for the client to read it (1s to
+	// 10m). It bounds progress, not the whole response: a slow download that keeps moving is never cut off, but a
+	// client that stops reading is disconnected instead of holding the response in central's memory. WebSocket
+	// connections (nodes, terminals) keep their own timeouts.
+	WriteIdleTimeout Duration `yaml:"write_idle_timeout"`
+	// CatchUpConcurrency bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each
+	// decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused
+	// with 503 and Retry-After (ADR-0081).
+	CatchUpConcurrency int `yaml:"catch_up_concurrency"`
+	// CatchUpWait bounds how long a terminal catch-up or recording read waits for one of catch_up_concurrency's slots
+	// (0 to 1m; 0 refuses at once).
+	CatchUpWait Duration `yaml:"catch_up_wait"`
+	// ReadIdleTimeout bounds how long one read of a request body may wait for the client to send data (1s to 10m). It
+	// bounds progress, not the whole request: the whole body must also arrive within its operation's bound (5 s for
+	// JSON operations, 10 minutes for an attachment upload); within that bound a large upload that keeps moving is
+	// never cut off, but a client that
+	// declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request
+	// refused before its body is read closes its connection instead of draining the body. Requests without a body
+	// (event streams) and WebSocket connections are unaffected.
+	ReadIdleTimeout Duration `yaml:"read_idle_timeout"`
+	// IdleTimeout bounds how long a kept-alive connection may wait for its next request (1s to 1h).
+	IdleTimeout Duration `yaml:"idle_timeout"`
 }
 
 // AuthConfig configures operator authentication (SM-AUTH-001).
@@ -260,11 +303,17 @@ type AuthConfig struct {
 	StreamRevalidate Duration `yaml:"stream_revalidate"`
 }
 
+// MaxLeaseTTL bounds nodes.lease_ttl. A node keeps a space's lease for up to lease_ttl after central last renewed it,
+// whatever central records later (a revoke stores the revoke time as the expiry), so the bound keeps that window well
+// inside the stale-run sweeper's margin past a lease's expiry (ADR-0074, 15 minutes).
+const MaxLeaseTTL = 10 * time.Minute
+
 // NodesConfig configures node connectivity and execution leases (ADR-0006).
 type NodesConfig struct {
 	// HeartbeatInterval is how often a connected node reports in and renews its leases (1s to 1m).
 	HeartbeatInterval Duration `yaml:"heartbeat_interval"`
-	// LeaseTTL is how long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval).
+	// LeaseTTL is how long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval, at most
+	// 10m).
 	LeaseTTL Duration `yaml:"lease_ttl"`
 	// DisconnectGrace is how long a node keeps runs going after losing central before stopping them (SM-NODE-007;
 	// 0 to 1h).

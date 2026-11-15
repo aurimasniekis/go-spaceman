@@ -39,6 +39,12 @@
   its `issues_opened` and `push` webhook fixtures to a real pulsed (`make test-real-pulse`). Its GitHub App
   installation lookup was answered by a local stand-in serving pulse-github's own test JSON, so the real GitHub API was
   not involved. There is no upstream pull request fixture, so the PR template has no real evidence.
+- **The comment, review and CI templates have no live evidence.** `github-pr-comment`, `github-issue-comment`,
+  `github-pr-review`, `github-pr-review-comment`, `github-workflow-run` and `github-check-suite` (ADR-0061) are tested
+  against payloads derived from GitHub's documented webhook shapes and pulse-github's normalisation code, not against
+  events a live pulse-github published. Lifecycle actions (closed, reopened, ready_for_review, …) keep the existing
+  issue and pull request templates' generic rendering, which still puts the issue or pull request title in the item
+  title.
 - **Paused-space policies cover event items only.** A subscription's `while_paused` (defer, wake or stop, ADR-0049)
   decides about the items it creates. Other inputs of a paused space (operator items, worker messages, schedules,
   task and run notices) still reach a control run that runs under **Hold** at once. A `stop` subscription's durable
@@ -74,13 +80,146 @@
   after the first refresh. The copy stays on the node (0600, readable by the agent's user and root) and is not removed
   when the account is deleted. A real ChatGPT login has not been used: the layout was verified with codex-cli 0.166.0
   using an API-key file (ADR-0053, SM-ACCT-002).
-- **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence. codex-cli
-  0.166.0 is installed on the development machine, but there is no Codex or OpenAI credential to run it with.
+- **No real Codex run on an OpenAI account yet.** There is no Codex or OpenAI credential to run with. Real codex-cli
+  0.166.0 runs through SpaceMan were made only against Harbor Pilot `serve --demo` with synthetic upstreams
+  (`TestRealHarborPilotGatewayRuns`, 2026-11-08). They show the launch through the shim, a model turn and a second
+  prompt by safe input, but not an API-key or ChatGPT login.
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Harness distribution
+- **Managed Claude Code is opt-in.** With `harness.claude.manage` off (the default) a run executes whatever `claude`
+  its `PATH` resolves to, and an unpinned run records no version. A profile pin on such a node runs only when it equals
+  the detected version, and a channel pin (`latest`, `stable`) fails there.
+- **A node's reported version can lag by up to 30 minutes.** From protocol 1.11 a connected node re-reports its
+  harness versions when its Claude Code cache or a channel target changes and at least every 30 minutes (SM-HARN-008);
+  an unmanaged `claude` updated by hand shows up at the next periodic report. Older agents report only when they
+  connect. The manifest's `node_default` is the last report; the run row holds what actually ran.
+- **Pins need protocol 1.11.** Central refuses to send a pinned launch to an older node agent: the run fails as
+  `node_too_old`. A node learns pins only from launches it has seen, so GC may remove a pinned version that no launch
+  has used for 30 days. The next pinned launch downloads it again.
+- **Checksum-verified, not signature-verified.** Under ADR-0077 the node accepts a downloaded Claude Code binary when
+  its SHA-256 and size match the version's `manifest.json`, fetched over HTTPS from the release host or the operator's
+  mirror. The manifest's signature is not checked until the release key and procedure are documented (K-14), so
+  whoever controls that host or mirror controls the binary.
+- **Live runs keep their version.** Under ADR-0077 a new version reaches new runs only; a running conversation moves
+  only if it is stopped and resumed. Resuming across versions was checked once, 2.1.317 to 2.1.322 in print mode
+  against a fake API (`docs/contracts/harnesses.md`, Distribution).
+
+## Harbor Pilot gateway
+- **Gateway runs need updated agents.** A node agent below protocol minor 9 can't hand the token to a harness, so
+  central fails a routed launch to it as `agent_too_old` before minting, rather than let the harness start on the
+  node's own login (ADR-0060). Update every node of a space before opting the space in.
+- **A Harbor Pilot outage stops the space's gateway runs.** There is no fallback to a direct account (Q1): when
+  Harbor Pilot is down, or its parent token is revoked or expired, every launch of a routed harness fails (at mint, as
+  `gateway_unavailable`), and running runs lose model access. Revoking the parent in Harbor Pilot is the emergency stop
+  for every gateway run at once (THREAT_MODEL T-39), and for the same reason a single point of failure for every
+  opted-in space. Recovery is a new parent saved on the connection; runs that lost access must be relaunched.
+- **No token refresh inside a run.** A run's token lives for the space's token lifetime (24 h by default, 15 min to
+  7 days, Q2). A harness can't be given a new token while it runs, so a run that outlives its token loses model
+  access and must be relaunched. A re-sent launch gets a fresh token only before its harness starts.
+- **Codex's default model may not be routed.** A gateway Codex run without a model uses Codex's own default
+  (`gpt-6.1-sol` in 0.166.0), which a Harbor Pilot plan may not route: the demo answers 403 "no eligible account". Set
+  the role's model, or the space's allowed models, to one the plan routes. SpaceMan doesn't pick one.
+- **Repository and harness-written settings are not checked.** In a gateway run SpaceMan refuses Claude Code profile
+  settings that add a credential or endpoint, and removes stored logins. It does not inspect a Claude Code project
+  `.claude/settings.json` in the run's working directory (repository content), keys Claude Code or the agent wrote
+  into the instance's own `settings.json`, or a Codex `config.toml` in `CODEX_HOME`. Whether a project file's `env`
+  can redirect Claude Code's base URL was not tested. The same holds for direct accounts (THREAT_MODEL T-36). A Codex
+  `config.toml` can't redirect a gateway run's model traffic: with codex-cli 0.166.0 the `-c model_provider…`
+  overrides won over its root `model_provider`, over a `<name>.config.toml` profile (even with `--profile`, which
+  SpaceMan never passes) and over its own `[model_providers.harbor-pilot]`, and a legacy `profile =` key makes Codex
+  refuse to start (checked by hand against two local servers, 2026-11-08). It can still add settings the overrides
+  don't set, such as extra request headers. Later Codex versions may change this precedence.
+- **The run can read its own token.** A gateway run's token is in its harness's environment, as account credentials
+  are. It is bound to the run in Harbor Pilot and revoked when the run ends, but stays usable until then.
+- **A crash right after a mint leaves an untracked token.** If central stops between Harbor Pilot's answer to a mint
+  and the transaction that stores the token, nothing records that child token. It stays valid until its TTL (the
+  space's token lifetime, 24 h by default) unless it, or the parent, is revoked in Harbor Pilot.
+- **Revocations and the lease-loss sweep run only in `spaceman serve`.** They run on serve's deadline timer. A
+  revocation queued by another process (an admin command) waits in the durable queue until the next `serve` runs.
+- **Failed revocations need a person.** A revocation Harbor Pilot refuses, or one whose parent was replaced before it
+  could be done, is audited, counted (connection page, `spaceman_gateway_revocations_failed`) and left to a person;
+  no human action is raised.
+- **The 0.1.3 minimum is still checked by a feature probe.** A gateway that does not know `check_budget` on mint
+  (before 0.1.3) is refused; a later gateway that dropped the field would look old too. Harbor Pilot 0.1.4's
+  `GET /api/v1/system` is read only with the service-principal token (it needs `config.read`), so without one the
+  version shows as unknown and budget status, when it can be read at all, takes the 0.1.3 path. SpaceMan never compares
+  version numbers: a gateway that answers `/api/v1/system` is treated as 0.1.4 or later.
+- **Budget status by project only on 0.1.4 or later.** On 0.1.3 SpaceMan still reads every budget (the list is not
+  paginated) and looks the project's workspace up. A 0.1.4 gateway whose version can't be read for a moment (a failed
+  `/api/v1/system` read is retried after 5 s) is read the 0.1.3 way meanwhile. The version is cached for 10 minutes:
+  when the gateway at the same address is downgraded below 0.1.4 meanwhile, it ignores the filters and answers every
+  budget. SpaceMan takes an answer holding another project's or binding's budget, an account budget, two workspaces' or
+  an item without `remaining_e10` (which 0.1.4 always sends) as unfiltered, drops the cached version and reads every
+  budget the 0.1.3 way. A gateway that sends `remaining_e10` but ignores the filters would not be detected when its
+  only foreign budget is one other workspace's. A filtered read that answers 404 (the space's project or the binding
+  was deleted in Harbor Pilot) also falls back to the 0.1.3 path.
+- **The launch check waits at most 15 s.** Every Harbor Pilot read of one launch's budget check (version, budget
+  status, a fallback) shares one 15 s deadline; when it passes, status counts as unavailable and the space's
+  `on_budget_status_unavailable` decides. The read itself goes on in the background and is cached for the next launch.
+- **Inactive and unknown budget states never refuse.** Scheduled, expired, disabled and any state a later Harbor Pilot
+  adds are shown but never refuse a launch, so SpaceMan's early check can't refuse more than Harbor Pilot would; Harbor
+  Pilot's own mint check and request enforcement still apply.
+- **A re-sent budget alert is a new inbox item.** After an upgrade to Harbor Pilot 0.1.4, or after a limit is raised,
+  a budget alert that already fired in the current period fires again. SpaceMan makes it one more item in the same
+  correlation as the first (only a redelivery of the same event is a duplicate); it does not merge them.
+- **Demo evidence only.** Everything real ran against `harbor-pilot serve --demo` 0.1.3 (and 0.1.4 for the
+  `make test-harbor-pilot` suite) with its synthetic upstreams:
+  connection checks, run tokens, real Claude Code and Codex runs, budgets, per-run usage, events and the Terraform
+  example. No run has gone through a production gateway to a real model provider (Q7: the operator will provide one;
+  the evidence map is in RELEASE_READINESS §13).
+- **Unscoped Harbor Pilot events have no routing decision.** Where quota, blocked-request and non-project budget events
+  should go is undecided (Q4, DECISIONS K-12); until it is decided they reach only spaces that subscribe.
+- **Harbor Pilot rounds share central's deadline timer.** Revocations, the lease-loss sweep and usage reads run one
+  after another on the timer that also expires human actions and approvals and fires schedules. A revocation
+  call is bounded by 5 s and a usage read by 10 s. A usage round stops asking Harbor Pilot after its first transport
+  failure, but a revocation round still tries each due revocation (at most 10), so a gateway that accepts connections
+  and never answers can delay human-action expiry, reminders and schedules by up to about 50 s per round, again each
+  time the revocations are retried.
+- **The early budget refusal is advisory and up to 30 s old.** SpaceMan reuses a budget status read for 30 s (5 s
+  after a failed read), so a budget used up in that window can let a launch through. Harbor Pilot then refuses the
+  run's token mint (`check_budget`) or its requests. The check can't see a request in flight that is about to push a
+  budget over its limit. A budget with no spend yet passes even when the first request is then refused for its own
+  estimate (Harbor Pilot's rule). Budgets on an upstream account are not shown or checked, because they cover
+  whichever account serves a request, not a space. Harbor Pilot doesn't check them at mint either.
+- **Workspace budgets need `config.read`.** Finding the project's workspace needs the service-principal token's
+  `config.read`. It is looked up only when a workspace budget exists, and cached for 10 minutes. If the lookup fails,
+  budget status is unavailable for the space, and its `on_budget_status_unavailable` decides.
+- **Project usage counts every client.** The Limits card's project usage is Harbor Pilot's usage of the project over all
+  its clients, not only this space's runs. Several spaces sharing a project see the same figures.
+- **Per-run usage arrives late and may miss a slow request.** A gateway run's usage is read about 15 s, 2 min and 10 min
+  after its end. A request still streaming after the last read is not counted. A run that ended while no
+  service-principal token was set gets no usage. A read failing for an hour is given up, and the run keeps what it had.
+  Usage is never written as zero: a read that finds no request for the run (the ledger behind, a binding changed, a
+  run that made no request) stays with the run's gateway figures only, and the run's usage stays unknown, so a gateway
+  run that really made no request is shown as unknown, not zero. Harbor Pilot counts requests whose provider reported
+  no usage; their tokens are unknown and not counted.
+- **Budget status errors on SpaceMan's side follow the unavailable policy.** A service-principal token that can't be
+  opened or a database error while reading the connection counts as "status can't be read": the space's
+  `on_budget_status_unavailable` decides, and the person sees a fixed reason (details only in central's log).
+- **Who may read budget status.** A space's Harbor Pilot status needs only `space_config:read`, and it shows the global
+  and client-binding budgets whose spend sums every space (ADR-0060, by design).
+- **Status refreshes once a minute in the UI.** The Limits card re-reads status every 60 s (central reuses a read for
+  30 s); a failed read shows an error on the card.
+- **Only project budgets map to a space.** The `harbor-pilot-budget` template routes a project-scoped budget to the
+  space whose subscription names that project. Quota windows, blocked requests and binding, workspace, account or global
+  budgets name no project: they reach only spaces that subscribe to them, and nothing routes them automatically (Q4 is
+  undecided, DECISIONS K-12). A blocked request is not mapped to the run or space that sent it.
+- **One item per refused request.** Harbor Pilot sends `access.request.blocked` for every refused request; refusals
+  of one binding share a correlation, but each is its own inbox item. There is no digest.
+- **Harbor Pilot events: relay tested against SpaceMan's test Pulse only.** Harbor Pilot's own relay was run into
+  SpaceMan's Pulse-shaped JetStream test server, not into a real `pulsed`. The quota window template was never fed a
+  live event (the demo emits none) and is tested on events derived from Harbor Pilot's code.
+- **A new Harbor Pilot Pulse destination misses earlier events.** Harbor Pilot starts a destination at its newest
+  event; anything emitted before the relay picked it up is only sent by a replay from Harbor Pilot.
+- **Stricter than Harbor Pilot's own validation.** The templates' input schemas expect Harbor Pilot 0.1.3's id, name
+  and amount formats. An event that differs (a forged one, or a later Harbor Pilot that changes a format) is
+  quarantined, not shown.
+
 ## Usage and transcripts
-- **Codex usage is unknown.** Its records are not verified, so Codex runs show unknown usage (never zero).
+- **Codex usage is unknown** unless the run went through Harbor Pilot. Its records are not verified, so direct Codex
+  runs show unknown usage (never zero). Gateway runs get Harbor Pilot's figures after they end (source `harbor-pilot`).
 - **Cost figures are the harness's own estimates** at list prices; SpaceMan has no price list and cannot enforce
   spending limits from usage that arrives after the fact. Budgets (ADR-0036) warn and stop new runs once reported usage
   passes them; runs already started can go past a budget, and runs with unknown usage are not counted.
@@ -98,6 +237,38 @@
 - **Terraform manages limits and schedules** (`spaceman_space_limits`, `spaceman_space_queue_policy`,
   `spaceman_schedule`, ADR-0041); the queue policy has no `If-Match` in the API (see Terraform provider below).
 - **Transcripts are uploaded after a run ends**, up to 64 MiB (longer ones keep their start).
+
+## Usage limits
+Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004..006):
+- **No live subscription limit has been observed.** A real claude.ai limit can't be forced, and none has been seen
+  on a SpaceMan run yet. Every test of the feature is simulated: scripted node reports, fake transcript records in
+  the shapes the contract recorded (placeholder values), a fake clock and hpfake. Real evidence covers only the gateway side: the
+  quota board and the all-exhausted 429 of a real `harbor-pilot serve --demo` (v0.1.6 and v0.1.4, 2026-11-14), with a
+  scripted node and harness. TRACEABILITY's real-evidence column for SM-RUN-004..006 stays empty until a live limit
+  is observed (K-16).
+- **Not verified with real accounts (K-16):** `--resume` of a real parked session, and `--resume` under a different
+  real claude.ai account (failover; only different tokens against a fake API were tried); how a real `--resume` fails
+  when its session is missing; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports an
+  `error` status when a turn ends at its limit (the node scans on idle, error and end, so detection doesn't depend on
+  it).
+- **A gateway reset is an estimate.** Harbor Pilot's 429 names no reset, so SpaceMan takes the earliest `until` on
+  the quota board, which covers every account of the Harbor Pilot installation, not only those the space's plan routes
+  to (it has no project filter), or a blocking budget's period end. A run may resume early, hit the limit again and be
+  parked again (no new notice), or resume up to 15 minutes late. Without the service-principal token, or while Harbor
+  Pilot names no reset, the hold is probed like any unknown reset.
+- **Codex isn't covered.** Only Claude Code transcripts are scanned. A Codex run at its limit is neither kept alive nor
+  parked and opens no hold; it behaves as before (control may stop or relaunch it). A Codex launch through a Harbor
+  Pilot connection that a Claude Code run found exhausted is refused while that hold is open.
+- **Detection follows an undocumented format.** It reads typed fields of Claude Code's transcript records, recorded
+  for 2.1.317–2.1.323 (`docs/contracts/harnesses.md`). A renamed field silently stops detection, and runs then behave
+  as they did before ADR-0079. Node agents below protocol minor 12 never report limits.
+- **More than half of subscription waits have no reset time.** Claude Code's wrap-up path names neither the reset nor
+  the kind, so such a hold is probed (one launch after 1 h, then 2 h, 4 h …, at most every keep-alive) and a parked run
+  is resumed by that probe, possibly hours after the real reset.
+- **A run's transcript can hold its account.** The transcript is untrusted. A forged record can hold an account for at
+  most 8 days (the clamp), in every space bound to it; any progress on the account and an operator's clear end it.
+- **Model-specific weekly limits hold the whole account**, for every model, not only the exhausted one.
+- **KB support and dreamer runs aren't parked**; their schedulers start them again when needed.
 
 ## Dreams
 - **Token budgets are advisory.** The dreamer is told its token budget; SpaceMan enforces only the time budget (by
@@ -140,6 +311,9 @@
   submodule work trees are inspected only as part of their parent's status.
 - **Credentials in remote URLs are dropped.** The destination clones with its own Git authentication; a remote that only
   works with credentials embedded in its URL fails to clone (the relocation blocks with the error).
+- **The destination gets a keyed repository's key at Prepare.** For a repository with a SpaceMan SSH key, the
+  relocation's destination receives the key in Prepare, before the lease moves, so the destination of a cancelled or
+  failed relocation has held the key in memory. Nothing is stored on that node.
 - **Native sessions are not carried.** Runs on the destination start fresh harness sessions (project continuity only).
 - **Without the source, only central's copies.** The unavailable-source flow restores acknowledged memory, the
   space's configured repositories that have a URL and the repositories the operator lists; everything else on the
@@ -161,6 +335,42 @@
   its operation (`mcp.<server>.<tool>` or a prefix such as `mcp.deploys.*`); other calls run at once (ADR-0024).
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
+## SpaceMan MCP
+- **Simulated evidence only.** Servers are managed through the API, the CLI and the web UI, runs use
+  the tools over the agent bridge and the external endpoint is served. All of it is tested in process with the real
+  agent and bridge and a fake runner (`TestSpacemanMCPOverBridge`); no real harness has driven the tools through a
+  model yet. The Terraform resource is in terraform-provider-spaceman PR #12, not yet released.
+- **Full admin by default, by design.** The default preset is `admin` on every space and the token never expires
+  (operator decisions for a trusted infra space). An agent with these tools can do what its owner can, short of the
+  hard exclusions; prompt injection into that space is accepted risk T-33.
+- **In-run approvals are decided in the run's space.** A dangerous call's approval request appears in the space of the
+  run that made it, and anyone with `approval:decide` there may approve it, also when the call acts on another space
+  or on an installation-wide target. Give `approval:decide` in the infra space only to people trusted with the
+  server's reach (accepted risk, T-33).
+- **Launches are writes, overrides included.** `launch-run` needs no approval under the default `approval: none`,
+  also when it overrides the role's `settings.permission_mode` (up to the installation ceiling) or `account_ref`;
+  only diagnostic launches are gated. Saving a space role is dangerous, because it changes every later launch by
+  that role (accepted risk, T-33). Set `approval: writes` to gate launches too.
+- **Owned by a person.** The token acts for the admin who created the server: if that admin is disabled or loses
+  grants, the server stops working until it is re-issued by someone else.
+- **External endpoint (`/api/v1/mcp`): on for every user API token.** There is no setting to turn it off, globally
+  or per token; a token can do there what it can do on the API. To keep it unreachable, don't forward `/api/v1/mcp`
+  from the reverse proxy (accepted risk, T-38).
+- **External endpoint (`/api/v1/mcp`): bearer tokens only.** A client must send `Authorization: Bearer
+  spaceman_at_…`; there is no OAuth flow, so clients that only support OAuth for remote servers can't connect.
+- **External endpoint: no dangerous tools without a second person.** A dangerous call needs an approval from someone
+  other than the token's user (that user may only deny or withdraw it), so an installation with one administrator
+  can't run them through the endpoint with a user's approval: approve with the root token, or use the API, CLI or
+  web UI. Dangerous tools that act on no space (accounts, Git SSH keys, HTTP MCP servers, harness
+  profiles, role templates, publishing, installation-wide human policies, node writes) and sensitive reads
+  (recordings, transcripts) are not offered there at all.
+- **External endpoint: the root token can approve.** An approval the endpoint asked for can be approved with the root
+  token; on a single-admin installation that is the documented approval path (operator decision, ADR-0063).
+- **External endpoint: one message per request.** JSON-RPC batches and protocol versions before 2025-06-18 are
+  refused (400), so the per-token rate limit counts calls.
+- **External endpoint: the token's grants are the selection.** There is no per-token tool preset; issue a token with
+  narrower grants for a narrower client.
+
 ## Skills
 - **Skill loading is verified, not a skill's use.** Codex runs get skills in `$CODEX_HOME/skills` (listed in the model's
   prompt input with codex-cli 0.166.0, no model call), Claude Code runs in `$CLAUDE_CONFIG_DIR/skills`; whether a model
@@ -171,6 +381,47 @@
   copy; publish the new content as a new version by hand.
 
 ## Human actions
+- **Terminal prompts are denied for Claude Code only** (ADR-0066). Claude Code runs never see `AskUserQuestion` or
+  `EnterPlanMode`, and every run's orientation says to use `spaceman_human_ask`. A profile gets either tool back by
+  listing it in its own `permissions.allow` (per tool; there is no global switch). Codex's `request_user_input` (Plan mode, or Default mode
+  with its feature flag) is only discouraged by the prompt: SpaceMan sets no override for it yet, because none has
+  been verified against a live Codex session. A harness's own permission dialogs still appear in the terminal.
+- **Claude Code permission dialogs are denied, not answered** (ADR-0068). `skipAutoPermissionPrompt` only skips the
+  one-time notice shown when auto mode starts. Auto mode still raises a dialog for `ask` rules, for reads outside the
+  working directories, and when its classifier falls back to asking after repeated blocks. SpaceMan's
+  PermissionRequest hook denies each of them, so an `ask` rule works like a deny in SpaceMan runs: a person can't
+  approve the call from the dialog, and the agent has to ask through `spaceman_human_ask` and then find another way or
+  wait for a profile change. A profile that sets `disableAllHooks` (or a managed `allowManagedHooksOnly`) turns the
+  hook off, and the dialogs stall the run again. A run whose permission mode is `plan` still ends in the
+  `ExitPlanMode` approval dialog; only `EnterPlanMode` is denied.
+- **A run's file tools reach its whole space folder** (ADR-0068). Every checkout and `work/` is readable and
+  writable. Other instances' transcripts (`projects/*.jsonl`), settings and memory are readable but not writable.
+  Everything in an instance's config dir that Claude Code loads, runs or restores at a later launch is denied to edits,
+  for every instance, the run's own included, whatever their number: settings, the cached `remote-settings.json` and
+  `policy-limits.json`, instructions (`CLAUDE.md`, `rules/`, agents, commands, skills, …), plugins, hooks, shell
+  snapshots, auto memory and transcripts (`projects/`). The run's own auto memory lives outside the space folder
+  (`<data_dir>/automemory/<space>/<instance>`); the memory an instance kept in its config dir before is copied there
+  at its first launch on this release. The Claude Code and Codex login files are denied entirely. Three gaps remain:
+  - in the folder of an instance created after the run started, and of every other instance in a space with more than
+    50 of them, the files Claude Code doesn't load at launch (plan files, background job output) are writable;
+  - the protected files and the stripped settings keys are deny-lists checked against Claude Code 2.1.317, so an entry
+    a later version adds is not covered until SpaceMan adds it;
+  - the node strips dangerous settings keys at every launch, but keeps keys the profile set.
+
+  This is wider than before: the shell runs as the same OS user, but each shell command passes auto mode's classifier,
+  which file tools inside a working directory skip. The folder of another space stays outside, and reading it raises a
+  dialog, which the hook denies, unless a profile adds the node's whole spaces folder as a directory: its runs can
+  then read and write other spaces' checkouts too. Every space's instance configuration, instructions, memory and
+  transcripts stay denied to edits even then (the rules cover `<data_dir>/spaces/*`). A profile's own
+  `autoMemoryDirectory` is ignored (the node logs a warning), so instances never share an auto memory folder.
+- **The PermissionRequest hook can still end at the dialog** (ADR-0068):
+  - **Timeout.** A hook that runs past its 30 s timeout ends at the dialog. A missing or failing agent binary does not:
+    the command then prints a fixed deny.
+  - **A profile hook that allows.** When a profile adds its own `PermissionRequest` hook, outside auto mode the first
+    answer wins, so a profile hook that allows can win over SpaceMan's deny.
+- **A run waiting at a terminal prompt raises no attention item.** SpaceMan doesn't detect that a run's terminal has
+  been waiting for input for a long time. Follow-up: raise an attention item when the program status reports a
+  waiting prompt for more than a few minutes.
 - **Approvals are advisory unless a policy gates the operation.** Enforcement covers only operations SpaceMan performs:
   built-in agent tools and gateway tools. Shell commands and a harness's own permission prompts are not intercepted.
 - **Agents call again after approval.** A gated call returns at once with a request; the agent must repeat the call
@@ -244,6 +495,11 @@
   read-only machine user. Built-in host-key pins cover github.com only; other hosts need the repository's known_hosts. A relocation's
   destination does not clone repositories that have a key: the first sync after the move does. Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
   `file://` and local paths need development mode.
+- **Some permanent delivery failures are retried.** A node command central can't prepare for a transient reason is
+  retried with a backoff (250 ms up to 30 s) while the node is connected. A run's command whose stored payload doesn't
+  decode fails the run as `invalid_command`, but a few failures that can't heal are retried the same way, with a
+  warning in central's log on every pass: a repository SSH key that can't be decrypted, and a command not tied to a run
+  (a repository sync, a relocation's prepare) whose payload doesn't decode. Fix the key or remove the repository.
 - **Unlisted folders still work.** Workers may still use a repository folder that is not in the space's list; such a
   folder is reported as unlisted but not tracked, and a relocation carries it only as the source has it. A space has at
   most 50 repositories. A repository's name and folder are fixed; changing the folder means adding another repository
@@ -284,12 +540,26 @@
   or on **Refresh**. Memory sync state and knowledge-base work stay on their pages (SM-UI-003).
 - **Terminal takeover is time-bound and keeps the terminal's size.** An admin (`terminal:takeover`) can take over a
   running terminal; automated input waits until it ends. It ends 30 seconds after the holder's page stops renewing it,
-  so revoking the holder's session ends it within 30 seconds (they cannot type after revocation). The terminal keeps its
-  size (the node's `runner.terminal_size`, 160×48 by default) rather than fitting the browser. Agents older than node protocol 1.6 cannot be taken over, and the
+  so revoking the holder's session ends it within 30 seconds (they cannot type after revocation). Taking over does not
+  change the terminal's size (see the next item). Agents older than node protocol 1.6 cannot be taken over, and the
   typed-byte count in the audit record is per central process (ADR-0046, SM-UI-004).
-- **Terminals do not fit the browser.** A program runs at the node's terminal size (`runner.terminal_size`, default
-  160×48; runs started before that setting keep herdr-core's 200×120). The view scales the font to the width, follows
-  the cursor as output arrives, and scrolls with the wheel; a watch-only view never resizes the program (ADR-0052).
+- **A terminal has one size, shared by everyone watching.** A program runs at the node's terminal size
+  (`runner.terminal_size`, default 160×48), at its space's `terminal_cols` × `terminal_rows` when both are set, or at
+  the size an admin set from the web (fit to their window, a preset or a custom size, ADR-0075). The size is per run,
+  not per viewer: the view scales the font to the width, follows the cursor and scrolls with the wheel, and opening a
+  page never resizes the program. Resizing needs node protocol 1.10; the node holds a set size through one extra
+  herdr-core connection per sized run. The Terraform provider's `spaceman_space_limits` resource has no attributes for
+  the two limits yet (the API, `spaceman limits set` and `spaceman run terminal-size` work).
+- **Scrolling back reaches only what the terminal keeps.** The live view scrolls back through the browser terminal's
+  scrollback (a 24 MiB limit: at least 10,000 rows at 160 columns, ADR-0080; a page reload rebuilds it from the stored
+  recording), never by sending the run input. A terminal first loads only the last 1 MiB of output; earlier output loads
+  when the viewer asks at the top of the scrollback (ADR-0081). A tail restores the terminal size and the DEC private
+  modes in effect where it starts, not colours, and a full-screen program's rows that it never repaints can be missing
+  from a tail until earlier output is loaded. A full-screen program on the alternate screen keeps its history itself,
+  so watchers see only its current screen: Claude Code runs therefore use its classic renderer unless the profile sets
+  `"tui": "fullscreen"`, and other full-screen
+  programs (Codex's alternate screen, editors) are the same. During a takeover the wheel scrolls such a program only
+  when it asks for mouse input (or xterm's alternate-scroll mode) (ADR-0064).
 - **Live views and many tabs over plain HTTP.** A browser opens at most six HTTP/1.1 connections to a host. The change
   feed is shared by all tabs where Web Locks exist (HTTPS, or `localhost`); a hidden tab releases its live terminal after
   5 seconds. Over plain HTTP to another host each tab holds its own feed, so only a few tabs work at once: serve central
@@ -311,8 +581,12 @@
   not a reference: that link breaks when the attachment expires (SM-ATT-006).
 - **Exports exclude recordings and transcripts**, and an export is not encrypted (ADR-0045). Download recordings and
   transcripts per run.
-- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB); they are not copied
-  into the run's folder (SM-ATT-005).
+- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB per call, with ranged
+  reads; a larger binary is not returned inline) **or `spaceman_attachment_save`**, which copies the whole file into the
+  run's own folder on the node until the run ends (SM-ATT-005, ADR-0073). Attachments are not copied there unasked.
+  There is no server-side image downscale: the harness's own file reader scales images. A saved file stays until its
+  run ends; files of a run that ended while its node agent was not running are removed when the node reconciles at
+  its next start, or at the instance's next launch. A node that never starts again leaves them on disk.
 
 ## Audit and logs
 - **Audit retention trusts its own checkpoint.** After `retention.audit_days` pruned events, verification starts from
@@ -324,6 +598,9 @@
   are metrics (SM-OBS-001).
 
 ## Messaging
+- **A forced "Message the agent" can still be dropped.** The run page's box types the text at once (`force`), but a
+  program reported as `blocked` (a permission prompt, for example) refuses it, as does a takeover that starts in
+  between or a run that is ending. Central has already answered 202 and the operator is not told yet (ADR-0084).
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself. herdr-core's
   own gate accepts only idle, so a `done` program gets the notice ungated after a fresh status check (ADR-0052).
@@ -456,6 +733,10 @@
   a queue policy is kept and cross-space settings are reset to the defaults; spaces are archived unless
   `purge_on_destroy` is set. Recreating such an object with the same slug (or a user with the same email) fails until it
   is imported.
+- **Optional template filters are not in the provider yet.** Its definition type has no `if_set` or `unless_set` and
+  refuses unknown fields, so a custom template or subscription definition using them cannot be managed through
+  Terraform, and the `spaceman_event_template` data source drops them when it reads a built-in that has them
+  (ADR-0061). Subscribing to the built-ins by slug works.
 - **Write-only rotation is explicit.** Terraform cannot see a changed write-only secret: bump its `_wo_version`.
 - **Tested against a local central only** (simulated, `make acc` in the provider repository); no Terraform run against a production
   deployment, a real identity provider or a real Pulse deployment is recorded.
@@ -467,6 +748,12 @@
   NATS) and MCP upstream transports (`gateway.Transport`). Adapters are compiled in. The gateway speaks only streamable
   HTTP to upstream servers (no stdio or SSE-only transport), and Pulse is the only inbound event system.
 
+- **Central has no per-IP or global connection cap** (T-43, ADR-0085). Slow-body clients are bounded per connection (5 s on
+  a JSON operation and on the enrolment and MCP endpoints, 10 minutes on an attachment upload, which needs a valid
+  credential, 30 s without progress), but many connections
+  at once each hold a goroutine for that long. A reverse proxy or firewall in front of central is the place for connection
+  limits. A client below about 43 KiB/s can't upload a 25 MiB attachment within its 10 minutes.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned
@@ -475,6 +762,7 @@
   installed in the Linux container the systemd suite uses (ADR-0034).
 - **External integrations still without real evidence** (SM-VER-002, re-checked 2026-11-03):
   - a real Codex run: no Codex or OpenAI credential on the development machine;
+  - a real Claude usage limit on a SpaceMan run (ADR-0079, K-16): none observed; the usage-limit tests are simulated;
   - AWS S3 and Cloudflare R2: no account (MinIO only);
   - a physical or cloud Linux host, and linux/amd64 under systemd (Docker Desktop's amd64 emulation breaks systemd);
   - Google behind Porch and the GitHub API behind go-pulse-github: no accounts (Porch's fake Google fixture and a local

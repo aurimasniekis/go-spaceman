@@ -27,10 +27,15 @@ The status dot means:
 
 ## Watching a run
 
-The header of an agent's terminal shows its role, kind, harness, turn and state, with Live/Replay, **Take over** and
-**Stop**. While the run is active, the **Live** view shows the stored output and then streams new output as it happens.
-It is **watch-only**: key presses in the browser are never sent to the run. To give an agent input, use the message box
-below the terminal, which delivers the text the next time the agent is idle, or stop it.
+The header of an agent's terminal shows its role, kind, harness, turn and state, with Live/Replay, **Take over**,
+**New inbox item** and **Stop**. While the run is active, the **Live** view shows the stored output and then streams new
+output as it happens. It is **watch-only**: key presses in the browser are never sent to the run. To give an agent
+input, use the message box below the terminal, which delivers the text the next time the agent is idle, or stop it.
+
+**New inbox item** opens the space's [inbox](/guide/inbox#adding-an-item) dialog. Next to **Send**, **Send as inbox
+item** opens the same dialog with the message box's text and a link to the run, so control triages it instead of the
+agent getting it: nothing is sent to the terminal, and the message box clears once the item is added. Both are there
+for anyone who may add inbox items to the space (operators and admins) and need no takeover.
 
 The **inspector** beside the terminal (the panel button toggles it) shows:
 - **Now:** the state, turn, how long the run has run, and human actions it is waiting on.
@@ -41,6 +46,27 @@ The **inspector** beside the terminal (the panel button toggles it) shows:
 - **Identifiers:** collapsed by default, each with a copy button.
 
 <Shot name="terminal-live" alt="A run's page: control's live terminal with the inspector showing its state, task, usage and node" caption="A live, watch-only terminal with its inspector" />
+
+### Scrolling back
+
+You can scroll back through earlier output in the live view without taking the terminal over. Use the mouse wheel or
+trackpad, or drag on a phone. Scrolling up first moves the terminal within its frame, then moves into the earlier output
+the terminal keeps (up to 10,000 lines). Scrolling never sends anything to the run. While you read, new output keeps
+arriving below without moving your place. **Jump to live** returns to the newest output.
+
+A terminal opens on its newest output: it loads only the last megabyte of the run's recording, so the current screen
+appears quickly even after hours of output, also on a phone. When you scroll to the top of what it loaded and the run
+printed more before that, **Load earlier output** fetches more (4 MB, then 16 MB, then the rest) and keeps your place.
+It stops offering more once the terminal's scrollback is full; the run's **Replay** has everything (ADR-0081 in the
+[decision log](/security/decisions)).
+
+<Shot name="terminal-scrollback" alt="A run's live, watch-only terminal scrolled back into earlier output, with a Jump to live button over its bottom edge" caption="Reading earlier output while the run goes on" />
+
+Earlier output is there only when the program printed it to the terminal's normal screen. Full-screen programs draw on
+an alternate screen and keep their own history, which only they can scroll. SpaceMan therefore starts Claude Code with
+its classic renderer (`"tui": "default"` in the run's settings). A profile can set `"tui": "fullscreen"` in its Claude
+Code settings to use the full-screen renderer instead, but then watchers can see only the current screen
+(ADR-0064 in the [decision log](/security/decisions)).
 
 Watching a terminal needs the `terminal:watch` permission (operator and above). The stream re-checks your session
 periodically and ends if it was revoked or your grant was removed.
@@ -62,11 +88,57 @@ an interactive tool). **Take over terminal** on a running run's page lets one pe
   bytes were typed). The keystrokes themselves are never stored, logged or audited; the recording shows only what the
   program echoes, as for any output.
 - Typed keys reach the program through herdr-core's interactive attach on the node (node protocol 1.6; older agents
-  cannot be taken over). The terminal keeps its size rather than fitting your browser window.
+  cannot be taken over). Taking over does not change the terminal's size; resize it from the size menu (below).
+- While you hold the takeover, the wheel scrolls a full-screen program the way a desktop terminal would: it sends
+  mouse-wheel reports when the program asks for mouse input (Claude Code's full-screen renderer then scrolls its
+  history), and nothing otherwise. Programs on the normal screen scroll back locally, as when watching.
 
 <Shot name="terminal-takeover" alt="A run's live terminal taken over by the signed-in admin: a banner says you have taken over this terminal, with a Release button" caption="A taken-over terminal: automated input waits until it is released" />
 
 From the command line: `spaceman run takeover start|type|renew|end` ([CLI reference](/reference/cli/run)).
+
+## Terminal size
+
+A run's terminal has one size, which every viewer shares. The size belongs to the run, not to your browser. Your
+browser scales the font to fit the run's columns into your window, and scrolls sideways when even the smallest font is
+too wide. By default a program runs at its node's size (`runner.terminal_size`, 160×48 unless the node sets another).
+
+The size menu above a live terminal changes it while the run is running:
+
+- **Fit to window** sizes the run's terminal to your terminal area at the regular font size, and fits it again when
+  your window changes size while it stays selected. If someone else resizes the run, their size stands: your browser
+  stops fitting and shows their size as selected. Choose Fit to window again to take it back.
+- **80 × 24, 120 × 40, 160 × 50, 200 × 60** and **Custom…** set a fixed size: 40–400 columns and 10–200 rows.
+- **Node default** goes back to the node's size.
+
+The node applies the size to the program's terminal, so the agent's program redraws for it. For a full-screen program
+such as Claude Code, its whole screen reflows.
+
+- **Who can resize:** resizing needs the `terminal:takeover` permission (admins by default), because it changes what
+  the agent's program sees. Operators see the menu disabled, with the reason as its tooltip and its description for
+  screen readers, and viewers don't see it. While someone has taken over the terminal, only they can resize it. When
+  two admins resize, the last one wins. Every change is audited as `run.terminal_resized`, with the previous size.
+- **Your choice is remembered:** your browser remembers your last choice and shows it selected next time, but it never
+  applies it on its own. Opening a run's page never resizes it for the others watching.
+- **It lasts until cleared:** a size lasts until it is set back to the node default or the run ends. It survives
+  restarts of central and of the node agent.
+- **Recordings:** the recording notes every size change, so a replay redraws at the size the output was drawn for.
+- **Node version:** resizing needs node protocol 1.10, and the node must be connected. With an older or disconnected
+  node the menu is disabled.
+
+<Shot name="terminal-size" alt="A run's live terminal with the size menu open: Fit to window, four presets, Custom and Node default" caption="Choosing a run's terminal size" />
+
+**Default size for new runs.** A space's **Limits** page has **Terminal columns** and **Terminal rows**
+(`terminal_cols`, `terminal_rows`). When both are set, every new run of the space starts at that size. 0 (the
+default) keeps the node's size. Changing them needs the `terminal:takeover` permission (admins by default), like
+resizing a running run: an operator who changes them gets **403**, but can still change the space's other limits.
+A node agent older than node protocol 1.10 can't hold a size, so its new runs keep the node's size. The CLI sets them like any limit:
+`spaceman limits set --space <space> --set terminal_cols=132 --set terminal_rows=43`.
+
+From the command line: `spaceman run terminal-size set --space <space> <run> --cols 120 --rows 40` and `spaceman run
+terminal-size clear` ([CLI reference](/reference/cli/run)). Through the API: `PUT
+/api/v1/spaces/{space}/runs/{run}/terminal-size` with `{"cols": 120, "rows": 40}`, and `DELETE` to go back to the node's
+default (ADR-0075 in the [decision log](/security/decisions)).
 
 ## Replay
 

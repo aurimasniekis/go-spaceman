@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
@@ -50,13 +51,19 @@ type Recordings struct {
 
 // Viewer is one live subscription.
 type Viewer struct {
-	C      chan recording.Record
-	lagged bool
+	C chan recording.Record
+	// lagged is set by apply (under r.mu) and read by the viewer's own goroutine, so it is atomic.
+	lagged atomic.Bool
 	run    string
 }
 
 // Lagged reports whether the viewer dropped records (it must re-read from storage after its last seq).
-func (v *Viewer) Lagged() bool { return v.lagged }
+func (v *Viewer) Lagged() bool { return v.lagged.Load() }
+
+// TakeLagged reports whether the viewer dropped records and clears the flag, so a viewer catches up from storage once
+// per lag and then streams live records again. Clear it before re-reading: records dropped during the re-read set it
+// again.
+func (v *Viewer) TakeLagged() bool { return v.lagged.Swap(false) }
 
 var reRunID = regexp.MustCompile(`^run_[0-9a-z]{26}$`)
 
@@ -165,7 +172,7 @@ func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 			select {
 			case v.C <- rec:
 			default:
-				v.lagged = true
+				v.lagged.Store(true)
 			}
 		}
 		if rec.Kind == recording.KindClose {
@@ -353,8 +360,37 @@ func (r *Recordings) Unsubscribe(v *Viewer) {
 
 // Read returns stored records after a sequence.
 func (r *Recordings) Read(ctx context.Context, runID string, after uint64) (recording.ReadResult, error) {
-	if _, err := r.Dir(runID); err != nil {
+	names, open, err := r.stored(ctx, runID)
+	if err != nil || len(names) == 0 {
+		return recording.ReadResult{Records: []recording.Record{}}, err
+	}
+	return recording.ReadSegments(names, open, after)
+}
+
+// Scan calls fn with each stored record after a sequence, one at a time, so a reader of a long recording holds only
+// the record in hand (a live terminal's catch-up).
+func (r *Recordings) Scan(ctx context.Context, runID string, after uint64, fn func(recording.Record) error) (recording.ReadResult, error) {
+	names, open, err := r.stored(ctx, runID)
+	if err != nil || len(names) == 0 {
 		return recording.ReadResult{}, err
+	}
+	return recording.ScanSegments(names, open, after, fn)
+}
+
+// Tail returns the end of a run's stored recording whose output fits budget bytes, and the state a terminal needs to
+// draw it (ADR-0081).
+func (r *Recordings) Tail(ctx context.Context, runID string, budget int64) (recording.TailResult, error) {
+	names, open, err := r.stored(ctx, runID)
+	if err != nil || len(names) == 0 {
+		return recording.TailResult{Records: []recording.Record{}}, err
+	}
+	return recording.TailSegments(names, open, budget)
+}
+
+// stored flushes the run's writer and returns its segment names and how to open them.
+func (r *Recordings) stored(ctx context.Context, runID string) ([]string, func(string) (io.ReadCloser, error), error) {
+	if _, err := r.Dir(runID); err != nil {
+		return nil, nil, err
 	}
 	r.mu.Lock()
 	if w := r.w[runID]; w != nil {
@@ -363,12 +399,9 @@ func (r *Recordings) Read(ctx context.Context, runID string, after uint64) (reco
 	r.mu.Unlock()
 	names, err := r.Segments(ctx, runID)
 	if err != nil {
-		return recording.ReadResult{}, err
+		return nil, nil, err
 	}
-	if len(names) == 0 {
-		return recording.ReadResult{Records: []recording.Record{}}, nil
-	}
-	return recording.ReadSegments(names, func(name string) (io.ReadCloser, error) { return r.OpenSegment(ctx, runID, name) }, after)
+	return names, func(name string) (io.ReadCloser, error) { return r.OpenSegment(ctx, runID, name) }, nil
 }
 
 // Delete removes a run's stored recording (permission recording:delete), in the spool and in the store. The node's

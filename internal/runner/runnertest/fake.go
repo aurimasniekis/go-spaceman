@@ -7,6 +7,7 @@ package runnertest
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,31 @@ type fakeProc struct {
 	// typed is what takeover streams wrote; attached counts open takeover streams.
 	typed    []byte
 	attached int
+	// interactive are the open takeover streams in the order they last set the size (newest last). Like herdr-core
+	// (docs/contracts/herdr-core.md S-7), the newest one sizes the terminal; with none open it has its start size.
+	interactive          []*takeoverStream
+	resizes              int
+	startCols, startRows int
+}
+
+// resize recomputes a process's size from its interactive streams and emits a size event when it changed (f.mu held).
+func (f *Fake) resize(fp *fakeProc) {
+	cols, rows := fp.startCols, fp.startRows
+	if n := len(fp.interactive); n > 0 {
+		cols, rows = fp.interactive[n-1].cols, fp.interactive[n-1].rows
+	}
+	if cols == fp.p.Cols && rows == fp.p.Rows {
+		return
+	}
+	fp.p.Cols, fp.p.Rows = cols, rows
+	f.seq++
+	ev := runner.Event{Seq: f.seq, Kind: "size", TerminalID: fp.p.ID, Data: []byte(fmt.Sprintf(`{"cols":%d,"rows":%d}`, cols, rows))}
+	for _, s := range f.subs {
+		select {
+		case s <- ev:
+		default:
+		}
+	}
 }
 
 // New returns an empty fake runner.
@@ -260,15 +286,21 @@ func (f *Fake) Takeover(_ context.Context, id string) (runner.Stream, *runner.Pr
 		return nil, nil, runner.ErrFinished
 	}
 	fp.attached++
+	if fp.startCols == 0 {
+		fp.startCols, fp.startRows = fp.p.Cols, fp.p.Rows
+	}
 	p := fp.p
-	return &takeoverStream{f: f, fp: fp, closed: make(chan struct{})}, &p, nil
+	ts := &takeoverStream{f: f, fp: fp, closed: make(chan struct{}), cols: p.Cols, rows: p.Rows}
+	fp.interactive = append(fp.interactive, ts)
+	return ts, &p, nil
 }
 
 type takeoverStream struct {
-	f      *Fake
-	fp     *fakeProc
-	once   sync.Once
-	closed chan struct{}
+	f          *Fake
+	fp         *fakeProc
+	once       sync.Once
+	closed     chan struct{}
+	cols, rows int
 }
 
 func (s *takeoverStream) Next(ctx context.Context) ([]byte, *runner.CloseInfo, error) {
@@ -285,7 +317,21 @@ func (s *takeoverStream) Next(ctx context.Context) ([]byte, *runner.CloseInfo, e
 	}
 }
 
-func (s *takeoverStream) Resize(int, int) error { return nil }
+// Resize sizes the terminal (this stream becomes the newest to set it) and counts the resize.
+func (s *takeoverStream) Resize(cols, rows int) error {
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	select {
+	case <-s.closed:
+		return fmt.Errorf("takeover stream closed")
+	default:
+	}
+	s.cols, s.rows = cols, rows
+	s.fp.resizes++
+	s.fp.interactive = append(slices.DeleteFunc(s.fp.interactive, func(x *takeoverStream) bool { return x == s }), s)
+	s.f.resize(s.fp)
+	return nil
+}
 
 func (s *takeoverStream) Write(p []byte) error {
 	s.f.mu.Lock()
@@ -306,6 +352,8 @@ func (s *takeoverStream) Close() error {
 	s.once.Do(func() {
 		s.f.mu.Lock()
 		s.fp.attached--
+		s.fp.interactive = slices.DeleteFunc(s.fp.interactive, func(x *takeoverStream) bool { return x == s })
+		s.f.resize(s.fp)
 		s.f.mu.Unlock()
 		close(s.closed)
 	})
@@ -320,6 +368,16 @@ func (f *Fake) Typed(id string) string {
 		return string(fp.typed)
 	}
 	return ""
+}
+
+// Size returns a process's current terminal size and how many resizes its interactive streams made.
+func (f *Fake) Size(id string) (cols, rows, resizes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fp, ok := f.procs[id]; ok {
+		return fp.p.Cols, fp.p.Rows, fp.resizes
+	}
+	return 0, 0, 0
 }
 
 // TakeoverAttached returns how many takeover streams are open on a process.

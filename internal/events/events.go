@@ -11,6 +11,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
@@ -43,6 +45,12 @@ type Options struct {
 	DepthFor func(ctx context.Context, spaceID string) int64
 	// Metrics receives the ingestion metrics (bounded labels only). Nil: none.
 	Metrics *metrics.Metrics
+	// Log receives the service's warnings. Nil: discarded.
+	Log *slog.Logger
+	// OnAccepted, when set, is called after a live or redelivered event became a new inbox item, with the slug of the
+	// built-in template its subscription uses ("" for a custom one). The event is untrusted: a hook may only use it as
+	// a hint (the gateway re-check reads Harbor Pilot again on quota.window.recovered, ADR-0079 decision 9).
+	OnAccepted func(templateSlug string, e template.Event)
 }
 
 // Service manages connections, templates and subscriptions, and processes delivered events.
@@ -64,6 +72,9 @@ type Service struct {
 func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, ch *changefeed.Recorder, ib *inbox.Service, att *attachments.Service, o Options) *Service {
 	if o.Clock == nil {
 		o.Clock = clock.System{}
+	}
+	if o.Log == nil {
+		o.Log = slog.New(slog.DiscardHandler)
 	}
 	if o.DeliveryRetention <= 0 {
 		o.DeliveryRetention = 30 * 24 * time.Hour

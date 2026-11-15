@@ -14,6 +14,7 @@ import (
 // not found (exit 4), refused principals as auth errors (exit 5), secrets from files and standard input only, and
 // one-time secrets written to 0600 files instead of the terminal.
 func TestCLIAgainstCentral(t *testing.T) {
+	t.Parallel()
 	c := startCentral(t)
 	e := c.env()
 

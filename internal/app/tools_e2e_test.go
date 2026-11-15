@@ -63,6 +63,7 @@ func (e *fleetEnv) runToken(runID string) string {
 // depends on the run kind, central authenticates the run token itself, workers cannot use control tools, and actions
 // are attributed to the run.
 func TestAgentToolsOverBridge(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()
@@ -199,6 +200,7 @@ func TestAgentToolsOverBridge(t *testing.T) {
 // and the worker on the same harness and on different ones (mixed-harness communication, brief §40): messages pass
 // through central, so the harness pairing changes nothing.
 func TestMessagesDeliveredToIdleRuns(t *testing.T) {
+	t.Parallel()
 	for _, pair := range [][2]string{{hns.KindClaude, hns.KindClaude}, {hns.KindClaude, hns.KindCodex}, {hns.KindCodex, hns.KindClaude}} {
 		t.Run(pair[0]+"-control-"+pair[1]+"-worker", func(t *testing.T) { messagesDeliveredToIdleRuns(t, pair[0], pair[1]) })
 	}

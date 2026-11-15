@@ -40,15 +40,20 @@ ${(spec.info?.description ?? '').trim()}
 - **Creates** accept an \`Idempotency-Key\` header (8-128 printable ASCII characters). A retry with the same key within 24 hours
   returns the original result; the same key with a different request is \`409\`.
 - **Lists** that can grow use cursor pagination (\`cursor\`, \`limit\`, \`next_cursor\`).
+- **Run lists** (\`GET /api/v1/spaces/{space_id}/runs\`) leave out each run's \`manifest\`, \`launch.prompt\` and \`launch.system\`;
+  ask for them with \`include=manifest\`, \`include=prompt\` or \`include=manifest,prompt\`. Getting one run returns everything.
 - **Spaces you cannot read** look exactly like missing ones (\`404\`).
 - **Live updates**: \`GET /api/v1/watch\` streams the durable change feed as Server-Sent Events (\`change\`, \`gap\`, \`heartbeat\`),
-  filtered by your permissions and resumable with \`Last-Event-ID\`.
+  filtered by your permissions and resumable with \`Last-Event-ID\` or \`after=<seq>\`. Without a position it replays every
+  retained change; \`live=1\` starts at the newest change instead, with a first \`position\` event carrying its ID.
 - **Terminals**: \`GET /api/v1/spaces/{space_id}/runs/{run_id}/terminal\` streams a run's recording as Server-Sent Events
   (stored records, then live ones); \`…/recording/download\` returns the zstd-compressed JSONL recording.
 - **Raw content** (outside the OpenAPI document, same authentication and permissions):
   \`GET /api/v1/spaces/{space_id}/attachments/{attachment_id}/content\` serves an attachment's bytes (raster images inline,
   everything else as a download, always sandboxed), and \`GET /api/v1/spaces/{space_id}/runs/{run_id}/transcript\` downloads a
   run's stored native transcript (\`recording:read\`; it may contain secrets and is never rendered).
+- **MCP**: \`POST /api/v1/mcp\` serves these operations as MCP tools over streamable HTTP to your own MCP client, with an API
+  token as the bearer (outside the OpenAPI document; [guide](../guide/mcp-endpoint)).
 - **Command line**: \`spaceman\` is a client for these operations ([CLI reference](./cli/)); each command names the operations it calls.
 
 ## Operations

@@ -205,6 +205,10 @@ func (sv *Supervisor) OnRunEnded(runID string) {
 			return
 		}
 		if r.Kind != agenttools.KindControl {
+			// A run parked at its usage limit is announced by its parked message (OnLimitWaitTx), not as ended.
+			if w, err := sv.fl.LimitWaitForRun(ctx, r.ID); err != nil || w != nil {
+				return
+			}
 			task := ""
 			if l, _, err := sv.q.List(ctx, r.SpaceID); err == nil {
 				for _, t := range l {
@@ -233,6 +237,18 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		sv.log.Warn("settle ended control run", obs.Err(err))
 		return
 	}
+	// A usage limit is not a crash (ADR-0079 decision 7): restarting would run into the same limit, burn the restart
+	// budget and page people. Nothing is restarted, counted or raised; control comes back at the reset (its limit wait,
+	// or auto-start for waiting work once the hold lets a launch through).
+	if r.EndReason == fleet.EndUsageLimit {
+		sv.log.Info("control ended at a usage limit; not restarted", slog.String(obs.FieldRunID, r.ID))
+		return
+	}
+	// A control with a limit wait (swept while at its limit, or a failed resume) comes back through the wait.
+	if w, err := sv.fl.LimitWaitForRun(ctx, r.ID); err != nil || w != nil {
+		sv.log.Info("control parked at a usage limit; not restarted", slog.String(obs.FieldRunID, r.ID))
+		return
+	}
 	sp, err := sv.fl.GetSpace(ctx, r.SpaceID)
 	if err != nil || sp.State != "active" {
 		return // paused or archived: no new work starts
@@ -253,7 +269,7 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 			Body:      fmt.Sprintf("Control was restarted %d times in the last %s and ended again (%s). SpaceMan stopped restarting it. Check the last run's terminal, then launch control again.", n, sv.Window, detail),
 			Requester: human.Requester{Kind: "system", Label: "Control supervisor"},
 			Request:   []byte(`{"steps":["Open the last control run and read its terminal","Fix the cause (account, harness, prompt or node)","Launch control again"]}`),
-			DedupKey:  fmt.Sprintf("control-failing:%s", now.Truncate(sv.Window).Format(time.RFC3339))})
+			DedupKey:  fmt.Sprintf("control-failing:%s", now.Truncate(sv.Window).Format(time.RFC3339)), Internal: true})
 		if err != nil {
 			sv.log.Warn("raise control attention", obs.Err(err))
 		}
@@ -266,6 +282,14 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		li.Prompt = r.Launch.Prompt + "\n\n" + li.Prompt
 	}
 	if _, err := sv.fl.LaunchRun(ctx, SupervisorActor, r.SpaceID, li); err != nil {
+		if h, ok := fleet.AsHold(err); ok {
+			// Its account is held: auto-start brings control back once the hold lets a launch through.
+			sv.startMu.Lock()
+			sv.deferStart(r.SpaceID, h)
+			sv.startMu.Unlock()
+			sv.log.Info("control restart deferred: its account is held at a usage limit", slog.String(obs.FieldRunID, r.ID), slog.Time("until", h.Until))
+			return
+		}
 		sv.log.Warn("restart control", slog.String(obs.FieldRunID, r.ID), obs.Err(err))
 	}
 }

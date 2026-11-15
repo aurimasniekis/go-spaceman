@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 )
 
 // FleetRules are the authorization rules of the node, space and run operations.
@@ -20,7 +22,7 @@ var FleetRules = map[string]Rule{
 	"set-node-state":     StepUp(authz.NodeWrite),
 	"update-node":        Global(authz.NodeWrite),
 
-	"list-spaces":     {Session: true},
+	"list-spaces":     FilteredRead(),
 	"create-space":    Global(authz.SpaceCreate),
 	"get-space":       InSpace(authz.SpaceRead),
 	"update-space":    InSpace(authz.SpaceWrite),
@@ -33,11 +35,29 @@ var FleetRules = map[string]Rule{
 	"stop-run":   InSpace(authz.RunControl),
 	"send-input": InSpace(authz.RunControl),
 
+	// Usage limits (ADR-0079). A space's holds include other spaces' open holds on its accounts, redacted to what the
+	// space may know (the account and the window); the account view names every space and needs account:read.
+	"list-space-usage-limits":   InSpace(authz.RunRead),
+	"list-space-limit-waits":    InSpace(authz.RunRead),
+	"list-account-usage-limits": Global(authz.AccountRead),
+	// "Clear now" (decision 7): a space's own hold with the permission that launches runs there; every space's holds
+	// on an account with the permission that manages accounts (accounts are global).
+	"clear-space-usage-limit":    InSpace(authz.RunControl),
+	"clear-account-usage-limits": Global(authz.AccountWrite),
+	// A parked run's wait (decisions 5 and 6): resume it now, or give it up and its task back to the queue, with the
+	// permission that launches and stops runs in the space.
+	"resume-limit-wait":  InSpace(authz.RunControl),
+	"release-limit-wait": InSpace(authz.RunControl),
+
 	// Terminal takeover (takeover.go).
 	"start-takeover": TakeoverRules["start-takeover"],
 	"renew-takeover": TakeoverRules["renew-takeover"],
 	"takeover-input": TakeoverRules["takeover-input"],
 	"end-takeover":   TakeoverRules["end-takeover"],
+
+	// Run terminal size (takeover.go, ADR-0075).
+	"set-terminal-size":   TakeoverRules["set-terminal-size"],
+	"clear-terminal-size": TakeoverRules["clear-terminal-size"],
 }
 
 type spaceOut struct {
@@ -243,7 +263,8 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				Limit int `query:"limit" minimum:"1" maximum:"500" default:"100"`
+				Limit   int      `query:"limit" minimum:"1" maximum:"500" default:"100"`
+				Include []string `query:"include" enum:"manifest,prompt" doc:"What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text"`
 			}) (*struct {
 				Body struct {
 					Items []*fleet.Run `json:"items"`
@@ -256,6 +277,17 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "runs.list", err)
 				}
+				// A run's manifest and launch prompt and system text hold its resolved prompts: a list of hundreds of them is
+				// megabytes, and the UI refetches lists on every run change.
+				manifest, prompt := slices.Contains(in.Include, "manifest"), slices.Contains(in.Include, "prompt")
+				for _, r := range rs {
+					if !manifest {
+						r.Manifest = nil
+					}
+					if !prompt {
+						r.Launch.Prompt, r.Launch.SystemText = "", ""
+					}
+				}
 				out := &struct {
 					Body struct {
 						Items []*fleet.Run `json:"items"`
@@ -263,6 +295,126 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				}{}
 				out.Body.Items = rs
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-usage-limits", Method: http.MethodGet, Path: "/spaces/{space_id}/usage-limits",
+			Summary: "A space's usage-limit holds",
+			Description: "The holds the space's runs opened when they reached a usage limit (newest first, cleared ones included), then the open holds " +
+				"other spaces opened on the accounts this space binds or the gateway it routes through: those hold this space too, and are marked " +
+				"shared, without the other space's identifiers.", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []fleet.UsageLimit `json:"items"`
+				}
+			}, error) {
+				ls, err := f.UsageLimits(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.UsageLimit `json:"items"`
+					}
+				}{}
+				out.Body.Items = ls
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-limit-waits", Method: http.MethodGet, Path: "/spaces/{space_id}/limit-waits",
+			Summary: "A space's runs parked at a usage limit, waiting to resume", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []fleet.LimitWait `json:"items"`
+				}
+			}, error) {
+				ws, err := f.LimitWaits(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.LimitWait `json:"items"`
+					}
+				}{}
+				out.Body.Items = ws
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "resume-limit-wait", Method: http.MethodPost, Path: "/spaces/{space_id}/limit-waits/{wait_id}/resume",
+			Summary: "Resume a run parked at a usage limit now",
+			Description: "Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is " +
+				"still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space " +
+				"or a node that isn't connected refuses it, and the wait keeps waiting. Audited.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				WaitID string `path:"wait_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.LimitWait }, error) {
+				w, err := f.ResumeLimitWait(ctx, Actor(ctx), in.SpaceID, in.WaitID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.resume", err)
+				}
+				return &struct{ Body *fleet.LimitWait }{Body: w}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "release-limit-wait", Method: http.MethodPost, Path: "/spaces/{space_id}/limit-waits/{wait_id}/release",
+			Summary: "Give up on a run parked at a usage limit",
+			Description: "Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and " +
+				"unassigned, and control is told. Audited.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				WaitID string `path:"wait_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.LimitWait }, error) {
+				w, err := f.ReleaseLimitWait(ctx, Actor(ctx), in.SpaceID, in.WaitID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.release", err)
+				}
+				return &struct{ Body *fleet.LimitWait }{Body: w}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-account-usage-limits", Method: http.MethodGet, Path: "/accounts/{account_id}/usage-limits",
+			Summary: "An account's open usage-limit holds in every space", Tags: []string{"accounts"}},
+			func(ctx context.Context, in *AccountPath) (*struct {
+				Body struct {
+					Items []fleet.UsageLimit `json:"items"`
+				}
+			}, error) {
+				ls, err := f.AccountUsageLimits(ctx, in.AccountID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.UsageLimit `json:"items"`
+					}
+				}{}
+				out.Body.Items = ls
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "clear-space-usage-limit", Method: http.MethodPost, Path: "/spaces/{space_id}/usage-limits/{limit_id}/clear",
+			Summary: "Clear one of the space's usage-limit holds now",
+			Description: "Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so " +
+				"launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write " +
+				"(clear-account-usage-limits).", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				LimitID string `path:"limit_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.UsageLimitClear }, error) {
+				res, err := f.ClearSpaceUsageLimit(ctx, Actor(ctx), in.SpaceID, in.LimitID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.clear", err)
+				}
+				return &struct{ Body *fleet.UsageLimitClear }{Body: res}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "clear-account-usage-limits", Method: http.MethodPost, Path: "/accounts/{account_id}/usage-limits/clear",
+			Summary: "Clear an account's usage-limit holds in every space now",
+			Description: "Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose " +
+				"hold was cleared has its control told once.", Tags: []string{"accounts"}},
+			func(ctx context.Context, in *struct {
+				AccountPath
+				Body struct {
+					Kind string `json:"kind,omitempty" enum:"five_hour,seven_day,seven_day_opus,seven_day_sonnet,seven_day_overage_included,overage,unknown" doc:"Only holds of this kind; every kind when absent"`
+				} `required:"false"`
+			}) (*struct{ Body *fleet.UsageLimitClear }, error) {
+				res, err := f.ClearAccountUsageLimits(ctx, Actor(ctx), in.AccountID, in.Body.Kind)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.clear", err)
+				}
+				return &struct{ Body *fleet.UsageLimitClear }{Body: res}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "get-run", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}", Summary: "Get a run", Tags: tags},
 			func(ctx context.Context, in *RunPath) (*struct{ Body *fleet.Run }, error) {
@@ -281,18 +433,7 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 			}) (*struct{ Body *fleet.Run }, error) {
 				r, _, err := Idempotent(ctx, d, "launch-run:"+in.SpaceID, in.IdempotencyKey, in.Body, false, func() (*fleet.Run, error) {
 					li := in.Body
-					// launch-run needs run:control; a diagnostic launch (the kind may come from the space role) also needs
-					// run:diagnose (SM-CTRL-004, ADR-0050).
-					li.AuthorizeKind = func(kind string) error {
-						if kind != "diagnostic" {
-							return nil
-						}
-						p := PrincipalFrom(ctx)
-						if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.RunDiag) {
-							return apperr.New(apperr.CodeForbidden, "diagnostic launches need run:diagnose")
-						}
-						return nil
-					}
+					li.AuthorizeKind = func(kind string) error { return d.authorizeLaunchKind(ctx, in.SpaceID, kind) }
 					return f.LaunchRun(ctx, Actor(ctx), in.SpaceID, li)
 				})
 				if err != nil {
@@ -346,4 +487,25 @@ func (d *Deps) spaceRun(ctx context.Context, f *fleet.Service, spaceID, runID st
 		return nil, newProblem(http.StatusNotFound, "not_found", "run not found", nil)
 	}
 	return r, nil
+}
+
+// authorizeLaunchKind checks the caller may launch a run of the resolved kind. launch-run needs run:control; a
+// diagnostic launch (the kind may come from the space role) also needs run:diagnose (SM-CTRL-004, ADR-0050). An
+// agent's SpaceMan MCP call (an internal principal), or a call through the external MCP endpoint, launches a diagnostic
+// run only when that call was approved as dangerous (gateway.WithApprovedCall, set by the gateway or the endpoint): both
+// class a call by its arguments, and this checks the kind as resolved, so a space role of diagnostic kind can't slip
+// past the approval (ADR-0063).
+func (d *Deps) authorizeLaunchKind(ctx context.Context, spaceID, kind string) error {
+	if kind != "diagnostic" {
+		return nil
+	}
+	p := PrincipalFrom(ctx)
+	if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), spaceID, authz.RunDiag) {
+		return apperr.New(apperr.CodeForbidden, "diagnostic launches need run:diagnose")
+	}
+	if p.ViaMCP() && gateway.ApprovedCall(ctx) != "launch-run" {
+		return apperr.New(apperr.CodeForbidden,
+			"a diagnostic launch through SpaceMan MCP needs a person's approval: call launch_run with kind \"diagnostic\" so it is gated")
+	}
+	return nil
 }

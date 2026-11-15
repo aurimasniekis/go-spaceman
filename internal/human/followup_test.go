@@ -3,7 +3,9 @@ package human
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 func (f *fx) exec(qs ...string) {
@@ -72,6 +75,7 @@ func question(title string) CreateInput { return CreateInput{Type: TypeQuestion,
 // SM-HUM-009: a response for a requester whose run ended goes to a live successor run, else to control, else to the
 // operators, always with the original run, the previous target and the reason.
 func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true, Clock: f.clk})
 
@@ -118,6 +122,7 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 // SM-HUM-009: a response delivered to a live requester whose run ends before acknowledging it is routed on by the
 // deadline loop (also after a restart: the loop's first round does it).
 func TestStrandedNotificationsMoveOn(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.run("run_ctl", "control", "control", "ins_c", "running", "running")
 	a := f.create(question("q"))
@@ -159,6 +164,7 @@ func (f *fx) answer2(a *Action) {
 // SM-HUM-009: with next_launch the response waits for the next run of the requester's agent instance (a resumed
 // session) and is rerouted when none starts within the hold.
 func TestNextLaunchHoldsForTheInstance(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.policy("", TypeQuestion, PolicyFields{MaxReminders: 1, RequesterEnded: EndedNextLaunch, HoldMinutes: 30, WakeIdle: false, RatePerRunHour: 30, RatePerSpaceHour: 300})
 	inst := ids.New(ids.Instance)
@@ -201,6 +207,7 @@ func TestNextLaunchHoldsForTheInstance(t *testing.T) {
 
 // A person can send an undeliverable response to control or to a running role.
 func TestOperatorRoutesAResponse(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.create(question("q"))
 	f.end("run_1")
@@ -229,6 +236,7 @@ func TestOperatorRoutesAResponse(t *testing.T) {
 
 // SM-HUM-009: runs unrelated to an action see its request, never its response, comments or reason.
 func TestResponsesHiddenFromUnrelatedRuns(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.create(question("secret?"))
 	_, err := f.svc.AddComment(f.ctx, op, "spc_a", a.ID, "between us", "Op")
@@ -258,6 +266,7 @@ func TestResponsesHiddenFromUnrelatedRuns(t *testing.T) {
 // SM-HUM-011: reminders re-surface an action on schedule without changing its version or order; escalation raises the
 // priority (never lowers it) and assigns per policy, audited, and the order stays.
 func TestRemindersAndEscalation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true, Clock: f.clk})
 	first := f.create(CreateInput{Type: TypeTodo, Title: "first", Requester: Requester{Kind: "operator", ID: "usr_op"}})
@@ -317,6 +326,7 @@ func TestRemindersAndEscalation(t *testing.T) {
 
 // Policies: the most specific applies as a whole; changes reschedule pending actions; invalid ones are refused.
 func TestPolicyResolution(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	eff := func(space string) map[string]Policy {
 		l, err := f.svc.EffectivePolicies(f.ctx, space)
@@ -408,6 +418,7 @@ func TestPolicyResolution(t *testing.T) {
 
 // SM-HUM-011: rate limits per requester run and per space, by policy, with an error that says waiting is enough.
 func TestRateLimits(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.policy("spc_a", TypeTodo, PolicyFields{MaxReminders: 1, RequesterEnded: EndedReroute, HoldMinutes: 60, WakeIdle: true, RatePerRunHour: 2, RatePerSpaceHour: 3})
 	f.create(CreateInput{Type: TypeTodo, Title: "1"})
@@ -432,6 +443,7 @@ func TestRateLimits(t *testing.T) {
 
 // SM-HUM-011: one timer for the earliest deadline, woken by Kick; extra deadlines (approvals) share it.
 func TestDeadlineLoop(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	if next, err := f.svc.NextDeadline(f.ctx); err != nil || !next.IsZero() {
 		t.Fatalf("empty %v %v", next, err)
@@ -469,4 +481,111 @@ func TestDeadlineLoop(t *testing.T) {
 	f.svc.Kick() // never blocks
 	f.svc.Kick()
 	_ = json.RawMessage{}
+}
+
+// A round in which a job failed is tried again soon, without a kick: what it left undone (a stranded response) does
+// not wait for the next deadline, which can be an hour away.
+func TestDeadlineLoopRetriesAFailedRound(t *testing.T) {
+	// Not parallel: it shortens the package's retry backoff (parallel tests start only after it has restored it).
+	f := newFx(t)
+	defer func(first, maxWait time.Duration) { retryFirst, retryMax = first, maxWait }(retryFirst, retryMax)
+	retryFirst, retryMax = 10*time.Millisecond, 40*time.Millisecond
+	calls := make(chan int, 10)
+	n := 0
+	extra := Deadline{Name: "flaky", Next: func(context.Context) (time.Time, error) { return time.Time{}, nil },
+		Due: func(context.Context) (int, error) {
+			n++
+			calls <- n
+			if n < 4 {
+				return 0, errors.New("transient")
+			}
+			return 0, nil
+		}}
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { f.svc.Run(ctx, extra); close(done) }()
+	defer func() { cancel(); <-done }()
+	for want := 1; want <= 4; want++ {
+		select {
+		case got := <-calls:
+			if got != want {
+				t.Fatalf("round %d, want %d", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d not retried", want)
+		}
+	}
+	// After a round that succeeded, the loop waits for the next deadline (idle here) again.
+	select {
+	case got := <-calls:
+		t.Fatalf("round %d after a successful one", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// A job whose deadline is due and whose round keeps failing backs off like any failed round: the loop does not spin
+// on the past deadline (it once ran hundreds of rounds in half a second).
+func TestDeadlineLoopBacksOffWhileAFailingJobIsDue(t *testing.T) {
+	// Not parallel: it changes the package's retry backoff (parallel tests start only after it has restored it).
+	f := newFx(t)
+	defer func(first, maxWait time.Duration) { retryFirst, retryMax = first, maxWait }(retryFirst, retryMax)
+	retryFirst, retryMax = time.Hour, time.Hour // after the first failed round, the next one is an hour away
+	first := make(chan struct{})
+	var rounds atomic.Int64
+	extra := Deadline{Name: "stuck",
+		Next: func(context.Context) (time.Time, error) { return f.clk.Now().Add(-time.Minute), nil }, // always due
+		Due: func(context.Context) (int, error) {
+			if rounds.Add(1) == 1 {
+				close(first)
+			}
+			return 0, errors.New("permanent")
+		}}
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { f.svc.Run(ctx, extra); close(done) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-first:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first round did not run")
+	}
+	// A loop that waits for the (past) deadline instead of the backoff runs a round every few milliseconds.
+	time.Sleep(300 * time.Millisecond)
+	if n := rounds.Load(); n != 1 {
+		t.Fatalf("%d rounds while backing off after the first failed one", n)
+	}
+}
+
+// ADR-0056: with control auto-start on, a response whose run is gone goes to control even while no control runs (it
+// is started for it), when the space can start one; with auto-start off, or with no control to start, to the operators.
+func TestResponsesGoToAControlThatCanBeStarted(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	on := false
+	f.svc.ControlAutostart = func(_ context.Context, _ *db.Queries, spaceID string) bool { return on && spaceID == "spc_a" }
+	ask := func(title string) *Action {
+		return f.create(CreateInput{Type: TypeQuestion, Title: title, Requester: Requester{Kind: "agent", ID: "ins_2", Role: "worker", Run: "run_gone"}})
+	}
+
+	// Auto-start on, but the space never had control and has no control role: nothing can take it.
+	on = true
+	if n := f.answer(ask("a")).Notifications[0]; n.TargetKind != TargetOperators {
+		t.Fatalf("no control to start %+v", n)
+	}
+	// A control ran once and was stopped (an idle stop): auto-start off keeps it with the operators.
+	f.run("run_ctl", "control", "control", "ins_c", "running", "running")
+	f.end("run_ctl")
+	on = false
+	if n := f.answer(ask("b")).Notifications[0]; n.TargetKind != TargetOperators {
+		t.Fatalf("auto-start off %+v", n)
+	}
+	// Auto-start on: it waits for control, pending and waking, which starts control for it.
+	on = true
+	n := f.answer(ask("c")).Notifications[0]
+	if n.TargetKind != TargetControl || n.RouteReason != ReasonRequesterEnded || n.OriginalRun != "run_gone" {
+		t.Fatalf("to a stopped control %+v", n)
+	}
+	if f.count(`SELECT count(*) FROM human_notifications WHERE id = '`+n.ID+`' AND state = 'pending' AND wake = 1`) != 1 {
+		t.Fatal("not pending and waking")
+	}
 }

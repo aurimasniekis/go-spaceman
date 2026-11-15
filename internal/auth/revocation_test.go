@@ -37,6 +37,7 @@ func expectSignals(t *testing.T, what string, want map[*StreamWatch]bool, all ..
 // SM-AUTH-007 (ADR-0033): every committed revocation signals exactly the streams it may affect, once, after commit;
 // a grant change signals every stream; a rolled-back transaction signals nothing.
 func TestStreamWatchSignals(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	sys := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -134,6 +135,7 @@ func TestStreamWatchSignals(t *testing.T) {
 // A user's own password change and MFA changes signal the user's streams; the stream that made the change
 // re-checks and keeps going, because its session is the one kept.
 func TestStreamWatchUserChanges(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	tok, p := f.loginEnrolled("admin@example.com")

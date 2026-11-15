@@ -3,7 +3,9 @@ INSERT INTO run_usage (run_id, space_id, source, models_json, estimate_json, tra
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (run_id) DO UPDATE SET source = excluded.source, models_json = excluded.models_json, estimate_json = excluded.estimate_json,
   transcript_bytes = excluded.transcript_bytes, final = excluded.final, note = excluded.note, updated_at = excluded.updated_at
-WHERE run_usage.final = 0;
+-- A harness's own figures replace usage Harbor Pilot filled in (even when final); "unavailable" never replaces it.
+WHERE (run_usage.final = 0 AND NOT (run_usage.source = 'harbor-pilot' AND excluded.source = 'unavailable'))
+   OR (run_usage.source = 'harbor-pilot' AND excluded.source NOT IN ('unavailable', 'harbor-pilot'));
 
 -- name: GetRunUsage :one
 SELECT * FROM run_usage WHERE run_id = ?;

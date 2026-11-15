@@ -17,15 +17,20 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 - **Creates** accept an `Idempotency-Key` header (8-128 printable ASCII characters). A retry with the same key within 24 hours
   returns the original result; the same key with a different request is `409`.
 - **Lists** that can grow use cursor pagination (`cursor`, `limit`, `next_cursor`).
+- **Run lists** (`GET /api/v1/spaces/{space_id}/runs`) leave out each run's `manifest`, `launch.prompt` and `launch.system`;
+  ask for them with `include=manifest`, `include=prompt` or `include=manifest,prompt`. Getting one run returns everything.
 - **Spaces you cannot read** look exactly like missing ones (`404`).
 - **Live updates**: `GET /api/v1/watch` streams the durable change feed as Server-Sent Events (`change`, `gap`, `heartbeat`),
-  filtered by your permissions and resumable with `Last-Event-ID`.
+  filtered by your permissions and resumable with `Last-Event-ID` or `after=<seq>`. Without a position it replays every
+  retained change; `live=1` starts at the newest change instead, with a first `position` event carrying its ID.
 - **Terminals**: `GET /api/v1/spaces/{space_id}/runs/{run_id}/terminal` streams a run's recording as Server-Sent Events
   (stored records, then live ones); `…/recording/download` returns the zstd-compressed JSONL recording.
 - **Raw content** (outside the OpenAPI document, same authentication and permissions):
   `GET /api/v1/spaces/{space_id}/attachments/{attachment_id}/content` serves an attachment's bytes (raster images inline,
   everything else as a download, always sandboxed), and `GET /api/v1/spaces/{space_id}/runs/{run_id}/transcript` downloads a
   run's stored native transcript (`recording:read`; it may contain secrets and is never rendered).
+- **MCP**: `POST /api/v1/mcp` serves these operations as MCP tools over streamable HTTP to your own MCP client, with an API
+  token as the bearer (outside the OpenAPI document; [guide](../guide/mcp-endpoint)).
 - **Command line**: `spaceman` is a client for these operations ([CLI reference](./cli/)); each command names the operations it calls.
 
 ## Operations
@@ -35,6 +40,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
 | `GET` | `/attention` | `get-attention` | What needs a person |
+| `GET` | `/system` | `get-system` | This instance's status |
 | `GET` | `/system/info` | `get-system-info` | Public system status |
 | `GET` | `/system/outbound-events` | `get-outbound-events` | Outbound event publication status |
 
@@ -135,6 +141,9 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/spaces/{space_id}/limit-waits` | `list-space-limit-waits` | A space's runs parked at a usage limit, waiting to resume |
+| `POST` | `/spaces/{space_id}/limit-waits/{wait_id}/release` | `release-limit-wait` | Give up on a run parked at a usage limit |
+| `POST` | `/spaces/{space_id}/limit-waits/{wait_id}/resume` | `resume-limit-wait` | Resume a run parked at a usage limit now |
 | `GET` | `/spaces/{space_id}/runs` | `list-runs` | A space's runs, newest first |
 | `POST` | `/spaces/{space_id}/runs` | `launch-run` | Launch a run on the space's node |
 | `GET` | `/spaces/{space_id}/runs/{run_id}` | `get-run` | Get a run |
@@ -144,6 +153,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/end` | `end-takeover` | End a takeover |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/input` | `takeover-input` | Type into a taken-over terminal |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/renew` | `renew-takeover` | Keep your takeover for another 30 s |
+| `DELETE` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `clear-terminal-size` | Return a run's terminal to the node's default size |
+| `PUT` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `set-terminal-size` | Resize a run's terminal |
+| `GET` | `/spaces/{space_id}/usage-limits` | `list-space-usage-limits` | A space's usage-limit holds |
+| `POST` | `/spaces/{space_id}/usage-limits/{limit_id}/clear` | `clear-space-usage-limit` | Clear one of the space's usage-limit holds now |
 
 ### recordings
 
@@ -162,6 +175,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/accounts/{account_id}` | `delete-account` | Delete an account and its bindings |
 | `GET` | `/accounts/{account_id}` | `get-account` | An account (never its secret) |
 | `PUT` | `/accounts/{account_id}` | `update-account` | Edit or rotate an account |
+| `GET` | `/accounts/{account_id}/usage-limits` | `list-account-usage-limits` | An account's open usage-limit holds in every space |
+| `POST` | `/accounts/{account_id}/usage-limits/clear` | `clear-account-usage-limits` | Clear an account's usage-limit holds in every space now |
 | `GET` | `/spaces/{space_id}/accounts` | `list-space-accounts` | Accounts the space's runs may use |
 | `PUT` | `/spaces/{space_id}/accounts` | `set-space-accounts` | Set the accounts the space's runs may use |
 
@@ -250,6 +265,19 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/git-ssh-keys/{key_id}/rotate` | `rotate-git-ssh-key` | Replace a shared Git SSH key |
 | `GET` | `/spaces/{space_id}/git-ssh-keys` | `list-space-git-ssh-keys` | The shared Git SSH keys a space's repositories may use |
 
+### harbor-pilot
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `DELETE` | `/harbor-pilot/connection` | `delete-harbor-pilot-connection` | Remove the Harbor Pilot connection |
+| `GET` | `/harbor-pilot/connection` | `get-harbor-pilot-connection` | The Harbor Pilot connection (never its tokens) |
+| `PUT` | `/harbor-pilot/connection` | `put-harbor-pilot-connection` | Connect Harbor Pilot, or replace the connection |
+| `GET` | `/harbor-pilot/gateway` | `get-harbor-pilot-gateway` | The connected Harbor Pilot's version |
+| `DELETE` | `/spaces/{space_id}/harbor-pilot` | `delete-space-harbor-pilot` | Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) |
+| `GET` | `/spaces/{space_id}/harbor-pilot` | `get-space-harbor-pilot` | A space's Harbor Pilot settings |
+| `PUT` | `/spaces/{space_id}/harbor-pilot` | `put-space-harbor-pilot` | Set a space's Harbor Pilot settings |
+| `GET` | `/spaces/{space_id}/harbor-pilot/status` | `get-space-harbor-pilot-status` | A space's Harbor Pilot budget status and project usage |
+
 ### human-action-policies
 
 | Method | Path | Operation | Summary |
@@ -337,6 +365,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/mcp-servers/{server_id}/grants` | `list-mcp-grants` | Spaces and roles granted the server |
 | `POST` | `/mcp-servers/{server_id}/grants` | `add-mcp-grant` | Grant the server to a space role |
 | `DELETE` | `/mcp-servers/{server_id}/grants/{grant_id}` | `revoke-mcp-grant` | Revoke a grant |
+| `POST` | `/mcp-servers/{server_id}/reissue` | `reissue-spaceman-mcp` | Re-issue a SpaceMan MCP server's token |
+| `PUT` | `/mcp-servers/{server_id}/spaceman` | `update-spaceman-mcp` | Edit a SpaceMan MCP server |
+| `POST` | `/mcp-servers/spaceman` | `create-spaceman-mcp` | Add a SpaceMan MCP server |
+| `GET` | `/mcp-servers/spaceman/tools` | `list-spaceman-mcp-tools` | Tools a SpaceMan MCP server can offer |
 | `GET` | `/spaces/{space_id}/mcp-servers` | `list-space-mcp-grants` | MCP servers granted in a space |
 
 ### memory
@@ -359,6 +391,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/messages` | `send-message` | Send a durable message to control, a role or a run |
 | `GET` | `/spaces/{space_id}/messages/{message_id}` | `get-message` | A message |
 | `POST` | `/spaces/{space_id}/messages/{message_id}/ack` | `ack-message` | Acknowledge a message addressed to operators |
+| `POST` | `/spaces/{space_id}/messages/{message_id}/cancel` | `cancel-message` | Cancel a scheduled message before it is due |
 | `POST` | `/spaces/{space_id}/messages/{message_id}/reply` | `reply-message` | Reply to an agent's message |
 | `POST` | `/spaces/{space_id}/messages/{message_id}/resolve` | `resolve-message` | Close a message or request |
 

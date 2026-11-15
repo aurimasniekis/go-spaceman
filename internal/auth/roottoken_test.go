@@ -13,6 +13,7 @@ import (
 // SM-AUTH-005: the root token is issued once, has full scope, never expires, is stored only as a MAC, can be rotated
 // and revoked (never leaving no administrator), and every step is audited.
 func TestRootTokenLifecycle(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	raw, rt, err := f.svc.IssueRootToken(f.ctx)
 	must(t, err)
@@ -100,6 +101,7 @@ func TestRootTokenLifecycle(t *testing.T) {
 
 // Root cannot issue API tokens (it is not a user); last-admin protection holds for grants.
 func TestRootIsNotAUserAndLastAdminGuard(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	raw, _, err := f.svc.RotateRootToken(f.ctx, audit.Actor{Type: audit.ActorCLI})

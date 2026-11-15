@@ -20,6 +20,7 @@ import (
 // SM-EVT-003/005/015/017/018 over HTTP: connections never echo credentials, the catalog has the verified GitHub seeds,
 // a sample event previews into an inbox item, a subscription shows the grant it needs, and replay needs replay:execute.
 func TestEventsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	nats := pulsetest.Start(t)
@@ -116,6 +117,7 @@ func TestEventsOverHTTP(t *testing.T) {
 // consumer, a subscribe grant), receives a plain NATS message published without JetStream into one inbox item, drops
 // the duplicate, refuses replay and start-now, and is counted on the management listener's /metrics.
 func TestCoreSubscriptionEndToEnd(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	nats := pulsetest.Start(t)

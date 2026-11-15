@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,11 @@ func TestAttachmentsAndHuman(t *testing.T) {
 		t.Fatalf("visibility: requester %+v, unrelated %+v", mineA, theirs)
 	}
 	code(t, f.call(f.wrk, "spaceman_human_ask", map[string]any{"type": "poll", "title": "x"}, nil), apperr.CodeInvalid)
+	// SpaceMan's own dedup namespaces are refused (ADR-0087): an agent can't plant the action an enforced approval
+	// will show, nor a task a service will reuse.
+	code(t, f.call(f.wrk, "spaceman_human_ask", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"},
+		"dedup_key": "approval:apv_1"}, nil), apperr.CodeInvalid)
+	code(t, f.call(f.ctrl, "spaceman_task_create", map[string]any{"title": "Planted", "dedup_key": "xspace:xsr_1"}, nil), apperr.CodeInvalid)
 }
 
 // The agent tools guide lists every tool, so the documented grants never drift from the registry.
@@ -307,4 +313,40 @@ func TestIncidentTriggersFromTools(t *testing.T) {
 	}
 	code(t, f.call(f.ctrl, "spaceman_task_resume", map[string]any{"task_id": inc.ID}, nil), apperr.CodePrecondition)
 	code(t, f.call(f.wrk, "spaceman_task_resume", map[string]any{"task_id": inc.ID}, nil), apperr.CodeForbidden)
+}
+
+// ADR-0088: a worker's inbox dedup key is scoped to its role; the same role still deduplicates across runs.
+func TestWorkerInboxDedupScopedToRole(t *testing.T) {
+	f := newFx(t)
+	add := func(p *fleet.RunPrincipal) inbox.Item {
+		var it inbox.Item
+		must(t, f.call(p, "spaceman_inbox_add", map[string]any{"title": "Finding", "body": "details", "dedup_key": "finding-1"}, &it))
+		return it
+	}
+	a := add(f.wrk)
+	other := *f.wrk
+	other.Role, other.RunID = "reviewer", "run_other"
+	if b := add(&other); b.ID == a.ID {
+		t.Fatalf("another role was handed %s", a.ID)
+	}
+	restarted := *f.wrk
+	restarted.RunID = "run_restarted"
+	if c := add(&restarted); c.ID != a.ID {
+		t.Fatalf("a restart of the same role created %s, want %s", c.ID, a.ID)
+	}
+}
+
+// ADR-0088: the role prefix counts against the 256-byte limit, so the longest key is 256 minus the prefix, and the error says so.
+func TestWorkerInboxDedupKeyEffectiveLimit(t *testing.T) {
+	f := newFx(t)
+	limit := inbox.MaxDedupKey - len("role:"+f.wrk.Role+":")
+	add := func(key string) error {
+		return f.call(f.wrk, "spaceman_inbox_add", map[string]any{"title": "Finding", "body": "details", "dedup_key": key}, nil)
+	}
+	must(t, add(strings.Repeat("k", limit)))
+	err := add(strings.Repeat("k", limit+1))
+	code(t, err, apperr.CodeInvalid)
+	if !strings.Contains(err.Error(), strconv.Itoa(limit)) {
+		t.Fatalf("error %q does not state the effective limit %d", err, limit)
+	}
 }

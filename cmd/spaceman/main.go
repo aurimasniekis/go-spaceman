@@ -136,7 +136,7 @@ func serveCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer closeCentral(c)
 			if dist, ok := webui.Dist(); ok {
 				c.UI = webui.Handler(dist)
 			}
@@ -145,6 +145,18 @@ func serveCmd(g *globals) *cobra.Command {
 			}
 			return c.Serve(ctx)
 		},
+	}
+}
+
+// closeCentral closes central and logs a failure to close (a store connection still in use at the shutdown deadline,
+// say), which a deferred Close would drop.
+func closeCentral(c *app.Central) {
+	if err := c.Close(); err != nil {
+		if c.Log != nil {
+			c.Log.Error("closing central failed", obs.Err(err))
+		} else {
+			fmt.Fprintln(os.Stderr, "spaceman: closing central failed:", err)
+		}
 	}
 }
 
@@ -167,7 +179,7 @@ func adminCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer closeCentral(c)
 			tok, rt, err := c.Auth.IssueRootToken(cmd.Context())
 			if err != nil {
 				return err
@@ -184,7 +196,7 @@ func adminCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer closeCentral(c)
 			tok, rt, err := c.Auth.RotateRootToken(cmd.Context(), audit.Actor{Type: audit.ActorCLI, ID: "admin"})
 			if err != nil {
 				return err
@@ -206,7 +218,7 @@ func adminCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer closeCentral(c)
 			user := ""
 			if len(args) == 1 {
 				user = args[0]

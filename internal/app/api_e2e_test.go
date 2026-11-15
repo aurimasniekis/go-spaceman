@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 // harness runs a real central (store, keyring, services, HTTP stack) on an httptest server.
@@ -35,6 +37,12 @@ func newHarness(t *testing.T) *harness { t.Helper(); return newHarnessWith(t, ni
 
 // newHarnessWith is newHarness with the configuration adjusted by mod before validation.
 func newHarnessWith(t *testing.T, mod func(*config.Config)) *harness {
+	t.Helper()
+	return newHarnessLogged(t, discard(), mod)
+}
+
+// newHarnessLogged is newHarnessWith with central logging to log.
+func newHarnessLogged(t *testing.T, log *slog.Logger, mod func(*config.Config)) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
@@ -58,7 +66,8 @@ func newHarnessWith(t *testing.T, mod func(*config.Config)) *harness {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	c, err := app.OpenCentral(context.Background(), cfg, discard(), app.Options{Clock: clk, Environ: []string{}})
+	storetest.Seed(t, cfg.DataDir)
+	c, err := app.OpenCentral(context.Background(), cfg, log, app.Options{Clock: clk, Environ: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +157,7 @@ func expect(t *testing.T, r resp, status int) {
 // SM-AUTH-005, SM-AUTH-001, SM-API-002: bootstrap through the real HTTP stack, sign-in with forced MFA, CSRF, origin
 // checks, problems, optimistic concurrency and idempotency.
 func TestAPIBootstrapLoginAndConventions(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	anon := h.client()
 
@@ -284,6 +294,7 @@ func TestAPIBootstrapLoginAndConventions(t *testing.T) {
 
 // Scoped API tokens through HTTP: the creator's grants bound the token, and the token shows up for the creator.
 func TestAPITokensOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(context.Background())
 	root := h.client()
@@ -339,6 +350,7 @@ func loginAndIssueToken(t *testing.T, h *harness, email string, grants []map[str
 
 // Every registered operation has an authorization rule (fail closed otherwise).
 func TestEveryOperationHasARule(t *testing.T) {
+	t.Parallel()
 	d := app.SpecDeps()
 	a := api.Register(http.NewServeMux(), d)
 	missing := api.MissingRules(a.OpenAPI(), d)
@@ -351,6 +363,7 @@ func TestEveryOperationHasARule(t *testing.T) {
 // SM-NODE-001: a node's name, description and labels are edited with If-Match (PUT /nodes/{id}); its state and
 // enrollment are unchanged, names stay unique, and a stale version conflicts. Viewers cannot edit nodes.
 func TestAPIUpdateNode(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(context.Background())
 	root := h.client()

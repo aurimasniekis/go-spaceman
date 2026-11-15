@@ -19,6 +19,7 @@ var MessageRules = map[string]Rule{
 	"ack-message":     InSpace(authz.MessageWrite),
 	"reply-message":   InSpace(authz.MessageWrite),
 	"resolve-message": InSpace(authz.MessageWrite),
+	"cancel-message":  InSpace(authz.MessageWrite),
 }
 
 // MessagePath identifies a message.
@@ -46,9 +47,16 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 			Summary: "A space's recent messages between agents, control and operators", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				Limit int `query:"limit" minimum:"0" maximum:"500"`
+				Limit     int  `query:"limit" minimum:"0" maximum:"500"`
+				Scheduled bool `query:"scheduled" doc:"Only scheduled messages to control that are not yet due, earliest first"`
 			}) (*struct{ Body MessageList }, error) {
-				l, err := svc.List(ctx, in.SpaceID, in.Limit)
+				var l []*messages.Message
+				var err error
+				if in.Scheduled {
+					l, err = svc.Scheduled(ctx, in.SpaceID)
+				} else {
+					l, err = svc.List(ctx, in.SpaceID, in.Limit)
+				}
 				if err != nil {
 					return nil, d.fail(ctx, "messages.list", err)
 				}
@@ -127,6 +135,15 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 					Subject: "Re: " + orig.Subject, Body: in.Body.Body, ReplyTo: orig.ID, AttachmentIDs: in.Body.AttachmentIDs})
 				if err != nil {
 					return nil, d.fail(ctx, "messages.reply", err)
+				}
+				return &struct{ Body *messages.Message }{Body: m}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "cancel-message", Method: http.MethodPost, Path: "/spaces/{space_id}/messages/{message_id}/cancel",
+			Summary: "Cancel a scheduled message before it is due", Description: "It is resolved as cancelled and never delivered (ADR-0065).", Tags: tags},
+			func(ctx context.Context, in *MessagePath) (*struct{ Body *messages.Message }, error) {
+				m, err := svc.Cancel(ctx, Actor(ctx), in.SpaceID, in.MessageID)
+				if err != nil {
+					return nil, d.fail(ctx, "messages.cancel", err)
 				}
 				return &struct{ Body *messages.Message }{Body: m}, nil
 			})

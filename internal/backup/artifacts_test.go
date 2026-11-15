@@ -22,6 +22,7 @@ import (
 // local folders; a segment that is still in the local spool is not copied twice; the manifest records the store; and
 // damaged attachment content in the bucket fails the backup instead of being preserved.
 func TestBackupCopiesS3Artifacts(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	srv := s3test.New(t, "AKIDTEST")
 	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "sm-art", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",
@@ -93,6 +94,7 @@ func TestBackupCopiesS3Artifacts(t *testing.T) {
 }
 
 func TestBackupRefusesDamagedS3Attachment(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	srv := s3test.New(t, "AKIDTEST")
 	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "sm-art", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",

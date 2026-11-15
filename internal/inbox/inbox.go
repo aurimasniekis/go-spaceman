@@ -53,6 +53,7 @@ const (
 	MaxBody        = 200_000
 	MaxTitle       = 200
 	MaxAttachments = 20
+	MaxDedupKey    = 256 // bytes, for dedup and correlation keys
 )
 
 var (
@@ -173,7 +174,7 @@ func (in *CreateInput) normalize() error {
 	if len(in.AttachmentIDs) > MaxAttachments {
 		v.Add("attachment_ids", "at most 20 attachments")
 	}
-	if len(in.DedupKey) > 256 || len(in.CorrelationID) > 256 {
+	if len(in.DedupKey) > MaxDedupKey || len(in.CorrelationID) > MaxDedupKey {
 		v.Add("dedup_key", "dedup and correlation keys are at most 256 bytes")
 	}
 	if in.Trusted == nil {

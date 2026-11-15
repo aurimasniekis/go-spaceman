@@ -40,6 +40,13 @@ func (a *App) accountCmd() *cobra.Command {
 		a.cmd(opts{use: "list", short: "Accounts (never their secrets)", op: "list-accounts", alias: []string{"ls"},
 			view: view{items: "items", cols: accountCols, empty: "No accounts."}}),
 		a.cmd(opts{use: "get", short: "Show an account", op: "get-account", args: pos("account")}),
+		a.cmd(opts{use: "holds", short: "An account's open usage-limit holds in every space", op: "list-account-usage-limits", args: pos("account"),
+			view: view{items: "items", cols: []col{c("ID", "id"), c("SPACE", "space_id"), c("KIND", "kind"), c("RESETS", "resets_at"), c("SEEN", "seen_at"), c("FIRST RUN", "first_run_id")},
+				empty: "No open usage-limit holds."}}),
+		a.cmd(opts{use: "clear-holds", short: "Clear an account's usage-limit holds in every space now", op: "clear-account-usage-limits", args: pos("account"),
+			form: func(f *form) {
+				f.str("kind", "kind", "only holds of this kind (five_hour, seven_day, …); every kind when absent")
+			}}),
 		a.cmd(opts{use: "create", short: "Add an account; the secret comes from a file or standard input", op: "create-account", idem: true, form: acct,
 			example: "spaceman account create --name ci-claude --kind claude_oauth_token --secret-file ~/.config/claude-token\n" +
 				"pass show claude | spaceman account create --name ci --kind anthropic_api_key --secret-stdin\n" +
@@ -75,6 +82,48 @@ func (a *App) gitKeyCmd() *cobra.Command {
 		a.cmd(opts{use: "delete", short: "Delete a key no repository uses", op: "delete-git-ssh-key", args: pos("key"), done: "Git SSH key deleted."}),
 		a.cmd(opts{use: "for-space", short: "The keys a space's repositories may use", op: "list-space-git-ssh-keys", scoped: true,
 			view: view{items: "items", cols: gitKeyCols, empty: "No Git SSH keys for this space."}}),
+	)
+}
+
+func (a *App) harborPilotCmd() *cobra.Command {
+	connForm := func(f *form) {
+		f.str("base-url", "base_url", "gateway origin SpaceMan calls (https unless loopback or --allow-insecure-http)").
+			str("run-base-url", "run_base_url", "origin runs reach the gateway on, when it differs (needs https)").
+			boolean("allow-insecure-http", "allow_insecure_http", "allow plain http: tokens then cross the network in clear text").
+			secret("parent-token", "parent_token", "parent gateway credential (hpk_…) with tokens:mint; required when connecting or changing the gateway URL").
+			secret("service-token", "service_token", "service-principal token (hpa_…) with usage.read and config.read; give it again (or --remove-service-token) when changing the gateway URL").
+			boolean("remove-service-token", "remove_service_token", "remove the service-principal token")
+	}
+	spaceForm := func(f *form) {
+		f.boolean("enabled", "enabled", "route the space's runs of the listed harnesses through Harbor Pilot").
+			str("project", "project_id", "Harbor Pilot project id runs are charged to (required when enabled; setting or changing it needs account:write)").
+			list("harness", "harnesses", "harness kind routed through Harbor Pilot (default: claude-code and codex)").
+			integer("ttl", "ttl_seconds", "run token lifetime in seconds, 900 to 604800 (default 86400)").
+			str("on-budget-status-unavailable", "on_budget_status_unavailable", "proceed or refuse").
+			list("model", "allowed_model_aliases", "model alias runs may use (default: any)")
+	}
+	return group("harbor-pilot", "The Harbor Pilot gateway (ADR-0060): the connection and a space's settings", []string{"hp"},
+		a.cmd(opts{use: "get", short: "The connection (never its tokens)", op: "get-harbor-pilot-connection"}),
+		a.cmd(opts{use: "connect", short: "Connect Harbor Pilot or change the connection (checked with Harbor Pilot first)", op: "put-harbor-pilot-connection",
+			get: "get-harbor-pilot-connection", getOptional: true, merge: true, form: connForm,
+			long: "Saving mints a probe token with the parent token and revokes it at once: it shows the parent holds tokens:mint, its client " +
+				"binding and expiry, and that the gateway is Harbor Pilot 0.1.3 or later. Tokens come from a file or standard input and are " +
+				"never shown again; omit them to keep the current ones. Stored tokens are only sent to the address they were entered for: " +
+				"changing --base-url or --run-base-url, or turning on --allow-insecure-http, needs --parent-token (and --service-token or " +
+				"--remove-service-token when one is stored) again. Needs account:write.",
+			example: "spaceman harbor-pilot connect --base-url https://harbor-pilot.example.com --parent-token-file ~/.hp/parent --service-token-file ~/.hp/reader"}),
+		a.cmd(opts{use: "version", short: "The connected Harbor Pilot's version (from its GET /api/v1/system, 0.1.4 or later)", op: "get-harbor-pilot-gateway"}),
+		a.cmd(opts{use: "disconnect", short: "Remove the connection (refused while a space uses it)", op: "delete-harbor-pilot-connection",
+			get: "get-harbor-pilot-connection", confirm: "remove the Harbor Pilot connection", done: "Harbor Pilot connection removed."}),
+		a.cmd(opts{use: "space", short: "A space's Harbor Pilot settings", op: "get-space-harbor-pilot", scoped: true}),
+		a.cmd(opts{use: "status", short: "A space's Harbor Pilot budget status (hard limits) and project usage", op: "get-space-harbor-pilot-status", scoped: true}),
+		a.cmd(opts{use: "set-space", short: "Set a space's Harbor Pilot settings (only the flags given change)", op: "put-space-harbor-pilot",
+			get: "get-space-harbor-pilot", merge: true, optionalIfMatch: true, scoped: true, form: spaceForm,
+			long: "Needs space_config:write. The project decides who pays, so setting or changing --project needs account:write " +
+				"(a global administrator); without --project the stored project is kept.",
+			example: "spaceman harbor-pilot set-space --space payments --enabled --project prj_01… --harness codex --ttl 43200"}),
+		a.cmd(opts{use: "unset-space", short: "Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot)",
+			op: "delete-space-harbor-pilot", get: "get-space-harbor-pilot", scoped: true, done: "Harbor Pilot settings removed."}),
 	)
 }
 
@@ -319,7 +368,50 @@ func (a *App) mcpCmd() *cobra.Command {
 			}}),
 		a.cmd(opts{use: "revoke", short: "Remove a grant", op: "revoke-mcp-grant", args: pos("server", "grant"), done: "Grant removed."}),
 	)
-	return group("mcp", "Central MCP gateway: servers, grants and a space's servers", nil, servers, grants)
+	sm := func(f *form) {
+		f.str("name", "name", "name").str("description", "description", "description").boolean("enabled", "enabled", "enabled").
+			str("preset", "preset", "tool set: read, operate, admin (read, write and dangerous; the default) or custom").
+			list("tool", "tools", "add a tool by name (without the slug); dangerous and sensitive-read tools only this way or with admin").
+			str("approval", "approval", "none (default: only dangerous tools need an approval) or writes (write tools too)").
+			integer("call-timeout-ms", "call_timeout_ms", "call timeout").integer("max-concurrency", "max_concurrency", "concurrent calls").
+			integer("max-result-bytes", "max_result_bytes", "largest result")
+	}
+	token := func(f *form) {
+		f.list("grant", "grants", grantHelp+"; default admin on every space with the admin preset").
+			integer("expires-in-days", "expires_in_days", "token expiry in days, 1-366 (default: never)")
+	}
+	spacemanBase := func(o map[string]any) map[string]any {
+		b := map[string]any{}
+		for _, k := range []string{"name", "description", "enabled", "call_timeout_ms", "max_concurrency", "max_result_bytes"} {
+			if v, ok := o[k]; ok {
+				b[k] = v
+			}
+		}
+		if s, ok := o["spaceman"].(map[string]any); ok {
+			for _, k := range []string{"preset", "tools", "approval"} {
+				if v, ok := s[k]; ok {
+					b[k] = v
+				}
+			}
+		}
+		return b
+	}
+	spaceman := group("spaceman", "SpaceMan MCP servers: SpaceMan's own API as tools for a space's runs (ADR-0063)", nil,
+		a.cmd(opts{use: "create", short: "Add a SpaceMan MCP server with a new internal token owned by you", op: "create-spaceman-mcp", idem: true,
+			bodyArgs: []string{"slug"},
+			long: "The server acts through an internal API token you own, with grants within yours (default: admin on every space) and no secret. " +
+				"Dangerous tools always need a person's approval. Grant the server to a space role (`spaceman mcp grant add`) for its runs to see the tools.",
+			example: "spaceman mcp spaceman create infra --name SpaceMan --enabled",
+			form:    func(f *form) { sm(f); token(f) }, prepare: a.grantsPrepare}),
+		a.cmd(opts{use: "update", short: "Edit a SpaceMan MCP server's tools, approval mode and limits", op: "update-spaceman-mcp", get: "get-mcp-server",
+			canonical: "server_id", base: spacemanBase, args: pos("server"), form: sm}),
+		a.cmd(opts{use: "reissue", short: "Replace a SpaceMan MCP server's token with a new one owned by you (new grants, expiry or owner)",
+			op: "reissue-spaceman-mcp", get: "get-mcp-server", canonical: "server_id", args: pos("server"), form: token, prepare: a.grantsPrepare}),
+		a.cmd(opts{use: "tools", short: "Tools a SpaceMan MCP server can offer, for a preset, named tools and grants", op: "list-spaceman-mcp-tools",
+			example: "spaceman mcp spaceman tools --preset operate --grants operator@spc_123",
+			view:    view{items: "items", cols: []col{c("TOOL", "name"), c("CLASS", "class"), c("SELECTED", "selected"), c("REACHABLE", "reachable"), c("SUMMARY", "summary")}}}),
+	)
+	return group("mcp", "Central MCP gateway: servers, grants and a space's servers", nil, servers, grants, spaceman)
 }
 
 func (a *App) approvalPolicyCmd() *cobra.Command {

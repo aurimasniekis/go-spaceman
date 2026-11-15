@@ -58,10 +58,24 @@ const (
 	// Control lifecycle (ADR-0056).
 	ControlAutostart = "control_autostart"
 	ControlIdleStop  = "control_idle_stop_minutes"
+	// A new run's terminal size (ADR-0075).
+	TerminalCols = "terminal_cols"
+	TerminalRows = "terminal_rows"
+	// Usage limits (ADR-0079): failover to another account of the harness, and how long a run waits for a reset with
+	// its process kept alive (also the cap of the probe backoff of a hold whose reset is unknown).
+	UsageLimitFailover     = "usage_limit_failover"
+	UsageLimitKeepAliveMax = "usage_limit_keep_alive_max_minutes"
+	// UsageLimitMaxWait is how long a worker parked at a usage limit waits before its task goes back to the queue (Q2).
+	UsageLimitMaxWait = "usage_limit_max_wait_hours"
+	// UsageLimitNotifyAfter is how far away a hold's reset must be for the space's people to be told once (Q5; 0: never).
+	UsageLimitNotifyAfter = "usage_limit_notify_after_hours"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
 var RetentionKeys = []string{RetainRecordings, RetainTranscripts, RetainAttachments, RetainHumanActions}
+
+// TerminalSizeKeys are the limits that set a new run's held terminal size (ADR-0075).
+var TerminalSizeKeys = []string{TerminalCols, TerminalRows}
 
 const retentionLower = "The next daily retention pass deletes what is older than the new period; deleted data is not recovered (restore a backup)."
 
@@ -82,7 +96,7 @@ const (
 type Def struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
-	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,days,tokens,usd_cents,percent,depth,switch" doc:"switch: 1 on, 0 off"`
+	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,hours,days,tokens,usd_cents,percent,depth,switch,columns,rows" doc:"switch: 1 on, 0 off"`
 	Scope       string `json:"scope" doc:"What one limit value bounds"`
 	Min         int64  `json:"min"`
 	Max         int64  `json:"max"`
@@ -147,6 +161,36 @@ var Defs = []Def{
 	{Key: ControlIdleStop, Label: "Stop idle control", Unit: "minutes",
 		Scope: "how long control may sit idle (turn finished, nothing waiting for it, no operator at its terminal) before SpaceMan stops it; with control started on new work, the next event starts it again", ZeroNone: true,
 		Enforced: "control supervisor (idle timer)", OnLower: "Applies from control's next idle point.", Overridable: true},
+	{Key: TerminalCols, Label: "Terminal columns", Unit: "columns",
+		Scope: "the width new runs' terminals are held at (40-400; 0: the node's default size); applies only with terminal rows set too", ZeroNone: true,
+		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},
+	{Key: TerminalRows, Label: "Terminal rows", Unit: "rows",
+		Scope: "the height new runs' terminals are held at (10-200; 0: the node's default size); applies only with terminal columns set too", ZeroNone: true,
+		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},
+	{Key: UsageLimitFailover, Label: "Usage-limit failover", Unit: "switch",
+		Scope:    "when the account a launch or resume would use is held at a usage limit, use another account bound to the space for the same harness that is not held (a space routed through an LLM gateway never falls back to a direct account)",
+		Enforced: "run launch (account resolution)", OnLower: "Turning it off never stops a run; later launches on a held account are refused until its reset.", Overridable: true},
+	{Key: UsageLimitKeepAliveMax, Label: "Usage-limit keep-alive", Unit: "minutes",
+		Scope:    "how long a run at a usage limit waits for the reset with its process kept alive; also the longest gap between checks of a hold whose reset time is unknown",
+		Enforced: "usage-limit holds (probe backoff) and parking (a limited run is stopped and parked after it)", OnLower: "Applies from the next check of a hold or a limited run.", Overridable: true},
+	{Key: UsageLimitMaxWait, Label: "Usage-limit maximum wait", Unit: "hours",
+		Scope:    "how long a worker or diagnostic run parked at a usage limit waits to be resumed before SpaceMan gives up on it and its task goes back to the queue, ready and unassigned (control is never given up on)",
+		Enforced: "usage-limit waits (release)", OnLower: "Applies to runs parked from then on; a wait already parked keeps its release time.", Overridable: true},
+	{Key: UsageLimitNotifyAfter, Label: "Usage-limit people notice", Unit: "hours", ZeroNone: true,
+		Scope:    "how far away the reset of an account (or gateway) held at a usage limit must be for the space's people to get one human action about it, once per account window (default 12: weekly limits, not 5-hour ones; 0: never)",
+		Enforced: "usage-limit holds (people notice, deadline timer)", OnLower: "Applies to holds not yet announced; an action already raised stays.", Overridable: true},
+}
+
+const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."
+
+// TerminalSize returns the size a new run's terminal is held at from a space's effective limits; ok is false when
+// either is 0 (the node's default size applies).
+func (v Values) TerminalSize() (cols, rows int, ok bool) {
+	c, r := v.Get(TerminalCols), v.Get(TerminalRows)
+	if c == 0 || r == 0 {
+		return 0, 0, false
+	}
+	return int(c), int(r), true
 }
 
 func init() {
@@ -214,6 +258,17 @@ func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, defaults map
 // RetentionChanged reports whether replacing a space's overrides with in would change one of its retention overrides
 // (set, cleared or a different value). The API requires retention:write for such a change.
 func (svc *Service) RetentionChanged(ctx context.Context, spaceID string, in Input) (bool, error) {
+	return svc.KeysChanged(ctx, spaceID, in, RetentionKeys)
+}
+
+// TerminalSizeChanged reports whether replacing a space's overrides with in would change its new-run terminal size
+// override. A new run is held at that size, which other people see: the API requires terminal:takeover (ADR-0075).
+func (svc *Service) TerminalSizeChanged(ctx context.Context, spaceID string, in Input) (bool, error) {
+	return svc.KeysChanged(ctx, spaceID, in, TerminalSizeKeys)
+}
+
+// KeysChanged reports whether replacing a space's overrides with in would set, clear or change one of keys' overrides.
+func (svc *Service) KeysChanged(ctx context.Context, spaceID string, in Input, keys []string) (bool, error) {
 	cur := map[string]int64{}
 	row, err := svc.s.R().GetSpaceLimits(ctx, spaceID)
 	switch {
@@ -223,7 +278,7 @@ func (svc *Service) RetentionChanged(ctx context.Context, spaceID string, in Inp
 	default:
 		cur = parseOverrides(row.ValuesJson)
 	}
-	for _, k := range RetentionKeys {
+	for _, k := range keys {
 		a, inCur := cur[k]
 		b, inNew := in.Values[k]
 		if inCur != inNew || a != b {
@@ -413,6 +468,8 @@ func (svc *Service) Set(ctx context.Context, actor audit.Actor, spaceID string, 
 			v.Add("values."+k, "is set in the %s, not here", d.EditAt)
 		case in.Values[k] < d.Min || in.Values[k] > d.Max:
 			v.Add("values."+k, "must be within %d..%d", d.Min, d.Max)
+		case in.Values[k] != 0 && in.Values[k] < config.TerminalLimitFloor[k]:
+			v.Add("values."+k, "must be 0 (the node's default) or within %d..%d", config.TerminalLimitFloor[k], d.Max)
 		}
 	}
 	if err := v.Err(); err != nil {

@@ -155,6 +155,7 @@ const issueType = "github.webhook.issues.opened.v1"
 // SM-EVT-011/012/014, SM-EVT-008, SM-INBOX-002: a go-pulse-github event becomes one inbox item in each subscribed space
 // (paused spaces keep ingesting), with provenance and the raw payload retained; acknowledgement follows the commit.
 func TestIngestFanOutAndProvenance(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.subscribe("spc_a", "issues", Cursor{})
 	b := f.subscribe("spc_b", "issues", Cursor{})
@@ -162,7 +163,10 @@ func TestIngestFanOutAndProvenance(t *testing.T) {
 		t.Fatalf("durables %+v %+v", a, b)
 	}
 	f.publish(issueSubject, issueType, issuePayload(t, ""), "")
-	eventually(t, "items in both spaces", func() bool { return len(f.items("spc_a")) == 1 && len(f.items("spc_b")) == 1 })
+	// The item is committed before its delivery is recorded: wait for both.
+	eventually(t, "items in both spaces", func() bool {
+		return len(f.items("spc_a")) == 1 && len(f.items("spc_b")) == 1 && f.outcomes("spc_a", a.ID)[OutcomeAccepted] == 1
+	})
 	it, err := f.inbox.Get(f.ctx, "spc_a", f.items("spc_a")[0].ID)
 	must(t, err)
 	if it.SourceKind != "event" || it.SourceID != a.ID || it.Title != "example-org/tool#42 opened: Bug <script>" || it.CorrelationID != "github:example-org/tool#42" ||
@@ -189,6 +193,7 @@ func TestIngestFanOutAndProvenance(t *testing.T) {
 
 // SM-EVT-013: an invalid event is quarantined once, never redelivered, and can be reprocessed after the definition is fixed.
 func TestQuarantineAndReprocess(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	def := template.Definition{Subject: "evt.ops.alert.fired", Title: "{{data.name}}", Body: "{{data | json}}",
 		InputSchema: json.RawMessage(`{"type":"object","required":["name","level"]}`)}
@@ -225,6 +230,7 @@ func TestQuarantineAndReprocess(t *testing.T) {
 // SM-EVT-007/015: edits never replay silently; "start now" skips history; an explicit replay redelivers it, labelled,
 // and duplicates do not become new items.
 func TestCursorSemantics(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.publish(issueSubject, issueType, issuePayload(t, ""), "")
 	s := f.subscribe("spc_a", "issues", Cursor{}) // default: new events only
@@ -268,6 +274,7 @@ func TestCursorSemantics(t *testing.T) {
 // SM-EVT-004/006: published versions are immutable; following subscriptions move to a new version only when it keeps
 // their subject; credentials are write-only and validated.
 func TestTemplatesAndConnections(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	if _, err := f.svc.CreateConnection(f.ctx, admin, ConnectionInput{Name: "bad", URL: f.nats.URL, Creds: "not creds", Enabled: true}); apperr.CodeOf(err) != apperr.CodeInvalid {
 		t.Fatalf("bad creds: %v", err)
@@ -324,6 +331,7 @@ func TestTemplatesAndConnections(t *testing.T) {
 // as filtered, never re-ingested; other events still become items, and the item's outbound event names the inbound
 // event as its causation.
 func TestOwnEventsAreNotReingested(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.o.Origin = "spaceman-test"
 	ob := outbox.New(f.s, outbox.Options{Enabled: true, Source: "spaceman-test"})
@@ -334,8 +342,8 @@ func TestOwnEventsAreNotReingested(t *testing.T) {
 	eventually(t, "own event filtered", func() bool { return f.outcomes("spc_a", s.ID)[OutcomeFiltered] == 1 })
 	d, err := f.svc.Deliveries(f.ctx, "spc_a", s.ID, 10)
 	must(t, err)
-	if d[0].Detail != OwnOriginDetail || len(f.items("spc_a")) != 0 {
-		t.Fatalf("delivery %+v items %d", d[0], len(f.items("spc_a")))
+	if len(d) == 0 || d[0].Detail != OwnOriginDetail || len(f.items("spc_a")) != 0 {
+		t.Fatalf("delivery %+v items %d", d, len(f.items("spc_a")))
 	}
 	// Another installation's origin is ingested normally.
 	_, err = f.pub.Publish(f.ctx, issueSubject, issueType, issuePayload(t, ""), pulse.WithHeader(outbox.HeaderOrigin, "spaceman-other"), pulse.WithID("evt-other-1"))

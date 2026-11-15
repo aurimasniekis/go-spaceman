@@ -38,3 +38,23 @@ kbd,
 .mantine-InputWrapper-root.mono .mantine-Input-input {
   font-family: var(--sm-mono);
 }
+
+/* The agent tab strip (SpaceTerminals) scrolls sideways only: no visible scrollbar, snapping to tabs. */
+.sm-tabstrip {
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+}
+.sm-tabstrip::-webkit-scrollbar {
+  display: none;
+}
+.sm-tabstrip > [role='tab'] {
+  scroll-snap-align: start;
+}
+
+/* A terminal wider than a phone scrolls inside its own box; the page itself never scrolls sideways. */
+.sm-terminal {
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+}

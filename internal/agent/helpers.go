@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -51,10 +55,13 @@ func LaunchShim(secretsFile string, argv []string) error {
 // inherited reports environment variables a run must never inherit from the node agent or the herdr-core server:
 // another Claude Code or Codex session's markers (a nested-session marker turns off transcripts, verified with Claude
 // Code 2.1.316) and provider credentials from the node's environment, which would bypass SpaceMan accounts
-// (SM-ACCT-004). The run's own credentials come from the secrets file, applied after scrubbing.
+// (SM-ACCT-004) or a gateway run's own token (ADR-0060). The run's own credentials come from the secrets file, applied
+// after scrubbing: for a gateway run, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (Claude Code) or HARBOR_PILOT_TOKEN
+// (Codex) and nothing else, so an ANTHROPIC_* variable of the node can't point a run elsewhere.
 func inherited(name string) bool {
 	switch name {
-	case "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_THREAD_ID":
+	case "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_THREAD_ID",
+		"HARBOR_PILOT_TOKEN", "SPACEMAN_GATEWAY_TOKEN":
 		return true
 	}
 	return strings.HasPrefix(name, "CLAUDE_CODE_") || strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CODEX_SANDBOX")
@@ -74,6 +81,116 @@ func scrubEnv(env []string) []string {
 // MergeJSONFile applies patch to the JSON object in path (see harness.Launch.MergeJSON), creating it when missing. The
 // file is replaced atomically and stays 0600.
 func MergeJSONFile(path string, patch map[string]any) error {
+	return editJSONFile(path, func(doc map[string]any) { mergeInto(doc, patch) })
+}
+
+// OwnJSONKeysFile sets SpaceMan's top-level keys in the JSON object in path (see harness.Launch.OwnJSON): each key is
+// set, keys it set at an earlier call and no longer gives are removed, and every other key is kept. The keys it owns
+// are recorded next to the file (<path>.spaceman-keys). Both files are created when missing and replaced atomically.
+//
+// A record that is not a JSON list of strings can't say which keys an earlier profile set (deny rules or hooks it no
+// longer has), and guessing could keep them. The settings file and the record are then moved aside
+// (<name>.corrupt-<unix time>), a warning names both, and the call starts from an empty settings file: no stale key
+// survives, and the instance recovers without anyone fixing the node by hand. The record is written before the
+// settings, with every key that may be in them (the earlier and the new ones), and narrowed to the new keys after: an
+// interrupted call never leaves a key in the settings that the record does not name, so the next call can still
+// remove it. log may be nil.
+//
+// strip are top-level keys (path.Match patterns, see harness.Launch.StripJSON) removed from the file unless keys sets
+// them: settings only SpaceMan or the profile may define, planted in the file between launches. A removal is logged
+// with the key names (never their values).
+func OwnJSONKeysFile(log *slog.Logger, path string, keys map[string]any, strip ...string) error {
+	record := path + ".spaceman-keys"
+	var before []string
+	if b, err := os.ReadFile(record); err == nil { //nolint:gosec // agent-owned path
+		if err := json.Unmarshal(b, &before); err != nil {
+			if err := setAsideCorrupt(log, path, record); err != nil {
+				return err
+			}
+			before = nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	owned := make([]string, 0, len(keys))
+	for k := range keys {
+		owned = append(owned, k)
+	}
+	sort.Strings(owned)
+	writeRecord := func(names []string) error {
+		b, err := json.Marshal(names)
+		if err != nil {
+			return err
+		}
+		return writeAtomic(record, b)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	pending := append(slices.Clone(before), owned...)
+	sort.Strings(pending)
+	if err := writeRecord(slices.Compact(pending)); err != nil {
+		return err
+	}
+	if err := editJSONFile(path, func(doc map[string]any) {
+		for _, k := range before {
+			if _, still := keys[k]; !still {
+				delete(doc, k)
+			}
+		}
+		var stripped []string
+		for k := range doc {
+			if _, ours := keys[k]; !ours && matchesAny(strip, k) {
+				delete(doc, k)
+				stripped = append(stripped, k)
+			}
+		}
+		if len(stripped) > 0 && log != nil {
+			sort.Strings(stripped)
+			log.Warn("removed settings keys that only the profile or SpaceMan may set", slog.String("path", path), slog.Any("keys", stripped))
+		}
+		for k, v := range keys {
+			doc[k] = v
+		}
+	}); err != nil {
+		return err
+	}
+	return writeRecord(owned)
+}
+
+// matchesAny reports whether name matches one of the path.Match patterns (a malformed pattern matches nothing).
+func matchesAny(patterns []string, name string) bool {
+	for _, p := range patterns {
+		if ok, _ := path.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// setAsideCorrupt moves the settings file and its corrupt keys record out of the way (renamed with a .corrupt-<unix
+// time in nanoseconds> suffix, so a second set-aside within the same second keeps the earlier copies) and logs a
+// warning naming both new paths. A missing settings file is not an error.
+func setAsideCorrupt(log *slog.Logger, path, record string) error {
+	suffix := fmt.Sprintf(".corrupt-%d", time.Now().UnixNano())
+	movedSettings := path + suffix
+	if err := os.Rename(path, movedSettings); errors.Is(err, os.ErrNotExist) {
+		movedSettings = ""
+	} else if err != nil {
+		return fmt.Errorf("%s: corrupt keys record; moving the settings aside: %w", record, err)
+	}
+	movedRecord := record + suffix
+	if err := os.Rename(record, movedRecord); err != nil {
+		return fmt.Errorf("%s: corrupt keys record; moving it aside: %w", record, err)
+	}
+	if log != nil {
+		log.Warn("the record of SpaceMan's settings keys is not a JSON list of key names; settings moved aside and started fresh",
+			slog.String("settings_moved_to", movedSettings), slog.String("record_moved_to", movedRecord))
+	}
+	return nil
+}
+
+func editJSONFile(path string, edit func(map[string]any)) error {
 	doc := map[string]any{}
 	b, err := os.ReadFile(path) //nolint:gosec // agent-owned path
 	switch {
@@ -84,7 +201,7 @@ func MergeJSONFile(path string, patch map[string]any) error {
 	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
-	mergeInto(doc, patch)
+	edit(doc)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err

@@ -20,11 +20,19 @@
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
 | `git-ssh-keys` | Repositories | Git SSH keys page: a shared key's public half, the spaces that may use it and the repositories that do (the private half is never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
+| `harbor-pilot-connect` | Harbor Pilot gateway | Connecting Harbor Pilot: gateway URL, optional URL for runs, write-only parent and service-principal tokens, plain HTTP switch | current |
+| `harbor-pilot` | Harbor Pilot gateway | The Harbor Pilot connection: URLs, tokens shown only as set with their versions, the client binding, spaces using it (a stand-in gateway in the capture) | current |
+| `space-harbor-pilot` | Harbor Pilot gateway | A space's Harbor Pilot settings: project, harnesses, run-token lifetime, budget fallback, allowed models | current |
+| `space-limits-harbor-pilot` | Harbor Pilot gateway | A space's Limits page with the Harbor Pilot budgets card: covering budgets labelled by source and enforcement, a used-up hard limit refusing launches, project usage over all clients | current |
+| `space-limits-harbor-pilot-warning` | Harbor Pilot gateway | The Harbor Pilot budgets card in its warning state: a hard limit near its limit, a warn-only budget over its own, no launches refused | current |
+| `space-limits-harbor-pilot-unavailable` | Harbor Pilot gateway | The Harbor Pilot budgets card when budget status can't be read: the reason and what launches do meanwhile | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
+| `terminal-scrollback` | Terminals and recordings | Live watch-only terminal scrolled back into earlier output, with Jump to live | current |
 | `space-terminals` | Terminals and recordings | A space's Terminals tab: every agent as a tab with its status, the selected agent's live terminal | current |
 | `terminals-workspace` | Terminals and recordings | The Terminals workspace: spaces and their agents in a sidebar, the selected space's agents as tabs | current |
 | `terminal-takeover` | Terminals and recordings | Live terminal taken over by the signed-in admin, with the takeover banner | current |
+| `terminal-size` | Terminals and recordings | Live terminal with the size menu open: fit to window, presets, custom, node default | current |
 | `terminal-replay` | Site landing, Terminals and recordings | Replay with seek and speed | current |
 | `auth-users` | Sign-in and access | Users and grants | current |
 | `auth-user-profile` | Sign-in and access | Editing a user's email, display name and MFA requirement | current |
@@ -69,6 +77,7 @@
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
 | `prompt-detail` | Prompts | A prompt's draft editor (with extends) and published versions | current |
 | `roles` | Roles and profiles | Role templates with prompt binding and profile, including the starter set | current |
+| `claude-settings` | Roles and profiles | A Claude Code profile's settings.json editors: permission rules, auto mode environment and allowed actions with the defaults switch, environment variables and other settings | current |
 | `skills` | Skills | Skill catalog with the built-in HallPass skill and a custom skill | current |
 | `approval-policies` | Approval policies | Operations that need a person's approval, with uses, validity and request expiry | current |
 | `approval-enforced` | Human actions | A pending enforced approval: bound operation, run, argument digest and redacted arguments | current |
@@ -91,6 +100,7 @@
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
 | `space-relocate` | Relocating a space | Relocate dialog: destination (a never-connected node is named as not available), dirty-state policy, stop runs, source folder retention | current |
 | `ops-backups` | Backups and restore | Backups page: target, schedule, retention, a verified backup, what backups include and exclude, the data retention card | current |
+| `ops-system` | Observability | System page: readiness, accepting writes, version, commit, boot ID, uptime, schema and node protocol versions, activity counts, public URL, data directory, database and data disk | current |
 | `space-repositories` | Repositories and worktrees | A space's configured repositories with the node's report: remote, default branch, state, changes, unpushed commits, worktrees, last fetch | current |
 | `space-repository-detail` | Repositories and worktrees | A repository's detail: branches with unpushed commits and its worktrees with the runs that own them | current |
 | `space-repository-form` | Repositories and worktrees | Adding a repository: name, folder, clone URL without credentials, default branch, role and clone policy | current |

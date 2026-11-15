@@ -30,14 +30,16 @@ func (f *fx) countOrigin(space, sub, origin, outcome string) int {
 // deliveries carry origin replay and the replay's ID, while the stream's own redeliveries are recorded as redelivery
 // with their attempt number. Inbox deduplication holds during a replay unless fresh items are asked for.
 func TestReplayIsExplicitAndDistinctFromRetry(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.publish(issueSubject, issueType, issuePayload(t, ""), "") // before the subscription: history
 	s := f.subscribe("spc_a", "issues", Cursor{})
 	f.publish(issueSubject, issueType, issuePayload(t, "example-org/tool"), "live-1")
-	eventually(t, "live item", func() bool { return len(f.items("spc_a")) == 1 })
+	// The item is committed before its delivery is recorded: wait for both.
+	eventually(t, "live item", func() bool { return len(f.items("spc_a")) == 1 && len(f.deliveries("spc_a", s.ID)) == 1 })
 	d := f.deliveries("spc_a", s.ID)
 	if len(d) != 1 || d[0].Origin != OriginLive || d[0].Attempt != 1 || d[0].ReplayID != "" {
-		t.Fatalf("live delivery %+v", d[0])
+		t.Fatalf("live delivery %+v", d)
 	}
 	live, err := f.inbox.Get(f.ctx, "spc_a", f.items("spc_a")[0].ID)
 	must(t, err)
@@ -46,8 +48,8 @@ func TestReplayIsExplicitAndDistinctFromRetry(t *testing.T) {
 	}
 	// The stream delivering the same event again (nak, ack timeout, restart) is a retry: redelivery, attempt 2.
 	must(t, f.svc.Process(f.ctx, s.ID, template.Event{ID: d[0].EventID, Subject: issueSubject, Type: issueType, Data: issuePayload(t, "")}, 9, Origin{}))
-	if f.countOrigin("spc_a", s.ID, OriginRedelivery, OutcomeDuplicate) != 1 || f.deliveries("spc_a", s.ID)[0].Attempt != 2 {
-		t.Fatalf("redelivery %+v", f.deliveries("spc_a", s.ID)[0])
+	if d := f.deliveries("spc_a", s.ID); f.countOrigin("spc_a", s.ID, OriginRedelivery, OutcomeDuplicate) != 1 || len(d) == 0 || d[0].Attempt != 2 {
+		t.Fatalf("redelivery %+v", d)
 	}
 
 	cur, _ := f.svc.GetSubscription(f.ctx, "spc_a", s.ID)
@@ -125,6 +127,7 @@ func TestReplayIsExplicitAndDistinctFromRetry(t *testing.T) {
 // SM-LIMIT-001: a subscription's ingestion rate holds events back without dropping them; an event that cannot be
 // admitted in time is left in the stream for redelivery.
 func TestIngestionRateLimit(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	m := NewManager(f.svc, nil)
 	f.svc.o.RateFor = func(context.Context, string) int64 { return 6 } // one per 10 s, burst 1

@@ -35,7 +35,7 @@ function SpaceHumanPage() {
   const linked = useQuery({
     queryKey: ['human-action', spaceId, search.action ?? '', 'linked'],
     enabled: !!search.action,
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-actions/{action_id}', { params: { path: { space_id: spaceId, action_id: search.action! } } })),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/human-actions/{action_id}', { params: { path: { space_id: spaceId, action_id: search.action! } }, signal })),
   })
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')

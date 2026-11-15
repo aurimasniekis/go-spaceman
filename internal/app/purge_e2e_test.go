@@ -14,6 +14,7 @@ import (
 // so the authorization engine forgets them as soon as the purge commits, without waiting for an unrelated reload.
 // Grants in other spaces are kept.
 func TestPurgeSpaceForgetsItsGrants(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()

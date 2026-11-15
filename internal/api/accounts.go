@@ -13,7 +13,7 @@ import (
 // AccountRules are the authorization rules of the account operations. Binding an account to a space hands its
 // credential to that space's runs, so it needs account:write, not only space configuration rights.
 var AccountRules = map[string]Rule{
-	"list-account-kinds":  {Session: true},
+	"list-account-kinds":  FilteredRead(),
 	"list-accounts":       Global(authz.AccountRead),
 	"get-account":         Global(authz.AccountRead),
 	"create-account":      Global(authz.AccountWrite),

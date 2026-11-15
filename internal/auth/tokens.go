@@ -225,21 +225,26 @@ func (svc *Service) IssueRecoveryLogin(ctx context.Context, userID, newAdminEmai
 	var token string
 	var exp time.Time
 	actor := audit.Actor{Type: audit.ActorCLI, ID: "breakglass"}
+	// The new administrator's random password is hashed before the transaction: Argon2id takes far longer than the
+	// write lock may be held (HP-DB-004).
+	var email, phc string
+	if newAdminEmail != "" {
+		var err error
+		if email, err = NormalizeEmail(newAdminEmail); err != nil {
+			return "", time.Time{}, err
+		}
+		pw, err := randomToken()
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		if phc, err = HashPassword([]byte(pw), CurrentParams); err != nil {
+			return "", time.Time{}, err
+		}
+	}
 	err := svc.s.W().TxNamed(ctx, "auth.breakglass", func(tx *store.Tx) error {
 		target := userID
 		if newAdminEmail != "" {
-			email, err := NormalizeEmail(newAdminEmail)
-			if err != nil {
-				return err
-			}
-			pw, err := randomToken()
-			if err != nil {
-				return err
-			}
-			phc, err := HashPassword([]byte(pw), CurrentParams)
-			if err != nil {
-				return err
-			}
+			var err error
 			if target, err = svc.insertLocalUser(ctx, tx, email, email, phc, "recovery", []GrantInput{{Role: authz.RoleAdmin, Domain: authz.Global}}, true, actor); err != nil {
 				return err
 			}

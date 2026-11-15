@@ -18,8 +18,74 @@ env:
   GOTOOLCHAIN: auto
 
 jobs:
+  # The Go checks run as parallel jobs: the race run is the longest, so lint, vet and coverage finish beside it instead of
+  # after it. Each job keeps its own Go cache: setup-go's built-in cache has one key for all of them, so only the first
+  # job to finish would save its (race, non-race or lint) build cache and the others would start cold.
   go:
-    name: go (lint, vet, race tests, coverage, fuzz smoke, traceability)
+    name: go (lint, vet, sqlc drift, analyzer tests, traceability)
+    runs-on: ubuntu-24.04
+    env:
+      GOLANGCI_LINT_VERSION: v2.15.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (lint)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-lint-${{ runner.os }}-
+      # Tool downloads from GitHub release assets failed with 504s often enough to fail whole runs, so neither tool is
+      # fetched from there on a cache hit. golangci-lint is built with `go install` through the Go module proxy (module
+      # checksums verified against the checksum database) and cached per version and Go toolchain; the action then only
+      # runs it (install-mode: none). sqlc is the pinned, checksum-verified release binary (scripts/install-sqlc.sh),
+      # cached under the hash of that script, which holds the version and the checksums.
+      - name: Go toolchain version (golangci-lint cache key)
+        id: gover
+        run: echo "version=$(go env GOVERSION)" >>"$GITHUB_OUTPUT"
+      - name: golangci-lint binary cache
+        id: golangci-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/golangci-lint
+          key: golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.gover.outputs.version }}
+      - name: install golangci-lint (Go module proxy)
+        if: steps.golangci-cache.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/.local/golangci-lint" go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+      - name: golangci-lint version check
+        run: |
+          set -euo pipefail
+          echo "$HOME/.local/golangci-lint" >>"$GITHUB_PATH"
+          out="$("$HOME/.local/golangci-lint/golangci-lint" version)"
+          echo "$out"
+          grep -qE "has version v?${GOLANGCI_LINT_VERSION#v} " <<<"$out"
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          install-mode: none
+      - name: vet
+        run: make vet custom-vet
+      - name: sqlc binary cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin/sqlc
+          key: sqlc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-sqlc.sh') }}
+      - name: sqlc drift check
+        run: make sqlc-check
+      - name: analyzer tests
+        run: make tools-test
+      - name: requirement traceability
+        run: make traceability
+
+  race:
+    name: go race tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,31 +94,111 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: |
-            go.sum
-            tools/go.sum
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+          cache: false
+      - name: Go module and build cache (race)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          version: v2.15.0
-      - name: vet
-        run: make vet custom-vet
-      - name: sqlc drift check
-        run: make sqlc-check
-      - name: analyzer tests
-        run: make tools-test
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-race-${{ runner.os }}-
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
-        # 290 ms); the 100 ms write-transaction guard is still enforced by the non-race coverage run below.
+        # 290 ms). The non-race coverage job uses the same 1 s (ADR-0062, update 2026-11-13, coverage at 1 s).
+        # scripts/race.sh builds modernc's SQLite without checkptr (ADR-0062, update 2026-11-13, hold analysis).
+        # internal/app runs as its own invocation next to the other packages (scripts/race.sh); on a 4-vCPU runner its
+        # cap stays 4, as before. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
           SM_TEST_TX_MAX: 1s
-        run: make race
+          RACE_APP_PARALLEL: "4"
+        # RACE_COUNT=1: every test runs, never a cached pass from the restored build cache (only local runs cache).
+        run: make race RACE_COUNT=1
+
+  coverage:
+    name: go coverage floor
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (coverage)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-coverage-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-coverage-${{ runner.os }}-
       - name: coverage floor
+        # The write-transaction guard (Hallpass HP-DB-004) is 100 ms locally and 500 ms in the full gate. GitHub's
+        # shared hosted runners showed 260-750 ms holds in packages a PR didn't touch, so the hosted coverage job uses
+        # 1 s, as the race job does (ADR-0062, update 2026-11-13, coverage at 1 s).
+        env:
+          SM_TEST_TX_MAX: 1s
+          # One package at a time, as before ADR-0069: more at once on a 4-core runner adds lock-hold noise.
+          COVERAGE_PARALLEL: "1"
         run: make coverage
-      - name: requirement traceability
-        run: make traceability
-      - name: fuzz smoke
-        run: make fuzz-smoke FUZZTIME=${{ github.event_name == 'schedule' && '10m' || '10s' }}
+
+  login-timing:
+    name: login timing (known vs unknown account)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (login timing)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-login-timing-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-login-timing-${{ runner.os }}-
+      - name: login timing
+        # The wall-clock comparison of Hallpass HP-AUTH-005 runs alone on its runner, without the race detector or
+        # coverage, where Argon2id's CPU time is not shared with other tests (ADR-0071). Its store writes (auth.login_failed)
+        # meet the same write-transaction guard as the coverage job: 250 ms on hosted runners (ADR-0062).
+        env:
+          SM_TEST_TX_MAX: 250ms
+        run: make test-login-timing
+
+  # Fuzzing runs nightly (10 minutes per target) and in the release workflow (10 s smoke), not on pull requests or
+  # pushes (ADR-0062).
+  fuzz:
+    name: go fuzz (nightly)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (fuzz)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-fuzz-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-fuzz-${{ runner.os }}-
+      - name: fuzz
+        # Fuzz targets that open a store (internal/keyring) meet the write-transaction guard: 250 ms on hosted runners,
+        # as in the coverage job (ADR-0062).
+        env:
+          SM_TEST_TX_MAX: 250ms
+        run: make fuzz-smoke FUZZTIME=10m
 
   web:
     name: web (typecheck, unit tests, build) and API drift
@@ -91,6 +237,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # A pull request checks out its merge commit: with its parents, HEAD^1 is the base it is compared against.
+          fetch-depth: 2
+      # The axe audit runs on a pull request only when it changes what the site is built from (ADR-0062). The path rule
+      # lives in scripts/site-affected.sh, shared with a local `make site-check`. Pushes to main and the nightly run
+      # always audit.
+      - name: does this change need the accessibility audit?
+        id: a11y
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != "pull_request" ]] || ./scripts/site-affected.sh HEAD^1; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          fi
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: site/package.json
@@ -104,13 +266,20 @@ jobs:
       - name: install
         working-directory: site
         run: pnpm install --frozen-lockfile
-      - name: install the web tooling (Playwright and axe for the accessibility audit)
-        working-directory: web
-        run: pnpm install --frozen-lockfile
       - name: chromium for the Mermaid check and the accessibility audit
         run: npx --yes playwright@1.64.1 install --with-deps chromium
-      - name: build, Mermaid, accessibility and API reference drift
-        run: make site-check
+      - name: build, Mermaid and API reference drift
+        run: make site-verify
+      - name: install the web tooling (Playwright and axe for the accessibility audit)
+        if: steps.a11y.outputs.run == 'true'
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: accessibility audit (axe, every page, both color schemes)
+        if: steps.a11y.outputs.run == 'true'
+        env:
+          # Two parallel shards on the 4-vCPU hosted runner (the Makefile's default from the CPU count would be one).
+          SM_A11Y_SHARDS: "2"
+        run: make site-a11y
 
   security:
     name: security (govulncheck, gitleaks)

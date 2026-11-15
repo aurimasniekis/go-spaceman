@@ -675,9 +675,14 @@ func (svc *Service) Accept(ctx context.Context, actor audit.Actor, spaceID, id s
 			status = queue.Ready
 		}
 		t, _, err := svc.queue.Create(ctx, actor, spaceID, queue.CreateInput{Title: title, Objective: task.Objective, Acceptance: task.Acceptance,
-			Priority: task.Priority, Status: status, OriginKind: originKind, OriginID: r.ID, DedupKey: "xspace:" + r.ID})
+			Priority: task.Priority, Status: status, OriginKind: originKind, OriginID: r.ID, DedupKey: "xspace:" + r.ID, Internal: true})
 		if err != nil {
 			return nil, err
+		}
+		// A task stored under the key before the reserved namespaces (ADR-0087) may be someone else's: link only the
+		// task this request made.
+		if t.OriginKind != originKind || t.OriginID != r.ID {
+			return nil, apperr.New(apperr.CodeConflict, "the task under xspace:%s was not created for this request", r.ID)
 		}
 		taskID = t.ID
 	}

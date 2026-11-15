@@ -392,13 +392,22 @@ func (svc *Service) start(ctx context.Context, actor audit.Actor, c db.DreamConf
 	}
 	spec := &proto.DreamSpec{ConfigID: c.ID, MemoryRoles: parseList(c.MemoryRolesJson), TranscriptRoles: parseList(c.TranscriptRolesJson), ExcludeRoles: exclude,
 		MaxFiles: int(c.MaxFiles), MaxBytes: c.MaxBytes}
-	run, err := svc.fleet.LaunchRun(ctx, actor, c.SpaceID, fleet.LaunchInput{Role: c.SpaceRole, InstanceID: c.InstanceID, Prompt: prompt(c), Dream: spec})
+	// The space role decides the kind: anything but dreamer is refused before a run exists (the check after launch
+	// below stays for a launcher without the hook).
+	notDreamer := apperr.New(apperr.CodePrecondition, "the space role %s does not run as kind dreamer", c.SpaceRole)
+	run, err := svc.fleet.LaunchRun(ctx, actor, c.SpaceID, fleet.LaunchInput{Role: c.SpaceRole, InstanceID: c.InstanceID, Prompt: prompt(c), Dream: spec,
+		AuthorizeKind: func(kind string) error {
+			if kind != "dreamer" {
+				return notDreamer
+			}
+			return nil
+		}})
 	if err != nil {
 		return nil, err
 	}
 	if run.Kind != "dreamer" {
 		_, _ = svc.fleet.StopRun(ctx, system, run.ID, "kill", "the dream's space role is not of kind dreamer")
-		return nil, apperr.New(apperr.CodePrecondition, "the space role %s does not run as kind dreamer", c.SpaceRole)
+		return nil, notDreamer
 	}
 	id := ids.New("drr")
 	err = svc.s.W().TxNamed(ctx, "dream.start", func(tx *store.Tx) error {

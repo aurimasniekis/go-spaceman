@@ -17,14 +17,14 @@ import (
 // EventRules are the authorization rules of connections, templates and subscriptions (SM-EVT-018).
 var EventRules = map[string]Rule{
 	// Any signed-in person can see which connections exist (never their credentials) and read the catalog.
-	"list-event-connections":  {Session: true},
-	"get-event-connection":    {Session: true},
+	"list-event-connections":  FilteredRead(),
+	"get-event-connection":    FilteredRead(),
 	"create-event-connection": StepUp(authz.ConnectionWrite),
 	"update-event-connection": StepUp(authz.ConnectionWrite),
 	"delete-event-connection": StepUp(authz.ConnectionWrite),
-	"list-event-templates":    {Session: true},
-	"get-event-template":      {Session: true},
-	"preview-event-template":  {Session: true},
+	"list-event-templates":    FilteredRead(),
+	"get-event-template":      FilteredRead(),
+	"preview-event-template":  FilteredRead(),
 	"create-event-template":   Global(authz.TemplateWrite),
 	"save-template-draft":     Global(authz.TemplateWrite),
 	"publish-template":        Global(authz.TemplateWrite),

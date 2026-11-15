@@ -14,6 +14,16 @@
 // (fictional token counts, no cost) where Claude Code keeps it. A "/fullscreen" line prints a full-screen program's
 // start-up the way Claude Code 2.1.317 draws it (alternate screen, mouse and keyboard modes, synchronized output, a
 // path in its banner; fullscreen.bin, with neutral text), which the web terminal must survive being reopened after.
+// A "/lines <n>" line prints n numbered lines first, a reply longer than the screen for scrolling back. A
+// "/styled <n>" line prints n numbered lines in as many 24-bit colours, the way Claude Code styles its output (a
+// terminal holding many styles needs much more memory than one of plain text). A "/size" line makes it draw a full-width
+// rule and its terminal size at the start and again whenever the terminal is resized (SIGWINCH), the way a full-screen
+// program redraws for a new size. A "/sparse <n>" line prints n long lines in 24-bit colours, each ending in a style
+// reset, then 60 short lines written the way Claude Code writes text: each word placed with a column move (CHA) over
+// cells it expects to be blank in a row that has just scrolled in. A "/redraw <n>" line redraws a four-line status box
+// at the bottom n times, the way Claude Code's classic renderer repaints its prompt area (a synchronized update that
+// erases the box's lines and draws them again), with a static output line above it every 50 frames: much output, little
+// scrollback (ADR-0081).
 // Not part of any release.
 package main
 
@@ -24,12 +34,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/sys/unix"
 )
 
 //go:embed fullscreen.bin
@@ -57,8 +70,12 @@ func main() {
 		}
 	}
 	writes(prompt)
+	longReply(prompt)
 	if strings.Contains(prompt, "/fullscreen") {
 		_, _ = os.Stdout.Write(fullscreen)
+	}
+	if strings.Contains(prompt, "/size") {
+		reportSize()
 	}
 	if strings.Contains(prompt, "/transcript") {
 		transcript(args, wd)
@@ -74,6 +91,108 @@ func main() {
 		fmt.Fprintf(os.Stdout, "\x1b[36mtick\x1b[0m %d\r\n", i)
 		time.Sleep(time.Second)
 	}
+}
+
+// reportSize draws a rule as wide as the terminal and "terminal size COLSxROWS" now and after every resize.
+func reportSize() {
+	draw := func() {
+		ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "terminal size unknown: %v\r\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stdout, "%s\r\nterminal size %dx%d\r\n", strings.Repeat("─", int(ws.Col)), ws.Col, ws.Row)
+	}
+	draw()
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGWINCH)
+	go func() {
+		for range ch {
+			draw()
+		}
+	}()
+}
+
+// longReply prints the numbered lines a "/lines <n>" (at most 5000), "/styled <n>" or "/sparse <n>" (at most 20000)
+// prompt line asks for.
+func longReply(prompt string) {
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/lines ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		for i := 1; i <= min(n, 5000); i++ {
+			fmt.Fprintf(os.Stdout, "reply line %d of %d\r\n", i, n)
+		}
+	}
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/styled ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		for i := 1; i <= min(n, 20000); i++ {
+			fmt.Fprintf(os.Stdout, "\x1b[38;2;%d;%d;%dmstyled line %d of %d\x1b[0m\r\n", 40+i%200, 40+(i/200)%200, 120+i%97, i, n)
+		}
+	}
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/sparse ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		for i := 1; i <= min(n, 20000); i++ {
+			fmt.Fprintf(os.Stdout, "\x1b[38;2;%d;%d;%dmlong line %d %s\x1b[0m\r\n", 40+i%200, 40+(i/200)%200, 120+i%97, i, strings.Repeat("x", 140))
+		}
+		for i := 1; i <= 60; i++ {
+			fmt.Fprintf(os.Stdout, "\x1b[3Gsparse\x1b[10Gline\x1b[15G%d\r\n", i)
+		}
+	}
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/redraw ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		redraw(min(n, 20000))
+	}
+}
+
+// redraw draws n frames of a four-line status box, each erasing the previous one first, with a static line above it
+// every 50 frames.
+func redraw(n int) {
+	rule := strings.Repeat("─", 76)
+	spin := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	for i := 1; i <= n; i++ {
+		var b strings.Builder
+		b.WriteString("\x1b[?2026h")
+		if i > 1 {
+			b.WriteString(strings.Repeat("\x1b[2K\x1b[1A", 3) + "\x1b[2K\x1b[G")
+		}
+		if i%50 == 0 {
+			fmt.Fprintf(&b, "static line %d of %d\r\n", i/50, n/50)
+		}
+		c := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", 40+i%200, 90, 160)
+		fmt.Fprintf(&b, "%s╭%s╮\x1b[0m\r\n", c, rule)
+		fmt.Fprintf(&b, "%s│\x1b[0m %c Working… frame %6d of %6d%s%s│\x1b[0m\r\n", c, spin[i%10], i, n, strings.Repeat(" ", 44), c)
+		fmt.Fprintf(&b, "%s╰%s╯\x1b[0m\r\n", c, rule)
+		b.WriteString("  ? for shortcuts\x1b[?2026l")
+		_, _ = os.Stdout.WriteString(b.String())
+	}
+	_, _ = os.Stdout.WriteString("\r\n")
 }
 
 // hasMCPLines reports whether the prompt has a line that needs the MCP server.

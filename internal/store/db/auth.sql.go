@@ -147,7 +147,7 @@ func (q *Queries) DeleteThrottle(ctx context.Context, key string) error {
 }
 
 const getAPIToken = `-- name: GetAPIToken :one
-SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by FROM api_tokens WHERE id = ?
+SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by, purpose FROM api_tokens WHERE id = ?
 `
 
 func (q *Queries) GetAPIToken(ctx context.Context, id string) (ApiToken, error) {
@@ -167,12 +167,13 @@ func (q *Queries) GetAPIToken(ctx context.Context, id string) (ApiToken, error) 
 		&i.LastUsedIp,
 		&i.RevokedAt,
 		&i.RevokedBy,
+		&i.Purpose,
 	)
 	return i, err
 }
 
 const getAPITokenByMAC = `-- name: GetAPITokenByMAC :one
-SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by FROM api_tokens WHERE mac = ?
+SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by, purpose FROM api_tokens WHERE mac = ?
 `
 
 func (q *Queries) GetAPITokenByMAC(ctx context.Context, mac []byte) (ApiToken, error) {
@@ -192,6 +193,7 @@ func (q *Queries) GetAPITokenByMAC(ctx context.Context, mac []byte) (ApiToken, e
 		&i.LastUsedIp,
 		&i.RevokedAt,
 		&i.RevokedBy,
+		&i.Purpose,
 	)
 	return i, err
 }
@@ -420,8 +422,8 @@ func (q *Queries) GetWebSession(ctx context.Context, idHash []byte) (WebSession,
 }
 
 const insertAPIToken = `-- name: InsertAPIToken :exec
-INSERT INTO api_tokens (id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO api_tokens (id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, purpose)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertAPITokenParams struct {
@@ -434,6 +436,7 @@ type InsertAPITokenParams struct {
 	ExpiresAt     int64
 	NeverExpires  int64
 	ParentTokenID sql.NullString
+	Purpose       string
 }
 
 func (q *Queries) InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) error {
@@ -447,6 +450,7 @@ func (q *Queries) InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) 
 		arg.ExpiresAt,
 		arg.NeverExpires,
 		arg.ParentTokenID,
+		arg.Purpose,
 	)
 	return err
 }
@@ -618,7 +622,7 @@ func (q *Queries) InsertWebSession(ctx context.Context, arg InsertWebSessionPara
 }
 
 const listAPITokens = `-- name: ListAPITokens :many
-SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by FROM api_tokens ORDER BY revoked_at IS NOT NULL, created_at DESC
+SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by, purpose FROM api_tokens ORDER BY revoked_at IS NOT NULL, created_at DESC
 `
 
 func (q *Queries) ListAPITokens(ctx context.Context) ([]ApiToken, error) {
@@ -644,6 +648,7 @@ func (q *Queries) ListAPITokens(ctx context.Context) ([]ApiToken, error) {
 			&i.LastUsedIp,
 			&i.RevokedAt,
 			&i.RevokedBy,
+			&i.Purpose,
 		); err != nil {
 			return nil, err
 		}
@@ -659,7 +664,7 @@ func (q *Queries) ListAPITokens(ctx context.Context) ([]ApiToken, error) {
 }
 
 const listAPITokensByUser = `-- name: ListAPITokensByUser :many
-SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by FROM api_tokens WHERE user_id = ? ORDER BY revoked_at IS NOT NULL, created_at DESC
+SELECT id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, last_used_at, last_used_ip, revoked_at, revoked_by, purpose FROM api_tokens WHERE user_id = ? ORDER BY revoked_at IS NOT NULL, created_at DESC
 `
 
 func (q *Queries) ListAPITokensByUser(ctx context.Context, userID string) ([]ApiToken, error) {
@@ -685,6 +690,7 @@ func (q *Queries) ListAPITokensByUser(ctx context.Context, userID string) ([]Api
 			&i.LastUsedIp,
 			&i.RevokedAt,
 			&i.RevokedBy,
+			&i.Purpose,
 		); err != nil {
 			return nil, err
 		}
@@ -991,6 +997,32 @@ DELETE FROM web_sessions WHERE absolute_expires_at < ?
 
 func (q *Queries) PurgeWebSessions(ctx context.Context, absoluteExpiresAt int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, purgeWebSessions, absoluteExpiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const rehashLocalCredential = `-- name: RehashLocalCredential :execrows
+UPDATE user_local_credentials SET password_phc = ?1, params_version = ?2
+WHERE user_id = ?3 AND password_phc = ?4
+`
+
+type RehashLocalCredentialParams struct {
+	NewPhc        string
+	ParamsVersion int64
+	UserID        string
+	OldPhc        string
+}
+
+// Replaces a password hash made with older parameters, only while the stored hash is still the one that was verified.
+func (q *Queries) RehashLocalCredential(ctx context.Context, arg RehashLocalCredentialParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rehashLocalCredential,
+		arg.NewPhc,
+		arg.ParamsVersion,
+		arg.UserID,
+		arg.OldPhc,
+	)
 	if err != nil {
 		return 0, err
 	}

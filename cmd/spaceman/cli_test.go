@@ -18,11 +18,13 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/cli"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 // The committed CLI reference (site/reference/cli) matches the commands of this build. SM_CLI_DOCS=1 rewrites it
 // (make cli-docs).
 func TestCLIReferenceUpToDate(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join("..", "..", "site", "reference", "cli")
 	root := newRoot(nil)
 	if os.Getenv("SM_CLI_DOCS") == "1" {
@@ -56,6 +58,7 @@ func TestCLIReferenceUpToDate(t *testing.T) {
 // The built binary against a real central (in this process, over loopback HTTP): exit codes, the token file, a create
 // with its secret written to a file, and table, JSON and YAML output.
 func TestBuiltBinaryAgainstCentral(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the binary")
 	}
@@ -80,6 +83,7 @@ func TestBuiltBinaryAgainstCentral(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	storetest.Seed(t, cfg.DataDir)
 	c, err := app.OpenCentral(context.Background(), cfg, slog.New(slog.DiscardHandler), app.Options{Environ: []string{}})
 	if err != nil {
 		t.Fatal(err)

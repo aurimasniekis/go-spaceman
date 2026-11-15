@@ -56,7 +56,27 @@ type Actor struct {
 	// Via names how a user acted when it was not a browser session, e.g. "api_token:atk_…". It is recorded as
 	// the "via" detail, so the event stays attributed to the user.
 	Via string
+	// Run is the agent run the user's authority was exercised for (a SpaceMan MCP call, ADR-0063). It is recorded as
+	// the "run" detail.
+	Run string
+	// Channel names the entry point a token's call came through when it is not the plain API: ChannelMCPEndpoint for
+	// the external MCP endpoint (ADR-0063 §External endpoint). It is recorded as the "channel" detail.
+	Channel string
 }
+
+// ChannelMCPEndpoint is the Channel of a call made through /api/v1/mcp by an operator's own MCP client.
+const ChannelMCPEndpoint = "mcp_endpoint"
+
+// ViaSpacemanMCP prefixes Via for calls made through a SpaceMan MCP server's internal token (ADR-0063).
+const ViaSpacemanMCP = "spaceman_mcp:"
+
+// Internal reports whether the actor acted through a SpaceMan MCP server's internal token: an agent using its owner's
+// authority, never a person at the keyboard.
+func (a Actor) Internal() bool { return strings.HasPrefix(a.Via, ViaSpacemanMCP) }
+
+// MCP reports whether the actor acted through one of SpaceMan's MCP entry points (a SpaceMan MCP server's internal
+// token, or the external MCP endpoint): a model choosing the call, never a person deciding a request.
+func (a Actor) MCP() bool { return a.Internal() || a.Channel == ChannelMCPEndpoint }
 
 // System is the actor for automatic actions (expiry, reconciliation, jobs).
 var System = Actor{Type: ActorSystem, ID: "spaceman"}
@@ -155,10 +175,18 @@ func (w *Writer) Append(ctx context.Context, tx *store.Tx, ev Event) (string, er
 		}
 	}
 	ev = withCorrelation(ctx, ev)
-	if ev.Actor.Via != "" {
-		d := make(map[string]any, len(ev.Details)+1)
+	if ev.Actor.Via != "" || ev.Actor.Run != "" || ev.Actor.Channel != "" {
+		d := make(map[string]any, len(ev.Details)+3)
 		maps.Copy(d, ev.Details)
-		d["via"] = ev.Actor.Via
+		if ev.Actor.Via != "" {
+			d["via"] = ev.Actor.Via
+		}
+		if ev.Actor.Run != "" {
+			d["run"] = ev.Actor.Run
+		}
+		if ev.Actor.Channel != "" {
+			d["channel"] = ev.Actor.Channel
+		}
 		ev.Details = d
 	}
 	details, err := canonicalJSON(ev.Details)

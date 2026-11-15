@@ -18,6 +18,7 @@ import (
 // there is checkpointed when the run ends, published to the node's shared history and synced to central over the node
 // connection. A second run of the same role starts from that history.
 func TestMemorySyncedToCentral(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}

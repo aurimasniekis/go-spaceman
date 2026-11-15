@@ -18,7 +18,7 @@ import (
 
 // AttentionRules: the summary is filtered per category by the caller's permissions, so it needs only a session.
 var AttentionRules = map[string]Rule{
-	"get-attention": {Session: true},
+	"get-attention": FilteredRead(),
 }
 
 // Attention windows and thresholds.

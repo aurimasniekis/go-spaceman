@@ -190,6 +190,50 @@ func (q *Queries) ListNodeTakeovers(ctx context.Context, nodeID string) ([]ListN
 	return items, nil
 }
 
+const listNodeTerminalSizes = `-- name: ListNodeTerminalSizes :many
+SELECT id, space_id, generation, CAST(terminal_cols AS INTEGER) AS term_cols, CAST(terminal_rows AS INTEGER) AS term_rows
+FROM runs
+WHERE node_id = ? AND terminal_cols IS NOT NULL AND desired = 'running' AND observed IN ('pending', 'starting', 'running', 'unknown')
+ORDER BY created_at
+`
+
+type ListNodeTerminalSizesRow struct {
+	ID         string
+	SpaceID    string
+	Generation int64
+	TermCols   int64
+	TermRows   int64
+}
+
+func (q *Queries) ListNodeTerminalSizes(ctx context.Context, nodeID string) ([]ListNodeTerminalSizesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listNodeTerminalSizes, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListNodeTerminalSizesRow{}
+	for rows.Next() {
+		var i ListNodeTerminalSizesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Generation,
+			&i.TermCols,
+			&i.TermRows,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nextTakeoverExpiry = `-- name: NextTakeoverExpiry :one
 SELECT CAST(COALESCE(MIN(expires_at), 0) AS INTEGER) AS expires_at FROM run_takeovers WHERE ended_at IS NULL
 `
@@ -212,6 +256,33 @@ type RenewTakeoverParams struct {
 
 func (q *Queries) RenewTakeover(ctx context.Context, arg RenewTakeoverParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, renewTakeover, arg.ExpiresAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setRunTerminalSize = `-- name: SetRunTerminalSize :execrows
+
+UPDATE runs SET terminal_cols = ?1, terminal_rows = ?2, version = version + 1, updated_at = ?3
+WHERE id = ?4
+`
+
+type SetRunTerminalSizeParams struct {
+	TermCols sql.NullInt64
+	TermRows sql.NullInt64
+	Now      int64
+	ID       string
+}
+
+// Terminal sizes (ADR-0075).
+func (q *Queries) SetRunTerminalSize(ctx context.Context, arg SetRunTerminalSizeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setRunTerminalSize,
+		arg.TermCols,
+		arg.TermRows,
+		arg.Now,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}
