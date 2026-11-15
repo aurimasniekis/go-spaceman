@@ -87,7 +87,7 @@ func killRecorded(file string) {
 	}
 }
 
-// Killing the wrapper (SIGHUP or SIGKILL at run teardown) takes the wrapped command with it, though it has its own group.
+// Killing the wrapper with SIGKILL takes the directly wrapped command with it (Pdeathsig), though it has its own group.
 func TestStatusLineWrapperKilledKillsWrappedCommand(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the agent binary's hook")
@@ -122,7 +122,45 @@ func TestStatusLineWrapperHelper(t *testing.T) {
 		t.Skip("helper process")
 	}
 	pidFile := os.Getenv("SM_STATUS_PIDFILE")
-	StatusLine(context.Background(), strings.NewReader(hookSample), io.Discard, "", "run_x", `echo $$ > '`+pidFile+`'; exec sleep 37`)
+	command := `echo $$ > '` + pidFile + `'; exec sleep 37`
+	if g := os.Getenv("SM_STATUS_GRANDCHILD"); g != "" {
+		command = `echo $$ > '` + pidFile + `'; sleep 38 & echo $! > '` + g + `'; wait; true`
+	}
+	StatusLine(context.Background(), strings.NewReader(hookSample), io.Discard, "", "run_x", command)
+}
+
+// SIGHUP or SIGTERM on the wrapper kills the whole wrapped group, a grandchild that is not exec'd included.
+func TestStatusLineWrapperSignalKillsGroup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the wrapper as a helper process")
+	}
+	for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			pidFile, gFile := filepath.Join(dir, "pid"), filepath.Join(dir, "gpid")
+			t.Cleanup(func() { killRecorded(pidFile); killRecorded(gFile) })
+			cmd := exec.Command(os.Args[0], "-test.run=TestStatusLineWrapperHelper")
+			cmd.Env = append(os.Environ(), "SM_STATUS_HELPER=1", "SM_STATUS_PIDFILE="+pidFile, "SM_STATUS_GRANDCHILD="+gFile)
+			cmd.Stdout = io.Discard
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+			read := func(f string) int {
+				b, _ := os.ReadFile(f)
+				n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+				return n
+			}
+			var pid, gpid int
+			waitFor(t, "shell and grandchild started", func() bool { pid, gpid = read(pidFile), read(gFile); return pid > 1 && gpid > 1 })
+			if err := cmd.Process.Signal(sig); err != nil {
+				t.Fatal(err)
+			}
+			_ = cmd.Wait()
+			waitFor(t, "grandchild killed", func() bool { return syscall.Kill(gpid, 0) != nil })
+			waitFor(t, "shell killed", func() bool { return syscall.Kill(pid, 0) != nil })
+		})
+	}
 }
 
 // What the wrapped command prints is bounded to 64 KiB.
@@ -371,7 +409,30 @@ func TestStopFailureIntakeAfterRunEndKeepsNothing(t *testing.T) {
 	}
 }
 
-// A bridge line over the cap closes the connection; the agent does not buffer it.
+// A StopFailure inside the coalescing gap that races the run's end leaves nothing behind either.
+func TestStopFailureCoalescedAfterRunEndKeepsNothing(t *testing.T) {
+	a, _, runID, _, f := startHookAgent(t)
+	req := bridgeRequest{Run: runID, Tool: ToolHookStopFailure, Args: json.RawMessage(`{"error":"authentication_failed"}`)}
+	if resp := a.stopFailureIntake(context.Background(), req); !resp.OK {
+		t.Fatalf("response %+v", resp)
+	}
+	row := getRun(t, a, runID)
+	f.Exit(row.TerminalID, 0, "exited")
+	waitFor(t, "run ended", func() bool { r, err := a.j.getRun(context.Background(), runID); return err == nil && ended(r.State) })
+	if resp := a.stopFailureIntake(context.Background(), req); !resp.OK {
+		t.Fatalf("response %+v", resp)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.failureClasses[runID]; ok {
+		t.Fatal("failure class kept for an ended run")
+	}
+	if _, ok := a.stopScans[runID]; ok {
+		t.Fatal("scan time kept for an ended run")
+	}
+}
+
+// A bridge line over the cap gets an error answer and closes the connection; the agent does not buffer it.
 func TestBridgeLineOverCapClosesConnection(t *testing.T) {
 	_, _, _, socket, _ := startHookAgent(t)
 	c, err := net.Dial("unix", socket)
@@ -385,8 +446,12 @@ func TestBridgeLineOverCapClosesConnection(t *testing.T) {
 	for sent := 0; sent <= bridgeLineMax+len(chunk) && werr == nil; sent += len(chunk) {
 		_, werr = c.Write(chunk)
 	}
-	if _, err := io.ReadAll(c); err != nil && !errors.Is(err, syscall.ECONNRESET) {
+	got, err := io.ReadAll(c)
+	if err != nil && !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("connection not closed by the agent: %v", err)
+	}
+	if err == nil && !strings.Contains(string(got), "request too large") {
+		t.Fatalf("no overflow error, got %q", got)
 	}
 	// A normal line still works on a new connection.
 	c2, err := net.Dial("unix", socket)

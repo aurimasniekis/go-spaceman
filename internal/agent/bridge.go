@@ -128,8 +128,12 @@ func (a *Agent) serveBridgeConn(ctx context.Context, c net.Conn) {
 	for {
 		_ = c.SetReadDeadline(time.Now().Add(10 * time.Minute))
 		line, err := readBridgeLine(br)
+		if errors.Is(err, errBridgeLineTooLong) {
+			_ = enc.Encode(bridgeResponse{Error: "request too large"})
+			return
+		}
 		if err != nil {
-			return // closed, timed out or over bridgeLineMax: the connection is dropped
+			return // closed or timed out: the connection is dropped
 		}
 		var req bridgeRequest
 		if json.Unmarshal(line, &req) != nil {
