@@ -5293,7 +5293,10 @@
 - **Decision:**
   - Only a real WebSocket handshake is passed through (`websocketHandshake`): a body-less HTTP/1.1 `GET` with the
     upgrade headers and no `Transfer-Encoding`. `ReadProgress` guards every request that has a body, whatever its
-    headers; `WriteProgress` skips only a real handshake.
+    headers; `WriteProgress` skips only a real handshake on a hijacking route (`/agent/v1/connect`, the node
+    WebSocket; the terminal stream is SSE and stays guarded): upgrade headers on a download or an event stream no
+    longer exempt it from the write bound (re-review finding C; probe: a stalled 64 MiB download with the headers was
+    still blocked after 5× the idle bound before the change).
   - Progress and total are both enforced. The guard's response writer implements `SetReadDeadline`, which huma
     finds by unwrapping: the deadline is recorded as the total cap, and each read waits for the sooner of now+idle and
     the cap. JSON operations keep huma's 5 s. `upload-attachment` sets `BodyReadTimeout` to 10 minutes

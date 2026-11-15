@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `/telegram/webhook/<id>`). The host must differ from `telegram.miniapp_host`; the Mini App origin still derives from
   `public_url`.
 
+### Security
+
+- The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
+  that carried WebSocket upgrade headers used to be exempt from it.
+
 ### Fixed
 
 - The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.

@@ -22,7 +22,7 @@ func readServer(t *testing.T, readIdle time.Duration, h func(w http.ResponseWrit
 	t.Helper()
 	done := make(chan error, 8)
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { done <- h(w, r) })
-	srv := httptest.NewUnstartedServer(WriteProgress(ReadProgress(inner, readIdle), time.Minute))
+	srv := httptest.NewUnstartedServer(WriteProgress(ReadProgress(inner, readIdle), time.Minute, "/agent/"))
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.Start()
 	t.Cleanup(srv.Close)
@@ -268,6 +268,8 @@ func TestKeepAliveAfterReadBody(t *testing.T) {
 }
 
 // A WebSocket upgrade's hijacked connection keeps no deadline from the guard: it is still usable after the idle bound.
+// The hijack paths are exact matches (slices.Contains on r.URL.Path), not prefixes: only "/agent/" is exempt here, so an
+// upgrade-headed request to any other path is still guarded.
 func TestReadGuardLeavesUpgradesAlone(t *testing.T) {
 	srv, done := readServer(t, idle, func(w http.ResponseWriter, _ *http.Request) error {
 		conn, brw, err := http.NewResponseController(w).Hijack()
