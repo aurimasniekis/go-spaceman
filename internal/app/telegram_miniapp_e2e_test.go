@@ -21,9 +21,11 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/app"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 )
 
@@ -469,6 +471,54 @@ func TestMiniAppPolicyChangeSignalsStreams(t *testing.T) {
 		t.Fatal("re-check without a policy change")
 	default:
 	}
+}
+
+// A per-space Telegram toggle-off of visibility or terminal_watch makes open streams re-check at once, not at the
+// next StreamRevalidate; turning something on, or changing another space setting, does not.
+func TestMiniAppSpaceToggleOffSignalsStreams(t *testing.T) {
+	t.Parallel()
+	e := newMiniAppEnv(t)
+	e.startBot(t)
+	ctx := context.Background()
+	on, off := true, false
+	put := func(version int64, in tgsettings.SpaceInput) {
+		t.Helper()
+		if _, err := e.h.c.TelegramSettings.PutSpace(ctx, audit.System, e.space, version, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := e.h.c.Auth.Revocations().Watch(&auth.Principal{User: &auth.User{ID: e.userID}, Method: auth.MethodTelegram, TelegramLinkID: e.linkID})
+	defer w.Close()
+	select { // a fresh watch starts with a pending signal
+	case <-w.C:
+	default:
+	}
+	quiet := func(what string) {
+		t.Helper()
+		select {
+		case <-w.C:
+			t.Fatalf("re-check without a toggle-off: %s", what)
+		default:
+		}
+	}
+	signalled := func(what string) {
+		t.Helper()
+		select {
+		case <-w.C:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("no re-check after %s", what)
+		}
+	}
+	put(0, tgsettings.SpaceInput{Enabled: &on, TerminalWatch: &on})
+	quiet("turning on")
+	put(1, tgsettings.SpaceInput{Enabled: &on, TerminalWatch: &on, Topics: &on})
+	quiet("another setting")
+	put(2, tgsettings.SpaceInput{Enabled: &on})
+	signalled("terminal_watch went off")
+	put(3, tgsettings.SpaceInput{Enabled: &on, TerminalWatch: &on})
+	quiet("terminal_watch back on")
+	put(4, tgsettings.SpaceInput{Enabled: &off, TerminalWatch: &on})
+	signalled("the space stopped being visible")
 }
 
 // Integration (TG-9a with TG-4b): a Mini App session and its change-feed stream are rebuilt through
