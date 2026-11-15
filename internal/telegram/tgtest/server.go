@@ -133,7 +133,7 @@ type Server struct {
 	topics   map[int64]map[int]*topic
 	noTopics map[int64]bool
 	goneAll  map[int64]bool
-	pinned   map[int64][]int // pinned message IDs per chat, oldest first (the last one is unpinned first)
+	pinned   map[int64][]int // pinned message IDs per chat, in pin order (unpinning without an ID takes the latest sent, not the last pinned)
 	messages map[int64]map[int]*botapi.Message
 	known    map[int64]map[int]*botapi.Message // messages users sent, for replies
 	nextMsg  map[int64]int

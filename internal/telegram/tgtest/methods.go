@@ -355,8 +355,9 @@ func (s *Server) pinLocked(p params) (any, *apiError) {
 	return true, nil
 }
 
-// unpinLocked unpins message_id, or the most recent pin when message_id is 0 or absent. Unpinning a message that isn't
-// pinned, or a chat with nothing pinned, succeeds without effect (Telegram's answer there is not documented).
+// unpinLocked unpins message_id, or the most recent pin when message_id is 0 or absent. "Most recent" means the latest
+// sending date, as Telegram documents it, not the last one pinned. Unpinning a message that isn't pinned, or a chat with
+// nothing pinned, succeeds without effect (Telegram's answer there is not documented).
 func (s *Server) unpinLocked(p params) (any, *apiError) {
 	chat, e := s.targetLocked(p)
 	if e != nil {
@@ -367,11 +368,40 @@ func (s *Server) unpinLocked(p params) (any, *apiError) {
 	switch {
 	case len(list) == 0:
 	case id == 0:
-		s.pinned[chat.ID] = list[:len(list)-1]
+		latest := 0
+		for i := 1; i < len(list); i++ {
+			if s.sentBeforeLocked(chat.ID, list[latest], list[i]) {
+				latest = i
+			}
+		}
+		s.pinned[chat.ID] = slices.Delete(list, latest, latest+1)
 	default:
 		s.pinned[chat.ID] = slices.DeleteFunc(list, func(x int) bool { return x == int(id) })
 	}
 	return true, nil
+}
+
+// sentBeforeLocked reports whether message a was sent before message b in chatID: by sending date, then by message ID
+// (IDs grow within a chat, which settles two messages sent in the same second). A message the fake doesn't know has no
+// date and sorts first.
+func (s *Server) sentBeforeLocked(chatID int64, a, b int) bool {
+	da, ia := s.sentKeyLocked(chatID, a)
+	db, ib := s.sentKeyLocked(chatID, b)
+	if da != db {
+		return da < db
+	}
+	return ia < ib
+}
+
+// sentKeyLocked returns a message's sending date (Unix seconds) and ID, from the bot's messages or the users' ones.
+func (s *Server) sentKeyLocked(chatID int64, id int) (int64, int) {
+	if m, ok := s.messages[chatID][id]; ok {
+		return m.Date, id
+	}
+	if m, ok := s.known[chatID][id]; ok {
+		return m.Date, id
+	}
+	return 0, id
 }
 
 // deleteMessagesLocked deletes 1–100 messages. Missing messages and messages older than 48 h are skipped; the documented

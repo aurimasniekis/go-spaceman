@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 )
 
 // newTopic creates a topic in the user's private chat and returns its thread ID.
@@ -134,6 +137,29 @@ func TestPinAndUnpin(t *testing.T) {
 	}
 	if got := srv.Pinned(userChat); len(got) != 0 {
 		t.Fatalf("pin survived its message's delete: %v", got)
+	}
+}
+
+// TestUnpinLatestSentNotLastPinned checks that unpinning without a message_id takes the pin sent most recently, which
+// Telegram documents as "by sending date", even when an older message was pinned after a newer one.
+func TestUnpinLatestSentNotLastPinned(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC))
+	srv, c := newPair(t, tgtest.Options{Clock: clk, Limits: tgtest.Limits{Disabled: true}})
+	ctx := context.Background()
+	older, _ := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: userChat, Text: "older"})
+	clk.Advance(time.Minute)
+	newer, _ := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: userChat, Text: "newer"})
+	// The newer message is pinned first, the older one last.
+	for _, id := range []int{newer.MessageID, older.MessageID} {
+		if err := c.PinChatMessage(ctx, botapi.PinChatMessageParams{ChatID: userChat, MessageID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.UnpinChatMessage(ctx, botapi.UnpinChatMessageParams{ChatID: userChat}); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.Pinned(userChat); len(got) != 1 || got[0] != older.MessageID {
+		t.Fatalf("unpin without ID removed the wrong pin; left %v, want [%d] (the older message)", got, older.MessageID)
 	}
 }
 

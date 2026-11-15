@@ -5410,8 +5410,8 @@
   `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
 
 ### ADR-0089 — Telegram chat threads per link: a thread per space, cards edited in place, a home summary
-- **Status:** Accepted, 2026-11-15. The operator accepted every planner default, Q1–Q10 below, on 2026-11-15 (epic
-  tsk_01m7g1cc3ee7wrh577qtfzchah; plan `docs/plans/2026-11-15-telegram-chat-ux.md` on `plan/telegram-chat-ux`). Amends
+- **Status:** Accepted, 2026-11-15. The operator accepted every planner default, Q1–Q10 below, on 2026-11-15 (the epic;
+  plan `docs/plans/2026-11-15-telegram-chat-ux.md` on `plan/telegram-chat-ux`). Amends
   ADR-0083 decision 16 and its topics answer (Q6): the per-space topics opt-in becomes a per-link mode. The work is in
   T1–T9 on `feat/tg-chat-threads`; T6 (Mini App home) goes straight to `next/v0.1.6`. Not security-relevant (see below).
   Requirement IDs are unchanged: SM-TG-008 and SM-TG-009 keep their wording.
