@@ -21,7 +21,9 @@ func TestApprovalRefusesForeignActionUnderItsKey(t *testing.T) {
 		{"same", func(*human.CreateInput) {}},
 		{"body", func(in *human.CreateInput) { in.Body = "Harmless: approve." }},
 		{"title", func(in *human.CreateInput) { in.Title = "Approve something else" }},
-		{"type", func(in *human.CreateInput) { in.Type, in.Request = human.TypeQuestion, json.RawMessage(`{"allow_text":true}`) }},
+		{"type", func(in *human.CreateInput) {
+			in.Type, in.Request = human.TypeQuestion, json.RawMessage(`{"allow_text":true}`)
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFx(t)
