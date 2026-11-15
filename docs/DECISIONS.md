@@ -4574,7 +4574,7 @@
       `DigestDue` of the `telegram.digest` deadline read memory only, `DigestDue` enqueues and never returns an error,
       and the digest is rechecked (access, mute, space visibility) and rendered with titles only when it is sent;
       a link with nothing collected gets none. `telegram_messages.created_at` is refreshed by every send, edit and
-      announcement, and retention prunes rows older than 30 days in batches of 1000.
+      announcement, and retention prunes rows older than 30 days in batches of 200.
   16. **What SpaceMan uses of Telegram's newer features:** private-chat topics (opt-in per link, M3, **(Q6)**), rich
       messages with an entity fallback **(Q12)**, styled buttons, `copy_text`, `disabled`, and ephemeral messages in group
       mode. **Not used:** guest mode, bot-to-bot, managed and business bots (each lets content or commands arrive from

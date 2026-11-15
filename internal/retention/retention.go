@@ -419,7 +419,7 @@ func (svc *Service) work(ctx context.Context) (Counts, error) {
 const TelegramMessageDays = 30
 
 // telegramPruneBatch bounds the rows one write transaction deletes.
-const telegramPruneBatch = 1000
+const telegramPruneBatch = 200
 
 // pruneTelegramMessages deletes the bot's message mappings older than TelegramMessageDays, in short transactions.
 func (svc *Service) pruneTelegramMessages(ctx context.Context) (int64, error) {

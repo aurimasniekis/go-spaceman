@@ -375,6 +375,10 @@ func TestPassPrunesTelegramMessages(t *testing.T) {
 	var qs []string
 	for i := int64(1); i <= telegramPruneBatch+50; i++ { // more than one batch
 		qs = append(qs, ins(1, i, 31*24*time.Hour))
+		if len(qs) == 50 { // short seed transactions
+			f.exec(qs...)
+			qs = nil
+		}
 	}
 	qs = append(qs, ins(2, 1, 29*24*time.Hour), ins(2, 2, time.Hour))
 	f.exec(qs...)
