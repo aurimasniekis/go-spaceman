@@ -10,6 +10,38 @@ import (
 	"database/sql"
 )
 
+const getTelegramMessage = `-- name: GetTelegramMessage :one
+SELECT link_id, space_id, resource_type, resource_id, resource_version FROM telegram_messages
+WHERE chat_id = ? AND message_id = ? AND kind = 'card'
+`
+
+type GetTelegramMessageParams struct {
+	ChatID    int64
+	MessageID int64
+}
+
+type GetTelegramMessageRow struct {
+	LinkID          sql.NullString
+	SpaceID         sql.NullString
+	ResourceType    string
+	ResourceID      string
+	ResourceVersion int64
+}
+
+// A card by its message, for a button that doesn't carry the resource (the link it was sent to binds the tap).
+func (q *Queries) GetTelegramMessage(ctx context.Context, arg GetTelegramMessageParams) (GetTelegramMessageRow, error) {
+	row := q.db.QueryRowContext(ctx, getTelegramMessage, arg.ChatID, arg.MessageID)
+	var i GetTelegramMessageRow
+	err := row.Scan(
+		&i.LinkID,
+		&i.SpaceID,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.ResourceVersion,
+	)
+	return i, err
+}
+
 const listTelegramMessagesByResource = `-- name: ListTelegramMessagesByResource :many
 SELECT chat_id, message_id, resource_version, created_at FROM telegram_messages
 WHERE resource_type = ? AND resource_id = ? AND kind = 'card'

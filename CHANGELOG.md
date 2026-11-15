@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram needs-you forms (ADR-0083, TG-7-1, not usable until the bot ships): `/needsyou` lists what waits for you; questions
+  (options and free text), todos (steps), messages and custom types with a simple response schema (a step-by-step wizard)
+  are answered in chat as you, with the same checks as the web. Approvals stay in the app.
 - Telegram notifications (ADR-0083, TG-6-2, not usable until the bot ships): quiet hours send silently, reminders, escalations
   and assignments to you arrive as their own messages, a daily digest is sent at each user's own local time, and the bot's
   message mappings are pruned after 30 days.

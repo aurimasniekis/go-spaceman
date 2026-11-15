@@ -65,6 +65,11 @@ type Options struct {
 	Space func(spaceID string) settings.Space
 	// Bot returns the live bot client (nil: nothing is sent).
 	Bot func() Bot
+	// Resolve maps a notifier card (chat, message) to its action and the link it was sent to (the telegram_messages
+	// mapping), for a button whose data doesn't carry the action ID. Nil: such buttons are refused.
+	Resolve func(ctx context.Context, chatID int64, messageID int) (spaceID, actionID, linkID string, ok bool)
+	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
+	AppURL func(spaceID, actionID string) string
 
 	PageSize int // inbox items per page (default 8)
 	Clock    clock.Clock
@@ -78,6 +83,8 @@ type Handler struct {
 	mu      sync.Mutex
 	current map[string]string  // link ID -> space ID chosen with /spaces or /space
 	pending map[pendingKey]rej // a reject reason being asked for
+	forms   map[pendingKey]*form
+	prompts map[pendingKey]prompt
 }
 
 var _ updates.Handler = (*Handler)(nil)
@@ -98,7 +105,8 @@ func New(o Options) *Handler {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Handler{o: o, current: map[string]string{}, pending: map[pendingKey]rej{}}
+	return &Handler{o: o, current: map[string]string{}, pending: map[pendingKey]rej{},
+		forms: map[pendingKey]*form{}, prompts: map[pendingKey]prompt{}}
 }
 
 // Handle routes a linked user's update: commands, button taps, and the reply to a reject-reason prompt. Anything else
@@ -117,10 +125,15 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 				h.cmdSpace(ctx, l, arg)
 			case "inbox":
 				h.cmdInbox(ctx, l, arg)
+			case "needsyou":
+				h.cmdNeedsYou(ctx, l, arg)
 			}
 			return
 		}
 		if m.ReplyToMessage != nil {
+			if h.promptReply(ctx, m, l) {
+				return
+			}
 			h.rejectReply(ctx, m, l)
 		}
 	}

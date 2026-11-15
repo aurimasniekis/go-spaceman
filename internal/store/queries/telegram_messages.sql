@@ -14,3 +14,8 @@ WHERE resource_type = ? AND resource_id = ? AND kind = 'card';
 -- name: PruneTelegramMessages :execrows
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
   SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < sqlc.arg(cutoff) LIMIT sqlc.arg(lim));
+
+-- name: GetTelegramMessage :one
+-- A card by its message, for a button that doesn't carry the resource (the link it was sent to binds the tap).
+SELECT link_id, space_id, resource_type, resource_id, resource_version FROM telegram_messages
+WHERE chat_id = ? AND message_id = ? AND kind = 'card';

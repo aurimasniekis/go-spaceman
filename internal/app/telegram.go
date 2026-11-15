@@ -14,6 +14,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/chat"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
@@ -123,6 +124,14 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			return c.Auth.TelegramPrincipal(ctx, linkID, auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})
 		},
 		Space: c.TelegramSettings.Space,
+		// A notifier card's button names no action: it comes from the card mapping, only for the link the card went to.
+		Resolve: func(ctx context.Context, chatID int64, messageID int) (string, string, string, bool) {
+			m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)
+			if err != nil || m.Key.Type != notify.TypeHumanAction {
+				return "", "", "", false
+			}
+			return m.SpaceID, m.Key.ID, m.LinkID, true
+		},
 		Bot: func() chat.Bot {
 			b, _ := d.Bot().(chat.Bot)
 			return b
