@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Mini App: your Telegram settings page is editable (notification categories, quiet hours, digest, muted spaces and your
+  time zone, which is per user; topics are shown read-only). Saves send `If-Match`; a stale save reloads the form with a
+  conflict notice. The queue page shows the read-only "Next" card (never `record=true`).
+- `move-task`, `ack-message` and `resolve-message` accept an optional `If-Match` with the resource version; a stale version is a
+  409 `precondition_failed` and changes nothing, and requests without it behave as before. The Telegram chat sends the card's
+  version with them, so a change between its check and the call is a conflict, not a stale action.
 - Telegram topics mode (ADR-0083, TG-11; the bot isn't usable yet): a space whose Telegram settings turn `topics` on gets a
   topic of its own in each linked private chat, and its open actions go to a "Needs you" topic. The bot creates a topic on
   first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted

@@ -3,7 +3,7 @@ import { IconArrowDown, IconArrowUp, IconGripVertical, IconPlus } from '@tabler/
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, unwrap, type Task } from '@/api/client'
-import { keys, useMe, useQueue } from '@/api/queries'
+import { keys, useMe, useNext, useQueue } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { LocalErrorBoundary } from '@/components/LocalErrorBoundary'
 import { TaskPriority, TaskRowState } from '@/features/queue/badges'
@@ -20,12 +20,13 @@ const FINISHED = ['done', 'cancelled']
 /**
  * The queue in the Mini App (plan §4.6, Q10): the tasks in the order they run, reordered by dragging a row's grip with a
  * finger (or the mouse, or the arrow buttons), and "New task" for operators. The server enforces who may move or create
- * (the same rules as the web); the buttons only hide what the role cannot do. The queue's "next" view and policy are
- * web-only operations and are not shown here.
+ * (the same rules as the web); the buttons only hide what the role cannot do. The "Next" card is the read-only queue-next
+ * view (a plain GET: `record=true` is never sent, it needs queue:write and Telegram may not record). The policy stays web-only.
  */
 export function TgQueue({ spaceId, open, onOpen }: { spaceId: string; open: string | null; onOpen: (id: string | null) => void }) {
   const qc = useQueryClient()
   const queue = useQueue(spaceId)
+  const next = useNext(spaceId)
   const canWrite = atLeast(roleIn(useMe().data, spaceId), 'operator')
   const [creating, setCreating] = useState(false)
   const [showDone, setShowDone] = useState(false)
@@ -51,6 +52,17 @@ export function TgQueue({ spaceId, open, onOpen }: { spaceId: string; open: stri
       <SectionHeader title="Queue" description="Tasks, in the order they run"
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New task</Button>} />
       <ErrorAlert error={queue.error} />
+      <Card mb="sm" p="sm" aria-label="Next task">
+        <Group gap="xs">
+          <Text size="sm" fw={600}>Next:</Text>
+          {next.data?.selected ? <Text size="sm" style={{ minWidth: 0, flex: 1 }} lineClamp={2}>{next.data.selected.title}</Text> : <Text size="sm" c="dimmed">{next.isSuccess ? 'nothing can start now' : '…'}</Text>}
+        </Group>
+        {(next.data?.skipped ?? []).length > 0 && (
+          <Text size="xs" c="dimmed" mt={4}>
+            {next.data!.skipped.length} {next.data!.skipped.length === 1 ? 'task waits' : 'tasks wait'}: {next.data!.skipped.slice(0, 3).map((k) => `${k.title} (${k.reason})`).join('; ')}
+          </Text>
+        )}
+      </Card>
       <Group justify="space-between" mb={6} gap="xs">
         <Text size="xs" c="dimmed">{canWrite ? 'Hold the grip and drag to reorder.' : ''}</Text>
         <Checkbox size="xs" label="Show done and cancelled" checked={showDone} onChange={(e) => setShowDone(e.currentTarget.checked)} />

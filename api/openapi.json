@@ -30147,6 +30147,7 @@
     },
     "/spaces/{space_id}/messages/{message_id}/ack": {
       "post": {
+        "description": "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).",
         "operationId": "ack-message",
         "parameters": [
           {
@@ -30164,6 +30165,15 @@
             "required": true,
             "schema": {
               "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
               "type": "string"
             }
           }
@@ -30312,6 +30322,7 @@
     },
     "/spaces/{space_id}/messages/{message_id}/resolve": {
       "post": {
+        "description": "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).",
         "operationId": "resolve-message",
         "parameters": [
           {
@@ -30329,6 +30340,15 @@
             "required": true,
             "schema": {
               "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
               "type": "string"
             }
           }
@@ -34086,7 +34106,7 @@
     },
     "/spaces/{space_id}/tasks/{task_id}/move": {
       "post": {
-        "description": "Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.",
+        "description": "Optional If-Match: a task that changed since that version is refused as a conflict (409 precondition_failed). Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.",
         "operationId": "move-task",
         "parameters": [
           {
@@ -34104,6 +34124,15 @@
             "required": true,
             "schema": {
               "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
               "type": "string"
             }
           }

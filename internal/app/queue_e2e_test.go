@@ -56,6 +56,20 @@ func TestQueueOverHTTP(t *testing.T) {
 	if q.Tasks[0].ID != task.ID || !q.Tasks[1].Manual {
 		t.Fatalf("after move %+v", q.Tasks)
 	}
+	// If-Match on move is optional: the move above sent none and went through (version 1 → 2). A stale version is a
+	// 409 precondition_failed and moves nothing; the current one is honoured; a malformed one is refused.
+	expect(t, root.do("POST", base+"/tasks/"+b.ID+"/move", map[string]any{"to": "top"}, "If-Match", `"1"`), 409)
+	root.do("GET", base+"/tasks", nil).json(t, &q)
+	if q.Tasks[0].ID != task.ID {
+		t.Fatalf("a refused move changed the queue: %+v", q.Tasks)
+	}
+	expect(t, root.do("POST", base+"/tasks/"+b.ID+"/move", map[string]any{"to": "top"}, "If-Match", "abc"), 422)
+	expect(t, root.do("POST", base+"/tasks/"+b.ID+"/move", map[string]any{"to": "top"}, "If-Match", `"2"`), 200)
+	root.do("GET", base+"/tasks", nil).json(t, &q)
+	if q.Tasks[0].ID != b.ID {
+		t.Fatalf("a matching move did not place the task: %+v", q.Tasks)
+	}
+	expect(t, root.do("POST", base+"/tasks/"+b.ID+"/move", map[string]any{"to": "bottom"}), 200)
 	expect(t, root.do("POST", base+"/tasks/"+task.ID+"/blockers", map[string]any{"kind": "external", "note": "waiting for the API gateway upgrade"}), 200)
 	var sel queue.Selection
 	root.do("GET", base+"/queue/next?record=true", nil).json(t, &sel)
@@ -63,7 +77,7 @@ func TestQueueOverHTTP(t *testing.T) {
 		t.Fatalf("next %+v", sel)
 	}
 	expect(t, root.do("POST", base+"/tasks/"+b.ID+"/status", map[string]any{"status": "running"}), 428)
-	expect(t, root.do("POST", base+"/tasks/"+b.ID+"/status", map[string]any{"status": "running"}, "If-Match", `"2"`), 200)
+	expect(t, root.do("POST", base+"/tasks/"+b.ID+"/status", map[string]any{"status": "running"}, "If-Match", `"4"`), 200)
 
 	expect(t, root.do("POST", "/users", map[string]any{"email": "vic@example.com", "display_name": "Vic", "password": "correct horse battery staple",
 		"grants": []map[string]string{{"role": "viewer", "domain": sp.ID}}}), 201)

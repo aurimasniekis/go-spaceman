@@ -87,7 +87,7 @@ func TestHeldResponseForWorkerInstanceDoesNotStartControl(t *testing.T) {
 		msgs, _ := w.c.Messages.List(w.ctx, w.spaceID, 50)
 		for _, m := range msgs {
 			if m.ToKind == "control" && m.State != "resolved" {
-				_, err := w.c.Messages.Resolve(w.ctx, admin, w.spaceID, m.ID, "seen")
+				_, err := w.c.Messages.Resolve(w.ctx, admin, w.spaceID, m.ID, "seen", 0)
 				return err == nil
 			}
 		}

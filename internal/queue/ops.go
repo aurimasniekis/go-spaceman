@@ -47,9 +47,10 @@ type MoveInput struct {
 }
 
 // Move places a task by an operator. The placement is authoritative: it marks the task manual, so policy and duplicate
-// triggers never move it again, and reordering never stops work (SM-QUEUE-001/002/009).
-func (svc *Service) Move(ctx context.Context, actor audit.Actor, spaceID, id string, in MoveInput) (*Task, error) {
-	return svc.mutate(ctx, "queue.move", spaceID, id, 0, func(tx *store.Tx, sn *snapshot, t *Task) error {
+// triggers never move it again, and reordering never stops work (SM-QUEUE-001/002/009). A version above zero is the
+// card's expected version: a task that changed since is a precondition failure; zero places it regardless.
+func (svc *Service) Move(ctx context.Context, actor audit.Actor, spaceID, id string, version int64, in MoveInput) (*Task, error) {
+	return svc.mutate(ctx, "queue.move", spaceID, id, version, func(tx *store.Tx, sn *snapshot, t *Task) error {
 		var others []db.Task
 		for _, s := range sn.siblings(t.ParentID) {
 			if s.ID != t.ID {
