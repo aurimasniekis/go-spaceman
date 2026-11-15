@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -33,12 +34,16 @@ type Prefs struct {
 	Version   int64                         `json:"version" doc:"The link's version; send it as If-Match to save"`
 }
 
-// TopicsPrefs is the read-only state of topics mode (ADR-0083 decision 16). The switch is per space (a space's
-// Telegram settings, space_config:write); a link only sees which of its spaces use it and whether its chat refused.
+// TopicsPrefs is the state of the link's chat layout (ADR-0089): whether each space gets a topic in this private chat.
+// The layout is chosen per link (the override, saved through the threads field of the preferences) or follows the
+// administrator's default; the rest is read-only state the Mini App explains it with.
 type TopicsPrefs struct {
-	Available bool     `json:"available" doc:"Whether topics mode is supported (the bot is running); it is turned on per space, not per link"`
-	Spaces    []string `json:"spaces" doc:"IDs of the spaces you can read that have topics on, sorted; each gets a topic in your private chat"`
-	Refused   bool     `json:"refused" doc:"True while the bot is not asking your private chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat"`
+	Available bool     `json:"available" doc:"Whether topics can be used now: the bot is running and has topics enabled (BotFather)"`
+	Mode      string   `json:"mode" enum:"auto,on,off" doc:"The chat layout that applies to this link: your override, else the administrator's default (auto is on while the bot has topics enabled)"`
+	Override  *string  `json:"override,omitempty" enum:"auto,on,off" doc:"Your own choice (the threads field of the preferences); left out when you follow the default"`
+	Active    bool     `json:"active" doc:"True while messages to this chat go to topics: the layout is on and the chat has not refused topics lately"`
+	Spaces    []string `json:"spaces" doc:"IDs of the spaces you can read that already have a topic in this chat, sorted"`
+	Refused   bool     `json:"refused" doc:"True while the bot is not asking this chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat"`
 }
 
 // PrefsInput replaces a link's overrides. A field left out (or null) follows the defaults again.
@@ -77,23 +82,42 @@ func (s *Service) prefsOut(l db.TelegramLink, p *auth.Principal, zone string) *P
 	return &Prefs{LinkID: l.ID, Overrides: o, Defaults: d, Effective: o.Effective(d), Timezone: zone, Topics: s.topicsOut(l, p), Version: l.Version}
 }
 
-// topicsOut reports topics mode for the link: only spaces the link may read are named, so it learns nothing about others.
+// topicsOut reports the link's chat layout. Only spaces the link may read are named, so it learns nothing about others.
 func (s *Service) topicsOut(l db.TelegramLink, p *auth.Principal) TopicsPrefs {
-	out := TopicsPrefs{Spaces: []string{}}
-	if s.o.TopicSpaces == nil {
-		return out
+	o := settings.ParseLinkPrefs(l.PrefsJson)
+	mode := o.Effective(s.o.Settings().NotificationDefaults).Threads
+	if mode == "" {
+		mode = settings.ThreadsAuto
 	}
-	if s.o.TopicsAvailable != nil && !s.o.TopicsAvailable() {
-		return out
+	out := TopicsPrefs{Spaces: []string{}, Mode: mode, Override: o.Threads}
+	out.Available = s.o.TopicsAvailable == nil || s.o.TopicsAvailable()
+	if s.o.TopicsEnabled != nil {
+		out.Active = s.o.TopicsEnabled(mode, l.ChatID)
 	}
-	out.Available = true
+	out.Refused = mode != settings.ThreadsOff && s.o.TopicsRefused != nil && s.o.TopicsRefused(l.ChatID)
 	subj := p.Subjects()
-	for _, id := range s.o.TopicSpaces() {
+	for _, id := range threadSpaces(l.TopicsJson) {
 		if s.o.CanRead != nil && s.o.CanRead(subj, id) {
 			out.Spaces = append(out.Spaces, id)
 		}
 	}
-	out.Refused = len(out.Spaces) > 0 && s.o.TopicsRefused != nil && s.o.TopicsRefused(l.ChatID)
+	return out
+}
+
+// threadSpaces lists the space IDs that have a thread in a link's topics_json (a JSON object of key to thread ID),
+// sorted. The bot's own keys (the retired needs topic, home) are not spaces.
+func threadSpaces(raw string) []string {
+	var m map[string]int
+	if json.Unmarshal([]byte(raw), &m) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		if authz.ValidDomain(k) && k != authz.Global {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 

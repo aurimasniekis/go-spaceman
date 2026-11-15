@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
+	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 )
 
@@ -98,7 +100,7 @@ func TestMiniAppLinkPrefsReadAndSave(t *testing.T) {
 	expect(t, r, 200)
 	var p tglink.Prefs
 	r.json(t, &p)
-	if p.LinkID != e.linkID || p.Version != 1 || r.header.Get("ETag") != `"1"` || !p.Effective.NewActions || p.Timezone != "" || !p.Topics.Available || len(p.Topics.Spaces) != 0 || p.Topics.Refused {
+	if p.LinkID != e.linkID || p.Version != 1 || r.header.Get("ETag") != `"1"` || !p.Effective.NewActions || p.Timezone != "" || p.Topics.Available || p.Topics.Mode != "auto" || p.Topics.Override != nil || p.Topics.Active || len(p.Topics.Spaces) != 0 || p.Topics.Refused {
 		t.Fatalf("read %+v (ETag %s)", p, r.header.Get("ETag"))
 	}
 	r = e.put(t, prefsPath, `"1"`, map[string]any{"new_actions": false, "quiet_hours_start": "22:00", "muted_spaces": []string{e.space, e.space},
@@ -136,6 +138,47 @@ func TestMiniAppLinkPrefsReadAndSave(t *testing.T) {
 	if _, _, _, v := e.row(t, e.linkID); v != 2 {
 		t.Fatalf("a refused write changed the link: v%d", v)
 	}
+}
+
+// The chat layout is saved through the threads field with If-Match, reads back as mode and override, and reaches the
+// notifier at once (the save publishes telegram.link, which the notifier's link list reloads on).
+func TestMiniAppLinkPrefsChatLayout(t *testing.T) {
+	t.Parallel()
+	e := newPrefsEnv(t)
+	// Saving publishes telegram.link at once, which is what the notifier's link list reloads on.
+	sub := e.h.c.Bus.Subscribe(8, eventbus.TopicTelegramLink)
+	defer sub.Close()
+	published := func(what string) {
+		t.Helper()
+		select {
+		case ev := <-sub.C:
+			if ev.Key != e.linkID {
+				t.Fatalf("%s: event for %s", what, ev.Key)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: no telegram.link event", what)
+		}
+	}
+	var p tglink.Prefs
+	r := e.put(t, prefsPath, `"1"`, map[string]any{"threads": "on"})
+	expect(t, r, 200)
+	r.json(t, &p)
+	if p.Version != 2 || p.Topics.Mode != "on" || p.Topics.Override == nil || *p.Topics.Override != "on" || p.Topics.Available || !p.Topics.Active {
+		t.Fatalf("on: %+v", p.Topics)
+	}
+	published("on")
+	r = e.put(t, prefsPath, `"2"`, map[string]any{"threads": "off"})
+	expect(t, r, 200)
+	r.json(t, &p)
+	if p.Topics.Mode != "off" || p.Topics.Active {
+		t.Fatalf("off: %+v", p.Topics)
+	}
+	published("off")
+	expect(t, e.put(t, prefsPath, `"3"`, map[string]any{"threads": "sideways"}), 422)
+	if prefs, _, _, v := e.row(t, e.linkID); prefs != `{"threads":"off"}` || v != 3 {
+		t.Fatalf("stored %s v%d", prefs, v)
+	}
+	e.untouched(t, "after the chat layout")
 }
 
 // The link is the session's: no request names another link. A link ID in the body is refused, one in the query is

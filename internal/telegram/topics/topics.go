@@ -113,13 +113,12 @@ func New(o Options) *Manager {
 		links: map[string]*linkState{}, refused: map[int64]time.Time{}}
 }
 
-// on reports whether a link's chat layout is a topic per space: its effective mode is on, or auto while the bot has
-// topics enabled.
-func (m *Manager) on(linkID string) bool {
-	if m == nil || m.o.Mode == nil {
+// modeOn reports whether a chat layout is a topic per space: on, or auto while the bot has topics enabled.
+func (m *Manager) modeOn(mode string) bool {
+	if m == nil {
 		return false
 	}
-	switch m.o.Mode(linkID) {
+	switch mode {
 	case settings.ThreadsOn:
 		return true
 	case settings.ThreadsAuto, "":
@@ -128,10 +127,24 @@ func (m *Manager) on(linkID string) bool {
 	return false
 }
 
+// on reports whether a link's effective chat layout (Options.Mode) is a topic per space.
+func (m *Manager) on(linkID string) bool {
+	if m == nil || m.o.Mode == nil {
+		return false
+	}
+	return m.modeOn(m.o.Mode(linkID))
+}
+
 // Enabled reports whether messages to the link's private chat go to topics now: the link's layout is on (see on) and
 // the chat hasn't refused a topic recently. A group chat is never in thread mode here (groups route on their own).
 func (m *Manager) Enabled(linkID string, chatID int64) bool {
 	return chatID > 0 && m.on(linkID) && !m.isRefused(chatID)
+}
+
+// EnabledFor is Enabled for a layout the caller already knows (a link's preferences just saved, which the notifier's
+// own view only learns of once the change commits): mode is settings.ThreadsAuto, ThreadsOn or ThreadsOff.
+func (m *Manager) EnabledFor(mode string, chatID int64) bool {
+	return chatID > 0 && m.modeOn(mode) && !m.isRefused(chatID)
 }
 
 // Route returns the topic key of a message about a space to a link: the space's ID for every kind of message, Home for

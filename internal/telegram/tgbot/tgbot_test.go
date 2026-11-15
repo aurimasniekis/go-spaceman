@@ -418,6 +418,45 @@ func TestStatusExposesGetMeTopicFlags(t *testing.T) {
 	}
 }
 
+// The topic flags are not kept past what getMe last said: disabling the bot, a getMe that fails on the next start and a
+// token for another bot each leave HasTopics and the health flags at what is true now, never at an older bot's value.
+func TestTopicFlagsResetAndRefresh(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.tg.SetBotTopics(true, true)
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !e.svc.HasTopics() || !b.Health.HasTopicsEnabled || !b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("on: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
+	// Disabled: the bot is off, so nothing is claimed about topics.
+	b = e.put(b.Version, Input{Enabled: false})
+	if e.svc.HasTopics() || b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("disabled: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
+	// Enabled again, but getMe fails: the old flags must not come back.
+	e.tg.FailNext("getMe", 500, "Internal Server Error", 0)
+	b = e.put(b.Version, Input{Enabled: true})
+	if e.svc.HasTopics() || b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("failed getMe: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
+	// A token for another bot, which has topics off: its flags replace the old ones.
+	other := tgtest.New(t, tgtest.Options{Limits: tgtest.Limits{Disabled: true}})
+	other.SetBotTopics(false, false)
+	e.svc.o.BaseURL = other.URL()
+	b = e.put(b.Version, Input{BotToken: other.Token(), Enabled: true})
+	if e.svc.HasTopics() || b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("another bot: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+	other.SetBotTopics(true, false)
+	b = e.put(b.Version, Input{BotToken: other.Token(), Enabled: true})
+	if !e.svc.HasTopics() || !b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("flags refreshed: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+}
+
 // Plan §4.1 startup in webhook mode: getMe, commands, the menu button (the Mini App when a host is set), then
 // setWebhook on central's public URL with the generated secret, the allowed updates and max_connections 10. The
 // webhook route accepts Telegram's deliveries; health comes from getWebhookInfo and reports a delivery error newer

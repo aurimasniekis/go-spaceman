@@ -107,12 +107,12 @@ type Options struct {
 	// Bus receives telegram.link events when a link is created, revoked or re-confirmed, so the dispatcher's cache
 	// (Cache) re-reads it. Nil publishes nothing.
 	Bus *eventbus.Bus
-	// TopicSpaces returns the spaces with topics mode on (visible to Telegram), TopicsRefused whether a private chat
-	// refused topics lately and CanRead whether the subjects may read a space. They feed the read-only topics state of
-	// the link preferences; a nil TopicSpaces reports topics as not available.
-	TopicSpaces func() []string
-	// TopicsAvailable reports whether the bot is running; nil means it is.
+	// TopicsAvailable reports whether topics can be used now: the bot is running and has topics enabled (nil: yes).
+	// TopicsEnabled reports whether messages to a private chat go to topics now under a layout (the topics Manager's EnabledFor),
+	// TopicsRefused whether a chat refused topics lately and CanRead whether the subjects may read a space. They feed
+	// the chat layout state of the link preferences.
 	TopicsAvailable func() bool
+	TopicsEnabled   func(mode string, chatID int64) bool
 	TopicsRefused   func(chatID int64) bool
 	CanRead         func(subjects []string, spaceID string) bool
 	Clock           clock.Clock

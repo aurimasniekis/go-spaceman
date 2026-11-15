@@ -8834,11 +8834,23 @@ export interface components {
             username: string;
         };
         LinkTopicsPrefs: {
-            /** @description Whether topics mode is supported (the bot is running); it is turned on per space, not per link */
+            /** @description True while messages to this chat go to topics: the layout is on and the chat has not refused topics lately */
+            active: boolean;
+            /** @description Whether topics can be used now: the bot is running and has topics enabled (BotFather) */
             available: boolean;
-            /** @description True while the bot is not asking your private chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat */
+            /**
+             * @description The chat layout that applies to this link: your override, else the administrator's default (auto is on while the bot has topics enabled)
+             * @enum {string}
+             */
+            mode: "auto" | "on" | "off";
+            /**
+             * @description Your own choice (the threads field of the preferences); left out when you follow the default
+             * @enum {string}
+             */
+            override?: "auto" | "on" | "off";
+            /** @description True while the bot is not asking this chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat */
             refused: boolean;
-            /** @description IDs of the spaces you can read that have topics on, sorted; each gets a topic in your private chat */
+            /** @description IDs of the spaces you can read that already have a topic in this chat, sorted */
             spaces: string[];
         };
         "List-account-kindsResponse": {
