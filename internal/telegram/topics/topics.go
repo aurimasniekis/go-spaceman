@@ -166,6 +166,11 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 	return t.MessageThreadID, nil
 }
 
+// Refused reports whether a chat refused a topic lately, so it is not asked again yet. A nil Manager refuses nothing.
+func (m *Manager) Refused(chatID int64) bool {
+	return m != nil && m.isRefused(chatID)
+}
+
 func (m *Manager) isRefused(chatID int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

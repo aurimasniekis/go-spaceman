@@ -213,10 +213,15 @@ func TestGatewayQuotaRecoveredEventResumes(t *testing.T) {
 			if err := h.e.c.Events.Process(ctx, sub.ID, ev, 1, events.Origin{}); err != nil {
 				t.Fatal(err)
 			}
-			// The kick made the hold due now (or the deadline loop already read the board and cleared it).
-			if next, err := h.e.c.HarborPilotWaits.Next(ctx); err != nil || next.After(clk.Now()) {
-				t.Fatalf("the event didn't bring the re-check forward: next in %v (%v)", next.Sub(clk.Now()), err)
-			}
+			// The kick made the hold due now, or the deadline loop already read the board and cleared it. Between
+			// those, the loop has used up the kick but not yet written the cleared hold: the hold then still shows its
+			// old check_at for a moment, so wait for the write instead of reading once.
+			var next time.Time
+			var nerr error
+			eventually(t, "the event brings the re-check forward", func() bool {
+				next, nerr = h.e.c.HarborPilotWaits.Next(ctx)
+				return nerr == nil && !next.After(clk.Now())
+			})
 		},
 		until: &until,
 	})

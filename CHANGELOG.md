@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Developer tooling: `make e2e-up`, `make e2e-spec SPEC=… GREP=…` and `make e2e-down` run one e2e spec against a stack that stays up; `make e2e` and `make screenshots` stop their stack on failure and Ctrl-C; the dev stack picks free ports when the defaults are taken and drops `SPACEMAN_*` variables; `ui-overflow.spec.ts` checks its three widths in parallel (12.3 to 5.1 minutes).
 
+### Fixed
+
+- Attaching a file or image in the Telegram Mini App (new inbox item, human-action responses, messages, tasks) no longer fails with "authentication required". The upload sent a cookie and CSRF token, which the Mini App never has; it now sends the Mini App's `Authorization: Telegram` session like every other call.
+- The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
+- The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
+
+### Security
+
+- The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
+  that carried WebSocket upgrade headers used to be exempt from it.
+
 ## [0.1.5] - 2026-11-15
 
 Release on top of v0.1.4. It adds the Telegram integration (ADR-0083): a bot you chat with, a Mini App that opens inside
