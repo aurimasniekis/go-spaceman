@@ -55,8 +55,8 @@ type Status struct {
 	Mode       string `json:"mode,omitempty" enum:"webhook,polling,"`
 	BotID      int64  `json:"bot_id,omitempty"`
 	Username   string `json:"username,omitempty" doc:"The bot's username, without @"`
-	// From getMe. Topics in private chats need both: topic mode on (BotFather) and user topics allowed (BotFather's
-	// Mini App setting). Nothing here is a per-user opt-in; the per-link thread mode is in the link's preferences.
+	// From getMe. The two flags are reported separately (API#user); neither is a per-user opt-in. The per-link thread
+	// mode is in the link's preferences.
 	HasTopicsEnabled          bool   `json:"has_topics_enabled" doc:"getMe: topic mode is on for the bot in private chats (set in BotFather)"`
 	AllowsUsersToCreateTopics bool   `json:"allows_users_to_create_topics" doc:"getMe: users may create and delete the bot's topics in private chats (BotFather)"`
 	WebhookStatus             string `json:"webhook_status" enum:"off,starting,polling,ok,error,unknown" doc:"off: no bot or disabled; starting: being configured; polling: getUpdates runs; ok: the webhook is registered and Telegram reports no delivery error since; error: see error; unknown: Telegram couldn't be asked"`

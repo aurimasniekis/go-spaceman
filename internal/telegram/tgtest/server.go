@@ -227,7 +227,11 @@ func (s *Server) URL() string { return s.srv.URL }
 func (s *Server) Token() string { return s.token }
 
 // Bot is the bot getMe returns.
-func (s *Server) Bot() botapi.User { return s.opts.Bot }
+func (s *Server) Bot() botapi.User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.opts.Bot
+}
 
 // Close stops the server early (it also stops at test cleanup).
 func (s *Server) Close() { s.srv.Close() }
