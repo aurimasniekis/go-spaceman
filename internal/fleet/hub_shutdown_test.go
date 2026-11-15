@@ -262,3 +262,25 @@ func TestHubShutdownRelocationAdvanceBoundedByGrace(t *testing.T) {
 		t.Fatalf("Shutdown took %v with a stuck relocation advance", d)
 	}
 }
+
+// A relocation kick after Shutdown began is refused: no advance runs, so nothing takes the relocation's lock. relocKick
+// adds an advance to the WaitGroup before it returns, so waiting on the WaitGroup here waits for any advance it started.
+func TestHubShutdownRefusesRelocationKickAfterShutdown(t *testing.T) {
+	e := newStaleEnv(t)
+	e.svc.hub.Shutdown("test", time.Minute)
+
+	e.svc.relocKick(e.ctx, "rel_1")
+	done := make(chan struct{})
+	go func() { e.svc.reloc.work.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a relocation advance kicked after Shutdown never finished")
+	}
+	e.svc.reloc.mu.Lock()
+	_, ran := e.svc.reloc.locks["rel_1"]
+	e.svc.reloc.mu.Unlock()
+	if ran {
+		t.Fatal("relocKick started an advance after Shutdown")
+	}
+}
