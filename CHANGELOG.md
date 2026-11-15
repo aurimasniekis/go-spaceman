@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `telegram.webhook_base_url` (environment `SPACEMAN_TELEGRAM_WEBHOOK_BASE_URL`): the public https base URL the Telegram
+  webhook is registered under, for a deployment whose `public_url` is not reachable from the internet. Empty keeps the
+  webhook under `public_url`. The webhook path and secret-token check are unchanged.
+  A path prefix is for the reverse proxy, which must strip it before forwarding (central serves only
+  `/telegram/webhook/<id>`). The host must differ from `telegram.miniapp_host`; the Mini App origin still derives from
+  `public_url`.
+
 ### Security
 
 - The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
