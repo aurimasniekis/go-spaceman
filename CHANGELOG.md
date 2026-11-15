@@ -96,6 +96,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - A run could show `starting` with no terminal while its program was running. A repeated launch made the node report an
   older copy of the run, which could reach central after the `running` report and replace it. Central now ignores a run
   report that is behind the state it already has (ADR-0086).
+- A terminal you are only watching (live, replay or someone else's takeover) no longer focuses its input: touching it on
+  a phone does not open the on-screen keyboard, and key presses are not captured or swallowed. Scrolling, selecting
+  and copying still work. Taking a terminal over puts it in input mode, and ending the takeover takes it out again.
 - Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
   be writing the run's files and its journal after the agent had stopped, while the next agent process started.
 - Central's shutdown now waits for node connections and the work they started (memory syncs into the role-memory
