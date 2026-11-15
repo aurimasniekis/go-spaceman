@@ -1,14 +1,15 @@
 # Plan: switch a run's subscription account at its usage limit, and log usage per run, account, role and space
 
-- **Status:** Draft for the operator, 2026-11-15. Planning only: no code changes.
+- **Status:** Planning only: no code changes. The operator answered Q1–Q12 on 2026-11-15 (§5); T0 applies them. Q4 and
+  Q5 changed from the recommended defaults.
 - **Epic:** when a run's Claude Code (and later Codex) subscription account reaches its usage limit, move the run to
   another account of its pool and continue the **same session**. Log usage (tokens, cost estimate, subscription
   windows) per run, account, role and space.
 - **Constraint from the operator:** no proxy or gateway for model traffic (not Harbor Pilot, not `claude -p` behind a
   proxy). Runs stay the real interactive Claude Code with real subscription credentials; SpaceMan swaps the
   credentials. (Reading recorded as Q1.)
-- **Draft ADR:** [2026-11-15-account-switching-adr.md](2026-11-15-account-switching-adr.md) (provisional number
-  ADR-0090; T0 fixes the number when it lands in `docs/DECISIONS.md`).
+- **ADR:** **ADR-0089** in `docs/DECISIONS.md` (landed by T0 on 2026-11-15; the [draft file](2026-11-15-account-switching-adr.md)
+  now only points there).
 - **Builds on:** ADR-0079 (usage limits: detection, holds, keep-alive, park, resume), ADR-0009 (launcher shim),
   ADR-0021 (first-run seed), ADR-0053 (Codex ChatGPT logins), ADR-0068 (the PermissionRequest hook).
 
@@ -160,10 +161,16 @@ stored-login format for a `setup-token` token (no refresh token), and Claude Cod
   only when the named account is held. A switch is "failover for a live run".
 - **Settings** (space limits, so they get installation defaults, per-space overrides, audit and Terraform names):
   - `usage_limit_failover` (existing switch): now also enables live switching (Q2).
+  - `usage_limit_wait_if_reset_within` (duration, default 15 min; Q4): when the limited account's reset is within this
+    window, the run **waits** as ADR-0079 does (keep alive, then park) instead of switching. A reset further away
+    switches. An unknown reset counts as further away.
   - `usage_limit_switch_max_per_day` (0–50, default 6): switches per instance per 24 h before the run falls back to
     ADR-0079 waiting; stops a switch storm (a forged record, a bad account).
-  - `usage_limit_switch_at_percent` (50–100, default 100 = off): pre-emptive switch at an idle point when the run's
-    account is at or above this utilisation of a window (Q5). Implements ADR-0079's deferred T13 for direct runs.
+  - `usage_limit_min_headroom_percent` (0–100, default 0 = off; Q5): a **launch-time headroom gate**. A new run (a
+    launch, a fresh resume, or a switch's resume) starts on an account only if every window with known usage keeps at
+    least this percentage free (`100 − used_pct`). An account with no known usage is not refused by this gate. When no
+    eligible account passes, the start waits (the launch is refused with the reset time, as SM-RUN-005 does for an
+    exhausted account). **There is no pre-emptive switch:** a running agent is never moved because of headroom.
 
 ### 3.3 Detection (Claude Code)
 
@@ -195,10 +202,11 @@ Primary stays ADR-0079's typed transcript scan; two accelerators and one new dat
 
 Central decides; the node only stops and launches, as for any park and resume.
 
-1. **Trigger.** A run report opens (or re-classifies) the run's limit (§3.3), or the pre-emptive threshold is crossed
-   while the run is idle. The report transaction checks: failover on, the run kind parks (control, worker,
-   diagnostic), the run had a turn (a session to resume), the instance's switch budget isn't spent, and
-   `Resolve` finds an eligible account **other than** the run's. Otherwise: ADR-0079 as today.
+1. **Trigger.** A run report opens (or re-classifies) the run's limit (§3.3). The report transaction checks: failover on,
+   the run kind parks (control, worker, diagnostic), the run had a turn (a session to resume), the limited account's
+   reset is more than `usage_limit_wait_if_reset_within` away (Q4; an unknown reset counts as more), the instance's
+   switch budget isn't spent, and `Resolve` finds an eligible account **other than** the run's. Otherwise, the run
+   **waits**: ADR-0079 as today (keep alive, then park until the reset).
 2. **Wait for an idle point.** The switch is armed (`account_switches` row, state `pending`) but the process is
    stopped only when the run is idle (OSC `idle`/`done`/`error` after the limit). A wrap-up limit lets the turn finish
    on its grace allowance; an error-path limit has already ended the turn. Armed for at most 10 min; a run still busy
@@ -208,8 +216,8 @@ Central decides; the node only stops and launches, as for any park and resume.
    switch row (`state = parked`). The hold on the old account opens as usual (it is what keeps the chain off it).
 4. **Resume.** The `limit_waits` job picks it up at once (a parked switch is due immediately; it goes before
    reset-time resumes, control first). `waitLaunch` uses `switch_to_account_id` instead of `launch_json.AccountRef`;
-   the launch transaction re-runs `Resolve` (the account may have been held meanwhile: pick the next or fall back to
-   waiting) and the usual checks. The new run gets `--resume <session>` and a fixed prompt: "SpaceMan moved this
+   the launch transaction re-runs `Resolve` (the account may have been held meanwhile, or may fail the headroom gate of
+   §3.2: pick the next, or fall back to waiting) and the usual checks. The new run gets `--resume <session>` and a fixed prompt: "SpaceMan moved this
    session to another subscription account because the previous one reached its usage limit. Continue the task; do
    not repeat completed work." The switch row moves to `resumed` with `new_run_id`.
 5. **Verify.** The first assistant message with usage on the new run marks the switch `succeeded`. A resume that ends
@@ -225,13 +233,14 @@ swapped to the new account's live `auth.json`.
 ### 3.5 What central tracks and shows
 
 - **`account_switches`** (new table, `asw_` IDs): `id, space_id, instance_id, role, run_kind, from_run_id,
-  new_run_id, from_account_id, to_account_id, harness, cause` (`usage_limit` | `preemptive` | `operator`),
+  new_run_id, from_account_id, to_account_id, harness, cause` (`usage_limit` | `operator`),
   `limit_kind, limit_resets_at, usage_limit_id, limit_wait_id, state` (`pending` | `parked` | `resumed` |
   `succeeded` | `failed` | `fell_back` | `cancelled`), `fell_back_reason` (fixed reasons), `created_at,
   updated_at, version`. Indexed by space and time, by account, by instance (for the daily budget).
+- `cause` is `usage_limit` (the only automatic cause) or `operator` (forced by a person).
 - **Audit:** `account.switch_started`, `account.switch_succeeded`, `account.switch_failed`, actor `system`
-  (switch job), targets the run, details carry account IDs and the kind only. Operator-forced switches (§3.8) are
-  audited with the user.
+  (switch job), targets the run, details carry account IDs and the kind only. Operator-forced switches are audited
+  with the user.
 - **Outbox events:** `fleet.account_switch.started`, `fleet.account_switch.completed` (payload: IDs, kind, state).
 - **Change feed:** resource `account_switch`.
 - **Run timeline:** the run detail shows "Moved to account *B* (5-hour limit on *A*, resets 18:00 UTC) → run *r2*";
@@ -360,7 +369,7 @@ into the integration branch `feat/account-switching`, a reviewer before done.
 | T6 | Usage ledger: buckets, windows, retention | medium | T5 |
 | T7 | Usage API + CLI | light | T6 |
 | T8 | Web: switches, pools, windows, usage page | medium | T3, T7 |
-| T9 | Pre-emptive switch at a threshold | medium | T3, T5 |
+| T9 | Launch-time headroom gate (no pre-emptive switch) | medium | T2, T6 |
 | T10 | Pool-exhausted handling and notices | medium | T3 |
 | T11 | Terraform attributes and docs | light | T2, T3, T9 |
 | T12 | Integration e2e and the real checklist | medium | T3, T5, T8, T10 |
@@ -390,11 +399,14 @@ priority and role pools (`If-Match`), audit `space.accounts_bound` details. **Ac
 (holds, disabled, role pool vs space pool, ties); API round-trip; default behaviour unchanged with failover off.
 
 ### T3 — Switch core (**hard**)
-`account_switches` table and IDs; arm in the report transaction; idle-point stop (10 min cap); park with
-`resume_at = now` and `switch_to_account_id`; `waitLaunch` uses it and re-resolves; state machine to
-`succeeded`/`failed`/`fell_back`; daily switch budget; control message `account-switch:<id>` replacing park/resume
-messages; audit, outbox, change feed; metrics. **Accept:** fleet tests for each state and fallback (no eligible
-account, budget spent, account deleted, resume failed, node offline, new account limited at once, control run);
+`account_switches` table and IDs; arm in the report transaction, only when the limited account's reset is more than
+`usage_limit_wait_if_reset_within` away (Q4); idle-point stop (10 min cap); park with
+`resume_at = now` and `switch_to_account_id`; `waitLaunch` uses it and re-resolves (headroom gate included); state
+machine to `succeeded`/`failed`/`fell_back`; daily switch budget; control message `account-switch:<id>` replacing
+park/resume messages; audit, outbox, change feed; metrics. **Accept:** fleet tests for each state and fallback (no
+eligible account, budget spent, account deleted, resume failed, node offline, new account limited at once, control
+run); tests for the near-reset wait (reset inside the window waits as ADR-0079; outside it switches; unknown reset
+switches);
 an app e2e with the fake harness driving a limit record → a new run on account B with `--resume` of the same
 session; race run of `internal/fleet`; ADR-0079 tests unchanged.
 
@@ -424,9 +436,13 @@ account permission), API docs regenerated.
 Switches list and run timeline links; pool order and role pools in space settings; account windows panel; space
 Usage page (dataviz conventions). **Accept:** vitest + Playwright, axe clean, screenshots updated.
 
-### T9 — Pre-emptive switch (medium)
-`usage_limit_switch_at_percent`: on a window at or above it, arm a switch at the next idle point if an eligible account
-is under the threshold. **Accept:** fleet tests (threshold, no eligible account, idle gating); off by default.
+### T9 — Launch-time headroom gate (medium; replaces the pre-emptive switch, Q5)
+`usage_limit_min_headroom_percent` (default 0 = off). `accounts.Resolve` (T2) skips an account for a launch, a fresh
+resume or a switch's resume when a window with known usage (from `account_windows`, T6) leaves less than the
+configured percentage free, and picks the next eligible account, or waits when none passes. **No pre-emptive switch:**
+running agents are never moved for headroom. **Accept:** table-driven tests (boundary at the threshold; unknown usage
+not skipped; every account below the threshold → wait with the reset time; a switch's resume is gated; 0 changes
+nothing); off by default.
 
 ### T10 — Pool exhausted (medium)
 Wait resume time = earliest pool reset; resume re-resolves; control message and one human action per space and window
@@ -448,22 +464,25 @@ C2/C3/C4 like T3/T6 for Codex.
 ### H1 — Harbor Pilot backlog (light)
 Per Q10: cancel the gateway-token item with a note pointing to this plan; keep or cancel the routing item.
 
-## 5. Open questions for the operator (each with a recommended default)
+## 5. Questions for the operator: answered 2026-11-15
 
-| # | Question | Recommended default |
-|---|---|---|
-| Q1 | We read "no hall pass / no `claude -p`" as: no proxy or gateway for model traffic; runs stay interactive Claude Code with real subscription tokens, and SpaceMan swaps the token by restarting the process and resuming the session. Correct? | Yes. |
-| Q2 | Should the existing `usage_limit_failover` switch also turn on live switching, or a separate switch? | One switch (`usage_limit_failover`) for launches, resumes and live runs; still **off by default** per space. |
-| Q3 | Pools: per space with an optional per-role pool, ordered by priority. Enough, or do you want per-harness-profile pools too? | Space pool + optional role pool; no profile pools. |
-| Q4 | Switch the session immediately at the limit, even when the reset is close (e.g. 20 min away)? | Switch whenever an eligible account exists; the session continues at once. (Alternative: keep ADR-0079's keep-alive when the reset is under N minutes.) |
-| Q5 | Pre-emptive switch before the limit (at an idle point, at ≥ X % of a window)? | Off by default (`100`); recommend 95 for spaces with a pool. |
-| Q6 | An account that fails authentication after a switch: stop, or try the next account? | Stop and tell control; flag the account. No automatic second switch on auth errors. |
-| Q7 | Notifications per switch: control only, or also Telegram/people? | Control only; people (and so Telegram) only when the whole pool is exhausted. |
-| Q8 | Codex: build after the Claude Code switch ships, and only after the C1 spike? If a Codex session can't be resumed under another account, accept a fresh session with a note, or keep Codex switching off? | Staged after Claude Code; if resume is refused, keep Codex switching off. |
-| Q9 | Usage retention: hourly buckets 90 days, daily 730 days, window samples 30 days, closed holds/waits/switches 180 days? | Yes. |
-| Q10 | Harbor Pilot backlog: retire "pass the HP token as `CLAUDE_CODE_OAUTH_TOKEN`"? Keep "HP routing per role" (it's about cheaper models, not limits)? | Retire the token item; keep routing in backlog until you decide on gateway use at all. |
-| Q11 | T1 needs two real subscription tokens on the node for a short, budget-bounded spike. OK to provide them? | Yes, two tokens, revoked after the spike or kept as the pool. |
-| Q12 | Cost: show the status line's `total_cost_usd` (a list-price estimate) on the usage page? | Yes, labelled "estimate (list price)"; tokens are the primary unit. |
+Q1–Q3 and Q6–Q12 take the recommended default. Q4 and Q5 are changed (the answer column says how). The rest of the
+plan applies these answers.
+
+| # | Question | Recommended default | Answer (2026-11-15) |
+|---|---|---|---|
+| Q1 | We read "no hall pass / no `claude -p`" as: no proxy or gateway for model traffic; runs stay interactive Claude Code with real subscription tokens, and SpaceMan swaps the token by restarting the process and resuming the session. Correct? | Yes. | Accepted (default). |
+| Q2 | Should the existing `usage_limit_failover` switch also turn on live switching, or a separate switch? | One switch (`usage_limit_failover`) for launches, resumes and live runs; still **off by default** per space. | Accepted (default). |
+| Q3 | Pools: per space with an optional per-role pool, ordered by priority. Enough, or do you want per-harness-profile pools too? | Space pool + optional role pool; no profile pools. | Accepted (default). |
+| Q4 | Switch the session immediately at the limit, even when the reset is close (e.g. 20 min away)? | Switch whenever an eligible account exists; the session continues at once. (Alternative: keep ADR-0079's keep-alive when the reset is under N minutes.) | **Changed: wait instead of switching when the reset is near.** New space setting `usage_limit_wait_if_reset_within`, default **15 min**. If the limited account resets within that window, the run waits (ADR-0079 park and wait). Otherwise it switches to the next eligible account. (§3.2, §3.4.) |
+| Q5 | Pre-emptive switch before the limit (at an idle point, at ≥ X % of a window)? | Off by default (`100`); recommend 95 for spaces with a pool. | **Changed: no pre-emptive switch.** Replaced by a launch-time headroom gate, `usage_limit_min_headroom_percent` (per space, off by default; T9). A new run (launch or fresh resume) does not start on an account whose known window usage leaves less than X % free; it picks the next eligible account, or waits. Running agents are not switched pre-emptively. |
+| Q6 | An account that fails authentication after a switch: stop, or try the next account? | Stop and tell control; flag the account. No automatic second switch on auth errors. | Accepted (default). |
+| Q7 | Notifications per switch: control only, or also Telegram/people? | Control only; people (and so Telegram) only when the whole pool is exhausted. | Accepted (default). |
+| Q8 | Codex: build after the Claude Code switch ships, and only after the C1 spike? If a Codex session can't be resumed under another account, accept a fresh session with a note, or keep Codex switching off? | Staged after Claude Code; if resume is refused, keep Codex switching off. | Accepted (default). |
+| Q9 | Usage retention: hourly buckets 90 days, daily 730 days, window samples 30 days, closed holds/waits/switches 180 days? | Yes. | Accepted (default). |
+| Q10 | Harbor Pilot backlog: retire "pass the HP token as `CLAUDE_CODE_OAUTH_TOKEN`"? Keep "HP routing per role" (it's about cheaper models, not limits)? | Retire the token item; keep routing in backlog until you decide on gateway use at all. | Accepted (default). |
+| Q11 | T1 needs two real subscription tokens on the node for a short, budget-bounded spike. OK to provide them? | Yes, two tokens, revoked after the spike or kept as the pool. | Accepted (default). Tokens are handed over out of band, never committed (K-17). |
+| Q12 | Cost: show the status line's `total_cost_usd` (a list-price estimate) on the usage page? | Yes, labelled "estimate (list price)"; tokens are the primary unit. | Accepted (default). |
 
 ## 6. Spikes and evidence still missing
 
