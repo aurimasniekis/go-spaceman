@@ -40,6 +40,7 @@ const (
 
 	maxAlbumFiles   = 10 // Telegram's own limit for a media group
 	maxOpenAlbums   = 3  // per link
+	maxDownloads    = 3  // files moving from Telegram into the API at once, across all links
 	albumMaxWait    = 10 * time.Second
 	albumFlushLimit = 2 * time.Minute // the whole capture, downloads and uploads included
 	maxSendFiles    = 3               // attachments sent back per item read
@@ -70,22 +71,24 @@ type albumKey struct{ linkID, group string }
 type album struct {
 	link    updates.Link
 	pieces  []piece
-	dropped int
+	dropped int // parts beyond maxAlbumFiles
+	skipped int // parts capture does not carry (a video, a sticker)
 	first   time.Time
 	timer   *time.Timer
 }
 
 func (h *Handler) capture(ctx context.Context, m *botapi.Message, l updates.Link) {
 	p, ok := extract(m)
-	if !ok {
-		h.send(ctx, l.ChatID, reply{text: TextNotKind})
-		return
-	}
 	if m.MediaGroupID == "" {
-		h.commit(ctx, l, []piece{p}, 0)
+		if !ok {
+			h.send(ctx, l.ChatID, reply{text: TextNotKind})
+			return
+		}
+		h.commit(ctx, l, []piece{p}, 0, 0)
 		return
 	}
-	h.addToAlbum(ctx, l, m.MediaGroupID, p)
+	// An unsupported part of an album is counted on the album and mentioned in its one ack, not answered alone.
+	h.addToAlbum(ctx, l, m.MediaGroupID, p, !ok)
 }
 
 // extract reads the parts of a message that capture uses; ok is false for a message with nothing to add.
@@ -190,10 +193,19 @@ func markupFree(s string) string {
 
 // --- albums ---
 
-func (h *Handler) addToAlbum(ctx context.Context, l updates.Link, group string, p piece) {
+func (h *Handler) addToAlbum(ctx context.Context, l updates.Link, group string, p piece, skip bool) {
 	k := albumKey{l.ID, group}
 	now := h.o.Clock.Now()
 	h.mu.Lock()
+	for rk, t := range h.refused { // a refusal is remembered for about as long as the album could still be arriving
+		if now.Sub(t) > albumMaxWait {
+			delete(h.refused, rk)
+		}
+	}
+	if _, no := h.refused[k]; no {
+		h.mu.Unlock() // the user was told once; the rest of the parts are dropped, even if a slot has freed since
+		return
+	}
 	a := h.albums[k]
 	if a == nil {
 		open := 0
@@ -205,6 +217,7 @@ func (h *Handler) addToAlbum(ctx context.Context, l updates.Link, group string, 
 			}
 		}
 		if open >= maxOpenAlbums {
+			h.refused[k] = now
 			h.mu.Unlock()
 			h.send(ctx, l.ChatID, reply{text: TextAlbumBusy})
 			return
@@ -212,7 +225,9 @@ func (h *Handler) addToAlbum(ctx context.Context, l updates.Link, group string, 
 		a = &album{link: l, first: now}
 		h.albums[k] = a
 	}
-	if len(a.pieces) >= maxAlbumFiles {
+	if skip {
+		a.skipped++
+	} else if len(a.pieces) >= maxAlbumFiles {
 		a.dropped++
 	} else {
 		a.pieces = append(a.pieces, p)
@@ -241,13 +256,17 @@ func (h *Handler) flushAlbum(parent context.Context, k albumKey, a *album) {
 	ctx, cancel := context.WithTimeout(parent, albumFlushLimit)
 	defer cancel()
 	sort.SliceStable(a.pieces, func(i, j int) bool { return a.pieces[i].id < a.pieces[j].id })
-	h.commit(ctx, a.link, a.pieces, a.dropped)
+	if len(a.pieces) == 0 { // nothing in it can be carried
+		h.send(ctx, a.link.ChatID, reply{text: TextNotKind})
+		return
+	}
+	h.commit(ctx, a.link, a.pieces, a.dropped, a.skipped)
 }
 
 // --- commit ---
 
 // commit makes one item from pieces: the space, the limits, the files, then the item, then the ack.
-func (h *Handler) commit(ctx context.Context, l updates.Link, ps []piece, dropped int) {
+func (h *Handler) commit(ctx context.Context, l updates.Link, ps []piece, dropped, skipped int) {
 	defer func() {
 		if r := recover(); r != nil {
 			h.o.Log.Error("telegram: capture panicked", slog.Any("panic", r))
@@ -315,6 +334,10 @@ func (h *Handler) commit(ctx context.Context, l updates.Link, ps []piece, droppe
 	if len(ids) > 0 {
 		in["attachment_ids"] = ids
 	}
+	if !h.visible(s.ID) { // the space may have been hidden from Telegram while the files moved
+		h.send(ctx, l.ChatID, reply{text: TextUnavailable})
+		return
+	}
 	r := c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/inbox", in, map[string]string{"Idempotency-Key": fmt.Sprintf("tg-%s-%d", l.ID, ps[0].id)})
 	if !r.ok() {
 		h.send(ctx, l.ChatID, reply{text: createFail(r)})
@@ -326,7 +349,7 @@ func (h *Handler) commit(ctx context.Context, l updates.Link, ps []piece, droppe
 		return
 	}
 	h.setCurrent(l.ID, s.ID)
-	h.send(ctx, l.ChatID, h.ack(s, it, len(ids), dropped))
+	h.send(ctx, l.ChatID, h.ack(s, it, len(ids), dropped, skipped))
 }
 
 func contains(xs []string, x string) bool {
@@ -356,7 +379,7 @@ func captureTitle(text string, files []fileRef) string {
 
 // ack is the answer to a capture. The title is the item's content, so it is shown only where the space's content level
 // is full (as bodies are); the button opens the item's card.
-func (h *Handler) ack(s spaceRef, it inboxItem, files, dropped int) reply {
+func (h *Handler) ack(s spaceRef, it inboxItem, files, dropped, skipped int) reply {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Added to the inbox of %s", s.title())
 	if h.o.Space(s.ID).ContentLevel == settings.ContentFull {
@@ -368,6 +391,9 @@ func (h *Handler) ack(s spaceRef, it inboxItem, files, dropped int) reply {
 	}
 	if dropped > 0 {
 		fmt.Fprintf(&b, "\n%d more file(s) were left out: an album holds at most %d.", dropped, maxAlbumFiles)
+	}
+	if skipped > 0 {
+		fmt.Fprintf(&b, "\n%d part(s) were left out: I can only add text, photos and files.", skipped)
 	}
 	return reply{text: b.String(), markup: markup([]botapi.InlineKeyboardButton{button("Open", readData(s.ID, it.ID))})}
 }
@@ -398,6 +424,12 @@ func (h *Handler) fetchAndUpload(ctx context.Context, c caller, s spaceRef, f fi
 	if b == nil {
 		return "", TextFailed
 	}
+	select { // a global cap on files in memory and in flight, whatever the number of links and albums
+	case h.dl <- struct{}{}:
+		defer func() { <-h.dl }()
+	case <-ctx.Done():
+		return "", TextFailed
+	}
 	gctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	info, err := b.GetFile(gctx, f.id)
 	cancel()
@@ -418,16 +450,24 @@ func (h *Handler) fetchAndUpload(ctx context.Context, c caller, s spaceRef, f fi
 		}
 		return "", TextNoFile
 	}
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
-	hdr := make(textproto.MIMEHeader)
-	hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, clean(f.name, 200)))
-	hdr.Set("Content-Type", "application/octet-stream") // the API sniffs the type; the sender's claim is not used
-	w, _ := mw.CreatePart(hdr)
-	_, _ = w.Write(buf.Bytes())
-	_ = mw.Close()
-	buf.Reset()
-	r := c.doRaw(ctx, http.MethodPost, "/spaces/"+s.ID+"/attachments", mw.FormDataContentType(), &body)
+	// The multipart body is streamed from the downloaded bytes: one copy of the file in memory, not two.
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	go func() {
+		hdr := make(textproto.MIMEHeader)
+		hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, clean(f.name, 200)))
+		hdr.Set("Content-Type", "application/octet-stream") // the API sniffs the type; the sender's claim is not used
+		w, err := mw.CreatePart(hdr)
+		if err == nil {
+			_, err = w.Write(buf.Bytes())
+		}
+		if err == nil {
+			err = mw.Close()
+		}
+		_ = pw.CloseWithError(err) // nil closes with EOF
+	}()
+	r := c.doRaw(ctx, http.MethodPost, "/spaces/"+s.ID+"/attachments", mw.FormDataContentType(), pr)
+	_ = pr.Close() // unblocks the writer if the API stopped reading
 	if !r.ok() {
 		return "", refusal(r)
 	}

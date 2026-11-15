@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -377,10 +378,10 @@ func TestAttachmentRoundTrip(t *testing.T) {
 	}
 
 	// Content level summary: the card says an attachment exists, no bytes go out.
-	sum := e.addItem(spS, iid('9'), "S", "new", "b")
+	sum := e.addItem(spS, iid('9'), "Zz attached", "new", "b")
 	sum.Attachments = append(sum.Attachments, e.api.atts[fmt.Sprintf("att_%026d", 2)].meta)
 	e.say("/inbox summary")
-	e.tapData(find(e.last(), "S"), e.last())
+	e.tapData(find(e.last(), "Zz attached"), e.last())
 	e.mu.Lock()
 	n := len(e.files)
 	e.mu.Unlock()
@@ -423,5 +424,106 @@ func TestCaptureUnsupportedMediaRefused(t *testing.T) {
 	e.msg(func(m *botapi.Message) { m.Caption = "bug repro"; m.Video = json.RawMessage(`{"file_id":"x"}`) })
 	if e.createdN() != 0 || e.last().Text != TextNotKind {
 		t.Fatalf("created %d, last %q", e.createdN(), e.last().Text)
+	}
+}
+
+// An unsupported part of an album is counted on the album and mentioned in its single ack: one reply, no separate
+// "nothing was added".
+func TestAlbumWithUnsupportedPart(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	n := len(e.srv.Messages(chatID))
+	e.msg(func(m *botapi.Message) {
+		m.MediaGroupID = "mix"
+		m.Photo = photo(e, []byte("\x89PNG\r\n\x1a\nimg"))
+		m.Caption = "mixed"
+	})
+	e.msg(func(m *botapi.Message) { m.MediaGroupID = "mix"; m.Video = json.RawMessage(`{"file_id":"x"}`) })
+	e.waitFor("the album", func() bool { return e.createdN() == 1 })
+	e.waitFor("the ack", func() bool { return len(e.srv.Messages(chatID)) > n })
+	time.Sleep(150 * time.Millisecond)
+	got := e.srv.Messages(chatID)[n:]
+	if len(got) != 1 || !strings.Contains(got[0].Text, "1 part(s) were left out") || !strings.Contains(got[0].Text, "1 attachment(s)") {
+		t.Fatalf("replies %q", e.texts()[n:])
+	}
+	// An album with nothing carriable is told so once.
+	n = len(e.srv.Messages(chatID))
+	for i := 0; i < 2; i++ {
+		e.msg(func(m *botapi.Message) { m.MediaGroupID = "vids"; m.Video = json.RawMessage(`{"file_id":"x"}`) })
+	}
+	e.waitFor("the refusal", func() bool { return len(e.srv.Messages(chatID)) > n })
+	time.Sleep(150 * time.Millisecond)
+	if got := e.texts()[n:]; len(got) != 1 || got[0] != TextNotKind || e.createdN() != 1 {
+		t.Fatalf("replies %q, created %d", got, e.createdN())
+	}
+}
+
+// A refused album (too many open) is answered once; its other parts are dropped quietly, even after a slot frees.
+func TestRefusedAlbumAnsweredOnce(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	for _, g := range []string{"a", "b", "c"} {
+		e.msg(func(m *botapi.Message) { m.MediaGroupID = g; m.Text = g })
+	}
+	n := len(e.srv.Messages(chatID))
+	for i := 0; i < 2; i++ {
+		e.msg(func(m *botapi.Message) { m.MediaGroupID = "x"; m.Text = "x" })
+	}
+	e.waitFor("the three albums", func() bool { return e.createdN() == 3 }) // slots are free now
+	for i := 0; i < 3; i++ {
+		e.msg(func(m *botapi.Message) { m.MediaGroupID = "x"; m.Text = "x" })
+	}
+	time.Sleep(200 * time.Millisecond)
+	busy := 0
+	for _, s := range e.texts()[n:] {
+		if s == TextAlbumBusy {
+			busy++
+		}
+	}
+	if busy != 1 || e.createdN() != 3 {
+		t.Fatalf("busy replies %d, created %d", busy, e.createdN())
+	}
+	e.h.mu.Lock()
+	open := len(e.h.albums)
+	e.h.mu.Unlock()
+	if open != 0 {
+		t.Fatalf("%d albums open", open)
+	}
+}
+
+// At most maxDownloads files are fetched and uploaded at once, however many captures run.
+func TestDownloadsAreCapped(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	e.dlDelay = 40 * time.Millisecond
+	const n = 9
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		id := e.srv.AddFile("a.txt", []byte("hello"), 5)
+		e.upd++
+		u := botapi.Update{UpdateID: e.upd, Message: &botapi.Message{MessageID: int(e.upd), From: &botapi.User{ID: chatID}, Chat: botapi.Chat{ID: chatID, Type: botapi.ChatPrivate},
+			Document: &botapi.Document{FileID: id, FileName: "a.txt"}}}
+		wg.Add(1)
+		go func() { defer wg.Done(); e.h.Handle(context.Background(), u, e.l) }()
+	}
+	wg.Wait()
+	if e.createdN() != n {
+		t.Fatalf("created %d", e.createdN())
+	}
+	if m := e.dlMax.Load(); m > maxDownloads || m < 2 {
+		t.Fatalf("peak concurrent downloads %d, cap %d", m, maxDownloads)
+	}
+}
+
+// The space is checked again just before the item is created: hidden from Telegram while the files moved, nothing is
+// created and the user is told.
+func TestVisibilityRecheckedBeforeCreate(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	e.api.onUpload = func() { e.hideA.Store(true) }
+	e.msg(func(m *botapi.Message) { m.MediaGroupID = "h"; m.Photo = photo(e, []byte("\x89PNG\r\n\x1a\nimg")) })
+	e.waitFor("the failure ack", func() bool { return e.last().Text == TextUnavailable })
+	if e.createdN() != 0 {
+		t.Fatalf("created %d in a hidden space", e.createdN())
 	}
 }

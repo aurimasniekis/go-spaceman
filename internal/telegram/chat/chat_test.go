@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,8 +53,9 @@ type fakeAPI struct {
 	atts     map[string]*storedAtt
 	created  []map[string]any
 	createH  []http.Header
-	uploadSt int // when set, an upload answers this status with a problem
-	createSt int // when set, a create answers this status
+	uploadSt int    // when set, an upload answers this status with a problem
+	createSt int    // when set, a create answers this status
+	onUpload func() // runs when an upload arrives
 }
 
 type storedAtt struct {
@@ -158,6 +160,9 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			out(f.uploadSt, map[string]any{"status": f.uploadSt, "detail": "attachments are limited to 1048576 bytes"})
 			return
 		}
+		if f.onUpload != nil {
+			f.onUpload()
+		}
 		file, hd, err := r.FormFile("file")
 		if err != nil {
 			out(400, map[string]any{"status": 400, "detail": "no file"})
@@ -224,6 +229,22 @@ type env struct {
 	mu           sync.Mutex                 // guards sent and files (albums are captured from a timer)
 	files        []sentFile
 	allow        func(string, updates.Kind) bool
+	hideA        atomic.Bool // spA stops being visible to Telegram
+	dlNow, dlMax atomic.Int32
+	dlDelay      time.Duration // each download takes this long (to overlap them)
+}
+
+func (r recBot) DownloadFile(ctx context.Context, path string, w io.Writer) (int64, error) {
+	n := r.e.dlNow.Add(1)
+	defer r.e.dlNow.Add(-1)
+	for {
+		m := r.e.dlMax.Load()
+		if n <= m || r.e.dlMax.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	time.Sleep(r.e.dlDelay)
+	return r.Client.DownloadFile(ctx, path, w)
 }
 
 type sentFile struct {
@@ -295,6 +316,9 @@ func newEnv(t *testing.T) *env {
 		},
 		Space: func(id string) settings.Space {
 			s := settings.DefaultSpace(id)
+			if id == spA && e.hideA.Load() {
+				return s
+			}
 			switch id {
 			case spA, spD, spViewer:
 				s.Enabled = true
