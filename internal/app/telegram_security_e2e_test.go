@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -695,6 +696,87 @@ func TestTelegramSelfRules(t *testing.T) {
 		}
 		if r.Public {
 			t.Errorf("%s sets TelegramSelf on a public rule", op.OperationID)
+		}
+	}
+}
+
+// SM-TG-006 (TG-10-3, ADR-0083 Q3): the Mini App's watch-only terminal. The stream is refused to a Telegram link unless
+// the space opted in (terminal_watch) AND the link's principal holds terminal:watch in the space (an operator cap; a
+// viewer cap reads runs but not terminals). The refusal for no access is a 404 before the setting is looked at, so a
+// viewer cannot learn what the space turned on. The features read the Mini App uses to hide the terminal gives the same
+// answer. The bot's host (the main host) never serves the stream to a Telegram principal.
+func TestTelegramTerminalWatchGate(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	var on atomic.Bool
+	s.deps.Telegram.SpaceFeature = func(_ context.Context, space, feature string) bool {
+		return on.Load() && space == s.space && feature == api.TelegramFeatureTerminalWatch
+	}
+	runID := ids.New(ids.Run)
+	s.exec(t, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		VALUES (?, ?, 'nod_oidc', 1, 'worker', 'implementor', 'codex', 'ins_1', 'running', 'running', 'idle', '{}', 0, 't', 0)`, runID, s.space)
+	stream := "/spaces/" + s.space + "/runs/" + runID + "/terminal"
+	features := "/telegram/spaces/" + s.space + "/features"
+	// open reads the stream's status and content type only: a live stream never ends by itself.
+	open := func() (int, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.minisrv.URL+api.Prefix+stream, nil)
+		req.Header.Set("Authorization", "Telegram good")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, ct := res.StatusCode, res.Header.Get("Content-Type")
+		cancel() // before closing: a live stream's body would otherwise be drained
+		res.Body.Close()
+		return code, ct
+	}
+	wantFeature := func(want bool) {
+		t.Helper()
+		r := s.mini(t, "GET", features, "", "Authorization", "Telegram good")
+		expect(t, r, 200)
+		var f struct {
+			TerminalWatch bool `json:"terminal_watch"`
+		}
+		r.json(t, &f)
+		if f.TerminalWatch != want {
+			t.Fatalf("features terminal_watch = %v, want %v", f.TerminalWatch, want)
+		}
+	}
+
+	// Off (the default): refused, and the features read says so.
+	if code, _ := open(); code != http.StatusForbidden {
+		t.Fatalf("opt-in off: %d", code)
+	}
+	wantFeature(false)
+	// On, operator: the stream opens, read-only (the server has no input on this route at all).
+	on.Store(true)
+	if code, ct := open(); code != http.StatusOK || !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("opt-in on: %d %q", code, ct)
+	}
+	wantFeature(true)
+	// On, but the link is capped to viewer (no terminal:watch): not found, whatever the setting.
+	s.setLinkRole(t, "viewer")
+	if code, _ := open(); code != http.StatusNotFound {
+		t.Fatalf("viewer: %d", code)
+	}
+	wantFeature(false)
+	// Back to operator, opt-in off again (read at request time): refused again.
+	s.setLinkRole(t, "operator")
+	on.Store(false)
+	if code, _ := open(); code != http.StatusForbidden {
+		t.Fatalf("opt-in off again: %d", code)
+	}
+	// There is no input path: the stream route has no other method, and no terminal input or size operation is
+	// reachable from the Mini App, with or without the opt-in.
+	on.Store(true)
+	expect(t, s.mini(t, "POST", stream, `{}`, "Authorization", "Telegram good"), 405)
+	for _, p := range []string{"/input", "/terminal-size", "/takeover"} {
+		for _, m := range []string{"POST", "PUT", "DELETE"} {
+			if r := s.mini(t, m, "/spaces/"+s.space+"/runs/"+runID+p, `{}`, "Authorization", "Telegram good"); r.status < 400 {
+				t.Fatalf("%s %s from the Mini App: %d", m, p, r.status)
+			}
 		}
 	}
 }

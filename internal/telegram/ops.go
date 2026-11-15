@@ -50,6 +50,8 @@ var Ops = map[string]api.TelegramClass{
 	"create-telegram-session": api.TelegramExchange,
 	// The Mini App's identity (get-me is not served on its host): the same document for the link's user.
 	"get-telegram-me": api.TelegramMiniApp,
+	// Whether the space opted in to the watch-only terminal (the stream route checks it again).
+	"get-telegram-space-features": api.TelegramMiniApp,
 	// Signed single-purpose download links for attachments (§3.4.3): the Mini App mints, /tg-dl/ redeems.
 	"create-telegram-download-link": api.TelegramMiniApp,
 	// Runs (Q3: stop, never launch).

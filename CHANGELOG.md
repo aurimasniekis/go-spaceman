@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram Mini App watch-only terminal (ADR-0083, TG-10-3; the bot isn't usable yet): off by default. A space's admin turns on
+  `terminal_watch` in its Telegram settings, and a run page in the Mini App then shows the live terminal of that space's
+  runs to links that may watch terminals (operator and up). It is read-only: no keys, paste, size or takeover, and no replay.
+  The stream comes straight from central over the Mini App host, never through Telegram; the server refuses it again
+  unless the space opted in and the link holds `terminal:watch`. New `get-telegram-space-features` tells the Mini App
+  whether to show it.
 - Telegram needs-you common actions (ADR-0083, TG-7-3, not usable until the bot ships): every pending card can be
   claimed or released, commented on, answered with a question to the requester (a clarification, which never answers the
   request), and withdrawn after a confirmation tied to that card's version. A photo or file sent as the reply to a comment
