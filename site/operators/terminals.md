@@ -27,10 +27,15 @@ The status dot means:
 
 ## Watching a run
 
-The header of an agent's terminal shows its role, kind, harness, turn and state, with Live/Replay, **Take over** and
-**Stop**. While the run is active, the **Live** view shows the stored output and then streams new output as it happens.
-It is **watch-only**: key presses in the browser are never sent to the run. To give an agent input, use the message box
-below the terminal, which delivers the text the next time the agent is idle, or stop it.
+The header of an agent's terminal shows its role, kind, harness, turn and state, with Live/Replay, **Take over**,
+**New inbox item** and **Stop**. While the run is active, the **Live** view shows the stored output and then streams new
+output as it happens. It is **watch-only**: key presses in the browser are never sent to the run. To give an agent
+input, use the message box below the terminal, which delivers the text the next time the agent is idle, or stop it.
+
+**New inbox item** opens the space's [inbox](/guide/inbox#adding-an-item) dialog. Next to **Send**, **Send as inbox
+item** opens the same dialog with the message box's text and a link to the run, so control triages it instead of the
+agent getting it: nothing is sent to the terminal, and the message box clears once the item is added. Both are there
+for anyone who may add inbox items to the space (operators and admins) and need no takeover.
 
 The **inspector** beside the terminal (the panel button toggles it) shows:
 - **Now:** the state, turn, how long the run has run, and human actions it is waiting on.
@@ -48,6 +53,12 @@ You can scroll back through earlier output in the live view without taking the t
 trackpad, or drag on a phone. Scrolling up first moves the terminal within its frame, then moves into the earlier output
 the terminal keeps (up to 10,000 lines). Scrolling never sends anything to the run. While you read, new output keeps
 arriving below without moving your place. **Jump to live** returns to the newest output.
+
+A terminal opens on its newest output: it loads only the last megabyte of the run's recording, so the current screen
+appears quickly even after hours of output, also on a phone. When you scroll to the top of what it loaded and the run
+printed more before that, **Load earlier output** fetches more (4 MB, then 16 MB, then the rest) and keeps your place.
+It stops offering more once the terminal's scrollback is full; the run's **Replay** has everything (ADR-0081 in the
+[decision log](/security/decisions)).
 
 <Shot name="terminal-scrollback" alt="A run's live, watch-only terminal scrolled back into earlier output, with a Jump to live button over its bottom edge" caption="Reading earlier output while the run goes on" />
 

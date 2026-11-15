@@ -197,8 +197,9 @@ SELECT count(*) FROM runs WHERE space_id = ? AND kind = ? AND created_by = ? AND
 -- name: GetLatestControlRun :one
 SELECT * FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at DESC, id DESC LIMIT 1;
 
+-- A control run waiting for its usage limit to reset is waiting, not idle: its idle stop is not armed (ADR-0079 decision 3).
 -- name: ListIdleControlRuns :many
-SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed = 'running' AND status IN ('idle', 'done');
+SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed = 'running' AND status IN ('idle', 'done') AND limit_kind = '';
 
 -- Runs the stale-run sweeper looks at (fleet/stale.go, ADR-0074): live runs past their launch (starting, running,
 -- stopping or unknown) whose space is still pinned to the run's node (relocation owns the others), with the space's
