@@ -5130,10 +5130,12 @@
     `TestMiniAppLinkPrefsCannotEscalate` (cap, spaces, grants, user, state and settings fields are 422; the cap,
     spaces and grants are unchanged and no Telegram settings row appears; the settings, links, web preferences and
     grants operations stay 403/404 from the Mini App), `TestMiniAppLinkPrefsRefusesOtherPrincipals` (web session, API
-    token and root token 404, the chat channel 403, a revoked link 401) and `TestMiniAppQueueNextIsReadOnly`. Mutants of
-    the ownership check (drop the user check, drop the state check, accept a non-Telegram or token principal, take the
-    link from the request, drop `user_id`/`state` from the `UPDATE`) and of the `record` refusal are each killed (PR
-    description).
+    token and root token 404, the chat channel 403, a revoked link 401) and `TestMiniAppQueueNextIsReadOnly`. Also
+    `TestSetTelegramLinkPrefsQueryGuards` (the `UPDATE` alone writes nothing for another user's or a revoked link).
+    Nine mutants are each killed: the ownership check without the user check, without the state check, accepting a
+    non-Telegram principal, accepting token principals, skipping the in-transaction read; the `UPDATE` without
+    `user_id`/`state`; the handler without the Mini App channel check; `queue-next` without the `record` refusal; the
+    write classified `both`.
 
 ### ADR-0084 — "Message the agent" is typed into the running session at once
 - **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
