@@ -4553,7 +4553,15 @@
       after 30 days. The digest is one `human.Deadline{Name:"telegram.digest"}` waking at the earliest link's due
       instant; its `Due` only enqueues and never returns an error caused by Telegram (that would back off the shared
       human deadline loop). **Measured acceptance:** 1000 `human_action` changes for 50 actions in a second with 5
-      linked users give at most 50 reads; no `changes` reads while idle; no writes for windows that send nothing.
+      linked users give at most 50 reads; no `changes` reads while idle; no writes for windows that send nothing. **Real bound with
+      updates (`TestBudgetUpdates`):** per window one `changes` read per 200 changes and one resource read per distinct
+      resource; a mapping lookup (`ListTelegramMessagesByResource`) only for a resource whose change is not a creation
+      and that at least one link may see, and at most once per resource per process lifetime (a cold process after a
+      restart pays one per resource, 50 for 50 resources); `LatestChangeSeq` once per window; the permission loads of
+      the reader (`Human.Permissions`) once per space per window. The recipient check is repeated from memory when a
+      queued card is sent, so access revoked while a card waits in the sender drops it. A card with a body at the `full`
+      content level is sent with `protect_content`. A failed `changes` read re-arms one retry after a second for the
+      unread rest.
   16. **What SpaceMan uses of Telegram's newer features:** private-chat topics (opt-in per link, M3, **(Q6)**), rich
       messages with an entity fallback **(Q12)**, styled buttons, `copy_text`, `disabled`, and ephemeral messages in group
       mode. **Not used:** guest mode, bot-to-bot, managed and business bots (each lets content or commands arrive from
