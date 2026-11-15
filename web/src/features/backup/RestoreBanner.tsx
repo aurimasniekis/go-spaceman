@@ -8,15 +8,16 @@ import { notifyError } from '@/lib/notify'
 
 /**
  * Shown to everyone after central was restored from a backup (SM-STORE-006): every space came up paused with new
- * execution authority and needs an explicit resume. It stays only while any of those spaces is still paused, whether or
- * not an administrator dismissed it.
+ * execution authority and needs an explicit resume. It stays while any of those spaces is still paused, unless an administrator
+ * dismissed it: spaces that are paused on purpose would otherwise keep it up forever. A new restore starts a fresh,
+ * undismissed notice.
  */
 export function RestoreBanner({ canAcknowledge }: { canAcknowledge: boolean }) {
   const qc = useQueryClient()
   const q = useRestoreNotice(true)
   const n = q.data
   if (!n?.restored || !n.state) return null
-  if (n.still_paused === 0) return null
+  if (n.still_paused === 0 || n.state.acknowledged_at) return null
   const ack = async () => {
     try {
       unwrap(await api.POST('/system/restore/acknowledge'))
@@ -33,7 +34,7 @@ export function RestoreBanner({ canAcknowledge }: { canAcknowledge: boolean }) {
           paused and execution authority was renewed; runs from before the restore were stopped. {n.still_paused} of {n.state.paused_spaces.length} space(s)
           are still paused: check each space, then resume it. <Link to="/backups">Details</Link>
         </Text>
-        {canAcknowledge && !n.state.acknowledged_at && <Button color="owlYellow" variant="light" onClick={() => void ack()}>Dismiss</Button>}
+        {canAcknowledge && <Button color="owlYellow" variant="light" onClick={() => void ack()}>Dismiss</Button>}
       </Group>
     </Alert>
   )

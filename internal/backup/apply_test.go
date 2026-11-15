@@ -3,8 +3,10 @@ package backup_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/backup"
@@ -89,6 +91,22 @@ func TestApplyPendingRestore(t *testing.T) {
 	ack, err := backup.AcknowledgeRestore(f.ctx, st, aw, ch, audit.Actor{Type: audit.ActorUser, ID: "usr_admin"})
 	if err != nil || ack == nil || ack.AcknowledgedAt == nil || ack.AcknowledgedBy != "usr_admin" {
 		t.Fatalf("acknowledge: %+v %v", ack, err)
+	}
+	// The acknowledgement is audited.
+	var acks int
+	must(t, st.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM audit_events WHERE action = 'backup.restore_acknowledged'`).Scan(&acks))
+	if acks != 1 {
+		t.Errorf("restore_acknowledged audit events = %d, want 1", acks)
+	}
+	// A new restore replaces the notice: it is not acknowledged, so the banner shows again.
+	pend, err := json.Marshal(backup.PendingRestore{BackupID: "bkp_second", BackupCreatedAt: time.Now().UTC(), RestoredAt: time.Now().UTC()})
+	must(t, err)
+	must(t, st.W().TxNamed(f.ctx, "test.pending", func(tx *store.Tx) error {
+		return tx.Q.UpsertSetting(f.ctx, db.UpsertSettingParams{Key: backup.SettingRestorePending, Value: string(pend), UpdatedAt: tx.NowMicros()})
+	}))
+	again2, err := backup.ApplyPendingRestore(f.ctx, st, aw, ch)
+	if err != nil || again2 == nil || again2.BackupID != "bkp_second" || again2.AcknowledgedAt != nil || again2.AcknowledgedBy != "" {
+		t.Fatalf("second restore notice: %+v %v", again2, err)
 	}
 	// Nothing pending on a fresh installation.
 	fresh := storetest.Open(t)
