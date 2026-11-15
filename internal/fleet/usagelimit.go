@@ -361,6 +361,30 @@ func (svc *Service) applyLimitTx(ctx context.Context, tx *store.Tx, r db.Run, cu
 	return n, err
 }
 
+// limitWindowTx calls OnRunLimitTx when a run's limit window changed: a limit opened, ended, or was replaced by one with
+// another since. The same since with another kind or reset is the same window.
+func (svc *Service) limitWindowTx(ctx context.Context, tx *store.Tx, runID string, cur, next limitState) error {
+	if svc.opts.OnRunLimitTx == nil || cur.kind != "" && next.kind != "" && cur.since == next.since {
+		return nil
+	}
+	r, err := tx.Q.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	var endedLimit, opened *RunLimit
+	if cur.kind != "" {
+		endedLimit = cur.runLimit()
+	}
+	if next.kind != "" {
+		opened = next.runLimit()
+	}
+	return svc.opts.OnRunLimitTx(ctx, tx, runFromRow(r), endedLimit, opened)
+}
+
+func (l limitState) runLimit() *RunLimit {
+	return runLimitOf(db.Run{LimitKind: l.kind, LimitResetsAt: l.resets, LimitSince: l.since})
+}
+
 // supersedeHoldTx clears the open hold of kind in the run's space if this run opened it.
 func (svc *Service) supersedeHoldTx(ctx context.Context, tx *store.Tx, r db.Run, kind string) error {
 	scope, account, gw, ok := limitScope(r, kind)

@@ -889,9 +889,10 @@ func (q *Queries) ListCommandsByRun(ctx context.Context, runID sql.NullString) (
 }
 
 const listIdleControlRuns = `-- name: ListIdleControlRuns :many
-SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed = 'running' AND status IN ('idle', 'done')
+SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed = 'running' AND status IN ('idle', 'done') AND limit_kind = ''
 `
 
+// A control run waiting for its usage limit to reset is waiting, not idle: its idle stop is not armed (ADR-0079 decision 3).
 func (q *Queries) ListIdleControlRuns(ctx context.Context) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, listIdleControlRuns)
 	if err != nil {

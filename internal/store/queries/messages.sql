@@ -69,9 +69,11 @@ UPDATE human_notifications SET state = 'acknowledged', acknowledged_at = sqlc.ar
 WHERE id = sqlc.arg(id) AND space_id = sqlc.arg(space_id) AND state IN ('pending', 'delivered')
   AND ((target_kind = 'run' AND target_run = sqlc.arg(run_id)) OR (target_kind = 'control' AND sqlc.arg(is_control) = 1));
 
+-- A run waiting for its usage limit to reset (limit_kind set) is no candidate: a notice would start a turn that fails at
+-- once. Its items wait for the clear (ADR-0079 decision 3).
 -- name: ListNoticeCandidates :many
 SELECT id, space_id, kind, role, harness, status, coalesce(started_at, created_at) AS since FROM runs
-WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done');
+WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done') AND limit_kind = '';
 
 -- name: ListMessagesByNotice :many
 SELECT id, space_id, version FROM messages WHERE notice_command = ?;

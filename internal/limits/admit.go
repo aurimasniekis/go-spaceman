@@ -33,6 +33,10 @@ func workKind(kind string) bool { return kind == "worker" || kind == "diagnostic
 // shows every live run of the space) can be explained.
 const notCounted = "Only live worker and diagnostic runs count; control, KB support and dreamer runs, and runs that exited, failed or were lost, do not"
 
+// notCountedInSpace adds the space count's one difference from the node's: a run waiting for its usage limit to reset
+// (keep-alive) frees its space slot but keeps using the node, whose process it still is (ADR-0079 decision 3, Q4).
+const notCountedInSpace = notCounted + ", nor do runs waiting for a usage limit to reset (they still use the node's capacity)"
+
 // countedRun is a live run named in a concurrency refusal.
 type countedRun struct{ id, kind, role, observed string }
 
@@ -57,7 +61,8 @@ func (svc *Service) Admit(ctx context.Context, tx *store.Tx, a fleet.Admission) 
 	}
 	if workKind(a.Kind) {
 		// Only live runs count (fleet.Live, the runs spaceman_runs_list shows): a run that exited, failed or was lost
-		// frees its slot even while its desired state is still "running".
+		// frees its slot even while its desired state is still "running". A run waiting for its usage limit to reset
+		// frees its space slot too, but not the node's (below).
 		runs, err := tx.Q.ListLiveWorkRunsInSpace(ctx, a.SpaceID)
 		if err != nil {
 			return err
@@ -68,7 +73,7 @@ func (svc *Service) Admit(ctx context.Context, tx *store.Tx, a fleet.Admission) 
 				counted = append(counted, countedRun{r.ID, r.Kind, r.Role, r.Observed})
 			}
 			return apperr.New(apperr.CodeRateLimited, "the space has %d worker and diagnostic runs active (limit %d): %s. %s; start more when one ends",
-				len(runs), limit, describeRuns(counted), notCounted)
+				len(runs), limit, describeRuns(counted), notCountedInSpace)
 		}
 		capacity, err := tx.Q.GetNodeCapacity(ctx, a.NodeID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {

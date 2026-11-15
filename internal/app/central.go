@@ -324,6 +324,12 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Human.Kick() // a resumed instance may take a held response
 			}
 		},
+		OnRunLimitTx: func(ctx context.Context, tx *store.Tx, r *fleet.Run, ended, opened *fleet.RunLimit) error {
+			if c.Supervisor == nil {
+				return nil
+			}
+			return c.Supervisor.OnRunLimitTx(ctx, tx, r, ended, opened) // control told once per limit (ADR-0079)
+		},
 		OnCommandAck: func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error {
 			if kind == proto.CmdDreamDone {
 				if c.Dreams == nil {

@@ -68,10 +68,11 @@ func (svc *Service) StopWorkerTx(ctx context.Context, tx *store.Tx, actor audit.
 	return err == nil, err
 }
 
-// NoticeWorkerTx queues an idle-gated notice for a live worker (false when it is not live or is taken over).
+// NoticeWorkerTx queues an idle-gated notice for a live worker (false when it is not live, is taken over or is waiting
+// for its usage limit to reset).
 func (svc *Service) NoticeWorkerTx(ctx context.Context, tx *store.Tx, spaceID, runID, text string) (bool, error) {
 	r, ok, err := activeWorker(ctx, tx, spaceID, runID)
-	if err != nil || !ok {
+	if err != nil || !ok || r.LimitKind != "" {
 		return false, err
 	}
 	if _, on, err := activeTakeover(ctx, tx.Q, r.ID, tx.Now); err != nil || on {
