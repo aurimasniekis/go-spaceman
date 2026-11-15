@@ -14,12 +14,16 @@ func Default() *Config {
 		PublicURL: "",
 		KEK:       KEKConfig{Source: "file", File: "/etc/spaceman/kek"},
 		HTTP: HTTPConfig{
-			Listen:            ":8080",
-			ManagementListen:  "127.0.0.1:9090",
-			MaxBodyBytes:      1 << 20,
-			MaxUploadBytes:    25 << 20,
-			ReadHeaderTimeout: Duration(10 * time.Second),
-			WriteIdleTimeout:  Duration(time.Minute),
+			Listen:             ":8080",
+			ManagementListen:   "127.0.0.1:9090",
+			MaxBodyBytes:       1 << 20,
+			MaxUploadBytes:     25 << 20,
+			ReadHeaderTimeout:  Duration(10 * time.Second),
+			WriteIdleTimeout:   Duration(time.Minute),
+			CatchUpConcurrency: 8,
+			CatchUpWait:        Duration(5 * time.Second),
+			ReadIdleTimeout:    Duration(30 * time.Second),
+			IdleTimeout:        Duration(2 * time.Minute),
 		},
 		Log: defaultLog(),
 		Auth: AuthConfig{
@@ -79,7 +83,8 @@ func DefaultAgent() *AgentConfig {
 				DownloadTimeout: Duration(dist.DefaultDownloadTimeout),
 			},
 		},
-		Log:      defaultLog(),
-		Capacity: 4,
+		Log:              defaultLog(),
+		Capacity:         4,
+		JournalRetention: Duration(30 * 24 * time.Hour),
 	}
 }

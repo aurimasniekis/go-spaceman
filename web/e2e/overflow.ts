@@ -188,7 +188,11 @@ export async function seedWorld(page: Page, tag = ''): Promise<World> {
 
   // Inbox, queue, human actions and messages.
   const item = await api.call<{ id: string }>('POST', `/spaces/${sp.id}/inbox`, { title: 'Settlement retries exhaust the budget during the bank window',
-    urgency: 'high', content_type: 'text/markdown', body: 'Retries **exhaust** the budget.\n\n```\nretry budget exhausted for batch 2026-11-02T01:00:00Z (attempt 5 of 5)\n```' })
+    urgency: 'high', content_type: 'text/markdown', body: 'Retries **exhaust** the budget.\n\n```\nretry budget exhausted for batch 2026-11-02T01:00:00Z (attempt 5 of 5)\n```\n\n' +
+      // Rich Markdown that is wider than a phone: it scrolls inside its own block, never the page.
+      `| ${Array.from({ length: 10 }, (_, i) => `settlement_column_${i}`).join(' | ')} |\n|${' --- |'.repeat(10)}\n|${' value |'.repeat(10)}\n\n` +
+      '```go\nfunc retryBudget(batch *Batch) int { return batch.Size * 5 } // a line longer than a phone screen is wide, by a lot\n```\n\n' +
+      '```mermaid\nflowchart LR\n  A[Bank window opens] --> B{Retry budget left?} --> C[Retry the batch] --> D[Alert the operator]\n```' })
   await api.call('POST', `/spaces/${sp.id}/inbox`, { title: 'Production alert', urgency: 'urgent', content_type: 'application/json', body: '{"name":"settlement lag","severity":"critical"}' })
   type T = { id: string; version: number }
   const task = await api.call<T>('POST', `/spaces/${sp.id}/tasks`, { status: 'ready', title: 'Add a retry budget per settlement batch instead of per item',

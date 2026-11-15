@@ -6,6 +6,79 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Rich Markdown in every rendered body (inbox items, tasks, human actions, messages and the rest): footnotes, heading
+  anchors, highlighted code blocks with a copy button, and Mermaid diagrams in the app's light and dark theme. The
+  highlighter and mermaid load only when a body needs them (ADR-0082).
+- Web: a space's overview has a **New inbox item** action next to **Launch run**, for users who may add inbox items
+  (operators and admins of the space). It opens the Inbox page's dialog, and a toast confirms the new item with a link
+  to it. On a phone the action is an icon. An unsent draft now survives closing and reopening the dialog.
+- Web: a run's terminal view (the run page and the Terminals views) has **New inbox item** next to **Take over**, and
+  **Send as inbox item** next to the message box's **Send**. The latter opens the same dialog prefilled with the text
+  and a link to the run, sends nothing to the terminal and clears the message box once the item is added. Both use the
+  same permission as the Inbox page and need no takeover; on a phone they are icons.
+
+### Fixed
+- A run could show `starting` with no terminal while its program was running. A repeated launch made the node report an
+  older copy of the run, which could reach central after the `running` report and replace it. Central now ignores a run
+  report that is behind the state it already has (ADR-0086).
+- Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
+  be writing the run's files and its journal after the agent had stopped, while the next agent process started.
+- Central's shutdown now waits for node connections and the work they started (memory syncs into the role-memory
+  repositories, usage, transcripts, tool calls, relocation transfers) before it closes its database. Before, that work
+  could still write after the database was closed. The wait shares the 5 s gateway mints already had, so a stop still
+  takes at most 43 s (30 s `shutdown.timeout`, 5 s, 8 s for the database), inside the units' `TimeoutStopSec=45s`.
+  Central also refuses new node connections once shutdown has begun; a memory sync still queued when its connection
+  ends is dropped (the node sends it again) and a tool call ends with its connection.
+- **A message typed into "Message the agent" (for example to control) while the agent was busy was lost.** The box sent
+  safe, idle-gated input; the node refused it while the program worked, and nothing tried again. The text is now typed
+  into the running session at once (the fake runner queues typed input; real Claude Code and Codex are not yet verified to). The placeholder
+  and the guides say so (ADR-0084). Messages from the Messages page and agents are unchanged: stored, then announced
+  by the terminal notice when the program is idle.
+- Resuming a paused space now starts control when work was waiting. The resume did not wake the control notifier, so
+  work that arrived while the space was paused started control only at the next slow sweep. Resuming kicks the
+  notifier; auto-start settings, limits and dedupe apply as before.
+- The "Restored from a backup" banner no longer comes back when an operator pauses a space later: only spaces the
+  restore paused and that have not been resumed since count as still paused (the notice now records `resumed_spaces`).
+
+### Changed
+
+- The node agent's hello carries only live and adoptable runs and the unacknowledged ended runs that are under 24 hours
+  old, instead of every run the node ever had (a node with 2500 ended runs sent a 1.1 MB hello on every connect). Older
+  unacknowledged ended runs follow the welcome in slices. An ended run that central's reconcile still lists as active
+  (a restored backup, a report lost with the connection) is reported again at once. No protocol change.
+- The node journal deletes ended runs after `journal_retention` (default `720h`, 30 days to 1 year), once central
+  acknowledged their final state, their recording is fully shipped and their transcript upload is finished. Live and
+  adoptable runs, and the runs that Claude Code cache GC's pins come from, are kept. See ADR-0078.
+- A run's terminal opens on its newest output. The live view and replay load only the last 1 MiB of a run's recording
+  first, with the terminal size and modes in effect there, instead of the whole recording (tens of MB for a long
+  session). **Load earlier output** at the top of the scrollback fetches more on demand. Replay seeks draw at most 1 MiB
+  before their position. Central streams catch-ups and recording pages instead of reading whole recordings into memory
+  for each viewer. The API adds optional `tail` parameters to the terminal stream and the recording endpoint; older
+  clients and servers keep working (ADR-0081).
+- Central reads at most `http.catch_up_concurrency` stored recordings at once (new setting, default 8). A terminal
+  catch-up or recording page waits up to `http.catch_up_wait` (default 5 s) for a slot, then gets 503 with
+  `Retry-After`; the web UI retries. A recording page's `gaps` now cover the records up to the end of the page.
+
+### Security
+
+- Central's public listener no longer lets a client hold a connection by declaring a request body and not sending it.
+  A handler that refused such a request without reading the body (a 401, a POST to a UI path) made the server wait,
+  with no deadline, for up to 256 KiB that never came, and a handler reading a body the client stopped sending waited
+  forever. Every read of a request body must now bring data within **`http.read_idle_timeout`** (new, default `30s`,
+  1s to 10m): a large upload that keeps moving is never cut off. A response sent before the body was read to its end
+  closes the connection instead of draining the body. A body must also arrive within its operation's own bound
+  (5 s for JSON operations, 10 minutes for attachment uploads). Requests without a body (event streams) and real
+  WebSocket handshakes are unaffected; `Upgrade` headers on a request with a body exempt nothing (ADR-0085).
+- A kept-alive connection waiting for its next request is closed after **`http.idle_timeout`** (new, default `2m`, 1s
+  to 1h); before, it could wait forever.
+- The Markdown sanitizer is stricter: images render only from attachments, and buttons, form fields other than task
+  checkboxes, `<link>`, `<meta>`, `<base>`, frames and `srcset` are removed. Rendering a deeply nested or
+  delimiter-heavy body is bounded to a few seconds. Mermaid renders in strict mode, its SVG is sanitized again (images
+  in labels removed) and a diagram can't change its theme. Diagrams are bounded too: a large one renders only after a
+  "Render diagram" click, and one over 500 statements, or past 25,000 characters of diagrams in one body, shows its
+  source (ADR-0082).
+
 ## [0.1.4] - 2026-11-14
 
 Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:

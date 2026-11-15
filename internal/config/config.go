@@ -245,6 +245,23 @@ type HTTPConfig struct {
 	// client that stops reading is disconnected instead of holding the response in central's memory. WebSocket
 	// connections (nodes, terminals) keep their own timeouts.
 	WriteIdleTimeout Duration `yaml:"write_idle_timeout"`
+	// CatchUpConcurrency bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each
+	// decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused
+	// with 503 and Retry-After (ADR-0081).
+	CatchUpConcurrency int `yaml:"catch_up_concurrency"`
+	// CatchUpWait bounds how long a terminal catch-up or recording read waits for one of catch_up_concurrency's slots
+	// (0 to 1m; 0 refuses at once).
+	CatchUpWait Duration `yaml:"catch_up_wait"`
+	// ReadIdleTimeout bounds how long one read of a request body may wait for the client to send data (1s to 10m). It
+	// bounds progress, not the whole request: the whole body must also arrive within its operation's bound (5 s for
+	// JSON operations, 10 minutes for an attachment upload); within that bound a large upload that keeps moving is
+	// never cut off, but a client that
+	// declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request
+	// refused before its body is read closes its connection instead of draining the body. Requests without a body
+	// (event streams) and WebSocket connections are unaffected.
+	ReadIdleTimeout Duration `yaml:"read_idle_timeout"`
+	// IdleTimeout bounds how long a kept-alive connection may wait for its next request (1s to 1h).
+	IdleTimeout Duration `yaml:"idle_timeout"`
 }
 
 // AuthConfig configures operator authentication (SM-AUTH-001).

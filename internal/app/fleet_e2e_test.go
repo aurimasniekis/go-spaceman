@@ -84,6 +84,7 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	e.startCentral()
 	e.srv.Start()
 	onTimeout(t, e.dump)
+	onProgress(t, e.progress)
 	t.Cleanup(func() {
 		e.stopAgent()
 		e.srv.Close()
@@ -188,13 +189,21 @@ func (e *fleetEnv) stopAgent() {
 	}
 }
 
-// eventually waits for cond. The deadline only bounds how long a failing test waits: most tests here run in parallel
-// (t.Parallel), so under the race detector on a small runner a condition can take several seconds to hold. On a
-// timeout it prints the test's state dumps (onTimeout; every fleetEnv registers one).
+// eventually waits for cond. Most tests here run in parallel (t.Parallel) and every state change goes through the one
+// SQLite writer queue, so under the race detector on a small runner a condition can take far longer than a fixed
+// deadline (a CI run took 35 s for a launch that takes 0.5 s idle). The wait is therefore for progress, not for wall
+// time: it keeps waiting while the fleet env's state advances (onProgress) and gives up after eventuallyStall with no
+// change, or after eventuallyMax whatever happens (eventuallyProgress). On a timeout it prints the test's state dumps
+// (onTimeout; every fleetEnv registers one).
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	eventuallyFor(t, what, 30*time.Second, cond)
+	eventuallyProgress(t, what, eventuallyStall, eventuallyMax, cond)
 }
+
+const (
+	eventuallyStall = 30 * time.Second
+	eventuallyMax   = 5 * time.Minute
+)
 
 func (e *fleetEnv) run1(id string) *fleet.Run {
 	r, err := e.c.Fleet.GetRun(context.Background(), id)
