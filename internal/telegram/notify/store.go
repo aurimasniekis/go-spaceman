@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
@@ -130,8 +131,19 @@ func (r StoreReader) action(ctx context.Context, scope map[string]any, k Key) (*
 	if a.Outcome != "" {
 		state = fmt.Sprintf("%s: %s", a.Status, a.Outcome)
 	}
+	detail := a.Body
+	if a.Type == human.TypeApproval {
+		// An enforced approval's body carries its (redacted) arguments: never sent to Telegram (SM-APPR-005, ADR-0083
+		// decision 14). Enforced: an approvals row points at it, or the approvals package's dedup key (set before the
+		// row is linked); a lookup error counts as enforced.
+		if strings.HasPrefix(a.DedupKey, "approval:") {
+			detail = ""
+		} else if _, err := r.S.R().GetApprovalByAction(ctx, a.ID); !errors.Is(err, sql.ErrNoRows) {
+			detail = ""
+		}
+	}
 	return &Resource{Key: k, SpaceID: a.SpaceID, Version: a.Version, Kind: KindAction, Perm: authz.HumanRead, ViewRole: role,
-		Label: humanLabel(a.Type, a.TypeSlug), Title: a.Title, Detail: a.Body, State: state, Priority: a.Priority, Assignee: a.Assignee,
+		Label: humanLabel(a.Type, a.TypeSlug), Title: a.Title, Detail: detail, State: state, Priority: a.Priority, Assignee: a.Assignee,
 		Notify: open, Final: !open, RemindedAt: a.RemindedAt.Int64, EscalatedAt: a.EscalatedAt.Int64}, nil
 }
 

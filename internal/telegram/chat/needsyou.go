@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
@@ -19,7 +20,15 @@ import (
 
 // Needs-you forms (ADR-0083, plan §2.4, TG-7-1): the human actions waiting for a person, answered from the chat.
 // Questions (options, free text), todos (step toggles, complete), messages (acknowledge) and custom types with a simple
-// response schema (a wizard) are handled here. An approval is NOT: its card says to open it in the app (TG-7-2).
+// response schema (a wizard) are handled here, and so are approvals (TG-7-2, ADR-0083 decision 14):
+//
+//   - Approve shows a Confirm step first ("Approve: <action>? [Confirm approve] [Back]"); Deny asks for a note with a
+//     ForceReply and asks again for an empty one. Both act on the form's version (If-Match) within its TTL.
+//   - An enforced approval (ADR-0024: get-action-approval returns a record) shows its operation, resource, space,
+//     expiry, uses and argument digest, never its arguments or the body that carries them (SM-APPR-005). It is decided
+//     in the browser unless the space set enforced_approvals = confirm; then the first step (Approve, or Deny) arms a
+//     confirmation on the server (Options.ArmApproval) and the second step (Confirm, or the note) passes it. The
+//     server enforces all of this itself (api telegram_approvals.go): the chat's view of the setting is only display.
 //
 // Like everything in this package, a tap acts as the link's principal through the in-process API and responds with the
 // version the person saw (If-Match). A form is bound to (chat, form message, link); a free-text reply is bound to
@@ -31,7 +40,9 @@ var humanIDRe = regexp.MustCompile(`^hum_[0-9a-z]{26}$`)
 // Texts of the needs-you forms.
 const (
 	TextFormExpired   = "That form expired. Open it again from /needsyou."
-	TextApprovalInApp = "Approvals are decided in the app."
+	TextApprovalInApp = "This approval is enforced: it is decided in the browser. This space doesn't allow deciding it in chat."
+	TextDenyNote      = "Why are you denying this? Reply to this message; a note is required."
+	TextDenyNoteEmpty = "A denial needs a note. Nothing was sent; reply with why you deny it."
 	TextOpenInApp     = "Open it in the app to answer."
 	maxWizardFields   = 8
 	maxWizardChoices  = 8
@@ -55,6 +66,7 @@ type humanAction struct {
 	Status         string          `json:"status"`
 	Outcome        string          `json:"outcome"`
 	Version        int64           `json:"version"`
+	DedupKey       string          `json:"dedup_key"`
 	TypeSpec       *struct {
 		Outcomes       []string        `json:"outcomes"`
 		ResponseSchema json.RawMessage `json:"response_schema"`
@@ -97,19 +109,29 @@ type form struct {
 	wiz                     *wizard
 	big                     bool   // too many steps or options for a keyboard
 	head                    string // the text above the controls
+	// Approvals: the action to approve, whether an enforced approval stands behind it, the step a Confirm would finish
+	// ("approved" after Approve), and the server's armed confirmation (enforced only) with the outcome it was armed for.
+	apAction             string
+	enforced, inChat     bool
+	confirming           string
+	armToken, armOutcome string
 }
 
 // prompt is a free-text reply being waited for.
 type prompt struct {
 	linkID string
 	form   pendingKey
-	field  int // wizard field index, -1 for a question's answer
+	field  int // wizard field index, -1 for a question's answer, promptDenyNote for an approval's denial note
 	at     time.Time
 }
 
+// promptDenyNote is prompt.field for an approval's denial note.
+const promptDenyNote = -2
+
 // Callback data (at most 64 bytes): "h<verb>:<space>:<action>[:<n>]", IDs without their prefix. Verbs: o open,
 // q option n, t toggle step n, c complete, m acknowledge, f free-text answer, w wizard choice n, k skip the field,
-// s submit with outcome n, x cancel. A bare "ho" on a notifier card resolves its action from the card mapping.
+// s submit with outcome n, x cancel, a approve (asks to confirm), y confirm approve, b back, d deny (asks for a note).
+// A bare "ho" on a notifier card resolves its action from the card mapping.
 func humanData(verb byte, spaceID, actionID string, n int) string {
 	d := fmt.Sprintf("h%c:%s:%s", verb, strings.TrimPrefix(spaceID, "spc_"), strings.TrimPrefix(actionID, "hum_"))
 	if n >= 0 {
@@ -119,7 +141,7 @@ func humanData(verb byte, spaceID, actionID string, n int) string {
 }
 
 func isHumanData(d string) bool {
-	return len(d) >= 2 && d[0] == 'h' && (d[1] == 'o' || strings.ContainsRune("qtcmfwksx", rune(d[1]))) && (len(d) == 2 || d[2] == ':')
+	return len(d) >= 2 && d[0] == 'h' && (d[1] == 'o' || strings.ContainsRune("qtcmfwksxaybd", rune(d[1]))) && (len(d) == 2 || d[2] == ':')
 }
 
 // --- /needsyou ---
@@ -317,7 +339,13 @@ func (h *Handler) openAction(ctx context.Context, q *botapi.CallbackQuery, l upd
 	}
 	h.answer(ctx, q.ID, "")
 	fm := h.newForm(a, l, s)
-	rp := h.renderForm(fm, a, s)
+	var ap *enforcedApproval
+	if a.Type == "approval" {
+		// Every status: the body of an enforced approval holds its arguments, so it is never shown unless the approval is
+		// positively known to be advisory (SM-APPR-005).
+		ap = h.approvalOf(ctx, c, s, a, fm)
+	}
+	rp := h.renderForm(fm, a, s, ap)
 	m, ok := h.send(ctx, l.ChatID, rp)
 	if ok && fm.interactive() {
 		fm.key = pendingKey{l.ChatID, m.MessageID}
@@ -330,7 +358,49 @@ func (f *form) interactive() bool {
 	if f.big {
 		return false
 	}
+	if f.typ == "approval" {
+		return f.apAction != "" && (!f.enforced || f.inChat) // apAction is set only while the approval is pending
+	}
 	return f.typ == "question" || f.typ == "todo" || f.typ == "message" || f.wiz != nil
+}
+
+func styled(b botapi.InlineKeyboardButton, style string) botapi.InlineKeyboardButton {
+	b.Style = style
+	return b
+}
+
+// enforcedApproval is the part of an enforced approval (get-action-approval) a card shows. Never its arguments.
+type enforcedApproval struct {
+	ID            string    `json:"id"`
+	Operation     string    `json:"operation"`
+	Resource      string    `json:"resource"`
+	ArgsDigest    string    `json:"args_digest"`
+	UsesAllowed   int64     `json:"uses_allowed"`
+	State         string    `json:"state"`
+	HumanActionID string    `json:"human_action_id"`
+	RequestExpiry time.Time `json:"request_expires_at"`
+}
+
+// approvalOf reads the enforced approval behind an approval action and sets the form's mode. Not found means advisory,
+// unless the action carries the approvals package's dedup key ("approval:…"); any other answer counts as enforced with
+// nothing to show (decided in the browser), never as advisory.
+func (h *Handler) approvalOf(ctx context.Context, c caller, s spaceRef, a humanAction, f *form) *enforcedApproval {
+	var ap enforcedApproval
+	r := c.get(ctx, "/spaces/"+s.ID+"/human-actions/"+a.ID+"/approval", &ap)
+	switch {
+	case r.status == http.StatusNotFound && strings.HasPrefix(a.DedupKey, "approval:"):
+		// The approvals package's dedup key without its row yet (or a failed link): enforced, as the server counts it.
+		f.enforced = true
+		return nil
+	case r.status == http.StatusNotFound:
+		return nil
+	case !r.ok() || ap.HumanActionID != a.ID:
+		f.enforced = true
+		return nil
+	}
+	f.enforced = true
+	f.inChat = h.o.Space(s.ID).EnforcedApprovals == settings.ApprovalsConfirm
+	return &ap
 }
 
 func (h *Handler) newForm(a humanAction, l updates.Link, s spaceRef) *form {
@@ -362,6 +432,15 @@ func (h *Handler) newForm(a humanAction, l updates.Link, s spaceRef) *form {
 		f.requiresAck = m.RequiresAck
 	case "custom":
 		f.wiz = parseWizard(a)
+	case "approval":
+		var ar struct {
+			Action string `json:"action"`
+		}
+		_ = json.Unmarshal(a.Request, &ar)
+		f.apAction = clean(ar.Action, 200)
+		if f.apAction == "" {
+			f.apAction = clean(a.Title, 200)
+		}
 	}
 	return f
 }
@@ -467,10 +546,23 @@ func parseWizard(a humanAction) *wizard {
 
 // --- rendering ---
 
-func (h *Handler) formHead(a humanAction, s spaceRef) string {
+func (h *Handler) formHead(a humanAction, s spaceRef, f *form, ap *enforcedApproval) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s%s", typeMark(a.Type), clean(a.Title, 200))
 	fmt.Fprintf(&b, "\nFrom: %s · Priority: %s · Space: %s", orDash(clean(a.RequesterLabel, 80)), clean(a.Priority, 20), s.title())
+	if f.typ == "approval" && f.apAction != "" {
+		b.WriteString("\nApprove: " + f.apAction)
+	}
+	if f.enforced {
+		// The body of an enforced approval carries its (redacted) arguments: never in chat (SM-APPR-005).
+		b.WriteString("\n\nEnforced approval: SpaceMan runs the operation only once it is approved, and only as shown.")
+		if ap != nil {
+			fmt.Fprintf(&b, "\nOperation: %s\nResource: %s\nScope: space %s\nUses: %d\nRequest expires: %s\nArgument digest: %s",
+				orDash(clean(ap.Operation, 120)), orDash(clean(ap.Resource, 200)), s.title(), ap.UsesAllowed,
+				ap.RequestExpiry.UTC().Format("2006-01-02 15:04 UTC"), orDash(clean(ap.ArgsDigest, 80)))
+		}
+		return b.String()
+	}
 	if h.o.Space(s.ID).ContentLevel == settings.ContentFull {
 		if body := strings.TrimSpace(a.Body); body != "" {
 			ps, dropped := parts(truncate(body, bodyRunes), partUnits/2)
@@ -497,8 +589,8 @@ func (h *Handler) appButton(s spaceRef, actionID, label string) []botapi.InlineK
 }
 
 // renderForm is the form of an action as it stands now.
-func (h *Handler) renderForm(f *form, a humanAction, s spaceRef) reply {
-	f.head = h.formHead(a, s)
+func (h *Handler) renderForm(f *form, a humanAction, s spaceRef, ap *enforcedApproval) reply {
+	f.head = h.formHead(a, s, f, ap)
 	rp := reply{text: f.head, protect: true}
 	app := h.appButton(s, a.ID, "Open in the app")
 	switch {
@@ -507,9 +599,11 @@ func (h *Handler) renderForm(f *form, a humanAction, s spaceRef) reply {
 		if a.Outcome != "" {
 			rp.text += " Outcome: " + clean(a.Outcome, 32) + "."
 		}
-	case a.Type == "approval":
+	case a.Type == "approval" && f.enforced && !f.inChat:
 		rp.text += "\n\n" + TextApprovalInApp
-		rp.markup = markup(app)
+		rp.markup = markup(h.appButton(s, a.ID, "Decide in browser"))
+	case a.Type == "approval":
+		return h.formView(f)
 	case f.big:
 		rp.text += "\n\n" + TextOpenInApp
 		rp.markup = markup(app)
@@ -565,6 +659,21 @@ func (h *Handler) formView(f *form) reply {
 		rows = append(rows, []botapi.InlineKeyboardButton{button(label, humanData('m', f.spaceID, f.action, -1))})
 	case "custom":
 		return h.wizardView(f)
+	case "approval":
+		if f.confirming == "approved" {
+			rp.text += "\n\nApprove: " + orDash(f.apAction) + "?"
+			if f.enforced {
+				rp.text += "\nThis is the second step: confirming lets SpaceMan run the operation as shown."
+			}
+			rows = append(rows, []botapi.InlineKeyboardButton{
+				styled(button("✅ Confirm approve", humanData('y', f.spaceID, f.action, -1)), botapi.StyleSuccess),
+				button("Back", humanData('b', f.spaceID, f.action, -1))})
+			break
+		}
+		rp.text += "\n\nApprove or deny. A denial needs a note."
+		rows = append(rows, []botapi.InlineKeyboardButton{
+			styled(button("✅ Approve", humanData('a', f.spaceID, f.action, -1)), botapi.StyleSuccess),
+			styled(button("❌ Deny", humanData('d', f.spaceID, f.action, -1)), botapi.StyleDanger)})
 	}
 	rp.markup = markup(rows...)
 	return rp
@@ -707,6 +816,34 @@ func (h *Handler) formAction(ctx context.Context, q *botapi.CallbackQuery, l upd
 		h.refresh(ctx, f)
 	case f.wiz != nil && verb == 's' && f.wiz.idx >= len(f.wiz.fields) && n >= 0 && n < len(f.wiz.outcomes):
 		h.respond(ctx, c, l, q, s, f, map[string]any{"outcome": f.wiz.outcomes[n], "data": f.wiz.values})
+	case verb == 'a' && f.typ == "approval":
+		if !h.arm(f, "approved") {
+			h.answer(ctx, q.ID, TextFailed)
+			return
+		}
+		f.confirming = "approved"
+		h.answer(ctx, q.ID, "")
+		h.refresh(ctx, f)
+	case verb == 'b' && f.typ == "approval" && f.confirming != "":
+		f.confirming, f.armToken, f.armOutcome = "", "", ""
+		h.answer(ctx, q.ID, "")
+		h.refresh(ctx, f)
+	case verb == 'y' && f.typ == "approval" && f.confirming == "approved":
+		f.confirming = "" // the server's confirmation is single use: a failed Confirm starts again from Approve
+		if !h.respond(h.confirmed(ctx, f, "approved"), c, l, q, s, f, map[string]any{"outcome": "approved"}) && h.formFor(f.key, l.ID) != nil {
+			h.refresh(ctx, f)
+		}
+	case verb == 'd' && f.typ == "approval":
+		if !h.arm(f, "denied") {
+			h.answer(ctx, q.ID, TextFailed)
+			return
+		}
+		f.confirming = ""
+		h.answer(ctx, q.ID, "")
+		m, ok := h.send(ctx, l.ChatID, reply{text: TextDenyNote, force: &botapi.ForceReply{ForceReply: true, InputFieldPlaceholder: "Why deny?"}})
+		if ok {
+			h.addPrompt(pendingKey{l.ChatID, m.MessageID}, prompt{linkID: l.ID, form: f.key, field: promptDenyNote})
+		}
 	case verb == 'x' && f.wiz != nil:
 		h.dropForm(f.key)
 		h.answer(ctx, q.ID, "")
@@ -717,8 +854,8 @@ func (h *Handler) formAction(ctx context.Context, q *botapi.CallbackQuery, l upd
 }
 
 // respond sends the response as the link's principal with the version the form showed. On success the form is closed;
-// on failure it says why, and a stale form is dropped.
-func (h *Handler) respond(ctx context.Context, c caller, l updates.Link, q *botapi.CallbackQuery, s spaceRef, f *form, body map[string]any) {
+// on failure it says why, and a stale form is dropped. It reports whether the response was accepted.
+func (h *Handler) respond(ctx context.Context, c caller, l updates.Link, q *botapi.CallbackQuery, s spaceRef, f *form, body map[string]any) bool {
 	r := c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/human-actions/"+f.action+"/respond", body, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, f.version)})
 	if !r.ok() {
 		msg := failText(r)
@@ -731,7 +868,7 @@ func (h *Handler) respond(ctx context.Context, c caller, l updates.Link, q *bota
 		} else {
 			h.send(ctx, l.ChatID, reply{text: msg})
 		}
-		return
+		return false
 	}
 	h.dropForm(f.key)
 	if q != nil {
@@ -739,6 +876,37 @@ func (h *Handler) respond(ctx context.Context, c caller, l updates.Link, q *bota
 	}
 	outcome, _ := body["outcome"].(string)
 	h.show(ctx, l.ChatID, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\n✅ Done: " + clean(outcome, 32) + "."})
+	return true
+}
+
+// arm prepares the decision an approval form's first step starts: for an enforced approval it arms the server's
+// confirmation for this link, action, outcome and version (false: it couldn't, nothing goes on). An advisory approval
+// needs none.
+func (h *Handler) arm(f *form, outcome string) bool {
+	f.armToken, f.armOutcome = "", ""
+	if !f.enforced {
+		return true
+	}
+	if !f.inChat || h.o.ArmApproval == nil {
+		return false
+	}
+	t := h.o.ArmApproval(f.linkID, f.spaceID, f.action, outcome, f.version)
+	if t == "" {
+		return false
+	}
+	f.armToken, f.armOutcome = t, outcome
+	return true
+}
+
+// confirmed is ctx for the second step of deciding an approval: it carries the armed confirmation when the form armed
+// one for this outcome. The server decides whether one is needed.
+func (h *Handler) confirmed(ctx context.Context, f *form, outcome string) context.Context {
+	if f.armToken == "" || f.armOutcome != outcome {
+		return ctx
+	}
+	t := f.armToken
+	f.armToken, f.armOutcome = "", "" // single use on the server too
+	return api.WithApprovalConfirmation(ctx, t)
 }
 
 // --- free-text replies ---
@@ -766,6 +934,10 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 		return true
 	}
 	text := strings.TrimSpace(m.Text)
+	if text == "" && p.field == promptDenyNote {
+		h.denyNotePrompt(ctx, f)
+		return true
+	}
 	if text == "" {
 		h.send(ctx, l.ChatID, reply{text: "Send the value as text."})
 		h.addPrompt(k, p)
@@ -778,6 +950,19 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 	s, r, ok := h.space(ctx, c, f.spaceID)
 	if !ok {
 		h.send(ctx, l.ChatID, reply{text: failText(r)})
+		return true
+	}
+	if p.field == promptDenyNote {
+		if f.typ != "approval" {
+			h.send(ctx, l.ChatID, reply{text: TextFormExpired})
+			return true
+		}
+		if n := len([]rune(text)); n > maxNoteRunes {
+			h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("That note is too long (%d characters, at most %d). Nothing was sent.", n, maxNoteRunes)})
+			h.denyNotePrompt(ctx, f)
+			return true
+		}
+		h.respond(h.confirmed(ctx, f, "denied"), c, l, nil, s, f, map[string]any{"outcome": "denied", "note": text})
 		return true
 	}
 	if p.field < 0 {
@@ -812,6 +997,17 @@ const maxWizardText = 2000
 
 // maxAnswerRunes is the longest free-text answer to a question.
 const maxAnswerRunes = 50000
+
+// maxNoteRunes is the longest note (human.Response.Note).
+const maxNoteRunes = 20000
+
+// denyNotePrompt asks again for a denial note, bound to the same form.
+func (h *Handler) denyNotePrompt(ctx context.Context, f *form) {
+	m, ok := h.send(ctx, f.key.chat, reply{text: TextDenyNoteEmpty, force: &botapi.ForceReply{ForceReply: true, InputFieldPlaceholder: "Why deny?"}})
+	if ok {
+		h.addPrompt(pendingKey{f.key.chat, m.MessageID}, prompt{linkID: f.linkID, form: f.key, field: promptDenyNote})
+	}
+}
 
 // parse checks a typed value against the field's kind and limits. On failure it returns what the field needs.
 func (fl wfield) parse(text string) (any, string) {
