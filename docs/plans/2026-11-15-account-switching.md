@@ -7,7 +7,7 @@
   windows) per run, account, role and space.
 - **Constraint from the operator:** no proxy or gateway for model traffic (not Harbor Pilot, not `claude -p` behind a
   proxy). Runs stay the real interactive Claude Code with real subscription credentials; SpaceMan swaps the
-  credentials. (Reading recorded as Q1.)
+  credentials. (Reading recorded as Q1.) This applies to subscription traffic; Harbor Pilot routing (ADR-0060) stays for 3rd-party/gateway models and is unchanged.
 - **ADR:** **ADR-0090** in `docs/DECISIONS.md` (landed by T0 on 2026-11-15; the [draft file](2026-11-15-account-switching-adr.md)
   now only points there).
 - **Builds on:** ADR-0079 (usage limits: detection, holds, keep-alive, park, resume), ADR-0009 (launcher shim),
@@ -86,9 +86,9 @@ Evidence labels used below:
 - **"Harbor Pilot routing per space role / harness profile"** (backlog): route one role (e.g. a light role on a cheaper
   model) through a Harbor Pilot alias while other roles of the same harness keep their account. It is about **model
   routing for cost**, not about limits. This plan neither needs nor replaces it. Since the operator no longer wants
-  the gateway for subscription traffic, Q10 asks whether to keep it.
+  the gateway for subscription traffic, Q10 asks whether to keep it. This applies to subscription traffic; Harbor Pilot routing (ADR-0060) stays for 3rd-party/gateway models and is unchanged.
 - **"Gateway runs: pass the Harbor Pilot token as `CLAUDE_CODE_OAUTH_TOKEN`"** (backlog): only so Claude Code shows
-  Harbor Pilot's usage headers on gateway runs. Direct runs already get `rate_limits` in the status line (§2.2), which
+  Harbor Pilot's usage headers on gateway runs. Direct runs already get `rate_limits` in the status line (§2.1), which
   this plan collects. **Recommendation: retire it** (Q10).
 
 ## 2. Verified facts the design rests on
@@ -184,9 +184,9 @@ Primary stays ADR-0079's typed transcript scan; two accelerators and one new dat
    `verification_required`) as a run health signal. `last_assistant_message` and `error_details` are **never read**
    (display text). The hook can't change anything in Claude Code; a missing or failing hook just leaves the scan.
 3. **Status-line wrapper (new data):** SpaceMan owns `statusLine`, set to `spaceman-agent statusline`, with
-   `refreshInterval` 60 s. It reads the JSON from stdin, forwards an **allowlisted numeric subset** (`rate_limits.*`,
+   `refreshInterval` 60 s. It reads the JSON from stdin, forwards **allowlisted typed fields** (`rate_limits.*`,
    `cost.total_cost_usd`, `cost.total_api_duration_ms`, `context_window.used_percentage`, the token counts,
-   `model.id`, `session_id`, `version`) over the bridge socket, and then, if the profile set its own `statusLine`,
+   `model.id`, `session_id`, `version`; the three strings are length-bounded and pattern-checked) over the bridge socket, and then, if the profile set its own `statusLine`,
    runs that command with the same stdin and prints its output (the "wrap the original status line" request);
    otherwise prints a short SpaceMan line. Bounded: 64 KiB of input, 2 s for the wrapped command, never blocks Claude
    Code on the socket.
@@ -413,7 +413,8 @@ session; race run of `internal/fleet`; ADR-0079 tests unchanged.
 ### T4 — Hook and status-line intake on the node (medium)
 `spaceman-agent hook stop-failure` and `spaceman-agent statusline` (wrap the profile's status line, 64 KiB/2 s bounds,
 allowlist); OwnJSON wiring in `Claude.Build`; bridge-socket intake authenticated by run token; StopFailure kicks the
-limit scan; latest snapshot kept per run. **Accept:** unit tests for the allowlist (no text field crosses), the
+limit scan; latest snapshot kept per run. String fields (`model.id`, `session_id`, `version`) are length-bounded and
+pattern-checked. **Accept:** unit tests for the allowlist (no text field crosses), the bounds, the
 wrapped command's output and timeout, a missing agent socket not breaking Claude Code; a real print-mode check
 (opt-in `SPACEMAN_REAL=1`) that the status line command is invoked with the documented JSON.
 
@@ -475,12 +476,12 @@ plan applies these answers.
 | Q2 | Should the existing `usage_limit_failover` switch also turn on live switching, or a separate switch? | One switch (`usage_limit_failover`) for launches, resumes and live runs; still **off by default** per space. | Accepted (default). |
 | Q3 | Pools: per space with an optional per-role pool, ordered by priority. Enough, or do you want per-harness-profile pools too? | Space pool + optional role pool; no profile pools. | Accepted (default). |
 | Q4 | Switch the session immediately at the limit, even when the reset is close (e.g. 20 min away)? | Switch whenever an eligible account exists; the session continues at once. (Alternative: keep ADR-0079's keep-alive when the reset is under N minutes.) | **Changed: wait instead of switching when the reset is near.** New space setting `usage_limit_wait_if_reset_within`, default **15 min**. If the limited account resets within that window, the run waits (ADR-0079 park and wait). Otherwise it switches to the next eligible account. (§3.2, §3.4.) |
-| Q5 | Pre-emptive switch before the limit (at an idle point, at ≥ X % of a window)? | Off by default (`100`); recommend 95 for spaces with a pool. | **Changed: no pre-emptive switch.** Replaced by a launch-time headroom gate, `usage_limit_min_headroom_percent` (per space, off by default; T9). A new run (launch or fresh resume) does not start on an account whose known window usage leaves less than X % free; it picks the next eligible account, or waits. Running agents are not switched pre-emptively. |
+| Q5 | Pre-emptive switch before the limit (at an idle point, at ≥ X % of a window)? | Off by default (`100`); recommend 95 for spaces with a pool. | **Changed: no pre-emptive switch.** Replaced by a launch-time headroom gate, `usage_limit_min_headroom_percent` (per space, off by default; T9). A new run (launch or fresh resume, or a switch's resume) does not start on an account whose known window usage leaves less than X % free; it picks the next eligible account, or waits. Running agents are not switched pre-emptively. |
 | Q6 | An account that fails authentication after a switch: stop, or try the next account? | Stop and tell control; flag the account. No automatic second switch on auth errors. | Accepted (default). |
 | Q7 | Notifications per switch: control only, or also Telegram/people? | Control only; people (and so Telegram) only when the whole pool is exhausted. | Accepted (default). |
 | Q8 | Codex: build after the Claude Code switch ships, and only after the C1 spike? If a Codex session can't be resumed under another account, accept a fresh session with a note, or keep Codex switching off? | Staged after Claude Code; if resume is refused, keep Codex switching off. | Accepted (default). |
 | Q9 | Usage retention: hourly buckets 90 days, daily 730 days, window samples 30 days, closed holds/waits/switches 180 days? | Yes. | Accepted (default). |
-| Q10 | Harbor Pilot backlog: retire "pass the HP token as `CLAUDE_CODE_OAUTH_TOKEN`"? Keep "HP routing per role" (it's about cheaper models, not limits)? | Retire the token item; keep routing in backlog until you decide on gateway use at all. | Accepted (default). |
+| Q10 | Harbor Pilot backlog: retire "pass the HP token as `CLAUDE_CODE_OAUTH_TOKEN`"? Keep "HP routing per role" (it's about cheaper models, not limits)? | Retire the token item; keep routing in backlog until you decide on gateway use at all. | Accepted (default). This applies to subscription traffic; Harbor Pilot routing (ADR-0060) stays for 3rd-party/gateway models and is unchanged. |
 | Q11 | T1 needs two real subscription tokens on the node for a short, budget-bounded spike. OK to provide them? | Yes, two tokens, revoked after the spike or kept as the pool. | Accepted (default). Tokens are handed over out of band, never committed (K-17). |
 | Q12 | Cost: show the status line's `total_cost_usd` (a list-price estimate) on the usage page? | Yes, labelled "estimate (list price)"; tokens are the primary unit. | Accepted (default). |
 
