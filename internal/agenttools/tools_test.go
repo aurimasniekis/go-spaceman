@@ -350,3 +350,31 @@ func TestWorkerInboxDedupKeyEffectiveLimit(t *testing.T) {
 		t.Fatalf("error %q does not state the effective limit %d", err, limit)
 	}
 }
+
+// Control's spaceman_task_set_status may close a task that never ran as done (it sets ControlDone); a worker, even
+// the one the task is assigned to, cannot reach that shortcut. Control still gets the queue's refusals.
+func TestControlDirectDone(t *testing.T) {
+	f := newFx(t)
+	var task queue.Task
+	must(t, f.call(f.ctrl, "spaceman_task_create", map[string]any{"title": "Control did it", "ready": true}, &task))
+	_, err := f.d.Queue.Update(f.ctx, audit.System, "spc_a", task.ID, task.Version, queue.UpdateInput{Title: task.Title, Priority: task.Priority, AssigneeRun: f.wrk.RunID})
+	must(t, err)
+	// A worker cannot close it, assigned or not.
+	code(t, f.call(f.wrk, "spaceman_task_set_status", map[string]any{"task_id": task.ID, "status": "done", "result": "mine"}, nil), apperr.CodeForbidden)
+
+	var plain queue.Task
+	must(t, f.call(f.ctrl, "spaceman_task_create", map[string]any{"title": "Plain", "ready": true}, &plain))
+	code(t, f.call(f.wrk, "spaceman_task_set_status", map[string]any{"task_id": plain.ID, "status": "done", "result": "mine"}, nil), apperr.CodeForbidden)
+	if got, err := f.d.Queue.Get(f.ctx, "spc_a", plain.ID); err != nil || got.Status != queue.Ready {
+		t.Fatalf("worker attempt changed the task: %+v %v", got, err)
+	}
+	// Control: a result is required, then the task is done.
+	code(t, f.call(f.ctrl, "spaceman_task_set_status", map[string]any{"task_id": plain.ID, "status": "done"}, nil), apperr.CodeInvalid)
+	var done queue.Task
+	must(t, f.call(f.ctrl, "spaceman_task_set_status", map[string]any{"task_id": plain.ID, "status": "done", "result": "did it myself"}, &done))
+	if done.Status != queue.Done || done.Result != "did it myself" {
+		t.Fatalf("direct done %+v", done)
+	}
+	// The assigned task has an assignee run: even control may not skip the worker.
+	code(t, f.call(f.ctrl, "spaceman_task_set_status", map[string]any{"task_id": task.ID, "status": "done", "result": "x"}, nil), apperr.CodePrecondition)
+}

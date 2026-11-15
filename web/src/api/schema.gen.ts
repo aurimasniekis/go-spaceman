@@ -14488,7 +14488,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -14554,7 +14554,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path?: never;
@@ -14710,7 +14710,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -14855,7 +14855,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -15015,7 +15015,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -16495,7 +16495,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -16749,7 +16749,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -16909,7 +16909,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -17650,7 +17650,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -18206,7 +18206,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -18371,7 +18371,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -19051,7 +19051,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -19450,7 +19450,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -19553,7 +19553,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -20068,7 +20068,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -20102,7 +20102,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -20139,7 +20139,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -21824,7 +21824,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -21969,7 +21969,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -22199,7 +22199,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -22444,7 +22444,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path: {
@@ -22776,7 +22776,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path?: never;
@@ -23094,7 +23094,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description The resource version this update was based on, as "<version>" (required) */
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
                 "If-Match"?: string;
             };
             path?: never;

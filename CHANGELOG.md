@@ -26,6 +26,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
 
+### Changed
+
+- Control can close a task that never had a worker run (control did the work itself) as **done** straight from backlog or ready with `spaceman_task_set_status`, a result required; the audit event is marked `direct`. The task must have no unmet dependency and no open `blocks_task` human action. No other transition changes, and operators and workers cannot use it.
+
+### Fixed
+
+- Admin MCP tools whose operation requires `If-Match` (`set_space_state`, `update_space`, and the other versioned writes) list `if_match` as a required argument and say so in the description, so an approved call is not refused with a 428 and approved again. Operations where it is optional (a missing version means create or overwrite, e.g. `move_task`, `set_space_limits`, the draft saves) keep it optional and make no 428 promise.
+- A question request refused with `unknown field "allow_text"` was a request of another type (approval, to-do, message), where `allow_text` is not a field. The refusal now names the type and the fields it takes, and the `spaceman_human_ask` request description says `allow_text` is for questions only.
+- Attaching a file or image in the Telegram Mini App (new inbox item, human-action responses, messages, tasks) no longer fails with "authentication required". The upload sent a cookie and CSRF token, which the Mini App never has; it now sends the Mini App's `Authorization: Telegram` session like every other call.
+- The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
+- The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
+- The human-action lists sort before they truncate, so a top-N view (the Mini App home) shows the most urgent pending action even when more than a page is pending; before, a newer urgent item was cut off and the oldest were kept.
+
 ### Security
 
 - The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
