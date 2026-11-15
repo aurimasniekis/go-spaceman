@@ -41,9 +41,15 @@ type StoreMappings struct{ S *store.Store }
 func (m StoreMappings) Save(ctx context.Context, rows []Mapping) error {
 	return m.S.W().TxNamed(ctx, "telegram.messages", func(tx *store.Tx) error {
 		for _, r := range rows {
+			if r.Delete {
+				if err := tx.Q.DeleteTelegramMessage(ctx, db.DeleteTelegramMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID)}); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := tx.Q.UpsertTelegramMessage(ctx, db.UpsertTelegramMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID),
 				LinkID: sql.NullString{String: r.LinkID, Valid: r.LinkID != ""}, SpaceID: sql.NullString{String: r.SpaceID, Valid: r.SpaceID != ""},
-				Kind: "card", ResourceType: r.Key.Type, ResourceID: r.Key.ID, ResourceVersion: r.Version, CreatedAt: r.CreatedAt.UnixMicro()}); err != nil {
+				Kind: kindOf(r), ResourceType: r.Key.Type, ResourceID: r.Key.ID, ResourceVersion: r.Version, CreatedAt: r.CreatedAt.UnixMicro()}); err != nil {
 				return err
 			}
 		}
@@ -51,7 +57,14 @@ func (m StoreMappings) Save(ctx context.Context, rows []Mapping) error {
 	})
 }
 
-// Lookup returns a resource's cards.
+func kindOf(m Mapping) string {
+	if m.Cont {
+		return "cont"
+	}
+	return "card"
+}
+
+// Lookup returns a resource's cards and their continuation messages.
 func (m StoreMappings) Lookup(ctx context.Context, k Key) ([]Mapping, error) {
 	rows, err := m.S.R().ListTelegramMessagesByResource(ctx, db.ListTelegramMessagesByResourceParams{ResourceType: k.Type, ResourceID: k.ID})
 	if err != nil {
@@ -59,7 +72,7 @@ func (m StoreMappings) Lookup(ctx context.Context, k Key) ([]Mapping, error) {
 	}
 	out := make([]Mapping, len(rows))
 	for i, r := range rows {
-		out[i] = Mapping{ChatID: r.ChatID, MessageID: int(r.MessageID), Key: k, Version: r.ResourceVersion, CreatedAt: time.UnixMicro(r.CreatedAt)}
+		out[i] = Mapping{ChatID: r.ChatID, MessageID: int(r.MessageID), Key: k, Version: r.ResourceVersion, CreatedAt: time.UnixMicro(r.CreatedAt), Cont: r.Kind == "cont"}
 	}
 	return out, nil
 }
@@ -177,7 +190,7 @@ func messageResource(k Key, m db.Message) *Resource {
 	}
 	open := m.State == "stored" || m.State == "available"
 	return &Resource{Key: k, SpaceID: m.SpaceID, Version: m.Version, Kind: KindMessage, Perm: authz.MessageRead, Label: "Message",
-		Title: m.Subject, Detail: m.Body, State: m.State, Notify: open, Final: !open}
+		Title: m.Subject, Detail: m.Body, State: messageState(m.State), Notify: open, Final: !open}
 }
 
 // runResource: a run is notified only when it failed or was lost (runs.observed); other states are of no interest
@@ -204,4 +217,17 @@ func (m StoreMappings) Card(ctx context.Context, chatID int64, messageID int) (M
 	}
 	return Mapping{ChatID: chatID, MessageID: messageID, LinkID: r.LinkID.String, SpaceID: r.SpaceID.String,
 		Key: Key{Type: r.ResourceType, ID: r.ResourceID}, Version: r.ResourceVersion}, nil
+}
+
+// messageState is what a message card shows: the internal state ("stored", "available") means nobody read it yet.
+func messageState(st string) string {
+	switch st {
+	case "stored", "available":
+		return "Unread"
+	case "acknowledged":
+		return "Read"
+	case "resolved":
+		return "Resolved"
+	}
+	return ""
 }

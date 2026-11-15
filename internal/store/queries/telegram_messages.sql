@@ -8,8 +8,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at;
 
 -- name: ListTelegramMessagesByResource :many
-SELECT chat_id, message_id, resource_version, created_at FROM telegram_messages
-WHERE resource_type = ? AND resource_id = ? AND kind = 'card';
+-- Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
+SELECT chat_id, message_id, kind, resource_version, created_at FROM telegram_messages
+WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont');
 
 -- name: PruneTelegramMessages :execrows
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
@@ -19,3 +20,7 @@ DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
 -- A card by its message, for a button that doesn't carry the resource (the link it was sent to binds the tap).
 SELECT link_id, space_id, resource_type, resource_id, resource_version FROM telegram_messages
 WHERE chat_id = ? AND message_id = ? AND kind = 'card';
+
+-- name: DeleteTelegramMessage :exec
+-- A continuation the notifier deleted (the body shrank): its row must not come back after a restart.
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'cont';
