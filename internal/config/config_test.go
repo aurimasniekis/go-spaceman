@@ -350,3 +350,35 @@ func TestTelegramMiniAppHost(t *testing.T) {
 		}
 	}
 }
+
+// telegram.webhook_base_url: empty by default, read from the file, https only with a lower-case host.
+func TestTelegramWebhookBaseURL(t *testing.T) {
+	if d := Default().Telegram.WebhookBaseURL; d != "" {
+		t.Fatalf("default telegram.webhook_base_url = %q", d)
+	}
+	p := writeFile(t, "public_url: http://127.0.0.1:8080\ntelegram:\n  webhook_base_url: https://hooks.example.com\n")
+	cfg, err := Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telegram.WebhookBaseURL != "https://hooks.example.com" {
+		t.Fatalf("telegram.webhook_base_url = %q", cfg.Telegram.WebhookBaseURL)
+	}
+	for _, bad := range []string{"http://hooks.example.com", "hooks.example.com", "https://Hooks.Example.com", "https://u:p@hooks.example.com",
+		"https://hooks.example.com/?x=1", "https://hooks.example.com/#f", "ftp://hooks.example.com", "https://"} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Telegram.WebhookBaseURL = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "telegram.webhook_base_url") {
+			t.Errorf("webhook_base_url %q: err = %v", bad, err)
+		}
+	}
+	for _, ok := range []string{"", "https://hooks.example.com", "https://hooks.example.com:8443/telegram"} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Telegram.WebhookBaseURL = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("webhook_base_url %q: %v", ok, err)
+		}
+	}
+}

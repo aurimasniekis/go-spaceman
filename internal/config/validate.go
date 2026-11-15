@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -135,6 +136,9 @@ func (c *Config) Validate() error {
 	v.durationRange("shutdown.timeout", c.Shutdown.Timeout, time.Second, 10*time.Minute)
 	if _, err := botapi.ParseBaseURL(c.Telegram.APIBaseURL); err != nil {
 		v.add("telegram.api_base_url %v", err)
+	}
+	if err := checkWebhookBaseURL(c.Telegram.WebhookBaseURL); err != nil {
+		v.add("telegram.webhook_base_url %v", err)
 	}
 	if err := tghost.Check(c.Telegram.MiniAppHost, c.PublicURL); err != nil {
 		v.add("telegram.miniapp_host %v", err)
@@ -400,6 +404,25 @@ func (v *validator) publicURL(name, raw string, prod bool) {
 	if prod && u.Scheme != "https" && !isLoopback(u.Hostname()) {
 		v.add("%s must use https in production", name)
 	}
+}
+
+// checkWebhookBaseURL validates telegram.webhook_base_url: empty, or an absolute https URL (Telegram only calls HTTPS
+// webhooks) with a lower-case host and no credentials, query or fragment.
+func checkWebhookBaseURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Scheme != "https" {
+		return fmt.Errorf("must be an absolute https URL (Telegram only calls HTTPS webhooks), got %q", raw)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(raw, "?") || strings.Contains(raw, "#") {
+		return errors.New("must not contain credentials, a query or a fragment")
+	}
+	if u.Host != strings.ToLower(u.Host) {
+		return errors.New("must have a lower-case host")
+	}
+	return nil
 }
 
 func isLoopback(host string) bool {

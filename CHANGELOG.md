@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `telegram.webhook_base_url` (environment `SPACEMAN_TELEGRAM_WEBHOOK_BASE_URL`): the public https base URL the Telegram
+  webhook is registered under, for a deployment whose `public_url` is not reachable from the internet. Empty keeps the
+  webhook under `public_url`. The webhook path and secret-token check are unchanged.
+
 ## [0.1.5] - 2026-11-15
 
 Release on top of v0.1.4. It adds the Telegram integration (ADR-0083): a bot you chat with, a Mini App that opens inside

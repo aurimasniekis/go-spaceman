@@ -511,7 +511,7 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 		return false
 	}
 
-	url := svc.o.PublicURL + updates.WebhookPath + row.HookID
+	url := svc.webhookBase() + updates.WebhookPath + row.HookID
 	if err := call(func(ctx context.Context) error {
 		return c.SetWebhook(ctx, botapi.SetWebhookParams{URL: url, SecretToken: string(secret), MaxConnections: webhookMaxConnections,
 			AllowedUpdates: updates.AllowedUpdates, DropPendingUpdates: drop})

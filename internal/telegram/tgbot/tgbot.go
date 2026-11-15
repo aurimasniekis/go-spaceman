@@ -90,6 +90,9 @@ type Options struct {
 	BaseURL string
 	// PublicURL is central's public_url: the webhook is registered under it, and the Mini App host must differ from it.
 	PublicURL string
+	// WebhookBaseURL is telegram.webhook_base_url: when set, the webhook is registered under it instead of PublicURL
+	// (the path and the secret token do not change). It is validated at configuration load.
+	WebhookBaseURL string
 	// MiniAppHost is central's telegram.miniapp_host (config file only; "" when unset). When set it is the Mini App
 	// host whatever the bot's miniapp_host says: a different stored miniapp_host is ignored, logged and shown in the
 	// health (ADR-0083 §3.4.1).
@@ -148,6 +151,14 @@ type Service struct {
 	sndDone chan struct{}
 }
 
+// webhookBase is the base URL the webhook is registered under: telegram.webhook_base_url when set, else public_url.
+func (svc *Service) webhookBase() string {
+	if svc.o.WebhookBaseURL != "" {
+		return svc.o.WebhookBaseURL
+	}
+	return svc.o.PublicURL
+}
+
 // New returns the service. Call Start once central serves, to bring the configured bot up.
 func New(s *store.Store, aw *audit.Writer, kr *keyring.Keyring, o Options) *Service {
 	if o.CallTimeout <= 0 {
@@ -160,6 +171,7 @@ func New(s *store.Store, aw *audit.Writer, kr *keyring.Keyring, o Options) *Serv
 		o.Bus = eventbus.New()
 	}
 	o.PublicURL = strings.TrimRight(o.PublicURL, "/")
+	o.WebhookBaseURL = strings.TrimRight(o.WebhookBaseURL, "/")
 	svc := &Service{s: s, audit: aw, kr: kr, o: o, retryMin: retryMin, retryMax: retryMax}
 	empty := ""
 	svc.miniAppHost.Store(&empty)
@@ -341,8 +353,8 @@ func (svc *Service) Put(ctx context.Context, actor audit.Actor, version int64, i
 	if in.Mode != ModeWebhook && in.Mode != ModePolling {
 		v.Add("mode", "must be webhook or polling")
 	}
-	if in.Enabled && in.Mode == ModeWebhook && !strings.HasPrefix(svc.o.PublicURL, "https://") {
-		v.Add("mode", "webhook mode needs central's public_url to be https (Telegram only calls HTTPS webhooks); use polling")
+	if in.Enabled && in.Mode == ModeWebhook && !strings.HasPrefix(svc.webhookBase(), "https://") {
+		v.Add("mode", "webhook mode needs central's public_url (or telegram.webhook_base_url) to be https (Telegram only calls HTTPS webhooks); use polling")
 	}
 	checkMiniAppHost(v, in.MiniAppHost, svc.o.PublicURL)
 	if in.MiniAppHost != "" && svc.o.MiniAppHost == "" {
