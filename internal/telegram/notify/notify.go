@@ -373,7 +373,7 @@ func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link
 		if card != nil && card.version >= r.Version && r.Version != 0 {
 			continue // the card already shows this state
 		}
-		n.enqueue(snd, l, r, sp, card != nil)
+		n.enqueue(snd, l, r, card != nil)
 	}
 }
 
@@ -413,7 +413,7 @@ func wants(p settings.EffectivePrefs, r *Resource) bool {
 	return false
 }
 
-func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, sp settings.Space, edit bool) {
+func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) {
 	prio := sender.Notification
 	switch {
 	case edit:
@@ -422,9 +422,6 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, sp settings
 		prio = sender.NeedsYou
 	}
 	chat, linkID, res := l.ChatID, l.ID, *r
-	full := sp.ContentLevel == settings.ContentFull
-	text, entities := renderCard(&res, full)
-	protect := full && res.Detail != "" // plan 3.8: a card with a body can't be forwarded or saved
 	var done func(error)
 	if !edit {
 		done = n.cards.queue(chat, r.Key)
@@ -436,7 +433,12 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, sp settings
 			if !n.stillMay(linkID, chat, &res) {
 				return nil
 			}
-			return n.cards.upsert(ctx, c, linkID, chat, &res, sp.SpaceID, text, entities, protect)
+			// The card is rendered here, from the space's current content level: a body queued at "full" is never sent
+			// after the space was lowered to "summary" while it waited.
+			full := n.o.Policy.Space(res.SpaceID).ContentLevel == settings.ContentFull
+			text, entities := renderCard(&res, full)
+			protect := full && res.Detail != "" // plan 3.8: a card with a body can't be forwarded or saved
+			return n.cards.upsert(ctx, c, linkID, chat, &res, res.SpaceID, text, entities, protect)
 		}})
 	if err != nil {
 		if done != nil {

@@ -268,3 +268,61 @@ func TestBudgetUpdates(t *testing.T) {
 		t.Errorf("%d sends in all, want %d: updates edit", c, res*links)
 	}
 }
+
+// TestSendTimeRecheckChatMoved: a card queued for a chat is dropped when its link moved to another chat while it
+// waited (the chat-ID match in the send-time check).
+func TestSendTimeRecheckChatMoved(t *testing.T) {
+	e := newEnv(t, 1)
+	stop := e.run(nil)
+	defer stop()
+	release := e.holdChat(1001)
+	before := e.feed.reads.Load()
+	e.rd.set(action("hum_1", 1, false))
+	e.feed.add("spc_1", notify.TypeHumanAction, "hum_1", changefeed.Created, 1)
+	e.ring()
+	e.endWindow()
+	e.settle(before)
+	e.editLink(func(l *notify.Link) { l.ChatID = 9999 })
+	release()
+	time.Sleep(300 * time.Millisecond)
+	if n := len(e.fake.Calls("sendMessage")); n != 0 {
+		t.Errorf("%d sends to a chat the link left", n)
+	}
+}
+
+// TestContentLevelLoweredWhileQueued: a card queued at the full level shows no body when the space was lowered to
+// summary while it waited, and sends nothing when it was lowered to off.
+func TestContentLevelLoweredWhileQueued(t *testing.T) {
+	for _, tc := range []struct {
+		lowered string
+		sends   int
+	}{{settings.ContentSummary, 1}, {settings.ContentOff, 0}} {
+		t.Run(tc.lowered, func(t *testing.T) {
+			e := newEnv(t, 1)
+			e.pol.level = settings.ContentFull
+			stop := e.run(nil)
+			defer stop()
+			release := e.holdChat(1001)
+			before := e.feed.reads.Load()
+			e.rd.set(action("hum_1", 1, false))
+			e.feed.add("spc_1", notify.TypeHumanAction, "hum_1", changefeed.Created, 1)
+			e.ring()
+			e.endWindow()
+			e.settle(before)
+			e.pol.mu.Lock()
+			e.pol.level = tc.lowered
+			e.pol.mu.Unlock()
+			release()
+			time.Sleep(300 * time.Millisecond)
+			c := e.fake.Calls("sendMessage")
+			if len(c) != tc.sends {
+				t.Fatalf("%d sends, want %d", len(c), tc.sends)
+			}
+			for _, call := range c {
+				if strings.Contains(call.Params["text"], "Please approve") || call.Params["protect_content"] == "true" {
+					t.Errorf("a full-level body or protection after lowering: %q", call.Params["text"])
+				}
+			}
+		})
+	}
+}
