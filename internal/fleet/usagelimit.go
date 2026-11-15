@@ -166,7 +166,9 @@ func reportedLimit(cur limitState, rep proto.RunReport, now time.Time) (limitSta
 		next.since = cur.since
 	}
 	if cur.kind != "" && cur.since == next.since {
-		if !next.resets.Valid {
+		// A reset the status line filled (minor ≥ 13) never replaces the one the transcript gave the stored limit; it only
+		// fills a missing one (the node sends it only for a limit whose record lacked a reset).
+		if !next.resets.Valid || (l.Source == proto.LimitSourceStatusLine && cur.resets.Valid) {
 			next.resets = cur.resets
 		}
 		if next.kind == proto.LimitUnknown {

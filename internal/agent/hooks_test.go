@@ -450,7 +450,8 @@ func TestBridgeLineOverCapClosesConnection(t *testing.T) {
 	if err != nil && !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("connection not closed by the agent: %v", err)
 	}
-	if err == nil && !strings.Contains(string(got), "request too large") {
+	// ReadAll usually returns ECONNRESET with the bytes read before it: the overflow answer is checked either way.
+	if !strings.Contains(string(got), "request too large") {
 		t.Fatalf("no overflow error, got %q", got)
 	}
 	// A normal line still works on a new connection.

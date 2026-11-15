@@ -8,6 +8,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // Intake of Claude Code's StopFailure hook and status-line wrapper (plan §3.3). Both arrive on the bridge socket,
@@ -35,8 +36,12 @@ func (a *Agent) stopFailureIntake(ctx context.Context, req bridgeRequest) bridge
 		if a.failureClasses == nil {
 			a.failureClasses = map[string]string{}
 		}
+		changed := a.failureClasses[req.Run] != f.Error
 		a.failureClasses[req.Run] = f.Error
 		a.mu.Unlock()
+		if changed {
+			defer a.goTrack(func() { a.reportHookData(context.WithoutCancel(ctx), req.Run) })
+		}
 	}
 	// The run may have ended between the bridge's check and the stores above; its data was dropped then, so drop it again.
 	if r, err := a.j.getRun(ctx, req.Run); err != nil || ended(r.State) {
@@ -78,8 +83,14 @@ func (a *Agent) statusLineIntake(ctx context.Context, req bridgeRequest) bridgeR
 	a.statusSnaps[req.Run] = StatusObservation{StatusSnapshot: s, ObservedAt: a.now()}
 	a.mu.Unlock()
 	// The run may have ended between the bridge's check and the store above; its data was dropped then, so drop it again.
-	if r, err := a.j.getRun(ctx, req.Run); err != nil || ended(r.State) {
+	r, err := a.j.getRun(ctx, req.Run)
+	if err != nil || ended(r.State) {
 		a.forgetHookData(req.Run)
+		return bridgeResponse{OK: true}
+	}
+	// An open limit still without a reset time gets the status line's, now rather than at the next report.
+	if l := r.Limit.wire(a.now()); l != nil && !l.Cleared && l.ResetsAt == nil && statusLineReset(l.Kind, s) != nil {
+		a.goTrack(func() { a.reportHookData(context.WithoutCancel(ctx), req.Run) })
 	}
 	return bridgeResponse{OK: true}
 }
@@ -105,4 +116,63 @@ func (a *Agent) forgetHookData(runID string) {
 	delete(a.failureClasses, runID)
 	delete(a.stopScans, runID)
 	a.mu.Unlock()
+}
+
+// statusLineReset is the reset time the status line's rate-limit windows give a limit of the given kind: the window
+// that is full (≥ 100 % used) and, for the wrap-up path's unknown kind, the later of the two. Nil when there is none. The
+// bound on the value (Unix seconds in 1e9–4e9) was applied when the snapshot was accepted; proto.RunLimit.Normalized
+// applies the limit's own bounds (after since, within MaxLimitReset) before anything is sent or stored.
+func statusLineReset(kind string, s harness.StatusSnapshot) *time.Time {
+	var cands []*harness.Window
+	switch kind {
+	case proto.LimitFiveHour:
+		cands = []*harness.Window{s.FiveHour}
+	case proto.LimitSevenDay:
+		cands = []*harness.Window{s.SevenDay}
+	case proto.LimitUnknown:
+		cands = []*harness.Window{s.FiveHour, s.SevenDay}
+	}
+	var best int64
+	for _, w := range cands {
+		if w != nil && w.UsedPct >= 100 && w.ResetsAt > best {
+			best = w.ResetsAt
+		}
+	}
+	if best == 0 {
+		return nil
+	}
+	t := time.Unix(best, 0).UTC()
+	return &t
+}
+
+// withHookData adds what the hooks gave the node to a run's report (minor ≥ 13; ForMinor strips it below): the
+// non-limit StopFailure class, and, on an open limit whose transcript record carried no reset time, the reset the status
+// line's window gives (source statusline). A reset the transcript gave is never replaced. The limit is copied, never
+// changed in place: it points into the journal row.
+func (a *Agent) withHookData(rep proto.RunReport) proto.RunReport {
+	a.mu.Lock()
+	rep.Failure = proto.FailureClass(a.failureClasses[rep.RunID])
+	snap, haveSnap := a.statusSnaps[rep.RunID]
+	a.mu.Unlock()
+	if l := rep.Limit; l != nil && !l.Cleared && l.ResetsAt == nil && haveSnap {
+		if r := statusLineReset(l.Kind, snap.StatusSnapshot); r != nil {
+			filled := *l
+			filled.ResetsAt, filled.Source = r, proto.LimitSourceStatusLine
+			// A reset outside the limit's bounds is dropped, with its source, as central would.
+			if n, ok := filled.Normalized(a.now()); ok && n.ResetsAt != nil {
+				rep.Limit = &n
+			}
+		}
+	}
+	return rep
+}
+
+// reportHookData sends a run's report again when a hook gave it something to say: a StopFailure class (when it
+// changed), or a status-line window that fills the reset of its open limit. Central stores a repeat without writing.
+func (a *Agent) reportHookData(ctx context.Context, runID string) {
+	r, err := a.j.getRun(ctx, runID)
+	if err != nil || ended(r.State) {
+		return
+	}
+	a.report(ctx, r)
 }

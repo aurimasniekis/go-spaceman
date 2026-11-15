@@ -418,8 +418,9 @@ func (a *Agent) session(ctx context.Context) error {
 	helloCaps := a.capsGen
 	a.mu.Unlock()
 	for _, r := range runs {
-		// Central drops the limit when the session settles below MinorUsageLimit (RunReport.ForMinor).
-		hello.Runs = append(hello.Runs, r.report(a.now()))
+		// Central drops the limit when the session settles below MinorUsageLimit, and the failure class and limit source
+		// below MinorAccountUsage (RunReport.ForMinor).
+		hello.Runs = append(hello.Runs, a.withHookData(r.report(a.now())))
 	}
 	a.mu.Lock()
 	a.conn = conn
@@ -639,7 +640,7 @@ func (a *Agent) sendReport(ctx context.Context, r runRow) {
 	a.mu.Lock()
 	minor := a.minor
 	a.mu.Unlock()
-	if err := a.send(ctx, proto.TypeRunReport, r.report(a.now()).ForMinor(minor)); err != nil {
+	if err := a.send(ctx, proto.TypeRunReport, a.withHookData(r.report(a.now())).ForMinor(minor)); err != nil {
 		a.log.Debug("run report deferred until reconnect", slog.String(obs.FieldRunID, r.RunID))
 	}
 }

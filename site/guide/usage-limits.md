@@ -30,6 +30,8 @@ Only Claude Code runs are watched, and only by a node agent of this release or l
 agent reports nothing, and its runs behave as before. Nothing from the transcript other than the kind and the times
 reaches central or its logs.
 
+A node agent at protocol minor 13 or later also reports the latest non-limit failure class Claude Code gave the run (for example `authentication_failed` or `billing_error`), which the run shows next to its state, and fills a missing reset time on a wrap-up limit from the status line's rate-limit window (bounded like any reset). A node below minor 13 sends neither.
+
 ## The account is held
 
 A run at its limit opens a **hold** on the account it used (or on the Harbor Pilot connection, or on the project of a

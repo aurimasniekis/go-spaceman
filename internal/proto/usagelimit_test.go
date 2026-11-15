@@ -152,3 +152,78 @@ func TestRunLimitNormalized(t *testing.T) {
 		}
 	}
 }
+
+// Minor 13 adds the failure class and the limit source; below it ForMinor strips both without touching the receiver, and
+// the wire form of a stripped report is the minor-12 form.
+func TestAccountUsageMinorDowngrade(t *testing.T) {
+	if MaxMinor < MinorAccountUsage || MinorAccountUsage != 13 {
+		t.Fatalf("MaxMinor %d, MinorAccountUsage %d", MaxMinor, MinorAccountUsage)
+	}
+	if m, err := Negotiate(0, MinorAccountUsage-1); err != nil || m != MinorUsageLimit {
+		t.Fatalf("minor-12 node: %d %v", m, err)
+	}
+	if m, err := Negotiate(0, MinorAccountUsage); err != nil || m != MinorAccountUsage {
+		t.Fatalf("minor-13 node: %d %v", m, err)
+	}
+	reset := time.Now().Add(time.Hour).UTC()
+	r := RunReport{RunID: "run_1", Failure: "billing_error",
+		Limit: &RunLimit{Kind: LimitUnknown, ResetsAt: &reset, Since: time.Now().UTC(), Source: LimitSourceStatusLine}}
+	old := r.ForMinor(MinorUsageLimit)
+	if old.Failure != "" || old.Limit == nil || old.Limit.Source != "" || old.Limit.ResetsAt != nil {
+		t.Fatalf("minor-12 view: %+v limit %+v", old, old.Limit)
+	}
+	b, _ := json.Marshal(old)
+	if strings.Contains(string(b), `"failure"`) || strings.Contains(string(b), `"source"`) {
+		t.Fatalf("minor-12 wire form carries minor-13 fields: %s", b)
+	}
+	if r.Failure == "" || r.Limit.Source != LimitSourceStatusLine {
+		t.Fatal("ForMinor changed the receiver")
+	}
+	if got := r.ForMinor(MinorAccountUsage); got.Failure != r.Failure || got.Limit != r.Limit {
+		t.Fatalf("minor-13 report lost data: %+v", got)
+	}
+	if r.ForMinor(MinorUsageLimit-1).Limit != nil {
+		t.Fatal("minor-11 report keeps its limit")
+	}
+	// Round trip.
+	b, _ = json.Marshal(r)
+	var back RunReport
+	if err := json.Unmarshal(b, &back); err != nil || back.Failure != r.Failure || back.Limit.Source != LimitSourceStatusLine {
+		t.Fatalf("round trip: %v %+v", err, back)
+	}
+}
+
+func TestLimitSourceNormalized(t *testing.T) {
+	now := time.Now().UTC()
+	in := func(d time.Duration) *time.Time { v := now.Add(d); return &v }
+	for _, tc := range []struct {
+		name string
+		l    RunLimit
+		want string
+	}{
+		{"filled", RunLimit{Kind: LimitUnknown, Since: now, ResetsAt: in(time.Hour), Source: LimitSourceStatusLine}, LimitSourceStatusLine},
+		{"no reset", RunLimit{Kind: LimitUnknown, Since: now, Source: LimitSourceStatusLine}, ""},
+		{"reset past the bound", RunLimit{Kind: LimitUnknown, Since: now, ResetsAt: in(MaxLimitReset + time.Hour), Source: LimitSourceStatusLine}, ""},
+		{"reset before since", RunLimit{Kind: LimitUnknown, Since: now, ResetsAt: in(-time.Hour), Source: LimitSourceStatusLine}, ""},
+		{"free text", RunLimit{Kind: LimitUnknown, Since: now, ResetsAt: in(time.Hour), Source: "mystery"}, ""},
+		{"cleared", RunLimit{Cleared: true, Since: now, ResetsAt: in(time.Hour), Source: LimitSourceStatusLine}, ""},
+	} {
+		got, ok := tc.l.Normalized(now)
+		if !ok || got.Source != tc.want {
+			t.Errorf("%s: source %q ok %v, want %q", tc.name, got.Source, ok, tc.want)
+		}
+	}
+}
+
+func TestFailureClass(t *testing.T) {
+	for _, f := range FailureClasses {
+		if FailureClass(f) != f {
+			t.Errorf("%q dropped", f)
+		}
+	}
+	for _, f := range []string{"", "rate_limit", "Billing_Error", "billing_error\n", "you are out of credit"} {
+		if FailureClass(f) != "" {
+			t.Errorf("%q kept", f)
+		}
+	}
+}

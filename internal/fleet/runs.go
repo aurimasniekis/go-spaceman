@@ -51,6 +51,8 @@ type Run struct {
 	Adopted    bool   `json:"adopted"`
 	// Limit is the run's open usage limit (ADR-0079): a live run with one is waiting for it to reset.
 	Limit *RunLimit `json:"limit,omitempty" doc:"The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset"`
+	// Failure is the latest non-limit failure class Claude Code reported for the run (node protocol 1.13 or later).
+	Failure string `json:"failure,omitempty" enum:"authentication_failed,oauth_org_not_allowed,account_on_hold,verification_required,billing_error,overloaded,invalid_request,model_not_found,server_error,unknown,max_output_tokens,cloud_credential_error" doc:"The latest failure class Claude Code reported for the run (not a usage limit); a run health signal (node protocol 1.13 or later)"`
 	// HarnessVersion, HarnessRequested and HarnessFallback are what the node reported launching (minor ≥ 11, ADR-0077).
 	HarnessVersion   string     `json:"harness_version,omitempty" doc:"The harness version the run launched, as its node reported it (node protocol 1.11 or later)"`
 	HarnessRequested string     `json:"harness_requested,omitempty" doc:"What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z)"`
@@ -100,6 +102,7 @@ func runFromRow(r db.Run) *Run {
 	_ = json.Unmarshal([]byte(r.LaunchJson), &out.Launch)
 	out.TerminalSize = terminalSizeOf(r.TerminalCols, r.TerminalRows)
 	out.Limit = runLimitOf(r)
+	out.Failure = r.Failure
 	return out
 }
 
@@ -799,7 +802,10 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		}
 		// A report that changes nothing (every hello re-reports the node's whole journal, ended runs included) writes
 		// nothing: no version, no change-feed entry, so a reconnect doesn't make every open UI refetch its runs.
-		if sweep == nil && !limitChanged && reportUnchanged(r, rep) {
+		// The failure class (minor ≥ 13): a report without one keeps what is stored; an unlisted value counts as none.
+		failure := proto.FailureClass(rep.Failure)
+		failureChanged := failure != "" && failure != r.Failure
+		if sweep == nil && !limitChanged && !failureChanged && reportUnchanged(r, rep) {
 			return nil
 		}
 		var exit sql.NullInt64
@@ -822,6 +828,13 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			requested, fallback := reportHarness(rep)
 			n, err := tx.Q.SetRunHarness(ctx, db.SetRunHarnessParams{HarnessVersion: rep.HarnessVersion,
 				HarnessRequested: requested, HarnessFallback: fallback, Now: tx.NowMicros(), ID: r.ID, Generation: r.Generation})
+			if err != nil {
+				return err
+			}
+			version += n
+		}
+		if failureChanged {
+			n, err := tx.Q.SetRunFailure(ctx, db.SetRunFailureParams{Failure: failure, Now: tx.NowMicros(), ID: r.ID, Generation: r.Generation})
 			if err != nil {
 				return err
 			}

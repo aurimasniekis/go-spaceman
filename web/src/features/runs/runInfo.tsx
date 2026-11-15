@@ -71,6 +71,9 @@ export function runDuration(r: Run, now = Date.now()): string | null {
 /** An end reason in words where the code reads badly: usage_limit → "usage limit". */
 export const endReasonText = (reason: string) => (reason === 'usage_limit' ? 'usage limit' : reason)
 
+/** A failure class in words: authentication_failed → "authentication failed". */
+export const failureText = (failure: string) => failure.replaceAll('_', ' ')
+
 /** The state in words, for tabs and lists: "working · 12m", "idle", "waiting for a person", "exited 3m ago". */
 export function runStateText(r: Run, now = Date.now()): string {
   const tone = runTone(r)
@@ -92,7 +95,9 @@ export function runStateText(r: Run, now = Date.now()): string {
       // Waiting for its usage limit to reset (ADR-0079): idle, but not for want of work.
       if (r.limit) return 'at usage limit'
       const d = runDuration(r, now)
-      return tone === 'working' ? `working${d ? ` · ${d}` : ''}` : 'idle'
+      const base = tone === 'working' ? `working${d ? ` · ${d}` : ''}` : 'idle'
+      // The latest failure Claude Code reported (node protocol 1.13): a health signal next to the state.
+      return r.failure ? `${base} · ${failureText(r.failure)}` : base
     }
   }
 }

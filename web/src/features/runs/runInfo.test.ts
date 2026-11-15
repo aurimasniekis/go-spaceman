@@ -26,6 +26,7 @@ describe('run display', () => {
     expect(runStateText(run({ observed: 'unknown' }), now)).toBe('node offline')
     // ADR-0079: a live run waiting for its usage limit to reset, and one that ended (parked) at it.
     expect(runStateText(run({ status: 'idle', limit: { kind: 'five_hour', since: '2026-11-06T10:00:00Z' } }), now)).toBe('at usage limit')
+    expect(runStateText(run({ status: 'idle', failure: 'authentication_failed' }), now)).toBe('idle · authentication failed')
     expect(runStateText(run({ observed: 'exited', ended_at: '2026-11-06T10:10:30Z', end_reason: 'usage_limit' }), now)).toBe('exited 2m ago · usage limit')
   })
   it('formats durations in their two largest units', () => {

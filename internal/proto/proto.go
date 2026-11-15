@@ -34,8 +34,9 @@ const (
 	// address and its child token in the secrets, delivered to the harness; ADR-0060); 10: run terminal sizes
 	// (terminal.sizes, ADR-0075); 11: harness versions (the profile's pin on launches, the launched version on run
 	// reports and node-managed harness details in capabilities, ADR-0077); 12: usage limits (the limit a node detected
-	// in a run's transcript on run reports, ADR-0079)
-	MaxMinor = 12
+	// in a run's transcript on run reports, ADR-0079); 13: account usage (a run's StopFailure class and the source of a
+	// limit's reset time on run reports, account-switching plan §3.9)
+	MaxMinor = 13
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -341,7 +342,10 @@ type RunReport struct {
 	// Minor ≥ 12 (ADR-0079): the run's open usage limit on every report while the node knows of one, and Cleared once
 	// it is over. Nil carries no limit information, so the receiver keeps what it has; always nil below minor 12
 	// (ForMinor).
-	Limit      *RunLimit `json:"limit,omitempty"`
+	Limit *RunLimit `json:"limit,omitempty"`
+	// Minor ≥ 13: the latest non-limit StopFailure class of the run (one of FailureClasses), a run health signal. Empty
+	// carries none, so the receiver keeps what it has; always empty below minor 13 (ForMinor).
+	Failure    string    `json:"failure,omitempty"`
 	ObservedAt time.Time `json:"observed_at"`
 }
 

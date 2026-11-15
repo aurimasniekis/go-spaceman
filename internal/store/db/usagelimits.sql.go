@@ -742,7 +742,7 @@ func (q *Queries) ListLimitWaitsToRelease(ctx context.Context, releaseAt sql.Nul
 }
 
 const listLimitedLiveRuns = `-- name: ListLimitedLiveRuns :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE observed IN ('starting', 'running', 'stopping') AND limit_kind <> '' AND desired = 'running'
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since, failure FROM runs WHERE observed IN ('starting', 'running', 'stopping') AND limit_kind <> '' AND desired = 'running'
   AND kind IN ('control', 'worker', 'diagnostic')
 ORDER BY id LIMIT ?
 `
@@ -799,6 +799,7 @@ func (q *Queries) ListLimitedLiveRuns(ctx context.Context, limit int64) ([]Run, 
 			&i.LimitKind,
 			&i.LimitResetsAt,
 			&i.LimitSince,
+			&i.Failure,
 		); err != nil {
 			return nil, err
 		}
@@ -1345,6 +1346,32 @@ func (q *Queries) NextUsageLimitDue(ctx context.Context) (int64, error) {
 	var at int64
 	err := row.Scan(&at)
 	return at, err
+}
+
+const setRunFailure = `-- name: SetRunFailure :execrows
+UPDATE runs SET failure = ?1, version = version + 1, updated_at = ?2
+WHERE id = ?3 AND generation = ?4 AND failure != ?1
+`
+
+type SetRunFailureParams struct {
+	Failure    string
+	Now        int64
+	ID         string
+	Generation int64
+}
+
+// The latest non-limit StopFailure class a node reported for a run (protocol minor 13); a repeat writes nothing.
+func (q *Queries) SetRunFailure(ctx context.Context, arg SetRunFailureParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setRunFailure,
+		arg.Failure,
+		arg.Now,
+		arg.ID,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setRunLimit = `-- name: SetRunLimit :execrows
