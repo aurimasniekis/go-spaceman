@@ -103,7 +103,7 @@ func TestGroupUnauthorizedTapperRefused(t *testing.T) {
 func TestGroupForeignCommandsFromNoAccessMemberAreSilent(t *testing.T) {
 	e := newEnv(t)
 	nogrant := member("tgl_nogrant", spD)
-	for _, c := range []string{"/start@OtherBot", "/foo", "/inbox@OtherBot"} {
+	for _, c := range []string{"/start@OtherBot", "/foo", "/inbox@OtherBot", "/settings", "/help", "/needs", "/settings@OtherBot"} {
 		e.gsay(nogrant, c)
 	}
 	if n := len(e.group()); n != 0 || len(e.api.seen()) != 0 {
@@ -374,6 +374,10 @@ func TestGroupEphemeralReplies(t *testing.T) {
 	e.gsay(m, "/start")
 	e.gsay(m, "/unlink")
 	e.gsay(m, "/nonsense")
+	// An authorized member's private-only commands are silent too.
+	e.gsay(m, "/settings")
+	e.gsay(m, "/help")
+	e.gsay(m, "/needs")
 	if len(e.group()) != n {
 		t.Fatalf("a command that isn't the bot's was answered: %d messages, had %d", len(e.group()), n)
 	}

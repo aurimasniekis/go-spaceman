@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/commands"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
@@ -27,10 +28,6 @@ const (
 	TextGroupNoAccess = "Your SpaceMan account can't use this space. Ask an administrator."
 	TextGroupFixed    = "This group is bound to one space."
 )
-
-// groupCommands are the commands the bot answers in a group (the others are ignored without a reply).
-var groupCommands = map[string]bool{"inbox": true, "needsyou": true, "queue": true, "runs": true, "messages": true,
-	"spaces": true, "space": true, "control": true}
 
 type groupKey struct{}
 
@@ -65,7 +62,7 @@ func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Li
 	if q == nil && u.Message != nil {
 		if cmd, to, _, ok := commandFor(u.Message.Text); ok {
 			// A command addressed to another bot is that bot's. An unknown own username fails closed.
-			if to != "" && !strings.EqualFold(to, h.botUsername()) || !groupCommands[cmd] {
+			if to != "" && !strings.EqualFold(to, h.botUsername()) || !commands.IsGroup(cmd) {
 				return
 			}
 		}
@@ -98,22 +95,10 @@ func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Li
 		return
 	}
 	if cmd, _, arg, ok := commandFor(m.Text); ok {
-		switch cmd {
-		case "inbox":
-			h.cmdInbox(ctx, l, arg)
-		case "needsyou":
-			h.cmdNeedsYou(ctx, l, arg)
-		case "queue":
-			h.cmdQueue(ctx, l, arg)
-		case "runs":
-			h.cmdRuns(ctx, l, arg)
-		case "messages":
-			h.cmdMessages(ctx, l, arg)
-		case "spaces", "space", "control":
-			// They don't apply to a group; the reply shows nothing of any space.
-			h.replyIn(ctx, m, TextGroupFixed)
+		// Any command without a group handler is none of the bot's: nothing is answered.
+		if f := groupHandlers[cmd]; f != nil && commands.IsGroup(cmd) {
+			f(h, ctx, m, l, arg)
 		}
-		// Any other command is none of the bot's: nothing is answered.
 		return
 	}
 	// A reply to one of the bot's prompts; any other message (capture, control text) is never taken in a group.

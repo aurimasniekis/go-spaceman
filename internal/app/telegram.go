@@ -177,6 +177,13 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
 			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
 		},
+		// A page of the Mini App (the /settings command); without its host there is none.
+		AppPage: func(path string) string {
+			if o := c.miniAppOrigin(); o != "" {
+				return o + path
+			}
+			return ""
+		},
 		// Telegram refuses web_app buttons outside private chats: a group's forms link to the Mini App with its direct
 		// link, t.me/<bot>?startapp=human-<space>-<action> (the web's deep link, web/src/tg/deeplink.ts). It needs the
 		// bot's Main Mini App (BotFather) and the Mini App host, like the button.

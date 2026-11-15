@@ -80,6 +80,8 @@ type Options struct {
 	ResolveMessage func(ctx context.Context, chatID int64, messageID int) (spaceID, msgID, linkID string, ok bool)
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
+	// AppPage is the Mini App URL of one of its pages, e.g. "/settings" (nil or "": the Mini App isn't available).
+	AppPage func(path string) string
 	// AppLink is the direct Mini App link (t.me/<bot>?startapp=…) of an action, for forms in a group, where Telegram
 	// refuses web_app buttons: they get a plain URL button instead (nil or "": no button).
 	AppLink func(spaceID, actionID string) string
@@ -179,23 +181,9 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 	case u.Message != nil:
 		m := u.Message
 		if cmd, arg, ok := command(m.Text); ok {
-			switch cmd {
-			case "spaces":
-				h.cmdSpaces(ctx, l)
-			case "space":
-				h.cmdSpace(ctx, l, arg)
-			case "inbox":
-				h.cmdInbox(ctx, l, arg)
-			case "needsyou":
-				h.cmdNeedsYou(ctx, l, arg)
-			case "queue":
-				h.cmdQueue(ctx, l, arg)
-			case "runs":
-				h.cmdRuns(ctx, l, arg)
-			case "messages":
-				h.cmdMessages(ctx, l, arg)
-			case "control":
-				h.cmdControl(ctx, l, arg)
+			// An unknown command is not captured as an inbox item.
+			if f := privateHandlers[cmd]; f != nil {
+				f(h, ctx, l, arg)
 			}
 			return
 		}
