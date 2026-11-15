@@ -24,6 +24,31 @@ type Account struct {
 	Version         int64
 }
 
+type AccountSwitch struct {
+	ID            string
+	SpaceID       string
+	InstanceID    string
+	Role          string
+	RunKind       string
+	Harness       string
+	FromRunID     string
+	NewRunID      string
+	FromAccountID string
+	ToAccountID   string
+	Cause         string
+	LimitKind     string
+	LimitResetsAt sql.NullInt64
+	LimitSince    sql.NullInt64
+	UsageLimitID  string
+	LimitWaitID   string
+	State         string
+	Reason        string
+	ArmedUntil    sql.NullInt64
+	Version       int64
+	CreatedAt     int64
+	UpdatedAt     int64
+}
+
 type ApiToken struct {
 	ID            string
 	Name          string
@@ -692,27 +717,29 @@ type KeyringKey struct {
 }
 
 type LimitWait struct {
-	ID           string
-	SpaceID      string
-	RunID        string
-	TaskID       string
-	RunKind      string
-	Role         string
-	NodeID       string
-	InstanceID   string
-	Harness      string
-	SessionID    string
-	LaunchJson   string
-	UsageLimitID string
-	ResumeAt     int64
-	ReleaseAt    sql.NullInt64
-	State        string
-	NewRunID     string
-	Attempts     int64
-	LastError    string
-	Version      int64
-	CreatedAt    int64
-	UpdatedAt    int64
+	ID                string
+	SpaceID           string
+	RunID             string
+	TaskID            string
+	RunKind           string
+	Role              string
+	NodeID            string
+	InstanceID        string
+	Harness           string
+	SessionID         string
+	LaunchJson        string
+	UsageLimitID      string
+	ResumeAt          int64
+	ReleaseAt         sql.NullInt64
+	State             string
+	NewRunID          string
+	Attempts          int64
+	LastError         string
+	Version           int64
+	CreatedAt         int64
+	UpdatedAt         int64
+	SwitchToAccountID string
+	AccountSwitchID   string
 }
 
 type LoginThrottle struct {

@@ -97,6 +97,9 @@ type LimitWaitEvent struct {
 	// TaskStatus is, on a release, the task's status after it was given back (ready, or review: only unassigned); ""
 	// when the task was not the run's any more and was left alone.
 	TaskStatus string
+	// Switch is the account switch a park or resume belongs to (ADR-0090): control hears one message per switch, at its
+	// resume, instead of the parked and resumed messages.
+	Switch *AccountSwitch
 }
 
 // Limit-wait changes.
@@ -195,6 +198,12 @@ func waitResumeAt(now time.Time, lim limitState, hold *db.UsageLimit, attempts i
 // the maximum wait and the backoff don't start again; control isn't told about such a re-park. A wait another run of
 // the same instance left waiting is superseded.
 func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limitState, why string) (*db.LimitWait, error) {
+	return svc.parkWithTx(ctx, tx, r, lim, why, nil)
+}
+
+// parkWithTx is parkTx, for an account switch (sw, ADR-0090) when sw is set: the wait is due at once and resumes on
+// the switch's target account, and the switch is parked with it.
+func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim limitState, why string, sw *db.AccountSwitch) (*db.LimitWait, error) {
 	if !parkKind(r.Kind) || lim.kind == "" {
 		return nil, nil
 	}
@@ -241,6 +250,11 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 	}
 	if r.Turn > 0 {
 		w.SessionID = r.SessionID // a session that never finished a turn has nothing to resume
+	} else if sw != nil {
+		// A switch keeps the session a resumed run was given, even before its first turn (limited at once).
+		if w.SessionID, err = resumableSession(ctx, tx.Q, r); err != nil {
+			return nil, err
+		}
 	}
 	var hold *db.UsageLimit
 	if scope, account, gw, ok := limitScope(r, lim.kind); ok {
@@ -251,21 +265,39 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 		}
 	}
 	w.ResumeAt = waitResumeAt(now, lim, hold, w.Attempts, ul.KeepAliveMax).UnixMicro()
+	if sw != nil {
+		// A switch resumes at once on its target (ADR-0090 decision 1).
+		w.ResumeAt, w.SwitchToAccountID, w.AccountSwitchID = now.UnixMicro(), sw.ToAccountID, sw.ID
+	}
 	if err := tx.Q.InsertLimitWait(ctx, db.InsertLimitWaitParams{ID: w.ID, SpaceID: w.SpaceID, RunID: w.RunID, TaskID: w.TaskID, RunKind: w.RunKind,
 		Role: w.Role, NodeID: w.NodeID, InstanceID: w.InstanceID, Harness: w.Harness, SessionID: w.SessionID, LaunchJson: w.LaunchJson,
-		UsageLimitID: w.UsageLimitID, ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
+		UsageLimitID: w.UsageLimitID, ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, SwitchToAccountID: w.SwitchToAccountID,
+		AccountSwitchID: w.AccountSwitchID, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
 		return nil, err
 	}
 	if err := svc.record(ctx, tx, w.SpaceID, "limit_wait", w.ID, "created", 1); err != nil {
 		return nil, err
 	}
+	details := map[string]any{"space_id": w.SpaceID, "run_id": r.ID, "kind": lim.kind, "why": why, "task_id": w.TaskID, "repark": repark,
+		"resume_at": time.UnixMicro(w.ResumeAt).UTC()}
+	if sw != nil {
+		details["account_switch_id"], details["switch_to_account_id"] = sw.ID, sw.ToAccountID
+	}
 	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: LimitWaitActor, Action: "limit_wait.parked", Target: audit.Target{Type: "limit_wait", ID: w.ID},
-		Details: map[string]any{"space_id": w.SpaceID, "run_id": r.ID, "kind": lim.kind, "why": why, "task_id": w.TaskID, "repark": repark,
-			"resume_at": time.UnixMicro(w.ResumeAt).UTC()}}); err != nil {
+		Details: details}); err != nil {
 		return nil, err
 	}
+	var evSwitch *AccountSwitch
+	if sw != nil {
+		if err := svc.switchParkedTx(ctx, tx, *sw, w.ID); err != nil {
+			return nil, err
+		}
+		if evSwitch, err = svc.switchOfWait(ctx, tx.Q, w); err != nil {
+			return nil, err
+		}
+	}
 	if svc.opts.OnLimitWaitTx != nil {
-		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitParked, Repark: repark}); err != nil {
+		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitParked, Repark: repark, Switch: evSwitch}); err != nil {
 			return nil, err
 		}
 	}
@@ -318,9 +350,17 @@ func (svc *Service) resumeFailedTx(ctx context.Context, tx *store.Tx, r db.Run) 
 			return err
 		}
 	}
+	// A switch's resume that failed starts fresh on the account it moved to (ADR-0090 §3.4 step 5), not the old one.
+	if prev.SwitchToAccountID != "" {
+		var spec LaunchSpec
+		if json.Unmarshal([]byte(r.LaunchJson), &spec) == nil && spec.AccountRef != "" {
+			w.SwitchToAccountID = spec.AccountRef
+		}
+	}
 	if err := tx.Q.InsertLimitWait(ctx, db.InsertLimitWaitParams{ID: w.ID, SpaceID: w.SpaceID, RunID: w.RunID, TaskID: w.TaskID, RunKind: w.RunKind,
 		Role: w.Role, NodeID: w.NodeID, InstanceID: w.InstanceID, Harness: w.Harness, LaunchJson: w.LaunchJson, UsageLimitID: w.UsageLimitID,
-		ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
+		ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, SwitchToAccountID: w.SwitchToAccountID, CreatedAt: w.CreatedAt,
+		UpdatedAt: w.UpdatedAt}); err != nil {
 		return err
 	}
 	if err := svc.record(ctx, tx, w.SpaceID, "limit_wait", w.ID, "created", 1); err != nil {
@@ -380,6 +420,10 @@ func (svc *Service) settleWaitTx(ctx context.Context, tx *store.Tx, w db.LimitWa
 	if err := svc.record(ctx, tx, w.SpaceID, "limit_wait", w.ID, "updated", w.Version+1); err != nil {
 		return err
 	}
+	// A switch whose wait is given up ends with it, for the wait's reason.
+	if err := svc.settleSwitchTx(ctx, tx, w.AccountSwitchID, SwitchCancelled, reason); err != nil {
+		return err
+	}
 	action := "limit_wait.cancelled"
 	if state == WaitReleased {
 		action = "limit_wait.released"
@@ -435,12 +479,24 @@ func (svc *Service) NextLimitWait(ctx context.Context) (time.Time, error) {
 	if rel > 0 {
 		earlier(time.UnixMicro(rel))
 	}
+	armed, err := q.NextArmedAccountSwitch(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if armed > 0 {
+		earlier(time.UnixMicro(armed))
+	}
 	runs, err := q.ListLimitedLiveRuns(ctx, maxLimitRows)
 	if err != nil {
 		return time.Time{}, err
 	}
 	settings := map[string]UsageLimitSettings{}
 	for _, r := range runs {
+		if sw, err := svc.armedSwitch(ctx, q, r.ID); err != nil {
+			return time.Time{}, err
+		} else if sw {
+			continue // its switch parks it (armed_until above)
+		}
 		ul, ok := settings[r.SpaceID]
 		if !ok {
 			ul = svc.ulSettings(ctx, q, r.SpaceID)
@@ -473,6 +529,9 @@ func (svc *Service) LimitWaitsDue(ctx context.Context) (int, error) {
 		errs = append(errs, err)
 	}
 	n, err := svc.releaseDueWaits(ctx, now)
+	done += n
+	errs = append(errs, err)
+	n, err = svc.parkArmedRuns(ctx, now)
 	done += n
 	errs = append(errs, err)
 	n, err = svc.parkDueRuns(ctx, now)
@@ -607,6 +666,12 @@ func (svc *Service) parkDueRuns(ctx context.Context, now time.Time) (int, error)
 		}
 		if parkAt(r, ul.KeepAliveMax).After(now) {
 			continue
+		}
+		if sw, err := svc.armedSwitch(ctx, q, r.ID); err != nil {
+			errs = append(errs, err)
+			continue
+		} else if sw {
+			continue // an armed switch parks it at its idle point (parkArmedRuns)
 		}
 		parked := false
 		err := svc.s.W().TxNamed(ctx, "fleet.limit_park", func(tx *store.Tx) error {
@@ -830,6 +895,13 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 		case reason != "":
 			return svc.deferWaitTx(ctx, tx, w, at, reason)
 		}
+		// A switch's target is re-resolved (ADR-0090 §3.4 step 4): held or gone, the next eligible account takes its
+		// place; none left, the run waits for its reset. An operator's "resume now" goes on either way.
+		if goOn, err := svc.switchResumeCheckTx(ctx, tx, &w); err != nil {
+			return err
+		} else if !goOn && !manual {
+			return nil
+		}
 		if sp, err = tx.Q.GetSpace(ctx, w.SpaceID); err != nil {
 			return err
 		}
@@ -864,6 +936,9 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 		}
 		in.manifest = map[string]any{"usage_limit_resume": map[string]any{"limit_wait_id": w.ID, "parked_run_id": w.RunID, "session_resumed": in.SessionID != "",
 			"relocated": fresh}}
+		if w.SwitchToAccountID != "" {
+			in.manifest["account_switch"] = map[string]any{"id": w.AccountSwitchID, "to": w.SwitchToAccountID}
+		}
 		var r *Run
 		if r, err = svc.LaunchRun(ctx, actor, w.SpaceID, in); err == nil {
 			svc.opts.Log.Info("parked run resumed", slog.String("limit_wait.id", w.ID), slog.String(obs.FieldRunID, r.ID), slog.Bool("fresh", fresh))
@@ -914,7 +989,13 @@ func waitReasonText(reason string) string {
 // original prompt again first.
 const (
 	resumePrompt = "SpaceMan paused you at your usage limit; it has reset. Continue the task you were working on; check spaceman_messages first."
-	freshPrompt  = "SpaceMan paused your previous session at a usage limit, and the limit has reset. That session could not be resumed (the " +
+	// switchPrompt and switchFreshPrompt are a switch's (ADR-0090 §3.4 step 4).
+	switchPrompt = "SpaceMan moved this session to another subscription account because the previous one reached its usage limit. Continue " +
+		"the task; do not repeat completed work. Check spaceman_messages first."
+	switchFreshPrompt = "SpaceMan moved you to another subscription account because the previous one reached its usage limit. Your previous " +
+		"session could not be resumed (the space moved to another node, or resuming it failed), so this is a fresh session. Continue the task " +
+		"from the state of the workspace; check spaceman_messages first."
+	freshPrompt = "SpaceMan paused your previous session at a usage limit, and the limit has reset. That session could not be resumed (the " +
 		"space moved to another node, or resuming it failed), so this is a fresh session. Continue the task from the state of the workspace; " +
 		"check spaceman_messages first."
 )
@@ -928,10 +1009,15 @@ func waitLaunch(w db.LimitWait, fresh bool) (LaunchInput, error) {
 	}
 	in := LaunchInput{Kind: w.RunKind, Role: w.Role, Harness: w.Harness, InstanceID: w.InstanceID, Model: spec.Model, Settings: spec.Settings,
 		Workspace: spec.Workspace, Worktree: spec.Worktree, AccountRef: spec.AccountRef, Prompt: resumePrompt}
+	again := freshPrompt
+	if w.SwitchToAccountID != "" {
+		// An account switch (ADR-0090): the launch names the target; the launch transaction still resolves it.
+		in.AccountRef, in.Prompt, again = w.SwitchToAccountID, switchPrompt, switchFreshPrompt
+	}
 	switch {
 	case fresh || w.SessionID == "":
 		// Relocated, a resume that failed, or a run that never finished a turn: it starts over with its prompt.
-		in.Prompt = spec.Prompt + "\n\n" + freshPrompt
+		in.Prompt = spec.Prompt + "\n\n" + again
 	default:
 		in.SessionID = w.SessionID
 	}
@@ -975,11 +1061,15 @@ func (svc *Service) resumedTx(ctx context.Context, tx *store.Tx, actor audit.Act
 			"relocated": fresh}}); err != nil {
 		return err
 	}
+	sw, err := svc.switchResumedTx(ctx, tx, cur, runID)
+	if err != nil {
+		return err
+	}
 	if svc.opts.OnLimitWaitTx != nil {
 		first := cur.Attempts == 0
 		cur.State, cur.NewRunID, cur.Attempts, cur.LastError, cur.Version = WaitResumed, runID, cur.Attempts+1, "", cur.Version+1
 		return svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(cur), Change: LimitWaitResumed, NewRunID: runID, Fresh: fresh,
-			FirstResume: first})
+			FirstResume: first, Switch: sw})
 	}
 	return nil
 }

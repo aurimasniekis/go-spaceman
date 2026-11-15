@@ -51,6 +51,29 @@ whether the account works again: after an hour, then two, four and so on, at mos
 another account bound to the space for the same harness that isn't held. A space routed through Harbor Pilot never
 falls back to a direct account.
 
+## Moving a run to another account
+
+With failover on, a run that reaches its usage limit also **moves to another account** of its pool (the space's
+accounts for the harness, or the role's pool, in priority order) instead of waiting, and continues the **same
+session** there:
+
+- SpaceMan waits for the run's next idle point (at most 10 minutes; a run still busy then is interrupted), stops it,
+  and at once starts a new run of the same instance on the next account that isn't held, with `--resume` of its
+  session and a note that it was moved. The task follows the new run. Background shells and subagents of the old
+  process end with it.
+- It doesn't move when the account resets within **15 minutes** (`usage_limit_wait_if_reset_within`): it waits as
+  described below. An unknown reset counts as further away.
+- It doesn't move when no other account of the pool is free, when the run never finished a turn (there is no session
+  to resume), or when the instance has already moved **6 times** in 24 hours (`usage_limit_switch_max_per_day`). It
+  waits instead.
+- Control gets one message per move, naming both runs and both accounts, instead of the "parked" and "resumed"
+  messages. Control itself is moved like any other run.
+- If the new run ends before its first turn, it is started once more in a fresh session on the new account. If the
+  new account is at its limit too, the run moves again (within the daily budget) or waits.
+
+Every move is recorded with its outcome (succeeded, failed, fell back to waiting, cancelled), audited and published as
+`fleet.account_switch.*` events. Claude Code only; Codex runs aren't moved yet.
+
 ## Short waits: kept alive
 
 When the reset is at most the **usage-limit keep-alive** away (`usage_limit_keep_alive_max_minutes`, 6 hours by
@@ -152,7 +175,9 @@ each is audited. `spaceman limits holds` and `spaceman limits waits` list a spac
 | `usage_limit_keep_alive_max_minutes` | 360 | 1–1,440 | longest wait kept alive; also the longest gap between tries of a hold with an unknown reset |
 | `usage_limit_max_wait_hours` | 168 (7 days) | 1–720 | how long a parked worker or diagnostic run waits before its task goes back to the queue |
 | `usage_limit_notify_after_hours` | 12 | 0–720 (0: never) | how far away a reset must be for the people notice |
-| `usage_limit_failover` | off (0) | 0 off, 1 on | use another unheld account of the same harness |
+| `usage_limit_failover` | off (0) | 0 off, 1 on | use another unheld account of the same harness, and move a limited run to one |
+| `usage_limit_wait_if_reset_within` | 15 | 0–1,440 minutes | a reset this near is waited for instead of moving the run |
+| `usage_limit_switch_max_per_day` | 6 | 0–50 (0: never move) | moves per agent instance in 24 hours |
 
 They are space limits like any other: installation defaults in the `limits:` section of the configuration file,
 overrides per space ([Limits and budgets](./limits)).

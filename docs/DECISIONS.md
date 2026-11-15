@@ -5418,8 +5418,34 @@
 
 ### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
 - **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the
-  recommended defaults; see decisions 2 and 4). Not implemented: tasks T2–T11 of the plan in `docs/plans/2026-11-15-account-switching.md`.
-  Real two-account evidence is open as K-17.
+  recommended defaults; see decisions 2 and 4). Tasks T2–T11 of the plan in `docs/plans/2026-11-15-account-switching.md`.
+  T3 (the switch core, decisions 1, 2, 5 and 7 for Claude Code) is implemented and tested with simulated evidence only
+  (fleet tests and a scripted-node app e2e); the pool-exhausted resume time (decision 8, T10), the headroom gate
+  (decision 4, T9) and the API, CLI and UI listings (T7, T8) are not. Real two-account evidence is open as K-17.
+- **T3 implementation notes (2026-11-15):**
+  - The switch decision runs in the report transaction that opens the run's limit window, before control is told
+    about the limit; a run with an armed switch gets no "kept alive" message. A run that ends at its limit by itself is
+    decided in its end report.
+  - A switch row is written only when a switch is decided: armed (`pending`) or `fell_back` (`no_eligible_account`,
+    `budget_spent`). A reset within `usage_limit_wait_if_reset_within`, failover off, a gateway run, a run kind that
+    isn't parked, or a run with no session to resume write no row: they are ADR-0079's ordinary wait. An armed switch
+    whose limit is re-read with a near reset falls back (`reset_near`); one whose limit clears, or whose run is stopped
+    or replaced, is `cancelled`.
+  - The daily budget counts the instance's switches created in the last 24 hours in any state but `fell_back` and
+    `cancelled`. A budget of 0 never switches.
+  - The resume re-resolves the target in its claim transaction: still eligible, it stays; held, gone, unbound or
+    disabled, the pool's next eligible account takes its place (the wait and the switch follow); none left, or
+    failover turned off, the switch falls back, the wait loses its target and its resume time becomes ADR-0079's (the
+    hold's reset), and control gets ADR-0079's "parked" message.
+  - A switch's park and resume carry the switch on the limit-wait event; control gets one message per switch at its
+    resume (`account-switch:` plus the switch ID, a control message, not a human action or task, so no reserved
+    dedup prefix is involved), naming both runs and both accounts by name.
+  - A resumed run that hits a limit before its first turn keeps the session it was resumed with: its next switch
+    resumes it again (a plain ADR-0079 re-park is unchanged).
+  - A switch's failed resume gets ADR-0079's fresh retry on the account it moved to (`limit_waits.switch_to_account_id`
+    on the retry wait).
+  - New space limits are named as in decision 5, without a unit suffix: `usage_limit_wait_if_reset_within` (minutes)
+    and `usage_limit_switch_max_per_day`. Metric `spaceman_account_switches_total{result}`.
 - **Security-relevant because:**
   - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
   - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now

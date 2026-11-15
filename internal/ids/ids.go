@@ -86,6 +86,7 @@ const (
 	TelegramLink   = "tgl" // a Telegram user linked to a SpaceMan user (ADR-0083)
 	UsageLimit     = "ulm" // an account hold at a usage limit (ADR-0079)
 	LimitWait      = "lwt" // a parked run's wait for its usage limit to reset (ADR-0079)
+	AccountSwitch  = "asw" // a run moved to another account of its pool at a usage limit (ADR-0090)
 )
 
 const encoding = "0123456789abcdefghjkmnpqrstvwxyz"

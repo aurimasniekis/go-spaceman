@@ -6688,6 +6688,8 @@ export interface components {
              * @example /api/v1/schemas/FleetLimitWait.json
              */
             readonly $schema?: string;
+            /** @description The account switch this wait belongs to */
+            account_switch_id?: string;
             /** Format: int64 */
             attempts: number;
             /** Format: date-time */
@@ -6713,6 +6715,8 @@ export interface components {
             space_id: string;
             /** @enum {string} */
             state: "waiting" | "resuming" | "resumed" | "released" | "cancelled" | "failed";
+            /** @description The account the resume uses instead of the parked run's (an account switch) */
+            switch_to_account_id?: string;
             task_id?: string;
             /** Format: date-time */
             updated_at: string;

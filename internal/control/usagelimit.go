@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -40,9 +42,15 @@ func (sv *Supervisor) OnRunLimitTx(ctx context.Context, tx *store.Tx, r *fleet.R
 			}
 		}
 	}
-	// Only a run kept alive at its limit is announced; one that ended with it is reported by its run-ended notice.
+	// Only a run kept alive at its limit is announced; one that ended with it is reported by its run-ended notice. A run
+	// with an armed account switch isn't kept alive: control hears about it once, when it continues on the new account.
 	if opened == nil || !fleet.Live(r.Observed) {
 		return nil
+	}
+	if _, err := tx.Q.GetPendingAccountSwitchByRun(ctx, r.ID); err == nil {
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
 	reset := "an unknown time (Claude Code didn't say)"
 	if opened.ResetsAt != nil {
@@ -87,7 +95,8 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 	var key, subject, body string
 	switch ev.Change {
 	case fleet.LimitWaitParked:
-		if ev.Repark {
+		// An account switch's park is told with its resume (one message per switch, ADR-0090).
+		if ev.Repark || ev.Switch != nil {
 			return nil
 		}
 		release := ""
@@ -100,6 +109,22 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 			"of the same instance at %s (or when the account's hold lets it through).%s%s Don't relaunch or reassign it; you get one message when it "+
 			"resumes. Its wait is %s (spaceman limits waits).", w.RunID, w.RunKind, w.Role, w.ResumeAt.UTC().Format(time.RFC3339), task, release, w.ID)
 	case fleet.LimitWaitResumed:
+		if sw := ev.Switch; sw != nil {
+			key, subject = "account-switch:"+sw.ID, fmt.Sprintf("%s run moved to another account at its usage limit", w.Role)
+			reset := "an unknown time"
+			if sw.LimitResetsAt != nil {
+				reset = sw.LimitResetsAt.UTC().Format(time.RFC3339)
+			}
+			how := "with its session"
+			if ev.Fresh {
+				how = "in a fresh session (its session could not be carried over), with its original prompt"
+			}
+			body = fmt.Sprintf("Run %s (%s, %s) reached its %s usage limit on account %s (it resets at %s); SpaceMan continued it as run %s on "+
+				"account %s, on the same instance, %s.%s Don't relaunch or reassign it. The switch is %s.",
+				w.RunID, w.RunKind, w.Role, sw.LimitKind, accountName(ctx, tx, sw.FromAccountID), reset, ev.NewRunID,
+				accountName(ctx, tx, sw.ToAccountID), how, taskNow(task, ev.NewRunID), sw.ID)
+			break
+		}
 		if !ev.FirstResume && !ev.Fresh {
 			return nil
 		}
@@ -131,6 +156,14 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 	}
 	_, err := sv.msgs.NotifyControlTx(ctx, tx, w.SpaceID, key, subject, body)
 	return err
+}
+
+// accountName names an account for control (its name, never a secret); its ID when it is gone.
+func accountName(ctx context.Context, tx *store.Tx, id string) string {
+	if a, err := tx.Q.GetAccount(ctx, id); err == nil {
+		return fmt.Sprintf("%q", a.Name)
+	}
+	return id
 }
 
 func taskNow(task, runID string) string {
