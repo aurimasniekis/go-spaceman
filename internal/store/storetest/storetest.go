@@ -21,9 +21,7 @@ import (
 // race detector slows a transaction several times and a loaded machine more. SM_TEST_TX_MAX overrides the default
 // exactly, scaled or not. On GitHub's hosted runners CI's coverage and race steps use 1s, its login-timing and fuzz
 // jobs 250ms (ADR-0062).
-var MaxTxDuration = txMaxFrom(getenvTxMax(), raceScale)
-
-func getenvTxMax() string { return os.Getenv("SM_TEST_TX_MAX") }
+var MaxTxDuration = txMaxFrom(os.Getenv("SM_TEST_TX_MAX"), raceScale)
 
 // txMaxFrom picks the guard: a positive duration in env wins as is, otherwise 100 ms times scale.
 func txMaxFrom(env string, scale int) time.Duration {

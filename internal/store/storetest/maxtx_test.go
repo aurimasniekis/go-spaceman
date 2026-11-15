@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -30,7 +31,7 @@ func TestMaxTxDurationUsesBuildScale(t *testing.T) {
 	if raceScale != 1 && raceScale != 5 {
 		t.Fatalf("raceScale = %d, want 1 or 5", raceScale)
 	}
-	if want := txMaxFrom(getenvTxMax(), raceScale); MaxTxDuration != want {
+	if want := txMaxFrom(os.Getenv("SM_TEST_TX_MAX"), raceScale); MaxTxDuration != want {
 		t.Fatalf("MaxTxDuration = %s, want %s", MaxTxDuration, want)
 	}
 }

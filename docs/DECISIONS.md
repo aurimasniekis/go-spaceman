@@ -2859,6 +2859,11 @@
   runs keep the 100 ms default and the full gate (`SM_TEST_TX_MAX=500ms make check`) keeps 500 ms, so a slow
   transaction is still caught before a pull request; I/O in a transaction is still rejected by `txscope`. The
   login-timing and fuzz jobs keep 250 ms. Not security-relevant, for the reasons above.
+- **Update, 2026-11-15, race-scaled default (not security-relevant):** a bare `go test -race` on a loaded machine
+  tripped the 100 ms guard on unrelated tests. The default is now 500 ms under `-race` (a `race` build tag in
+  `storetest`, 5x) and stays 100 ms without it; `SM_TEST_TX_MAX` still wins unscaled. The non-race runs (local
+  `make check-fast`, coverage) keep enforcing HP-DB-004 at its original value, and `make race`, CI and release already
+  set 500 ms to 1 s, so no run that was strict becomes looser.
 - **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
   the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
   tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock
