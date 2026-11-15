@@ -129,4 +129,21 @@ describe('change-feed invalidation', () => {
     expect(signal?.aborted).toBe(true)
     get.mockRestore()
   })
+
+  it('refreshes every space\'s usage-limit holds on a hold change, and only that space\'s waits on a wait change', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    for (const sp of ['spc_a', 'spc_b']) {
+      qc.setQueryData(keys.usageLimits(sp), [])
+      qc.setQueryData(keys.limitWaits(sp), [])
+    }
+    applyChange(qc, { seq: 1, at: 0, space_id: 'spc_a', resource_type: 'usage_limit', resource_id: 'ulm_1', action: 'created' })
+    applyChange(qc, { seq: 2, at: 0, space_id: 'spc_a', resource_type: 'limit_wait', resource_id: 'lwt_1', action: 'created' })
+    await vi.advanceTimersByTimeAsync(INVALIDATE_WINDOW_MS)
+    const stale = (k: readonly unknown[]) => qc.getQueryState(k)?.isInvalidated
+    // A hold on a shared account shows, redacted, in the other spaces bound to it.
+    expect(stale(keys.usageLimits('spc_a'))).toBe(true)
+    expect(stale(keys.usageLimits('spc_b'))).toBe(true)
+    expect(stale(keys.limitWaits('spc_a'))).toBe(true)
+    expect(stale(keys.limitWaits('spc_b'))).toBe(false)
+  })
 })

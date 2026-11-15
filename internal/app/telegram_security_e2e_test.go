@@ -3,6 +3,7 @@ package app_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram"
@@ -534,12 +536,14 @@ func TestTelegramApprovalResponses(t *testing.T) {
 	if err := s.h.c.Authz.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// An action with the approvals package's dedup key counts as enforced before its row is linked.
-	var keyed created
-	kr := s.root.do("POST", "/spaces/"+other+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"},
-		"dedup_key": "approval:apr_unlinked"})
-	expect(t, kr, 201)
-	kr.json(t, &keyed)
+	// An action with the approvals package's dedup key counts as enforced before its row is linked. The key is reserved
+	// (ADR-0087): only a service creates it (Internal), as approvals.ask does, so the test creates it the same way.
+	keyed, _, err := s.h.c.Human.Create(ctx, audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}, other, human.CreateInput{
+		Type: human.TypeApproval, Title: "Deploy?", Request: json.RawMessage(`{"action":"deploy"}`),
+		DedupKey: "approval:apr_unlinked", Internal: true, Requester: human.Requester{Kind: "system", Label: "Approvals"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	refused("dedup key without a row", bot(other, keyed.ID, `{"outcome":"approved"}`, ""), webOnly)
 
 	// Enforced, no opt-in in its space: refused everywhere, even with a confirmation armed for exactly it.

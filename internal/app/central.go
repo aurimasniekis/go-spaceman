@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -36,6 +37,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/dream"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/events"
+	eventtemplate "github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	"github.com/aurimasniekis/go-spaceman/internal/gitkeys"
@@ -115,6 +117,8 @@ type Central struct {
 	HarborPilotRuns *harborpilot.Lifecycle
 	// HarborPilotBudgets reads Harbor Pilot budget status: the early launch refusal and the Limits page (ADR-0060, HP-T5).
 	HarborPilotBudgets *harborpilot.Budgets
+	// HarborPilotWaits estimates gateway usage-limit holds from the quota board and budget status (ADR-0079 decision 9).
+	HarborPilotWaits *harborpilot.GatewayWaits
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
@@ -350,6 +354,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			if c.Supervisor != nil {
 				c.Supervisor.OnSpaceState(spaceID, state) // notices deferred while paused go out on resume
 			}
+			if state == "active" && c.Notifier != nil {
+				c.Notifier.Kick() // work that waited while paused starts control now, not at the next slow sweep (ADR-0056)
+			}
 		},
 		OnRunIdle: func(runID string) {
 			if c.Notifier != nil {
@@ -361,6 +368,25 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			if c.Human != nil {
 				c.Human.Kick() // a resumed instance may take a held response
 			}
+		},
+		OnRunLimitTx: func(ctx context.Context, tx *store.Tx, r *fleet.Run, ended, opened *fleet.RunLimit) error {
+			if c.Supervisor == nil {
+				return nil
+			}
+			return c.Supervisor.OnRunLimitTx(ctx, tx, r, ended, opened) // control told once per limit (ADR-0079)
+		},
+		// Parked runs (ADR-0079 decisions 4–6): control told once per park, resume and release; the task follows its run.
+		OnLimitWaitTx: func(ctx context.Context, tx *store.Tx, ev fleet.LimitWaitEvent) error {
+			if c.Supervisor == nil {
+				return nil
+			}
+			return c.Supervisor.OnLimitWaitTx(ctx, tx, ev)
+		},
+		RepointTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, fromRun, toRun string) (bool, error) {
+			return c.Queue.RepointRunTaskTx(ctx, tx, actor, taskID, fromRun, toRun)
+		},
+		ReleaseTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (string, error) {
+			return c.Queue.ReleaseRunTaskTx(ctx, tx, actor, taskID, runID, reason)
 		},
 		OnCommandAck: func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error {
 			if kind == proto.CmdDreamDone {
@@ -374,7 +400,27 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return c.Notifier.OnCommandAck(ctx, tx, commandID, result)
 		},
-		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines})
+		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines,
+		// ADR-0079: failover and the probe backoff cap are space limits.
+		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
+			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter}
+			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
+				out.Failover = v.Get(limits.UsageLimitFailover) != 0
+				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
+					out.KeepAliveMax = time.Duration(m) * time.Minute
+				}
+				if h := v.Get(limits.UsageLimitMaxWait); h > 0 {
+					out.MaxWait = time.Duration(h) * time.Hour
+				}
+				out.NotifyAfter = time.Duration(v.Get(limits.UsageLimitNotifyAfter)) * time.Hour // 0: never
+			}
+			return out
+		},
+		OnHoldsCleared: func(hs []fleet.ClearedHold) {
+			if c.Supervisor != nil {
+				c.Supervisor.OnHoldsCleared(hs)
+			}
+		}})
 	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
 	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
 		if run.Launch.AccountRef == "" {
@@ -516,7 +562,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
 		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
-	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), RateFor: func(ctx context.Context, spaceID string) int64 {
+	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)
+	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), OnAccepted: c.gatewayQuotaKick, RateFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
 	}, DepthFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.EventDepth) // bounded automation across installations (SM-EVT-016)
@@ -605,8 +652,11 @@ const (
 	dataReservePercent = 2
 )
 
-// mintShutdownGrace is how long Close lets background gateway mints finish before it cancels them.
-const mintShutdownGrace = 5 * time.Second
+// shutdownGrace is how long Close lets background gateway mints, node connections and the work those started (memory
+// syncs, usage, transcripts, tool calls) finish before it cancels the mints and closes the store. The two waits run
+// side by side under this one grace, so a stop takes at most shutdown.timeout (30 s by default) + 5 s + the store's
+// 8 s = 43 s, inside the units' TimeoutStopSec=45s.
+const shutdownGrace = 5 * time.Second
 
 // Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
@@ -617,8 +667,11 @@ func (c *Central) Close() error {
 		c.Retention.Wait()
 	}
 	if c.Fleet != nil {
-		c.Fleet.Hub().CloseAll("central shutting down")
-		c.Fleet.Hub().StopMints(mintShutdownGrace)
+		hub := c.Fleet.Hub()
+		var wg sync.WaitGroup
+		wg.Go(func() { hub.StopMints(shutdownGrace) })
+		hub.Shutdown("central shutting down", shutdownGrace)
+		wg.Wait()
 		c.Fleet.Recordings().Close()
 	}
 	if c.Gateway != nil {
@@ -634,6 +687,7 @@ func (c *Central) APIDeps() *api.Deps {
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), StreamHeartbeat: c.Cfg.HTTP.StreamHeartbeat.D(), ExtraRules: rules(),
+		CatchUps: make(chan struct{}, max(1, c.Cfg.HTTP.CatchUpConcurrency)), CatchUpWait: c.Cfg.HTTP.CatchUpWait.D(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink), api.RegisterTelegramMiniApp(c.TelegramMiniApp), api.RegisterTelegramDownloads(c.TelegramDownloads, c.Attachments, c.miniAppOrigin)},
@@ -731,8 +785,10 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 		main.ServeHTTP(w, r)
 	})
 	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
-	// reads, with central keeping every response): writes must make progress.
-	return httpguard.WriteProgress(h, c.Cfg.HTTP.WriteIdleTimeout.D())
+	// reads, with central keeping every response): writes must make progress. A client that declares a body and doesn't
+	// send it must not hold a connection either: body reads must make progress, and a refusal doesn't drain the body.
+	// Both guards wrap both hosts (the main host and the Mini App host).
+	return httpguard.WriteProgress(httpguard.ReadProgress(h, c.Cfg.HTTP.ReadIdleTimeout.D()), c.Cfg.HTTP.WriteIdleTimeout.D())
 }
 
 // mainHandler serves the main host: the API, the node protocol, the Telegram webhook and the web UI.
@@ -765,6 +821,18 @@ func (c *Central) ManagementHandler() http.Handler {
 	return mux
 }
 
+// publicServer is the public listener's server. It has no whole-request ReadTimeout or WriteTimeout, which would cut
+// event streams: the handler bounds body reads and response writes by progress instead (httpguard), and IdleTimeout
+// bounds a kept-alive connection waiting for its next request.
+func (c *Central) publicServer(ctx context.Context) *http.Server {
+	srv := &http.Server{Addr: c.Cfg.HTTP.Listen, Handler: c.Handler(c.APIDeps()), ReadHeaderTimeout: c.Cfg.HTTP.ReadHeaderTimeout.D(), IdleTimeout: c.Cfg.HTTP.IdleTimeout.D(), //nolint:contextcheck // handlers take their context from each request
+		ErrorLog: slog.NewLogLogger(obs.Component(c.Log, "http").Handler(), slog.LevelWarn), BaseContext: func(net.Listener) context.Context { return ctx }}
+	if c.Cfg.HTTP.TLSCertFile != "" {
+		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return srv
+}
+
 // Serve runs every listener until ctx ends, then shuts down gracefully within the configured timeout.
 func (c *Central) Serve(ctx context.Context) error {
 	// The stored bot's Mini App host is read before anything listens: the router must know it from the first request
@@ -774,12 +842,7 @@ func (c *Central) Serve(ctx context.Context) error {
 			return fmt.Errorf("telegram: %w", err)
 		}
 	}
-	d := c.APIDeps()
-	srv := &http.Server{Addr: c.Cfg.HTTP.Listen, Handler: c.Handler(d), ReadHeaderTimeout: c.Cfg.HTTP.ReadHeaderTimeout.D(), //nolint:contextcheck // handlers take their context from each request
-		ErrorLog: slog.NewLogLogger(obs.Component(c.Log, "http").Handler(), slog.LevelWarn), BaseContext: func(net.Listener) context.Context { return ctx }}
-	if c.Cfg.HTTP.TLSCertFile != "" {
-		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
+	srv := c.publicServer(ctx)
 	errc := make(chan error, 2)
 	go func() {
 		var err error
@@ -827,6 +890,12 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "gateway_lease_sweep", Next: c.Fleet.NextGatewayLeaseSweep, Due: c.Fleet.SweepGatewayLeases},
 		// Runs counted as live whose process is gone (a node agent restart, a lost lease) end as lost (ADR-0074).
 		human.Deadline{Name: "stale_run_sweep", Next: c.Fleet.NextStaleRunSweep, Due: c.Fleet.SweepStaleRuns},
+		// Runs at a usage limit: parked after the keep-alive, resumed at the reset, released after the maximum wait (ADR-0079).
+		human.Deadline{Name: "limit_waits", Next: c.Fleet.NextLimitWait, Due: c.Fleet.LimitWaitsDue},
+		// Gateway usage-limit holds: their reset estimated from Harbor Pilot, re-read every 15 minutes (ADR-0079 decision 9).
+		human.Deadline{Name: "gateway_waits", Next: c.HarborPilotWaits.Next, Due: c.HarborPilotWaits.Due},
+		// Holds whose reset is far away: the space's people get one human action each (ADR-0079 Q5). A limit report wakes it.
+		human.Deadline{Name: "usage_limit_people", Due: c.Supervisor.TellLongHolds},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
@@ -1058,4 +1127,12 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		Feed: tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
 		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
+}
+
+// gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts
+// Harbor Pilot's quota.window.recovered (ADR-0079 decision 9). The event only says "read the board again".
+func (c *Central) gatewayQuotaKick(slug string, e eventtemplate.Event) {
+	if slug == "harbor-pilot-quota" && e.Subject == "evt.harborpilot.quota.window.recovered" && c.HarborPilotWaits != nil {
+		c.HarborPilotWaits.Kick()
+	}
 }

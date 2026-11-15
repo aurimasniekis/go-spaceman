@@ -72,7 +72,9 @@ in a way that is not purely additive gets a new type version (`.v2`).
 |---|---|---|
 | `evt.spaceman.fleet.run.launched` | `spaceman.fleet.run_launched.v1` | `space_id`, `run_id`, `node_id`, `kind`, `role`, `harness`, `instance_id`, `lease_generation` |
 | `evt.spaceman.fleet.run.started` | `spaceman.fleet.run_started.v1` | the run fields, `adopted` |
-| `evt.spaceman.fleet.run.ended` | `spaceman.fleet.run_ended.v1` | the run fields, `state` (exited, failed, lost), `end_reason`, `exit_code` |
+| `evt.spaceman.fleet.run.ended` | `spaceman.fleet.run_ended.v1` | the run fields, `state` (exited, failed, lost), `end_reason`, `node_reason` (the node's own reason when central recorded `usage_limit`), `exit_code` |
+| `evt.spaceman.fleet.usage_limit.reached` | `spaceman.fleet.usage_limit_reached.v1` | `space_id`, `limit_id`, `scope` (`account` or `gateway`), `account_id`, `gateway_ref`, `kind`, `resets_at` (absent: unknown), `run_id`; once per hold, not per report |
+| `evt.spaceman.fleet.usage_limit.cleared` | `spaceman.fleet.usage_limit_cleared.v1` | the usage-limit fields, `cleared_by` |
 | `evt.spaceman.queue.task.created` | `spaceman.queue.task_created.v1` | `space_id`, `task_id`, `parent_id`, `kind`, `priority`, `assignee_role`, `origin_kind`, `origin_id`, `status` |
 | `evt.spaceman.queue.task.status_changed` | `spaceman.queue.task_status_changed.v1` | the task fields, `from`, `to`, `preempted` |
 | `evt.spaceman.inbox.item.created` | `spaceman.inbox.item_created.v1` | `space_id`, `item_id`, `source_kind`, `source_id`, `subscription_id`, `urgency` |

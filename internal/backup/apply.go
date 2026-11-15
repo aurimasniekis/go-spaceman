@@ -35,6 +35,9 @@ type RestoreState struct {
 	AppliedAt       time.Time `json:"applied_at"`
 	// PausedSpaces are the spaces the restore paused (active at backup time). Each needs an explicit resume.
 	PausedSpaces []string `json:"paused_spaces"`
+	// ResumedSpaces are the PausedSpaces an operator has resumed since. A later pause of one is an ordinary pause and
+	// never counts as still paused by the restore. Written by fleet.SetSpaceState.
+	ResumedSpaces []string `json:"resumed_spaces"`
 	// LeasesRenewed spaces got a revoked lease LeaseGenerationStep generations ahead.
 	LeasesRenewed int64 `json:"leases_renewed"`
 	// RunsUnknown were active at backup time; they are marked unknown and stopped until their node reconciles.
@@ -78,7 +81,7 @@ func ApplyPendingRestore(ctx context.Context, st *store.Store, aw *audit.Writer,
 	}
 	var rs *RestoreState
 	err = st.W().TxNamed(ctx, "backup.apply_restore", func(tx *store.Tx) error {
-		rs = &RestoreState{BackupID: p.BackupID, BackupCreatedAt: p.BackupCreatedAt, RestoredAt: p.RestoredAt, AppliedAt: tx.Now, PausedSpaces: []string{}}
+		rs = &RestoreState{BackupID: p.BackupID, BackupCreatedAt: p.BackupCreatedAt, RestoredAt: p.RestoredAt, AppliedAt: tx.Now, PausedSpaces: []string{}, ResumedSpaces: []string{}}
 		now := tx.NowMicros()
 		exec := func(q string, args ...any) (int64, error) {
 			r, err := tx.SQL.ExecContext(ctx, q, args...)
@@ -194,6 +197,12 @@ func LoadRestoreState(ctx context.Context, q *db.Queries) (*RestoreState, error)
 	var rs RestoreState
 	if err := json.Unmarshal([]byte(s.Value), &rs); err != nil {
 		return nil, err
+	}
+	if rs.PausedSpaces == nil {
+		rs.PausedSpaces = []string{}
+	}
+	if rs.ResumedSpaces == nil {
+		rs.ResumedSpaces = []string{}
 	}
 	return &rs, nil
 }
