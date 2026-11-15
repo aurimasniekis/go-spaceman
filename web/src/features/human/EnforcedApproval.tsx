@@ -1,5 +1,6 @@
 import { Badge, Button, Card, Code, Group, Stack, Table, Text } from '@mantine/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { isMiniApp } from '@/api/session'
 import { api, unwrap, type Approval, type HumanAction } from '@/api/client'
 import { useMe } from '@/api/queries'
 import { atLeast, roleIn } from '@/lib/access'
@@ -28,7 +29,7 @@ const execColor: Record<string, string> = { executing: 'owlBlue', succeeded: 'ow
  */
 export function EnforcedApprovalCard({ approval }: { approval: Approval }) {
   const qc = useQueryClient()
-  const canRevoke = atLeast(roleIn(useMe().data, approval.space_id), 'operator')
+  const canRevoke = !isMiniApp() && atLeast(roleIn(useMe().data, approval.space_id), 'operator')
   const revoke = async () => {
     try {
       unwrap(await api.POST('/spaces/{space_id}/approvals/{approval_id}/revoke', { params: { path: { space_id: approval.space_id, approval_id: approval.id } }, body: {} }))

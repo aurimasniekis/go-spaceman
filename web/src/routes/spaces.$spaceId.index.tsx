@@ -16,8 +16,15 @@ import { RelocationCard } from '@/features/spaces/RelocationCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
 import { hasGlobal } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
+import { isMiniApp } from '@/api/session'
+import { TgSpaceOverview } from '@/tg/pages/TgSpaceOverview'
 
-export const Route = createFileRoute('/spaces/$spaceId/')({ component: SpacePage })
+export const Route = createFileRoute('/spaces/$spaceId/')({ component: SpaceRoute })
+
+function SpaceRoute() {
+  const { spaceId } = Route.useParams()
+  return isMiniApp() ? <TgSpaceOverview spaceId={spaceId} /> : <SpacePage />
+}
 
 /**
  * A space's overview (UX review §3.2): what needs attention, the agents running now, then configuration and usage, and

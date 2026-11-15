@@ -6,6 +6,8 @@ import { ErrorAlert } from '@/components/ErrorAlert'
 import { RunWorkbench } from '@/features/runs/RunWorkbench'
 import { isEnded, runTitle } from '@/features/runs/runInfo'
 import { RunUsageCard } from '@/features/usage/UsageCards'
+import { isMiniApp } from '@/api/session'
+import { TgRunDetail } from '@/tg/pages/TgRunDetail'
 
 export const Route = createFileRoute('/spaces/$spaceId/runs/$runId')({
   validateSearch: (s: Record<string, unknown>): { view?: 'live' | 'replay' } => (s.view === 'replay' || s.view === 'live' ? { view: s.view } : {}),
@@ -18,6 +20,10 @@ export const Route = createFileRoute('/spaces/$spaceId/runs/$runId')({
  */
 function RunPage() {
   const { spaceId, runId } = Route.useParams()
+  return isMiniApp() ? <TgRunDetail spaceId={spaceId} runId={runId} /> : <WebRunPage spaceId={spaceId} runId={runId} />
+}
+
+function WebRunPage({ spaceId, runId }: { spaceId: string; runId: string }) {
   const { view } = Route.useSearch()
   const navigate = Route.useNavigate()
   const run = useRun(spaceId, runId)

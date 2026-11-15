@@ -1,6 +1,7 @@
 import { Badge, Box, Group, UnstyledButton } from '@mantine/core'
 import { Link, useRouterState } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { isMiniApp } from '@/api/session'
 import { useHumanActions, useInbox, useMessages, useRuns, useXSpaceRequests } from '@/api/queries'
 
 type Section = 'overview' | 'terminals' | 'inbox' | 'queue' | 'human' | 'messages' | 'repositories' | 'knowledge' | 'memory' | 'events' | 'schedules' | 'limits' | 'cross-space'
@@ -12,12 +13,13 @@ type To = '/spaces/$spaceId' | '/spaces/$spaceId/terminals' | '/spaces/$spaceId/
  * (a labelled nav with aria-current), not tabs: each section is its own page.
  */
 export function SpaceNav({ spaceId }: { spaceId: string }) {
+  const mini = isMiniApp()
   const path = useRouterState({ select: (s) => s.location.pathname })
   const fresh = useInbox(spaceId, '').data?.pages[0]?.counts.new ?? 0
   const human = useHumanActions(spaceId)
   const waiting = (human.data?.items ?? []).filter((a) => a.status === 'open' || a.status === 'in_progress').length
   const forOperators = useMessages(spaceId).data?.operators_pending ?? 0
-  const incoming = (useXSpaceRequests(spaceId).data ?? []).filter((r) => r.side === 'incoming' && r.state === 'pending').length
+  const incoming = (useXSpaceRequests(spaceId, !mini).data ?? []).filter((r) => r.side === 'incoming' && r.state === 'pending').length
   const running = (useRuns(spaceId).data ?? []).filter((r) => !['exited', 'failed', 'lost'].includes(r.observed)).length
   const active: Section = path.includes('/terminals') || path.includes('/runs/') ? 'terminals' : path.includes('/inbox') ? 'inbox' : path.includes('/events') ? 'events' : path.includes('/queue') ? 'queue'
     : path.includes('/schedules') ? 'schedules' : path.includes('/limits') ? 'limits' : path.includes('/repositories') ? 'repositories'
@@ -38,13 +40,16 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
     { key: 'limits', to: '/spaces/$spaceId/limits', label: 'Limits' },
     { key: 'cross-space', to: '/spaces/$spaceId/cross-space', label: 'Cross-space', extra: count(incoming, 'owlYellow') },
   ]
+  // Sections whose pages need operations the Mini App is refused (TelegramExcluded) are left out.
+  const MINI: Section[] = ['overview', 'terminals', 'inbox', 'queue', 'human', 'messages']
+  const shown = mini ? items.filter((i) => MINI.includes(i.key)) : items
   return (
     <Box component="nav" aria-label="Space sections" mb="md">
       {/* The baseline and the active underline are inset shadows, not borders with a negative margin: a link that sticks
           out of the row by even a pixel makes the scrolling row show a vertical scrollbar. The active link's shadow paints
           over the row's. */}
       <Group gap={0} wrap="nowrap" style={{ overflowX: 'auto', scrollbarWidth: 'thin', boxShadow: 'inset 0 -1px 0 var(--mantine-color-default-border)' }}>
-        {items.map((it) => {
+        {shown.map((it) => {
           const on = it.key === active
           return (
             <UnstyledButton key={it.key} renderRoot={(props) => <Link {...props} to={it.to} params={{ spaceId }} />} aria-current={on ? 'page' : undefined}
