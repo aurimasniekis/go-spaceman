@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Mini App: your Telegram settings page is editable (notification categories, quiet hours, digest, muted spaces and your
+  time zone, which is per user; topics are shown read-only). Saves send `If-Match`; a stale save reloads the form with a
+  conflict notice. The queue page shows the read-only "Next" card (never `record=true`).
 - Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
   App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
   muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App
