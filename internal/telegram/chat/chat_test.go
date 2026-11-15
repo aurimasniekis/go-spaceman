@@ -301,9 +301,9 @@ type env struct {
 	files        []sentFile
 	allow        func(string, updates.Kind) bool
 	threadSpace  map[int]string // topic thread -> space it belongs to (what topics.Manager.SpaceOf would answer)
-	hideA        atomic.Bool // spA stops being visible to Telegram
-	apConfirm    atomic.Bool // spA allows enforced approvals in chat (enforced_approvals = confirm)
-	arms         []string    // ArmApproval calls: "link space action outcome version"
+	hideA        atomic.Bool    // spA stops being visible to Telegram
+	apConfirm    atomic.Bool    // spA allows enforced approvals in chat (enforced_approvals = confirm)
+	arms         []string       // ArmApproval calls: "link space action outcome version"
 	dlNow, dlMax atomic.Int32
 	dlDelay      time.Duration // each download takes this long (to overlap them)
 }
