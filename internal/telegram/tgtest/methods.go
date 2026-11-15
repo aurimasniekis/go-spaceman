@@ -49,6 +49,8 @@ func (s *Server) dispatch(r *http.Request, method string, p params, files map[st
 			w.PendingUpdateCount = len(s.updates)
 		}
 		return w, nil
+	case "createForumTopic":
+		return s.createForumTopicLocked(p)
 	case "sendMessage":
 		return s.sendMessageLocked(p)
 	case "editMessageText":
@@ -220,6 +222,9 @@ func (s *Server) sendMessageLocked(p params) (any, *apiError) {
 	}
 	reply, e := s.replyLocked(chat, p)
 	if e != nil {
+		return nil, e
+	}
+	if e := s.threadLocked(chat.ID, p); e != nil {
 		return nil, e
 	}
 	m := s.newMessageLocked(chat, p)
