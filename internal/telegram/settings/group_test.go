@@ -117,3 +117,28 @@ func TestGroupSpace(t *testing.T) {
 		t.Fatalf("the binding was lost: %+v", svc.Space("spc_a"))
 	}
 }
+
+// TG-13-2: a group that stops acting for a space is reported (the bot leaves it): unbound, rebound to another group,
+// its space disabled or hidden, or its settings gone. Unchanged bindings and groups that never acted aren't.
+func TestLostGroups(t *testing.T) {
+	on := func(g int64) Space { return Space{Enabled: true, ContentLevel: ContentFull, GroupChatID: g} }
+	old := map[string]Space{
+		"keep": on(-1), "unbound": on(-2), "rebound": on(-3), "disabled": on(-4), "hidden": on(-5), "deleted": on(-6),
+		"never": on(0), "off": {Enabled: false, GroupChatID: -7},
+	}
+	hidden := on(-5)
+	hidden.ContentLevel = ContentOff
+	disabled := on(-4)
+	disabled.Enabled = false
+	cur := map[string]Space{"keep": on(-1), "unbound": on(0), "rebound": on(-30), "disabled": disabled, "hidden": hidden, "never": on(0), "off": {GroupChatID: -7}}
+	got := lostGroups(old, cur)
+	want := []int64{-6, -5, -4, -3, -2}
+	if len(got) != len(want) {
+		t.Fatalf("lost %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("lost %v, want %v", got, want)
+		}
+	}
+}

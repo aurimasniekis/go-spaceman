@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
@@ -127,6 +128,21 @@ func TestTelegramGroupBindOverHTTP(t *testing.T) {
 	if _, ok := h.c.TelegramSettings.GroupSpace(forum2); ok {
 		t.Fatal("an unbound group still acts for the space")
 	}
+	// A group that lost its binding is left by the bot, the replaced one (forum -> forum2) included.
+	waitLeft := func(chat string) {
+		t.Helper()
+		for range 200 {
+			for _, c := range tg.Calls("leaveChat") {
+				if c.Params["chat_id"] == chat {
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("the bot didn't leave %s: %+v", chat, tg.Calls("leaveChat"))
+	}
+	waitLeft("-1001001")
+	waitLeft("-1001002")
 
 	// The freed group can be bound to the other space.
 	expect(t, adminB.do("PUT", pathB, map[string]any{"enabled": true, "group_chat_id": forum}, "If-Match", `"1"`), 200)

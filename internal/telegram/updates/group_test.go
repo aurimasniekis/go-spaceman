@@ -2,6 +2,7 @@ package updates
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,10 @@ func TestDispatcherGroupScope(t *testing.T) {
 	if len(rec.got()) != 0 || links.lookups != 0 {
 		t.Fatalf("handled %v, %d link lookups", rec.got(), links.lookups)
 	}
+	// Activity in chats that can't be bound (no topics, a basic group) makes the bot leave them; the bound group isn't.
+	if calls := srv.Calls("leaveChat"); len(calls) != 2 || calls[0].Params["chat_id"] != "-100600" || calls[1].Params["chat_id"] != "-42" {
+		t.Fatalf("leaveChat calls after chatter %+v", calls)
+	}
 	reply := groupMsg(5, 8, boundGroup, "the reason")
 	reply.Message.ReplyToMessage = &botapi.Message{MessageID: 3, Chat: botapi.Chat{ID: boundGroup, Type: botapi.ChatSupergroup}}
 	d.Dispatch(ctx, reply)
@@ -154,7 +159,101 @@ func TestDispatcherGroupScope(t *testing.T) {
 	}
 	d.Dispatch(ctx, member(6, boundGroup))
 	d.Dispatch(ctx, member(7, otherGroup))
-	if calls := srv.Calls("leaveChat"); len(calls) != 1 || calls[0].Params["chat_id"] != "-100600" {
+	if calls := srv.Calls("leaveChat"); len(calls) != 3 || calls[2].Params["chat_id"] != "-100600" {
 		t.Fatalf("leaveChat calls %+v", calls)
+	}
+}
+
+// TG-13-2: binding checks that the bot is a member, so the bot stays in a forum supergroup that isn't bound yet (and
+// reads nothing there), but leaves a chat that can never be bound: a channel, a basic group, a supergroup without
+// topics. It also leaves a group that lost its binding (LeaveGroup), and never a private chat.
+func TestDispatcherGroupLeavePolicy(t *testing.T) {
+	srv, bot := fakeBot(t)
+	d := NewDispatcher(DispatcherOptions{Links: &recorder{}, Handler: &linkRecorder{}, Bot: bot, Groups: groupsFake{boundGroup: "spc_bound"}})
+	ctx := context.Background()
+	member := func(id int64, chat botapi.Chat, status string) {
+		d.Dispatch(ctx, botapi.Update{UpdateID: id, MyChatMember: &botapi.ChatMemberUpdated{Chat: chat, From: botapi.User{ID: 8},
+			NewChatMember: botapi.ChatMember{Status: status}}})
+	}
+	member(1, botapi.Chat{ID: -100801, Type: botapi.ChatSupergroup, IsForum: true}, botapi.MemberAdministrator) // waits for a binding
+	member(2, botapi.Chat{ID: -100802, Type: botapi.ChatSupergroup}, botapi.MemberMember)                       // no topics
+	member(3, botapi.Chat{ID: -100803, Type: botapi.ChatGroup}, botapi.MemberMember)
+	member(4, botapi.Chat{ID: -100804, Type: "channel"}, botapi.MemberAdministrator)
+	var left []string
+	for _, c := range srv.Calls("leaveChat") {
+		left = append(left, c.Params["chat_id"])
+	}
+	if strings.Join(left, ",") != "-100802,-100803,-100804" {
+		t.Fatalf("left %v", left)
+	}
+	d.LeaveGroup(ctx, -100801)
+	d.LeaveGroup(ctx, 42) // never a private chat
+	d.LeaveGroup(ctx, 0)
+	calls := srv.Calls("leaveChat")
+	if len(calls) != 4 || calls[3].Params["chat_id"] != "-100801" {
+		t.Fatalf("leaveChat calls %+v", calls)
+	}
+}
+
+// TG-13-2 (reviewed lifecycle): the bot waits in an unbound forum supergroup for at most the grace, then leaves unless
+// the group got bound. After a restart it has forgotten the wait, so the first message or tap from an unbound group
+// makes it leave at once. Nothing from such a group is ever handed to the handler.
+func TestDispatcherUnboundForumGroupWaitIsBounded(t *testing.T) {
+	srv, bot := fakeBot(t)
+	clk := clock.NewFake(time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC))
+	rec := &linkRecorder{}
+	groups := groupsFake{}
+	d := NewDispatcher(DispatcherOptions{Links: &recorder{linked: map[int64]Link{8: {ID: "tgl_8", UserID: "usr_8", ChatID: 8}}}, Handler: rec, Bot: bot,
+		Groups: groups, Clock: clk, GroupGrace: 15 * time.Minute})
+	ctx := context.Background()
+	forum := func(id int64) botapi.Chat { return botapi.Chat{ID: id, Type: botapi.ChatSupergroup, IsForum: true} }
+	added := func(n, id int64) {
+		d.Dispatch(ctx, botapi.Update{UpdateID: n, MyChatMember: &botapi.ChatMemberUpdated{Chat: forum(id), From: botapi.User{ID: 8},
+			NewChatMember: botapi.ChatMember{Status: botapi.MemberAdministrator}}})
+	}
+	left := func() int { return len(srv.Calls("leaveChat")) }
+
+	added(1, -100901) // never bound
+	added(2, -100902) // bound within the grace
+	added(3, -100903) // bound, then loses it
+	if left() != 0 {
+		t.Fatal("the bot left a forum supergroup at once")
+	}
+	// Chatter and a command from a group it waits in: nothing is read or handed over, and it stays.
+	chatter := groupMsg(4, 8, -100901, "/needsyou")
+	chatter.Message.Chat = forum(-100901)
+	d.Dispatch(ctx, chatter)
+	if len(rec.got()) != 0 || left() != 0 {
+		t.Fatalf("handled %v, left %d", rec.got(), left())
+	}
+	clk.Advance(14 * time.Minute)
+	groups[-100902] = "spc_x" // bound in time
+	d.SweepGroups(ctx)
+	if left() != 0 {
+		t.Fatal("left before the grace ended")
+	}
+	clk.Advance(2 * time.Minute)
+	d.SweepGroups(ctx)
+	calls := srv.Calls("leaveChat")
+	if len(calls) != 2 || calls[0].Params["chat_id"] == "-100902" || calls[1].Params["chat_id"] == "-100902" {
+		t.Fatalf("after the grace: %+v", calls)
+	}
+	// A restart: a new dispatcher knows no wait, so the first activity of an unbound forum group makes it leave.
+	d2 := NewDispatcher(DispatcherOptions{Links: &recorder{}, Handler: rec, Bot: bot, Groups: groupsFake{}, Clock: clk})
+	forgotten := groupMsg(5, 8, -100904, "/needsyou")
+	forgotten.Message.Chat = forum(-100904)
+	d2.Dispatch(ctx, forgotten)
+	calls = srv.Calls("leaveChat")
+	if len(calls) != 3 || calls[2].Params["chat_id"] != "-100904" || len(rec.got()) != 0 {
+		t.Fatalf("after a restart: %+v handled %v", calls, rec.got())
+	}
+	// The same activity in the group the bot waits in (a tap too) is dropped without leaving.
+	d.Dispatch(ctx, botapi.Update{UpdateID: 6, MyChatMember: &botapi.ChatMemberUpdated{Chat: forum(-100905), From: botapi.User{ID: 8},
+		NewChatMember: botapi.ChatMember{Status: botapi.MemberMember}}})
+	tap := botapi.Update{UpdateID: 7, CallbackQuery: &botapi.CallbackQuery{ID: "q", From: botapi.User{ID: 8}, Data: "x",
+		Message: &botapi.Message{MessageID: 1, Chat: forum(-100905)}}}
+	d.Dispatch(ctx, tap)
+	if n := len(srv.Calls("leaveChat")); n != 3 || len(rec.got()) != 0 {
+		t.Fatalf("a tap in a waiting group: %d leaves, handled %v", n, rec.got())
 	}
 }

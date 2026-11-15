@@ -569,7 +569,9 @@ func (h *Handler) qrReply(ctx context.Context, m *botapi.Message, l updates.Link
 			return false
 		}
 		sp, id, link, found := h.o.ResolveMessage(ctx, m.Chat.ID, m.ReplyToMessage.MessageID)
-		if !found || link != l.ID {
+		// A card in a bound group is the group's: the replier acts as their own link whichever link it was sent to, and
+		// Handler.space below admits only the bound space (the same rule as a tap on a card, humanCallback).
+		if !found || l.Group == nil && link != l.ID {
 			return false
 		}
 		p = replyPrompt{linkID: l.ID, spaceID: sp, messageID: id}

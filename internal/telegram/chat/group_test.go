@@ -361,3 +361,34 @@ func TestGroupEphemeralReplies(t *testing.T) {
 		t.Fatalf("a command that isn't the bot's was answered: %d messages, had %d", len(e.group()), n)
 	}
 }
+
+// TG-13-2: a reply to a notifier card of a message in a bound group is authorized as the replier, like a tap on a
+// card: the card's link (the notified person's) doesn't have to be the replier's. The bound space still decides: a card
+// of another space is not taken.
+func TestGroupReplyToMessageCardIsTheRepliersOwn(t *testing.T) {
+	e, a := newQR(t)
+	e.h.o.ResolveMessage = func(_ context.Context, chat int64, msg int) (string, string, string, bool) {
+		switch {
+		case chat == groupID && msg == 777:
+			return spA, mid('1'), "tgl_other", true // sent to somebody else's link
+		case chat == groupID && msg == 778:
+			return spS, mid('1'), "tgl_other", true // another space
+		}
+		return "", "", "", false
+	}
+	m := member("tgl_1", spA)
+	reply := func(to int, text string) {
+		e.upd++
+		e.ginject(m, botapi.Message{MessageID: int(e.upd), From: &botapi.User{ID: 900}, Chat: botapi.Chat{ID: groupID, Type: botapi.ChatSupergroup},
+			Text: text, ReplyToMessage: &botapi.Message{MessageID: to, Chat: botapi.Chat{ID: groupID}}})
+	}
+	reply(778, "wrong space")
+	reply(999, "unknown card")
+	if len(a.writes()) != 0 {
+		t.Fatalf("writes %v", a.writes())
+	}
+	reply(777, "go on")
+	if w := a.writes(); len(w) != 1 || !strings.HasSuffix(w[0], "/spaces/"+spA+"/messages/"+mid('1')+"/reply") {
+		t.Fatalf("writes %v", a.writes())
+	}
+}

@@ -122,6 +122,8 @@ type DispatcherOptions struct {
 	Unlinker Unlinker
 	// Groups maps a group chat to its bound space (nil: no group mode; the bot leaves every group).
 	Groups Groups
+	// GroupGrace is how long the bot waits in an unbound forum supergroup before it leaves (default 15 minutes).
+	GroupGrace time.Duration
 	// Limiter enforces the per-link inbound limits (nil: none). Every linked user's update costs one KindAction.
 	Limiter *Limiter
 	// Bot sends the dispatcher's own replies; SetBot replaces it when the bot is (re)configured. Without one, nothing
@@ -160,6 +162,8 @@ type Dispatcher struct {
 	log     *slog.Logger
 
 	perUser, global time.Duration
+	grace           time.Duration // how long the bot waits in an unbound forum supergroup (groupwait.go)
+	wait            groupWait
 
 	mu         sync.Mutex
 	lastGlobal time.Time
@@ -183,7 +187,10 @@ func NewDispatcher(o DispatcherOptions) *Dispatcher {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	d := &Dispatcher{links: o.Links, linker: o.Linker, unlink: o.Unlinker, groups: o.Groups, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
+	if o.GroupGrace <= 0 {
+		o.GroupGrace = DefaultGroupGrace
+	}
+	d := &Dispatcher{grace: o.GroupGrace, links: o.Links, linker: o.Linker, unlink: o.Unlinker, groups: o.Groups, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
 		perUser: o.UnlinkedPerUser, global: o.UnlinkedGlobal, replied: newLRU(o.UnlinkedUsers)}
 	d.SetBot(o.Bot)
 	d.SetHandler(o.Handler)
@@ -258,11 +265,22 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 			d.metrics.TelegramUpdate(metrics.TelegramUpdateIgnored)
 			return
 		}
+		if canBeBound(c.Chat) && c.NewChatMember.Status != botapi.MemberLeft && c.NewChatMember.Status != botapi.MemberKicked {
+			// A forum supergroup waits for its binding (binding checks that the bot is a member): nothing is read or
+			// answered there until then, and not for longer than the grace (groupwait.go).
+			d.startWaiting(c.Chat.ID)
+			d.metrics.TelegramUpdate(metrics.TelegramUpdateIgnored)
+			return
+		}
 		d.leaveGroup(ctx, c)
 		return
 	}
+	d.SweepGroups(ctx)
 	if g, from, ok := d.groupUpdate(&u); ok {
 		d.dispatchGroup(ctx, u, g, from)
+		return
+	}
+	if d.groupActivity(ctx, &u) {
 		return
 	}
 	from, ok := sender(&u)
@@ -493,7 +511,27 @@ func (d *Dispatcher) throttled(ctx context.Context, u *botapi.Update, l Link, wa
 	}
 }
 
-// leaveGroup leaves a group, supergroup or channel the bot was added to that isn't bound to a space. A status change that already removed the bot needs nothing.
+// LeaveGroup makes the bot leave a group that no longer acts for a space (its binding or its space is gone). Failures
+// are logged; the group is ignored by the dispatcher either way.
+func (d *Dispatcher) LeaveGroup(ctx context.Context, chatID int64) {
+	d.wait.mu.Lock()
+	delete(d.wait.deadline, chatID)
+	d.wait.mu.Unlock()
+	bot := d.client()
+	if bot == nil || chatID >= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	if err := bot.LeaveChat(ctx, chatID); err != nil {
+		d.log.Warn("telegram: leaving a group that lost its binding failed", slog.String("error", err.Error()))
+		d.metrics.TelegramUpdate(metrics.TelegramUpdateFailed)
+		return
+	}
+	d.metrics.TelegramUpdate(metrics.TelegramUpdateLeftChat)
+}
+
+// leaveGroup leaves a group, supergroup or channel the bot was added to that can't be bound to a space. A status change that already removed the bot needs nothing.
 func (d *Dispatcher) leaveGroup(ctx context.Context, c *botapi.ChatMemberUpdated) {
 	switch c.NewChatMember.Status {
 	case botapi.MemberLeft, botapi.MemberKicked:

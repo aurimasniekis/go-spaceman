@@ -72,6 +72,11 @@ func (c *Central) newTelegram(ctx context.Context) {
 		}
 		return b.GetChat(ctx, chatID)
 	})
+	// A group that lost its binding (unbound, or its space disabled, hidden or removed) is left, so it isn't a member the
+	// operator forgot about. Leaving runs apart from the reload that noticed.
+	c.TelegramSettings.OnGroupLost(func(chatID int64) {
+		go c.TelegramUpdates.Dispatcher.LeaveGroup(context.WithoutCancel(ctx), chatID)
+	})
 	// link_sso_grants (ADR-0083 Q8) is read per use, so a change applies to the next principal without a restart.
 	c.TelegramSSOGrants = func() bool { return c.TelegramSettings.Current().LinkSSOGrants }
 	c.TelegramSettings.OnChange(func(s tgsettings.Settings) {

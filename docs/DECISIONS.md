@@ -5161,6 +5161,22 @@
     `web/src/tg/deeplink.ts`; a routing hint that authorizes nothing). It uses the bot's Main Mini App (BotFather) and needs
     the bot's username and the Mini App host; without them the form has no app button but still works. Private chats keep
     the `web_app` button.
+  - **Lifecycle of the bot's membership (changes TG-13-1's leave-on-add, no authorization).** Binding verifies that the
+    bot is a member, so the bot can't leave a group the moment it is added. It still leaves at once a chat that can never
+    be bound (a channel, a basic group, a supergroup without topics: the update carries `is_forum`). It waits in an
+    unbound forum supergroup, silent and reading nothing (any message or tap there is dropped before any lookup), for at
+    most `updates.DefaultGroupGrace` (15 minutes from the add, `DispatcherOptions.GroupGrace`); `Dispatcher.SweepGroups`
+    (every minute and on every update) then leaves it unless it got bound, so nobody can park the bot in groups. The
+    wait is in memory: after a restart the first message or tap from any unbound group makes the bot leave at once (a
+    restart opens no window that doesn't close). Telegram can't list the bot's groups, so a group that stays completely
+    idle across a restart stays until it produces an update; it reads and answers nothing meanwhile. Activity from a chat
+    that can't be bound also makes the bot leave. A group that stops acting for a space (unbound, rebound to another
+    group, its space disabled, hidden, archived or its settings deleted) is left: `settings.Service.OnGroupLost` reports
+    it after the reload that noticed, and central calls `Dispatcher.LeaveGroup`. The dispatcher change is confined to
+    `updates/groupwait.go` plus three small hooks in `Dispatch`.
+  - **Replies to cards.** `qrReply` (a Telegram reply to a notifier card of a message) takes a group card whatever link
+    it was sent to and authorizes the replier's own link, like a tap (`humanCallback`); `Handler.space` still admits only
+    the bound space.
   - **Group send limit.** `send_limits.group_per_minute` (1-20, default 20) already existed in the sender but no caller
     set `Message.Group`. The sender now treats every negative chat ID as a group, whatever the caller set, so the
     notifier's and the chat handler's group posts take the per-group bucket.
@@ -5168,7 +5184,8 @@
     the fake, 409 on a duplicate, keep/rebind/unbind, a deleted space), `internal/telegram/chat`
     `TestGroupEphemeralReplies`, `TestGroupFormLinksToAppWithDirectLink`, `internal/telegram/updates` (the refusal alert),
     `internal/telegram/sender` `TestNegativeChatIDGetsTheGroupLimit`, `TestGroupPerMinuteIsTheGroupBucket`,
-    `internal/telegram/botapi` `TestGetChat`.
+    `internal/telegram/botapi` `TestGetChat`, `internal/telegram/updates` `TestDispatcherGroupLeavePolicy`, `TestDispatcherUnboundForumGroupWaitIsBounded`,
+    `internal/telegram/settings` `TestLostGroups`, `internal/telegram/chat` `TestGroupReplyToMessageCardIsTheRepliersOwn`.
 
 ### ADR-0084 — "Message the agent" is typed into the running session at once
 - **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.

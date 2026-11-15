@@ -54,6 +54,7 @@ type Service struct {
 	retryMin, retryMax, reloadEvery time.Duration
 	loader                          func(context.Context) error
 	verify                          GroupVerifier
+	groupLost                       []func(int64)
 }
 
 // New returns the service with the built-in defaults cached; Load (or Run) reads the stored state.
@@ -260,15 +261,50 @@ func (svc *Service) Load(ctx context.Context) error {
 	}
 	svc.mu.Lock()
 	changed := !svc.loaded || ver != svc.curVer || cur != svc.cur
+	var lost []int64
+	if svc.loaded {
+		lost = lostGroups(svc.spaces, spaces)
+	}
 	svc.cur, svc.curVer, svc.spaces, svc.loaded = cur, ver, spaces, true
 	ls := slices.Clone(svc.listeners)
+	gl := slices.Clone(svc.groupLost)
 	svc.mu.Unlock()
+	for _, chatID := range lost {
+		for _, fn := range gl {
+			fn(chatID)
+		}
+	}
 	if changed {
 		for _, fn := range ls {
 			fn(cur)
 		}
 	}
 	return nil
+}
+
+// lostGroups returns the group chats that acted for a space before (bound to a space visible to Telegram) and no longer
+// do for that space: unbound, rebound elsewhere, or their space disabled, hidden, archived or removed.
+func lostGroups(old, cur map[string]Space) []int64 {
+	var out []int64
+	for id, o := range old {
+		if o.GroupChatID == 0 || !o.Visible() {
+			continue
+		}
+		if n, ok := cur[id]; ok && n.GroupChatID == o.GroupChatID && n.Visible() {
+			continue
+		}
+		out = append(out, o.GroupChatID)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// OnGroupLost registers fn: it is called with the chat ID of every group that stopped acting for a space (see
+// lostGroups) after a reload, so the bot can leave it. Not for the first load.
+func (svc *Service) OnGroupLost(fn func(chatID int64)) {
+	svc.mu.Lock()
+	svc.groupLost = append(svc.groupLost, fn)
+	svc.mu.Unlock()
 }
 
 // liveSpaces returns the IDs of the spaces that exist and are not archived.

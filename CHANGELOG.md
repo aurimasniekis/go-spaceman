@@ -12,7 +12,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   supergroup with topics (422), a group serves one space (409), and `spaceman telegram` gets `--group-chat-id`. In a
   group, refusals and answers to button taps are alerts only the tapper sees, a refused command gets one short reply
   that shows nothing, forms link to the Mini App with a `t.me` direct link (Telegram refuses app buttons in groups), and
-  posts to a group take the `send_limits.group_per_minute` limit.
+  posts to a group take the `send_limits.group_per_minute` limit. The bot stays in a forum supergroup until it is bound
+  (it still leaves chats that can never be bound) and leaves a group that loses its binding.
 - Telegram group mode authorization (ADR-0083, TG-13-1): in a forum supergroup
   bound to a space, every button tap and command acts as the tapping person's own linked account and grants, never the
   binder's or the group's. Members without a link, or whose account can't use the space, are refused; nothing outside the
