@@ -117,3 +117,31 @@ func TestNextClock(t *testing.T) {
 		t.Error("a bad clock time has no next instant")
 	}
 }
+
+// A card's baseline lives in base only while its first send is queued: record seeds byCard from it once, later
+// records keep what byCard holds, and the last send's Done leaves nothing behind.
+func TestCardsBaselineIsSeededOnceAndCleared(t *testing.T) {
+	c := newCards(nil, 10, time.Now)
+	k := Key{Type: TypeHumanAction, ID: "hum_1"}
+	r := Resource{Key: k, SpaceID: "spc_1", Version: 1, Kind: KindAction}
+	d1, d2 := c.queue(1, &r), c.queue(1, &r)
+	m := Mapping{ChatID: 1, MessageID: 7, SpaceID: "spc_1", Key: k, Version: 1}
+	c.record(m, &r)
+	d1(nil)
+	r2 := r
+	r2.Version, r2.Assignee = 2, "usr_1"
+	if _, _, reassigned := c.observe(1, &r2); !reassigned {
+		t.Fatal("the assignment was not seen")
+	}
+	m.Version = 2
+	c.record(m, &r2)
+	d2(nil)
+	if _, _, reassigned := c.observe(1, &r2); reassigned {
+		t.Error("the same assignment is seen again")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.base) != 0 || len(c.queued) != 0 {
+		t.Errorf("base %d, queued %d left after the last send", len(c.base), len(c.queued))
+	}
+}

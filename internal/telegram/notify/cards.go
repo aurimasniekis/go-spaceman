@@ -62,11 +62,14 @@ type cards struct {
 	loaded  map[Key]bool
 	pending map[[2]int64]Mapping // (chat, message) -> row
 	queued  map[cardKey]int      // sends enqueued and not yet finished
+	// base is the announce baseline (reminders, escalations, assignee) of a card whose first send is queued or in flight,
+	// so a change observed before the send's mapping is recorded is still announced, and only once.
+	base map[cardKey]card
 }
 
 func newCards(st Mappings, rows int, now func() time.Time) *cards {
 	return &cards{now: now, store: st, rows: rows, full: make(chan struct{}, 1), byCard: map[cardKey]card{}, loaded: map[Key]bool{},
-		pending: map[[2]int64]Mapping{}, queued: map[cardKey]int{}}
+		pending: map[[2]int64]Mapping{}, queued: map[cardKey]int{}, base: map[cardKey]card{}}
 }
 
 func (c *cards) get(chat int64, k Key) *card {
@@ -129,7 +132,11 @@ func (c *cards) record(m Mapping, r *Resource) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.bound()
-	cur := c.byCard[cardKey{m.ChatID, m.Key}]
+	ck := cardKey{m.ChatID, m.Key}
+	cur, ok := c.byCard[ck]
+	if !ok {
+		cur = c.base[ck] // what was observed while the first send was on its way
+	}
 	cur.messageID, cur.version = m.MessageID, m.Version
 	if r != nil {
 		cur.remindedSeen, cur.escalatedSeen = max(cur.remindedSeen, r.RemindedAt), max(cur.escalatedSeen, r.EscalatedAt)
@@ -164,14 +171,21 @@ func (c *cards) observe(chat int64, r *Resource) (reminded, escalated, reassigne
 	defer c.mu.Unlock()
 	ck := cardKey{chat, r.Key}
 	cur, ok := c.byCard[ck]
+	inBase := false
 	if !ok {
-		return false, false, false
+		if cur, inBase = c.base[ck]; !inBase {
+			return false, false, false
+		}
 	}
 	reminded, escalated = r.RemindedAt > cur.remindedSeen, r.EscalatedAt > cur.escalatedSeen
 	reassigned = cur.known && cur.assignee != r.Assignee
 	cur.remindedSeen, cur.escalatedSeen = max(cur.remindedSeen, r.RemindedAt), max(cur.escalatedSeen, r.EscalatedAt)
 	cur.assignee, cur.known = r.Assignee, true
-	c.byCard[ck] = cur
+	if inBase {
+		c.base[ck] = cur
+	} else {
+		c.byCard[ck] = cur
+	}
 	return reminded, escalated, reassigned
 }
 
@@ -287,23 +301,35 @@ func clip(s string, n int) string {
 	return string([]rune(s)[:n-1]) + "…"
 }
 
-// sendQueued reports whether a send of the card is waiting in the sender (its card doesn't exist yet).
-func (c *cards) sendQueued(chat int64, k Key) bool {
+// state returns, under one lock, the card (nil: none) and whether a send of the card is waiting in the sender. One
+// snapshot, so a send finishing between two reads can't make the card look absent and the send gone at once.
+func (c *cards) state(chat int64, k Key) (cd *card, queued bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.queued[cardKey{chat, k}] > 0
+	ck := cardKey{chat, k}
+	if v, ok := c.byCard[ck]; ok {
+		cd = &v
+	}
+	return cd, c.queued[ck] > 0
 }
 
 // queue counts a send in the sender; the returned function ends it (the sender's Done).
-func (c *cards) queue(chat int64, k Key) func(error) {
+func (c *cards) queue(chat int64, r *Resource) func(error) {
+	k := r.Key
 	ck := cardKey{chat, k}
 	c.mu.Lock()
 	c.queued[ck]++
+	if _, ok := c.byCard[ck]; !ok {
+		if _, ok := c.base[ck]; !ok {
+			c.base[ck] = card{remindedSeen: r.RemindedAt, escalatedSeen: r.EscalatedAt, assignee: r.Assignee, known: true}
+		}
+	}
 	c.mu.Unlock()
 	return func(error) {
 		c.mu.Lock()
 		if c.queued[ck]--; c.queued[ck] <= 0 {
 			delete(c.queued, ck)
+			delete(c.base, ck)
 		}
 		c.mu.Unlock()
 	}

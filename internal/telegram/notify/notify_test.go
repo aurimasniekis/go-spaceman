@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -135,6 +136,12 @@ func (p *policy) hide(id string) {
 	p.hidden[id] = true
 }
 
+func (p *policy) unhide(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.hidden, id)
+}
+
 func (p *policy) Space(id string) settings.Space {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -211,6 +218,8 @@ type env struct {
 	n      *notify.Notifier
 	stop   func()
 
+	gate atomic.Pointer[replyGate] // when set, sendMessage replies are held (see holdReplies)
+
 	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
 	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
 	authz      notify.Authorizer
@@ -224,7 +233,8 @@ func newEnv(t *testing.T, nLinks int) *env {
 	t.Helper()
 	clk := clock.NewFake(t0)
 	fake := tgtest.New(t, tgtest.Options{Clock: clk})
-	c, err := botapi.New(botapi.Options{BaseURL: fake.URL(), Token: fake.Token()})
+	e0 := &env{}
+	c, err := botapi.New(botapi.Options{BaseURL: fake.URL(), Token: fake.Token(), HTTPClient: &http.Client{Transport: gateTransport{e0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +248,8 @@ func newEnv(t *testing.T, nLinks int) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, fake: fake, clk: clk, snd: snd, bus: eventbus.New(), feed: &feed{}, rd: &reader{items: map[notify.Key]notify.Resource{}},
+	e := e0
+	*e = env{t: t, fake: fake, clk: clk, snd: snd, bus: eventbus.New(), feed: &feed{}, rd: &reader{items: map[notify.Key]notify.Resource{}},
 		az: &authorizer{space: map[string]map[string]bool{}, roles: map[string]bool{}, deny: map[string]bool{}}, pol: &policy{set: settings.Defaults(), hidden: map[string]bool{}},
 		maps: &mappings{rows: map[[2]int64]notify.Mapping{}}, window: make(chan struct{}, 1)}
 	e.links = notify.NewLinks(nil, e.bus, nil, nil, 0)
@@ -692,3 +703,44 @@ func TestContentLevel(t *testing.T) {
 }
 
 func notifyDefaults() settings.NotificationDefaults { return settings.Defaults().NotificationDefaults }
+
+// replyGate holds sendMessage replies after the fake server has logged the request, the gap in which Telegram has
+// the message and the notifier does not yet know its id.
+type replyGate struct {
+	reached chan struct{} // one value per held reply
+	release chan struct{}
+}
+
+type gateTransport struct{ e *env }
+
+func (g gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil && strings.HasSuffix(r.URL.Path, "/sendMessage") {
+		if gate := g.e.gate.Load(); gate != nil {
+			gate.reached <- struct{}{}
+			select {
+			case <-gate.release:
+			case <-r.Context().Done():
+			}
+		}
+	}
+	return resp, err
+}
+
+// holdReplies holds every sendMessage reply from now on. wait blocks until n replies are held; release lets them
+// (and later ones) through.
+func (e *env) holdReplies() (wait func(n int), release func()) {
+	g := &replyGate{reached: make(chan struct{}, 64), release: make(chan struct{})}
+	e.gate.Store(g)
+	wait = func(n int) {
+		e.t.Helper()
+		for i := 0; i < n; i++ {
+			select {
+			case <-g.reached:
+			case <-time.After(10 * time.Second):
+				e.t.Fatal("a sendMessage reply was not reached")
+			}
+		}
+	}
+	return wait, func() { e.gate.Store(nil); close(g.release) }
+}
