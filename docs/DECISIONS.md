@@ -4713,7 +4713,7 @@
       server-side.
   11. **Every Telegram setting is configurable through the API and terraform-provider-spaceman (operator requirement,
       2026-11-14), with one exception.** Each setting has a StepUp, audited operation with `If-Match` versions
-      (`system:write` globally, `space:config:write` per space) and a provider attribute:
+      (`system:write` globally, `space_config:write` per space) and a provider attribute:
       - `spaceman_telegram_bot` (singleton, import ID `telegram-bot`; `get/put/delete-telegram-bot`): `bot_token_wo`,
         `bot_token_wo_version`, `enabled` (default `false`), `mode` (`webhook`|`polling`), `miniapp_host` (empty = Mini
         App off), `webhook_ip_allowlist` (set of CIDRs, empty = off); computed `bot_id`, `username`, `has_token`,
@@ -4803,7 +4803,7 @@
       messages with an entity fallback **(Q12)**, styled buttons, `copy_text`, `disabled`, and ephemeral messages in group
       mode. **Not used:** guest mode, bot-to-bot, managed and business bots (each lets content or commands arrive from
       something that isn't a linked user), widgets, polls, draft streaming (later). v1 is **private chats only**; group
-      mode (a forum supergroup bound to one space by StepUp `space:config:write`, `summary` by default, every tap
+      mode (a forum supergroup bound to one space by StepUp `space_config:write`, plus `telegram_group:write`, admins only, `summary` by default, every tap
       authorized as the tapping user's own link, group membership granting nothing) is M3 **(Q4)**. Talking to control
       from Telegram (a message to the control run as the user) is in M1 **(Q13)**.
 - **Alternatives rejected:**
@@ -5089,7 +5089,7 @@
   `group_chat_id` are TG-13-2 (and TG-12c), which build on the names fixed here.
   - **Data model.** A space is bound to a group by `space_telegram_settings.group_chat_id` (0051, `UNIQUE`, NULL: none);
     no new migration. `settings.Space.GroupChatID` carries it in the cache (not in the API yet: `put-space-telegram`
-    gains `group_chat_id` in TG-13-2, StepUp `space:config:write`), and `settings.Service.GroupSpace(chatID)` answers
+    gains `group_chat_id` in TG-13-2, StepUp `space_config:write`), and `settings.Service.GroupSpace(chatID)` answers
     from memory which space a group is bound to, only for a group chat ID and only while the space is visible to
     Telegram (enabled, content level not `off`), so disabling the space ends the group's access at once. A settings
     write keeps the binding.
