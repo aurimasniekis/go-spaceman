@@ -182,7 +182,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			Summary: "Create or update the prompt's draft", Description: "Without If-Match, a new draft is started (refused if one exists); with it, the draft at that version is updated.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				PromptPath
-				IfMatch
+				OptionalIfMatch
 				Body struct {
 					Body    string `json:"body" maxLength:"200000"`
 					Extends string `json:"extends,omitempty" maxLength:"64" doc:"A published version of another prompt to build on"`
@@ -190,7 +190,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 			}) (*struct{ Body *catalog.PromptVersion }, error) {
 				v := int64(0)
-				if in.IfMatch.IfMatch != "" {
+				if in.OptionalIfMatch.IfMatch != "" {
 					var err error
 					if v, err = in.Version(); err != nil {
 						return nil, d.fail(ctx, "prompts.draft", err)
@@ -329,14 +329,14 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			Summary: "Create or update the skill's draft", Description: "Without If-Match a new draft is started; with it, the draft at that version is updated.", Tags: stags},
 			func(ctx context.Context, in *struct {
 				SkillID string `path:"skill_id" maxLength:"64"`
-				IfMatch
+				OptionalIfMatch
 				Body struct {
 					Files map[string]string `json:"files"`
 					Notes string            `json:"notes,omitempty" maxLength:"2000"`
 				}
 			}) (*struct{ Body *catalog.Skill }, error) {
 				v := int64(0)
-				if in.IfMatch.IfMatch != "" {
+				if in.OptionalIfMatch.IfMatch != "" {
 					var err error
 					if v, err = in.Version(); err != nil {
 						return nil, d.fail(ctx, "skills.draft", err)

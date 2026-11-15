@@ -8,12 +8,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
-- Admin MCP tools that take `If-Match` (`set_space_state`, `update_space`, and every other versioned write) now list `if_match` as a required argument and say so in the description, so an approved call is not refused with a 428 and approved again.
+- Admin MCP tools whose operation requires `If-Match` (`set_space_state`, `update_space`, and the other versioned writes) list `if_match` as a required argument and say so in the description, so an approved call is not refused with a 428 and approved again. Operations where it is optional (a missing version means create or overwrite, e.g. `move_task`, `set_space_limits`, the draft saves) keep it optional and make no 428 promise.
 - A question request refused with `unknown field "allow_text"` was a request of another type (approval, to-do, message), where `allow_text` is not a field. The refusal now names the type and the fields it takes, and the `spaceman_human_ask` request description says `allow_text` is for questions only.
 
 ### Changed
 
-- Control can close a task that never had a worker run (control did the work itself) as **done** straight from backlog or ready with `spaceman_task_set_status`, a result required; the audit event is marked `direct`. No other transition changes, and operators and workers cannot use it.
+- Control can close a task that never had a worker run (control did the work itself) as **done** straight from backlog or ready with `spaceman_task_set_status`, a result required; the audit event is marked `direct`. The task must have no unmet dependency and no open `blocks_task` human action. No other transition changes, and operators and workers cannot use it.
 
 ## [0.1.5] - 2026-11-15
 

@@ -212,14 +212,14 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				TaskPath
-				IfMatch
+				OptionalIfMatch
 				Body struct {
 					BeforeID string `json:"before_id,omitempty" maxLength:"64"`
 					AfterID  string `json:"after_id,omitempty" maxLength:"64"`
 					To       string `json:"to,omitempty" enum:"top,bottom"`
 				}
 			}) (*taskOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "queue.move", err)
 				}

@@ -276,6 +276,52 @@ func TestSchemasAreValidObjects(t *testing.T) {
 	}
 }
 
+// optionalIfMatchTools are the tools whose handler reads If-Match with optionalVersion: a missing version means create
+// or overwrite, so the tool must not require it or promise a 428. Every other If-Match tool calls Version() (a missing
+// header is a 428) and must require it. Keep this list in step with the handlers (api.OptionalIfMatch).
+var optionalIfMatchTools = []string{
+	"ack_message", "delete_space_repository", "generate_repository_ssh_key", "move_task", "put_space_harbor_pilot",
+	"put_xspace_peer", "remove_repository_ssh_key", "resolve_message", "rotate_git_ssh_key", "save_human_type_draft",
+	"save_prompt_draft", "save_skill_draft", "set_human_policy", "set_human_type_permission", "set_space_human_policy",
+	"set_space_limits", "update_xspace_settings",
+}
+
+func TestIfMatchRequiredPerOperation(t *testing.T) {
+	c := catalog(t)
+	seen := 0
+	for _, tl := range c.Tools() {
+		if !tl.IfMatch {
+			continue
+		}
+		seen++
+		var s struct {
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(tl.InputSchema, &s); err != nil {
+			t.Fatal(err)
+		}
+		inRequired := slices.Contains(s.Required, spacemanmcp.ArgIfMatch)
+		says428 := strings.Contains(tl.Description, "428")
+		if slices.Contains(optionalIfMatchTools, tl.Name) {
+			if tl.IfMatchRequired || inRequired || says428 {
+				t.Errorf("%s: optional If-Match is required or promises a 428 (flag %v, schema %v, 428 line %v)", tl.Name, tl.IfMatchRequired, inRequired, says428)
+			}
+			continue
+		}
+		if !tl.IfMatchRequired || !inRequired || !says428 {
+			t.Errorf("%s: required If-Match is not required or lacks the 428 line (flag %v, schema %v, 428 line %v)", tl.Name, tl.IfMatchRequired, inRequired, says428)
+		}
+	}
+	for _, name := range optionalIfMatchTools {
+		if tl, ok := c.Tool(name); !ok || !tl.IfMatch {
+			t.Errorf("%s: listed as optional If-Match but not an If-Match tool", name)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no If-Match tools")
+	}
+}
+
 func names(ts []*spacemanmcp.Tool) []string {
 	out := make([]string, len(ts))
 	for i, t := range ts {

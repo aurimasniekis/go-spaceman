@@ -220,6 +220,11 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 			if t.StartedAt != nil || t.Preemptions > 0 || t.PreemptedBy != "" || t.AssigneeRun != "" || t.Kind == KindIncident {
 				return apperr.New(apperr.CodePrecondition, "only an ordinary task that never had a worker run can be closed as done from %s", from)
 			}
+			// Work that is not yet startable is not finished either: unmet dependencies or an open human action that
+			// blocks the task (control may not skip them by closing it).
+			if why := sn.waitingOn(t); len(why) > 0 {
+				return apperr.New(apperr.CodePrecondition, "the task cannot be closed as done: %s", why[0])
+			}
 		}
 		if !slices.Contains(transitions[from], in.Status) && !finishing && !direct {
 			return apperr.New(apperr.CodePrecondition, "a %s task cannot become %s", from, in.Status)

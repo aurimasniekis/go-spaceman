@@ -231,11 +231,17 @@ func newTool(op operation, method, path string, rule api.Rule, e Entry, componen
 		case "header":
 			switch p.Name {
 			case "If-Match":
-				// Every If-Match of the API is required (SM-API-002: a missing one is a 428), though the OpenAPI header
-				// is not marked so, to keep the REST answer a 428 rather than a validation error. The tool says so.
-				t.IfMatch, t.IfMatchRequired = true, true
-				if err := add(ArgIfMatch, map[string]any{"type": "string",
-					"description": "Required: the resource's current version (its version field or ETag, e.g. 3); read it first. A missing version is refused (428) and a stale one is a conflict"}, true); err != nil {
+				// Most If-Match headers are required (SM-API-002: a missing one is a 428), though the OpenAPI header is
+				// not marked so, to keep the REST answer a 428 rather than a validation error. Operations whose handler
+				// also works without one (a missing header means create or overwrite) use api.OptionalIfMatch, whose
+				// description carries api.OptionalIfMatchMarker; those stay optional here and make no 428 promise.
+				t.IfMatch = true
+				t.IfMatchRequired = !strings.Contains(p.Description, api.OptionalIfMatchMarker)
+				desc := "Optional: the resource's current version (its version field or ETag, e.g. 3). With it the update is checked against that version (a stale one is a conflict); without it the resource is created or overwritten"
+				if t.IfMatchRequired {
+					desc = "Required: the resource's current version (its version field or ETag, e.g. 3); read it first. A missing version is refused (428) and a stale one is a conflict"
+				}
+				if err := add(ArgIfMatch, map[string]any{"type": "string", "description": desc}, t.IfMatchRequired); err != nil {
 					return nil, err
 				}
 			case "Idempotency-Key":
@@ -270,11 +276,11 @@ func newTool(op operation, method, path string, rule api.Rule, e Entry, componen
 	if t.InputSchema, err = json.Marshal(schema); err != nil {
 		return nil, err
 	}
-	t.Description = describe(op, e, t.IfMatch)
+	t.Description = describe(op, e, t.IfMatchRequired)
 	return t, nil
 }
 
-func describe(op operation, e Entry, ifMatch bool) string {
+func describe(op operation, e Entry, ifMatchRequired bool) string {
 	d := strings.TrimSpace(op.Summary)
 	if desc := strings.TrimSpace(op.Description); desc != "" {
 		if d != "" {
@@ -285,7 +291,7 @@ func describe(op operation, e Entry, ifMatch bool) string {
 	if d == "" {
 		d = op.OperationID
 	}
-	if ifMatch {
+	if ifMatchRequired {
 		d += ". Requires if_match: the resource's current version (read it first), or the call is refused with 428"
 	}
 	prefix := "[SpaceMan · " + string(e.Class) + "] "

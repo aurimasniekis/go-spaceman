@@ -83,10 +83,10 @@ func RegisterLimits(svc *limits.Service, sched *schedule.Service) func(api huma.
 				"running work, except the concurrent-runs limit with on_lower=stop, which stops the newest runs beyond it.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				IfMatch
+				OptionalIfMatch
 				Body limits.Input
 			}) (*limitsOut, error) {
-				v, err := optionalVersion(in.IfMatch)
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "limits.set", err)
 				}

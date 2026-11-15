@@ -24,7 +24,7 @@ automatically: control or an operator moves the task to done.
 When control did the work itself and no worker ever ran on the task, control may set a **backlog** or **ready** task
 straight to **done** with `spaceman_task_set_status`, giving a result. Only those two transitions are added, only
 for an ordinary task that never started, was never preempted and has no assigned run; the audit event carries
-`direct: true`. Anything else still goes through running and review.
+`direct: true`. A task with unmet dependencies or an open human action that blocks it is refused. Anything else still goes through running and review.
 
 ## Separate worktrees for writers
 
