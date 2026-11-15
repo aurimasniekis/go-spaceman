@@ -74,7 +74,7 @@ func TestTelegramSettingsOverHTTP(t *testing.T) {
 		"notification_defaults": map[string]any{"new_actions": false, "min_priority": "high", "assigned_to_me": false, "escalations": false,
 			"reminders": "digest", "clarifications": false, "operator_messages": false, "inbox_items": "push", "tasks_in_review": "off",
 			"failed_runs": "push", "digest": false, "digest_time": "07:15", "quiet_hours": false, "quiet_hours_start": "22:00",
-			"quiet_hours_end": "06:30"},
+			"quiet_hours_end": "06:30", "threads": "off"},
 	}
 	r = global.do("PUT", "/telegram/settings", full)
 	expect(t, r, 200)

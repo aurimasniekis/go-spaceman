@@ -8814,6 +8814,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review?: "push" | "digest" | "off";
+            /**
+             * @description Default auto
+             * @enum {string}
+             */
+            threads?: "auto" | "on" | "off";
             /** @description Your IANA time zone, such as Europe/Vilnius; empty clears it, left out keeps it. It is your user's, so it applies to all your links and the web */
             timezone?: string;
         };
@@ -11238,6 +11243,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review: "push" | "digest" | "off";
+            /**
+             * @description Chat layout (ADR-0089): on puts each space's messages in a topic of its own in the private chat, off keeps everything in one chat, auto is on when the bot has topics enabled in BotFather
+             * @enum {string}
+             */
+            threads: "auto" | "on" | "off";
         };
         SettingsInboundLimits: {
             /**
@@ -11342,7 +11352,7 @@ export interface components {
             miniapp_session_idle_seconds?: number;
             notification_defaults?: components["schemas"]["SettingsNotificationDefaultsInput"];
             send_limits?: components["schemas"]["SettingsSendLimitsInput"];
-            /** @description Default false */
+            /** @description Deprecated, no effect (notification_defaults.threads replaced it). Default false */
             topics_mode_default?: boolean;
         };
         SettingsLinkPrefs: {
@@ -11393,6 +11403,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review?: "push" | "digest" | "off";
+            /**
+             * @description Default auto
+             * @enum {string}
+             */
+            threads?: "auto" | "on" | "off";
         };
         SettingsNotificationDefaults: {
             /** @description An action was assigned to the user */
@@ -11440,6 +11455,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review: "push" | "digest" | "off";
+            /**
+             * @description Chat layout (ADR-0089): on puts each space's messages in a topic of its own in the private chat, off keeps everything in one chat, auto is on when the bot has topics enabled in BotFather
+             * @enum {string}
+             */
+            threads: "auto" | "on" | "off";
         };
         SettingsNotificationDefaultsInput: {
             /** @description Default true */
@@ -11487,6 +11507,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review?: "push" | "digest" | "off";
+            /**
+             * @description Default auto
+             * @enum {string}
+             */
+            threads?: "auto" | "on" | "off";
         };
         SettingsOut: {
             /**
@@ -11542,7 +11567,7 @@ export interface components {
             send_limits: components["schemas"]["SettingsSendLimits"];
             /** @description false: nothing was ever set (or it was reset), every value is the built-in default */
             stored: boolean;
-            /** @description Whether a new link starts in topics mode (a topic per space in the private chat) */
+            /** @description Deprecated, no effect (ADR-0089): notification_defaults.threads chooses the chat layout */
             topics_mode_default: boolean;
             /** Format: date-time */
             updated_at?: string;
@@ -11649,7 +11674,7 @@ export interface components {
             stored: boolean;
             /** @description Run terminals can be watched (read-only) from the Mini App */
             terminal_watch: boolean;
-            /** @description The space gets its own topic for users in topics mode */
+            /** @description Deprecated, no effect (ADR-0089): the chat layout is chosen per link (notification_defaults.threads) */
             topics: boolean;
             /** Format: date-time */
             updated_at?: string;
@@ -11683,7 +11708,7 @@ export interface components {
             group_chat_id?: number;
             /** @description Default false */
             terminal_watch?: boolean;
-            /** @description Default false */
+            /** @description Deprecated, no effect (the chat layout is per link). Default false */
             topics?: boolean;
         };
         SignInProviders: {

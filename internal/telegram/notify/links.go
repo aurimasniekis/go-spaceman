@@ -105,6 +105,17 @@ func (l *Links) Snapshot() []Link {
 	return l.links
 }
 
+// ThreadsMode is a link's effective chat layout under the defaults d (settings.ThreadsAuto, ThreadsOn or ThreadsOff),
+// from memory; a link that isn't in the list (gone, or not notifiable) is off. It is the topics Manager's Mode.
+func (l *Links) ThreadsMode(linkID string, d settings.NotificationDefaults) string {
+	for _, k := range l.Snapshot() {
+		if k.ID == linkID {
+			return k.Prefs.Effective(d).Threads
+		}
+	}
+	return settings.ThreadsOff
+}
+
 // Set replaces the links (tests).
 func (l *Links) Set(links []Link) {
 	l.mu.Lock()

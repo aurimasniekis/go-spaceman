@@ -34,7 +34,7 @@ func TestDefaultsAreValidAndMatchThePlan(t *testing.T) {
 	n := d.NotificationDefaults
 	if !n.NewActions || n.MinPriority != "normal" || !n.AssignedToMe || !n.Escalations || !n.Clarifications || !n.OperatorMessages ||
 		n.InboxItems != DeliveryDigest || n.TasksInReview != DeliveryDigest || n.FailedRuns != DeliveryDigest || !n.Digest ||
-		n.DigestTime != "09:00" || !n.QuietHours || n.QuietHoursStart != "23:00" || n.QuietHoursEnd != "08:00" {
+		n.DigestTime != "09:00" || !n.QuietHours || n.QuietHoursStart != "23:00" || n.QuietHoursEnd != "08:00" || n.Threads != ThreadsAuto {
 		t.Fatalf("notification defaults %+v", n)
 	}
 }
@@ -111,6 +111,9 @@ func TestValidateBounds(t *testing.T) {
 		}},
 		{field: "notification_defaults.failed_runs", set: func(s *Settings, ok bool) {
 			s.NotificationDefaults.FailedRuns = map[bool]string{true: DeliveryPush, false: ""}[ok]
+		}},
+		{field: "notification_defaults.threads", set: func(s *Settings, ok bool) {
+			s.NotificationDefaults.Threads = map[bool]string{true: ThreadsOff, false: "topics"}[ok]
 		}},
 		{field: "notification_defaults.digest_time", set: func(s *Settings, ok bool) {
 			s.NotificationDefaults.DigestTime = map[bool]string{true: "23:59", false: "24:00"}[ok]
@@ -299,5 +302,31 @@ func TestZones(t *testing.T) {
 	}
 	if loc, ok := LoadZone("Europe/Vilnius"); !ok || loc.String() != "Europe/Vilnius" {
 		t.Errorf("Europe/Vilnius: %v %v", loc, ok)
+	}
+}
+
+// threads (ADR-0089): the default and the link override follow the same machinery as every other preference; an
+// invalid override is refused.
+func TestThreadsDefaultAndOverride(t *testing.T) {
+	t.Parallel()
+	d := Defaults().NotificationDefaults
+	on, bad := ThreadsOn, "sometimes"
+	if got := (LinkPrefs{}).Effective(d).Threads; got != ThreadsAuto {
+		t.Errorf("no override: %q, want auto", got)
+	}
+	p := LinkPrefs{NotificationDefaultsInput: NotificationDefaultsInput{Threads: &on}}
+	if got := p.Effective(d).Threads; got != ThreadsOn {
+		t.Errorf("override: %q, want on", got)
+	}
+	if err := p.Validate(d); err != nil {
+		t.Errorf("valid override refused: %v", err)
+	}
+	if err := (LinkPrefs{NotificationDefaultsInput: NotificationDefaultsInput{Threads: &bad}}).Validate(d); err == nil {
+		t.Error("an invalid threads override was accepted")
+	}
+	off := ThreadsOff
+	s := Resolve(Input{NotificationDefaults: &NotificationDefaultsInput{Threads: &off}})
+	if s.NotificationDefaults.Threads != ThreadsOff || p.Effective(s.NotificationDefaults).Threads != ThreadsOn {
+		t.Errorf("a global off reaches links without an override only: %+v", s.NotificationDefaults)
 	}
 }

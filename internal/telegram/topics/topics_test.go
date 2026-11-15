@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
 )
@@ -47,7 +49,7 @@ func setup(t *testing.T) (*tgtest.Server, *botapi.Client, *memStore, func() *top
 	}
 	st := &memStore{rows: map[string]map[string]int{}}
 	return srv, c, st, func() *topics.Manager {
-		return topics.New(topics.Options{Store: st, Enabled: func(id string) bool { return id != "off" },
+		return topics.New(topics.Options{Store: st, Mode: func(string) string { return settings.ThreadsOn },
 			SpaceName: func(context.Context, string) string { return "Alpha" }})
 	}
 }
@@ -61,21 +63,64 @@ func send(t *testing.T, m *topics.Manager, c *botapi.Client, key, text string) b
 	return msg
 }
 
-func TestRoute(t *testing.T) {
-	_, _, _, mk := setup(t)
-	m := mk()
-	for _, c := range []struct {
-		space string
-		needs bool
-		want  string
-	}{{"spc_1", false, "spc_1"}, {"spc_1", true, topics.Needs}, {"off", true, ""}, {"off", false, ""}} {
-		if got := m.Route(c.space, c.needs); got != c.want {
-			t.Errorf("Route(%s,%v) = %q, want %q", c.space, c.needs, got, c.want)
+// Route: a space's topic for every kind of message, home for a cross-space one, the main chat when the link's layout
+// is off, or auto while the bot has no topics. Each link has its own layout.
+func TestRoutePerLink(t *testing.T) {
+	var botTopics atomic.Bool
+	modes := map[string]string{"tgl_on": settings.ThreadsOn, "tgl_off": settings.ThreadsOff, "tgl_auto": settings.ThreadsAuto, "tgl_unset": ""}
+	m := topics.New(topics.Options{Mode: func(id string) string { return modes[id] }, BotTopics: botTopics.Load})
+	check := func(link, space, want string) {
+		t.Helper()
+		if got := m.Route(link, space); got != want {
+			t.Errorf("Route(%s, %q) = %q, want %q (bot topics %v)", link, space, got, want, botTopics.Load())
 		}
 	}
+	check("tgl_on", "spc_1", "spc_1")
+	check("tgl_on", "", topics.Home)
+	check("tgl_off", "spc_1", "")
+	check("tgl_auto", "spc_1", "") // auto follows getMe: off
+	check("tgl_unset", "spc_1", "")
+	if m.Enabled("tgl_auto", chat) || !m.Enabled("tgl_on", chat) || m.Enabled("tgl_off", chat) {
+		t.Error("Enabled without bot topics")
+	}
+	botTopics.Store(true)
+	check("tgl_auto", "spc_1", "spc_1")
+	check("tgl_unset", "spc_1", "spc_1")
+	check("tgl_off", "spc_1", "") // an explicit off wins over the bot
+	if !m.Enabled("tgl_auto", chat) || m.Enabled("tgl_auto", -100) {
+		t.Error("Enabled with bot topics: auto is on in a private chat, never in a group")
+	}
 	var nilM *topics.Manager
-	if nilM.Route("spc_1", true) != "" {
+	if nilM.Route("tgl_on", "spc_1") != "" || nilM.Enabled("tgl_on", chat) {
 		t.Error("a nil Manager routes to the main chat")
+	}
+	if topics.New(topics.Options{}).Route("tgl_on", "spc_1") != "" {
+		t.Error("no Mode: off")
+	}
+}
+
+// A refused chat is not Enabled for a while, and comes back after RefusedFor.
+func TestEnabledFollowsRefusal(t *testing.T) {
+	srv, c, st, _ := setup(t)
+	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	m := topics.New(topics.Options{Store: st, Mode: func(string) string { return settings.ThreadsOn }, Now: clock})
+	srv.DisableTopics(chat)
+	if !m.Enabled("tgl_1", chat) {
+		t.Fatal("on before any refusal")
+	}
+	if got := send(t, m, c, "spc_1", "one"); got.MessageThreadID != 0 {
+		t.Fatalf("thread %d, want the main chat", got.MessageThreadID)
+	}
+	if m.Enabled("tgl_1", chat) {
+		t.Error("a refused chat is not enabled")
+	}
+	mu.Lock()
+	now = now.Add(topics.RefusedFor + time.Second)
+	mu.Unlock()
+	if !m.Enabled("tgl_1", chat) {
+		t.Error("enabled again after RefusedFor")
 	}
 }
 
@@ -91,11 +136,7 @@ func TestCreatedOnceAndRemembered(t *testing.T) {
 	if got := srv.Topics(chat)[a.MessageThreadID]; got != "Alpha" {
 		t.Errorf("topic name %q", got)
 	}
-	n := send(t, m, c, topics.Needs, "three")
-	if srv.Topics(chat)[n.MessageThreadID] != topics.NeedsName {
-		t.Errorf("needs topic %v", srv.Topics(chat))
-	}
-	if d := send(t, mk(), c, "spc_1", "four"); d.MessageThreadID != a.MessageThreadID || len(srv.Calls("createForumTopic")) != 2 {
+	if d := send(t, mk(), c, "spc_1", "four"); d.MessageThreadID != a.MessageThreadID || len(srv.Calls("createForumTopic")) != 1 {
 		t.Errorf("after a restart: thread %d, %d topics created", d.MessageThreadID, len(srv.Calls("createForumTopic")))
 	}
 	if st.rows["tgl_1"]["spc_1"] != a.MessageThreadID {
@@ -203,22 +244,123 @@ func TestCreateRateLimitIsReturnedAndNotRemembered(t *testing.T) {
 	}
 }
 
-// SpaceOf answers only from stored threads, and never for Needs-you or an unknown thread.
+// SpaceOf answers only from stored threads, and never for the legacy Needs-you topic, a home topic or an unknown thread.
 func TestSpaceOf(t *testing.T) {
-	_, c, _, mk := setup(t)
+	_, c, st, mk := setup(t)
 	m := mk()
 	a := send(t, m, c, "spc_1", "one").MessageThreadID
-	n := send(t, m, c, topics.Needs, "two").MessageThreadID
+	n, h := 777, 778
+	st.mu.Lock()
+	st.rows["tgl_1"][topics.LegacyNeeds], st.rows["tgl_1"][topics.HomeKey] = n, h
+	st.mu.Unlock()
+	m = mk() // reads the store again
 	ctx := context.Background()
 	if id, ok := mk().SpaceOf(ctx, "tgl_1", a); !ok || id != "spc_1" { // a new Manager: read from the store
 		t.Errorf("SpaceOf(%d) = %q, %v", a, id, ok)
 	}
-	for _, th := range []int{n, 0, 12345} {
+	for _, th := range []int{n, h, 0, 12345} {
 		if id, ok := m.SpaceOf(ctx, "tgl_1", th); ok {
 			t.Errorf("SpaceOf(%d) = %q, want none", th, id)
 		}
 	}
 	if _, ok := m.SpaceOf(ctx, "tgl_other", a); ok {
 		t.Error("another link's lookup must not see this link's topics")
+	}
+}
+
+// The legacy Needs-you topic: on the first topic send after the upgrade, one note is posted in it and its key is
+// dropped from the link's topics; the topic is never deleted. A second send, a new Manager on the same store and many
+// concurrent sends post no second note.
+func TestLegacyNeedsRetiredOnceUnderConcurrentSends(t *testing.T) {
+	srv, c, st, mk := setup(t)
+	legacy, err := c.CreateForumTopic(context.Background(), botapi.CreateForumTopicParams{ChatID: chat, Name: "Needs you"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.rows["tgl_1"] = map[string]int{topics.LegacyNeeds: legacy.MessageThreadID}
+	m := mk()
+	if id, ok := m.SpaceOf(context.Background(), "tgl_1", legacy.MessageThreadID); ok {
+		t.Fatalf("SpaceOf(legacy) = %q before retirement", id)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); send(t, m, c, "spc_1", "x") }()
+	}
+	wg.Wait()
+	send(t, mk(), c, "spc_2", "y") // after a restart
+	notes := srv.MessagesIn(chat, legacy.MessageThreadID)
+	if len(notes) != 1 || notes[0].Text != topics.LegacyNote {
+		t.Fatalf("messages in the legacy topic %+v, want the one note", notes)
+	}
+	st.mu.Lock()
+	_, kept := st.rows["tgl_1"][topics.LegacyNeeds]
+	st.mu.Unlock()
+	if kept {
+		t.Errorf("stored %v, want the needs key dropped", st.rows["tgl_1"])
+	}
+	if _, ok := srv.Topics(chat)[legacy.MessageThreadID]; !ok || len(srv.Calls("deleteForumTopic")) != 0 {
+		t.Error("the legacy topic must never be deleted")
+	}
+	if n := len(srv.Calls("createForumTopic")); n != 3 { // the legacy one (test setup), spc_1, spc_2
+		t.Errorf("%d topics created, want 3", n)
+	}
+}
+
+// A legacy topic the user already deleted: the key is dropped without a note, and the send goes on.
+func TestLegacyNeedsGoneIsDroppedQuietly(t *testing.T) {
+	srv, c, st, mk := setup(t)
+	legacy, err := c.CreateForumTopic(context.Background(), botapi.CreateForumTopicParams{ChatID: chat, Name: "Needs you"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.DeleteTopic(chat, legacy.MessageThreadID)
+	st.rows["tgl_1"] = map[string]int{topics.LegacyNeeds: legacy.MessageThreadID}
+	if got := send(t, mk(), c, "spc_1", "x"); got.MessageThreadID == 0 {
+		t.Fatal("the send must still reach the space topic")
+	}
+	if _, kept := st.rows["tgl_1"][topics.LegacyNeeds]; kept {
+		t.Errorf("stored %v", st.rows["tgl_1"])
+	}
+	if ms := srv.MessagesIn(chat, legacy.MessageThreadID); len(ms) != 0 {
+		t.Errorf("messages in a gone topic %v", ms)
+	}
+}
+
+// A rate limit on the note leaves the key for a later send, which posts the note then.
+func TestLegacyNeedsNoteRateLimitedIsRetried(t *testing.T) {
+	srv, c, st, mk := setup(t)
+	legacy, err := c.CreateForumTopic(context.Background(), botapi.CreateForumTopicParams{ChatID: chat, Name: "Needs you"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.rows["tgl_1"] = map[string]int{topics.LegacyNeeds: legacy.MessageThreadID}
+	m := mk()
+	srv.FailNext("sendMessage", 429, "Too Many Requests: retry after 1", 1)
+	send(t, m, c, "spc_1", "one")
+	if _, kept := st.rows["tgl_1"][topics.LegacyNeeds]; !kept {
+		t.Fatal("the key was dropped although the note was not sent")
+	}
+	send(t, m, c, "spc_1", "two")
+	if notes := srv.MessagesIn(chat, legacy.MessageThreadID); len(notes) != 1 {
+		t.Fatalf("notes %+v, want one", notes)
+	}
+	if _, kept := st.rows["tgl_1"][topics.LegacyNeeds]; kept {
+		t.Error("the key must be dropped after the note")
+	}
+}
+
+// Topic creation is bounded over every chat: with one create a second, a burst of new topics is spread out.
+func TestCreatesAreRateLimited(t *testing.T) {
+	_, c, st, _ := setup(t)
+	m := topics.New(topics.Options{Store: st, Mode: func(string) string { return settings.ThreadsOn }, CreatesPerSecond: 10})
+	start := time.Now()
+	for i := 0; i < 13; i++ { // a burst of 10, then 3 more at 10/s
+		if _, err := m.Send(context.Background(), c, "tgl_"+string(rune('a'+i)), chat, "spc_1", botapi.SendMessageParams{Text: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d := time.Since(start); d < 250*time.Millisecond {
+		t.Errorf("13 creates took %v, want them spread by the limit", d)
 	}
 }

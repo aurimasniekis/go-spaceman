@@ -137,7 +137,8 @@ type Options struct {
 	Sender func() *sender.Sender
 	// Store records card mappings (nil: cards are not remembered across restarts).
 	Store Mappings
-	// Topics routes messages to topics in topics mode (nil: everything goes to the main chat).
+	// Topics routes messages to each link's space topics when its chat layout is on (nil: everything goes to the main
+	// chat).
 	Topics *topics.Manager
 	Bus    *eventbus.Bus
 	Log    *slog.Logger
@@ -154,10 +155,11 @@ type Options struct {
 
 // Notifier is the single change-feed consumer.
 type Notifier struct {
-	o      Options
-	log    *slog.Logger
-	cards  *cards
-	digest *digestBuf
+	o       Options
+	log     *slog.Logger
+	cards   *cards
+	digest  *digestBuf
+	notices *notices
 
 	cursor int64 // only the Run goroutine touches it
 }
@@ -182,7 +184,8 @@ func New(o Options) *Notifier {
 	if o.FlushRows <= 0 {
 		o.FlushRows = 100
 	}
-	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf()}
+	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf(),
+		notices: &notices{sent: map[string]bool{}}}
 }
 
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
@@ -205,6 +208,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 		n.cursor, started = latest, true
 	}
 	start()
+	n.loadNotices(ctx)
 	flush := time.NewTicker(n.o.FlushEvery)
 	defer flush.Stop()
 	var again <-chan time.Time // armed once after a failed feed read: the unread rest is processed without a new change
@@ -220,6 +224,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 			if !started {
 				start()
 			}
+			n.loadNotices(ctx)
 		case <-again:
 			again = nil
 			if n.process(ctx) {
@@ -548,15 +553,27 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 	}
 }
 
-// sender is the send function for a resource's messages to a link: to the resource's topic when its space is in topics
-// mode (open actions go to Needs you, the rest to the space's topic) and otherwise to the main chat.
+// sender is the send function for a resource's messages to a link: its card and its alerts go to the space's topic when
+// the link's chat layout is a topic per space, and to the main chat otherwise.
 func (n *Notifier) sender(r *Resource, linkID string) sendFunc {
-	key := n.o.Topics.Route(r.SpaceID, r.Kind == KindAction)
+	return n.route(linkID, r.SpaceID)
+}
+
+// route is the send function for a link's messages about a space (spaceID "": home, for what concerns no single
+// space). The topic is chosen when the message is sent, never when it was queued: a layout the link changed while the
+// message waited applies (ADR-0089). The first message of a link that lands in a topic queues the link's one-time
+// announcement of the new layout.
+func (n *Notifier) route(linkID, spaceID string) sendFunc {
 	return func(ctx context.Context, c *botapi.Client, p botapi.SendMessageParams) (botapi.Message, error) {
+		key := n.o.Topics.Route(linkID, spaceID)
 		if key == "" {
 			return c.SendMessage(ctx, p)
 		}
-		return n.o.Topics.Send(ctx, c, linkID, p.ChatID, key, p)
+		msg, err := n.o.Topics.Send(ctx, c, linkID, p.ChatID, key, p)
+		if err == nil && msg.MessageThreadID != 0 {
+			n.announceThreads(linkID, p.ChatID)
+		}
+		return msg, err
 	}
 }
 
@@ -597,10 +614,10 @@ func (n *Notifier) overflow(snd *sender.Sender, links []Link, spaces map[string]
 			if !n.o.Policy.Space(sp).Visible() || l.Prefs.IsMuted(sp) || !n.o.Authz.AllowedAll(subj, sp, authz.SpaceRead) {
 				continue
 			}
-			chat := l.ChatID
+			chat, send := l.ChatID, n.route(l.ID, "") // home: the notice is about several spaces
 			_ = snd.Enqueue(sender.Message{ChatID: chat, Priority: sender.Notification, Key: "many",
 				Send: func(ctx context.Context, c *botapi.Client) error {
-					_, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: "Many changes at once — open the app to see them."})
+					_, err := send(ctx, c, botapi.SendMessageParams{ChatID: chat, Text: "Many changes at once — open the app to see them."})
 					return err
 				}})
 			break // one notice per chat, whatever the number of spaces

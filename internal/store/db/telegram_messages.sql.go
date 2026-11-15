@@ -87,9 +87,37 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 	return items, nil
 }
 
+const listTelegramNoticeLinks = `-- name: ListTelegramNoticeLinks :many
+SELECT DISTINCT link_id FROM telegram_messages WHERE kind = 'notice' AND resource_type = ?
+`
+
+// The links that were sent a one-time notice of a type (read once when the notifier starts).
+func (q *Queries) ListTelegramNoticeLinks(ctx context.Context, resourceType string) ([]sql.NullString, error) {
+	rows, err := q.db.QueryContext(ctx, listTelegramNoticeLinks, resourceType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []sql.NullString{}
+	for rows.Next() {
+		var link_id sql.NullString
+		if err := rows.Scan(&link_id); err != nil {
+			return nil, err
+		}
+		items = append(items, link_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneTelegramMessages = `-- name: PruneTelegramMessages :execrows
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
-  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < ?1 LIMIT ?2)
+  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < ?1 AND m.kind <> 'notice' LIMIT ?2)
 `
 
 type PruneTelegramMessagesParams struct {
@@ -97,6 +125,8 @@ type PruneTelegramMessagesParams struct {
 	Lim    int64
 }
 
+// A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). It is one row
+// per link at most and goes with its link.
 func (q *Queries) PruneTelegramMessages(ctx context.Context, arg PruneTelegramMessagesParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, pruneTelegramMessages, arg.Cutoff, arg.Lim)
 	if err != nil {
