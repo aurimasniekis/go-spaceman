@@ -447,7 +447,7 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Notifications are in the web UI only.** Notification preferences decide what the open web UI announces to a user
   (in-app, and desktop notifications where the browser allows them). Nothing is announced while no SpaceMan page is
   open, and SpaceMan sends no e-mail or chat messages; external systems can follow the outbound `human.action.*` events
-  (SM-HUI-006). A Telegram bot that notifies linked users is proposed (ADR-0083, SM-TG-001…014) and not implemented.
+  (SM-HUI-006). A Telegram bot and Mini App for linked users exist (ADR-0083, SM-TG-001…014); see [Telegram](#telegram).
 - **Retention deletes whole actions, daily.** A finished action is deleted with its comments and notifications once
   its space's `retention_human_actions_days` has passed, by one daily pass; there is no archive tier and no per-type
   period. Open actions and finished ones that open work still refers to are kept (ADR-0045, SM-HUI-007).
@@ -753,6 +753,45 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   credential, 30 s without progress), but many connections
   at once each hold a goroutine for that long. A reverse proxy or firewall in front of central is the place for connection
   limits. A client below about 43 KiB/s can't upload a 25 MiB attachment within its 10 minutes.
+
+## Telegram
+
+Status: built and tested against a fake Bot API server only; **never run against a real bot** (SM-TG-001…014 stay
+"tested (simulated)" in [TRACEABILITY.md](TRACEABILITY.md)). The user guide is the site's Telegram page.
+
+- **Web only.** These are refused from Telegram by classification (not hidden in the UI), in the bot and the Mini App
+  alike: everything that needs a step-up, re-authentication or MFA, and every personal session operation (API tokens,
+  passwords, sessions, identities, recovery codes); linking itself is started and confirmed in the web; terminal takeover,
+  typing into a terminal, terminal sizes and run launches; secrets, accounts, credentials, Git keys, Harbor Pilot, MCP
+  servers, skills, prompts, roles, policies, human type definitions and permissions, event connections, templates and
+  subscriptions, cross-space settings; users, grants, SSO providers, the root token, audit verification, backups,
+  restore, purge, retention, deleting recordings and transcripts, nodes, relocation and space state; all Telegram
+  configuration; bulk approvals; HallPass approvals; the MCP endpoint; and anything in a space whose Telegram content
+  level is `off`. Recording downloads, transcripts and space exports are never served to Telegram. Task creation is in the
+  Mini App only (not in chat).
+- **Enforced approvals are decided in the browser** unless the space sets `enforced_approvals = confirm`. Withdrawing an
+  approval is never possible from Telegram, and a group never decides one.
+- **The terminal is watch-only and opt-in, and not in the Mini App yet.** The server serves a run's terminal stream to
+  Telegram only when the space turns `terminal_watch` on, never with input, takeover or resizing. No Mini App page shows
+  it in the base build (TG-10-3 is unmerged); the Mini App says the terminal isn't available.
+- **Chat content lives on Telegram's servers**, not end-to-end encrypted, within the space's content level. Terminal
+  output, hidden responses, non-allowlisted attachment contents and secrets are never sent to a chat. Forwarding and
+  saving are turned off for messages with a body, which doesn't stop screenshots.
+- **Private chats only, unless a group is bound.** The bot leaves any group it is added to that isn't bound to a space.
+  Telegram has **no `web_app` buttons in groups**, so group messages can't open the Mini App with one tap.
+  *Group mode is not in the base build yet (TG-13): see the guide.*
+- **The content level is summary-only in groups.** Whatever the space's content level, a group gets summaries, and no
+  attachment is ever sent to a group chat. Group membership grants nothing: each tap is authorized as the tapping
+  person's own link.
+- **One bot per central**, one live link per Telegram account, and a different bot revokes every link.
+- **No Telegram sign-in.** A link never signs anyone in to the web app.
+- **In-memory state is lost on restart:** Mini App sessions and replay memory (see the next section), conversation steps in chat,
+  the collected digest, pending confirmations and the update queue. A webhook update that was acknowledged but still queued
+  when central stopped is lost; the bot acknowledges captures so people can resend.
+- **Digest and quiet hours need a time zone,** per user. Without one both are off; there is no server-wide zone.
+- **Telegram's own limits apply:** messages are rate-limited per chat and group, long content is split or cut, and the
+  sender treats a chat that answers 403 as blocked (its queue is dropped, in memory only; the link is not marked).
+- **Screenshots of the Mini App are not part of the guide** (the capture pipeline covers the web app only).
 
 ## Telegram Mini App
 

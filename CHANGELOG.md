@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- **Telegram bot and Mini App (ADR-0083), documentation.** A guide (the site's Telegram page) covers linking an
+  account, the bot chat (spaces, inbox capture, queue, runs, messages, control), needs-you forms and approvals (including
+  the per-space opt-in for enforced approvals), the Mini App, topics mode, group mode, notifications with quiet hours and
+  the digest, and the administration settings. An operator page (Telegram setup) covers
+  `telegram.miniapp_host` (it must match the bot's host, and it fails closed without it), webhook versus polling, the
+  trusted proxy, and that the planned Terraform `spaceman_telegram_bot` needs central's `miniapp_host` set first. LIMITATIONS lists what
+  Telegram can't do (web only, no `web_app` buttons in groups, a server-gated opt-in watch-only terminal (no Mini App page yet), summary-only groups), and
+  SECURITY and the threat model cover the link principal, limited links for pending MFA, single-use bound confirmations,
+  opt-in enforced approvals, fail-closed Mini App hosts and the stream heartbeat. **The bot and Mini App are tested against a fake
+  Telegram server only; nothing is verified against a real bot yet.** Topics mode, If-Match on move, acknowledge and
+  resolve, editable Mini App settings and group mode are documented from approved branches that are not merged into the
+  base build.
 - Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
   App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
   muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App

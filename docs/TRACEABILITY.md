@@ -265,3 +265,30 @@
 | SM-VER-001 | M4-08 | implemented | `docs/TEST_STRATEGY.md` maps all 31 topics of the brief §40 to named tests, simulated and real apart; fault suite `make test-fault` (`test/fault`: `TestFaultRecordingDiskFull`, `TestFaultInterruptedRecordingAndUpload`, `TestFaultAgentKilledMidRun`, `TestFaultCentralKilledMidWrite`, `TestFaultDisconnectBeyondLeaseAndGrace`, `TestFaultPartitionDuringCommand`, `TestFaultCorruptNodeState`, `TestFaultDatabaseBusyIsRetryable`); `make test-pulse` (embedded nats-server, real go-pulse SDK); mixed-harness messaging (`TestMessagesDeliveredToIdleRuns` with Claude and Codex pairings) | Real evidence per topic in TEST_STRATEGY.md (herdr-core, Claude Code, browsers, Terraform; see the rows of the individual requirements) | Several topics have simulated evidence only (Pulse, OIDC, S3, Codex, relocation between machines): recorded in TEST_STRATEGY.md, not claimed. |
 | SM-VER-002 | M5-04 | partial | — | 2026-11-03, macOS + Docker 29.8.2: herdr-core (`internal/runner/hc` and `test/real` node suites, hc 0.1.16); Claude Code 2.1.317 (`TestRealClaude*`, Haiku); Porch OIDC (`make test-real-porch`); Pulse + nats-server + go-pulse-github (`make test-real-pulse`); S3 on MinIO (`make test-real-s3`); Linux/systemd in a Debian 13 container (`make test-real-systemd`); containers (`make image-smoke`); Chromium, Firefox and WebKit (`make e2e`, `make e2e-browsers`); docs (`make site-check`). Credentialed runs are opt-in and budget-bounded; every suite removes only what it created | Missing: a real Codex run (no credential); the other suites ran, with gaps recorded in LIMITATIONS (AWS S3/R2, a physical Linux host and linux/amd64 under systemd, real Google behind Porch, real GitHub behind go-pulse-github).; The remaining suites are ready to run on another server: `make test-real-codex`, `make test-real-s3-external` and the steps in TEST_STRATEGY.md ("Verifying a release candidate on another server"). |
 | SM-VER-003 | M5-04 | implemented | `test/demo` `TestDemo` (`make demo`, build tag `demo`; browser steps `web/e2e/demo.spec.ts`): the 30 steps of the brief's §41 in order, each with an evidence line (kind real or simulated per step, see `docs/DEMO.md`); stub harness for both harness kinds | `make demo` 2026-11-03, stub mode, macOS arm64, hc 0.1.16: 31 of 31 steps (0–30) pass against a real central with the embedded UI, two real agents with their own herdr-core cores, devpulse (NATS JetStream, real go-pulse SDK) and Chromium; run recorded in `docs/DEMO.md`; `SPACEMAN_DEMO_REAL=1 make demo` 2026-11-03 at `3baa1d9`: 31 of 31 with a real Claude Code worker (haiku) using SpaceMan tools (step 5 mixed); Codex never real | Steps 5, 7–9, 13–15 and 17–20 rest on the stub harness (simulated). In real mode only the Claude Code worker is real; its usage was recorded as unknown because the run is stopped early (DEMO.md). No real Codex, `pulsed`, S3 or multi-machine relocation. |
+
+## Telegram status (SM-TG-001…014)
+
+Written at core `450a3561` for TG-14a. The table above carries the evidence; this section only keeps the three kinds of
+status apart. **Implemented** means the code is in the Telegram core branch. **Tested (simulated)** means an automated
+test against the fake Bot API server (`internal/telegram/tgtest`), `tg.localhost` or in-process fakes, named in the row.
+**Real-verified** means evidence from a real bot and a real Telegram client (`SPACEMAN_REAL_TELEGRAM=1`).
+
+- **SM-TG-001 Link and revocation** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-002 Classification of operations** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-003 Authorization and refusals** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-004 Webhook hardening** — implemented: yes, in core. Simulated: yes. Real: **pending** (needs a real webhook route).
+- **SM-TG-005 Mini App sessions (initData)** — implemented: yes, in core. Simulated: yes. Real: **pending** (real signed initData).
+- **SM-TG-006 Needs-you and approvals** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-007 Spaces and inbox capture** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-008 Queue, runs, messages** — implemented: yes, in core; topics (#107) and If-Match (#109) are not yet merged. Simulated: yes for core. Real: **pending**.
+- **SM-TG-009 Notifications** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-010 Per-space settings** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-011 Mini App** — implemented: pages in core; editable settings (#112) not yet merged. The row above still says "design only": **stale, to be refreshed with its evidence**. Simulated: the row names none yet. Real: **pending** (Telegram Web and a phone).
+- **SM-TG-012 Audit** — implemented: yes, in core. Simulated: yes. Real: **pending**.
+- **SM-TG-013 Host isolation** — implemented: yes, in core. Simulated: yes. Real: **pending** (real proxy and `Host`).
+- **SM-TG-014 Configuration** — implemented: bot, policy and space settings in core; provider resources are TG-12 (other repository). Simulated: yes for core. Real: **pending**.
+- **Group mode (TG-13)** — implemented: TG-13-1 authorization is on a branch, binding (TG-13-2) is not written. Simulated: on its branch. Real: **pending**.
+
+No requirement is real-verified. A fake server proves the code follows `docs/contracts/telegram.md` as read in the
+documentation, not that Telegram behaves that way. Real verification needs a test bot, an HTTPS name for the webhook and
+a Mini App host, and is the later part of TG-14.
