@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted
   or closed is created again once; if that fails, or the chat has topics off for the bot, the message goes to the main
   chat. Topics only choose where a message appears; who may receive it is unchanged.
+- Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
+  App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
+  muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App
+  may also read what the queue picks next (`queue-next`), without recording the decision.
 - Telegram needs-you common actions (ADR-0083, TG-7-3, not usable until the bot ships): every pending card can be
   claimed or released, commented on, answered with a question to the requester (a clarification, which never answers the
   request), and withdrawn after a confirmation tied to that card's version. A photo or file sent as the reply to a comment
