@@ -1,0 +1,261 @@
+{
+  "parts": [
+    {
+      "text": "| Name | Count | Note |\n|------|-------|------|\n| a    |     1 |  x   |\n| 日本 |    22 |  y   |\n\n[table — open in app]",
+      "entities": [
+        {
+          "type": "pre",
+          "offset": 0,
+          "length": 93,
+          "covers": "| Name | Count | Note |\n|------|-------|------|\n| a    |     1 |  x   |\n| 日本 |    22 |  y   |"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "table",
+        "cells": [
+          [
+            {
+              "text": "Name",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "Count",
+              "is_header": true,
+              "align": "right",
+              "valign": "top"
+            },
+            {
+              "text": "Note",
+              "is_header": true,
+              "align": "center",
+              "valign": "top"
+            }
+          ],
+          [
+            {
+              "text": "a",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "1",
+              "align": "right",
+              "valign": "top"
+            },
+            {
+              "text": {
+                "type": "italic",
+                "text": "x"
+              },
+              "align": "center",
+              "valign": "top"
+            }
+          ],
+          [
+            {
+              "text": "日本",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "22",
+              "align": "right",
+              "valign": "top"
+            },
+            {
+              "text": {
+                "type": "code",
+                "text": "y"
+              },
+              "align": "center",
+              "valign": "top"
+            }
+          ]
+        ],
+        "is_bordered": true
+      },
+      {
+        "type": "table",
+        "cells": [
+          [
+            {
+              "text": "c1",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c2",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c3",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c4",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c5",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c6",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c7",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c8",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c9",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c10",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c11",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c12",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c13",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c14",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "c15",
+              "is_header": true,
+              "align": "left",
+              "valign": "top"
+            }
+          ],
+          [
+            {
+              "text": "aaaa",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "bbbb",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "cccc",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "dddd",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "eeee",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "ffff",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "gggg",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "hhhh",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "iiii",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "jjjj",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "kkkk",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "llll",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "mmmm",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "nnnn",
+              "align": "left",
+              "valign": "top"
+            },
+            {
+              "text": "oooo",
+              "align": "left",
+              "valign": "top"
+            }
+          ]
+        ],
+        "is_bordered": true
+      }
+    ]
+  },
+  "markdown": "```\n| Name | Count | Note |\n|------|-------|------|\n| a    |     1 |  x   |\n| 日本 |    22 |  y   |\n```\n\n\\[table — open in app\\]"
+}
