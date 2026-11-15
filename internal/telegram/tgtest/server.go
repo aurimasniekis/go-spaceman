@@ -53,6 +53,7 @@ const (
 	MaxPhotoUpload     = 10 << 20
 	MaxCallbackAnswer  = 200
 	MaxCommands        = 100
+	MaxDeleteMessages  = 100
 	MaxUpdatesPerPoll  = 100
 	maxRequestBodySize = MaxUploadBytes + 1<<20
 )
@@ -132,6 +133,7 @@ type Server struct {
 	topics   map[int64]map[int]*topic
 	noTopics map[int64]bool
 	goneAll  map[int64]bool
+	pinned   map[int64][]int // pinned message IDs per chat, in pin order (unpinning without an ID takes the latest sent, not the last pinned)
 	messages map[int64]map[int]*botapi.Message
 	known    map[int64]map[int]*botapi.Message // messages users sent, for replies
 	nextMsg  map[int64]int
@@ -178,6 +180,7 @@ func New(t testing.TB, o Options) *Server {
 		topics:    map[int64]map[int]*topic{},
 		noTopics:  map[int64]bool{},
 		goneAll:   map[int64]bool{},
+		pinned:    map[int64][]int{},
 		messages:  map[int64]map[int]*botapi.Message{},
 		known:     map[int64]map[int]*botapi.Message{},
 		nextMsg:   map[int64]int{},
@@ -224,7 +227,11 @@ func (s *Server) URL() string { return s.srv.URL }
 func (s *Server) Token() string { return s.token }
 
 // Bot is the bot getMe returns.
-func (s *Server) Bot() botapi.User { return s.opts.Bot }
+func (s *Server) Bot() botapi.User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.opts.Bot
+}
 
 // Close stops the server early (it also stops at test cleanup).
 func (s *Server) Close() { s.srv.Close() }

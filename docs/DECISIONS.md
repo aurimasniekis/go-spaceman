@@ -5409,6 +5409,57 @@
 - **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`, `TestWorkerInboxDedupKeyEffectiveLimit`;
   `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
 
+### ADR-0089 — Telegram chat threads per link: a thread per space, cards edited in place, a home summary
+- **Status:** Accepted, 2026-11-15. The operator accepted every planner default, Q1–Q10 below, on 2026-11-15 (the epic;
+  plan `docs/plans/2026-11-15-telegram-chat-ux.md` on `plan/telegram-chat-ux`). Amends
+  ADR-0083 decision 16 and its topics answer (Q6): the per-space topics opt-in becomes a per-link mode. The work is in
+  T1–T9 on `feat/tg-chat-threads`; T6 (Mini App home) goes straight to `next/v0.1.6`. Not security-relevant (see below).
+  Requirement IDs are unchanged: SM-TG-008 and SM-TG-009 keep their wording.
+- **Security label:** not security-relevant. **Authorization is unchanged.** A topic only chooses where a message is
+  shown. `may()`/`stillMay()` run at send time, a tap is authorized as the tapping link, `SpaceOf` is taken only from
+  bot-created threads, enforced approvals follow ADR-0083 decision 14, and content levels are unchanged (a `summary`
+  space never shows a body, a group is always `summary`). The one new path that acts on a person's tap is the card's
+  Approve/Deny button (Q6); its callback handling is the security review point in T4, before T4 merges.
+- **Context:**
+  - Topics mode (TG-11, #107) puts a space's messages into a topic of the private chat, chosen by one per-space flag.
+    Cards stay new messages forever, resolved cards keep their buttons, and the chat without a topic mixes everything.
+  - What Telegram allows, and what is undocumented, is in `docs/contracts/telegram.md` § Topics (sources and the list of
+    open points). The design uses only documented calls; each undocumented point has a fallback.
+- **Decision:**
+  1. **Thread mode per link (Q1).** `threads` is `auto`, `on` or `off`, default `auto` (on when the bot has topics
+     enabled). It is stored with the link's preferences (T3). The space `topics` flag and `topics_mode_default` are
+     deprecated and have no effect; they are removed later.
+  2. **Home is the chat without a topic (Q2).** A bot-created "🏠 Home" topic is the switch when the real-bot check
+     shows that untargeted messages are awkward.
+  3. **The legacy "Needs you" topic is left alone (Q3).** It gets a note and is no longer used. It is never deleted,
+     because deleting a topic deletes all its messages.
+  4. **A resolved card is edited to one compact line with no buttons (Q4).** It is never deleted: deletion is possible
+     only within 48 h and would lose the history.
+  5. **The pinned home summary is edited in place, at most once per 30 s (Q5).**
+  6. **Approve/Deny on the card (Q6).** For approvals that are not enforced, with the existing two-step confirm. Enforced
+     approvals follow the space's `enforced_approvals` setting (`web_only` by default).
+  7. **The Mini App's "Needs you" lists human actions only (Q7),** like the web's `/human`. Operator messages, tasks in
+     review and failed runs stay in `/attention` and on the space pages. Another kind needs a new API operation and a
+     security review.
+  8. **BotFather (Q8).** The operator enables private-chat topics and turns off user topic creation and deletion. The
+     bot status shows both flags from getMe: `has_topics_enabled` and `allows_users_to_create_topics`.
+  9. **Reminders and escalations are replies to the card (Q9).** The previous alert is deleted, and the card gets a
+     "reminded 2×" line. A silent card edit was rejected: it sends no alert.
+  10. **No new run notices (Q10).** Failed or lost runs only, as today.
+- **Alternatives rejected:**
+  - Keeping the per-space flag: one setting for every linked user, and it can't show a user's own choice.
+  - A Home topic by default (Q2): it creates a topic the user didn't ask for, and untargeted messages are not known to
+    be a problem.
+  - Deleting resolved cards (Q4) or using silent edits for reminders (Q9): see decisions 4 and 9.
+- **Consequences:** Topic creation becomes a per-link action, and a user can have no topic at all. The Bot API surface
+  grows by `editForumTopic`, `pinChatMessage`, `unpinChatMessage` and `deleteMessages` (T1, no behaviour change). The
+  facts the design relies on are recorded in the contract with a source; the new rows were checked against the Bot API
+  page on 2026-11-15. Nothing has been observed against a real bot yet.
+- **Evidence:** T1: `internal/telegram/botapi` `TestGetMeTopicFlags`, `TestEditForumTopic`, `TestMessagesInRecordsThread`,
+  `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` (it covers the flags after a reconfigure only; the reset to false on a disable or a
+  failed getMe is not tested). All of it is
+  simulated (`internal/telegram/tgtest`); the real-bot run is TG-14 (plan §6.3).
+
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
   on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code

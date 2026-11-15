@@ -18933,6 +18933,10 @@
       "TgbotStatus": {
         "additionalProperties": false,
         "properties": {
+          "allows_users_to_create_topics": {
+            "description": "getMe: users may create and delete the bot's topics in private chats (BotFather)",
+            "type": "boolean"
+          },
           "bot_id": {
             "format": "int64",
             "type": "integer"
@@ -18952,6 +18956,10 @@
           "error": {
             "description": "Why the bot isn't working (startup, or Telegram's last delivery error)",
             "type": "string"
+          },
+          "has_topics_enabled": {
+            "description": "getMe: topic mode is on for the bot in private chats (set in BotFather)",
+            "type": "boolean"
           },
           "last_error_at": {
             "description": "Telegram's last failed webhook delivery",
@@ -19015,6 +19023,8 @@
         "required": [
           "configured",
           "enabled",
+          "has_topics_enabled",
+          "allows_users_to_create_topics",
           "webhook_status",
           "pending_update_count"
         ],

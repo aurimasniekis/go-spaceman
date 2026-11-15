@@ -401,6 +401,23 @@ func private(id int64, text string) botapi.Update {
 	return botapi.Update{Message: &botapi.Message{MessageID: 1, From: &botapi.User{ID: id, FirstName: "Stranger"}, Chat: botapi.Chat{ID: id, Type: botapi.ChatPrivate}, Text: text}}
 }
 
+// The getMe topic flags (has_topics_enabled, allows_users_to_create_topics) reach the bot's health as read at each
+// startup, so a change in BotFather shows after the bot is reconfigured.
+func TestStatusExposesGetMeTopicFlags(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.tg.SetBotTopics(true, false)
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("health %+v, want topics on and user topics off", b.Health)
+	}
+	e.tg.SetBotTopics(true, true)
+	b = e.put(b.Version, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !b.Health.HasTopicsEnabled || !b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("health after the flags changed: %+v", b.Health)
+	}
+}
+
 // Plan §4.1 startup in webhook mode: getMe, commands, the menu button (the Mini App when a host is set), then
 // setWebhook on central's public URL with the generated secret, the allowed updates and max_connections 10. The
 // webhook route accepts Telegram's deliveries; health comes from getWebhookInfo and reports a delivery error newer
