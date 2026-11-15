@@ -18,7 +18,13 @@ const owlDark: MantineColorsTuple = ['#d6deeb', '#b2bccc', '#8d9aad', '#637777',
  */
 const filledText: VariantColorsResolver = (input) => {
   const r = defaultVariantColorsResolver(input)
-  return input.variant === 'filled' ? { ...r, color: 'var(--sm-on-filled)' } : r
+  if (input.variant !== 'filled') return r
+  // A primary-colored filled control reads --mantine-primary-color-filled (identical to the owlBlue token, but the Mini App
+  // maps Telegram's button color onto it; without this its text color changed while the background did not).
+  const primary = input.color === undefined || input.color === input.theme.primaryColor
+  return primary
+    ? { ...r, color: 'var(--sm-on-filled)', background: 'var(--mantine-primary-color-filled)', hover: 'var(--mantine-primary-color-filled-hover)' }
+    : { ...r, color: 'var(--sm-on-filled)' }
 }
 
 export const theme = createTheme({

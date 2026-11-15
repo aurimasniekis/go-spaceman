@@ -16,6 +16,8 @@ import { TaskModal } from '@/features/queue/TaskModal'
 import { useAppForm } from '@/components/form/appForm'
 import { atLeast, roleIn } from '@/lib/access'
 import { notifyError } from '@/lib/notify'
+import { isMiniApp } from '@/api/session'
+import { TgQueue } from '@/tg/pages/TgQueue'
 
 export const Route = createFileRoute('/spaces/$spaceId/queue')({
   // ?task=<id> opens that task's drawer (links from human actions and the attention view, SM-HUI-006).
@@ -27,6 +29,16 @@ export const Route = createFileRoute('/spaces/$spaceId/queue')({
 
 function QueuePage() {
   const { spaceId } = Route.useParams()
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
+  const [openTask, setOpenTask] = useState<string | null>(null)
+  if (isMiniApp()) {
+    return <TgQueue spaceId={spaceId} open={openTask ?? search.task ?? null} onOpen={(id) => { setOpenTask(id); if (!id && search.task) void navigate({ search: {} }) }} />
+  }
+  return <WebQueuePage spaceId={spaceId} />
+}
+
+function WebQueuePage({ spaceId }: { spaceId: string }) {
   const qc = useQueryClient()
   const queue = useQueue(spaceId)
   const runs = useRuns(spaceId)
