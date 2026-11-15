@@ -51,6 +51,8 @@ func TestHumanActionsOverHTTP(t *testing.T) {
 	expect(t, root.do("POST", base+"/human-actions/"+q.ID+"/comments", map[string]any{"body": "Postgres is overkill here"}), 201)
 	expect(t, root.do("POST", base+"/human-actions/"+q.ID+"/respond", map[string]any{"outcome": "answered", "answer": "SQLite"}), 428)
 	expect(t, root.do("POST", base+"/human-actions/"+q.ID+"/respond", map[string]any{"outcome": "approved"}, "If-Match", `"1"`), 422)
+	// ADR-0087: the API never marks a row internal, so a reserved dedup_key is refused (kills a mutant that passes Internal).
+	expect(t, root.do("POST", base+"/human-actions", map[string]any{"type": "todo", "title": "Planted", "dedup_key": "approval:x"}), 422)
 	var ans human.Action
 	r = root.do("POST", base+"/human-actions/"+q.ID+"/respond", map[string]any{"outcome": "answered", "answer": "SQLite"}, "If-Match", `"1"`)
 	expect(t, r, 200)
