@@ -260,3 +260,87 @@ func TestGroupNoCapture(t *testing.T) {
 		t.Fatalf("captured %v, sent %d", e.api.created, len(e.group()))
 	}
 }
+
+// SM-TG-002: the link's private form of an action holds the body; a Withdraw tapped in the group looks up the group's
+// form of the action, never the private one, so nothing of the private form is posted into the group.
+func TestGroupCancelNeverShowsPrivateForm(t *testing.T) {
+	e := newEnv(t)
+	m := member("tgl_1", spA)
+	// The forms live in a map, so which one a chat-less lookup finds is random: several actions make a missing chat
+	// filter fail in one run, not only in some.
+	for i := byte('1'); i <= '8'; i++ {
+		e.addHuman(spA, hid(i), "todo", "Todo", `{"steps":["a"]}`)
+		if p := e.open(spA, hid(i)); !strings.Contains(p.Text, "do the thing") {
+			t.Fatalf("the private form has no body, so the probe proves nothing: %q", p.Text)
+		}
+		e.gtap(m, humanData('o', spA, hid(i), -1), groupCard())
+		f := e.glast()
+		e.gtap(m, find(f, "Withdraw"), f)
+		cf := e.glast()
+		data := find(cf, "Confirm")
+		if data == "" {
+			t.Fatalf("no confirmation: %q", cf.Text)
+		}
+		e.gtap(m, data, cf)
+	}
+	if got := e.acts(); len(got) != 8 {
+		t.Fatalf("the withdraws didn't happen: %v", got)
+	}
+	for _, g := range e.group() {
+		if strings.Contains(g.Text, "do the thing") {
+			t.Fatalf("the private form's body reached the group: %q", g.Text)
+		}
+	}
+	// A withdraw in the group neither found nor closed the private forms (read from the map, not through the lookup).
+	e.h.mu.Lock()
+	defer e.h.mu.Unlock()
+	n := 0
+	for k := range e.h.forms {
+		if k.chat == chatID {
+			n++
+		}
+	}
+	if n != 8 {
+		t.Fatalf("the group's withdraws closed private forms: %d of 8 left", n)
+	}
+}
+
+// formByAction finds the form of the chat asked about, not the link's form in another chat.
+func TestGroupFormByActionMatchesChat(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "todo", "Todo", `{"steps":["a"]}`)
+	e.open(spA, hid('1'))
+	e.gtap(member("tgl_1", spA), humanData('o', spA, hid('1'), -1), groupCard())
+	for i := 0; i < 20; i++ { // the forms are in a map: a lookup that ignores the chat finds either, at random
+		for _, c := range []int64{chatID, groupID} {
+			if f := e.h.formByAction("tgl_1", spA, hid('1'), c); f == nil || f.key.chat != c {
+				t.Fatalf("the form of chat %d: %+v", c, f)
+			}
+		}
+	}
+	if e.h.formByAction("tgl_1", spA, hid('1'), -100999) != nil {
+		t.Fatal("found a form in a chat that has none")
+	}
+}
+
+// Only bare commands and ones addressed to this bot are answered in a group; "/cmd@OtherBot" is another bot's.
+func TestGroupIgnoresCommandsForOtherBots(t *testing.T) {
+	e := newEnv(t)
+	e.addHuman(spA, hid('1'), "question", "Which one?", `{"options":["a","b"]}`)
+	m := member("tgl_1", spA)
+	for _, c := range []string{"/needsyou@OtherBot", "/inbox@other_bot", "/needsyou@spaceman_test_botx"} {
+		e.gsay(m, c)
+	}
+	if n := len(e.group()); n != 0 {
+		t.Fatalf("answered a command for another bot: %d messages, %q", n, e.group()[0].Text)
+	}
+	e.gsay(m, "/needsyou@Spaceman_Test_Bot")
+	if len(e.group()) == 0 {
+		t.Fatal("a command addressed to our bot got no answer")
+	}
+	before := len(e.group())
+	e.gsay(m, "/needsyou")
+	if len(e.group()) <= before {
+		t.Fatal("a bare command got no answer")
+	}
+}

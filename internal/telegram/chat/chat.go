@@ -84,6 +84,10 @@ type Options struct {
 	// (api.ApprovalConfirmations.Arm); "" or nil: enforced approvals can't be decided in chat.
 	ArmApproval func(linkID, spaceID, actionID, outcome string, version int64) string
 
+	// BotUsername returns the bot's own username without "@" ("" while unknown). In a group a command addressed to
+	// another bot ("/cmd@OtherBot") is ignored: only bare commands and ones addressed to this username are answered.
+	BotUsername func() string
+
 	// Allow takes one unit of a link's inbound limit of that kind (updates.Limiter.Allow); nil: no limit. Capture costs
 	// one KindInboxItem per item and one KindDownload per file moved in either direction.
 	Allow func(linkID string, k updates.Kind) bool
@@ -184,15 +188,28 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 
 // command splits "/name@bot args" into its parts; ok is false for text that is not a command.
 func command(text string) (name, arg string, ok bool) {
+	name, _, arg, ok = commandFor(text)
+	return
+}
+
+// commandFor is command that also reports the "@bot" the command was addressed to ("" for a bare command).
+func commandFor(text string) (name, to, arg string, ok bool) {
 	t := strings.TrimSpace(text)
 	if !strings.HasPrefix(t, "/") {
-		return "", "", false
+		return "", "", "", false
 	}
 	head, arg, _ := strings.Cut(t[1:], " ")
 	if i := strings.IndexByte(head, '@'); i >= 0 {
-		head = head[:i]
+		head, to = head[:i], head[i+1:]
 	}
-	return strings.ToLower(head), strings.TrimSpace(arg), head != ""
+	return strings.ToLower(head), to, strings.TrimSpace(arg), head != ""
+}
+
+func (h *Handler) botUsername() string {
+	if h.o.BotUsername == nil {
+		return ""
+	}
+	return h.o.BotUsername()
 }
 
 // --- sending ---
