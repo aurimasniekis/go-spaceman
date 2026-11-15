@@ -42,12 +42,14 @@ type Run struct {
 	TerminalID string `json:"terminal_id,omitempty"`
 	PID        int64  `json:"pid,omitempty"`
 	ExitCode   *int64 `json:"exit_code,omitempty"`
-	EndReason  string `json:"end_reason,omitempty"`
+	EndReason  string `json:"end_reason,omitempty" doc:"Why the run ended: the node's reason (exited, stopped, killed, lease_expired, …), usage_limit when it ended while at a usage limit, or central's stale_not_on_node, stale_lease_lost or relocated_source_unavailable"`
 	Error      string `json:"error,omitempty"`
 	Status     string `json:"status,omitempty" doc:"Program-reported status (OSC 7501): idle, working, done, blocked, error"`
 	StatusKind string `json:"status_kind,omitempty"`
 	Turn       int64  `json:"turn"`
 	Adopted    bool   `json:"adopted"`
+	// Limit is the run's open usage limit (ADR-0079): a live run with one is waiting for it to reset.
+	Limit *RunLimit `json:"limit,omitempty" doc:"The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset"`
 	// HarnessVersion, HarnessRequested and HarnessFallback are what the node reported launching (minor ≥ 11, ADR-0077).
 	HarnessVersion   string     `json:"harness_version,omitempty" doc:"The harness version the run launched, as its node reported it (node protocol 1.11 or later)"`
 	HarnessRequested string     `json:"harness_requested,omitempty" doc:"What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z)"`
@@ -96,6 +98,7 @@ func runFromRow(r db.Run) *Run {
 	}
 	_ = json.Unmarshal([]byte(r.LaunchJson), &out.Launch)
 	out.TerminalSize = terminalSizeOf(r.TerminalCols, r.TerminalRows)
+	out.Limit = runLimitOf(r)
 	return out
 }
 
@@ -132,6 +135,10 @@ type LaunchInput struct {
 	// TerminalSize is the size the run's terminal is held at from the start: the space's terminal_cols and
 	// terminal_rows limits, filled by launch resolution (not part of the API, ADR-0075). nil: the node's default.
 	TerminalSize *TerminalSize `json:"-"`
+	// inTx runs inside the launch transaction once the run is inserted (a resume marks its wait and re-points its task
+	// there); an error rolls the launch back. manifest adds to the run's manifest. Neither is part of the API.
+	inTx     func(ctx context.Context, tx *store.Tx, runID string) error
+	manifest map[string]any
 	// AuthorizeKind checks the caller may launch the resolved kind (the API: diagnostics need run:diagnose,
 	// SM-CTRL-004). It runs after the space role decided the kind and before anything is written.
 	AuthorizeKind func(kind string) error `json:"-"`
@@ -242,6 +249,10 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				in.SessionID = ""
 			}
 		}
+		ul := UsageLimitSettings{KeepAliveMax: DefaultLimitKeepAliveMax}
+		if svc.opts.UsageLimitSettings != nil {
+			ul = svc.opts.UsageLimitSettings(ctx, tx.Q, spaceID)
+		}
 		// A harness the space routes through an LLM gateway uses no account, never as a fallback either (ADR-0060 Q1).
 		var gw *GatewaySpec
 		if svc.opts.Gateway != nil {
@@ -262,9 +273,37 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				session = harness.NewUUID()
 			}
 		} else if svc.opts.ResolveAccount != nil {
-			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.AccountRef); err != nil {
+			// With failover on (a space setting, off by default: ADR-0079 decision 8, Q1), an account with an open hold
+			// gives way to another bound account of the harness without one. A gateway run never gets here: it never
+			// falls back to a direct account.
+			var avoid func(string) (bool, error)
+			if ul.Failover {
+				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
+			}
+			ref := in.AccountRef
+			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, avoid); err != nil {
 				return err
 			}
+			if avoid != nil {
+				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, nil); err == nil && base != in.AccountRef {
+					if resolved == nil {
+						resolved = map[string]any{}
+					}
+					resolved["account_failover"] = map[string]any{"from": base, "to": in.AccountRef, "reason": "usage_limit"}
+				}
+			}
+		}
+		// A held account (or gateway reference) refuses the launch, writing nothing, unless this launch is the hold's
+		// probe (ADR-0079 decision 7).
+		probe, err := svc.holdCheckTx(ctx, tx, holdTarget(in.AccountRef, gw), ul.KeepAliveMax)
+		if err != nil {
+			return err
+		}
+		if probe {
+			if resolved == nil {
+				resolved = map[string]any{}
+			}
+			resolved["usage_limit_probe"] = true
 		}
 		// A worktree of a configured repository (named by its folder or its name) carries the repository, so the node can
 		// clone it at its first use (ADR-0044). Folders that are not configured still work as they are.
@@ -297,6 +336,9 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		for k, v := range resolved {
 			m[k] = v
 		}
+		for k, v := range in.manifest {
+			m[k] = v
+		}
 		manifest, _ := json.Marshal(m)
 		var termCols, termRows sql.NullInt64
 		// A node known to predate minor 10 cannot hold a size: storing one would show a size the run doesn't have.
@@ -321,6 +363,11 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			RecordingMaxBytes: in.RecordingMaxBytes}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
+		}
+		if in.inTx != nil {
+			if err := in.inTx(ctx, tx, runID); err != nil {
+				return err
+			}
 		}
 		if err := svc.record(ctx, tx, spaceID, "run", runID, "created", 1); err != nil {
 			return err
@@ -359,6 +406,10 @@ func (svc *Service) queueCommandID(ctx context.Context, tx *store.Tx, nodeID, sp
 		CreatedAt: tx.NowMicros()})
 }
 
+// ErrLimitWaiting refuses idle-gated input to a run waiting for its usage limit to reset (ADR-0079 decision 3): typing
+// into it would start a turn that fails at once. The input waits for the clear; an operator's own input still goes.
+var ErrLimitWaiting = apperr.New(apperr.CodePrecondition, "the run is waiting for its usage limit to reset; notices wait until it clears")
+
 // QueueNotice queues safe (idle-gated) input for a running run inside the caller's transaction and returns the
 // command ID; the node refuses it while the program is busy (SM-COMM-003). Call KickRun after the commit.
 func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text string) (string, error) {
@@ -368,6 +419,9 @@ func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text s
 	}
 	if r.Desired != "running" || ended(r.Observed) {
 		return "", apperr.New(apperr.CodePrecondition, "the run is not running")
+	}
+	if r.LimitKind != "" {
+		return "", ErrLimitWaiting
 	}
 	// Notices are automated input: none while an operator has taken over the terminal (SM-UI-004).
 	if err := refuseIfTakenOver(ctx, tx, r.ID); err != nil {
@@ -633,6 +687,9 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 // and sets its desired state to stopped, and the run's end is audited and counted as a sweep. A sweep that no longer
 // applies is skipped, not fenced.
 func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto.RunReport, sweep *staleRun) (fenced bool, err error) {
+	if svc.onReport != nil {
+		svc.onReport(rep)
+	}
 	becameIdle, justEnded, skipped := false, false, false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:
@@ -694,9 +751,33 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			fenced = true
 			return nil
 		}
+		// The run's usage limit (minor ≥ 12, ADR-0079): a report without one keeps what is stored. A run that ends while
+		// at a limit, without central having asked it to stop, ended because of it.
+		curLimit := storedLimit(r)
+		nextLimit, hasLimit := reportedLimit(curLimit, rep, tx.Now)
+		limitChanged := hasLimit && nextLimit != curLimit
+		if !hasLimit {
+			nextLimit = curLimit
+		}
+		// An end recorded as usage_limit stays so when a later report clears the limit.
+		nodeReason := rep.Reason
+		// The override applies to the report that ends the run; an end already recorded keeps its reason (only an end
+		// recorded as usage_limit is restored when a later report repeats the node's own reason).
+		// A run central stopped to park it at its limit (it has a limit wait) ended because of the limit too (UL-7).
+		parked := false
+		if sweep == nil && ended(rep.State) && !ended(r.Observed) && r.Desired == "stopped" {
+			if _, err := tx.Q.GetLimitWaitByRun(ctx, r.ID); err == nil {
+				parked = true
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+		if sweep == nil && ended(rep.State) && (!ended(r.Observed) && (nextLimit.kind != "" && r.Desired != "stopped" || parked) || ended(r.Observed) && r.EndReason == EndUsageLimit) {
+			rep.Reason = EndUsageLimit
+		}
 		// A report that changes nothing (every hello re-reports the node's whole journal, ended runs included) writes
 		// nothing: no version, no change-feed entry, so a reconnect doesn't make every open UI refetch its runs.
-		if sweep == nil && reportUnchanged(r, rep) {
+		if sweep == nil && !limitChanged && reportUnchanged(r, rep) {
 			return nil
 		}
 		var exit sql.NullInt64
@@ -723,6 +804,18 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 			version += n
+		}
+		if limitChanged {
+			n, err := svc.applyLimitTx(ctx, tx, r, curLimit, nextLimit)
+			if err != nil {
+				return err
+			}
+			version += n
+			if err := svc.limitWindowTx(ctx, tx, r.ID, curLimit, nextLimit); err != nil {
+				return err
+			}
+			// When the run is parked depends on its limit (the limit-wait job's next due time).
+			tx.AfterCommit(svc.wakeDeadlines)
 		}
 		if sweep != nil {
 			// Nothing for the run may reach the node any more, and the node is no longer told to keep it (sendReconcile).
@@ -754,7 +847,10 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 		}
-		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State)
+		// A limit that clears while the program is idle counts as turning idle: the notices held for it go out and
+		// control's idle stop is armed again (ADR-0079 decision 3).
+		limitCleared := limitChanged && curLimit.kind != "" && nextLimit.kind == ""
+		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State || limitCleared)
 		justEnded = ended(rep.State) && !ended(r.Observed)
 		if !r.StartedAt.Valid && (rep.State == proto.RunRunning || (justEnded && rep.State == proto.RunExited)) {
 			if err := svc.runEvent(ctx, tx, r, outbox.RunStarted{Run: outboxRun(r), Adopted: rep.Adopted}); err != nil {
@@ -765,7 +861,31 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			if err := svc.endRunTakeoverTx(ctx, tx, r); err != nil {
 				return err
 			}
+			// A run that ends, or is lost or swept, while at its limit is parked: it comes back at the reset (ADR-0079
+			// decision 4). One somebody asked to stop is not.
+			if nextLimit.kind != "" && r.Desired != "stopped" {
+				pr := r
+				if rep.SessionID != "" {
+					pr.SessionID = rep.SessionID
+				}
+				pr.Turn = max(pr.Turn, int64(min(rep.Turn, math.MaxInt64))) //nolint:gosec // saturated
+				why := rep.State
+				if sweep != nil {
+					why = sweep.Reason
+				}
+				if _, err := svc.parkTx(ctx, tx, pr, nextLimit, why); err != nil {
+					return err
+				}
+			} else if sweep == nil && r.Desired != "stopped" && r.Turn == 0 && rep.Turn == 0 && (rep.State == proto.RunFailed || rep.State == proto.RunExited) {
+				// A resumed run that ended before its first turn: its --resume may have failed (review S4).
+				if err := svc.resumeFailedTx(ctx, tx, r); err != nil {
+					return err
+				}
+			}
 			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
+			if nodeReason != rep.Reason {
+				ev.NodeReason = outbox.CleanID(nodeReason)
+			}
 			if rep.ExitCode != nil {
 				c := int64(*rep.ExitCode)
 				ev.ExitCode = &c
@@ -907,7 +1027,7 @@ func startResult(rep proto.RunReport) metrics.RunStartResult {
 
 func endReason(rep proto.RunReport) string {
 	switch rep.Reason {
-	case "exited", "killed", "lease_expired", "stopped":
+	case "exited", "killed", "lease_expired", "stopped", EndUsageLimit:
 		return rep.Reason
 	case "holder_lost", "server_stop", "host_shutdown":
 		return "lost"

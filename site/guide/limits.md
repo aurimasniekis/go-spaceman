@@ -30,6 +30,10 @@ it comes from and where SpaceMan enforces it.
 | Recording, transcript, attachment and finished human-action retention (`retention_*_days`) | kept (0) | 0–36,500 days | how long central keeps them | the daily retention pass ([Retention and export](/guide/retention)) |
 | Start control on new work (`control_autostart`) | on (1) | 0 off, 1 on | whether work waiting for control starts the space's control role ([Control](/guide/control#starting-and-stopping-on-its-own)) | control supervisor |
 | Stop idle control (`control_idle_stop_minutes`) | 30 | 0–10,080 (0: never) | how long control sits idle before it is stopped | control supervisor |
+| Usage-limit failover (`usage_limit_failover`) | off (0) | 0 off, 1 on | when the account a launch would use is held at a usage limit, use another account bound to the space for the same harness that isn't held; a space routed through Harbor Pilot never falls back to a direct account | run launch |
+| Usage-limit keep-alive (`usage_limit_keep_alive_max_minutes`) | 360 | 1–1,440 | how long a run at a usage limit waits for the reset with its process kept alive (after that, or at once when the reset is further away, SpaceMan stops it and parks it to resume at the reset); also the longest gap between re-checks of a hold whose reset time is unknown | usage-limit holds and parking |
+| Usage-limit maximum wait (`usage_limit_max_wait_hours`) | 168 (7 days) | 1–720 | how long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned; control is never given up on | usage-limit waits |
+| Usage-limit people notice (`usage_limit_notify_after_hours`) | 12 | 0–720 (0: never) | how far away the reset of an account held at a usage limit must be for the space's people to get one human action about it, once per account and limit window (12 h: weekly limits, not 5-hour ones) | usage-limit holds |
 
 Some limits are set elsewhere and only shown here: the node's **capacity** (the node agent's `capacity` setting, shared
 by every space on the node), each knowledge base's own session limit, human-action rate limits per type
@@ -47,6 +51,14 @@ from its tools.
 Workers and diagnostic runs share the space's concurrency limit and the node's capacity. Control (one per space), KB
 support sessions and dreamer runs have their own pools and never count against them, so busy workers cannot keep a
 knowledge base from answering, and many support sessions cannot keep workers from starting.
+
+A worker or diagnostic run that is waiting for its Claude usage limit to reset (its process kept alive until the reset)
+doesn't count against the space's concurrency limit, so another run can start meanwhile. It still counts against the
+node's capacity, because its process is still running there.
+
+A run that waits longer than the keep-alive is **parked** and resumed at the reset, and its account is held
+meanwhile. [When an account runs out](./usage-limits) explains holds, parked runs, Harbor Pilot gateway estimates, who
+is told and what you can do.
 
 Support never starts more support without bound. At the default **support depth** of 1, a KB support session cannot ask
 any knowledge base; raising the depth allows that many levels. KB sessions never launch workers.

@@ -79,6 +79,8 @@ export const keys = {
   oidcMappings: (id: string) => ['oidc-mappings', id] as const,
   myIdentities: ['identities', 'me'] as const,
   limits: (space: string) => ['limits', space] as const,
+  usageLimits: (space: string) => ['usage-limits', space] as const,
+  limitWaits: (space: string) => ['limit-waits', space] as const,
   schedules: (space: string) => ['schedules', space] as const,
   schedule: (space: string, id: string) => ['schedules', space, id] as const,
   repositories: (space: string) => ['repositories', space] as const,
@@ -282,6 +284,20 @@ export const useLimits = (space: string) =>
   useQuery({
     queryKey: keys.limits(space),
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/limits', { params: { path: { space_id: space } }, signal })),
+  })
+
+/** A space's usage-limit holds, its own (cleared ones too) then other spaces' open ones on its accounts (ADR-0079). */
+export const useUsageLimits = (space: string) =>
+  useQuery({
+    queryKey: keys.usageLimits(space),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/usage-limits', { params: { path: { space_id: space } }, signal })).items ?? [],
+  })
+
+/** A space's runs parked at a usage limit, and what became of them (ADR-0079). */
+export const useLimitWaits = (space: string) =>
+  useQuery({
+    queryKey: keys.limitWaits(space),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/limit-waits', { params: { path: { space_id: space } }, signal })).items ?? [],
   })
 
 export const useSchedules = (space: string) =>

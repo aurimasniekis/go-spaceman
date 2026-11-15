@@ -53,7 +53,7 @@ Every command accepts these.
 | [`spaceman inbox`](./inbox) | A space's inbox: list, show, add and triage items (--space) |
 | [`spaceman kb`](./kb) | A space's knowledge bases: list, show, create, update; requests and proposals (--space) |
 | [`spaceman keys`](./keys) | Key-encryption key management |
-| [`spaceman limits`](./limits) | Space limits: show, override and list definitions |
+| [`spaceman limits`](./limits) | Space limits: show, override and list definitions; usage-limit holds and waits |
 | [`spaceman mcp`](./mcp) | Central MCP gateway: servers, grants and a space's servers |
 | [`spaceman memory`](./memory) | Role memory of a space: collections, sync status, files, history and conflicts (--space) |
 | [`spaceman message`](./message) | Durable messages between agents, control and operators: list, show, send, reply, ack, resolve and cancel (--space) |

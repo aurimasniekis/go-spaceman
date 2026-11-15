@@ -4167,7 +4167,7 @@
 
 ### ADR-0078 — Changes must not fan out: no-op run reports, lean run lists, a live change feed, coalesced and cached UI queries, progress-bounded responses
 - **Status:** Accepted, 2026-11-13 (incident: nodes lost their connection every 15 s after central restarted while a
-  web UI tab was open; the operator stayed on v0.1.1 until the fix).
+  web UI tab was open; the operator stayed on v0.1.1 until the fix). Shipped in v0.1.3 (2026-11-13).
 - **Context (code, at v0.1.2; v0.1.1 behaves the same):**
   - A node's hello reports every run in its journal, ended ones included; the journal is never pruned. Central applied
     each report in its own write transaction, always bumping the run's version and writing a change-feed entry, so a
@@ -4542,6 +4542,361 @@
 - **Evidence:** `TestStaleStartingReportDoesNotOverwriteRunning` (failed on main), `TestRunReportOrderGuard` and
   `TestStaleReportStillStopsUnwantedRun` in `internal/fleet/run_report_order_test.go`.
 
+### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
+- **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
+  on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code
+  runs, direct and through Harbor Pilot; Codex runs are not covered, and the Terraform attributes (UL-11) remain.
+  Tested with simulated evidence only: no live subscription limit has been observed on a SpaceMan run (K-16); the
+  gateway side also ran against a real Harbor Pilot demo with a scripted node (TRACEABILITY SM-RUN-004..006). Labelled
+  security-relevant not because it relaxes a requirement but because **content of a run's own transcript (untrusted)
+  now drives central scheduling**: it can park the run and hold an account.
+- **Context:**
+  - A claude.ai subscription has a 5-hour and a weekly window. When one is exhausted, Claude Code ends the turn and,
+    for waits under 24 h, arms its own timer and continues about a minute after the reset (contract
+    `docs/contracts/harnesses.md`, "Claude Code usage limits", 2.1.317–2.1.323). On SpaceMan runs that works only while
+    nothing ends the process: control's idle stop, control replacing a worker that looks stuck, a node restart (run
+    `lost`, ADR-0074) or control relaunching into the same limit. Of 21 armed waits in the examined transcripts, 16
+    fired; weekly waits (more than 24 h out) never arm at all.
+  - **The signal is in typed transcript fields, never the screen** (SM-RUN-002):
+    - **Error path:** an assistant record with `apiError: "usage_limit_reached"`, `quotaLimits.resetsAt` (epoch
+      seconds) and `rateLimitType` (`five_hour`, `seven_day`, …).
+    - **Wrap-up path:** a meta user record `usageLimitNote: "wrap_up"`, then the auto-continue arm record; **no reset
+      time and no kind** anywhere. Twelve of the 21 waits came this way.
+    - **Cleared:** the "reset" informational record and the `auto-continuation` turn, or any later assistant message
+      with usage.
+  - Gateway runs (Harbor Pilot, `ANTHROPIC_AUTH_TOKEN`) never arm auto-continue. When every candidate account is
+    exhausted, HP answers 429 `rate_limit_error` "no eligible account is available for model …" **without
+    `Retry-After`**, and Claude Code records it as a plain API-error message with that text and no typed kind or reset
+    (contracts `harbor-pilot.md`, "Quota board and the all-exhausted 429", and `harnesses.md`, "Gateway runs"). A
+    blocking budget's 429 differs only by its message. The reset can be estimated from HP's `GET /api/v1/quota/board`
+    `account_health[].until`, which has no project filter.
+  - A typed SpaceMan nudge while armed does not cancel the timer, but its request is refused at once and the nudge is
+    not acted on until the reset (contract, 4 cases). A process that exits or is relaunched loses the timer; a session
+    resumed with `--resume` needs a prompt to continue.
+  - `--resume` of a session under a different token works (live, fake API, 2.1.323); with two real claude.ai accounts
+    it is **not verified** (K-16).
+- **Decision:**
+  1. **Detection on the node.** On the OSC 7501 status turning `idle` or `error`, and once at run end, the node agent
+     tail-scans the run's transcript from a persisted offset and reads only typed fields: `type`, `subtype`, `error`,
+     `apiError`, `apiErrorStatus`, `quotaLimits.{resetsAt,rateLimitType,status}` (falling back to
+     `apiErrorParams.rate_limit_info`), `usageLimitNote`, `origin.kind` and `timestamp`.
+     - **Limit set** by a `usage_limit_reached` record, or an auto-continue arm record (wrap-up path), newer than the
+       last typed user turn.
+     - **Gateway limit set** by an API-error record with `apiErrorStatus: 429` whose text, after the fixed
+       `API Error: Request rejected (429) · ` prefix, starts with HP's `no eligible account is available for model `
+       (`gateway_quota`) or matches `budget <name> is exhausted ` (`gateway_budget`). Patterns are anchored and come
+       from the HP contract; anything else is not a limit.
+     - **Limit cleared** by the reset informational record, an `auto-continuation` turn, or a later assistant message
+       with non-zero usage.
+     - No screen text and no display wording is ever parsed for status or time (SM-RUN-002); the arm record counts by
+       its record type, not its text.
+     - **Amended 2026-11-13 (UL-3):** the arm and the reset informational records share their `type`, `subtype` and
+       `level` and differ only in wording, so neither is used. The wrap-up path is keyed on the typed meta record
+       `usageLimitNote: "wrap_up"`, which comes first in the same turn; the replies the turn finishes with on its grace
+       allowance don't clear it, and a later turn's reply with usage or an `auto-continuation` turn does. A typed turn
+       alone doesn't clear a limit (a nudge while armed is refused at once). While the limit stays open, `since` stays
+       that of the first record; kind and reset follow the newest.
+  2. **The reported limit.** `RunReport.limit {kind, resets_at, since, cleared}` (protocol minor 12,
+     `MinorUsageLimit`). `kind` is from an allowlist (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
+     `seven_day_overage_included`, `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path
+     reports `unknown`). `since` is bounded to `[now − 8 days, now + 5 min]` (missing, or further ahead: now; the 5 min allow a node clock slightly ahead, so repeats compare equal); `resets_at` is kept when it lies in
+     `(since, since + 8 days]`, even if it has already passed, otherwise null; a report with neither a kind nor
+     `cleared` is not a limit (`proto.RunLimit.Normalized`). **No transcript text crosses the wire or reaches a log.**
+     A node below minor 12 never reports limits, and central drops a limit on any report from a session negotiated
+     below 12 (`RunReport.ForMinor`), so everything behaves as before.
+  3. **Keep-alive for short waits.** When the reset is known and within `keep_alive_max` (default 6 h), or unknown on
+     a subscription run, the process stays up and Claude Code continues by itself. Meanwhile the run is
+     *limit-waiting*: it is excluded from the **space** limit but still counts against the **node** limit (Q4);
+     SpaceMan's idle-gated notices are held (the Notifier skips it and `QueueNotice` refuses idle-gated input; operator
+     force-input still works) and delivered after the clear; control's idle stop is not armed for a limit-waiting
+     control run.
+  4. **Park for long waits.** A wait beyond `keep_alive_max`, an unknown subscription reset still open after
+     `keep_alive_max`, an unknown gateway reset after 30 min, or a process that ends or is lost while limit-waiting,
+     ends the run with `end_reason = 'usage_limit'` and writes a durable **limit wait** in the same transaction. Its
+     resume is a **new run** of the same instance under the current lease generation with `--resume <session>`
+     (when the old run had a turn) and a fixed prompt telling the agent the limit reset and to continue. Ended runs are
+     never reopened, so fencing, the sweeper and the single-control index are unchanged.
+     Since UL-4, central records `end_reason = 'usage_limit'` (also on `run_ended` and in the end-reason metric) for a
+     run that ends while its limit is open, unless central had asked it to stop (`desired = stopped`) or the stale-run
+     sweeper ended it; a later `cleared` report doesn't change it. The `run_ended` event keeps the node's own reason as
+     `node_reason`. The limit wait itself comes with parking (UL-7).
+     - **Amended 2026-11-14 (UL-7).**
+       - **When.** A live run at its limit is parked when its known reset is more than `keep_alive_max` after its
+         `since` (at once), when a gateway limit has no reset after 30 min, and otherwise when the limit is still open
+         `keep_alive_max` after its `since`.
+       - **How.** The limit-wait job stops the run (interrupt, `desired = stopped`) and writes its wait in the same
+         transaction. The run's later end is recorded as `usage_limit`, because the run has a wait.
+       - **Ended, lost or swept runs.** A run that ends, is lost or is swept while at its limit, and that nobody asked to
+         stop, gets its wait in the report (or sweep) transaction. A swept run keeps the sweeper's end reason.
+       - **Kinds.** Only control, worker and diagnostic runs are parked (control's decision, 2026-11-14). KB support and
+         dreamer runs are short-lived and started on demand by their schedulers, which start them again when needed,
+         so they are neither stopped at the keep-alive nor resumed.
+       - **What the wait records.** The session (only when the run finished a turn), the task (only while it is assigned
+         to the run and running, blocked or in review), the space's open hold, and the run's launch.
+       - **Re-park.** When a resumed run parks again, the new wait carries its predecessor's `release_at`, `attempts`
+         and original prompt forward, so the maximum wait and the backoff don't start again. An active wait another run
+         of the same instance left is superseded (cancelled).
+  5. **Resume job.** A deadline-timer job resumes due waits at `resets_at` + 2 min (unknown: retried with backoff from
+     1 h, each attempt re-detected and re-parked without new notices). A paused space, a still-open account limit, a
+     node with no lease or a full space keeps the wait waiting; node hello kicks it. An open hold with an **unknown
+     reset** does not block its own retry: it is **probed** at the hold's `usage_limits.check_at` (decision 7), and
+     the retry that the probe lets through is that attempt. Resumes go through `Admit`; when
+     several are due, control first, then the oldest task, and a resume never pre-empts a launch already admitted
+     (Q6). A space that relocated resumes without a session, and control is told.
+     - **Amended 2026-11-14 (UL-7).** The job is the `limit_waits` deadline on central's shared timer, batched and
+       bounded after the 2026-11-13 incident.
+       - **A round.** It recovers stuck resumes, releases waits past their maximum wait, parks runs that are due, and
+         resumes due waits: control first, then the oldest, at most 5 per round. When more are due, the next round
+         waits 10 s.
+       - **No writes when nothing is due.** A round with nothing due only reads (indexed). A wait put off again for the
+         same reason at the same time writes nothing.
+       - **Resume time.** The reset plus 2 min. With an unknown reset, the hold's `check_at` (the T6 probe, which the
+         resume claims in its launch transaction, like any launch). With no hold, back off from 1 h, doubling with each
+         attempt, capped at `keep_alive_max`.
+       - **Checks.** Each resume claims the wait (`waiting` → `resuming`) after reading:
+         - the parked run must have ended; until then the wait retries in 2 min (`run_not_ended`);
+         - the space: archived gives the wait up; paused retries in 1 h; relocating retries in 2 min;
+         - the task must still be the run's; otherwise the wait is cancelled (`task_moved`);
+         - no other live run of the instance may exist (`superseded`);
+         - the lease: no valid lease retries in 15 min (`node_offline`).
+       - **Launch refusals.** A held account defers the wait to the hold's free time. A full space retries in 2 min; a
+         resume never pre-empts another run. A control conflict cancels the wait. Any other refusal retries in 10 min.
+         All of these are fixed reasons, never raw text.
+       - **One transaction.** The launch inserts the new run (same instance, current lease generation,
+         `LaunchPayload.Resume` with the session) and marks the wait `resumed`. It re-points the task through the
+         queue, and tells control. So a wait still `resuming` never started a run: the first round of a process, and
+         later rounds for rows resuming longer than 10 min, return such waits to `waiting` (UL-2 review follow-up).
+       - **Relocation.** It is detected by the space's node differing from the wait's. The run then starts a fresh
+         session with its original prompt and a fixed note; control's message says so, or a resumed control's own
+         prompt does.
+       - **Brought forward.** The node's hello (after its leases are granted) and a space's resume bring waits put off
+         for that reason forward; they read first and write only when such a wait exists.
+       - **The parked run** is set to `desired = stopped` in the claim, so a parked control releases the single-control
+         slot even if the supervisor didn't settle it.
+       - **Auto-start** leaves a space whose control has an active wait alone; the wait brings control back.
+       - **Not done.** The probe isn't reserved for a resume over a plain launch: the first launch at `check_at` takes
+         it, as in UL-6. The deadline job doesn't clear holds whose reset passed: such holds no longer refuse anything.
+       - **PR #59 review.**
+         - **A hold that clears wakes its waits.** Clear-now, an account clear, evidence, or a probe that made progress
+           sets `resume_at = now`, in the clear's transaction, for two kinds of waiting wait: those parked under the hold
+           (`usage_limit_id`), and those put off as `account_held` whose launch uses the hold's account (or gateway). The
+           job resumes them on its next round; the clear launches nothing.
+         - **The launch transaction re-checks** that the instance has no other live run. One started between the claim and
+           the launch supersedes the wait (`superseded`).
+         - **A failed `--resume`.** A resumed run that ends `failed`, or `exited`, before its first turn (the resume
+           didn't work) gets a new wait due at once. It carries no session and the original prompt (the fresh-session
+           path), and control is told once (`limit-wait-resume-failed:<wait id>`). Only a resume that used a session gets
+           this, so a wait has at most one fresh retry.
+         - **The supervisor** neither restarts nor counts a control that has a limit wait (swept at its limit, or a failed
+           resume).
+  6. **Release.** A worker's wait is released after `max_wait` (default 7 days, Q2): the task returns to `ready`
+     with its assignee cleared and control is told. A control wait is never released.
+     - **Amended 2026-11-14 (UL-7).**
+       - **The setting.** `max_wait` is the space limit `usage_limit_max_wait_hours` (1–720, default 168), following
+         UL-6's settings. It applies to worker and diagnostic waits parked after it changes. Control's wait has no
+         `release_at`.
+       - **The release.** One transaction marks the wait `released` (`max_wait`). The queue sets the task `ready` and
+         clears `assignee_run`, only while it is still the parked run's, with its outbox event and audit. Control is
+         told once (dedup `limit-wait-released:<wait id>`); the queue's own "task ready" notice isn't sent.
+       - **A task in review** (PR #59 review) stays in review on a release, with only its assignee cleared; control's
+         message says it still waits for acceptance. The message says "back in the queue" only when the task really
+         went back to ready.
+       - **Task changes** (UL-2 review follow-up). A task that becomes done, failed, cancelled, ready or backlog, or
+         is assigned to another run, cancels its waiting waits (`task_moved`) in the same queue transaction, through
+         the `limit_waits(task_id)` index. An incident's preemption, which returns running tasks to ready, does the same.
+       - **Operator actions.** `POST /spaces/{id}/limit-waits/{wait_id}/resume` resumes a wait now, whatever its resume
+         time. The usual checks apply; a refusal returns the reason and leaves the wait as it was.
+         `POST /spaces/{id}/limit-waits/{wait_id}/release` gives a wait up now; control's too, after which only
+         auto-start brings control back. Both need `run:control` in the space, like clear-now, are audited
+         (`limit_wait.resumed`, `limit_wait.released`), and have CLI commands (`spaceman limits resume`,
+         `spaceman limits release`).
+  7. **Account hold.** A limit report opens a `usage_limits` row for the run's resolved account (or gateway
+     reference). While it is open, a launch or resume on that account is refused in the launch transaction (a DB read
+     only) with `CodeRateLimited` and the reset time in UTC. The hold applies **to every space bound to that account**;
+     control is notified per space (Q8). Control autostart is deferred silently to the reset, and the supervisor
+     neither restarts nor counts a control run that ended `usage_limit`. The hold clears when `resets_at` passes, a
+     node reports `cleared` on any run of the account, any other run on the account makes progress (an assistant
+     message with usage), the quota board shows a gateway account available, or an operator clears it.
+     - **Unknown resets are probed, so a hold never deadlocks** (amended 2026-11-13, UL-2 review). A hold without
+       `resets_at` refuses everything except a **probe**: at the hold's `usage_limits.check_at`, exactly one resume
+       (or, with none waiting, one launch) on the account is let through. A probe that makes progress clears the
+       hold; one that hits the limit again moves `check_at` on with backoff (from 1 h, doubling, capped at
+       `keep_alive_max`). The gateway re-check of decision 9 uses the same column.
+     - **Scope of a hold** (amended 2026-11-13, UL-4). A direct run holds its resolved account (`scope = 'account'`).
+       A Harbor Pilot run holds a gateway reference whose granularity follows the cause: a quota exhaustion (`gateway_quota`,
+       or any kind other than a budget) is connection-wide, `gateway_ref = 'harbor-pilot'`, because no account behind the
+       one connection is eligible; a blocking budget (`gateway_budget`) belongs to one project,
+       `gateway_ref = 'harbor-pilot:project:<project id>'`, and holds only the spaces charged to it. A report opens a
+       row in the reporting space only. Every other space that binds the account (or routes through the same connection or
+       project) sees it as a **shared** hold, without the other space's identifiers. An unknown reset gets
+       `check_at = now + 1 h`; a later known reset fills the row in and drops the probe.
+     - **Model-specific weekly limits hold the whole account** (control's conservative default, 2026-11-13):
+       `seven_day_opus` and `seven_day_sonnet` hold the account for every model, not only the exhausted one.
+     - **Clearing a hold across spaces** (control's decision, 2026-11-13). Accounts are global objects, so "clear
+       now" on an account hold clears **every open row for that account and kind in all spaces**, and needs
+       **account-level permission** (the same as managing accounts). An operator with only space-level permission
+       clears **their space's row only**: that does not lift the hold in other spaces (the hold is read across
+       spaces), and the UI says so. Every clear is audited; each other space whose row was cleared has its control
+       told once.
+     - **Evidence clears** (UL-4, PR #55 review). A node's `cleared` report is evidence that the account works again.
+       It is separate from the operator's "clear now" above, whose permission rule it doesn't change.
+       - The clear names the `since` of the limit it ends. A clear of an older `since` than the run's stored limit is
+         late (the node repeats it on every later report) and changes nothing. A newer limit (another `since`) also
+         ends the stored one.
+       - Only rows of that kind first seen no later than the ended limit's `since` count. So a new window always gets
+         a row of its own: an open row whose reset passed before the new limit was seen is cleared, never reused.
+       - The same limit reclassified (the same `since`, a newer record of another kind, such as the wrap-up path's
+         `unknown` then a typed kind) supersedes the hold the run opened for the old kind.
+     - **Trust decision: nodes are trusted for their own runs; cross-space effects are limited to scheduling a probe.**
+       - The run's own space's rows are cleared, with `cleared_by = run:<id>`.
+       - Another space's row is cleared only when its reset has passed (within 2 min) or is unknown. It gets
+         `cleared_by = evidence` and is correlated on the hold, so that space never sees this space's run.
+       - A row whose reset is still ahead gets `check_at = now`: one probe launch decides.
+     - **Events and visibility.**
+       - Each cleared row publishes one `fleet.usage_limit.cleared` event in its own space, and each opened row one
+         `fleet.usage_limit.reached` event.
+       - A report that changes nothing writes nothing.
+       - A space's listing shows other spaces' open holds as one shared row per account (or gateway reference) and
+         kind, so it doesn't reveal how many spaces hit the limit.
+     - **At launch** (amended 2026-11-13, UL-6). A hold whose reset has passed no longer refuses, whether or not the
+       deadline job has cleared it yet. A hold due for its probe lets the launch through and is claimed in the same
+       transaction: an unknown reset's `check_at` moves on by the time since the hold was seen, at least 1 h and at most
+       `keep_alive_max` (so 1 h, 2 h, 4 h … from the first probe); a known reset's `check_at` is set to none (one probe,
+       then the reset decides). Any hold that is neither refuses, and the refusal writes nothing. Its text names the
+       account (or the Harbor Pilot connection or project) and the time the last hold lets a launch through, never
+       another space. Until UL-7 adds resumes, the probe goes to the first launch.
+     - **Control** (UL-6). A control restart or auto-start refused by a hold defers auto-start until that time; later
+       sweeps only read the hold, so a clear (operator or evidence) lets control start at the next sweep. Nobody is asked
+       to look.
+     - **Clear now** (UL-6). The space-level clear needs `run:control` in the space (the permission that launches runs
+       there; operators and admins) and returns `held_elsewhere`; the account-level clear needs `account:write` and takes
+       an optional kind (none: every kind, as the opus/sonnet holds hold the whole account). Control is told with dedup
+       key `usage-limit-cleared:<usage_limits id>`, the key decision 11's clear message uses, so one hold is announced
+       once.
+  8. **Failover is opt-in.** With the space setting `usage_limit.failover = true` (default **false**), `Resolve` picks
+     the next bound account for the same harness without an open limit, for launches and resumes. SpaceMan never falls
+     back from a gateway binding to a direct account (Q1). (UL-6: the settings `failover` and `keep_alive_max` are the
+     space limits `usage_limit_failover`, a switch, and `usage_limit_keep_alive_max_minutes`, 1–1,440, default 360, so
+     they get installation defaults, per-space overrides, audit and the limits API with no new table. Failover avoids an
+     account with any open hold whose reset hasn't passed, a probe-due one included; the default comes first, then
+     binding order; with every account held the usual choice stands and is refused.)
+  9. **Gateway waits.** The reset is an **estimate**: the earliest `until` among the quota board's unavailable
+     accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
+     cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9). The
+     re-check is scheduled by the hold's `usage_limits.check_at`, as is the probe of decision 7.
+     - **Amended 2026-11-14 (UL-8).**
+       - **The job.** `gateway_waits` runs on central's shared deadline timer. It reads every open gateway hold of every
+         space (indexed, at most 200). A hold without an estimate yet is read at once; an estimated one at its
+         `check_at`. One board read serves the quota hold of every space, and one budget read serves each project.
+         Reads use the connection's service-principal token outside any transaction. The board is cached for 60 s;
+         budget status keeps its own 30 s cache, shared with the launch check.
+       - **The estimate.** Quota: the earliest future `until` among the board's unavailable accounts. Budget: the
+         latest `period_end` among the covering blocking budgets. It is stored as the hold's `resets_at`, with
+         `source` `quota_board` or `budget_status` and `check_at = now + 15 min`. Waits parked under the hold are
+         re-timed to the estimate plus the 2-minute slack. A gateway wait put off as `account_held` is moved only
+         earlier. An estimate the hold already has writes nothing (no version, `check_at` or change event); the job
+         keeps the next re-read in memory.
+       - **An estimated hold's `check_at` is the re-read, never a probe.** The hold refuses launches until its
+         reset, and the refusal says "until about `<time>` (estimated from Harbor Pilot's quota board …)" or "until
+         `<time>`, when the budget's period ends". The probe of decision 7 stays in charge while Harbor Pilot names no
+         reset: the board lists no account at all (an empty, missing or renamed `account_health` is no evidence, never
+         a recovery), every unavailable account has a null or past `until`, a blocking one-time budget has no end, a
+         blocking budget's `period_end` has passed (Harbor Pilot hasn't rolled the period yet), or Harbor Pilot can't
+         be read. Such a hold is read again after 15 minutes, or after 2 minutes when a read failed or a period end
+         has passed. A
+         node's evidence from another space sets `check_at = now` as before. On an estimated hold that means "read
+         again now".
+       - **Recovery.** The board lists every account of the installation, including ones the space's plan never
+         routes to. For example, the demo's local model has no monitor and is always available. So "any account
+         available" is no signal. With each board estimate the job remembers the accounts behind it (those whose
+         `until` is the estimate), in memory, for the hold's id and version. A quota hold clears when no account is
+         unavailable any more, or when one of those accounts is available again. An account behind the estimate that
+         is still out with a moved `until` re-times the hold to the new earliest `until`; it never clears it. When the
+         job doesn't know the accounts (after a restart, or the hold changed meanwhile), it only re-estimates. A newly
+         exhausted account with an earlier `until` moves the estimate earlier. A budget hold clears when no covering
+         budget blocks any more. The clear has `cleared_by` `quota_board` or `budget_status` and wakes the waits, as
+         other clears do.
+       - **Kick.** `events.Options.OnAccepted` is called after an event becomes a new item. When the subscription
+         uses the built-in `harbor-pilot-quota` template and the subject is
+         `evt.harborpilot.quota.window.recovered`, central drops the cached board and makes every quota hold due.
+         A board read already in flight when the kick arrives is neither cached nor used: it is read again. The
+         event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
+         alone applies.
+       - **A gateway run parked after its hold cleared** resumes at once, not after the 1-hour backoff. The gateway hold
+         opens with the limit, so a missing hold means Harbor Pilot recovered, or the hold was cleared. A run still
+         kept alive when the hold clears is parked only at its 30-minute keep-alive (not changed here).
+       - **No migration.** `usage_limits.source` already allowed both sources (0050). The protocol is unchanged.
+  10. **Operator answers (2026-11-13, all proposed defaults accepted).**
+      - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.
+      - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.
+      - **Q3 keep-alive versus park:** keep alive up to 6 h, park longer waits.
+      - **Q4 node capacity:** a kept-alive run counts against the node limit, not the space limit.
+      - **Q5 people:** one human action (type `message`, priority `normal`) to the affected space's operators, once per
+        account window, only for waits over 12 h.
+      - **Q6 priority:** control first, then the oldest task; a resume never pre-empts a launch already running.
+      - **Q7 early stop:** a later, optional step (T13, a separate amendment): stop new launches on an account at
+        ≥ 95 % of a window, from a SpaceMan-owned statusline. Not part of this decision.
+      - **Q8 cross-space:** the hold applies to every space bound to the account.
+      - **Q9 gateway estimate:** accepted (earliest reset, re-checked every 15 min); no per-project board view requested.
+  11. **Telling control and people once.** Control gets one durable message per space and account window when a
+      limit opens and one when it clears or resumes (dedup keys from the `usage_limits` id); worker `run-ended` notices
+      for `usage_limit` ends are folded in. People get the single action of Q5.
+      - **Amended 2026-11-13 (UL-5, control's decision):** the keep-alive messages are per **run and limit window**:
+        one "at its usage limit" and one "usage limit cleared" per (run, `since`), written inside the report
+        transaction that changes the run's limit window, never per report. A "cleared" message goes out only for a
+        window control was told about. Control isn't told about its own limit, and a run that ends at its limit is
+        reported by its run-ended notice. The per-account-window message with the parked runs and the folding of
+        run-ended notices come with parking (UL-7).
+      - **Amended 2026-11-14 (UL-7):** parked runs are announced **per wait**, written in the transaction of the change:
+        one "parked" message (`limit-wait:<wait id>`) with the resume and release times, one "resumed" message
+        (`limit-wait-resumed:<wait id>`), and one "given up" message (`limit-wait-released:<wait id>`). They replace
+        the run-ended notice of a parked run. A re-park, and later resumes of the same chain (an unknown reset probed
+        again), aren't announced again; a fresh-session resume always is. Control's own wait isn't announced to it. A
+        per-account-window summary isn't sent.
+      - **Amended 2026-11-14 (UL-9):** the people notice of Q5 is one human action (type `message`, priority `normal`,
+        not blocking, requester `system` "Usage limits") per **hold row**: per space and account (or gateway reference)
+        window, deduplicated on `usage-limit-human:<usage_limits id>`, and recorded in `usage_limits.notified_humans_at`.
+        It is raised for an open hold whose known reset is further away than the space's
+        `usage_limit_notify_after_hours` (default 12), by a job on the shared deadline timer (a limit report wakes it);
+        not for an unknown reset, and not in an archived space. A hold whose reset later moves past the threshold is
+        announced then. The action is created first and the hold marked after, so a crash in between raises it once.
+        "The space's operators" are the people who see the space's human actions; no message to the operators' inbox is
+        sent in addition. A space that has too many open human actions gets it on a later round.
+  12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind` without a CHECK,
+      so a new kind never needs a runs-table rebuild, `limit_resets_at`, `limit_since`; tables `usage_limits`, with
+      `check_at` and the kind CHECK, and `limit_waits`); agent
+      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_since`, `limit_offset`; `limit_since` added in UL-2
+      so a restarted agent re-reports the same `since`). Space setting
+      `usage_limit {failover, keep_alive_max, max_wait, notify_humans_after}`.
+      **Amended 2026-11-14 (UL-6, UL-7):** these are space limits, not a settings object: `usage_limit_failover`
+      (switch, default off), `usage_limit_keep_alive_max_minutes` (1–1,440, default 360) and
+      `usage_limit_max_wait_hours` (1–720, default 168: Q2's 7 days). `notify_humans_after` comes with UL-9.
+      **Amended 2026-11-14 (UL-9):** `notify_humans_after` is the space limit `usage_limit_notify_after_hours` (0–720,
+      default 12; 0: never). These four keys are the names the Terraform provider uses (T11).
+- **Alternatives:**
+  - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and
+    dateless under 24 h, and server-overridable wording.
+  - **Always park.** Simpler and frees memory, but discards in-memory state (background shells) and Claude Code's own
+    timer, which already handles the common 5-hour case (Q3).
+  - **A new `observed`/`waiting` run state.** Rejected: it would touch every literal live-state list, the sweeper and
+    the single-control index; columns plus two tables avoid that.
+  - **`StopFailure` hook or statusline `rate_limits`.** The hook carries no reset time and the statusline needs an
+    unsafe settings key; kept for T13 as accelerators, not the source.
+  - **Trust `Retry-After` for gateway runs.** HP doesn't send it in this case.
+- **Consequences:**
+  - A run's transcript can now park that run and hold its account. A forged record can block an account for at most
+    8 days (the clamp); only typed fields are read, no free text is stored, the kind is allowlisted, progress by any
+    other run on the account clears the hold, and an operator can clear it. THREAT_MODEL gains a row when the
+    detector lands.
+  - Claude Code's record format is undocumented; a rename silently stops detection and falls back to today's
+    behaviour. The contract records the versions, ADR-0077's managed versions let a fixture test follow the pinned
+    version, and a bounded metric counts unclassified 429 records.
+  - The wrap-up path gives no reset time, so more than half the subscription waits seen run with an unknown reset:
+    keep-alive covers them while the process lives, and a parked one is resumed by backoff.
+  - A gateway reset is an estimate and may resume early (re-detected, re-parked, no new notice) or up to 15 min late.
+  - A real subscription limit can't be forced in tests; until one is observed on a SpaceMan run, real evidence stays
+    empty (K-16).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -4560,3 +4915,5 @@
 | K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
+| K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
+| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run. None had been observed when the work was documented (UL-12, 2026-11-14). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |

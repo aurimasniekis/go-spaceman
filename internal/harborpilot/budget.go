@@ -58,6 +58,8 @@ type BudgetsOptions struct {
 	Fresh, FailFresh time.Duration
 	// ProjectFresh is how long a project's workspace, and the gateway's version, are reused (default 10 min).
 	ProjectFresh time.Duration
+	// QuotaFresh is how long a quota board read is reused (default 60 s; ADR-0079 decision 9).
+	QuotaFresh time.Duration
 	// CheckTimeout bounds a whole launch check (default 15 s): every read it makes (version, budget status, a fallback)
 	// together, so a hung gateway delays a launch once, not once per read. When it passes, status is unavailable.
 	CheckTimeout time.Duration
@@ -78,10 +80,13 @@ type Budgets struct {
 	status   *cached[[]Budget]
 	covered  map[string]*cached[[]Budget] // project id → budgets covering it (0.1.4 filter)
 	system   *cached[*GatewayInfo]
+	board    *cached[*QuotaBoard]
 	projects map[string]*cached[string]        // project id → workspace id
 	usage    map[string]*cached[*ProjectUsage] // project id + from → usage
 	flights  map[string]*flight                // key → in-flight read
 	now      func() time.Time
+	// boardGen counts the times the cached board was dropped: a board read that started before a drop isn't cached.
+	boardGen uint64
 }
 
 type cached[T any] struct {
@@ -118,6 +123,9 @@ func NewBudgets(svc *Service, o BudgetsOptions) *Budgets {
 	if o.ProjectFresh <= 0 {
 		o.ProjectFresh = 10 * time.Minute
 	}
+	if o.QuotaFresh <= 0 {
+		o.QuotaFresh = time.Minute
+	}
 	if o.CheckTimeout <= 0 {
 		o.CheckTimeout = 15 * time.Second
 	}
@@ -129,7 +137,8 @@ func NewBudgets(svc *Service, o BudgetsOptions) *Budgets {
 func (b *Budgets) Invalidate() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.status, b.system = nil, nil
+	b.status, b.system, b.board = nil, nil, nil
+	b.boardGen++
 	clear(b.covered)
 	clear(b.projects)
 	clear(b.usage)

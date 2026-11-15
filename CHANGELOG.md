@@ -7,6 +7,80 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- **Runs survive Claude usage limits** (ADR-0079, Accepted; SM-RUN-004..006). When a Claude Code run reaches its
+  subscription's 5-hour or weekly limit, or a Harbor Pilot gateway runs out of accounts or budget, SpaceMan holds the
+  account until the reset, keeps a short wait alive, parks a long one with its session and task, resumes it at the
+  reset with `--resume`, and tells control and (for waits over 12 hours) the space's people once. The entries below
+  give the details. New guide page "When an account runs out", and a "Usage limits" section in Known limitations.
+  Read it before you rely on this: no live subscription limit has been observed on a SpaceMan run, so the tests are
+  simulated (scripted node, fake transcript records, fake clock, fake Harbor Pilot; the gateway side also ran against a
+  real Harbor Pilot demo, still with a scripted node); a gateway reset is an estimate from Harbor Pilot's quota board;
+  and Codex runs are not covered.
+- Usage limits, groundwork (ADR-0079): central migration 0050 (a run's reported limit, the `usage_limits` and
+  `limit_waits` tables), the agent's journal migration 0008, and node protocol 1.12, whose run reports may carry the
+  limit a node detected. Both migrations are forward-only in production: take a backup first. Upgrade central first,
+  then the node agents; a node agent below 1.12 keeps working as before.
+- Usage-limit detection on the node (ADR-0079): when a Claude Code run's turn ends, and when it ends, the
+  node agent reads the typed usage-limit fields of the run's transcript (from where it stopped last time) and reports
+  the limit (kind, reset time, since) or its clear with the run, once per change. No transcript text is logged or
+  sent.
+- Usage limits are visible (ADR-0079): central stores the limit a node reports for a run (`limit` on runs, and in
+  control's `spaceman_runs_list`). It opens a hold on the run's account, or on the Harbor Pilot connection or project,
+  and clears the hold when a run on that account reports the limit over. A run that ends at a limit ends with
+  `usage_limit`. New reads: `GET /spaces/{id}/usage-limits` (including other spaces' holds on the same accounts),
+  `GET /spaces/{id}/limit-waits` and `GET /accounts/{id}/usage-limits`, also available as `spaceman limits holds`,
+  `spaceman limits waits` and `spaceman account holds`. New events: `fleet.usage_limit.reached` and
+  `fleet.usage_limit.cleared`.
+- Runs waiting for a usage limit to reset are kept alive and protected (ADR-0079 decision 3): a worker or diagnostic run
+  at its limit no longer counts against the space's concurrency limit (it still counts against the node's capacity),
+  gets no terminal notices until the limit clears (its messages wait, then are noticed), and control's idle stop is not
+  armed while control itself is at its limit. Control gets exactly one message when a run reaches its limit and one when
+  the limit clears, written with the change that causes it, never once per report.
+- Usage-limit holds block launches (ADR-0079): a launch or resume on an account (or Harbor Pilot connection or project)
+  that any space holds at a usage limit is refused (429) with the reset time in UTC, or with the next re-check time when
+  the reset is unknown; a refusal writes nothing. When a hold with an unknown reset is due for its re-check, exactly one
+  launch goes through as the probe; the next re-check backs off from 1 h, doubling, up to the keep-alive maximum. A
+  control run that ends at a usage limit is no longer restarted, counted against the restart budget or reported to
+  people, and control auto-start waits for the reset. Two new space limits: `usage_limit_failover` (off by default)
+  lets a launch use another bound account of the same harness without a hold (never a direct account for a space routed
+  through Harbor Pilot), and `usage_limit_keep_alive_max_minutes` (default 360). "Clear now":
+  `POST /spaces/{id}/usage-limits/{limit_id}/clear` (`spaceman limits clear`, run:control) clears only that space's
+  hold and says when other spaces still hold the account; `POST /accounts/{id}/usage-limits/clear`
+  (`spaceman account clear-holds`, account:write) clears every space's holds on the account. Both are audited, and
+  each cleared space's control is told once.
+- Runs at a usage limit are parked and resumed at the reset (ADR-0079 decisions 4–6). A run whose reset is further away
+  than the keep-alive is stopped at once, one still limited after the keep-alive is stopped then, and one that ends, is
+  lost or is swept while at its limit is parked too (control, worker and diagnostic runs). At the reset, SpaceMan
+  resumes it as a new run of the same instance with `--resume` of its session (a fresh session with its original
+  prompt when the space moved node), and its task points at the new run. Control resumes first, then the oldest, at
+  most five every 10 seconds. A wait that can't resume yet (node away, space paused or full, account still held) keeps
+  waiting, and the node's hello or the space's resume brings it forward. After `usage_limit_max_wait_hours` (new
+  space limit, default 168) a worker's task goes back to the queue, ready and unassigned; control is never given up
+  on. Control gets one message per park, resume and release, in place of the run-ended notice, and a parked control
+  isn't auto-started. A task that is finished, cancelled or reassigned ends its run's wait. New endpoints
+  `POST /spaces/{id}/limit-waits/{wait_id}/resume` and `.../release` (`spaceman limits resume|release`, run:control),
+  audited. A hold that clears lets the runs parked under it resume on the next round. A resume whose `--resume` fails
+  before the first turn starts once more in a fresh session. A released task in review stays in review, with only its
+  assignee cleared.
+- Harbor Pilot runs waiting on an exhausted gateway now know roughly when to come back (ADR-0079 decision 9). Central
+  estimates a gateway hold's reset from Harbor Pilot. For a quota exhaustion it takes the earliest reset among the
+  quota board's exhausted accounts (`GET /api/v1/quota/board`, which the service-principal token's `usage.read`
+  already allows). For a blocking budget it takes the budget's period end. It reads Harbor Pilot again every 15
+  minutes, or at once when a subscription on the Harbor Pilot quota template receives `quota.window.recovered`. When
+  the accounts recover or the budget no longer blocks, the hold clears and the parked runs resume. Launches refused
+  meanwhile name the estimate. The board covers every account of the Harbor Pilot installation, not only the ones the
+  space's plan uses, so the time is an estimate: a run may resume early, hit the limit again and be parked again.
+- People are told about long usage-limit waits (ADR-0079 Q5): when an account (or the Harbor Pilot gateway) is held
+  until a reset more than 12 hours away, the space gets one informational human action naming the account, the reset
+  and what waits on it, once per space and limit window. New space limit `usage_limit_notify_after_hours` (0–720,
+  default 12; 0 turns it off). The `usage_limit_*` limits are validated like every limit, and the limits API now lists
+  `hours` among the units.
+- Usage limits in the web UI (ADR-0079): a run at its usage limit shows the limit and its reset time (and "at usage
+  limit" as its state), and a run parked at one says so. The Limits page lists the accounts and gateway references held
+  at a usage limit (other spaces' holds on the same account as "shared", without their details) and the runs waiting
+  for a reset, each with until when, plus "Resume now", "Release" and "Clear" for operators and "Clear in every space"
+  for account admins. Times are shown in the viewer's time zone, with UTC in the tooltip. The usage-limit maximum wait
+  now reads in days and hours on the Limits page.
 - Rich Markdown in every rendered body (inbox items, tasks, human actions, messages and the rest): footnotes, heading
   anchors, highlighted code blocks with a copy button, and Mermaid diagrams in the app's light and dark theme. The
   highlighter and mermaid load only when a body needs them (ADR-0082).

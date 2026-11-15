@@ -508,7 +508,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 			return net.ErrClosed
 		default:
 		}
-		if _, err := svc.applyReport(ctx, s.nodeID, rep); err != nil {
+		if _, err := svc.applyReport(ctx, s.nodeID, s.report(rep)); err != nil {
 			applied = false
 			s.log.Warn("apply hello report", obs.Err(err))
 		}
@@ -524,6 +524,8 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	if err := h.sendReconcile(ctx, s); err != nil {
 		return err
 	}
+	// Runs parked at a usage limit that waited for this node resume now that its leases are granted (ADR-0079).
+	svc.wakeWaitsOnNode(ctx, s.nodeID)
 	// The stale-run sweep's due time depends on which nodes are connected and since when (ADR-0074).
 	svc.wakeDeadlines()
 	// The node learns which of its terminals are taken over before any command (it refuses run.input for them).
@@ -640,6 +642,10 @@ func (h *Hub) toolCall(ctx context.Context, s *session, call proto.ToolCall) {
 	reply(proto.ToolResult{OK: true, Result: out})
 }
 
+// report is a run report from this session as central may use it: fields of a later minor than the session negotiated
+// are dropped (a usage limit below minor 12, ADR-0079), whatever the node sent.
+func (s *session) report(rep proto.RunReport) proto.RunReport { return rep.ForMinor(s.minor) }
+
 func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error {
 	svc := h.svc
 	switch env.Type {
@@ -680,6 +686,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if err := env.Decode(&rep); err != nil {
 			return err
 		}
+		rep = s.report(rep)
 		fenced, err := svc.applyReport(ctx, s.nodeID, rep)
 		if err == nil && fenced && !ended(rep.State) {
 			// A run of an older generation (or unknown to central) is still running on the node: stop it.
