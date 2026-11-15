@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -187,7 +186,7 @@ func (h *Handler) taskCard(t queueTask, s spaceRef) reply {
 		fmt.Fprintf(&b, "\nPlace in the queue: %d", t.Position)
 	}
 	// Reasons, blocker notes and waiting entries are free text from agents or people: content, full level only.
-	full := h.o.Space(s.ID).ContentLevel == settings.ContentFull
+	full := h.full(s)
 	if t.StatusReason != "" && full {
 		fmt.Fprintf(&b, "\nReason: %s", clean(t.StatusReason, 200))
 	}
@@ -245,7 +244,7 @@ func (h *Handler) taskCard(t queueTask, s spaceRef) reply {
 // sendTaskBody sends the objective, acceptance criteria and result as plain text, never as markup, and only where the
 // space's content level is full.
 func (h *Handler) sendTaskBody(ctx context.Context, l updates.Link, s spaceRef, t queueTask) {
-	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
+	if !h.full(s) {
 		h.send(ctx, l.ChatID, reply{text: "The task text isn't shown in chat for this space. Open the task in the app to read it."})
 		return
 	}

@@ -25,6 +25,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted
   or closed is created again once; if that fails, or the chat has topics off for the bot, the message goes to the main
   chat. Topics only choose where a message appears; who may receive it is unchanged.
+- Telegram group binding (ADR-0083, TG-13-2): `put-space-telegram` takes `group_chat_id` to bind a forum supergroup to a
+  space (`0` unbinds; left out keeps it), for space admins only (`telegram_group:write`). The bot must be a member of a
+  supergroup with topics (422), a group serves one space (409), and `spaceman telegram` gets `--group-chat-id`. In a
+  group, refusals and answers to button taps are alerts only the tapper sees, a refused command gets one short reply
+  that shows nothing, forms link to the Mini App with a `t.me` direct link (Telegram refuses app buttons in groups), and
+  posts to a group take the `send_limits.group_per_minute` limit. The bot stays in a forum supergroup until it is bound
+  (it still leaves chats that can never be bound) and leaves a group that loses its binding.
+- Telegram group mode authorization (ADR-0083, TG-13-1): in a forum supergroup
+  bound to a space, every button tap and command acts as the tapping person's own linked account and grants, never the
+  binder's or the group's. Members without a link, or whose account can't use the space, are refused; nothing outside the
+  bound space is reachable; forms and confirmations belong to whoever opened them; enforced approvals are never decided
+  in a group. Only summaries are ever posted to a group, whatever the space's content level, and files never are.
 - Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
   App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
   muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App

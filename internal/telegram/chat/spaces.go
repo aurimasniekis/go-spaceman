@@ -19,6 +19,9 @@ type spaceRef struct {
 	State string `json:"state"`
 
 	PauseMode string `json:"pause_mode"`
+
+	// group marks a space shown in a bound group: only its summary may be sent (Handler.full).
+	group bool
 }
 
 var spaceIDRe = regexp.MustCompile(`^spc_[0-9a-z]{26}$`)
@@ -55,12 +58,18 @@ func (h *Handler) visible(spaceID string) bool {
 }
 
 // space loads one space for the user: hidden from Telegram, unreadable or missing all give ok=false.
+// In a bound group only the bound space exists (group.go).
 func (h *Handler) space(ctx context.Context, c caller, id string) (spaceRef, result, bool) {
-	if !h.visible(id) {
+	g, inGroup := groupOf(ctx)
+	if !h.visible(id) || inGroup && id != g.SpaceID {
 		return spaceRef{}, result{status: http.StatusNotFound}, false
 	}
 	var s spaceRef
 	r := c.get(ctx, "/spaces/"+id, &s)
+	if r.ok() && s.ID != id {
+		r.status = http.StatusNotFound
+	}
+	s.group = inGroup
 	return s, r, r.ok()
 }
 
@@ -84,14 +93,17 @@ func (h *Handler) resolve(ctx context.Context, c caller, ref string) (spaceRef, 
 }
 
 // setCurrent makes spaceID the link's current space. Work done in a space's topic leaves it alone: the topic already
-// says which space, and a note written there must not redirect what the user writes in the main chat.
+// says which space, and a note written there must not redirect what the user writes in the main chat. Work done in a
+// bound group leaves it alone too: the group is pinned to its space and never changes the member's private choice.
 func (h *Handler) setCurrent(ctx context.Context, linkID, spaceID string) {
-	if pinnedOf(ctx) != "" {
+	if _, inGroup := groupOf(ctx); inGroup || pinnedOf(ctx) != "" {
 		return
 	}
 	h.setCurrentNow(linkID, spaceID)
 }
 
+// setCurrentNow sets the current space unconditionally. Only an explicit /space calls it, which a group refuses
+// before it gets here (and cmdSpace checks again).
 func (h *Handler) setCurrentNow(linkID, spaceID string) {
 	h.mu.Lock()
 	h.current[linkID] = spaceID
@@ -105,7 +117,18 @@ func (h *Handler) currentSpace(linkID string) string {
 }
 
 // target picks the space a command works on: the one named, else the one of the topic written in, else the chosen one, else the only visible one.
+// In a bound group it is always the bound space (a ref naming another space is refused).
 func (h *Handler) target(ctx context.Context, c caller, l updates.Link, ref string) (spaceRef, string) {
+	if g, ok := groupOf(ctx); ok {
+		s, r, ok := h.space(ctx, c, g.SpaceID)
+		switch {
+		case !ok:
+			return spaceRef{}, failText(r)
+		case ref != "" && ref != s.ID && !strings.EqualFold(ref, s.Slug) && !strings.EqualFold(ref, s.Name):
+			return spaceRef{}, TextUnavailable
+		}
+		return s, ""
+	}
 	if ref != "" {
 		if s, ok := h.resolve(ctx, c, ref); ok {
 			return s, ""
@@ -207,7 +230,9 @@ func (h *Handler) cmdSpace(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrentNow(l.ID, s.ID) // an explicit /space moves it even from a topic
+	if _, inGroup := groupOf(ctx); !inGroup {
+		h.setCurrentNow(l.ID, s.ID) // an explicit /space moves it even from a topic, never from a group
+	}
 	h.send(ctx, l.ChatID, h.overview(ctx, c, s))
 }
 

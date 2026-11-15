@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -421,7 +420,7 @@ func (h *Handler) messageCard(m opMessage, s spaceRef) reply {
 	fmt.Fprintf(&b, "\nFrom: %s (%s) · %s", orDash(clean(m.FromLabel, 80)), clean(m.FromKind, 20), clean(m.Kind, 20))
 	fmt.Fprintf(&b, "\nState: %s", clean(m.State, 20))
 	// The resolution is free text written by a person or an agent: content, shown only at the full level.
-	if m.Resolution != "" && h.o.Space(s.ID).ContentLevel == settings.ContentFull {
+	if m.Resolution != "" && h.full(s) {
 		fmt.Fprintf(&b, "\nResolution: %s", clean(m.Resolution, 200))
 	}
 	fmt.Fprintf(&b, "\nSpace: %s", s.title())
@@ -537,7 +536,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 // sendMessageBody sends a message's body as plain text (content from an agent, not instructions), only where the
 // space's content level is full.
 func (h *Handler) sendMessageBody(ctx context.Context, l updates.Link, s spaceRef, m opMessage) {
-	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
+	if !h.full(s) {
 		h.send(ctx, l.ChatID, reply{text: "The message text isn't shown in chat for this space. Open it in the app to read it."})
 		return
 	}
@@ -573,7 +572,9 @@ func (h *Handler) qrReply(ctx context.Context, m *botapi.Message, l updates.Link
 			return false
 		}
 		sp, id, link, found := h.o.ResolveMessage(ctx, m.Chat.ID, m.ReplyToMessage.MessageID)
-		if !found || link != l.ID {
+		// A card in a bound group is the group's: the replier acts as their own link whichever link it was sent to, and
+		// Handler.space below admits only the bound space (the same rule as a tap on a card, humanCallback).
+		if !found || l.Group == nil && link != l.ID {
 			return false
 		}
 		p = replyPrompt{linkID: l.ID, spaceID: sp, messageID: id}

@@ -89,7 +89,8 @@ type Message struct {
 	// ChatID is the chat the call writes to; 0 for a call without a chat (answerCallbackQuery), which takes only a
 	// global token and is never limited to one call in flight.
 	ChatID int64
-	// Group is set for a group or supergroup (20/min bucket instead of the private-chat one).
+	// Group is set for a group or supergroup (group_per_minute bucket instead of the private-chat one). A negative ChatID
+	// counts as a group whether it is set or not.
 	Group bool
 	// Priority is the class (required).
 	Priority Priority
@@ -345,6 +346,9 @@ func (s *Sender) Enqueue(m Message) error {
 	if !m.Priority.valid() {
 		return fmt.Errorf("telegram sender: invalid priority %d", m.Priority)
 	}
+	// Telegram numbers private chats with positive IDs and groups, supergroups and channels with negative ones, so the
+	// group bucket (20 a minute) applies to every one of them whatever the caller said.
+	m.Group = m.Group || m.ChatID < 0
 	var done []func()
 	err := func() error {
 		s.mu.Lock()

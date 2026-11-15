@@ -202,6 +202,14 @@ func (svc *Service) hostMismatch(stored string) string {
 	return ""
 }
 
+// Username is the bot's username without "@" from the last getMe ("" while unknown). It makes no call.
+func (svc *Service) Username() string {
+	rt := &svc.run
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.username
+}
+
 // MiniAppBot is the running bot's ID with the key its Mini App initData is signed with (miniapp.SecretKey of its
 // token; the token itself stays here), or false while no bot runs or it has no Mini App host.
 func (svc *Service) MiniAppBot() (miniapp.Bot, bool) {

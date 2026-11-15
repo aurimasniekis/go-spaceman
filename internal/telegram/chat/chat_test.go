@@ -364,6 +364,7 @@ type env struct {
 	files        []sentFile
 	allow        func(string, updates.Kind) bool
 	threadSpace  map[int]string // topic thread -> space it belongs to (what topics.Manager.SpaceOf would answer)
+	threadAsked  atomic.Int32   // SpaceOfThread calls
 	hideA        atomic.Bool    // spA stops being visible to Telegram
 	apConfirm    atomic.Bool    // spA allows enforced approvals in chat (enforced_approvals = confirm)
 	arms         []string       // ArmApproval calls: "link space action outcome version"
@@ -472,10 +473,12 @@ func newEnv(t *testing.T) *env {
 			return s
 		},
 		SpaceOfThread: func(_ context.Context, _ string, thread int) (string, bool) {
+			e.threadAsked.Add(1)
 			id, ok := e.threadSpace[thread]
 			return id, ok
 		},
-		Bot: func() Bot { return recBot{Client: bc, e: e} },
+		Bot:         func() Bot { return recBot{Client: bc, e: e} },
+		BotUsername: func() string { return "spaceman_test_bot" },
 		Allow: func(id string, k updates.Kind) bool {
 			return e.allow == nil || e.allow(id, k)
 		},
