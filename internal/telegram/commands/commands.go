@@ -14,8 +14,8 @@ type Spec struct {
 	Group bool
 }
 
-// Table lists the commands in menu order.
-var Table = []Spec{
+// table lists the commands in menu order. It is unexported so no caller can change it; All returns a copy.
+var table = []Spec{
 	{"needs", "What needs you", false},
 	{"needsyou", "", true}, // the long name of /needs, kept out of the menu
 	{"inbox", "Inbox of the current space", true},
@@ -30,10 +30,13 @@ var Table = []Spec{
 	{"unlink", "Unlink this Telegram account", false}, // handled by the dispatcher before any link is looked up
 }
 
+// All returns a copy of the table, in menu order.
+func All() []Spec { return append([]Spec(nil), table...) }
+
 // Menu is the command menu of private chats.
 func Menu() []botapi.BotCommand {
 	var out []botapi.BotCommand
-	for _, c := range Table {
+	for _, c := range table {
 		if c.Desc != "" {
 			out = append(out, botapi.BotCommand{Command: c.Name, Description: c.Desc})
 		}
@@ -43,7 +46,7 @@ func Menu() []botapi.BotCommand {
 
 // Lookup finds a command by its lower-case name.
 func Lookup(name string) (Spec, bool) {
-	for _, c := range Table {
+	for _, c := range table {
 		if c.Name == name {
 			return c, true
 		}

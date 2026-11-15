@@ -15,7 +15,7 @@ const (
 	TextOpenApp   = "Open SpaceMan in Telegram."
 )
 
-// privateHandlers answers each command of commands.Table in a private chat; groupHandlers each one with Group set.
+// privateHandlers answers each command of commands.All in a private chat; groupHandlers each one with Group set.
 // Both are checked against the table (commands_test.go).
 var (
 	privateHandlers map[string]func(h *Handler, ctx context.Context, l updates.Link, arg string)

@@ -21,7 +21,7 @@ func TestMenuCommandsHaveHandlers(t *testing.T) {
 			t.Errorf("menu command %q is not lower-case", m.Command)
 		}
 	}
-	for _, c := range commands.Table {
+	for _, c := range commands.All() {
 		if privateHandlers[c.Name] == nil {
 			t.Errorf("/%s has no private handler", c.Name)
 		}

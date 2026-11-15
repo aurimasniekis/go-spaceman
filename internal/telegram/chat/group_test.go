@@ -374,6 +374,10 @@ func TestGroupEphemeralReplies(t *testing.T) {
 	e.gsay(m, "/start")
 	e.gsay(m, "/unlink")
 	e.gsay(m, "/nonsense")
+	// An authorized member's private-only commands are silent too.
+	e.gsay(m, "/settings")
+	e.gsay(m, "/help")
+	e.gsay(m, "/needs")
 	if len(e.group()) != n {
 		t.Fatalf("a command that isn't the bot's was answered: %d messages, had %d", len(e.group()), n)
 	}
