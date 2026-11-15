@@ -555,3 +555,45 @@ func TestGroupForumTopicRepliesInTopicAndLeavesPrivateChatAlone(t *testing.T) {
 		t.Fatalf("private /inbox answered %q in thread %d", got.Text, got.MessageThreadID)
 	}
 }
+
+// send applies exactly one thread source: an explicit thread or reply target wins over the update's topic, which
+// applies only when the reply names neither. (Mutants: threadOf overriding r.thread, or added to a reply target.)
+func TestSendUsesOneThreadSource(t *testing.T) {
+	e := newEnv(t)
+	ctx := withThread(context.Background(), 5)
+	cases := []struct {
+		name string
+		r    reply
+		want int
+	}{
+		{"update's topic", reply{text: "a"}, 5},
+		{"explicit thread", reply{text: "b", thread: 9}, 9},
+		{"reply target only", reply{text: "c", replyTo: 1}, 0},
+		{"reply target and thread", reply{text: "d", replyTo: 1, thread: 9}, 9},
+	}
+	e.srv.Know(botapi.Message{MessageID: 1, Chat: botapi.Chat{ID: groupID, Type: botapi.ChatSupergroup}})
+	for _, c := range cases {
+		e.h.send(ctx, groupID, c.r)
+		e.mu.Lock()
+		p := e.sent[len(e.sent)-1]
+		e.mu.Unlock()
+		if p.MessageThreadID != c.want {
+			t.Errorf("%s: sent in thread %d, want %d", c.name, p.MessageThreadID, c.want)
+		}
+		if (c.r.replyTo != 0) != (p.ReplyParameters != nil) {
+			t.Errorf("%s: reply parameters %+v", c.name, p.ReplyParameters)
+		}
+	}
+}
+
+// Defense in depth: handleGroup refuses /space, but cmdSpace reached with a group's context still never moves the
+// member's private current space. (Mutant: cmdSpace calling setCurrentNow in a group.)
+func TestCmdSpaceInAGroupContextKeepsPrivateCurrent(t *testing.T) {
+	e := newEnv(t)
+	e.say("/space " + spS)
+	m := member(e.l.ID, spViewer)
+	e.h.cmdSpace(withGroup(context.Background(), *m.Group), m, spViewer)
+	if cur := e.h.currentSpace(e.l.ID); cur != spS {
+		t.Fatalf("the private current space is %q, want S", cur)
+	}
+}
