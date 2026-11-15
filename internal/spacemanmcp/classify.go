@@ -98,13 +98,17 @@ var Table = map[string]Entry{
 	"list-pending-human-actions": {Read, rFiltered},
 
 	// Accounts (credentials for harnesses).
-	"create-account":      {Dangerous, rSecret},
-	"update-account":      {Dangerous, rSecret},
-	"delete-account":      {Dangerous, rSecret},
-	"get-account":         {Read, rRead},
-	"list-accounts":       {Read, rRead},
-	"list-space-accounts": {Read, rRead},
-	"set-space-accounts":  {Dangerous, "chooses which credentials a space's runs receive"},
+	"create-account": {Dangerous, rSecret},
+	"update-account": {Dangerous, rSecret},
+	"delete-account": {Dangerous, rSecret},
+	"get-account":    {Read, rRead},
+	"list-accounts":  {Read, rRead},
+	// An account's usage-limit holds (ADR-0079): identifiers, kinds and times only.
+	"list-account-usage-limits": {Read, rRead},
+	// Clearing an account's holds in every space lets every space launch on it again (account:write).
+	"clear-account-usage-limits": {Dangerous, "lets every space using the account launch on it again"},
+	"list-space-accounts":        {Read, rRead},
+	"set-space-accounts":         {Dangerous, "chooses which credentials a space's runs receive"},
 
 	// Admin.
 	"get-break-glass":     {Read, rRead},
@@ -375,15 +379,22 @@ var Table = map[string]Entry{
 	"save-space-role":      {Dangerous, rSpaceRole},
 
 	// Runs.
-	"get-run":        {Read, rRead},
-	"launch-run":     {Write, rLaunch},
-	"list-runs":      {Read, rRead},
-	"stop-run":       {Write, rSpaceWrite},
-	"start-takeover": {Excluded, rTakeover},
-	"end-takeover":   {Excluded, rTakeover},
-	"renew-takeover": {Excluded, rTakeover},
-	"send-input":     {Excluded, rTakeover},
-	"takeover-input": {Excluded, rTakeover},
+	"get-run":    {Read, rRead},
+	"launch-run": {Write, rLaunch},
+	"list-runs":  {Read, rRead},
+	// Usage-limit holds and parked runs' waits (ADR-0079): identifiers, kinds and times only.
+	"list-space-usage-limits": {Read, rRead},
+	"list-space-limit-waits":  {Read, rRead},
+	// Clearing a space's own hold lets its launches through; a wrong clear only costs a refused launch at the limit.
+	"clear-space-usage-limit": {Write, rSpaceWrite},
+	"resume-limit-wait":       {Write, rSpaceWrite},
+	"release-limit-wait":      {Write, rSpaceWrite},
+	"stop-run":                {Write, rSpaceWrite},
+	"start-takeover":          {Excluded, rTakeover},
+	"end-takeover":            {Excluded, rTakeover},
+	"renew-takeover":          {Excluded, rTakeover},
+	"send-input":              {Excluded, rTakeover},
+	"takeover-input":          {Excluded, rTakeover},
 	// Resizing a run's terminal needs terminal:takeover (ADR-0075): it is a person's at the keyboard too.
 	"set-terminal-size":   {Excluded, rTakeover},
 	"clear-terminal-size": {Excluded, rTakeover},

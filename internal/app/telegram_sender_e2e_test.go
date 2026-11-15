@@ -63,7 +63,7 @@ func TestTelegramSendLimitsReachTheSender(t *testing.T) {
 	}
 
 	// 4. A reconfiguration replaces the sender; the new one has the newest limits.
-	expect(t, root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling", "miniapp_host": "tg.example.com"}, "If-Match", `"1"`), 200)
+	expect(t, root.do("PUT", "/telegram/bot", map[string]any{"enabled": true, "mode": "polling"}, "If-Match", `"1"`), 200)
 	second := h.c.TelegramBot.Sender()
 	// The first sender was stopped, not just dropped: its Run returned, so it refuses work.
 	late := sender.Message{ChatID: 1, Priority: sender.Interactive, Send: func(context.Context, *botapi.Client) error { return nil }}

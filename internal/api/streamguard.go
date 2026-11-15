@@ -20,6 +20,17 @@ const (
 // DefaultStreamRevalidate is the periodic re-authorization interval of open streams when none is configured.
 const DefaultStreamRevalidate = 30 * time.Second
 
+// DefaultStreamHeartbeat is how often an idle live stream sends a heartbeat when none is configured. It stays far
+// below the roughly 100 s after which a proxy in front of central drops an idle connection.
+const DefaultStreamHeartbeat = 15 * time.Second
+
+func (d *Deps) streamHeartbeat() time.Duration {
+	if d.StreamHeartbeat <= 0 {
+		return DefaultStreamHeartbeat
+	}
+	return d.StreamHeartbeat
+}
+
 // streamGuard keeps an open stream's authorization current. It re-authorizes the stream immediately when a committed
 // revocation may affect it (auth.StreamWatch) and at least once every StreamRevalidate as the backstop for expiry,
 // idle timeout and revocations made outside this process. One re-check is a principal lookup (a handful of indexed

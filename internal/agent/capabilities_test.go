@@ -326,14 +326,45 @@ func TestUnmanagedCapabilitiesRedetected(t *testing.T) {
 		}
 	}
 	stub("2.1.5")
+	var detecting atomic.Int32 // detections in flight
+	realDetect := detectCapabilities
+	detectCapabilities = func(a *Agent, ctx context.Context) proto.Capabilities {
+		detecting.Add(1)
+		defer detecting.Add(-1)
+		return realDetect(a, ctx)
+	}
+	t.Cleanup(func() { detectCapabilities = realDetect })
 	a, _ := ccAgent(t, dir, nil, func(o *Options) { o.HarnessBinaries[harness.KindClaude] = bin })
 	fc := newWSCentral(t, proto.MinorHarnessVersion)
 	clk := runAgent(t, a, fc)
 	if h := claudeEntry(t, fc.next(t, proto.TypeHello)); h.Version != "2.1.5" || h.Path != bin || h.Managed {
 		t.Fatalf("hello %+v", h)
 	}
+	// Detections can overlap by design (a hello's and capsLoop's), and under -race on a loaded runner one can still be
+	// running (and about to report) when the hello arrives. Wait for every detection to finish before the binary changes, so that any report still on
+	// its way carries what the first detections saw (2.1.5), never the new binary. Without this a late detection
+	// ran the new stub and reported 2.1.6 before the interval, failing the "not yet" check below.
+	waitUntil(t, "startup detections finished", func() bool { return detecting.Load() == 0 })
 	stub("2.1.6")
-	fc.none(t, proto.TypeNodeCapabilities, 100*time.Millisecond)
+	// Not yet: nothing may report the new version before the interval has passed (a leftover report of 2.1.5 is fine).
+	quiet := time.After(100 * time.Millisecond)
+quiet:
+	for {
+		select {
+		case env := <-fc.msgs:
+			if env.Type == proto.TypeNodeCapabilities {
+				var nc proto.NodeCapabilities
+				if err := env.Decode(&nc); err != nil {
+					t.Fatal(err)
+				}
+				if h := claudeEntry(t, nc.Capabilities); h.Version == "2.1.6" {
+					t.Fatalf("the new binary was reported before the interval: %+v", h)
+				}
+			}
+		case <-quiet:
+			break quiet
+		}
+	}
 	clk.Advance(proto.NodeCapabilitiesInterval)
 	if h := claudeEntry(t, fc.next(t, proto.TypeNodeCapabilities)); h.Version != "2.1.6" || !h.Available || h.Managed {
 		t.Fatalf("re-detected %+v", h)

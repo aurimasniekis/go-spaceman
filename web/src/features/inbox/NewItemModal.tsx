@@ -1,7 +1,7 @@
 import { Button, Group, JsonInput, Modal, SegmentedControl, Select, SimpleGrid, Stack, Text, TextInput } from '@mantine/core'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, idempotencyKey, unwrap, type InboxItem } from '@/api/client'
 import { keys } from '@/api/queries'
 import { Composer } from '@/components/composer/Composer'
@@ -14,11 +14,22 @@ const URGENCIES = [
   { value: 'urgent', label: 'Urgent' },
 ]
 
+/** Text to start a new item with (another page's "Send as inbox item"). */
+export interface NewItemPrefill {
+  title?: string
+  /** Markdown. */
+  body?: string
+}
+
 /**
  * Adds an operator item to a space's inbox (SM-UI-005: task entry belongs in the inbox). Markdown bodies use the
  * composer, with pasted, dropped or attached files; JSON bodies are validated before sending.
  */
-export function NewItemModal({ spaceId, opened, onClose, onCreated }: { spaceId: string; opened: boolean; onClose: () => void; onCreated: (it: InboxItem) => void }) {
+export function NewItemModal({ spaceId, opened, onClose, onCreated, prefill }: {
+  spaceId: string; opened: boolean; onClose: () => void; onCreated: (it: InboxItem) => void
+  /** Replaces the dialog's text whenever a new prefill object is passed. */
+  prefill?: NewItemPrefill
+}) {
   const qc = useQueryClient()
   const [error, setError] = useState('')
   const [key, setKey] = useState(idempotencyKey)
@@ -47,6 +58,16 @@ export function NewItemModal({ spaceId, opened, onClose, onCreated }: { spaceId:
       }
     },
   })
+
+  // A prefill replaces the text (kept out of defaultValues, which a later reset would bring back).
+  useEffect(() => {
+    if (!prefill) return
+    form.setFieldValue('contentType', 'text/markdown')
+    form.setFieldValue('title', prefill.title ?? '')
+    form.setFieldValue('markdown', prefill.body ?? '')
+    form.setFieldValue('attachmentIds', [])
+    setComposerKey((k) => k + 1)
+  }, [prefill, form])
 
   return (
     <Modal opened={opened} onClose={onClose} title="New inbox item" size="xl">
@@ -78,7 +99,8 @@ export function NewItemModal({ spaceId, opened, onClose, onCreated }: { spaceId:
                     value={f.state.value} onChange={f.handleChange} onBlur={f.handleBlur} />}
                 </form.Field>
               ) : (
-                <Composer key={composerKey} spaceId={spaceId} ariaLabel="Item text" autoFocus onSubmit={() => void form.handleSubmit()}
+                // The modal unmounts its content while closed: the editor starts from the form's text (an unsent draft, or the prefill).
+                <Composer key={composerKey} spaceId={spaceId} initialMarkdown={form.state.values.markdown} ariaLabel="Item text" autoFocus onSubmit={() => void form.handleSubmit()}
                   onChange={(v) => { form.setFieldValue('markdown', v.markdown); form.setFieldValue('attachmentIds', v.attachmentIds) }} />
               )
             }

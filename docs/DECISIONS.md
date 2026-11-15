@@ -352,7 +352,8 @@
     for every space. The tools needed to ask and talk to people can never be gated.
   - A gated call without a matching approval returns at once with an approval request: an `approvals` row and a human
     action of type `approval` (created with a dedup key, so a crash between the two is repaired on the next call). The
-    agent is notified of the decision and calls again.
+    agent is notified of the decision and calls again. The `approval:` dedup namespace is reserved for this service,
+    and an action under it that the service did not write is never linked (ADR-0087).
   - An approval matches only the same operation, resource (MCP servers by ID), space, requesting **run** and digest:
     SHA-256 over the operation, resource and canonical JSON arguments (sorted keys, numbers kept exactly).
   - Deciding needs `approval:decide` (API). Before every execution the approver is checked again (user active, API
@@ -4172,7 +4173,7 @@
 
 ### ADR-0078 — Changes must not fan out: no-op run reports, lean run lists, a live change feed, coalesced and cached UI queries, progress-bounded responses
 - **Status:** Accepted, 2026-11-13 (incident: nodes lost their connection every 15 s after central restarted while a
-  web UI tab was open; the operator stayed on v0.1.1 until the fix).
+  web UI tab was open; the operator stayed on v0.1.1 until the fix). Shipped in v0.1.3 (2026-11-13).
 - **Context (code, at v0.1.2; v0.1.1 behaves the same):**
   - A node's hello reports every run in its journal, ended ones included; the journal is never pruned. Central applied
     each report in its own write transaction, always bumping the run's version and writing a change-feed entry, so a
@@ -4212,6 +4213,28 @@
   runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
   reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
 - **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
+- **Follow-up (journal prune and hello slicing, 2026-11-14):**
+  - No protocol minor bump and no journal migration. Central already answers a hello with a reconcile that lists the
+    node's runs it still considers active, after it applied the hello's reports. The agent treats an ended run it sent
+    and that central no longer lists as acknowledged (memory only; after a restart nothing is acknowledged until the
+    next connection went through the exchange).
+  - The hello carries live and adoptable runs, plus ended runs not yet acknowledged that ended within 24 hours. Older
+    unacknowledged ended runs follow the welcome as `run.report` in slices of 100 every 250 ms, outside the connect
+    deadline. Acknowledged ended runs are not sent at all, so the hello is bounded by live and recent runs.
+  - The journal deletes an ended run after `journal_retention` (default 30 days, never below the 30-day pin window of
+    ADR-0077, at most 1 year) only when central acknowledged its final state, its recording is fully acknowledged and no
+    recorder or kept-back records remain, no transcript upload is unfinished and no dream's evidence positions refer to
+    it. Live and adoptable runs are never deleted. A run's recording files stay on disk.
+  - Not covered: central's apply of a hello still costs one read per reported run, so the hello of a node that was offline
+    with many unacknowledged runs is as large as before once, then small.
+  - An ended run that central's reconcile lists as active is unacknowledged again (the agent forgets that it sent it) and
+    its final state is reported at once, whatever the agent counted before: a central restored from a backup, a
+    follow-up report lost with the connection or one central failed to apply would otherwise never be resent, and the
+    stale sweeper (ADR-0074) would end the run `lost` two minutes after the reconcile and fence its real final state.
+  - Consequences: restoring central from a backup older than the retention loses the runs pruned since: they are swept
+    `lost` if central still lists them, and their recordings are not shipped again. Every agent restart resends all
+    ended runs once as follow-up (acknowledgements are memory only). Pruning runs only on the reconcile, once per
+    connection, not on a timer. Recording directories of pruned runs are not garbage-collected yet (backlog).
 
 ### ADR-0080 — The web terminal's scrollback is a byte limit: 24 MiB, at least 10,000 rows at 160 columns
 - **Status:** Accepted, 2026-11-13 (follow-up to ADR-0076's side finding).
@@ -4248,6 +4271,197 @@
   `e2e/terminal-scrollback.spec.ts` checks at least 10,000 rows in a live terminal at 160×48 in Chromium (it fails
   with the old value: 485 rows).
 - **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
+
+### ADR-0081 — A terminal shows the end of its recording first: tail catch-up with a mode prelude, earlier output on demand
+- **Status:** Accepted, 2026-11-13 (follows ADR-0076 and ADR-0080). No recording format change, no node protocol
+  change, no migration.
+- **Context (code, at v0.1.3 plus ADR-0080):**
+  - A live terminal's catch-up streamed the run's whole stored recording from seq 0, and the page applied it in slices
+    (ADR-0076). The tab stayed responsive, but a long run (tens of MB) downloaded and replayed everything before the
+    current screen was right: slow on a phone, and wasted bandwidth.
+  - Central read the whole recording into memory for each viewer's catch-up (`Recordings.Read`), and once per replay
+    page.
+  - Terminal output can't be read from the middle without the state before it. So the question was whether
+    recordings have natural checkpoints. Five real Claude Code recordings on a node (8 to 16 MB of output each) were
+    replayed in a reference emulator (xterm headless), and each final screen was compared with one drawn from only
+    the tail, at 25, 50, 75, 90 and 100% of each recording:
+    - **No usable clears.** One ED2 at the start, no ED3, no RIS.
+    - **Sync frames don't help.** Nearly every record opens a synchronized update (`CSI ? 2026 h`), but the classic
+      renderer repaints only its prompt area: a tail of quiet stretches holds the spinner and none of the text above
+      it.
+    - **The one exact checkpoint is rare.** The repaint after each recorder reattach (herdr-core's first paint, a
+      `gap` record followed by a reset of modes and the visible screen).
+  - Results of the comparison:
+    - **Classic renderer** (which SpaceMan sets with `tui: "default"`, ADR-0064): **1 MiB of tail drew the same 48 rows
+      as the whole recording at every point**. 256 KiB was wrong at about a third of them; 64 KiB at nearly all.
+    - **Modes matter.** A run that left the alternate screen at its end was drawn wrong from the tail, until the
+      DEC private modes in effect before it were restored.
+    - **The full-screen renderer** (alternate screen, differential repaint): 43–45 of 48 rows. Rows it never repaints,
+      such as the prompt's borders and the status line, are in no tail.
+- **Options considered:**
+  - (a) Snapshots in the recording (screen and modes, e.g. a periodic herdr-core first paint): exact for any program,
+    but a new record kind, a node change and a protocol minor. **Recorded as the follow-up for the full-screen
+    renderer; not built.**
+  - (b) **Tail catch-up with a mode prelude: chosen.** It needs no format or protocol change, and the measurements show
+    it is exact for the renderer SpaceMan runs.
+  - (c) Replay seeks use the same tail.
+- **Decision:**
+  - **Server** (`internal/recording`, `internal/api`):
+    - `ScanSegments` reads a recording one record at a time. `TailSegments` keeps only a window of the last N bytes of
+      output (at least one record, at most `MaxTailBytes` = 16 MiB). Records leaving the window pass through a
+      `ModeTracker`, which follows `CSI ? Pm h/l` (split across records too) and RIS for an allowlist: cursor keys (1),
+      origin (6), autowrap (7), cursor visibility (25), the alternate screens (47, 1047, 1049), mouse reporting
+      (1000–1006, 1015) and bracketed paste (2004).
+    - `GET …/terminal?tail=<bytes>` applies only to a fresh catch-up (no `after`, no `Last-Event-ID`). It first sends
+      an `event: tail` with `{from, skipped_bytes, cols, rows, modes[], gaps, truncated}` (what the output before the
+      tail left), then the tail's records, then live output. Reconnects resume after the last record, as before.
+    - `GET …/recording?tail=<bytes>` returns the same tail as one page, with `tail` set.
+    - **A tail starts at a character.** The tracker follows every CSI and string sequence (OSC, DCS, APC, PM, SOS) to
+      its end. When the cut falls inside one, the rest of it goes through the tracker (a mode it completes counts)
+      and is cut from the tail, and so are UTF-8 continuation bytes of a character that began before it. Replay does
+      the same (`ReplayIndex.tail`).
+    - Catch-ups without a tail, gap re-reads and plain pages now stream: a page keeps only its own records, and its
+      read stops after the page (its `gaps` cover the range read). `httpguard` (ADR-0078) still bounds writes to a
+      client that stops reading.
+    - **Bounded concurrency.** Every read of a stored recording (a terminal's catch-up or gap re-read, a recording
+      page or tail) takes one of `http.catch_up_concurrency` slots (default 8). It waits up to `http.catch_up_wait`
+      (default 5 s), then gets 503 with `Retry-After`; it never waits without bound. The live terminal reopens a
+      refused stream with back-off (a browser never retries an `EventSource` that got an error status), and replay
+      asks again for a refused page.
+  - **Live terminal** (`web/src/features/terminal`):
+    - Asks for a 1 MiB tail (`TAIL_BYTES`). It applies the `tail` event as records with seq 0 (size, the mode prelude,
+      gaps), then the tail, still in #37's slices.
+    - **Earlier output:** when the viewer is at the top of the scrollback (or the scrollback is empty) and output was
+      left out, it offers **Load earlier output**. That reconnects with 4× the tail: 1, then 4, then 16 MiB, and after
+      16 MiB the whole recording through the streamed, untailed path. It redraws on a clean terminal while the old
+      picture stays (`holdDrawing`), then returns the viewer to the lines they were reading.
+    - It stops offering once the scrollback holds `scrollbackRows(cols)` rows (ADR-0080): the terminal could not keep
+      earlier output anyway, and Replay has all of it.
+  - **Replay:**
+    - Fetches the tail first and draws the run's last screen from it. The full record list then loads page by page for
+      play and seeking, and isn't drawn again when it ends in the same record.
+    - A seek draws at most 1 MiB of output before its position, after the size and modes there (`ReplayIndex`: mode
+      checkpoints every 512 records, indexed a slice at a time), instead of everything from the start.
+  - **Compatibility:** only optional fields are added to the API.
+    - An older UI sends no `tail` and gets the whole recording as before.
+    - This UI against an older central gets no `tail` event or field, and draws the whole recording as before.
+    - Existing recordings are read unchanged.
+- **Measurements:** see the table below (`e2e/terminal-tail.spec.ts`, `SM_E2E_TAIL_MEASURE=1`).
+  The table shows time from navigation until the end of the output is on screen, and bytes received by then. It
+  covers a running run (live) and a finished one (replay). Each run is Claude-like output from the stub's `/redraw`:
+  about 5 MB and 22 MB, i.e. 7,000 and 31,000 repaints. Each measurement uses a fresh browser context in headless
+  Chromium on Linux, with central on the same machine, 2026-11-13. Before is the base of this change (ADR-0080) with
+  the shipping fix below applied, so that its central had the whole recording.
+
+  | Output | View | Device | Before: screen, received | After: screen, received |
+  |---|---|---|---|---|
+  | 5 MB | live | desktop 1× | 1.1 s, 6.7 MB | 0.9 s, 1.4 MB |
+  | 5 MB | live | desktop 4× CPU | 5.1 s, 6.7 MB | 3.6 s, 1.4 MB |
+  | 5 MB | live | phone 390 px, 4× | 5.2 s, 6.7 MB | 3.4 s, 1.4 MB |
+  | 5 MB | replay | desktop 1× | 1.0 s, 6.7 MB | 1.2 s, 8.1 MB¹ |
+  | 5 MB | replay | desktop 4× | 5.2 s, 6.7 MB | 4.0 s, 8.1 MB¹ |
+  | 5 MB | replay | phone 390 px, 4× | 5.1 s, 6.7 MB | 3.9 s, 8.1 MB¹ |
+  | 22 MB | live | desktop 1× | 3.2 s, 29.8 MB | 0.9 s, 1.4 MB |
+  | 22 MB | live | desktop 4× | 13.8 s, 29.8 MB | 3.3 s, 1.4 MB |
+  | 22 MB | live | phone 390 px, 4× | 13.7 s, 29.8 MB | 3.6 s, 1.4 MB |
+  | 22 MB | replay | desktop 1× | 2.8 s, 29.8 MB | 0.9 s, 21.6 MB¹ |
+  | 22 MB | replay | desktop 4× | 12.1 s, 29.8 MB | 3.5 s, 21.6 MB¹ |
+  | 22 MB | replay | phone 390 px, 4× | 12.0 s, 29.8 MB | 3.4 s, 21.6 MB¹ |
+
+  ¹ A replay draws its last screen from the 1.4 MB tail, but goes on to load the whole recording for play and seeking.
+  Over the local connection most of that arrived while the tail was being drawn. Everything was loaded after
+  4.9 s at 4×, against 12.2 s before; that is 31.2 MB, i.e. the 1.4 MB tail on top of the recording. A live
+  terminal stops at its tail.
+  - **What's left doesn't grow with the recording.** After the change, the 5 MB and 22 MB times are the same (3.3 to
+    3.6 s at 4×). What remains is the same for any length of output: the page, its chunks and the terminal starting,
+    plus drawing 1 MiB.
+  - **Found while measuring:** the node shipped a second's records to central as one message. A burst over the
+    protocol's 4 MiB message limit closed the connection, and those records never reached central's copy. The 22 MB
+    run kept only its last megabyte. Fixed separately: the node splits shipments into messages of at most 1 MiB.
+- **Consequences:**
+  - The current screen of a long run appears after about 1 MiB of output, whatever the run's length. Central holds
+    about one tail per viewer in memory: 3.9 MiB of heap while scanning a 50 MiB recording (`TestTailMemoryBounded`).
+  - Each catch-up still decompresses the whole recording on central, which costs CPU (under a second for 50 MiB in the
+    test) but not memory. The catch-up slots bound how many run at once. An index of checkpoints per segment would
+    remove the cost; it is not needed yet.
+  - The full-screen renderer's never-repainted rows can be missing from a tail until the viewer loads earlier output.
+    The fix is option (a), a follow-up.
+  - Colours are not part of the prelude: a tail that starts inside coloured text draws its first characters
+    uncoloured. This was invisible in every comparison.
+- **Not a security-relevant change:** nothing is relaxed. The same `terminal:watch` and `recording:read` checks apply,
+  and less output reaches the browser.
+
+### ADR-0082 — Rich Markdown rendering: GFM, lazily loaded code highlighting and Mermaid in strict mode (security-relevant change)
+- **Status:** Accepted, 2026-11-14 (operator request 2026-11-13: render Mermaid, highlighted code and all Markdown
+  features in the inbox, queue and needs-you views).
+- **Context:** `web/src/lib/markdown.ts` (marked + DOMPurify) renders every untrusted body: inbox items, task objectives,
+  acceptance criteria and results, human-action bodies, details, answers and comments, messages, cross-space requests,
+  knowledge answers, dreams, memory files, prompts and the event preview. It already did GFM tables and task lists. It
+  forbade `<svg>`, showed fenced code as plain text and had no bound on nesting: a body of 2,000 nested list levels kept
+  marked busy for minutes, 8,000 unmatched `*a ` for 15 s.
+- **Decision:**
+  - The shared renderer adds footnotes (`marked-footnote` 1.4.0), heading anchors (GitHub-style slugs, unique per body)
+    and per-view ID prefixes (`user-content-<hash>-`, from an FNV-1a hash of the body so a link to a heading still works
+    after a reload or in a new tab; a second view of the same body on the page gets `user-content-<hash>-1-` once
+    mounted), so two bodies on a page never share an ID and no ID can clobber a DOM property. A body scrolls to the
+    heading or footnote the address names once it renders. In-page links stay in the tab; every other link keeps
+    `target="_blank"` and `rel="noopener noreferrer nofollow"`.
+  - Sanitizing uses a DOMPurify instance of its own, so its hooks never touch mermaid's sanitizing (the shared
+    instance). Images render only when they are attachment content URLs (`/api/v1/spaces/<space>/attachments/att_…/content`,
+    exact pattern) or URLs the renderer's attachment resolver produced; any other image becomes a link (http/https) or
+    its alt text. Forbidden in addition to before: `frame`, `button`, `textarea`, `select`, `link`, `meta`, `base`, the
+    `srcset` and `sizes` attributes, and every `input` except task-list checkboxes. Attachment references are resolved
+    in the sanitizer hook (one function, `AttachmentResolver`, so another transport such as the Telegram Mini App can
+    supply blob: URLs), no longer by rewriting the source text. DOMPurify's URI allow-list has no `blob:`; a `blob:`
+    URL is kept only when it is exactly one the resolver produced for this body, so a `blob:` URL written in a body is
+    still removed.
+  - Bounds before parsing, outside fenced code: indentation at most 64 columns, at most 16 stacked block markers per
+    line, and a paragraph with more than 256 emphasis delimiters has them escaped (shown literally). A parser failure
+    renders the body as escaped text.
+  - Code: fences with a language are highlighted after mount with **@tanstack/highlight 1.2.12** (MIT; class-based,
+    synchronous, about 15 kB for core plus the module, each of its 78 grammars a separate lazy chunk). Tokens are built
+    as text nodes, never parsed as HTML. At most 50 blocks of at most 20,000 characters each, one at a time, yielding
+    between blocks. Colors are app tokens (`--sm-code-*`, Night Owl / Light Owl like the docs site, each checked at
+    4.5:1 in `contrast.test.ts`). Every block gets a copy button (Clipboard API; on an insecure origin the text is
+    selected instead), and its `<pre>` is focusable for keyboard scrolling. Compared with Shiki (TextMate grammars plus a
+    regex engine, much larger, colors inlined per theme) and highlight.js or Prism (class-based too, but not
+    the package the operator asked for), TanStack Highlight is small, emits classes that follow both themes through
+    CSS, and is synchronous and SSR-safe.
+  - Mermaid: `mermaid` 11.17.2, the version the docs site uses (its configuration there is mermaid's defaults, so only
+    the version is shared), loaded only when a body has a diagram and only once the diagram is near the viewport.
+    `securityLevel: 'strict'`, `maxTextSize` 10,000 and `maxEdges` 500, at most 20 diagrams per body, renders serialized,
+    temporary render elements removed on failure, and a queued render whose view went away (unmounted, or its source or
+    theme changed) is skipped before mermaid starts. The returned SVG is sanitized again (DOMPurify SVG and HTML
+    profiles with mermaid's own `foreignobject` addition; scripts, `<a>`, `<image>`, `<img>`, `<animate>`, `<set>`,
+    `srcset` and handlers removed) before it reaches the DOM: an `<img>` in an HTML label would otherwise load any URL,
+    with the session cookie on the same origin, or a tracking pixel where no CSP applies. Theme: mermaid's `base`
+    theme with Night Owl or Light Owl colors, following the app's color scheme; `theme`, `themeVariables`, `themeCSS`,
+    `darkMode` and the font are added to mermaid's `secure` keys, so a diagram's `%%{init}%%` or front matter can't
+    change them.
+  - Main-thread work: the size limits alone don't bound it. 4,000 bare node IDs fit in 10,000 characters and took
+    7 seconds in one task; 21 such diagrams in one body, 66 seconds. Measured in Chromium (mermaid 11.17.2, node of
+    2026-11-14), a render costs about 2.5-5 ms per node for flowcharts, class, state, ER and block diagrams and more for
+    mind maps (50 nodes about 0.7 s, 100 about 1.4 s). So: a diagram has at most 500 statements (lines, `;` and `&`
+    separated parts) and a body's diagrams at most 25,000 characters of source in all; a diagram over either renders
+    as its source with the reason. A diagram of at most 50 statements and 2,500 characters renders on its own when
+    near the viewport; a larger one shows a "Render diagram" button and renders only when clicked.
+    `e2e/ui-markdown-diagrams.spec.ts` renders the slowest kinds at the automatic limit and checks that no long task
+    runs 1 s or more. A failed render shows a one-line message and the source; the source is always available under the
+    diagram as its text alternative. `MermaidDiagram` renders one diagram from source on its own (for a future "view
+    diagram" page).
+  - Bundle: the eager JS stays where it was (+2.0 kB raw, +1.1 kB gzip, from chunk reshuffling and the theme's token
+    variables); the MarkdownView chunks grow by 10.9 kB raw (4.7 kB gzip); the lazy highlighter is 14.8 kB (4.9 kB gzip) plus one small chunk per grammar, lazy mermaid 614 kB (148 kB gzip) plus its per-diagram-type chunks. `scripts/check-dist.mjs` fails the build when
+    mermaid or the highlighter appears in an eagerly loaded chunk, and prints the sizes.
+- **Security-relevant change:** SVG generated by mermaid from untrusted source now reaches the DOM (bodies still cannot
+  contain `<svg>`). It is bounded by mermaid's strict mode, a second sanitizing pass and the UI's CSP (`script-src 'self'`,
+  `img-src 'self' data: blob:`), which also stops a diagram's style from loading remote content. Everything else in
+  this decision tightens the sanitizer. Hostile inputs are tested in `markdown.test.ts` (XSS vectors, pathological
+  nesting and delimiters, huge bodies and diagrams, `blob:` URLs), `mermaid.test.ts` (configuration and secure keys,
+  SVG sanitizing including label images, statement limit, skipped renders) and `highlight.test.ts` (tokens as text).
+- **Consequences:** a body over the bounds still renders, just with less structure; pathological bodies take at most a
+  few seconds to render rather than minutes (raw HTML nesting has no separate depth limit). A diagram renders on the
+  main thread (mermaid needs the DOM): automatically up to about 1 s each, larger ones only on a click, and none over
+  the statement limit or the body's budget.
 
 ### ADR-0083 — Telegram bot and Mini App as a person's channel (security-relevant change)
 - **Status:** **Proposed**, 2026-11-14 (operator request; design reviewed once and finalized with the operator's answers
@@ -4394,7 +4608,9 @@
        unchanged. Only `r.Host` is used; `X-Forwarded-Host` is never trusted for routing (the proxy must preserve
        `Host`). With no bot or an empty `miniapp_host`, the Mini App handler isn't mounted. `miniapp_host` must be a bare
        DNS name (no scheme, port or path), not an IP address and not `PublicURL`'s host; changing it is StepUp
-       `system:write` and audited.
+       `system:write` and audited. **Amended (fail closed, 2026-11-15):** central's configuration
+       `telegram.miniapp_host` names the Mini App host statically, and a request for a Mini App host never reaches
+       today's handler, whatever the bot's state; see "Mini App host fails closed" below.
      - **Served on `tg.<host>`, and nothing else** (anything not listed is a plain 404, no redirect):
 
        | Path | Served |
@@ -4760,7 +4976,7 @@
     server's, in `respond-human-action` (`internal/api/telegram_approvals.go`), and the chat only renders it:
     - *Advisory* approvals (no `approvals` row behind the action) are decided from the bot or the Mini App like on the
       web: `approval:decide` on the link's subjects, and a denial needs a note (the human service). The chat asks
-      Approve → "Approve: <action>? [Confirm approve] [Back]", and Deny → a ForceReply note that it asks for again
+      Approve → `Approve: <action>? [Confirm approve] [Back]`, and Deny → a ForceReply note that it asks for again
       when empty; both act on the form's version (`If-Match`) within the 15 min form TTL.
     - *Enforced* approvals: an action counts as enforced when an `approvals` row points at it or its dedup key starts
       with `approval:` (the approvals package asks before it links its row), and a lookup error refuses. Refused from
@@ -4792,7 +5008,7 @@
     authorization (`inbox:write`, `attachment:write`), size cap, content sniffing, quota and audit apply; a space hidden
     from Telegram is never a target. Text or caption is the body; a photo (largest size) or a document is downloaded
     server-side (20 MB, the Bot API's limit; a file known to be larger is refused before any download) and uploaded
-    through `upload-attachment`; the sender's claimed MIME type is not used. A forward puts "Forwarded from <name>" in
+    through `upload-attachment`; the sender's claimed MIME type is not used. A forward puts `Forwarded from <name>` in
     the body as a quoted line (names stripped of control and markup characters); `source_label` is whatever the API
     sets for the principal, never the origin. An album (`media_group_id`) is collected per link (at most 3 open albums,
     10 parts each, flushed after 1.5 s without a part or 10 s at the latest) and becomes one item. Each item costs the
@@ -4808,6 +5024,542 @@
     bytes are opened by `chat.Options.Content` (the raw content route stays Mini App only), and the file goes out with
     `protect_content` (a PNG or JPEG raster image as a photo up to 10 MB, anything else as a document up to 20 MB).
     A `summary` space sends no files.
+
+- **Mini App host fails closed (2026-11-15, security-relevant change: tightens decision 6).** Infra's review of the
+  exposure found that central routed the Mini App host to the Mini App handler only while a bot ran with that
+  `miniapp_host`. With no bot, a disabled bot, a bot that failed to start or an emptied `miniapp_host`, a request for
+  that host fell through to the main handler: the full API with Bearer tokens and cookies, sign-in, `openapi.json` and
+  the web UI, under the Mini App's name. The edge blocks tokens and cookies on that host, but central must not depend
+  on it.
+  - **Static setting.** `telegram.miniapp_host` in central's configuration (environment
+    `SPACEMAN_TELEGRAM_MINIAPP_HOST`; empty by default) names the Mini App host. It follows the bot's `miniapp_host`
+    rules (`internal/telegram/tghost`: a bare lower-case DNS name of two or more labels, not an IP address and not
+    `public_url`'s host); central refuses to start otherwise. Operators set it whenever the Mini App's DNS name points
+    at central. It is configuration rather than API state for the same reason as `api_base_url`: what is routed where
+    must hold before the database is read and whatever a bot write does.
+  - **Routing.** A request whose `r.Host` (lower-cased, port and one trailing dot stripped; never `X-Forwarded-Host`)
+    equals `telegram.miniapp_host`, or the stored bot's `miniapp_host` whether the bot is enabled or not, goes to the
+    Mini App handler and nowhere else. The handler serves its allowlist (the shell and assets, the API in Telegram
+    mode, `/tg-dl/`) only while a running bot's effective Mini App host is that host; otherwise every path is a plain
+    404 (`not found`, `no-store`, no redirect). So with the setting in place the host answers 404 with no bot, a
+    disabled bot, a failed start or a deleted bot. The webhook stays a main-host route.
+  - **Config and bot.** The effective Mini App host is `telegram.miniapp_host` when set, otherwise the bot's
+    `miniapp_host`. A running bot serves the effective host even when it stores none (menu button, the initData key,
+    the Mini App origin). When both are set and differ, the configuration wins: the bot's `miniapp_host` is ignored,
+    still routed to the Mini App handler (so it answers 404 for everything rather than becoming another name for the
+    main host), logged as a warning when a bot is applied with it, listed in `get-telegram-bot` `warnings`, and shown
+    in the bot's health (`miniapp_host`, `miniapp_host_source` `config`|`bot`, `miniapp_host_ignored`) on the System
+    page and in `get-system`. Writes of a different `miniapp_host` are not refused: Terraform state and the
+    configuration change at different times, and refusing would block unrelated bot changes.
+  - **Without the setting (fix round on the review's M-1).** A bot's `miniapp_host` is refused on create and update
+    (422 naming `telegram.miniapp_host`), because a host that only the database knows can't be routed safely. A row
+    stored before this keeps working as before (served when its bot runs, otherwise a 404 host), and is flagged: a
+    warning in the log at start, in the bot's `warnings` and on the System page (`miniapp_host_needs_key`) telling the
+    operator to set `telegram.miniapp_host`. Central reads the stored bot row **before it listens**
+    (`tgbot.LoadStoredHost`; the bot itself starts later, in the background), so the stored host routes to the Mini App
+    handler, and its 404 gate, from the first request; a failed read refuses to start rather than serve without
+    knowing the host. Every host the bot row has had since central started (a deleted bot's, an emptied or a changed
+    `miniapp_host`) is **retired**, not released: it stays routed to the Mini App handler (404) in memory until central
+    restarts. After a restart, a host that no row names is an ordinary main-host name again with no key set (the edge
+    still blocks credentials there). The setting stays the recommended deployment and the only one where the host
+    never depends on the database.
+  - **Tests:** `internal/app` `TestMiniAppHostFailsClosedWithoutBot` (configured host, no bot, a disabled bot with and
+    without the same `miniapp_host`, a deleted bot: every path in every host spelling is the Mini App 404, including
+    sign-in, `openapi.json`, `/` and admin operations with a valid root Bearer token that answer 200 on the main host)
+    and `TestMiniAppHostFailsClosedWithBot` (only Mini App routes answer; Bearer tokens and cookie sessions are 401,
+    sign-in and openapi 404; a different stored host is the 404 host and the mismatch is logged and in `get-system`;
+    disabling returns everything to 404); `internal/telegram/tgbot` `TestConfiguredMiniAppHostWins`,
+    `TestPutRefusesMiniAppHostWithoutKey`, `TestLoadStoredHostWithoutKey`, `TestRetiredMiniAppHostsStayRouted`,
+    `TestLoadStoredHostReadError`; `internal/app` `TestMiniAppHostFailsClosedNoKeyDisabledBot`,
+    `TestMiniAppHostRoutedBeforeTheBotStarts`, `TestMiniAppHostRetiredNoKey`, `TestServeRefusesWhenTheStoredHostCannotBeRead`;
+    `internal/config` `TestTelegramMiniAppHost`; `internal/telegram/tghost`.
+    Mutants that restore the fall-through (route only while the running bot serves, ignore the configured host, let
+    the 404 gate fall through to the main handler, drop the gate, compare the raw Host, route the ignored stored host
+    to the main handler) are each killed.
+
+### ADR-0084 — "Message the agent" is typed into the running session at once
+- **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
+- **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while
+  the program works (`ErrBusy`) and acknowledges it as rejected; central does not retry a rejected `run.input`. A message
+  sent while control was busy was therefore lost. The durable message path (Messages page, agent tools) is not affected:
+  its terminal notice is refused while busy but the item stays stored and is announced at the next idle report.
+- **Decision:** The box sends `force: true`: the text is typed into the session immediately and the harness decides when to
+  act on it (the fake runner queues typed input; real Claude Code and Codex are unverified). Safe input stays the rule for automated input (notices). Takeover
+  still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
+- **Consequences:** The text may sit in the harness's own queue while it works. A harness that reports `blocked` refuses
+  the text (hc refuses a blocked program without its own force) and the text is dropped, and the operator is not told yet;
+  central answers 202 when it queues the command, so the box says "Queued for the agent". The risk that a modal takes
+  the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
+  `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
+- **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.
+
+### ADR-0085 — Central bounds request bodies by progress and by a total (security-relevant change)
+- **Status:** Accepted, 2026-11-14. **Security-relevant change:** it adds limits to central's public listener, and the
+  security review of the first version (`httpguard.ReadProgress`, PR #78) found that version weakened one and bypassed
+  another; both are corrected here.
+- **Context:** the listener had no `ReadTimeout`: a client that declared a body and sent none, or trickled it, held a
+  connection and goroutine (T-43). A whole-request `ReadTimeout` would cut event streams, the agent WebSocket and
+  slow uploads. The first version gave every body read `http.read_idle_timeout` (30 s). The review found two defects:
+  - **Upgrade bypass (high).** It skipped any request whose headers said `Connection: Upgrade` and `Upgrade:
+    websocket`. A client adding those to `POST /api/v1/spaces` or `POST /` with a `Content-Length` and no body held the
+    connection indefinitely, on any route. `WriteProgress` had the same header-only skip.
+  - **Lost total bound (high).** huma gives every operation `BodyReadTimeout` (5 s total unless set) and applies it
+    as a read deadline; the guard reset the deadline to now+30 s on every read and so overrode it. A login body sent
+    one byte per 29 s was held for up to 1 MiB × 29 s (`http.max_body_bytes` is 1 MiB), where main answered 408 at
+    5.7 s.
+- **Decision:**
+  - Only a real WebSocket handshake is passed through (`websocketHandshake`): a body-less HTTP/1.1 `GET` with the
+    upgrade headers and no `Transfer-Encoding`. `ReadProgress` guards every request that has a body, whatever its
+    headers; `WriteProgress` skips only a real handshake.
+  - Progress and total are both enforced. The guard's response writer implements `SetReadDeadline`, which huma
+    finds by unwrapping: the deadline is recorded as the total cap, and each read waits for the sooner of now+idle and
+    the cap. JSON operations keep huma's 5 s. `upload-attachment` sets `BodyReadTimeout` to 10 minutes
+    (`api.UploadBodyReadTimeout`): 25 MiB (`http.max_upload_bytes`) at a floor of about 43 KiB/s, with the idle bound still
+    applying to every read.
+  - A body whose handler sets no deadline (routes outside huma: `/agent/v1/enroll`, unauthenticated, and the MCP endpoint's
+    batch check) gets `httpguard.DefaultBodyBound` (5 s, huma's default) from its first read; a handler raises or clears it
+    through `SetReadDeadline`. (Round 2 of the review: a 1-byte/400 ms trickle on enrolment was still held after 15 s.)
+  - No new setting: the total is the operation's own bound.
+- **Consequences (numbers per connection):** a JSON operation, the enrolment endpoint or the MCP endpoint: at most 5 s, ≤ 1 MiB buffered. An upload (it requires an
+  authenticated caller; the body is read after authentication): at most 10 min, ≤ 25 MiB. A stalled client is cut at
+  30 s regardless. There is **no per-IP or global connection cap**: N connections hold N goroutines for up to those
+  bounds, which is the residual in T-43. A client slower than 43 KiB/s can't upload 25 MiB, and gets a 408; a slower link
+  needs smaller files.
+- **Evidence:** `TestSlowOrEmptyBodyCannotHoldConnection` (upgrade-header rows), `TestTrickledBodyMeetsTotalBound` (408 at
+  about 5 s), `TestBodyGuardKeepsStreamsAndUploads`, and in `internal/httpguard` `TestUpgradeHeadersWithBodyAreStillGuarded`,
+  `TestHandlerDeadlineIsATotalBound`, `TestDefaultBodyBoundApplies`, `TestOnlyWebSocketUpgradesPassThrough`, and `TestTrickledEnrollBodyMeetsDefaultBound`. The bypass and trickle probes fail on 80a7f5f.
+
+### ADR-0086 — Central ignores a run report that is behind the recorded state
+- **Status:** Accepted, 2026-11-14. No migration, no node protocol change. Not a security-relevant change: no check,
+  limit or default is relaxed; central applies fewer reports.
+- **Context:** central re-sends an unacknowledged launch on every kick. The node acknowledges the repeat as a duplicate
+  and reports the run's journal row from its session goroutine (`agent.command`), while the launch goroutine moves the
+  row to `running` and reports that. The two reports are not ordered. A duplicate's `starting` report, read before the
+  launch finished, could reach central after `running`. `applyRunReport` only refused live reports for an ended run, so
+  it applied the stale one: the run went back to `starting` and `UpdateRunObserved` cleared its `terminal_id` while the
+  terminal was live (seen in CI as a HarborPilot node e2e flake). Two places could fix it: the node could order its
+  reports per run (re-read under the run's lock, or a sequence number), or central could refuse a report that goes
+  backwards.
+- **Decision:** central refuses it (`staleReport` in `internal/fleet/runs.go`). Within one run row the node's state
+  only moves forward: `pending`, `starting`, `running`, `stopping`, then an ended state, and a row's generation never
+  changes (a relaunch is a new run row). A live report whose state ranks below the recorded live state is ignored. So is
+  a live report without a terminal when central already has one, because no node path clears a live run's terminal.
+  Central's own `unknown` (node disconnected) ranks below every live state, so a reconnecting node's re-reported journal
+  replaces it. An ignored report is not fenced, since fencing sends a kill and the run is live. If central wants the run
+  stopped, the stop command is still queued, as for any live report.
+- **Why central, not the node:** the guard covers every path that can deliver an old row: the duplicate launch, a
+  hello's journal re-report racing a live report, and older agents in the fleet, which need no upgrade. Ordering on the
+  node would mean either blocking the session goroutine on the run's lock (held while the runner starts the program,
+  which stalls every other command for that node) or adding a per-run sequence to the protocol and the journal (a
+  protocol minor and a migration). Neither is minimal.
+- **Transitions checked:** the forward path, including a managed launch reporting `starting` twice; stopped before
+  start (`starting` to `exited` with no terminal); a reconnect after `unknown`; adoption after a node restart (`unknown`
+  to `running` with a new terminal); relaunch, which gets a new run and generation, so the existing generation fence
+  applies; the stale-run sweeper and node `exited`/`failed`/`lost`, which are ended states and keep their own guards
+  (ADR-0074).
+- **Consequences:** if a node ever needs a run to move backwards within a generation (for example, restarting a program
+  in place), that needs a new generation or an explicit protocol change, not a plain report.
+- **Evidence:** `TestStaleStartingReportDoesNotOverwriteRunning` (failed on main), `TestRunReportOrderGuard` and
+  `TestStaleReportStillStopsUnwantedRun` in `internal/fleet/run_report_order_test.go`.
+
+### ADR-0087 — SpaceMan's own dedup namespaces are reserved
+- **Status:** Accepted, 2026-11-15. No migration, no API schema change. A tightening, not a relaxation: callers lose
+  the use of a few key prefixes.
+- **Context:** human actions and tasks are deduplicated per space on `(space_id, dedup_key)`, whatever the type or
+  requester, and `human.Create` / `queue.Create` return an existing row with the key. Several services rely on that
+  to repair a crash between two writes, and trust the row they get back: `approvals.ask` links the action under
+  `approval:<approval id>` to an enforced approval (ADR-0024), control raises its supervisor and usage-limit notices
+  under `control-failing:`, `control-autostart-*:` and `usage-limit-human:` keys, an accepted cross-space request
+  creates its task under `xspace:<request id>`, and a schedule creates each occurrence's task under
+  `schedule:<id>:<unix>`. The same keys could be supplied by any caller allowed to create in the space (the human
+  actions and tasks API, `spaceman_human_ask`, `spaceman_task_create`). A row created first under such a key would be
+  reused by the service: an enforced approval could be linked to an action whose title and body the service never
+  wrote, and the surfaces that render the action's body (the web, notifications) would show that text to the person
+  deciding. Surfaces that read the approval row (the Telegram card) were not affected. A supervisor notice or a
+  delegated task could be replaced the same way.
+- **Decision:**
+  - Each package keeps the list of its reserved prefixes (`human.ReservedDedup`, `queue.ReservedDedup`): human actions
+    `approval:`, `usage-limit-human:`, `control-failing:`, `control-autostart-limit:`, `control-autostart-refused:`;
+    tasks `xspace:`, `schedule:`.
+  - `CreateInput.Internal` marks a row a SpaceMan service creates. It is set only in code, never from request input.
+    `Create` refuses a reserved key without it (`validation_failed` on `dedup_key`), so an outside caller can neither
+    plant a row under a service's key nor be handed back the service's row. The reverse is refused too: an internal
+    key outside the list is an error, so a service that adds a key must reserve its prefix. The default is safe: a new
+    API or tool that passes a caller's key through can't reach a reserved namespace.
+  - `approvals.ask` also checks what it gets back: an action that isn't of type `approval` or whose title or body
+    differ from what it writes (one stored before this change) is never linked. The approval is revoked ("its human
+    action did not match the approval") and the call fails with `conflict`; the next call asks again under a new
+    approval ID.
+- **Alternatives:** requiring the same type and requester for reuse doesn't help: the requester of an enforced
+  approval's action is the run that asked, the same run that could plant it, and a system notice would still be
+  blocked by a planted row (the unique index refuses the second insert). Scoping every caller's key to its requester
+  would change what `spaceman_human_ask` dedup returns to agents and needs a data migration; kept out of this fix.
+- **Checked, not affected:** inbox items are deduplicated per `(space, source_kind)` (`response:`, `undeliverable:`,
+  `xspace:` items have their own source kinds), messages per sender, cross-space requests per requesting run.
+- **Consequences:** a caller that used a key starting with one of these prefixes for its own rows now gets
+  `validation_failed`. Rows stored before this change under a reserved key are only checked on the approval path,
+  which refuses them. Elsewhere they are still reused: a supervisor or usage-limit notice is suppressed once (for that
+  window or hold), a schedule occurrence is skipped, and accepting a cross-space request links the existing task. A
+  token requester's display name changing between a crash and the repair also makes the approval's own action differ;
+  it is revoked and asked again, which is harmless.
+- **Evidence:** `internal/approvals` `TestApprovalActionCannotBePlanted` (failed on main: the person deciding saw the
+  planted body), `TestApprovalRefusesForeignActionUnderItsKey`; `internal/human` `TestReservedDedupNamespaces`;
+  `internal/queue` `TestReservedTaskDedupNamespaces`; `internal/agenttools` `TestAttachmentsAndHuman`.
+
+### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
+- **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
+  on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code
+  runs, direct and through Harbor Pilot; Codex runs are not covered, and the Terraform attributes (UL-11) remain.
+  Tested with simulated evidence only: no live subscription limit has been observed on a SpaceMan run (K-16); the
+  gateway side also ran against a real Harbor Pilot demo with a scripted node (TRACEABILITY SM-RUN-004..006). Labelled
+  security-relevant not because it relaxes a requirement but because **content of a run's own transcript (untrusted)
+  now drives central scheduling**: it can park the run and hold an account.
+- **Context:**
+  - A claude.ai subscription has a 5-hour and a weekly window. When one is exhausted, Claude Code ends the turn and,
+    for waits under 24 h, arms its own timer and continues about a minute after the reset (contract
+    `docs/contracts/harnesses.md`, "Claude Code usage limits", 2.1.317–2.1.323). On SpaceMan runs that works only while
+    nothing ends the process: control's idle stop, control replacing a worker that looks stuck, a node restart (run
+    `lost`, ADR-0074) or control relaunching into the same limit. Of 21 armed waits in the examined transcripts, 16
+    fired; weekly waits (more than 24 h out) never arm at all.
+  - **The signal is in typed transcript fields, never the screen** (SM-RUN-002):
+    - **Error path:** an assistant record with `apiError: "usage_limit_reached"`, `quotaLimits.resetsAt` (epoch
+      seconds) and `rateLimitType` (`five_hour`, `seven_day`, …).
+    - **Wrap-up path:** a meta user record `usageLimitNote: "wrap_up"`, then the auto-continue arm record; **no reset
+      time and no kind** anywhere. Twelve of the 21 waits came this way.
+    - **Cleared:** the "reset" informational record and the `auto-continuation` turn, or any later assistant message
+      with usage.
+  - Gateway runs (Harbor Pilot, `ANTHROPIC_AUTH_TOKEN`) never arm auto-continue. When every candidate account is
+    exhausted, HP answers 429 `rate_limit_error` "no eligible account is available for model …" **without
+    `Retry-After`**, and Claude Code records it as a plain API-error message with that text and no typed kind or reset
+    (contracts `harbor-pilot.md`, "Quota board and the all-exhausted 429", and `harnesses.md`, "Gateway runs"). A
+    blocking budget's 429 differs only by its message. The reset can be estimated from HP's `GET /api/v1/quota/board`
+    `account_health[].until`, which has no project filter.
+  - A typed SpaceMan nudge while armed does not cancel the timer, but its request is refused at once and the nudge is
+    not acted on until the reset (contract, 4 cases). A process that exits or is relaunched loses the timer; a session
+    resumed with `--resume` needs a prompt to continue.
+  - `--resume` of a session under a different token works (live, fake API, 2.1.323); with two real claude.ai accounts
+    it is **not verified** (K-16).
+- **Decision:**
+  1. **Detection on the node.** On the OSC 7501 status turning `idle` or `error`, and once at run end, the node agent
+     tail-scans the run's transcript from a persisted offset and reads only typed fields: `type`, `subtype`, `error`,
+     `apiError`, `apiErrorStatus`, `quotaLimits.{resetsAt,rateLimitType,status}` (falling back to
+     `apiErrorParams.rate_limit_info`), `usageLimitNote`, `origin.kind` and `timestamp`.
+     - **Limit set** by a `usage_limit_reached` record, or an auto-continue arm record (wrap-up path), newer than the
+       last typed user turn.
+     - **Gateway limit set** by an API-error record with `apiErrorStatus: 429` whose text, after the fixed
+       `API Error: Request rejected (429) · ` prefix, starts with HP's `no eligible account is available for model `
+       (`gateway_quota`) or matches `budget <name> is exhausted ` (`gateway_budget`). Patterns are anchored and come
+       from the HP contract; anything else is not a limit.
+     - **Limit cleared** by the reset informational record, an `auto-continuation` turn, or a later assistant message
+       with non-zero usage.
+     - No screen text and no display wording is ever parsed for status or time (SM-RUN-002); the arm record counts by
+       its record type, not its text.
+     - **Amended 2026-11-13 (UL-3):** the arm and the reset informational records share their `type`, `subtype` and
+       `level` and differ only in wording, so neither is used. The wrap-up path is keyed on the typed meta record
+       `usageLimitNote: "wrap_up"`, which comes first in the same turn; the replies the turn finishes with on its grace
+       allowance don't clear it, and a later turn's reply with usage or an `auto-continuation` turn does. A typed turn
+       alone doesn't clear a limit (a nudge while armed is refused at once). While the limit stays open, `since` stays
+       that of the first record; kind and reset follow the newest.
+  2. **The reported limit.** `RunReport.limit {kind, resets_at, since, cleared}` (protocol minor 12,
+     `MinorUsageLimit`). `kind` is from an allowlist (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
+     `seven_day_overage_included`, `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path
+     reports `unknown`). `since` is bounded to `[now − 8 days, now + 5 min]` (missing, or further ahead: now; the 5 min allow a node clock slightly ahead, so repeats compare equal); `resets_at` is kept when it lies in
+     `(since, since + 8 days]`, even if it has already passed, otherwise null; a report with neither a kind nor
+     `cleared` is not a limit (`proto.RunLimit.Normalized`). **No transcript text crosses the wire or reaches a log.**
+     A node below minor 12 never reports limits, and central drops a limit on any report from a session negotiated
+     below 12 (`RunReport.ForMinor`), so everything behaves as before.
+  3. **Keep-alive for short waits.** When the reset is known and within `keep_alive_max` (default 6 h), or unknown on
+     a subscription run, the process stays up and Claude Code continues by itself. Meanwhile the run is
+     *limit-waiting*: it is excluded from the **space** limit but still counts against the **node** limit (Q4);
+     SpaceMan's idle-gated notices are held (the Notifier skips it and `QueueNotice` refuses idle-gated input; operator
+     force-input still works) and delivered after the clear; control's idle stop is not armed for a limit-waiting
+     control run.
+  4. **Park for long waits.** A wait beyond `keep_alive_max`, an unknown subscription reset still open after
+     `keep_alive_max`, an unknown gateway reset after 30 min, or a process that ends or is lost while limit-waiting,
+     ends the run with `end_reason = 'usage_limit'` and writes a durable **limit wait** in the same transaction. Its
+     resume is a **new run** of the same instance under the current lease generation with `--resume <session>`
+     (when the old run had a turn) and a fixed prompt telling the agent the limit reset and to continue. Ended runs are
+     never reopened, so fencing, the sweeper and the single-control index are unchanged.
+     Since UL-4, central records `end_reason = 'usage_limit'` (also on `run_ended` and in the end-reason metric) for a
+     run that ends while its limit is open, unless central had asked it to stop (`desired = stopped`) or the stale-run
+     sweeper ended it; a later `cleared` report doesn't change it. The `run_ended` event keeps the node's own reason as
+     `node_reason`. The limit wait itself comes with parking (UL-7).
+     - **Amended 2026-11-14 (UL-7).**
+       - **When.** A live run at its limit is parked when its known reset is more than `keep_alive_max` after its
+         `since` (at once), when a gateway limit has no reset after 30 min, and otherwise when the limit is still open
+         `keep_alive_max` after its `since`.
+       - **How.** The limit-wait job stops the run (interrupt, `desired = stopped`) and writes its wait in the same
+         transaction. The run's later end is recorded as `usage_limit`, because the run has a wait.
+       - **Ended, lost or swept runs.** A run that ends, is lost or is swept while at its limit, and that nobody asked to
+         stop, gets its wait in the report (or sweep) transaction. A swept run keeps the sweeper's end reason.
+       - **Kinds.** Only control, worker and diagnostic runs are parked (control's decision, 2026-11-14). KB support and
+         dreamer runs are short-lived and started on demand by their schedulers, which start them again when needed,
+         so they are neither stopped at the keep-alive nor resumed.
+       - **What the wait records.** The session (only when the run finished a turn), the task (only while it is assigned
+         to the run and running, blocked or in review), the space's open hold, and the run's launch.
+       - **Re-park.** When a resumed run parks again, the new wait carries its predecessor's `release_at`, `attempts`
+         and original prompt forward, so the maximum wait and the backoff don't start again. An active wait another run
+         of the same instance left is superseded (cancelled).
+  5. **Resume job.** A deadline-timer job resumes due waits at `resets_at` + 2 min (unknown: retried with backoff from
+     1 h, each attempt re-detected and re-parked without new notices). A paused space, a still-open account limit, a
+     node with no lease or a full space keeps the wait waiting; node hello kicks it. An open hold with an **unknown
+     reset** does not block its own retry: it is **probed** at the hold's `usage_limits.check_at` (decision 7), and
+     the retry that the probe lets through is that attempt. Resumes go through `Admit`; when
+     several are due, control first, then the oldest task, and a resume never pre-empts a launch already admitted
+     (Q6). A space that relocated resumes without a session, and control is told.
+     - **Amended 2026-11-14 (UL-7).** The job is the `limit_waits` deadline on central's shared timer, batched and
+       bounded after the 2026-11-13 incident.
+       - **A round.** It recovers stuck resumes, releases waits past their maximum wait, parks runs that are due, and
+         resumes due waits: control first, then the oldest, at most 5 per round. When more are due, the next round
+         waits 10 s.
+       - **No writes when nothing is due.** A round with nothing due only reads (indexed). A wait put off again for the
+         same reason at the same time writes nothing.
+       - **Resume time.** The reset plus 2 min. With an unknown reset, the hold's `check_at` (the T6 probe, which the
+         resume claims in its launch transaction, like any launch). With no hold, back off from 1 h, doubling with each
+         attempt, capped at `keep_alive_max`.
+       - **Checks.** Each resume claims the wait (`waiting` → `resuming`) after reading:
+         - the parked run must have ended; until then the wait retries in 2 min (`run_not_ended`);
+         - the space: archived gives the wait up; paused retries in 1 h; relocating retries in 2 min;
+         - the task must still be the run's; otherwise the wait is cancelled (`task_moved`);
+         - no other live run of the instance may exist (`superseded`);
+         - the lease: no valid lease retries in 15 min (`node_offline`).
+       - **Launch refusals.** A held account defers the wait to the hold's free time. A full space retries in 2 min; a
+         resume never pre-empts another run. A control conflict cancels the wait. Any other refusal retries in 10 min.
+         All of these are fixed reasons, never raw text.
+       - **One transaction.** The launch inserts the new run (same instance, current lease generation,
+         `LaunchPayload.Resume` with the session) and marks the wait `resumed`. It re-points the task through the
+         queue, and tells control. So a wait still `resuming` never started a run: the first round of a process, and
+         later rounds for rows resuming longer than 10 min, return such waits to `waiting` (UL-2 review follow-up).
+       - **Relocation.** It is detected by the space's node differing from the wait's. The run then starts a fresh
+         session with its original prompt and a fixed note; control's message says so, or a resumed control's own
+         prompt does.
+       - **Brought forward.** The node's hello (after its leases are granted) and a space's resume bring waits put off
+         for that reason forward; they read first and write only when such a wait exists.
+       - **The parked run** is set to `desired = stopped` in the claim, so a parked control releases the single-control
+         slot even if the supervisor didn't settle it.
+       - **Auto-start** leaves a space whose control has an active wait alone; the wait brings control back.
+       - **Not done.** The probe isn't reserved for a resume over a plain launch: the first launch at `check_at` takes
+         it, as in UL-6. The deadline job doesn't clear holds whose reset passed: such holds no longer refuse anything.
+       - **PR #59 review.**
+         - **A hold that clears wakes its waits.** Clear-now, an account clear, evidence, or a probe that made progress
+           sets `resume_at = now`, in the clear's transaction, for two kinds of waiting wait: those parked under the hold
+           (`usage_limit_id`), and those put off as `account_held` whose launch uses the hold's account (or gateway). The
+           job resumes them on its next round; the clear launches nothing.
+         - **The launch transaction re-checks** that the instance has no other live run. One started between the claim and
+           the launch supersedes the wait (`superseded`).
+         - **A failed `--resume`.** A resumed run that ends `failed`, or `exited`, before its first turn (the resume
+           didn't work) gets a new wait due at once. It carries no session and the original prompt (the fresh-session
+           path), and control is told once (`limit-wait-resume-failed:<wait id>`). Only a resume that used a session gets
+           this, so a wait has at most one fresh retry.
+         - **The supervisor** neither restarts nor counts a control that has a limit wait (swept at its limit, or a failed
+           resume).
+  6. **Release.** A worker's wait is released after `max_wait` (default 7 days, Q2): the task returns to `ready`
+     with its assignee cleared and control is told. A control wait is never released.
+     - **Amended 2026-11-14 (UL-7).**
+       - **The setting.** `max_wait` is the space limit `usage_limit_max_wait_hours` (1–720, default 168), following
+         UL-6's settings. It applies to worker and diagnostic waits parked after it changes. Control's wait has no
+         `release_at`.
+       - **The release.** One transaction marks the wait `released` (`max_wait`). The queue sets the task `ready` and
+         clears `assignee_run`, only while it is still the parked run's, with its outbox event and audit. Control is
+         told once (dedup `limit-wait-released:<wait id>`); the queue's own "task ready" notice isn't sent.
+       - **A task in review** (PR #59 review) stays in review on a release, with only its assignee cleared; control's
+         message says it still waits for acceptance. The message says "back in the queue" only when the task really
+         went back to ready.
+       - **Task changes** (UL-2 review follow-up). A task that becomes done, failed, cancelled, ready or backlog, or
+         is assigned to another run, cancels its waiting waits (`task_moved`) in the same queue transaction, through
+         the `limit_waits(task_id)` index. An incident's preemption, which returns running tasks to ready, does the same.
+       - **Operator actions.** `POST /spaces/{id}/limit-waits/{wait_id}/resume` resumes a wait now, whatever its resume
+         time. The usual checks apply; a refusal returns the reason and leaves the wait as it was.
+         `POST /spaces/{id}/limit-waits/{wait_id}/release` gives a wait up now; control's too, after which only
+         auto-start brings control back. Both need `run:control` in the space, like clear-now, are audited
+         (`limit_wait.resumed`, `limit_wait.released`), and have CLI commands (`spaceman limits resume`,
+         `spaceman limits release`).
+  7. **Account hold.** A limit report opens a `usage_limits` row for the run's resolved account (or gateway
+     reference). While it is open, a launch or resume on that account is refused in the launch transaction (a DB read
+     only) with `CodeRateLimited` and the reset time in UTC. The hold applies **to every space bound to that account**;
+     control is notified per space (Q8). Control autostart is deferred silently to the reset, and the supervisor
+     neither restarts nor counts a control run that ended `usage_limit`. The hold clears when `resets_at` passes, a
+     node reports `cleared` on any run of the account, any other run on the account makes progress (an assistant
+     message with usage), the quota board shows a gateway account available, or an operator clears it.
+     - **Unknown resets are probed, so a hold never deadlocks** (amended 2026-11-13, UL-2 review). A hold without
+       `resets_at` refuses everything except a **probe**: at the hold's `usage_limits.check_at`, exactly one resume
+       (or, with none waiting, one launch) on the account is let through. A probe that makes progress clears the
+       hold; one that hits the limit again moves `check_at` on with backoff (from 1 h, doubling, capped at
+       `keep_alive_max`). The gateway re-check of decision 9 uses the same column.
+     - **Scope of a hold** (amended 2026-11-13, UL-4). A direct run holds its resolved account (`scope = 'account'`).
+       A Harbor Pilot run holds a gateway reference whose granularity follows the cause: a quota exhaustion (`gateway_quota`,
+       or any kind other than a budget) is connection-wide, `gateway_ref = 'harbor-pilot'`, because no account behind the
+       one connection is eligible; a blocking budget (`gateway_budget`) belongs to one project,
+       `gateway_ref = 'harbor-pilot:project:<project id>'`, and holds only the spaces charged to it. A report opens a
+       row in the reporting space only. Every other space that binds the account (or routes through the same connection or
+       project) sees it as a **shared** hold, without the other space's identifiers. An unknown reset gets
+       `check_at = now + 1 h`; a later known reset fills the row in and drops the probe.
+     - **Model-specific weekly limits hold the whole account** (control's conservative default, 2026-11-13):
+       `seven_day_opus` and `seven_day_sonnet` hold the account for every model, not only the exhausted one.
+     - **Clearing a hold across spaces** (control's decision, 2026-11-13). Accounts are global objects, so "clear
+       now" on an account hold clears **every open row for that account and kind in all spaces**, and needs
+       **account-level permission** (the same as managing accounts). An operator with only space-level permission
+       clears **their space's row only**: that does not lift the hold in other spaces (the hold is read across
+       spaces), and the UI says so. Every clear is audited; each other space whose row was cleared has its control
+       told once.
+     - **Evidence clears** (UL-4, PR #55 review). A node's `cleared` report is evidence that the account works again.
+       It is separate from the operator's "clear now" above, whose permission rule it doesn't change.
+       - The clear names the `since` of the limit it ends. A clear of an older `since` than the run's stored limit is
+         late (the node repeats it on every later report) and changes nothing. A newer limit (another `since`) also
+         ends the stored one.
+       - Only rows of that kind first seen no later than the ended limit's `since` count. So a new window always gets
+         a row of its own: an open row whose reset passed before the new limit was seen is cleared, never reused.
+       - The same limit reclassified (the same `since`, a newer record of another kind, such as the wrap-up path's
+         `unknown` then a typed kind) supersedes the hold the run opened for the old kind.
+     - **Trust decision: nodes are trusted for their own runs; cross-space effects are limited to scheduling a probe.**
+       - The run's own space's rows are cleared, with `cleared_by = run:<id>`.
+       - Another space's row is cleared only when its reset has passed (within 2 min) or is unknown. It gets
+         `cleared_by = evidence` and is correlated on the hold, so that space never sees this space's run.
+       - A row whose reset is still ahead gets `check_at = now`: one probe launch decides.
+     - **Events and visibility.**
+       - Each cleared row publishes one `fleet.usage_limit.cleared` event in its own space, and each opened row one
+         `fleet.usage_limit.reached` event.
+       - A report that changes nothing writes nothing.
+       - A space's listing shows other spaces' open holds as one shared row per account (or gateway reference) and
+         kind, so it doesn't reveal how many spaces hit the limit.
+     - **At launch** (amended 2026-11-13, UL-6). A hold whose reset has passed no longer refuses, whether or not the
+       deadline job has cleared it yet. A hold due for its probe lets the launch through and is claimed in the same
+       transaction: an unknown reset's `check_at` moves on by the time since the hold was seen, at least 1 h and at most
+       `keep_alive_max` (so 1 h, 2 h, 4 h … from the first probe); a known reset's `check_at` is set to none (one probe,
+       then the reset decides). Any hold that is neither refuses, and the refusal writes nothing. Its text names the
+       account (or the Harbor Pilot connection or project) and the time the last hold lets a launch through, never
+       another space. Until UL-7 adds resumes, the probe goes to the first launch.
+     - **Control** (UL-6). A control restart or auto-start refused by a hold defers auto-start until that time; later
+       sweeps only read the hold, so a clear (operator or evidence) lets control start at the next sweep. Nobody is asked
+       to look.
+     - **Clear now** (UL-6). The space-level clear needs `run:control` in the space (the permission that launches runs
+       there; operators and admins) and returns `held_elsewhere`; the account-level clear needs `account:write` and takes
+       an optional kind (none: every kind, as the opus/sonnet holds hold the whole account). Control is told with dedup
+       key `usage-limit-cleared:<usage_limits id>`, the key decision 11's clear message uses, so one hold is announced
+       once.
+  8. **Failover is opt-in.** With the space setting `usage_limit.failover = true` (default **false**), `Resolve` picks
+     the next bound account for the same harness without an open limit, for launches and resumes. SpaceMan never falls
+     back from a gateway binding to a direct account (Q1). (UL-6: the settings `failover` and `keep_alive_max` are the
+     space limits `usage_limit_failover`, a switch, and `usage_limit_keep_alive_max_minutes`, 1–1,440, default 360, so
+     they get installation defaults, per-space overrides, audit and the limits API with no new table. Failover avoids an
+     account with any open hold whose reset hasn't passed, a probe-due one included; the default comes first, then
+     binding order; with every account held the usual choice stands and is refused.)
+  9. **Gateway waits.** The reset is an **estimate**: the earliest `until` among the quota board's unavailable
+     accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
+     cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9). The
+     re-check is scheduled by the hold's `usage_limits.check_at`, as is the probe of decision 7.
+     - **Amended 2026-11-14 (UL-8).**
+       - **The job.** `gateway_waits` runs on central's shared deadline timer. It reads every open gateway hold of every
+         space (indexed, at most 200). A hold without an estimate yet is read at once; an estimated one at its
+         `check_at`. One board read serves the quota hold of every space, and one budget read serves each project.
+         Reads use the connection's service-principal token outside any transaction. The board is cached for 60 s;
+         budget status keeps its own 30 s cache, shared with the launch check.
+       - **The estimate.** Quota: the earliest future `until` among the board's unavailable accounts. Budget: the
+         latest `period_end` among the covering blocking budgets. It is stored as the hold's `resets_at`, with
+         `source` `quota_board` or `budget_status` and `check_at = now + 15 min`. Waits parked under the hold are
+         re-timed to the estimate plus the 2-minute slack. A gateway wait put off as `account_held` is moved only
+         earlier. An estimate the hold already has writes nothing (no version, `check_at` or change event); the job
+         keeps the next re-read in memory.
+       - **An estimated hold's `check_at` is the re-read, never a probe.** The hold refuses launches until its
+         reset, and the refusal says "until about `<time>` (estimated from Harbor Pilot's quota board …)" or "until
+         `<time>`, when the budget's period ends". The probe of decision 7 stays in charge while Harbor Pilot names no
+         reset: the board lists no account at all (an empty, missing or renamed `account_health` is no evidence, never
+         a recovery), every unavailable account has a null or past `until`, a blocking one-time budget has no end, a
+         blocking budget's `period_end` has passed (Harbor Pilot hasn't rolled the period yet), or Harbor Pilot can't
+         be read. Such a hold is read again after 15 minutes, or after 2 minutes when a read failed or a period end
+         has passed. A
+         node's evidence from another space sets `check_at = now` as before. On an estimated hold that means "read
+         again now".
+       - **Recovery.** The board lists every account of the installation, including ones the space's plan never
+         routes to. For example, the demo's local model has no monitor and is always available. So "any account
+         available" is no signal. With each board estimate the job remembers the accounts behind it (those whose
+         `until` is the estimate), in memory, for the hold's id and version. A quota hold clears when no account is
+         unavailable any more, or when one of those accounts is available again. An account behind the estimate that
+         is still out with a moved `until` re-times the hold to the new earliest `until`; it never clears it. When the
+         job doesn't know the accounts (after a restart, or the hold changed meanwhile), it only re-estimates. A newly
+         exhausted account with an earlier `until` moves the estimate earlier. A budget hold clears when no covering
+         budget blocks any more. The clear has `cleared_by` `quota_board` or `budget_status` and wakes the waits, as
+         other clears do.
+       - **Kick.** `events.Options.OnAccepted` is called after an event becomes a new item. When the subscription
+         uses the built-in `harbor-pilot-quota` template and the subject is
+         `evt.harborpilot.quota.window.recovered`, central drops the cached board and makes every quota hold due.
+         A board read already in flight when the kick arrives is neither cached nor used: it is read again. The
+         event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
+         alone applies.
+       - **A gateway run parked after its hold cleared** resumes at once, not after the 1-hour backoff. The gateway hold
+         opens with the limit, so a missing hold means Harbor Pilot recovered, or the hold was cleared. A run still
+         kept alive when the hold clears is parked only at its 30-minute keep-alive (not changed here).
+       - **No migration.** `usage_limits.source` already allowed both sources (0050). The protocol is unchanged.
+  10. **Operator answers (2026-11-13, all proposed defaults accepted).**
+      - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.
+      - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.
+      - **Q3 keep-alive versus park:** keep alive up to 6 h, park longer waits.
+      - **Q4 node capacity:** a kept-alive run counts against the node limit, not the space limit.
+      - **Q5 people:** one human action (type `message`, priority `normal`) to the affected space's operators, once per
+        account window, only for waits over 12 h.
+      - **Q6 priority:** control first, then the oldest task; a resume never pre-empts a launch already running.
+      - **Q7 early stop:** a later, optional step (T13, a separate amendment): stop new launches on an account at
+        ≥ 95 % of a window, from a SpaceMan-owned statusline. Not part of this decision.
+      - **Q8 cross-space:** the hold applies to every space bound to the account.
+      - **Q9 gateway estimate:** accepted (earliest reset, re-checked every 15 min); no per-project board view requested.
+  11. **Telling control and people once.** Control gets one durable message per space and account window when a
+      limit opens and one when it clears or resumes (dedup keys from the `usage_limits` id); worker `run-ended` notices
+      for `usage_limit` ends are folded in. People get the single action of Q5.
+      - **Amended 2026-11-13 (UL-5, control's decision):** the keep-alive messages are per **run and limit window**:
+        one "at its usage limit" and one "usage limit cleared" per (run, `since`), written inside the report
+        transaction that changes the run's limit window, never per report. A "cleared" message goes out only for a
+        window control was told about. Control isn't told about its own limit, and a run that ends at its limit is
+        reported by its run-ended notice. The per-account-window message with the parked runs and the folding of
+        run-ended notices come with parking (UL-7).
+      - **Amended 2026-11-14 (UL-7):** parked runs are announced **per wait**, written in the transaction of the change:
+        one "parked" message (`limit-wait:<wait id>`) with the resume and release times, one "resumed" message
+        (`limit-wait-resumed:<wait id>`), and one "given up" message (`limit-wait-released:<wait id>`). They replace
+        the run-ended notice of a parked run. A re-park, and later resumes of the same chain (an unknown reset probed
+        again), aren't announced again; a fresh-session resume always is. Control's own wait isn't announced to it. A
+        per-account-window summary isn't sent.
+      - **Amended 2026-11-14 (UL-9):** the people notice of Q5 is one human action (type `message`, priority `normal`,
+        not blocking, requester `system` "Usage limits") per **hold row**: per space and account (or gateway reference)
+        window, deduplicated on `usage-limit-human:<usage_limits id>`, and recorded in `usage_limits.notified_humans_at`.
+        It is raised for an open hold whose known reset is further away than the space's
+        `usage_limit_notify_after_hours` (default 12), by a job on the shared deadline timer (a limit report wakes it);
+        not for an unknown reset, and not in an archived space. A hold whose reset later moves past the threshold is
+        announced then. The action is created first and the hold marked after, so a crash in between raises it once.
+        "The space's operators" are the people who see the space's human actions; no message to the operators' inbox is
+        sent in addition. A space that has too many open human actions gets it on a later round.
+  12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind` without a CHECK,
+      so a new kind never needs a runs-table rebuild, `limit_resets_at`, `limit_since`; tables `usage_limits`, with
+      `check_at` and the kind CHECK, and `limit_waits`); agent
+      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_since`, `limit_offset`; `limit_since` added in UL-2
+      so a restarted agent re-reports the same `since`). Space setting
+      `usage_limit {failover, keep_alive_max, max_wait, notify_humans_after}`.
+      **Amended 2026-11-14 (UL-6, UL-7):** these are space limits, not a settings object: `usage_limit_failover`
+      (switch, default off), `usage_limit_keep_alive_max_minutes` (1–1,440, default 360) and
+      `usage_limit_max_wait_hours` (1–720, default 168: Q2's 7 days). `notify_humans_after` comes with UL-9.
+      **Amended 2026-11-14 (UL-9):** `notify_humans_after` is the space limit `usage_limit_notify_after_hours` (0–720,
+      default 12; 0: never). These four keys are the names the Terraform provider uses (T11).
+- **Alternatives:**
+  - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and
+    dateless under 24 h, and server-overridable wording.
+  - **Always park.** Simpler and frees memory, but discards in-memory state (background shells) and Claude Code's own
+    timer, which already handles the common 5-hour case (Q3).
+  - **A new `observed`/`waiting` run state.** Rejected: it would touch every literal live-state list, the sweeper and
+    the single-control index; columns plus two tables avoid that.
+  - **`StopFailure` hook or statusline `rate_limits`.** The hook carries no reset time and the statusline needs an
+    unsafe settings key; kept for T13 as accelerators, not the source.
+  - **Trust `Retry-After` for gateway runs.** HP doesn't send it in this case.
+- **Consequences:**
+  - A run's transcript can now park that run and hold its account. A forged record can block an account for at most
+    8 days (the clamp); only typed fields are read, no free text is stored, the kind is allowlisted, progress by any
+    other run on the account clears the hold, and an operator can clear it. THREAT_MODEL gains a row when the
+    detector lands.
+  - Claude Code's record format is undocumented; a rename silently stops detection and falls back to today's
+    behaviour. The contract records the versions, ADR-0077's managed versions let a fixture test follow the pinned
+    version, and a bounded metric counts unclassified 429 records.
+  - The wrap-up path gives no reset time, so more than half the subscription waits seen run with an unknown reset:
+    keep-alive covers them while the process lives, and a parked one is resumed by backoff.
+  - A gateway reset is an estimate and may resume early (re-detected, re-parked, no new notice) or up to 15 min late.
+  - A real subscription limit can't be forced in tests; until one is observed on a SpaceMan run, real evidence stays
+    empty (K-16).
 
 ## 2. Open items and unresolved contracts
 
@@ -4827,3 +5579,5 @@
 | K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
+| K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
+| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run. None had been observed when the work was documented (UL-12, 2026-11-14). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |

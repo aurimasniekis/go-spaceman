@@ -35,6 +35,20 @@ var FleetRules = map[string]Rule{
 	"stop-run":   InSpace(authz.RunControl),
 	"send-input": InSpace(authz.RunControl),
 
+	// Usage limits (ADR-0079). A space's holds include other spaces' open holds on its accounts, redacted to what the
+	// space may know (the account and the window); the account view names every space and needs account:read.
+	"list-space-usage-limits":   InSpace(authz.RunRead),
+	"list-space-limit-waits":    InSpace(authz.RunRead),
+	"list-account-usage-limits": Global(authz.AccountRead),
+	// "Clear now" (decision 7): a space's own hold with the permission that launches runs there; every space's holds
+	// on an account with the permission that manages accounts (accounts are global).
+	"clear-space-usage-limit":    InSpace(authz.RunControl),
+	"clear-account-usage-limits": Global(authz.AccountWrite),
+	// A parked run's wait (decisions 5 and 6): resume it now, or give it up and its task back to the queue, with the
+	// permission that launches and stops runs in the space.
+	"resume-limit-wait":  InSpace(authz.RunControl),
+	"release-limit-wait": InSpace(authz.RunControl),
+
 	// Terminal takeover (takeover.go).
 	"start-takeover": TakeoverRules["start-takeover"],
 	"renew-takeover": TakeoverRules["renew-takeover"],
@@ -281,6 +295,126 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				}{}
 				out.Body.Items = rs
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-usage-limits", Method: http.MethodGet, Path: "/spaces/{space_id}/usage-limits",
+			Summary: "A space's usage-limit holds",
+			Description: "The holds the space's runs opened when they reached a usage limit (newest first, cleared ones included), then the open holds " +
+				"other spaces opened on the accounts this space binds or the gateway it routes through: those hold this space too, and are marked " +
+				"shared, without the other space's identifiers.", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []fleet.UsageLimit `json:"items"`
+				}
+			}, error) {
+				ls, err := f.UsageLimits(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.UsageLimit `json:"items"`
+					}
+				}{}
+				out.Body.Items = ls
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-limit-waits", Method: http.MethodGet, Path: "/spaces/{space_id}/limit-waits",
+			Summary: "A space's runs parked at a usage limit, waiting to resume", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []fleet.LimitWait `json:"items"`
+				}
+			}, error) {
+				ws, err := f.LimitWaits(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.LimitWait `json:"items"`
+					}
+				}{}
+				out.Body.Items = ws
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "resume-limit-wait", Method: http.MethodPost, Path: "/spaces/{space_id}/limit-waits/{wait_id}/resume",
+			Summary: "Resume a run parked at a usage limit now",
+			Description: "Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is " +
+				"still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space " +
+				"or a node that isn't connected refuses it, and the wait keeps waiting. Audited.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				WaitID string `path:"wait_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.LimitWait }, error) {
+				w, err := f.ResumeLimitWait(ctx, Actor(ctx), in.SpaceID, in.WaitID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.resume", err)
+				}
+				return &struct{ Body *fleet.LimitWait }{Body: w}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "release-limit-wait", Method: http.MethodPost, Path: "/spaces/{space_id}/limit-waits/{wait_id}/release",
+			Summary: "Give up on a run parked at a usage limit",
+			Description: "Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and " +
+				"unassigned, and control is told. Audited.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				WaitID string `path:"wait_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.LimitWait }, error) {
+				w, err := f.ReleaseLimitWait(ctx, Actor(ctx), in.SpaceID, in.WaitID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.release", err)
+				}
+				return &struct{ Body *fleet.LimitWait }{Body: w}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-account-usage-limits", Method: http.MethodGet, Path: "/accounts/{account_id}/usage-limits",
+			Summary: "An account's open usage-limit holds in every space", Tags: []string{"accounts"}},
+			func(ctx context.Context, in *AccountPath) (*struct {
+				Body struct {
+					Items []fleet.UsageLimit `json:"items"`
+				}
+			}, error) {
+				ls, err := f.AccountUsageLimits(ctx, in.AccountID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.UsageLimit `json:"items"`
+					}
+				}{}
+				out.Body.Items = ls
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "clear-space-usage-limit", Method: http.MethodPost, Path: "/spaces/{space_id}/usage-limits/{limit_id}/clear",
+			Summary: "Clear one of the space's usage-limit holds now",
+			Description: "Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so " +
+				"launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write " +
+				"(clear-account-usage-limits).", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				LimitID string `path:"limit_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.UsageLimitClear }, error) {
+				res, err := f.ClearSpaceUsageLimit(ctx, Actor(ctx), in.SpaceID, in.LimitID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.clear", err)
+				}
+				return &struct{ Body *fleet.UsageLimitClear }{Body: res}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "clear-account-usage-limits", Method: http.MethodPost, Path: "/accounts/{account_id}/usage-limits/clear",
+			Summary: "Clear an account's usage-limit holds in every space now",
+			Description: "Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose " +
+				"hold was cleared has its control told once.", Tags: []string{"accounts"}},
+			func(ctx context.Context, in *struct {
+				AccountPath
+				Body struct {
+					Kind string `json:"kind,omitempty" enum:"five_hour,seven_day,seven_day_opus,seven_day_sonnet,seven_day_overage_included,overage,unknown" doc:"Only holds of this kind; every kind when absent"`
+				} `required:"false"`
+			}) (*struct{ Body *fleet.UsageLimitClear }, error) {
+				res, err := f.ClearAccountUsageLimits(ctx, Actor(ctx), in.AccountID, in.Body.Kind)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.clear", err)
+				}
+				return &struct{ Body *fleet.UsageLimitClear }{Body: res}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "get-run", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}", Summary: "Get a run", Tags: tags},
 			func(ctx context.Context, in *RunPath) (*struct{ Body *fleet.Run }, error) {

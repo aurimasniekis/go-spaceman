@@ -64,6 +64,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}/usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An account's open usage-limit holds in every space */
+        get: operations["list-account-usage-limits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/usage-limits/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear an account's usage-limit holds in every space now
+         * @description Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose hold was cleared has its control told once.
+         */
+        post: operations["clear-account-usage-limits"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/break-glass": {
         parameters: {
             query?: never;
@@ -2631,6 +2668,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/limit-waits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's runs parked at a usage limit, waiting to resume */
+        get: operations["list-space-limit-waits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/limit-waits/{wait_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give up on a run parked at a usage limit
+         * @description Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and unassigned, and control is told. Audited.
+         */
+        post: operations["release-limit-wait"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/limit-waits/{wait_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a run parked at a usage limit now
+         * @description Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space or a node that isn't connected refuses it, and the wait keeps waiting. Audited.
+         */
+        post: operations["resume-limit-wait"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/limits": {
         parameters: {
             query?: never;
@@ -3918,6 +4012,46 @@ export interface paths {
         get: operations["get-space-usage"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's usage-limit holds
+         * @description The holds the space's runs opened when they reached a usage limit (newest first, cleared ones included), then the open holds other spaces opened on the accounts this space binds or the gateway it routes through: those hold this space too, and are marked shared, without the other space's identifiers.
+         */
+        get: operations["list-space-usage-limits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/usage-limits/{limit_id}/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear one of the space's usage-limit holds now
+         * @description Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write (clear-account-usage-limits).
+         */
+        post: operations["clear-space-usage-limit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5354,6 +5488,7 @@ export interface components {
             pending_approvals: number;
             /** Format: date-time */
             restored_at: string;
+            resumed_spaces: string[];
             /** Format: int64 */
             run_credentials_revoked: number;
             /** Format: int64 */
@@ -5667,6 +5802,19 @@ export interface components {
             readonly $schema?: string;
             current: string;
             new: string;
+        };
+        "Clear-account-usage-limitsRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Clear-account-usage-limitsRequest.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Only holds of this kind; every kind when absent
+             * @enum {string}
+             */
+            kind?: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "unknown";
         };
         CodeInBody: {
             /**
@@ -6420,6 +6568,45 @@ export interface components {
             state: string;
             valid: boolean;
         };
+        FleetLimitWait: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetLimitWait.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            attempts: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            id: string;
+            instance_id: string;
+            last_error?: string;
+            new_run_id?: string;
+            node_id: string;
+            /**
+             * Format: date-time
+             * @description When a worker's task is given back to the queue; absent for control
+             */
+            release_at?: string;
+            /** Format: date-time */
+            resume_at: string;
+            role: string;
+            run_id: string;
+            /** @enum {string} */
+            run_kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            space_id: string;
+            /** @enum {string} */
+            state: "waiting" | "resuming" | "resumed" | "released" | "cancelled" | "failed";
+            task_id?: string;
+            /** Format: date-time */
+            updated_at: string;
+            usage_limit_id?: string;
+            /** Format: int64 */
+            version: number;
+        };
         FleetLossReport: {
             /**
              * Format: date-time
@@ -6605,6 +6792,7 @@ export interface components {
             created_by: string;
             /** @enum {string} */
             desired: "running" | "stopped";
+            /** @description Why the run ended: the node's reason (exited, stopped, killed, lease_expired, …), usage_limit when it ended while at a usage limit, or central's stale_not_on_node, stale_lease_lost or relocated_source_unavailable */
             end_reason?: string;
             /** Format: date-time */
             ended_at?: string;
@@ -6629,6 +6817,8 @@ export interface components {
             /** @enum {string} */
             kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
             launch: components["schemas"]["FleetLaunchSpec"];
+            /** @description The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset */
+            limit?: components["schemas"]["FleetRunLimit"];
             /** @description Omitted from run lists unless include=manifest */
             manifest?: unknown;
             node_id: string;
@@ -6660,6 +6850,20 @@ export interface components {
             turn: number;
             /** Format: int64 */
             version: number;
+        };
+        FleetRunLimit: {
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "gateway_quota" | "gateway_budget" | "unknown";
+            /**
+             * Format: date-time
+             * @description When the limit resets; absent when unknown (Claude Code's wrap-up path and gateway limits carry none)
+             */
+            resets_at?: string;
+            /**
+             * Format: date-time
+             * @description When the node first saw the limit
+             */
+            since: string;
         };
         FleetSpace: {
             /**
@@ -6797,6 +7001,55 @@ export interface components {
             goals: string;
             name: string;
             standing_instructions: string;
+        };
+        FleetUsageLimit: {
+            account_id?: string;
+            /**
+             * Format: date-time
+             * @description When a hold with an unknown reset is next probed
+             */
+            check_at?: string;
+            /** Format: date-time */
+            cleared_at?: string;
+            /** @description run:<id> (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it */
+            cleared_by?: string;
+            first_run_id?: string;
+            /** @description harbor-pilot (a quota exhaustion: the whole connection) or harbor-pilot:project:<id> (a project's budget) */
+            gateway_ref?: string;
+            /** @description Absent on a shared hold */
+            id?: string;
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "gateway_quota" | "gateway_budget" | "unknown";
+            /**
+             * Format: date-time
+             * @description Absent when unknown
+             */
+            resets_at?: string;
+            /** @enum {string} */
+            scope: "account" | "gateway";
+            /** Format: date-time */
+            seen_at: string;
+            /** @description Opened by another space's run on an account or gateway this space uses; it holds this space too */
+            shared?: boolean;
+            /** @enum {string} */
+            source: "transcript" | "quota_board" | "budget_status" | "operator";
+            /** @description The space whose run opened it; absent on a shared hold */
+            space_id?: string;
+            /** Format: int64 */
+            version?: number;
+        };
+        FleetUsageLimitClear: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetUsageLimitClear.json
+             */
+            readonly $schema?: string;
+            /** @description The holds this request cleared */
+            cleared: components["schemas"]["FleetUsageLimit"][];
+            /** @description Other spaces still hold the account or gateway reference, so launches here may still be refused */
+            held_elsewhere: boolean;
+            note?: string;
         };
         "Fork-promptRequest": {
             /**
@@ -8249,7 +8502,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "hours" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** @description 0 means no limit */
             zero_means_none: boolean;
         };
@@ -8334,7 +8587,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "hours" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** Format: int64 */
             value: number;
             /** @description 0 means no limit */
@@ -8451,6 +8704,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AccountsKind"][];
+        };
+        "List-account-usage-limitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-account-usage-limitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetUsageLimit"][];
         };
         "List-approval-policiesResponse": {
             /**
@@ -8697,6 +8959,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["HumanSpaceType"][];
         };
+        "List-space-limit-waitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-limit-waitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetLimitWait"][];
+        };
         "List-space-mcp-grantsResponse": {
             /**
              * Format: uri
@@ -8714,6 +8985,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["CatalogSpaceRole"][];
+        };
+        "List-space-usage-limitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-usage-limitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetUsageLimit"][];
         };
         "List-spacesResponse": {
             /**
@@ -9930,6 +10210,11 @@ export interface components {
             code?: string;
             password: string;
         };
+        RecordingMode: {
+            /** Format: int64 */
+            mode: number;
+            on: boolean;
+        };
         RecordingPage: {
             /**
              * Format: uri
@@ -9939,7 +10224,7 @@ export interface components {
             readonly $schema?: string;
             /**
              * Format: int64
-             * @description Sequence discontinuities and explicit gap records
+             * @description Sequence discontinuities and explicit gap records up to the end of this page (the read stops after it)
              */
             gaps: number;
             more: boolean;
@@ -9949,7 +10234,9 @@ export interface components {
              */
             next_after: number;
             records: components["schemas"]["RecordingRecord"][];
-            /** @description A segment ended in an incomplete frame (interrupted writer) */
+            /** @description Set when the page is a tail (tail=): what comes before its records */
+            tail?: components["schemas"]["RecordingTail"];
+            /** @description A segment read for this page ended in an incomplete frame (interrupted writer) */
             truncated: boolean;
         };
         RecordingRecord: {
@@ -9971,6 +10258,37 @@ export interface components {
              */
             t: number;
             why?: string;
+        };
+        RecordingTail: {
+            /**
+             * Format: int64
+             * @description Terminal columns where the tail starts (0 when no size was recorded before it)
+             */
+            cols: number;
+            /**
+             * Format: int64
+             * @description Sequence number of the tail's first record (0 when the recording is empty)
+             */
+            from: number;
+            /**
+             * Format: int64
+             * @description Gap records before the tail
+             */
+            gaps: number;
+            /** @description DEC private modes the output before the tail set (on) or reset, in the order they last changed */
+            modes: components["schemas"]["RecordingMode"][];
+            /**
+             * Format: int64
+             * @description Terminal rows where the tail starts
+             */
+            rows: number;
+            /**
+             * Format: int64
+             * @description Bytes of output before the tail; 0 when the tail is the whole recording
+             */
+            skipped_bytes: number;
+            /** @description Whether a truncation record comes before the tail */
+            truncated: boolean;
         };
         "Recovery-loginRequest": {
             /**
@@ -11665,6 +11983,17 @@ export interface components {
              */
             last_error_at?: string;
             last_error_message?: string;
+            /** @description The host central routes to the Mini App handler only (it never reaches the rest of central; 404 for everything while no bot serves it): telegram.miniapp_host from central's configuration when set, otherwise the bot's miniapp_host */
+            miniapp_host?: string;
+            /** @description The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything */
+            miniapp_host_ignored?: string;
+            /** @description The bot stores a miniapp_host but central's configuration does not set telegram.miniapp_host: set it (or clear the bot's miniapp_host) */
+            miniapp_host_needs_key?: boolean;
+            /**
+             * @description Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)
+             * @enum {string}
+             */
+            miniapp_host_source?: "config" | "bot" | "";
             /** @enum {string} */
             mode?: "webhook" | "polling" | "";
             /**
@@ -12198,6 +12527,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-account-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-account-usage-limitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-account-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Clear-account-usage-limitsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetUsageLimitClear"];
+                };
             };
             /** @description Error */
             default: {
@@ -18268,6 +18663,101 @@ export interface operations {
             };
         };
     };
+    "list-space-limit-waits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-limit-waitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "release-limit-wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                wait_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetLimitWait"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resume-limit-wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                wait_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetLimitWait"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-space-limits": {
         parameters: {
             query?: never;
@@ -19756,6 +20246,8 @@ export interface operations {
                 /** @description Return records with seq greater than this */
                 after?: number;
                 limit?: number;
+                /** @description Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after. */
+                tail?: number;
             };
             header?: never;
             path: {
@@ -21295,6 +21787,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageSummary"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-usage-limitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-space-usage-limit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                limit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetUsageLimitClear"];
                 };
             };
             /** @description Error */

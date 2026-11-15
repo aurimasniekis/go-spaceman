@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   prompt becomes an attachment of the comment, and the card's attachments come back to the chat with forwarding and saving
   off, where the space shows content. A card that went stale gets a conflict and is redrawn, never overwritten.
   Approvals still can't be withdrawn from Telegram.
+- `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
+  proxy that drops idle connections (about 100 s) never sees them idle.
 - Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
   and what waits, with status changes, placement (top, up, down, bottom) and incident decisions after a confirmation;
   `/runs` shows the live runs and stops one after a confirmation (the API requires `run:control`); `/messages` lists what
@@ -88,11 +90,168 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the caller's Telegram link, and `GET /tg-dl/<id>` on the Mini App host serves it: random ID kept by hash, valid 60
   seconds and 3 requests, the link's permissions checked on every use, `Cache-Control: no-store`, `Referrer-Policy:
   no-referrer`, the one CORS header (`https://web.telegram.org`) of the host, and `/tg-dl/<redacted>` in logs.
+- **Runs survive Claude usage limits** (ADR-0079, Accepted; SM-RUN-004..006). When a Claude Code run reaches its
+  subscription's 5-hour or weekly limit, or a Harbor Pilot gateway runs out of accounts or budget, SpaceMan holds the
+  account until the reset, keeps a short wait alive, parks a long one with its session and task, resumes it at the
+  reset with `--resume`, and tells control and (for waits over 12 hours) the space's people once. The entries below
+  give the details. New guide page "When an account runs out", and a "Usage limits" section in Known limitations.
+  Read it before you rely on this: no live subscription limit has been observed on a SpaceMan run, so the tests are
+  simulated (scripted node, fake transcript records, fake clock, fake Harbor Pilot; the gateway side also ran against a
+  real Harbor Pilot demo, still with a scripted node); a gateway reset is an estimate from Harbor Pilot's quota board;
+  and Codex runs are not covered.
+- Usage limits, groundwork (ADR-0079): central migration 0050 (a run's reported limit, the `usage_limits` and
+  `limit_waits` tables), the agent's journal migration 0008, and node protocol 1.12, whose run reports may carry the
+  limit a node detected. Both migrations are forward-only in production: take a backup first. Upgrade central first,
+  then the node agents; a node agent below 1.12 keeps working as before.
+- Usage-limit detection on the node (ADR-0079): when a Claude Code run's turn ends, and when it ends, the
+  node agent reads the typed usage-limit fields of the run's transcript (from where it stopped last time) and reports
+  the limit (kind, reset time, since) or its clear with the run, once per change. No transcript text is logged or
+  sent.
+- Usage limits are visible (ADR-0079): central stores the limit a node reports for a run (`limit` on runs, and in
+  control's `spaceman_runs_list`). It opens a hold on the run's account, or on the Harbor Pilot connection or project,
+  and clears the hold when a run on that account reports the limit over. A run that ends at a limit ends with
+  `usage_limit`. New reads: `GET /spaces/{id}/usage-limits` (including other spaces' holds on the same accounts),
+  `GET /spaces/{id}/limit-waits` and `GET /accounts/{id}/usage-limits`, also available as `spaceman limits holds`,
+  `spaceman limits waits` and `spaceman account holds`. New events: `fleet.usage_limit.reached` and
+  `fleet.usage_limit.cleared`.
+- Runs waiting for a usage limit to reset are kept alive and protected (ADR-0079 decision 3): a worker or diagnostic run
+  at its limit no longer counts against the space's concurrency limit (it still counts against the node's capacity),
+  gets no terminal notices until the limit clears (its messages wait, then are noticed), and control's idle stop is not
+  armed while control itself is at its limit. Control gets exactly one message when a run reaches its limit and one when
+  the limit clears, written with the change that causes it, never once per report.
+- Usage-limit holds block launches (ADR-0079): a launch or resume on an account (or Harbor Pilot connection or project)
+  that any space holds at a usage limit is refused (429) with the reset time in UTC, or with the next re-check time when
+  the reset is unknown; a refusal writes nothing. When a hold with an unknown reset is due for its re-check, exactly one
+  launch goes through as the probe; the next re-check backs off from 1 h, doubling, up to the keep-alive maximum. A
+  control run that ends at a usage limit is no longer restarted, counted against the restart budget or reported to
+  people, and control auto-start waits for the reset. Two new space limits: `usage_limit_failover` (off by default)
+  lets a launch use another bound account of the same harness without a hold (never a direct account for a space routed
+  through Harbor Pilot), and `usage_limit_keep_alive_max_minutes` (default 360). "Clear now":
+  `POST /spaces/{id}/usage-limits/{limit_id}/clear` (`spaceman limits clear`, run:control) clears only that space's
+  hold and says when other spaces still hold the account; `POST /accounts/{id}/usage-limits/clear`
+  (`spaceman account clear-holds`, account:write) clears every space's holds on the account. Both are audited, and
+  each cleared space's control is told once.
+- Runs at a usage limit are parked and resumed at the reset (ADR-0079 decisions 4–6). A run whose reset is further away
+  than the keep-alive is stopped at once, one still limited after the keep-alive is stopped then, and one that ends, is
+  lost or is swept while at its limit is parked too (control, worker and diagnostic runs). At the reset, SpaceMan
+  resumes it as a new run of the same instance with `--resume` of its session (a fresh session with its original
+  prompt when the space moved node), and its task points at the new run. Control resumes first, then the oldest, at
+  most five every 10 seconds. A wait that can't resume yet (node away, space paused or full, account still held) keeps
+  waiting, and the node's hello or the space's resume brings it forward. After `usage_limit_max_wait_hours` (new
+  space limit, default 168) a worker's task goes back to the queue, ready and unassigned; control is never given up
+  on. Control gets one message per park, resume and release, in place of the run-ended notice, and a parked control
+  isn't auto-started. A task that is finished, cancelled or reassigned ends its run's wait. New endpoints
+  `POST /spaces/{id}/limit-waits/{wait_id}/resume` and `.../release` (`spaceman limits resume|release`, run:control),
+  audited. A hold that clears lets the runs parked under it resume on the next round. A resume whose `--resume` fails
+  before the first turn starts once more in a fresh session. A released task in review stays in review, with only its
+  assignee cleared.
+- Harbor Pilot runs waiting on an exhausted gateway now know roughly when to come back (ADR-0079 decision 9). Central
+  estimates a gateway hold's reset from Harbor Pilot. For a quota exhaustion it takes the earliest reset among the
+  quota board's exhausted accounts (`GET /api/v1/quota/board`, which the service-principal token's `usage.read`
+  already allows). For a blocking budget it takes the budget's period end. It reads Harbor Pilot again every 15
+  minutes, or at once when a subscription on the Harbor Pilot quota template receives `quota.window.recovered`. When
+  the accounts recover or the budget no longer blocks, the hold clears and the parked runs resume. Launches refused
+  meanwhile name the estimate. The board covers every account of the Harbor Pilot installation, not only the ones the
+  space's plan uses, so the time is an estimate: a run may resume early, hit the limit again and be parked again.
+- People are told about long usage-limit waits (ADR-0079 Q5): when an account (or the Harbor Pilot gateway) is held
+  until a reset more than 12 hours away, the space gets one informational human action naming the account, the reset
+  and what waits on it, once per space and limit window. New space limit `usage_limit_notify_after_hours` (0–720,
+  default 12; 0 turns it off). The `usage_limit_*` limits are validated like every limit, and the limits API now lists
+  `hours` among the units.
+- Usage limits in the web UI (ADR-0079): a run at its usage limit shows the limit and its reset time (and "at usage
+  limit" as its state), and a run parked at one says so. The Limits page lists the accounts and gateway references held
+  at a usage limit (other spaces' holds on the same account as "shared", without their details) and the runs waiting
+  for a reset, each with until when, plus "Resume now", "Release" and "Clear" for operators and "Clear in every space"
+  for account admins. Times are shown in the viewer's time zone, with UTC in the tooltip. The usage-limit maximum wait
+  now reads in days and hours on the Limits page.
+- Rich Markdown in every rendered body (inbox items, tasks, human actions, messages and the rest): footnotes, heading
+  anchors, highlighted code blocks with a copy button, and Mermaid diagrams in the app's light and dark theme. The
+  highlighter and mermaid load only when a body needs them (ADR-0082).
+- Web: a space's overview has a **New inbox item** action next to **Launch run**, for users who may add inbox items
+  (operators and admins of the space). It opens the Inbox page's dialog, and a toast confirms the new item with a link
+  to it. On a phone the action is an icon. An unsent draft now survives closing and reopening the dialog.
+- Web: a run's terminal view (the run page and the Terminals views) has **New inbox item** next to **Take over**, and
+  **Send as inbox item** next to the message box's **Send**. The latter opens the same dialog prefilled with the text
+  and a link to the run, sends nothing to the terminal and clears the message box once the item is added. Both use the
+  same permission as the Inbox page and need no takeover; on a phone they are icons.
 
 ### Fixed
+- The Telegram Mini App host fails closed (ADR-0083): new configuration `telegram.miniapp_host`
+  (`SPACEMAN_TELEGRAM_MINIAPP_HOST`). A request for that host, or for the bot's stored `miniapp_host`, is served only
+  by the Mini App and answers 404 for everything while no bot runs or it is disabled; it never reaches the main API,
+  sign-in or web UI. When the configuration and the bot's `miniapp_host` differ, the configuration wins and the System
+  page shows the difference.
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header
   line, not only the first, so a proxy that appends its own line can't be skipped over (audit source addresses and the
   sign-in rate limit).
+- A run could show `starting` with no terminal while its program was running. A repeated launch made the node report an
+  older copy of the run, which could reach central after the `running` report and replace it. Central now ignores a run
+  report that is behind the state it already has (ADR-0086).
+- A terminal you are only watching (live, replay or someone else's takeover) no longer focuses its input: touching it on
+  a phone does not open the on-screen keyboard, and key presses are not captured or swallowed. Scrolling, selecting
+  and copying still work. Taking a terminal over puts it in input mode, and ending the takeover takes it out again.
+- Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
+  be writing the run's files and its journal after the agent had stopped, while the next agent process started.
+- Central's shutdown now waits for node connections and the work they started (memory syncs into the role-memory
+  repositories, usage, transcripts, tool calls, relocation transfers) before it closes its database. Before, that work
+  could still write after the database was closed. The wait shares the 5 s gateway mints already had, so a stop still
+  takes at most 43 s (30 s `shutdown.timeout`, 5 s, 8 s for the database), inside the units' `TimeoutStopSec=45s`.
+  Central also refuses new node connections once shutdown has begun; a memory sync still queued when its connection
+  ends is dropped (the node sends it again) and a tool call ends with its connection.
+- **A message typed into "Message the agent" (for example to control) while the agent was busy was lost.** The box sent
+  safe, idle-gated input; the node refused it while the program worked, and nothing tried again. The text is now typed
+  into the running session at once (the fake runner queues typed input; real Claude Code and Codex are not yet verified to). The placeholder
+  and the guides say so (ADR-0084). Messages from the Messages page and agents are unchanged: stored, then announced
+  by the terminal notice when the program is idle.
+- Resuming a paused space now starts control when work was waiting. The resume did not wake the control notifier, so
+  work that arrived while the space was paused started control only at the next slow sweep. Resuming kicks the
+  notifier; auto-start settings, limits and dedupe apply as before.
+- The "Restored from a backup" banner no longer comes back when an operator pauses a space later: only spaces the
+  restore paused and that have not been resumed since count as still paused (the notice now records `resumed_spaces`).
+
+### Changed
+
+- The node agent's hello carries only live and adoptable runs and the unacknowledged ended runs that are under 24 hours
+  old, instead of every run the node ever had (a node with 2500 ended runs sent a 1.1 MB hello on every connect). Older
+  unacknowledged ended runs follow the welcome in slices. An ended run that central's reconcile still lists as active
+  (a restored backup, a report lost with the connection) is reported again at once. No protocol change.
+- The node journal deletes ended runs after `journal_retention` (default `720h`, 30 days to 1 year), once central
+  acknowledged their final state, their recording is fully shipped and their transcript upload is finished. Live and
+  adoptable runs, and the runs that Claude Code cache GC's pins come from, are kept. See ADR-0078.
+- A run's terminal opens on its newest output. The live view and replay load only the last 1 MiB of a run's recording
+  first, with the terminal size and modes in effect there, instead of the whole recording (tens of MB for a long
+  session). **Load earlier output** at the top of the scrollback fetches more on demand. Replay seeks draw at most 1 MiB
+  before their position. Central streams catch-ups and recording pages instead of reading whole recordings into memory
+  for each viewer. The API adds optional `tail` parameters to the terminal stream and the recording endpoint; older
+  clients and servers keep working (ADR-0081).
+- Central reads at most `http.catch_up_concurrency` stored recordings at once (new setting, default 8). A terminal
+  catch-up or recording page waits up to `http.catch_up_wait` (default 5 s) for a slot, then gets 503 with
+  `Retry-After`; the web UI retries. A recording page's `gaps` now cover the records up to the end of the page.
+
+### Security
+
+- **Reserved dedup namespaces** (ADR-0087). The dedup keys SpaceMan's own services use for human actions
+  (`approval:`, `usage-limit-human:`, `control-failing:`, `control-autostart-*:`) and tasks (`xspace:`, `schedule:`)
+  are refused from the API and agent tools with `validation_failed`. Before, a caller could create a row under such a
+  key first and the service would reuse it: an enforced approval's action could show text the approvals service never
+  wrote. An enforced approval also refuses an existing action under its key that it didn't write, revokes itself, and
+  is asked again under a new ID.
+- Central's public listener no longer lets a client hold a connection by declaring a request body and not sending it.
+  A handler that refused such a request without reading the body (a 401, a POST to a UI path) made the server wait,
+  with no deadline, for up to 256 KiB that never came, and a handler reading a body the client stopped sending waited
+  forever. Every read of a request body must now bring data within **`http.read_idle_timeout`** (new, default `30s`,
+  1s to 10m): a large upload that keeps moving is never cut off. A response sent before the body was read to its end
+  closes the connection instead of draining the body. A body must also arrive within its operation's own bound
+  (5 s for JSON operations, 10 minutes for attachment uploads). Requests without a body (event streams) and real
+  WebSocket handshakes are unaffected; `Upgrade` headers on a request with a body exempt nothing (ADR-0085).
+- A kept-alive connection waiting for its next request is closed after **`http.idle_timeout`** (new, default `2m`, 1s
+  to 1h); before, it could wait forever.
+- The Markdown sanitizer is stricter: images render only from attachments, and buttons, form fields other than task
+  checkboxes, `<link>`, `<meta>`, `<base>`, frames and `srcset` are removed. Rendering a deeply nested or
+  delimiter-heavy body is bounded to a few seconds. Mermaid renders in strict mode, its SVG is sanitized again (images
+  in labels removed) and a diagram can't change its theme. Diagrams are bounded too: a large one renders only after a
+  "Render diagram" click, and one over 500 statements, or past 25,000 characters of diagrams in one body, shows its
+  source (ADR-0082).
 
 ## [0.1.4] - 2026-11-14
 

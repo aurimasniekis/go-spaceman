@@ -11,8 +11,7 @@ import (
 )
 
 // SM-TG-006 (TG-7-2): an enforced approval in a space without the opt-in, which is decided only in the browser, gets a
-// Mini App button built from the configured Mini App host (a link to the action's page); with no Mini App host the card
-// keeps its text and has no button.
+// Mini App button built from the configured Mini App host (a link to the action's page).
 func TestTelegramNeedsYouAppButton(t *testing.T) {
 	t.Parallel()
 	e := newMiniAppEnv(t)

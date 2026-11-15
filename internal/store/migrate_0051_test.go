@@ -6,15 +6,15 @@ import (
 	"testing"
 )
 
-// SM-TG-004 (groundwork for SM-TG-001/010/014): migration 0051 adds every Telegram table to a database at 0049 without
+// SM-TG-004 (groundwork for SM-TG-001/010/014): migration 0051 adds every Telegram table to a database at 0050 (the usage-limit migration it follows) without
 // touching existing rows, and its constraints hold: one bot row and one settings row, a 22-character hook id, one live
 // link per Telegram user (a revoked one frees it), a redeemed code names its redeemer, and a purged space takes its
 // Telegram settings and message rows with it while links only lose their current space.
-func TestTelegramMigrationFrom0049(t *testing.T) {
+func TestTelegramMigrationFrom0050(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
-	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0049")})
+	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0050")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,11 @@ func TestTelegramMigrationFrom0049(t *testing.T) {
 	}
 	var n int
 	if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name LIKE '%telegram%'`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("0049 already has Telegram tables: %d %v", n, err)
+		t.Fatalf("0050 already has Telegram tables: %d %v", n, err)
+	}
+	// 0051 is ordered after 0050: the base it migrates already has the usage-limit tables.
+	if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('usage_limits', 'limit_waits')`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("0050's usage-limit tables at the base: %d %v", n, err)
 	}
 	_ = s.Close()
 

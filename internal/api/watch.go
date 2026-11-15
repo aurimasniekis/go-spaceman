@@ -25,9 +25,8 @@ var globalReadPerm = map[string]authz.Permission{
 }
 
 const (
-	watchBatch     = 200
-	watchHeartbeat = 15 * time.Second
-	watchMaxQueue  = 64
+	watchBatch    = 200
+	watchMaxQueue = 64
 )
 
 // watchHandler streams the durable change feed as Server-Sent Events (SM-API-002, SM-UI-006).
@@ -89,7 +88,7 @@ func (d *Deps) watchHandler() http.Handler {
 
 		guard := d.guardStream(r, p, nil)
 		defer guard.close()
-		heartbeat := time.NewTicker(watchHeartbeat)
+		heartbeat := time.NewTicker(d.streamHeartbeat())
 		defer heartbeat.Stop()
 
 		// A position beyond the newest change comes from before a restore from backup (SM-STORE-006): the feed was
