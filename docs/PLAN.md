@@ -157,7 +157,7 @@ number) in TG-3a; no agent migration and no protocol change. TG-12a/b/c are in t
 | TG-8b | Queue, runs, messages to operators, talk to control | SM-TG-008 | implemented, tested (simulated): `/queue`, `/runs`, `/messages`, `/control`; buttons on the notifier cards are still open |
 | TG-9a | Mini App server: host routing, Telegram mode, session exchange, signed downloads | SM-TG-005, SM-TG-013 | TG-9a-1 (host routing, allowlist, initData exchange, sessions) implemented, tested (simulated); TG-9a-2 (`tg.html`, headers, `/tg-dl/`) todo |
 | TG-9b | Mini App client shell and transports | SM-TG-011 | TG-9b-1 (`tg.html` entry, slim shell, fetch-SSE watch transport, `credentials: 'omit'`, reopen screen) implemented, tested (simulated); TG-9b-2 (blob images behind a visibility gate and a concurrency cap through the shared `AttachmentResolver`, signed downloads, theme mapping, Back/Main buttons, start-parameter deep links, `/telegram/me`, terminal hidden) implemented, tested (simulated) |
-| TG-10 | Mini App pages (after the ADR-0082 renderer merges) | SM-TG-011 | todo |
+| TG-10 | Mini App pages (after the ADR-0082 renderer merges) | SM-TG-011 | TG-10-2 (start page, space frame and overview, queue with touch drag reorder and operator-only New task, read-only runs, messages, Telegram settings) implemented, tested (simulated); TG-10-1 (needs-you forms, inbox) and TG-10-3 (watch-only terminal) open |
 | TG-11 | Topics mode | SM-TG-008 | todo |
 | TG-12a/b/c | Provider: `spaceman_telegram_bot`, `spaceman_telegram_settings`, `spaceman_space_telegram` (+ `group_chat_id`) | SM-TG-014 | todo |
 | TG-13 | Group mode | SM-TG-002, SM-TG-008 | todo |
