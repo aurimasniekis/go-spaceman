@@ -20,3 +20,7 @@ DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
 -- A card by its message, for a button that doesn't carry the resource (the link it was sent to binds the tap).
 SELECT link_id, space_id, resource_type, resource_id, resource_version FROM telegram_messages
 WHERE chat_id = ? AND message_id = ? AND kind = 'card';
+
+-- name: DeleteTelegramMessage :exec
+-- A continuation the notifier deleted (the body shrank): its row must not come back after a restart.
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'cont';

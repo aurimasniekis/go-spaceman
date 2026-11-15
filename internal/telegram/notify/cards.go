@@ -14,6 +14,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/render"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 )
 
 // Mapping is a card the bot sent: where it is, and which version of the resource it shows (telegram_messages).
@@ -28,6 +29,8 @@ type Mapping struct {
 	// Cont marks a continuation message: the rest of a long body, sent as a reply to the card (Key names the card's
 	// resource).
 	Cont bool
+	// Delete removes the row of a continuation message that was deleted (Save only; set with Cont).
+	Delete bool
 }
 
 // Mappings persists card mappings. Save is called in batches, never per send.
@@ -178,6 +181,11 @@ func (c *cards) record(m Mapping, r *Resource) {
 	if c.store == nil {
 		return
 	}
+	for _, ct := range cur.conts { // refresh the continuation rows with the card's, so retention never prunes them before it
+		cm := m
+		cm.MessageID, cm.Cont = ct.id, true
+		c.pending[[2]int64{m.ChatID, int64(ct.id)}] = cm
+	}
 	for k := range c.pending {
 		if len(c.pending) < maxPending {
 			break
@@ -221,12 +229,18 @@ func (c *cards) setSig(chat int64, k Key, sig uint64) {
 	}
 }
 
-// dropConts forgets continuation messages that were deleted (their rows stay until retention prunes them).
+// dropConts forgets continuation messages that were deleted and queues the removal of their rows, so a restart doesn't
+// load them again.
 func (c *cards) dropConts(chat int64, k Key, n int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ck := cardKey{chat, k}
 	if cd, ok := c.byCard[ck]; ok && n < len(cd.conts) {
+		if c.store != nil {
+			for _, ct := range cd.conts[n:] {
+				c.pending[[2]int64{chat, int64(ct.id)}] = Mapping{ChatID: chat, MessageID: ct.id, Key: k, Cont: true, Delete: true}
+			}
+		}
 		cd.conts = slices.Clone(cd.conts[:n])
 		c.byCard[ck] = cd
 	}
@@ -306,26 +320,39 @@ type sendFunc func(ctx context.Context, cl *botapi.Client, p botapi.SendMessageP
 // continuation messages, replies to the card that are edited, sent or deleted along with it.
 func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, parts []cardPart, protect, silent bool) error {
 	sig := parts[0].sig()
+	// The sender paid for the first Bot API call of this job; every further one pays for itself (sender.Take).
+	paid := false
+	pay := func() error {
+		if !paid {
+			paid = true
+			return nil
+		}
+		return sender.Take(ctx)
+	}
 	if cd := c.get(chat, r.Key); cd != nil {
 		var err error
 		if cd.sig != sig || cd.version != r.Version { // a retry after a failed continuation doesn't edit the card again (edits count against the rate limit)
+			_ = pay()
 			_, err = cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: parts[0].Text, Entities: parts[0].Entities, ReplyMarkup: parts[0].markup()})
 		}
 		switch {
 		case err == nil || isNotModified(err):
 			c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now()}, r)
 			c.setSig(chat, r.Key, sig)
-			return c.syncConts(ctx, cl, send, linkID, chat, r, spaceID, cd.messageID, parts, protect)
+			return c.syncConts(ctx, cl, pay, send, linkID, chat, r, spaceID, cd.messageID, parts, protect)
 		case isGone(err) && !r.Final:
-			_ = c.deleteConts(ctx, cl, chat, r.Key, 0) // best effort: the card is sent again, with new continuations
-			c.forget(chat, r.Key)                      // the message was deleted: send the card again
+			_ = c.deleteConts(ctx, cl, pay, chat, r.Key, 0) // best effort: the card is sent again, with new continuations
+			c.forget(chat, r.Key)                           // the message was deleted: send the card again
 		case isGone(err):
-			_ = c.deleteConts(ctx, cl, chat, r.Key, 0)
+			_ = c.deleteConts(ctx, cl, pay, chat, r.Key, 0)
 			c.forget(chat, r.Key)
 			return nil
 		default:
 			return err
 		}
+	}
+	if err := pay(); err != nil {
+		return err
 	}
 	m, err := send(ctx, cl, botapi.SendMessageParams{ChatID: chat, Text: parts[0].Text, Entities: parts[0].Entities, ReplyMarkup: parts[0].markupAny(), ProtectContent: protect, DisableNotification: silent})
 	if err != nil {
@@ -333,12 +360,12 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, li
 	}
 	c.record(Mapping{ChatID: chat, MessageID: m.MessageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now()}, r)
 	c.setSig(chat, r.Key, sig)
-	return c.syncConts(ctx, cl, send, linkID, chat, r, spaceID, m.MessageID, parts, protect)
+	return c.syncConts(ctx, cl, pay, send, linkID, chat, r, spaceID, m.MessageID, parts, protect)
 }
 
 // syncConts brings the continuation messages in line with parts[1:]: existing ones are edited, missing ones sent as
 // replies to the card (silently: the card already notified), and ones the body no longer needs deleted.
-func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, cardID int, parts []cardPart, protect bool) error {
+func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, pay func() error, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, cardID int, parts []cardPart, protect bool) error {
 	cd := c.get(chat, r.Key)
 	if cd == nil {
 		return nil
@@ -350,6 +377,9 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, send sendFunc,
 			if have[i].sig == sig {
 				continue
 			}
+			if err := pay(); err != nil {
+				return err
+			}
 			_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: have[i].id, Text: p.Text, Entities: p.Entities, ReplyMarkup: p.markup()})
 			if err == nil || isNotModified(err) {
 				c.recordCont(Mapping{ChatID: chat, MessageID: have[i].id, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now(), Cont: true}, sig)
@@ -359,10 +389,13 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, send sendFunc,
 				return err
 			}
 			// A continuation was deleted: drop it and the ones after it and send them again, so the order holds.
-			if err := c.deleteConts(ctx, cl, chat, r.Key, i); err != nil {
+			if err := c.deleteConts(ctx, cl, pay, chat, r.Key, i); err != nil {
 				return err
 			}
 			have = have[:i]
+		}
+		if err := pay(); err != nil {
+			return err
 		}
 		m, err := send(ctx, cl, botapi.SendMessageParams{ChatID: chat, Text: p.Text, Entities: p.Entities, ReplyMarkup: p.markupAny(),
 			ReplyParameters: &botapi.ReplyParameters{MessageID: cardID}, ProtectContent: protect, DisableNotification: true})
@@ -373,7 +406,7 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, send sendFunc,
 		have = append(slices.Clone(have), cont{m.MessageID, sig})
 	}
 	if len(have) > len(parts)-1 {
-		return c.deleteConts(ctx, cl, chat, r.Key, len(parts)-1)
+		return c.deleteConts(ctx, cl, pay, chat, r.Key, len(parts)-1)
 	}
 	return nil
 }
@@ -381,12 +414,16 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, send sendFunc,
 // deleteConts deletes a card's continuation messages from the nth on, last first, and forgets the ones deleted. A
 // message already gone counts as deleted; any other failure (a rate limit, say) is returned, so the sender tries
 // again and no continuation is left behind.
-func (c *cards) deleteConts(ctx context.Context, cl *botapi.Client, chat int64, k Key, from int) error {
+func (c *cards) deleteConts(ctx context.Context, cl *botapi.Client, pay func() error, chat int64, k Key, from int) error {
 	cd := c.get(chat, k)
 	if cd == nil {
 		return nil
 	}
 	for j := len(cd.conts) - 1; j >= from; j-- {
+		if err := pay(); err != nil {
+			c.dropConts(chat, k, j+1)
+			return err
+		}
 		if err := cl.DeleteMessage(ctx, chat, cd.conts[j].id); err != nil && !isDeleteGone(err) {
 			c.dropConts(chat, k, j+1)
 			return err

@@ -33,8 +33,13 @@ func TestRenderCardMarkdown(t *testing.T) {
 	if bold != 2 || code != 1 || link != 1 {
 		t.Errorf("bold %d code %d link %d, want 2 1 1 (%+v)", bold, code, link, p[0].Entities)
 	}
-	if strings.Contains(p[0].Text, "javascript:") && link != 1 {
-		t.Errorf("unsafe link kept")
+	for _, e := range p[0].Entities {
+		if strings.Contains(strings.ToLower(e.URL), "javascript:") {
+			t.Errorf("unsafe link kept as an entity: %+v", e)
+		}
+	}
+	if !strings.Contains(p[0].Text, "bad") || !strings.Contains(p[0].Text, "ok") {
+		t.Errorf("link texts dropped: %q", p[0].Text)
 	}
 }
 

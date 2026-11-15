@@ -10,6 +10,21 @@ import (
 	"database/sql"
 )
 
+const deleteTelegramMessage = `-- name: DeleteTelegramMessage :exec
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'cont'
+`
+
+type DeleteTelegramMessageParams struct {
+	ChatID    int64
+	MessageID int64
+}
+
+// A continuation the notifier deleted (the body shrank): its row must not come back after a restart.
+func (q *Queries) DeleteTelegramMessage(ctx context.Context, arg DeleteTelegramMessageParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTelegramMessage, arg.ChatID, arg.MessageID)
+	return err
+}
+
 const getTelegramMessage = `-- name: GetTelegramMessage :one
 SELECT link_id, space_id, resource_type, resource_id, resource_version FROM telegram_messages
 WHERE chat_id = ? AND message_id = ? AND kind = 'card'

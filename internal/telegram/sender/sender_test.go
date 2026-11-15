@@ -851,3 +851,78 @@ func TestGroupPerMinuteIsTheGroupBucket(t *testing.T) {
 		t.Fatalf("5 messages to a group at 2 a minute took %s of virtual time, want at least 90s", d)
 	}
 }
+
+// multi is a message whose SendFunc makes n Bot API calls, paying for every one after the first with sender.Take (the
+// shape of a card with continuation messages).
+func multi(chat int64, n int, done func(error)) sender.Message {
+	return sender.Message{
+		ChatID: chat, Group: chat < 0, Priority: sender.Notification, Done: done,
+		Send: func(ctx context.Context, c *botapi.Client) error {
+			for i := range n {
+				if i > 0 {
+					if err := sender.Take(ctx); err != nil {
+						return err
+					}
+				}
+				if _, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: fmt.Sprint(i)}); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// A SendFunc with several calls stays inside the chat bucket (1/s, burst 3) and, over many chats, the global bucket
+// (25/s); the fake answers 429 to anything faster.
+func TestTakeKeepsMultiCallSendsInsideTheBuckets(t *testing.T) {
+	t.Run("one chat", func(t *testing.T) {
+		e := newEnv(t, nil)
+		r := newResults()
+		const jobs, calls = 3, 7
+		for i := range jobs {
+			e.enqueue(multi(5001, calls, r.done(fmt.Sprint(i))))
+		}
+		start := e.clk.Now()
+		e.start()
+		r.wait(t, jobs)
+		for i := range jobs {
+			if err, _ := r.err(fmt.Sprint(i)); err != nil {
+				t.Fatalf("job %d: %v", i, err)
+			}
+		}
+		if n := calls429(e.fake); n != 0 {
+			t.Fatalf("%d answers were 429", n)
+		}
+		if got := len(e.fake.Messages(5001)); got != jobs*calls {
+			t.Fatalf("delivered %d, want %d", got, jobs*calls)
+		}
+		// 21 calls at 1/s after a burst of 3 need at least 18 s.
+		if el := e.clk.Now().Sub(start); el < 18*time.Second {
+			t.Errorf("finished in %v of virtual time: faster than the chat bucket allows", el)
+		}
+	})
+	t.Run("many chats", func(t *testing.T) {
+		e := newEnv(t, nil)
+		r := newResults()
+		const chats, calls = 40, 7
+		for i := range chats {
+			e.enqueue(multi(int64(6000+i), calls, r.done(fmt.Sprint(i))))
+		}
+		start := e.clk.Now()
+		e.start()
+		r.wait(t, chats)
+		for i := range chats {
+			if err, _ := r.err(fmt.Sprint(i)); err != nil {
+				t.Fatalf("chat %d: %v", i, err)
+			}
+		}
+		if n := calls429(e.fake); n != 0 {
+			t.Fatalf("%d answers were 429", n)
+		}
+		// 280 calls at 25/s after a burst of 25 need at least 10.2 s, and each chat 4 s after its burst of 3.
+		if el := e.clk.Now().Sub(start); el < 10*time.Second {
+			t.Errorf("finished in %v of virtual time: faster than the global bucket allows", el)
+		}
+	})
+}

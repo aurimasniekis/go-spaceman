@@ -76,6 +76,13 @@ func TestStoreFeedAndMappings(t *testing.T) {
 	if _, err := m.Card(ctx, 9, 6); !errors.Is(err, notify.ErrNoCard) {
 		t.Fatalf("a continuation is not a card: %v", err)
 	}
+	// A deleted continuation's row is removed; a card is never removed this way.
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 9, MessageID: 6, Key: k, Cont: true, Delete: true}, {ChatID: 9, MessageID: 5, Key: k, Delete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = m.Lookup(ctx, k); err != nil || len(got) != 1 || got[0].MessageID != 5 {
+		t.Fatalf("Lookup after deleting the continuation = %+v, %v", got, err)
+	}
 }
 
 // TestLinksLoad: only active links of users who may act are notified, with their preferences, and a failing user
