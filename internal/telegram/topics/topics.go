@@ -8,6 +8,8 @@
 // A topic that was deleted or closed (the send fails with "message thread not found" or TOPIC_CLOSED) is forgotten and
 // created again once; if that fails too, or the chat does not have topics enabled for the bot, the message goes to the
 // main chat, so a notification is never lost to a topic. A chat that refuses topics is not asked again for a while.
+// A space's rename renames its topic in every link that has one (Renamed); a relink of the same chat and Telegram user
+// keeps the revoked link's topics (link.Confirm), so it doesn't create them again.
 // Authorization is unchanged: topics only choose where a message appears, never whether a link may receive it.
 //
 // The shared "Needs you" topic of the per-space topics mode (TG-11) is retired: nothing is routed to it, and the first
@@ -25,6 +27,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
 
@@ -58,6 +61,16 @@ const DefaultCreatesPerSecond = 5
 type Store interface {
 	Load(ctx context.Context, linkID string) (map[string]int, error)
 	Save(ctx context.Context, linkID string, threads map[string]int) error
+	// Threads returns the thread of key in every live link that has one, read in one pass (a rename reads them once,
+	// not per recipient).
+	Threads(ctx context.Context, key string) ([]LinkThread, error)
+}
+
+// LinkThread is a live link's topic for a key: its thread in the link's private chat.
+type LinkThread struct {
+	LinkID string
+	ChatID int64
+	ID     int
 }
 
 // Options configure a Manager.
@@ -70,6 +83,14 @@ type Options struct {
 	BotTopics func() bool
 	// SpaceName is a space's title for its topic (default: the ID).
 	SpaceName func(ctx context.Context, spaceID string) string
+	// MayRead reports whether the link may see the space now (the notifier's in-memory check: the link is current and
+	// usable, holds the space's read permission, and the space is visible to Telegram). A rename of a topic is checked
+	// with it when queued and again when sent, so a space's new name never reaches a link that may not read the space.
+	// nil: no renames.
+	MayRead func(linkID string, chatID int64, spaceID string) bool
+	// Sender queues the renames of topics (Renamed); it returns nil while the bot is off, and then nothing is renamed.
+	// nil: no renames.
+	Sender func() *sender.Sender
 	// CreatesPerSecond bounds topic creation over every chat (default DefaultCreatesPerSecond).
 	CreatesPerSecond float64
 	Now              func() time.Time
@@ -96,6 +117,9 @@ type linkState struct {
 	// threads is key → thread; loaded once from the store.
 	threads map[string]int
 	loaded  bool
+	// names is key → the title the topic has, as far as this process knows it (set when the topic is created or
+	// renamed, never stored). A rename to the same title skips the Telegram call.
+	names map[string]string
 }
 
 // New returns a Manager.
@@ -235,10 +259,13 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 	if m.isRefused(chatID) { // a create that went before refused
 		return 0, nil
 	}
+	// The 5/s create limiter is waited on here, inside a sender worker: in a storm of links switching to threads at once,
+	// every queued send waits its turn behind it, so all sends can slow to about 5/s until the topics exist.
 	if err := m.creates.Wait(ctx); err != nil {
 		return 0, err
 	}
-	topic, err := c.CreateForumTopic(ctx, botapi.CreateForumTopicParams{ChatID: chatID, Name: m.name(ctx, key)})
+	title := m.name(ctx, key)
+	topic, err := c.CreateForumTopic(ctx, botapi.CreateForumTopicParams{ChatID: chatID, Name: title})
 	if err != nil {
 		var be *botapi.Error
 		if errors.As(err, &be) && (be.Code == 429 || be.Code >= 500) {
@@ -252,9 +279,18 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 		return 0, nil
 	}
 	ls.mu.Lock()
-	defer ls.mu.Unlock()
 	ls.threads[key] = topic.MessageThreadID
+	m.rememberName(ls, key, title)
 	m.saveLocked(ctx, ls, linkID)
+	ls.mu.Unlock()
+	// A rename that committed while the topic was being created may have found no thread to edit. The thread is saved
+	// now, so the title is read again: a rename committed before this read is seen here, one committed after finds the
+	// saved thread in Renamed.
+	if m.name(ctx, key) != title {
+		if err := m.rename(ctx, c, LinkThread{LinkID: linkID, ChatID: chatID, ID: topic.MessageThreadID}, key); err != nil {
+			m.o.Log.Debug("telegram topics: the title of a new topic was not brought up to date", slog.String("error", err.Error()))
+		}
+	}
 	return topic.MessageThreadID, nil
 }
 
@@ -375,7 +411,89 @@ func (m *Manager) forget(ctx context.Context, linkID, key string, thread int) {
 		return
 	}
 	delete(ls.threads, key)
+	delete(ls.names, key)
 	m.saveLocked(ctx, ls, linkID)
+}
+
+// Renamed gives every link's topic of a space the space's new name (ADR-0089 T7): one editForumTopic per link that has a
+// topic for it. The calls are queued on the sender, so they count in its rate limits and retry like any send; a link
+// whose topic is already known to have the name is skipped. The topics are read once for all links (Store.Threads),
+// never per recipient. It runs on the request that renamed the space, so it does one read and queues the calls; it never
+// waits for Telegram.
+func (m *Manager) Renamed(ctx context.Context, spaceID, _ string) {
+	// The name argument is not used: each rename reads the space's name when it is sent (see rename).
+	if m == nil || m.o.Sender == nil || m.o.MayRead == nil || m.o.Store == nil || spaceID == "" {
+		return
+	}
+	snd := m.o.Sender()
+	if snd == nil {
+		return // the bot is off: no link's chat is written to, and the names follow the next rename
+	}
+	threads, err := m.o.Store.Threads(ctx, spaceID)
+	if err != nil {
+		m.o.Log.Warn("telegram topics: reading the topics of a renamed space failed", slog.String("error", err.Error()))
+		return
+	}
+	for _, t := range threads {
+		if !m.o.MayRead(t.LinkID, t.ChatID, spaceID) {
+			continue
+		}
+		m.link(t.LinkID) // its state exists until Forget (a revoked link), which skips the queued rename
+		err := snd.Enqueue(sender.Message{ChatID: t.ChatID, Priority: sender.Edit, Key: "topic-rename:" + spaceID,
+			Send: func(ctx context.Context, c *botapi.Client) error {
+				return m.rename(ctx, c, t, spaceID)
+			}})
+		if err != nil {
+			m.o.Log.Warn("telegram topics: a topic rename was not queued", slog.String("error", err.Error()))
+		}
+	}
+}
+
+// rename edits one topic's title. It runs on a sender worker. A topic that is gone is left alone: the next send that
+// needs it creates it again with the current title.
+func (m *Manager) rename(ctx context.Context, c *botapi.Client, t LinkThread, key string) error {
+	if m.o.MayRead == nil || !m.o.MayRead(t.LinkID, t.ChatID, key) {
+		return nil // revoked, or no longer allowed to read the space, since the rename was queued
+	}
+	m.mu.Lock()
+	ls := m.links[t.LinkID]
+	m.mu.Unlock()
+	if ls == nil {
+		return nil // the link was revoked (Forget) after the rename was queued
+	}
+	// The title is read now, not when the rename was queued: renames commit and call Renamed concurrently, and the
+	// sender keeps only the last one enqueued, which may carry an older name.
+	name := m.name(ctx, key)
+	ls.mu.Lock()
+	if ls.loaded && ls.threads[key] != t.ID {
+		ls.mu.Unlock()
+		return nil // the topic was replaced meanwhile; the new one has the current title
+	}
+	if ls.names[key] == name {
+		ls.mu.Unlock()
+		return nil
+	}
+	ls.mu.Unlock()
+	err := c.EditForumTopic(ctx, botapi.EditForumTopicParams{ChatID: t.ChatID, MessageThreadID: t.ID, Name: name})
+	if err != nil {
+		if botapi.IsTopicGone(err) {
+			m.o.Log.Debug("telegram topics: a renamed topic is gone", slog.String("error", err.Error()))
+			return nil
+		}
+		return err
+	}
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	m.rememberName(ls, key, name)
+	return nil
+}
+
+// rememberName records the title a topic has. Must hold ls.mu.
+func (m *Manager) rememberName(ls *linkState, key, name string) {
+	if ls.names == nil {
+		ls.names = map[string]string{}
+	}
+	ls.names[key] = name
 }
 
 // Forget drops everything remembered in memory about a link (it was revoked). The stored row goes with the link.

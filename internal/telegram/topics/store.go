@@ -36,3 +36,22 @@ func (t StoreTopics) Save(ctx context.Context, linkID string, threads map[string
 		return err
 	})
 }
+
+// Threads returns the thread of key in every live link that has one: one read of the links, not one per link.
+func (t StoreTopics) Threads(ctx context.Context, key string) ([]LinkThread, error) {
+	rows, err := t.S.R().ListLiveTelegramLinks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []LinkThread
+	for _, r := range rows {
+		m := map[string]int{}
+		if err := json.Unmarshal([]byte(r.TopicsJson), &m); err != nil {
+			continue // malformed content reads as none
+		}
+		if id := m[key]; id != 0 {
+			out = append(out, LinkThread{LinkID: r.ID, ChatID: r.ChatID, ID: id})
+		}
+	}
+	return out, nil
+}

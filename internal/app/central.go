@@ -69,6 +69,7 @@ import (
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	tgnotify "github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	tgtopics "github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
@@ -348,6 +349,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			if c.Human != nil {
 				c.Human.Kick() // route responses the run had not acknowledged (SM-HUM-009)
+			}
+		},
+		OnSpaceRenamed: func(ctx context.Context, spaceID, name string) {
+			if c.TelegramTopics != nil {
+				c.TelegramTopics.Renamed(ctx, spaceID, name) // the topics take the new name (ADR-0089); one read and queued calls
 			}
 		},
 		OnSpaceState: func(spaceID, state string) {
@@ -1141,12 +1147,17 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 	links.OnChange = c.Human.Kick // a changed zone or digest time moves the next digest: the deadline loop looks again
 	// Chat layout per link (ADR-0089): with the link's threads mode on (or auto while the bot has topics enabled), each
 	// space gets a topic in the link's private chat. Both inputs are read from memory at send time.
+	var notifier *tgnotify.Notifier // set below; MayRead runs only at rename time, after construction
 	c.TelegramTopics = tgtopics.New(tgtopics.Options{
+		MayRead: func(linkID string, chatID int64, spaceID string) bool {
+			return notifier != nil && notifier.MayRead(linkID, chatID, spaceID)
+		},
 		Store: tgtopics.StoreTopics{S: c.Store},
 		Mode: func(linkID string) string {
 			return links.ThreadsMode(linkID, c.TelegramSettings.Current().NotificationDefaults)
 		},
 		BotTopics: c.TelegramBot.HasTopics,
+		Sender:    func() *sender.Sender { return c.TelegramBot.Sender() },
 		SpaceName: func(ctx context.Context, spaceID string) string {
 			sp, err := c.Store.R().GetSpace(ctx, spaceID)
 			if err != nil {
@@ -1156,11 +1167,12 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		},
 		Now: c.Clock.Now, Log: obs.Component(log, "telegram.topics"),
 	})
-	return tgnotify.New(tgnotify.Options{
+	notifier = tgnotify.New(tgnotify.Options{
 		Topics: c.TelegramTopics,
 		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
 		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
+	return notifier
 }
 
 // gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts

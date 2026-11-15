@@ -589,6 +589,21 @@ func (n *Notifier) stillMay(linkID string, chat int64, r *Resource) bool {
 	return l != nil && n.may(l, r, n.o.Policy.Current(), n.o.Now())
 }
 
+// MayRead reports whether the link may see the space as it is now, all in memory: the link is current (not revoked,
+// not moved to another chat) and usable, its subjects hold the space's read permission, and the space is visible to
+// Telegram. It is the check a topic rename makes before it writes a space's name into a chat (no database read).
+func (n *Notifier) MayRead(linkID string, chat int64, spaceID string) bool {
+	if !n.o.Policy.Space(spaceID).Visible() {
+		return false
+	}
+	l := n.currentLink(linkID, chat)
+	if l == nil {
+		return false
+	}
+	now := n.o.Now()
+	return l.Usable(now) && n.o.Authz.AllowedAll(l.Subjects(n.o.Policy.Current().LinkSSOGrants, now), spaceID, authz.SpaceRead)
+}
+
 // currentLink is the link as it is now (nil: gone, or moved to another chat).
 func (n *Notifier) currentLink(linkID string, chat int64) *Link {
 	links := n.o.Links.Snapshot()
