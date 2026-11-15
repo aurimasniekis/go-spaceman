@@ -35,6 +35,12 @@ var FleetRules = map[string]Rule{
 	"stop-run":   InSpace(authz.RunControl),
 	"send-input": InSpace(authz.RunControl),
 
+	// Usage limits (ADR-0079). A space's holds include other spaces' open holds on its accounts, redacted to what the
+	// space may know (the account and the window); the account view names every space and needs account:read.
+	"list-space-usage-limits":   InSpace(authz.RunRead),
+	"list-space-limit-waits":    InSpace(authz.RunRead),
+	"list-account-usage-limits": Global(authz.AccountRead),
+
 	// Terminal takeover (takeover.go).
 	"start-takeover": TakeoverRules["start-takeover"],
 	"renew-takeover": TakeoverRules["renew-takeover"],
@@ -280,6 +286,66 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 					}
 				}{}
 				out.Body.Items = rs
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-usage-limits", Method: http.MethodGet, Path: "/spaces/{space_id}/usage-limits",
+			Summary: "A space's usage-limit holds",
+			Description: "The holds the space's runs opened when they reached a usage limit (newest first, cleared ones included), then the open holds " +
+				"other spaces opened on the accounts this space binds or the gateway it routes through: those hold this space too, and are marked " +
+				"shared, without the other space's identifiers.", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []fleet.UsageLimit `json:"items"`
+				}
+			}, error) {
+				ls, err := f.UsageLimits(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.UsageLimit `json:"items"`
+					}
+				}{}
+				out.Body.Items = ls
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-limit-waits", Method: http.MethodGet, Path: "/spaces/{space_id}/limit-waits",
+			Summary: "A space's runs parked at a usage limit, waiting to resume", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []fleet.LimitWait `json:"items"`
+				}
+			}, error) {
+				ws, err := f.LimitWaits(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.LimitWait `json:"items"`
+					}
+				}{}
+				out.Body.Items = ws
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-account-usage-limits", Method: http.MethodGet, Path: "/accounts/{account_id}/usage-limits",
+			Summary: "An account's open usage-limit holds in every space", Tags: []string{"accounts"}},
+			func(ctx context.Context, in *AccountPath) (*struct {
+				Body struct {
+					Items []fleet.UsageLimit `json:"items"`
+				}
+			}, error) {
+				ls, err := f.AccountUsageLimits(ctx, in.AccountID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.UsageLimit `json:"items"`
+					}
+				}{}
+				out.Body.Items = ls
 				return out, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "get-run", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}", Summary: "Get a run", Tags: tags},

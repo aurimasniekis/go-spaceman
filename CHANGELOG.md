@@ -15,6 +15,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   node agent reads the typed usage-limit fields of the run's transcript (from where it stopped last time) and reports
   the limit (kind, reset time, since) or its clear with the run, once per change. No transcript text is logged or
   sent. Central doesn't act on it yet.
+- Usage limits are visible (ADR-0079): central stores the limit a node reports for a run (`limit` on runs, and in
+  control's `spaceman_runs_list`). It opens a hold on the run's account, or on the Harbor Pilot connection or project,
+  and clears the hold when a run on that account reports the limit over. A run that ends at a limit ends with
+  `usage_limit`. New reads: `GET /spaces/{id}/usage-limits` (including other spaces' holds on the same accounts),
+  `GET /spaces/{id}/limit-waits` and `GET /accounts/{id}/usage-limits`, also available as `spaceman limits holds`,
+  `spaceman limits waits` and `spaceman account holds`. New events: `fleet.usage_limit.reached` and
+  `fleet.usage_limit.cleared`. Holds don't block launches yet.
 
 ## [0.1.3] - 2026-11-13
 

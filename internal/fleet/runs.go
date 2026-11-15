@@ -40,12 +40,14 @@ type Run struct {
 	TerminalID string `json:"terminal_id,omitempty"`
 	PID        int64  `json:"pid,omitempty"`
 	ExitCode   *int64 `json:"exit_code,omitempty"`
-	EndReason  string `json:"end_reason,omitempty"`
+	EndReason  string `json:"end_reason,omitempty" doc:"Why the run ended: the node's reason (exited, stopped, killed, lease_expired, …), usage_limit when it ended while at a usage limit, or central's stale_not_on_node, stale_lease_lost or relocated_source_unavailable"`
 	Error      string `json:"error,omitempty"`
 	Status     string `json:"status,omitempty" doc:"Program-reported status (OSC 7501): idle, working, done, blocked, error"`
 	StatusKind string `json:"status_kind,omitempty"`
 	Turn       int64  `json:"turn"`
 	Adopted    bool   `json:"adopted"`
+	// Limit is the run's open usage limit (ADR-0079): a live run with one is waiting for it to reset.
+	Limit *RunLimit `json:"limit,omitempty" doc:"The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset"`
 	// HarnessVersion, HarnessRequested and HarnessFallback are what the node reported launching (minor ≥ 11, ADR-0077).
 	HarnessVersion   string     `json:"harness_version,omitempty" doc:"The harness version the run launched, as its node reported it (node protocol 1.11 or later)"`
 	HarnessRequested string     `json:"harness_requested,omitempty" doc:"What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z)"`
@@ -94,6 +96,7 @@ func runFromRow(r db.Run) *Run {
 	}
 	_ = json.Unmarshal([]byte(r.LaunchJson), &out.Launch)
 	out.TerminalSize = terminalSizeOf(r.TerminalCols, r.TerminalRows)
+	out.Limit = runLimitOf(r)
 	return out
 }
 
@@ -677,9 +680,24 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			fenced = true
 			return nil
 		}
+		// The run's usage limit (minor ≥ 12, ADR-0079): a report without one keeps what is stored. A run that ends while
+		// at a limit, without central having asked it to stop, ended because of it.
+		curLimit := storedLimit(r)
+		nextLimit, hasLimit := reportedLimit(curLimit, rep, tx.Now)
+		limitChanged := hasLimit && nextLimit != curLimit
+		if !hasLimit {
+			nextLimit = curLimit
+		}
+		// An end recorded as usage_limit stays so when a later report clears the limit.
+		nodeReason := rep.Reason
+		// The override applies to the report that ends the run; an end already recorded keeps its reason (only an end
+		// recorded as usage_limit is restored when a later report repeats the node's own reason).
+		if sweep == nil && ended(rep.State) && (!ended(r.Observed) && nextLimit.kind != "" && r.Desired != "stopped" || ended(r.Observed) && r.EndReason == EndUsageLimit) {
+			rep.Reason = EndUsageLimit
+		}
 		// A report that changes nothing (every hello re-reports the node's whole journal, ended runs included) writes
 		// nothing: no version, no change-feed entry, so a reconnect doesn't make every open UI refetch its runs.
-		if sweep == nil && reportUnchanged(r, rep) {
+		if sweep == nil && !limitChanged && reportUnchanged(r, rep) {
 			return nil
 		}
 		var exit sql.NullInt64
@@ -702,6 +720,13 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			requested, fallback := reportHarness(rep)
 			n, err := tx.Q.SetRunHarness(ctx, db.SetRunHarnessParams{HarnessVersion: rep.HarnessVersion,
 				HarnessRequested: requested, HarnessFallback: fallback, Now: tx.NowMicros(), ID: r.ID, Generation: r.Generation})
+			if err != nil {
+				return err
+			}
+			version += n
+		}
+		if limitChanged {
+			n, err := svc.applyLimitTx(ctx, tx, r, curLimit, nextLimit)
 			if err != nil {
 				return err
 			}
@@ -749,6 +774,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
+			if nodeReason != rep.Reason {
+				ev.NodeReason = outbox.CleanID(nodeReason)
+			}
 			if rep.ExitCode != nil {
 				c := int64(*rep.ExitCode)
 				ev.ExitCode = &c
@@ -861,7 +889,7 @@ func startResult(rep proto.RunReport) metrics.RunStartResult {
 
 func endReason(rep proto.RunReport) string {
 	switch rep.Reason {
-	case "exited", "killed", "lease_expired", "stopped":
+	case "exited", "killed", "lease_expired", "stopped", EndUsageLimit:
 		return rep.Reason
 	case "holder_lost", "server_stop", "host_shutdown":
 		return "lost"

@@ -11,6 +11,7 @@ Aliases: `accounts`.
 | [`spaceman account create`](#spaceman-account-create) | Add an account; the secret comes from a file or standard input |
 | [`spaceman account delete`](#spaceman-account-delete) | Delete an account no space uses |
 | [`spaceman account get`](#spaceman-account-get) | Show an account |
+| [`spaceman account holds`](#spaceman-account-holds) | An account's open usage-limit holds in every space |
 | [`spaceman account kinds`](#spaceman-account-kinds) | Account kinds and the harness each serves |
 | [`spaceman account list`](#spaceman-account-list) | Accounts (never their secrets) |
 | [`spaceman account set-space`](#spaceman-account-set-space) | Replace the accounts a space's runs may use (at most one default per harness) |
@@ -66,6 +67,16 @@ spaceman account get <account> [flags]
 ```
 
 API: `get-account` ([HTTP API](../api)).
+
+## spaceman account holds
+
+An account's open usage-limit holds in every space.
+
+```sh
+spaceman account holds <account> [flags]
+```
+
+API: `list-account-usage-limits` ([HTTP API](../api)).
 
 ## spaceman account kinds
 

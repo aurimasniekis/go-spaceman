@@ -141,6 +141,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/spaces/{space_id}/limit-waits` | `list-space-limit-waits` | A space's runs parked at a usage limit, waiting to resume |
 | `GET` | `/spaces/{space_id}/runs` | `list-runs` | A space's runs, newest first |
 | `POST` | `/spaces/{space_id}/runs` | `launch-run` | Launch a run on the space's node |
 | `GET` | `/spaces/{space_id}/runs/{run_id}` | `get-run` | Get a run |
@@ -152,6 +153,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/renew` | `renew-takeover` | Keep your takeover for another 30 s |
 | `DELETE` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `clear-terminal-size` | Return a run's terminal to the node's default size |
 | `PUT` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `set-terminal-size` | Resize a run's terminal |
+| `GET` | `/spaces/{space_id}/usage-limits` | `list-space-usage-limits` | A space's usage-limit holds |
 
 ### recordings
 
@@ -170,6 +172,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/accounts/{account_id}` | `delete-account` | Delete an account and its bindings |
 | `GET` | `/accounts/{account_id}` | `get-account` | An account (never its secret) |
 | `PUT` | `/accounts/{account_id}` | `update-account` | Edit or rotate an account |
+| `GET` | `/accounts/{account_id}/usage-limits` | `list-account-usage-limits` | An account's open usage-limit holds in every space |
 | `GET` | `/spaces/{space_id}/accounts` | `list-space-accounts` | Accounts the space's runs may use |
 | `PUT` | `/spaces/{space_id}/accounts` | `set-space-accounts` | Set the accounts the space's runs may use |
 

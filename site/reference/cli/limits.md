@@ -2,7 +2,7 @@
 
 # spaceman limits
 
-Space limits: show, override and list definitions.
+Space limits: show, override and list definitions; usage-limit holds and waits.
 
 Aliases: `limit`.
 
@@ -10,7 +10,9 @@ Aliases: `limit`.
 |---|---|
 | [`spaceman limits definitions`](#spaceman-limits-definitions) | Every limit: unit, bounds, default and enforcement point |
 | [`spaceman limits get`](#spaceman-limits-get) | A space's effective limits and where each value comes from |
+| [`spaceman limits holds`](#spaceman-limits-holds) | A space's usage-limit holds, and other spaces' open holds on its accounts (shared) |
 | [`spaceman limits set`](#spaceman-limits-set) | Override a space's limits (keys not given keep their override) |
+| [`spaceman limits waits`](#spaceman-limits-waits) | A space's runs parked at a usage limit, waiting to resume |
 
 ## spaceman limits definitions
 
@@ -31,6 +33,20 @@ spaceman limits get [flags]
 ```
 
 API: `get-space-limits` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman limits holds
+
+A space's usage-limit holds, and other spaces' open holds on its accounts (shared).
+
+```sh
+spaceman limits holds [flags]
+```
+
+API: `list-space-usage-limits` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -61,4 +77,18 @@ spaceman limits set --space payments --set concurrent_runs=3 --unset tool_calls_
 | `--set` | string, repeatable |  | override KEY=VALUE (repeatable) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--unset` | string, repeatable |  | remove the override of KEY (repeatable) |
+
+## spaceman limits waits
+
+A space's runs parked at a usage limit, waiting to resume.
+
+```sh
+spaceman limits waits [flags]
+```
+
+API: `list-space-limit-waits` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 

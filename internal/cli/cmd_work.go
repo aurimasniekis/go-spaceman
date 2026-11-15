@@ -13,6 +13,8 @@ var (
 	taskCols     = []col{c("ID", "id"), c("POS", "position"), c("STATUS", "status"), c("PRIORITY", "priority"), c("KIND", "kind"), c("ROLE", "assignee_role"), c("TITLE", "title")}
 	humanCols    = []col{c("ID", "id"), c("SPACE", "space_id"), c("TYPE", "type"), c("STATUS", "status"), c("PRIORITY", "priority"), c("ASSIGNEE", "assignee"), c("TITLE", "title")}
 	scheduleCols = []col{c("ID", "id"), c("NAME", "name"), c("KIND", "kind"), c("CRON", "cron"), c("EVERY(S)", "interval_seconds"), c("TARGET", "target"), c("ENABLED", "enabled"), c("NEXT", "next_at")}
+	holdCols     = []col{c("ID", "id"), c("SCOPE", "scope"), c("ACCOUNT", "account_id"), c("GATEWAY", "gateway_ref"), c("KIND", "kind"), c("RESETS", "resets_at"), c("SHARED", "shared"), c("SEEN", "seen_at"), c("CLEARED", "cleared_at")}
+	waitCols     = []col{c("ID", "id"), c("RUN", "run_id"), c("ROLE", "role"), c("TASK", "task_id"), c("STATE", "state"), c("RESUME", "resume_at"), c("RELEASE", "release_at"), c("ATTEMPTS", "attempts")}
 	limitCols    = []col{c("KEY", "key"), c("VALUE", "value"), c("UNIT", "unit"), c("SOURCE", "source"), c("OVERRIDE", "override"), c("DEFAULT", "default"), c("LABEL", "label")}
 )
 
@@ -190,9 +192,13 @@ func (a *App) limitsCmd() *cobra.Command {
 	set.Flags().StringArrayVar(&sets, "set", nil, "override KEY=VALUE (repeatable)")
 	set.Flags().StringArrayVar(&unsets, "unset", nil, "remove the override of KEY (repeatable)")
 	set.Flags().StringVar(&onLower, "on-lower", "", "drain (default) or stop: what lowering the concurrent-runs limit does to running work")
-	return group("limits", "Space limits: show, override and list definitions", []string{"limit"},
+	return group("limits", "Space limits: show, override and list definitions; usage-limit holds and waits", []string{"limit"},
 		a.cmd(opts{use: "get", short: "A space's effective limits and where each value comes from", op: "get-space-limits", scoped: true, view: limitsView()}),
 		set,
+		a.cmd(opts{use: "holds", short: "A space's usage-limit holds, and other spaces' open holds on its accounts (shared)", op: "list-space-usage-limits",
+			scoped: true, view: view{items: "items", cols: holdCols, empty: "No usage-limit holds."}}),
+		a.cmd(opts{use: "waits", short: "A space's runs parked at a usage limit, waiting to resume", op: "list-space-limit-waits",
+			scoped: true, view: view{items: "items", cols: waitCols, empty: "No runs waiting for a usage limit."}}),
 		a.cmd(opts{use: "definitions", short: "Every limit: unit, bounds, default and enforcement point", op: "list-limit-definitions",
 			view: view{items: "items", cols: []col{c("KEY", "key"), c("UNIT", "unit"), c("DEFAULT", "default"), c("MIN", "min"), c("MAX", "max"), c("ENFORCED", "enforced")}}}),
 	)
