@@ -287,15 +287,23 @@ func TestAdmissionCountsOnlyLiveRuns(t *testing.T) {
 	}
 }
 
-// The SQL behind the limits and fleet.Live (spaceman_runs_list) agree on every observed and desired state.
+// The SQL behind the limits and fleet.Live (spaceman_runs_list) agree on every observed and desired state, with one
+// rule on top (ADR-0079, Q4): a live run waiting for its usage limit to reset is left out of the space's count but kept
+// in the node's.
 func TestLiveRunQueriesMatchRunsList(t *testing.T) {
 	f := newFx(t)
-	want := 0
+	want, waiting := 0, map[string]bool{}
 	for _, obs := range []string{"pending", "starting", "running", "stopping", "unknown", "exited", "failed", "lost"} {
 		for _, desired := range []string{"running", "stopped"} {
 			f.runIn("spc_a", "worker", desired, obs)
 			if fleet.Live(obs) {
 				want++
+			}
+			// The same states again, each at a usage limit.
+			id := f.runIn("spc_a", "worker", desired, obs)
+			f.exec(`UPDATE runs SET limit_kind = 'five_hour', limit_since = 1 WHERE id = '` + id + `'`)
+			if fleet.Live(obs) {
+				waiting[id] = true
 			}
 		}
 	}
@@ -303,13 +311,53 @@ func TestLiveRunQueriesMatchRunsList(t *testing.T) {
 	must(t, err)
 	onNode, err := f.s.R().ListLiveWorkRunsOnNode(f.ctx, "nod_1")
 	must(t, err)
-	if len(inSpace) != want || len(onNode) != want || want != 10 {
-		t.Fatalf("live runs: space %d, node %d, fleet.Live %d (want 10)", len(inSpace), len(onNode), want)
+	if len(inSpace) != want || len(onNode) != want+len(waiting) || want != 10 || len(waiting) != 10 {
+		t.Fatalf("live runs: space %d, node %d, fleet.Live %d, limit-waiting %d (want 10, 20, 10, 10)", len(inSpace), len(onNode), want, len(waiting))
 	}
 	for _, r := range inSpace {
-		if !fleet.Live(r.Observed) {
-			t.Fatalf("counted a %s run", r.Observed)
+		if !fleet.Live(r.Observed) || waiting[r.ID] {
+			t.Fatalf("space counted %s (%s, limit-waiting %v)", r.ID, r.Observed, waiting[r.ID])
 		}
+	}
+	for _, r := range onNode {
+		if !fleet.Live(r.Observed) {
+			t.Fatalf("node counted a %s run", r.Observed)
+		}
+	}
+}
+
+// ADR-0079 decision 3 (Q4): a run kept alive at its usage limit frees its slot in the space's concurrency limit, but
+// still uses the node's capacity, since its process stays up. The space refusal says so.
+func TestLimitWaitingRunFreesSpaceSlotNotNode(t *testing.T) {
+	f := newFx(t)
+	_, err := f.svc.Set(f.ctx, admin, "spc_a", 0, Input{Values: map[string]int64{ConcurrentRuns: 1}})
+	must(t, err)
+	limited := f.run("spc_a", "worker")
+	err = f.admit("spc_a", "worker")
+	if apperr.CodeOf(err) != apperr.CodeRateLimited || !strings.Contains(err.Error(), "waiting for a usage limit to reset") {
+		t.Fatalf("at the space limit: %v", err)
+	}
+	f.exec(`UPDATE runs SET limit_kind = 'five_hour', limit_since = 1 WHERE id = '` + limited + `'`)
+	if err := f.admit("spc_a", "worker"); err != nil {
+		t.Fatalf("a limit-waiting run held its space slot: %v", err)
+	}
+	// The node's capacity (4) still counts it: three more runs fill the node, and the refusal names it.
+	_, err = f.svc.Set(f.ctx, admin, "spc_a", 1, Input{Values: map[string]int64{ConcurrentRuns: 8}})
+	must(t, err)
+	f.run("spc_a", "worker")
+	f.run("spc_b", "worker")
+	f.run("spc_b", "worker")
+	err = f.admit("spc_a", "worker")
+	if apperr.CodeOf(err) != apperr.CodeRateLimited || !strings.Contains(err.Error(), "capacity is 4") || !strings.Contains(err.Error(), limited) {
+		t.Fatalf("node capacity with a limit-waiting run: %v", err)
+	}
+	// Once the limit clears, the run counts in the space again.
+	f.exec(`UPDATE runs SET limit_kind = '', limit_since = NULL WHERE id = '`+limited+`'`,
+		`UPDATE runs SET observed = 'exited' WHERE space_id = 'spc_b'`)
+	_, err = f.svc.Set(f.ctx, admin, "spc_a", 2, Input{Values: map[string]int64{ConcurrentRuns: 2}})
+	must(t, err)
+	if err := f.admit("spc_a", "worker"); apperr.CodeOf(err) != apperr.CodeRateLimited || !strings.Contains(err.Error(), limited) {
+		t.Fatalf("after the clear: %v", err)
 	}
 }
 

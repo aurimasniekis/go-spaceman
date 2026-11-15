@@ -410,6 +410,19 @@ func Read(dir string, after uint64) (ReadResult, error) {
 // ReadSegments decodes the named segments in order, each opened by open (a file, or an object of the artifact
 // store), returning records with seq > after.
 func ReadSegments(names []string, open func(name string) (io.ReadCloser, error), after uint64) (ReadResult, error) {
+	var recs []Record
+	res, err := ScanSegments(names, open, after, func(r Record) error {
+		recs = append(recs, r)
+		return nil
+	})
+	res.Records = recs
+	return res, err
+}
+
+// ScanSegments decodes the named segments in order and calls fn with each record with seq > after, one at a time,
+// so a reader never holds the whole recording. An error from fn stops the scan and is returned. The result's Records
+// is nil; Truncated and Gaps cover what was scanned.
+func ScanSegments(names []string, open func(name string) (io.ReadCloser, error), after uint64, fn func(Record) error) (ReadResult, error) {
 	var res ReadResult
 	var last uint64
 	for _, s := range names {
@@ -417,7 +430,8 @@ func ReadSegments(names []string, open func(name string) (io.ReadCloser, error),
 		if err != nil {
 			return res, err
 		}
-		torn, err := readSegment(rc, func(r Record) {
+		var ferr error
+		torn, err := readSegment(rc, func(r Record) bool {
 			if last != 0 && r.Seq != last+1 {
 				res.Gaps++
 			}
@@ -426,10 +440,14 @@ func ReadSegments(names []string, open func(name string) (io.ReadCloser, error),
 				res.Gaps++
 			}
 			if r.Seq > after {
-				res.Records = append(res.Records, r)
+				ferr = fn(r)
 			}
+			return ferr == nil
 		})
 		_ = rc.Close()
+		if ferr != nil {
+			return res, ferr
+		}
 		if err != nil {
 			return res, err
 		}
@@ -441,11 +459,12 @@ func ReadSegments(names []string, open func(name string) (io.ReadCloser, error),
 // LastSeq returns the sequence number of the last record of one segment (0 when it holds none).
 func LastSeq(r io.Reader) uint64 {
 	var last uint64
-	_, _ = readSegment(r, func(rec Record) { last = rec.Seq })
+	_, _ = readSegment(r, func(rec Record) bool { last = rec.Seq; return true })
 	return last
 }
 
-func readSegment(f io.Reader, emit func(Record)) (torn bool, err error) {
+// readSegment decodes one segment, calling emit with each record until it returns false.
+func readSegment(f io.Reader, emit func(Record) bool) (torn bool, err error) {
 	dec, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return false, err
@@ -457,7 +476,9 @@ func readSegment(f io.Reader, emit func(Record)) (torn bool, err error) {
 		if len(line) > 0 && line[len(line)-1] == '\n' {
 			var r Record
 			if json.Unmarshal(line, &r) == nil {
-				emit(r)
+				if !emit(r) {
+					return torn, nil
+				}
 			} else {
 				torn = true
 			}

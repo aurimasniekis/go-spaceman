@@ -167,6 +167,12 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, spaceID, id s
 		if err := svc.changes.Record(ctx, tx, spaceID, "task", t.ID, "updated", version+1); err != nil {
 			return err
 		}
+		// A run parked at a usage limit on this task no longer comes back for it once the task is given to another run.
+		if in.AssigneeRun != t.AssigneeRun {
+			if err := svc.settleLimitWaitsTx(ctx, tx, actor, t.ID, t.Status, in.AssigneeRun); err != nil {
+				return err
+			}
+		}
 		details := map[string]any{"space_id": spaceID, "priority": c.Priority}
 		if in.AssigneeRole != t.AssigneeRole || in.AssigneeRun != t.AssigneeRun {
 			details["assignee_role"], details["assignee_run"] = in.AssigneeRole, in.AssigneeRun
@@ -221,6 +227,10 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "task", t.ID, "updated", t.Version+1); err != nil {
+			return err
+		}
+		// Nor once the task is finished or back in the queue.
+		if err := svc.settleLimitWaitsTx(ctx, tx, actor, t.ID, in.Status, t.AssigneeRun); err != nil {
 			return err
 		}
 		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Depth: t.AutomationDepth, Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: from, To: in.Status,

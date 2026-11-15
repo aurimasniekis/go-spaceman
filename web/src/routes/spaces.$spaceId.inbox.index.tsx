@@ -3,13 +3,13 @@ import { IconPaperclip, IconPlus } from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { isMiniApp } from '@/api/session'
-import { useInbox, useMe, type InboxStatus } from '@/api/queries'
+import { useInbox, type InboxStatus } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { InboxStatusBadge, sourceLabel, statusLabel, UrgencyBadge } from '@/features/inbox/badges'
 import { NewItemModal } from '@/features/inbox/NewItemModal'
-import { atLeast, roleIn } from '@/lib/access'
+import { useCanCreateInboxItem } from '@/features/inbox/useNewInboxItem'
 import { ago, datetime } from '@/lib/format'
 
 export const Route = createFileRoute('/spaces/$spaceId/inbox/')({ component: InboxPage })
@@ -19,13 +19,12 @@ const FILTERS: (InboxStatus | '')[] = ['new', 'in_progress', 'deferred', 'done',
 function InboxPage() {
   const { spaceId } = Route.useParams()
   const navigate = useNavigate()
-  const me = useMe().data
   const [status, setStatus] = useState<InboxStatus | ''>('new')
   const [creating, setCreating] = useState(false)
   const inbox = useInbox(spaceId, status)
   const counts = inbox.data?.pages[0]?.counts
   const items = inbox.data?.pages.flatMap((p) => p.items) ?? []
-  const canWrite = atLeast(roleIn(me, spaceId), 'operator')
+  const canWrite = useCanCreateInboxItem(spaceId)
 
   return (
     <>

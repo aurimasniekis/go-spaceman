@@ -425,6 +425,175 @@ So `DISABLE_AUTOUPDATER` covers only the background updater. ADR-0077 sets both 
 - Not checked: an interactive `--resume`, a real model's answer (the fake API replied with fixed text), a newer
   version resuming a session with tool calls, or going back to an older version.
 
+## Claude Code usage limits (2.1.317–2.1.323, 2026-11-13)
+
+Evidence for ADR-0079 (usage limits). **Labels:**
+- **transcripts**: observed in Claude Code's own transcripts on a SpaceMan node: 343 files under the spaces'
+  `instances/<ins>/claude/projects/<proj>/*.jsonl`, written by Claude Code 2.1.317, 2.1.319, 2.1.321, 2.1.322 and
+  2.1.323 between 2026-11-07 and 2026-11-13, scanned read-only with `python3 -I`. The transcripts are private and not
+  committed; every shape below uses placeholders.
+- **binary**: read from Claude Code 2.1.323's strings, not exercised.
+- **live**: run on 2026-11-13 against Harbor Pilot v0.1.6 `serve --demo` or a local fake Messages API, with fresh
+  `HOME` and `CLAUDE_CONFIG_DIR` (umask 077, deleted afterwards), the ADR-0021 seed and both updater variables. No
+  credential was used and no real model was called.
+
+### Subscription runs: two ways into a wait
+
+A run on a claude.ai subscription (`CLAUDE_CODE_OAUTH_TOKEN`) reaches its limit in one of two ways. Both end the turn
+and arm Claude Code's own auto-continue (below). **Only the first carries the reset time.**
+
+**(A) Error path: a typed limit record.** 16 records: 12 `five_hour` (2.1.317 ×3, 2.1.319, 2.1.321 ×2, 2.1.322 ×2,
+2.1.323 ×4) and 4 `seven_day` (2.1.322). Every one had `error: "rate_limit"`, `apiErrorStatus: 429`,
+`apiError: "usage_limit_reached"`, `status: "rejected"` and an integer `resetsAt` equal in both copies
+(**transcripts**). Shape, with placeholders:
+
+```json
+{"type":"assistant","isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,
+ "apiError":"usage_limit_reached",
+ "apiErrorParams":{"rate_limit_info":{"status":"rejected","resetsAt":<epoch s>,"rateLimitType":"five_hour",
+   "overageStatus":"rejected","overageDisabledReason":"<reason>","isUsingOverage":false}},
+ "quotaLimits":{"status":"rejected","resetsAt":<epoch s>,"rateLimitType":"five_hour","overageStatus":"rejected",
+   "overageDisabledReason":"<reason>","isUsingOverage":false,"unifiedRateLimitFallbackAvailable":false,
+   "upgradePaths":[…],"lowPriorityOffer":…,"lowPriorityMaxWaitSeconds":…,"lowPriorityRetryAfterSeconds":…},
+ "message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your 5-hour limit · resets <local time> (<zone>)"}],"usage":{<all zero>}},
+ "requestId":"<id>","sessionId":"<uuid>","timestamp":"<ISO-8601>","version":"2.1.323"}
+```
+
+- Key on `apiError == "usage_limit_reached"`. Reset: `quotaLimits.resetsAt`, else
+  `apiErrorParams.rate_limit_info.resetsAt` (epoch seconds). Kind: `rateLimitType`. Some records also carry
+  `failedResponseHadNoToolCall` (3 of 16).
+- `rateLimitType` values in the binary: `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
+  `seven_day_overage_included`, `overage` (**binary**). Only the first two were seen.
+- The record's text is display wording in the process's local zone, with no date when the reset is under 24 h away.
+  It is never parsed (SM-RUN-002).
+
+**(B) Wrap-up path: no error record and no reset time.** 12 of the 21 "continuing automatically" records below
+(2.1.317, 2.1.319, 2.1.321, 2.1.322, 2.1.323) came **without** any `usage_limit_reached` record. Instead, while a
+turn was running, Claude Code inserted a meta user record and let the turn finish (**transcripts**):
+
+```json
+{"type":"user","isMeta":true,"turnCompanion":true,"usageLimitNote":"wrap_up",
+ "message":{"role":"user","content":"[Usage limit reached; a short grace allowance remains, then this turn is cut off without warning. …]"},
+ "timestamp":"<ISO-8601>","version":"<v>"}
+```
+
+- `usageLimitNote` values in the binary: `wrap_up`, `release` and `near_limit` (**binary**). `wrap_up` was seen
+  12 times and `release` 12 times; `near_limit` was not seen.
+- After the wrap-up the turn ended normally (a text reply, then `turn_duration`), and the arm record followed.
+- **No record of this path holds `resetsAt` or `rateLimitType`.** Of the 343 files, only the 16 error records do. The
+  only reset time on this path is the arm record's display text ("at 10:10pm"), which is local and dateless.
+- **Consequence:** a detector that keys only on the error record misses more than half of the waits seen here.
+
+### Auto-continue
+
+**Records** (`type: "system"`, `subtype: "informational"`, `level: "notice"`, `isMeta: false`; **transcripts**):
+
+| `content` | Count | Meaning |
+|---|---|---|
+| `Usage limit reached · continuing automatically at <t> · esc to cancel` | 21 | armed |
+| `Usage limit reached again · continuing automatically at <t> · esc to cancel` | 4 | a new turn hit the limit while armed; re-armed |
+| `Usage limit reset · Continuing automatically` | 16 | fired |
+
+The wording comes from the defaults `started`, `rearmed` and `waiting` and can be overridden by a server-side flag
+(**binary**). It is a display string, so a detector should treat the record type, not its text, as the signal.
+
+**When it fires** (**transcripts**):
+- A `queue-operation` `enqueue` with the content "Your claude.ai usage limit has reset. Continue the task you were
+  working on when the limit was reached; do not repeat work that is already complete.", then a `dequeue`.
+- Then the "reset" informational record and a meta user record with `origin.kind: "auto-continuation"`,
+  `turnOrigin: "auto_continuation"`, `promptSource: "system"`, `queuePriority: "later"`.
+- The enqueue came **41–111 s after `resetsAt`** in the 11 cases where that transcript held the epoch. The binary's
+  default jitter is 30–90 s after the reset (`jitterMinMs`/`jitterMaxMs`), and the binary confirms the model is
+  available before firing (**binary**).
+- An "early" variant exists: "Your claude.ai usage is available again before the usage-limit reset. …" (**binary**;
+  not seen).
+
+**When it arms** (**binary**, 2.1.323, with the transcripts that agree):
+- Only for claude.ai OAuth sessions that are not usage-billed. A gateway run (`ANTHROPIC_AUTH_TOKEN`) never arms: the
+  live gateway run below wrote no informational record.
+- The setting `autoContinueAtUsageLimit` ("When a claude.ai usage limit stops your session, wait for the limit to reset
+  and continue the task automatically") defaults to on. SpaceMan doesn't set it; a profile's `claude_settings` could.
+- **Only when the reset is at most 24 h away** (`86400000` ms). Otherwise it shows "Automatic continue stopped · the
+  usage limit now resets more than 24 hours out". The transcripts agree: the `seven_day` records written 62, 59 and
+  46 h before their reset have no arm record, and the one written 22 h before has one. **A weekly wait therefore never
+  resumes on its own until its last 24 h**, and then only if the process is still alive.
+- At most 3 automatic continuations since the last human prompt (`continuationsSinceHumanPrompt`, cap 3), then
+  "Automatic continue stopped after repeated usage-limit hits".
+
+**What cancels it** (**binary**): `escape`, `ctrl_c` and `kill_agents_chord` (the user's cancel, "Automatic continue
+cancelled · /rate-limit-options to re-arm"); an account switch; a conversation reset; the session moving to the
+background, Claude Desktop or the cloud; **the process exiting** ("Claude Code exited during the wait, so the task will
+not resume on its own …"); and **a relaunch** ("Claude Code relaunched during the wait, so the task will not resume on
+its own … (send a prompt then to continue)"). So a session resumed with `--resume` after its process ended needs a
+prompt to continue; it does not inherit the armed timer.
+
+### Typed input while armed (a SpaceMan nudge)
+
+**Does not cancel auto-continue** (**transcripts**, 4 cases: 2.1.317, 2.1.319, 2.1.322, 2.1.323). Each time:
+1. SpaceMan's notice ("SpaceMan: N new message(s) waiting for you. …") arrived as a typed user turn
+   (`origin.kind: "human"`, `promptSource: "typed"`) while armed.
+2. Claude Code added a meta record `usageLimitNote: "release"`: "[Earlier usage-limit notes no longer apply. Continue
+   working normally. Don't mention this to the user.]".
+3. The turn's request was refused at once: "Usage limit reached again · continuing automatically …" plus a
+   `usage_limit_reached` record, about 0.5 s after the nudge.
+4. At the reset the auto-continue fired as usual.
+
+So a nudge costs one refused request and is itself not handled until after the reset; the message stays unread in
+SpaceMan until then. A typed prompt counts as a human prompt, so it also resets the 3-continuation cap.
+
+A turn not started by typed input (a background task's `task-notification`), armed on the wrap-up path, ran without a
+refusal 7 minutes after the arm record (1 case, 2.1.321), presumably on the remaining grace allowance; that session's
+auto-continue never fired (see the next sentence). Typed input that arrived **after** the reset but before the timer fired (2 cases, 2.1.323 and
+2.1.321) ran normally, and no auto-continue followed: the user's turn replaces it.
+
+**Not verified:** whether SpaceMan's interrupt (herdr-core `interrupt`) is seen as `ctrl_c` and cancels the timer (the
+binary lists `ctrl_c` as a cancel); auto-continue across a node agent restart that adopts the process (the process keeps
+running in herdr-core, so the timer should survive); the `seven_day_opus` and `seven_day_sonnet` kinds; the TUI layout.
+Auto-continue arms only on a real claude.ai limit, which can't be forced, so these stay unverified until a live limit
+is observed on a SpaceMan run (T3's agent restart test covers the adoption path with the fake harness; ADR-0079 never
+interrupts a keep-alive run, and T7's park ends the process, so neither depends on the answer).
+
+### `--resume` with a different token (live, 2.1.323, fake API)
+
+- Print mode: `--session-id <uuid>` with `ANTHROPIC_AUTH_TOKEN=<token A>` ("Remember the code word …"), then
+  `--resume <uuid>` with `<token B>` in the same `CLAUDE_CONFIG_DIR`. Both exited 0. The second request carried 5
+  `messages[]` entries including the code word, against 2 in the first, under the other token.
+- Interactive, in an isolated tmux: `--resume <uuid>` with `<token C>`, one typed prompt. The request carried 8 entries
+  including the code word.
+- The transcript records no account or token field: session files belong to `CLAUDE_CONFIG_DIR`, not to the
+  credential.
+- **Not verified:** two real claude.ai accounts (no second account on this node; `CLAUDE_CODE_OAUTH_TOKEN` was not
+  used). With OAuth, Claude Code may record the account (`oauthAccount` in `.claude.json`) and the binary has an
+  `account_switch` cancel reason for auto-continue. ADR-0079 failover (off by default) is verified with real
+  accounts before it is relied on (T6/T7).
+
+### Gateway runs: Harbor Pilot's 429 (live, 2.1.323 against Harbor Pilot v0.1.6 `serve --demo`)
+
+Setup: a credential minted on the demo's `claude-code-laptop` binding; Claude Code interactive in an isolated tmux
+with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, `--model claude-opus-5-5`. The plan's three candidate accounts
+were made unavailable by raising their demo quota monitors' `exhausted_below` to 0.99 (`docs/contracts/harbor-pilot.md`,
+Quota board).
+
+- Claude Code retried the 429 for 3 min 4 s ("429 no eligible account is available for model … · Retrying in <n>s ·
+  attempt <k>/10"), then wrote one record:
+
+```json
+{"type":"assistant","isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"apiErrorIsTransient":false,
+ "failedResponseHadNoToolCall":true,
+ "message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: Request rejected (429) · no eligible account is available for model <model>"}]},
+ "timestamp":"<ISO-8601>","version":"2.1.323"}
+```
+
+- There is **no `apiError`, no `apiErrorParams` and no `quotaLimits`**, so no kind and no reset time. No
+  informational record followed, so no auto-continue.
+- A blocking budget's 429 (print mode, `CLAUDE_CODE_MAX_RETRIES=0`) produced the same shape with the text
+  "API Error: Request rejected (429) · budget <name> is exhausted for this day (<spent> of <limit> USD)".
+- The text after "API Error: Request rejected (429) · " is Harbor Pilot's `error.message` verbatim, so the two refusals
+  can be told apart only by that message (`no eligible account is available for model ` versus
+  `budget <name> is exhausted `), both from Harbor Pilot's source (`harbor-pilot.md`).
+- Claude Code's retry count comes from `CLAUDE_CODE_MAX_RETRIES` (default 10 attempts, as observed); SpaceMan doesn't
+  set it.
+
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |
 |---|---|---|

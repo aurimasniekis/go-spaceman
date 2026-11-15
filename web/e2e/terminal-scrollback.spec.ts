@@ -7,7 +7,9 @@ import { Api, env, startAgent } from './stack'
  * The web terminal keeps at least 10,000 rows of earlier output at the node's 160 columns. ghostty-web's `scrollback`
  * option is a byte limit, not a line count (scrollback.ts, ADR-0080): `scrollback: 10_000` kept only a few hundred
  * rows. The stub's "/sparse 12000" prints 12,000 lines of 154 characters, each in a 24-bit colour of its own (the most
- * memory a row of Claude Code's output takes), then 60 short lines and a "tick N" line a second.
+ * memory a row of Claude Code's output takes), then 60 short lines and a "tick N" line a second. That is about 2 MB
+ * of output: the terminal first shows its last 1 MiB (ADR-0081), and the rest loads when the viewer scrolls to the top
+ * and asks for earlier output.
  */
 interface Probe {
   __smTerminals?: { texts(): string[]; screens(): string[]; wasmBytes(): number }
@@ -52,6 +54,18 @@ test('the terminal keeps 10,000 rows of scrollback at 160 columns', async ({ pag
     await expect.poll(screen, { timeout: 60_000 }).toMatch(/^tick \d+$/m)
     const size = (await page.getByTestId('terminal-badge-size').first().textContent())?.split('×').map(Number) ?? []
     expect(size, 'size badge').toEqual([160, 48])
+
+    // Earlier output, from the top of the scrollback, when the catch-up was a tail (the page may open while the stub is
+    // still printing, and then the stored output so far fits in the first tail).
+    const box = page.locator('[data-earlier]')
+    if (Number(await box.getAttribute('data-earlier')) > 0) {
+      await page.getByTestId('terminal').hover()
+      await page.mouse.wheel(0, -10_000_000)
+      await page.mouse.wheel(0, -10_000_000)
+      await page.getByTestId('load-earlier').click()
+      await expect(box).toHaveAttribute('data-reloading', 'false', { timeout: 60_000 })
+      expect(Number(await box.getAttribute('data-earlier')), 'output before the second tail').toBe(0)
+    }
 
     const lines = (await page.evaluate(() => (window as unknown as Probe).__smTerminals!.texts()[0])).split('\n')
     const longLines = lines.filter((l) => /^long line \d+ x{140}$/.test(l))

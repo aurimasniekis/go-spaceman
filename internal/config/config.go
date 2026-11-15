@@ -178,6 +178,21 @@ type LimitsConfig struct {
 	// TerminalRows is the height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's
 	// runner.terminal_size. A size applies only when terminal_cols is set too.
 	TerminalRows int64 `yaml:"terminal_rows"`
+	// UsageLimitFailover lets a launch or resume whose account is held at a usage limit use another account bound to
+	// the space for the same harness that is not held (1: on; 0: off, the default). A space routed through an LLM
+	// gateway never falls back to a direct account (ADR-0079 decision 8).
+	UsageLimitFailover int64 `yaml:"usage_limit_failover"`
+	// UsageLimitKeepAliveMaxMinutes is how long a run at a usage limit waits for the reset with its process kept alive,
+	// and the longest gap between checks of a hold whose reset time is unknown (1-1440, default 360; ADR-0079).
+	UsageLimitKeepAliveMaxMinutes int64 `yaml:"usage_limit_keep_alive_max_minutes"`
+	// UsageLimitMaxWaitHours is how long a worker or diagnostic run parked at a usage limit waits to be resumed before
+	// its task goes back to the queue, ready and unassigned (1-720, default 168: 7 days; control is never given up on;
+	// ADR-0079 Q2).
+	UsageLimitMaxWaitHours int64 `yaml:"usage_limit_max_wait_hours"`
+	// UsageLimitNotifyAfterHours is how far away a usage-limit hold's reset must be for the space's people to get one
+	// human action about it, once per account window (0-720, default 12: weekly limits, not 5-hour ones; 0: never;
+	// ADR-0079 Q5).
+	UsageLimitNotifyAfterHours int64 `yaml:"usage_limit_notify_after_hours"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual
@@ -267,6 +282,23 @@ type HTTPConfig struct {
 	// heartbeat event. A proxy in front of central (Cloudflare drops an idle proxied connection after about 100 s)
 	// must see traffic well inside its idle limit. 1 s to 45 s, default 15 s.
 	StreamHeartbeat Duration `yaml:"stream_heartbeat"`
+	// CatchUpConcurrency bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each
+	// decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused
+	// with 503 and Retry-After (ADR-0081).
+	CatchUpConcurrency int `yaml:"catch_up_concurrency"`
+	// CatchUpWait bounds how long a terminal catch-up or recording read waits for one of catch_up_concurrency's slots
+	// (0 to 1m; 0 refuses at once).
+	CatchUpWait Duration `yaml:"catch_up_wait"`
+	// ReadIdleTimeout bounds how long one read of a request body may wait for the client to send data (1s to 10m). It
+	// bounds progress, not the whole request: the whole body must also arrive within its operation's bound (5 s for
+	// JSON operations, 10 minutes for an attachment upload); within that bound a large upload that keeps moving is
+	// never cut off, but a client that
+	// declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request
+	// refused before its body is read closes its connection instead of draining the body. Requests without a body
+	// (event streams) and WebSocket connections are unaffected.
+	ReadIdleTimeout Duration `yaml:"read_idle_timeout"`
+	// IdleTimeout bounds how long a kept-alive connection may wait for its next request (1s to 1h).
+	IdleTimeout Duration `yaml:"idle_timeout"`
 }
 
 // AuthConfig configures operator authentication (SM-AUTH-001).
