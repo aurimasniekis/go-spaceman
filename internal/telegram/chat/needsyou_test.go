@@ -694,3 +694,28 @@ func (e *env) promptMsg() int {
 	e.t.Fatal("no prompt")
 	return 0
 }
+
+// A full page of open actions plus one escalated action ranked first: the escalated one is listed, not hidden behind "more".
+func TestNeedsYouEscalatedRankedFirstListed(t *testing.T) {
+	e := newEnv(t)
+	for i := 0; i < 3; i++ { // PageSize is 2
+		e.addHuman(spA, hid(byte('1'+i)), "question", "Open", `{"options":["a"]}`)
+	}
+	e.addHuman(spA, hid('9'), "question", "Escalated", `{"options":["a"]}`).Status = "in_progress"
+	e.say("/needsyou alpha")
+	m := e.last()
+	texts, data := buttons(m)
+	if len(texts) != 2 || data[0] != humanData('o', spA, hid('9'), -1) || !strings.Contains(m.Text, "more in the app") {
+		t.Fatalf("%v %v %q", texts, data, m.Text)
+	}
+}
+
+// A schema maxLength above the chat limit is held to it, and the prompt says so.
+func TestWizardPromptNotesCappedMaxLength(t *testing.T) {
+	e := newEnv(t)
+	e.addCustom(hid('1'), `{"type":"object","properties":{"long":{"type":"string","maxLength":5000},"short":{"type":"string","maxLength":10}}}`, []string{"done"}, `{"order":["long","short"]}`)
+	e.open(spA, hid('1'))
+	if p := e.last().Text; !strings.Contains(p, "2000") || !strings.Contains(p, "app") {
+		t.Fatalf("%q", p)
+	}
+}

@@ -145,12 +145,25 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		out(200, it)
 	case len(seg) == 3 && seg[2] == "human-actions" && r.Method == http.MethodGet:
 		var items []humanAction
+		pending := r.URL.Query().Get("pending") == "true"
 		for _, a := range f.human {
-			if a.SpaceID == seg[1] && a.Status == r.URL.Query().Get("status") {
+			if a.SpaceID == seg[1] && (a.Status == r.URL.Query().Get("status") || pending && (a.Status == "open" || a.Status == "in_progress")) {
 				items = append(items, *a)
 			}
 		}
-		slices.SortFunc(items, func(a, b humanAction) int { return strings.Compare(a.ID, b.ID) })
+		// pending=true is the space's rank order: escalated (in_progress) first, then by ID.
+		slices.SortFunc(items, func(a, b humanAction) int {
+			if (a.Status == "in_progress") != (b.Status == "in_progress") {
+				if a.Status == "in_progress" {
+					return -1
+				}
+				return 1
+			}
+			return strings.Compare(a.ID, b.ID)
+		})
+		if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && len(items) > n {
+			items = items[:n]
+		}
 		out(200, map[string]any{"items": items})
 	case len(seg) == 4 && seg[2] == "human-actions" && r.Method == http.MethodGet:
 		a := f.human[seg[3]]

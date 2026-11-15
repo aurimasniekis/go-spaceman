@@ -135,20 +135,14 @@ func (h *Handler) cmdNeedsYou(ctx context.Context, l updates.Link, arg string) {
 		return
 	}
 	h.setCurrent(l.ID, s.ID)
-	// The list takes one status at a time: an action assigned or escalated to the caller is in_progress.
-	var items []humanAction
-	for _, st := range []string{"open", "in_progress"} {
-		var out struct {
-			Items []humanAction `json:"items"`
-		}
-		r := c.get(ctx, "/spaces/"+s.ID+"/human-actions?status="+st+"&limit="+strconv.Itoa(h.o.PageSize+1), &out)
-		if !r.ok() {
-			h.send(ctx, l.ChatID, reply{text: failText(r)})
-			return
-		}
-		items = append(items, out.Items...)
+	// One call with pending=true: open and in_progress (assigned or escalated) actions in the space's rank order.
+	var out struct {
+		Items []humanAction `json:"items"`
 	}
-	out := struct{ Items []humanAction }{items}
+	if r := c.get(ctx, "/spaces/"+s.ID+"/human-actions?pending=true&limit="+strconv.Itoa(h.o.PageSize+1), &out); !r.ok() {
+		h.send(ctx, l.ChatID, reply{text: failText(r)})
+		return
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Needs you in %s", s.title())
 	if len(out.Items) == 0 {
@@ -657,7 +651,11 @@ func (h *Handler) wizardPrompt(ctx context.Context, f *form) {
 	if fl.kind == "boolean" || len(fl.choices) > 0 {
 		return
 	}
-	m, ok := h.send(ctx, f.key.chat, reply{text: "Reply with: " + fl.label, force: &botapi.ForceReply{ForceReply: true, InputFieldPlaceholder: truncate(fl.label, 60)}})
+	text := "Reply with: " + fl.label
+	if fl.maxLen != nil && *fl.maxLen > maxWizardText {
+		text += fmt.Sprintf("\n(Chat takes at most %d characters here; open the app for a longer value.)", maxWizardText)
+	}
+	m, ok := h.send(ctx, f.key.chat, reply{text: text, force: &botapi.ForceReply{ForceReply: true, InputFieldPlaceholder: truncate(fl.label, 60)}})
 	if ok {
 		h.addPrompt(pendingKey{f.key.chat, m.MessageID}, prompt{linkID: f.linkID, form: f.key, field: f.wiz.idx})
 	}
