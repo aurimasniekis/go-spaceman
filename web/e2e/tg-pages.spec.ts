@@ -39,7 +39,10 @@ const task = (n: number, status = 'ready') => ({
 const run = { id: 'run_pages1', space_id: SPACE, role: 'implementor', turn: 2, kind: 'worker', harness: 'claude-code', observed: 'running', desired: 'running', status: 'working', created_at: now, started_at: now, generation: 1, adopted: false, instance_id: 'i', node_id: 'n', launch: {} }
 const message = { id: 'msg_pages1', space_id: SPACE, kind: 'request', subject: 'Please look at the deploy', body: 'Hello', state: 'available', from_kind: 'control', to_kind: 'operators', created_at: now, attachments: [] }
 
-async function launch(page: Page, o: { role?: string; path: string }) {
+/** The fixtures a test can replace: the queue's tasks, the scheduled messages to control and the space's attention counts. */
+type Fixtures = { role?: string; path: string; tasks?: unknown[]; scheduled?: unknown[]; attention?: Record<string, unknown> }
+
+async function launch(page: Page, o: Fixtures) {
   const moves: unknown[] = []
   const created: unknown[] = []
   await page.route('https://telegram.org/js/telegram-web-app.js', (r) =>
@@ -60,16 +63,22 @@ async function launch(page: Page, o: { role?: string; path: string }) {
     if (p === '/watch') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': ok\n\n' })
     if (p === '/spaces') return route.fulfill(json({ items: [{ id: SPACE, name: 'Pages space', state: 'active', version: 1 }] }))
     if (p === `/spaces/${SPACE}`) return route.fulfill(json({ id: SPACE, name: 'Pages space', state: 'active', version: 1, goals: 'Ship it', lease: { valid: true, state: 'valid', generation: 1 } }))
-    if (p === '/attention') return route.fulfill(json({ total: 0, checked_at: now, spaces: [{ space_id: SPACE, name: 'Pages space', slug: 'p', state: 'active', total: 0 }] }))
+    if (p === '/attention') {
+      const space = { space_id: SPACE, name: 'Pages space', slug: 'p', state: 'active', total: 0, ...o.attention }
+      return route.fulfill(json({ total: space.total, checked_at: now, spaces: [space] }))
+    }
     if (p === `/spaces/${SPACE}/runs`) return route.fulfill(json({ items: [run] }))
     if (p === `/spaces/${SPACE}/runs/${run.id}`) return route.fulfill(json(run))
-    if (p === `/spaces/${SPACE}/messages`) return route.fulfill(json({ items: [message], operators_pending: 1 }))
-    if (p === `/spaces/${SPACE}/messages/scheduled`) return route.fulfill(json({ items: [] }))
+    // The scheduled list is GET /messages?scheduled=true (api.GET in useScheduledMessages), not a path of its own.
+    if (p === `/spaces/${SPACE}/messages`) {
+      if (new URL(req.url()).searchParams.get('scheduled') === 'true') return route.fulfill(json({ items: o.scheduled ?? [] }))
+      return route.fulfill(json({ items: [message], operators_pending: 1 }))
+    }
     if (p === `/spaces/${SPACE}/tasks` && req.method() === 'POST') {
       created.push(req.postDataJSON())
       return route.fulfill(json(task(9), 201))
     }
-    if (p === `/spaces/${SPACE}/tasks`) return route.fulfill(json({ tasks: [task(1), task(2), task(3, 'running')], policy: { max_active: 1 } }))
+    if (p === `/spaces/${SPACE}/tasks`) return route.fulfill(json({ tasks: o.tasks ?? [task(1), task(2), task(3, 'running')], policy: { max_active: 1 } }))
     if (p.endsWith('/move')) {
       moves.push({ path: p, body: req.postDataJSON() })
       return route.fulfill(json({ ...task(1) }))
@@ -117,6 +126,8 @@ test('the queue: touch drag reorders, an operator sees New task, and the sheet o
   expect(seen.moves[0]).toEqual({ path: `/spaces/${SPACE}/tasks/${T(1)}/move`, body: { after_id: T(3) } })
   await page.getByRole('button', { name: /^2\. Task number 2/ }).click()
   await expect(page.getByRole('dialog').getByText('Do the')).toBeVisible()
+  // The operator's state change is there, so its absence for a viewer means something.
+  await expect(page.getByRole('button', { name: 'Change state' })).toBeVisible()
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'New task' }).click()
   await expect(page.getByRole('dialog', { name: 'New task' })).toBeVisible()
@@ -130,6 +141,41 @@ test('a viewer sees the queue without New task or drag handles', async ({ page }
   await expect(page.getByRole('listitem')).toHaveCount(3)
   await expect(page.getByRole('button', { name: 'New task' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Drag / })).toHaveCount(0)
+  await clean(page)
+  await page.getByRole('button', { name: /^2\. Task number 2/ }).click()
+  await expect(page.getByRole('dialog').getByText('Do the')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Change state' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+})
+
+const proposed = { ...task(4), incident_proposed_by: 'run_pages1' }
+
+test('an operator confirms or dismisses an incident proposal from the sheet', async ({ page }) => {
+  await launch(page, { path: `/spaces/${SPACE}/queue`, tasks: [proposed] })
+  await page.getByRole('button', { name: /^4\. Task number 4/ }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'Incident proposal' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Confirm incident' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible()
+})
+
+test('a viewer sees an incident proposal without its confirm or dismiss', async ({ page }) => {
+  await launch(page, { role: 'viewer', path: `/spaces/${SPACE}/queue`, tasks: [proposed] })
+  await page.getByRole('button', { name: /^4\. Task number 4/ }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'Incident proposal' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Confirm incident' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Dismiss' })).toHaveCount(0)
+  await clean(page)
+})
+
+test('the space overview names the web-only counts without links in the Mini App', async ({ page }) => {
+  await launch(page, { path: `/spaces/${SPACE}`, attention: { total: 4, quarantine_open: 2, budget_exceeded: 1, tasks_blocked: 1 } })
+  await expect(page.getByText('2 quarantined events')).toBeVisible()
+  await expect(page.getByText('1 budgets exceeded')).toBeVisible()
+  await expect(page.getByRole('link', { name: /quarantined events/ })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /budgets exceeded/ })).toHaveCount(0)
+  // Exact name: the Mini App header's "‹ All spaces" back link to the start page is fine; the web's /attention link is not.
+  await expect(page.getByRole('link', { name: 'All spaces', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: '1 blocked tasks' })).toBeVisible()
   await clean(page)
 })
 
@@ -146,6 +192,16 @@ test('runs: the list and a read-only run page', async ({ page }) => {
 test('messages', async ({ page }) => {
   await launch(page, { path: `/spaces/${SPACE}/messages` })
   await expect(page.getByText('Please look at the deploy')).toBeVisible()
+  await clean(page)
+})
+
+test('a scheduled message opens without the web-only cancel button in the Mini App', async ({ page }) => {
+  const later = { ...message, id: 'msg_sched1', subject: 'Remind me on Friday', state: 'stored', deliver_at: '2099-01-02T00:00:00Z', from_kind: 'control', to_kind: 'control' }
+  await launch(page, { path: `/spaces/${SPACE}/messages`, scheduled: [later] })
+  await page.getByText('Scheduled (1)').click()
+  await page.getByRole('listitem', { name: /Remind me on Friday/ }).click()
+  await expect(page.getByRole('dialog').getByText(/control is not told before then/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Cancel scheduled message' })).toHaveCount(0)
   await clean(page)
 })
 

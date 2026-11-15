@@ -18,7 +18,7 @@ export function TgSpaceOverview({ spaceId }: { spaceId: string }) {
       {s.lease && !s.lease.valid && (
         <Alert color="owlRed" title="No valid execution lease">The node holds no valid lease for this space ({s.lease.state}), so no new work starts until it reconnects.</Alert>
       )}
-      <SpaceAttentionCard spaceId={s.id} />
+      <SpaceAttentionCard spaceId={s.id} miniApp />
       <Card>
         <Group justify="space-between" mb="xs">
           <Title order={5}>Agents</Title>

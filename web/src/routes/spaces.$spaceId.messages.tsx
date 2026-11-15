@@ -6,6 +6,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type Message } from '@/api/client'
 import { keys, useMe, useMessages, useRuns, useScheduledMessages } from '@/api/queries'
+import { isMiniApp } from '@/api/session'
 import { AttachmentList } from '@/components/AttachmentList'
 import { Composer } from '@/components/composer/Composer'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
@@ -140,7 +141,8 @@ function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; 
               Acknowledge
             </Button>
           )}
-          {pending && (
+          {/* Cancelling is excluded from the Mini App (cancel-message is TelegramExcluded): it stays on the web. */}
+          {pending && !isMiniApp() && (
             <Button size="xs" color="owlRed" variant="light" leftSection={<IconX size={14} />}
               onClick={() => void act(() => api.POST('/spaces/{space_id}/messages/{message_id}/cancel', { params: { path } }).then(unwrap), 'Could not cancel')}>
               Cancel scheduled message
