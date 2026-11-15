@@ -103,8 +103,10 @@ var Table = map[string]Entry{
 	"list-accounts":  {Read, rRead},
 	// An account's usage-limit holds (ADR-0079): identifiers, kinds and times only.
 	"list-account-usage-limits": {Read, rRead},
-	"list-space-accounts":       {Read, rRead},
-	"set-space-accounts":        {Dangerous, "chooses which credentials a space's runs receive"},
+	// Clearing an account's holds in every space lets every space launch on it again (account:write).
+	"clear-account-usage-limits": {Dangerous, "lets every space using the account launch on it again"},
+	"list-space-accounts":        {Read, rRead},
+	"set-space-accounts":         {Dangerous, "chooses which credentials a space's runs receive"},
 
 	// Admin.
 	"get-break-glass":     {Read, rRead},
@@ -365,6 +367,8 @@ var Table = map[string]Entry{
 	// Usage-limit holds and parked runs' waits (ADR-0079): identifiers, kinds and times only.
 	"list-space-usage-limits": {Read, rRead},
 	"list-space-limit-waits":  {Read, rRead},
+	// Clearing a space's own hold lets its launches through; a wrong clear only costs a refused launch at the limit.
+	"clear-space-usage-limit": {Write, rSpaceWrite},
 	"stop-run":                {Write, rSpaceWrite},
 	"start-takeover":          {Excluded, rTakeover},
 	"end-takeover":            {Excluded, rTakeover},

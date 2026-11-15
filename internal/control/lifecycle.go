@@ -42,18 +42,31 @@ type lifecycle struct {
 	startMu sync.Mutex
 	idleMu  sync.Mutex
 	idle    map[string]*time.Timer
+	// deferred holds back auto-start per space while the account control would use is held at a usage limit (ADR-0079
+	// decision 7), guarded by startMu.
+	deferred map[string]deferral
+}
+
+// deferral is a space whose control start waits for a usage-limit hold: until its reset or its next probe.
+type deferral struct {
+	target fleet.HoldTarget
+	until  time.Time
 }
 
 // ControlWanted starts the space's control for work waiting for it (the notifier's sweep calls it for active spaces
 // with unseen control items and no live control). Nothing starts when the space turned auto-start off, is not
 // active, has no connected node or no control role; a refused launch (account, budget, relocation) asks people to look,
-// once an hour.
+// once an hour. A launch refused because control's account is held at a usage limit is not a fault: the start is
+// deferred silently until the reset or the hold's next probe, and nobody is asked to look (ADR-0079 decision 7).
 func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 	if sv.Limit == nil || sv.Limit(ctx, spaceID, limits.ControlAutostart) == 0 {
 		return
 	}
 	sv.startMu.Lock()
 	defer sv.startMu.Unlock()
+	if sv.stillDeferred(ctx, spaceID) {
+		return
+	}
 	sp, err := sv.fl.GetSpace(ctx, spaceID)
 	if err != nil || sp.State != "active" || sp.Lease == nil || !sp.Lease.Valid {
 		return // paused, archived or its node is away: the work waits
@@ -86,6 +99,12 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 		return // the space has no control role: nothing to start
 	}
 	r, err := sv.fl.LaunchRun(ctx, AutostartActor, spaceID, li)
+	if h, ok := fleet.AsHold(err); ok {
+		sv.deferStart(spaceID, h)
+		sv.log.Info("control start deferred: its account is held at a usage limit", slog.String("space.id", spaceID),
+			slog.Time("until", h.Until), slog.Bool("reset_known", h.Known))
+		return
+	}
 	if err != nil {
 		var ae *apperr.Error
 		if errors.As(err, &ae) && ae.Code == apperr.CodeConflict {
@@ -96,6 +115,66 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 		return
 	}
 	sv.log.Info("control started for waiting work", slog.String("space.id", spaceID), slog.String(obs.FieldRunID, r.ID))
+}
+
+// deferStart holds control's start back until the hold that refused it can let a launch through. Callers hold startMu.
+func (sv *Supervisor) deferStart(spaceID string, h *fleet.HoldError) {
+	until := h.Until
+	if until.IsZero() {
+		until = sv.clock.Now().Add(time.Hour) // cleared only by an operator: look again in an hour
+	}
+	if sv.deferred == nil {
+		sv.deferred = map[string]deferral{}
+	}
+	sv.deferred[spaceID] = deferral{target: h.Target, until: until}
+}
+
+// stillDeferred reports whether control's start in a space is still held back by a usage-limit hold. Until the reset
+// or probe time it only reads whether the hold is still open (a clear, by an operator or another run's progress,
+// ends the deferral at the next sweep); from then on the launch itself decides (it may be the hold's probe). Callers
+// hold startMu.
+func (sv *Supervisor) stillDeferred(ctx context.Context, spaceID string) bool {
+	d, ok := sv.deferred[spaceID]
+	if !ok {
+		return false
+	}
+	if !sv.clock.Now().Before(d.until) {
+		delete(sv.deferred, spaceID)
+		return false
+	}
+	h, err := sv.fl.HoldOpen(ctx, d.target)
+	switch {
+	case err != nil:
+		sv.log.Warn("read usage-limit hold", obs.Err(err))
+		return true
+	case h == nil:
+		delete(sv.deferred, spaceID)
+		return false
+	}
+	return true
+}
+
+// OnHoldsCleared tells each space whose usage-limit hold an operator cleared, once per hold, and lets its control start
+// again at the next sweep (fleet OnHoldsCleared, ADR-0079 decision 7).
+func (sv *Supervisor) OnHoldsCleared(hs []fleet.ClearedHold) {
+	sv.do(func(ctx context.Context) {
+		sv.startMu.Lock()
+		for _, h := range hs {
+			delete(sv.deferred, h.SpaceID)
+		}
+		sv.startMu.Unlock()
+		for _, h := range hs {
+			what := "the Harbor Pilot gateway"
+			if h.Scope == fleet.LimitScopeAccount {
+				what = fmt.Sprintf("account %s (%s)", h.AccountName, h.AccountID)
+			} else if h.GatewayRef != "harbor-pilot" {
+				what = "the space's Harbor Pilot project budget"
+			}
+			sv.notify(ctx, h.SpaceID, "usage-limit-cleared:"+h.LimitID, "Usage-limit hold cleared: "+what,
+				fmt.Sprintf("An operator cleared this space's %s usage-limit hold on %s. Launches on it are no longer refused because of it; "+
+					"a hold another space still has on it would still refuse them (spaceman_runs_list shows runs waiting at a limit).", h.Kind, what))
+		}
+	})
 }
 
 // resumable returns the session a new control run resumes: the last run's, unless it never finished a turn (a session

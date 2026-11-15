@@ -8,11 +8,26 @@ Aliases: `limit`.
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman limits clear`](#spaceman-limits-clear) | Clear one of the space's own usage-limit holds now (other spaces' holds on the account remain) |
 | [`spaceman limits definitions`](#spaceman-limits-definitions) | Every limit: unit, bounds, default and enforcement point |
 | [`spaceman limits get`](#spaceman-limits-get) | A space's effective limits and where each value comes from |
 | [`spaceman limits holds`](#spaceman-limits-holds) | A space's usage-limit holds, and other spaces' open holds on its accounts (shared) |
 | [`spaceman limits set`](#spaceman-limits-set) | Override a space's limits (keys not given keep their override) |
 | [`spaceman limits waits`](#spaceman-limits-waits) | A space's runs parked at a usage limit, waiting to resume |
+
+## spaceman limits clear
+
+Clear one of the space's own usage-limit holds now (other spaces' holds on the account remain).
+
+```sh
+spaceman limits clear <limit> [flags]
+```
+
+API: `clear-space-usage-limit` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman limits definitions
 

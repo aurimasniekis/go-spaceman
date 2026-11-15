@@ -233,6 +233,13 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		sv.log.Warn("settle ended control run", obs.Err(err))
 		return
 	}
+	// A usage limit is not a crash (ADR-0079 decision 7): restarting would run into the same limit, burn the restart
+	// budget and page people. Nothing is restarted, counted or raised; control comes back at the reset (its limit wait,
+	// or auto-start for waiting work once the hold lets a launch through).
+	if r.EndReason == fleet.EndUsageLimit {
+		sv.log.Info("control ended at a usage limit; not restarted", slog.String(obs.FieldRunID, r.ID))
+		return
+	}
 	sp, err := sv.fl.GetSpace(ctx, r.SpaceID)
 	if err != nil || sp.State != "active" {
 		return // paused or archived: no new work starts
@@ -266,6 +273,14 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		li.Prompt = r.Launch.Prompt + "\n\n" + li.Prompt
 	}
 	if _, err := sv.fl.LaunchRun(ctx, SupervisorActor, r.SpaceID, li); err != nil {
+		if h, ok := fleet.AsHold(err); ok {
+			// Its account is held: auto-start brings control back once the hold lets a launch through.
+			sv.startMu.Lock()
+			sv.deferStart(r.SpaceID, h)
+			sv.startMu.Unlock()
+			sv.log.Info("control restart deferred: its account is held at a usage limit", slog.String(obs.FieldRunID, r.ID), slog.Time("until", h.Until))
+			return
+		}
 		sv.log.Warn("restart control", slog.String(obs.FieldRunID, r.ID), obs.Err(err))
 	}
 }

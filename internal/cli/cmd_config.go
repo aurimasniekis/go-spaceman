@@ -43,6 +43,10 @@ func (a *App) accountCmd() *cobra.Command {
 		a.cmd(opts{use: "holds", short: "An account's open usage-limit holds in every space", op: "list-account-usage-limits", args: pos("account"),
 			view: view{items: "items", cols: []col{c("ID", "id"), c("SPACE", "space_id"), c("KIND", "kind"), c("RESETS", "resets_at"), c("SEEN", "seen_at"), c("FIRST RUN", "first_run_id")},
 				empty: "No open usage-limit holds."}}),
+		a.cmd(opts{use: "clear-holds", short: "Clear an account's usage-limit holds in every space now", op: "clear-account-usage-limits", args: pos("account"),
+			form: func(f *form) {
+				f.str("kind", "kind", "only holds of this kind (five_hour, seven_day, …); every kind when absent")
+			}}),
 		a.cmd(opts{use: "create", short: "Add an account; the secret comes from a file or standard input", op: "create-account", idem: true, form: acct,
 			example: "spaceman account create --name ci-claude --kind claude_oauth_token --secret-file ~/.config/claude-token\n" +
 				"pass show claude | spaceman account create --name ci --kind anthropic_api_key --secret-stdin\n" +

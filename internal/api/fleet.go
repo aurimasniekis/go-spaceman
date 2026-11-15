@@ -40,6 +40,10 @@ var FleetRules = map[string]Rule{
 	"list-space-usage-limits":   InSpace(authz.RunRead),
 	"list-space-limit-waits":    InSpace(authz.RunRead),
 	"list-account-usage-limits": Global(authz.AccountRead),
+	// "Clear now" (decision 7): a space's own hold with the permission that launches runs there; every space's holds
+	// on an account with the permission that manages accounts (accounts are global).
+	"clear-space-usage-limit":    InSpace(authz.RunControl),
+	"clear-account-usage-limits": Global(authz.AccountWrite),
 
 	// Terminal takeover (takeover.go).
 	"start-takeover": TakeoverRules["start-takeover"],
@@ -347,6 +351,37 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				}{}
 				out.Body.Items = ls
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "clear-space-usage-limit", Method: http.MethodPost, Path: "/spaces/{space_id}/usage-limits/{limit_id}/clear",
+			Summary: "Clear one of the space's usage-limit holds now",
+			Description: "Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so " +
+				"launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write " +
+				"(clear-account-usage-limits).", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				LimitID string `path:"limit_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.UsageLimitClear }, error) {
+				res, err := f.ClearSpaceUsageLimit(ctx, Actor(ctx), in.SpaceID, in.LimitID)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.clear", err)
+				}
+				return &struct{ Body *fleet.UsageLimitClear }{Body: res}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "clear-account-usage-limits", Method: http.MethodPost, Path: "/accounts/{account_id}/usage-limits/clear",
+			Summary: "Clear an account's usage-limit holds in every space now",
+			Description: "Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose " +
+				"hold was cleared has its control told once.", Tags: []string{"accounts"}},
+			func(ctx context.Context, in *struct {
+				AccountPath
+				Body struct {
+					Kind string `json:"kind,omitempty" enum:"five_hour,seven_day,seven_day_opus,seven_day_sonnet,seven_day_overage_included,overage,unknown" doc:"Only holds of this kind; every kind when absent"`
+				} `required:"false"`
+			}) (*struct{ Body *fleet.UsageLimitClear }, error) {
+				res, err := f.ClearAccountUsageLimits(ctx, Actor(ctx), in.AccountID, in.Body.Kind)
+				if err != nil {
+					return nil, d.fail(ctx, "usage_limits.clear", err)
+				}
+				return &struct{ Body *fleet.UsageLimitClear }{Body: res}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "get-run", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}", Summary: "Get a run", Tags: tags},
 			func(ctx context.Context, in *RunPath) (*struct{ Body *fleet.Run }, error) {

@@ -243,6 +243,10 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				in.SessionID = ""
 			}
 		}
+		ul := UsageLimitSettings{KeepAliveMax: DefaultLimitKeepAliveMax}
+		if svc.opts.UsageLimitSettings != nil {
+			ul = svc.opts.UsageLimitSettings(ctx, tx.Q, spaceID)
+		}
 		// A harness the space routes through an LLM gateway uses no account, never as a fallback either (ADR-0060 Q1).
 		var gw *GatewaySpec
 		if svc.opts.Gateway != nil {
@@ -263,9 +267,37 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				session = harness.NewUUID()
 			}
 		} else if svc.opts.ResolveAccount != nil {
-			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.AccountRef); err != nil {
+			// With failover on (a space setting, off by default: ADR-0079 decision 8, Q1), an account with an open hold
+			// gives way to another bound account of the harness without one. A gateway run never gets here: it never
+			// falls back to a direct account.
+			var avoid func(string) (bool, error)
+			if ul.Failover {
+				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
+			}
+			ref := in.AccountRef
+			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, avoid); err != nil {
 				return err
 			}
+			if avoid != nil {
+				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, nil); err == nil && base != in.AccountRef {
+					if resolved == nil {
+						resolved = map[string]any{}
+					}
+					resolved["account_failover"] = map[string]any{"from": base, "to": in.AccountRef, "reason": "usage_limit"}
+				}
+			}
+		}
+		// A held account (or gateway reference) refuses the launch, writing nothing, unless this launch is the hold's
+		// probe (ADR-0079 decision 7).
+		probe, err := svc.holdCheckTx(ctx, tx, holdTarget(in.AccountRef, gw), ul.KeepAliveMax)
+		if err != nil {
+			return err
+		}
+		if probe {
+			if resolved == nil {
+				resolved = map[string]any{}
+			}
+			resolved["usage_limit_probe"] = true
 		}
 		// A worktree of a configured repository (named by its folder or its name) carries the repository, so the node can
 		// clone it at its first use (ADR-0044). Folders that are not configured still work as they are.

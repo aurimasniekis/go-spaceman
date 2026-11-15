@@ -154,6 +154,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `clear-terminal-size` | Return a run's terminal to the node's default size |
 | `PUT` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `set-terminal-size` | Resize a run's terminal |
 | `GET` | `/spaces/{space_id}/usage-limits` | `list-space-usage-limits` | A space's usage-limit holds |
+| `POST` | `/spaces/{space_id}/usage-limits/{limit_id}/clear` | `clear-space-usage-limit` | Clear one of the space's usage-limit holds now |
 
 ### recordings
 
@@ -173,6 +174,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/accounts/{account_id}` | `get-account` | An account (never its secret) |
 | `PUT` | `/accounts/{account_id}` | `update-account` | Edit or rotate an account |
 | `GET` | `/accounts/{account_id}/usage-limits` | `list-account-usage-limits` | An account's open usage-limit holds in every space |
+| `POST` | `/accounts/{account_id}/usage-limits/clear` | `clear-account-usage-limits` | Clear an account's usage-limit holds in every space now |
 | `GET` | `/spaces/{space_id}/accounts` | `list-space-accounts` | Accounts the space's runs may use |
 | `PUT` | `/spaces/{space_id}/accounts` | `set-space-accounts` | Set the accounts the space's runs may use |
 
