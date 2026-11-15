@@ -12218,6 +12218,8 @@ export interface components {
             webhook_ip_allowlist?: string[];
         };
         TgbotStatus: {
+            /** @description getMe: users may create and delete the bot's topics in private chats (BotFather) */
+            allows_users_to_create_topics: boolean;
             /** Format: int64 */
             bot_id?: number;
             /**
@@ -12230,6 +12232,8 @@ export interface components {
             enabled: boolean;
             /** @description Why the bot isn't working (startup, or Telegram's last delivery error) */
             error?: string;
+            /** @description getMe: topic mode is on for the bot in private chats (set in BotFather) */
+            has_topics_enabled: boolean;
             /**
              * Format: date-time
              * @description Telegram's last failed webhook delivery

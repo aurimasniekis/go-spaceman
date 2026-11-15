@@ -58,6 +58,60 @@ func (s *Server) Topics(chatID int64) map[int]string {
 	return out
 }
 
+// SetBotTopics sets what getMe reports about topics: has_topics_enabled (topic mode on in private chats) and
+// allows_users_to_create_topics (users may create and delete topics; BotFather's setting). It changes nothing else:
+// createForumTopic keeps working as DisableTopics and the rest of the fake say.
+func (s *Server) SetBotTopics(hasTopics, allowsUserTopics bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opts.Bot.HasTopicsEnabled = hasTopics
+	s.opts.Bot.AllowsUsersToCreateTopics = allowsUserTopics
+}
+
+// MessagesIn returns the messages in chatID that landed in thread (sent and not deleted, oldest first). Thread 0 is the
+// chat without a topic: a send without message_thread_id.
+func (s *Server) MessagesIn(chatID int64, thread int) []botapi.Message {
+	var out []botapi.Message
+	for _, m := range s.Messages(chatID) {
+		if m.MessageThreadID == thread {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// Pinned returns the messages pinned in chatID, oldest pin first.
+func (s *Server) Pinned(chatID int64) []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int(nil), s.pinned[chatID]...)
+}
+
+// editForumTopicLocked renames a topic (name 0–128 characters; empty keeps the name). A topic that doesn't exist, or was
+// deleted, can't be edited; a closed one can.
+func (s *Server) editForumTopicLocked(p params) (any, *apiError) {
+	chat, e := s.targetLocked(p)
+	if e != nil {
+		return nil, e
+	}
+	n, ok := p.int64("message_thread_id")
+	if !ok {
+		return nil, badRequest("message thread not found")
+	}
+	t := s.topics[chat.ID][int(n)]
+	if t == nil || t.absent {
+		return nil, badRequest("message thread not found")
+	}
+	name := p.str("name")
+	if utf16Len(name) > 128 {
+		return nil, badRequest("topic name is invalid")
+	}
+	if name != "" {
+		t.name = name
+	}
+	return true, nil
+}
+
 func (s *Server) createForumTopicLocked(p params) (any, *apiError) {
 	chat, e := s.targetLocked(p)
 	if e != nil {

@@ -50,13 +50,17 @@ var Commands = commands.Menu()
 // Status is the bot's live health, for the System page and get-telegram-bot. It carries no token, secret or webhook
 // path.
 type Status struct {
-	Configured    bool   `json:"configured" doc:"A bot is configured"`
-	Enabled       bool   `json:"enabled"`
-	Mode          string `json:"mode,omitempty" enum:"webhook,polling,"`
-	BotID         int64  `json:"bot_id,omitempty"`
-	Username      string `json:"username,omitempty" doc:"The bot's username, without @"`
-	WebhookStatus string `json:"webhook_status" enum:"off,starting,polling,ok,error,unknown" doc:"off: no bot or disabled; starting: being configured; polling: getUpdates runs; ok: the webhook is registered and Telegram reports no delivery error since; error: see error; unknown: Telegram couldn't be asked"`
-	Error         string `json:"error,omitempty" doc:"Why the bot isn't working (startup, or Telegram's last delivery error)"`
+	Configured bool   `json:"configured" doc:"A bot is configured"`
+	Enabled    bool   `json:"enabled"`
+	Mode       string `json:"mode,omitempty" enum:"webhook,polling,"`
+	BotID      int64  `json:"bot_id,omitempty"`
+	Username   string `json:"username,omitempty" doc:"The bot's username, without @"`
+	// From getMe. Topics in private chats need both: topic mode on (BotFather) and user topics allowed (BotFather's
+	// Mini App setting). Nothing here is a per-user opt-in; the per-link thread mode is in the link's preferences.
+	HasTopicsEnabled          bool   `json:"has_topics_enabled" doc:"getMe: topic mode is on for the bot in private chats (set in BotFather)"`
+	AllowsUsersToCreateTopics bool   `json:"allows_users_to_create_topics" doc:"getMe: users may create and delete the bot's topics in private chats (BotFather)"`
+	WebhookStatus             string `json:"webhook_status" enum:"off,starting,polling,ok,error,unknown" doc:"off: no bot or disabled; starting: being configured; polling: getUpdates runs; ok: the webhook is registered and Telegram reports no delivery error since; error: see error; unknown: Telegram couldn't be asked"`
+	Error                     string `json:"error,omitempty" doc:"Why the bot isn't working (startup, or Telegram's last delivery error)"`
 	// From getWebhookInfo (webhook mode).
 	PendingUpdateCount int        `json:"pending_update_count" doc:"Updates Telegram holds for the webhook"`
 	LastErrorAt        *time.Time `json:"last_error_at,omitempty" doc:"Telegram's last failed webhook delivery"`
@@ -87,6 +91,8 @@ type runtime struct {
 	mode       string
 	botID      int64
 	username   string
+	hasTopics  bool // getMe's has_topics_enabled
+	userTopics bool // getMe's allows_users_to_create_topics
 	state      string
 	err        string
 	webhookURL string
@@ -380,6 +386,7 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 		}
 		svc.setState(func(rt *runtime) {
 			rt.configured, rt.enabled, rt.mode, rt.botID, rt.username = row != nil, false, "", 0, ""
+			rt.hasTopics, rt.userTopics = false, false
 			if row != nil {
 				rt.mode, rt.botID, rt.username = row.Mode, row.BotID, row.Username
 			}
@@ -397,6 +404,7 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 	}
 	svc.setState(func(rt *runtime) {
 		rt.configured, rt.enabled, rt.mode, rt.botID, rt.username = true, true, row.Mode, row.BotID, row.Username
+		rt.hasTopics, rt.userTopics = false, false
 		rt.state, rt.err, rt.webhookURL, rt.info, rt.infoErr, rt.infoAt, rt.setAt = StateStarting, "", "", nil, false, time.Time{}, time.Time{}
 	})
 
@@ -467,7 +475,9 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 	if me.ID != row.BotID {
 		return fail("the token's bot ("+strconv.FormatInt(me.ID, 10)+") is not the configured bot ("+strconv.FormatInt(row.BotID, 10)+")", nil, false)
 	}
-	svc.setState(func(rt *runtime) { rt.username = me.Username })
+	svc.setState(func(rt *runtime) {
+		rt.username, rt.hasTopics, rt.userTopics = me.Username, me.HasTopicsEnabled, me.AllowsUsersToCreateTopics
+	})
 	if err := call(func(ctx context.Context) error {
 		return c.SetMyCommands(ctx, botapi.SetMyCommandsParams{Commands: Commands, Scope: &botapi.BotCommandScope{Type: "all_private_chats"}})
 	}); err != nil {
@@ -532,7 +542,8 @@ func (svc *Service) Status(ctx context.Context) Status {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	st := Status{Configured: rt.configured, Enabled: rt.enabled, Mode: rt.mode, BotID: rt.botID, Username: rt.username,
-		WebhookStatus: rt.state, Error: rt.err, MiniAppHost: svc.effectiveHost(stored), MiniAppHostIgnored: svc.hostMismatch(stored), MiniAppHostNeedsKey: svc.hostNeedsKey(stored)}
+		WebhookStatus: rt.state, Error: rt.err, MiniAppHost: svc.effectiveHost(stored), MiniAppHostIgnored: svc.hostMismatch(stored), MiniAppHostNeedsKey: svc.hostNeedsKey(stored),
+		HasTopicsEnabled: rt.hasTopics, AllowsUsersToCreateTopics: rt.userTopics}
 	switch {
 	case svc.o.MiniAppHost != "":
 		st.MiniAppHostSource = "config"

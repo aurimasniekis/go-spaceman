@@ -53,6 +53,7 @@ const (
 	MaxPhotoUpload     = 10 << 20
 	MaxCallbackAnswer  = 200
 	MaxCommands        = 100
+	MaxDeleteMessages  = 100
 	MaxUpdatesPerPoll  = 100
 	maxRequestBodySize = MaxUploadBytes + 1<<20
 )
@@ -132,6 +133,7 @@ type Server struct {
 	topics   map[int64]map[int]*topic
 	noTopics map[int64]bool
 	goneAll  map[int64]bool
+	pinned   map[int64][]int // pinned message IDs per chat, oldest first (the last one is unpinned first)
 	messages map[int64]map[int]*botapi.Message
 	known    map[int64]map[int]*botapi.Message // messages users sent, for replies
 	nextMsg  map[int64]int
@@ -178,6 +180,7 @@ func New(t testing.TB, o Options) *Server {
 		topics:    map[int64]map[int]*topic{},
 		noTopics:  map[int64]bool{},
 		goneAll:   map[int64]bool{},
+		pinned:    map[int64][]int{},
 		messages:  map[int64]map[int]*botapi.Message{},
 		known:     map[int64]map[int]*botapi.Message{},
 		nextMsg:   map[int64]int{},

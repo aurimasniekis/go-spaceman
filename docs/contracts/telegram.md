@@ -98,6 +98,27 @@ count toward rate limits (SpaceMan counts them as sends).
 |---|---|
 | Messages in private chats carry `message_thread_id` since 9.3; bots can create topics in private chats since 9.4; topic links `https://t.me/<bot>/<thread_id>` since 10.4. Enabled in BotFather. | https://core.telegram.org/bots/api-changelog#december-31-2025, https://core.telegram.org/bots/api-changelog#february-9-2026, https://core.telegram.org/bots/api-changelog#november-9-2026, https://core.telegram.org/bots/features#topics-in-private-chats |
 | Forum topics in supergroups: `createForumTopic` (name 1–128 characters). | https://core.telegram.org/bots/api#createforumtopic |
+| `getMe` returns `has_topics_enabled`: "True, if the bot has forum topic mode enabled in private chats." Set in BotFather (no API call). Returned only by `getMe`. | https://core.telegram.org/bots/api#user, https://core.telegram.org/bots/api#getme |
+| `getMe` returns `allows_users_to_create_topics`: "True, if the bot allows users to create and delete topics in private chats." Returned only by `getMe`. The plan (§2.1) records its BotFather setting as a Mini App setting, from the 9.4 changelog; not re-read for T1. | https://core.telegram.org/bots/api#user |
+| `editForumTopic(chat_id, message_thread_id, name?)` works in a private chat with a user. `name` is 0–128 characters; an empty or missing name keeps the current one. Returns `True`. | https://core.telegram.org/bots/api#editforumtopic |
+| `pinChatMessage(chat_id, message_id, disable_notification?)`: in a private chat **all non-service messages** can be pinned. Notifications are always disabled in private chats, so `disable_notification` changes nothing there. Returns `True`. | https://core.telegram.org/bots/api#pinchatmessage |
+| `unpinChatMessage(chat_id, message_id?)`: in a private chat all messages can be unpinned. Without `message_id` the **most recent pinned message (by sending date)** is unpinned. `unpinAllChatMessages` clears the list. | https://core.telegram.org/bots/api#unpinchatmessage, https://core.telegram.org/bots/api#unpinallchatmessages |
+| `deleteMessages(chat_id, message_ids)`: 1–100 identifiers. "If some of the specified messages can't be found, they are skipped." The limits of `deleteMessage` apply to each. Returns `True`. | https://core.telegram.org/bots/api#deletemessages |
+| `deleteMessage` limits: a message can be deleted only if it was sent **less than 48 hours** ago; service messages about forum-topic creation can't be deleted; bots can delete outgoing and incoming messages in private chats. | https://core.telegram.org/bots/api#deletemessage |
+| `deleteForumTopic` and `unpinAllForumTopicMessages` work in a private chat with a user. `deleteForumTopic` deletes **all the topic's messages**. | https://core.telegram.org/bots/api#deleteforumtopic, https://core.telegram.org/bots/api#unpinallforumtopicmessages |
+| `close`/`reopen` and the `*GeneralForumTopic` methods: documented for supergroups only (read on 2026-11-14 from the plan's §2.1; not re-read for T1). | https://core.telegram.org/bots/api#closeforumtopic |
+
+**Not documented** (the design has a fallback or an observation step for each; see ADR-0089 and plan §6.3):
+- whether a private chat has a "General" topic;
+- where a message sent **without** `message_thread_id` appears in a chat whose topics are on (it is recorded as thread 0 by the fake, not known from Telegram);
+- whether users can rename the bot's topics;
+- the error text when topics are off (the fake answers "the chat is not a forum", which is its own);
+- whether service messages (`forum_topic_*`) arrive;
+- the BotFather setting's name;
+- what `unpinChatMessage` answers when nothing is pinned or the ID isn't pinned (the fake succeeds without effect);
+- whether deleting a pinned message also unpins it (the fake does);
+- whether `deleteMessages` answers an error for a batch that contains a too-old message, or skips it (the fake skips it);
+- whether `editForumTopic` works on a closed topic (the fake allows it).
 
 ## Files
 

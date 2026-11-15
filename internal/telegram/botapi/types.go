@@ -16,13 +16,15 @@ type ResponseParameters struct {
 
 // User is a Telegram user or bot (API#user).
 type User struct {
-	ID               int64  `json:"id"`
-	IsBot            bool   `json:"is_bot"`
-	FirstName        string `json:"first_name"`
-	LastName         string `json:"last_name,omitempty"`
-	Username         string `json:"username,omitempty"`
-	LanguageCode     string `json:"language_code,omitempty"`
-	HasTopicsEnabled bool   `json:"has_topics_enabled,omitempty"`
+	ID           int64  `json:"id"`
+	IsBot        bool   `json:"is_bot"`
+	FirstName    string `json:"first_name"`
+	LastName     string `json:"last_name,omitempty"`
+	Username     string `json:"username,omitempty"`
+	LanguageCode string `json:"language_code,omitempty"`
+	// HasTopicsEnabled and AllowsUsersToCreateTopics are returned only by getMe (API#user).
+	HasTopicsEnabled          bool `json:"has_topics_enabled,omitempty"`
+	AllowsUsersToCreateTopics bool `json:"allows_users_to_create_topics,omitempty"`
 }
 
 // Chat types (API#chat).
