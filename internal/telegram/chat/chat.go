@@ -34,6 +34,7 @@ const (
 	TextNoSpaces    = "You have no spaces visible in Telegram. A space shows up here once Telegram is enabled for it and you can read it."
 	TextPickSpace   = "Pick a space first with /spaces."
 	TextFailed      = "Something went wrong. Try again in a moment."
+	TextConfirmGone = "That confirmation expired or was already used. Open the card again."
 	TextStale       = "That item changed since this card was shown. Reopen it from /inbox."
 	TextNoAccess    = "Your link can't do that. Ask an administrator, or use the web UI."
 	apiTimeout      = 20 * time.Second

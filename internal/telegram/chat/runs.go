@@ -200,9 +200,17 @@ func (h *Handler) runsCallback(ctx context.Context, q *botapi.CallbackQuery, l u
 		if ru.Kind == "control" {
 			warn = "\nThis is the control run: it coordinates the space."
 		}
-		h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("Stop %s in %s? The run is interrupted and its session can be resumed.%s", ru.label(), s.title(), warn),
-			markup: markup([]botapi.InlineKeyboardButton{button("Stop run", runData("ry", s.ID, id)), button("Cancel", runData("rk", s.ID, id))})})
+		if m, sent := h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("Stop %s in %s? The run is interrupted and its session can be resumed.%s", ru.label(), s.title(), warn),
+			markup: markup([]botapi.InlineKeyboardButton{button("Stop run", runData("ry", s.ID, id)), button("Cancel", runData("rk", s.ID, id))})}); sent {
+			h.qrAddConfirm(pendingKey{l.ChatID, m.MessageID}, confirmation{linkID: l.ID, kind: "stop", spaceID: s.ID, id: id})
+		}
 	case "ry":
+		// Bound to the confirmation message, this link, run and space; a tap on any other message (forged callback
+		// data), an expired confirmation or a second tap is refused.
+		if _, ok := h.takeConfirm(pendingKey{q.Message.Chat.ID, q.Message.MessageID}, l.ID, "stop", s.ID, id, "", 0); !ok {
+			h.answer(ctx, q.ID, TextConfirmGone)
+			return
+		}
 		if !ru.live() || ru.Observed == "stopping" {
 			h.answer(ctx, q.ID, "That run has already ended or is stopping.")
 			h.show(ctx, l.ChatID, q.Message, h.runCard(ru, s))

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
 func tid(c byte) string { return "tsk_" + strings.Repeat(string(c), 26) }
@@ -33,6 +34,13 @@ type qrAPI struct {
 	hdrs     []http.Header    // and their headers
 	conflict bool             // the next task write answers 412
 	moves    []map[string]any
+
+	extraMsgs, extraPending int // filler messages and waiting ones beyond the list
+}
+
+// otherMessage is a bot message that is not any confirmation (a forged callback is tapped on it).
+func (e *env) say2(string) botapi.Message {
+	return botapi.Message{MessageID: 987654, Chat: botapi.Chat{ID: chatID, Type: botapi.ChatPrivate}}
 }
 
 func (a *qrAPI) writes() []string {
@@ -145,10 +153,17 @@ func (a *qrAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		out(200, a.runs[seg[3]])
 	case seg[2] == "messages" && len(seg) == 3 && r.Method == http.MethodGet:
 		var items []*opMessage
+		var pend int
 		for _, m := range a.msgs {
 			items = append(items, m)
+			if m.waiting() && m.SpaceID == seg[1] {
+				pend++
+			}
 		}
-		out(200, map[string]any{"items": items})
+		for i := 0; i < a.extraMsgs; i++ { // a long history, to cut the list
+			items = append(items, &opMessage{ID: mid('q'), SpaceID: seg[1], ToKind: "control", State: "resolved"})
+		}
+		out(200, map[string]any{"items": items, "operators_pending": pend + a.extraPending})
 	case seg[2] == "messages" && len(seg) == 3:
 		out(201, map[string]any{"id": mid('z')})
 	case seg[2] == "messages" && len(seg) == 4:
@@ -421,8 +436,18 @@ func TestQueueIncidentNeedsConfirmation(t *testing.T) {
 	if a.task(tid('4')).Kind != "incident" {
 		t.Fatal("not confirmed")
 	}
-	// A stale confirmation (the proposal was decided elsewhere) conflicts.
+	// The confirmation is single use.
 	e.tapData(find(conf, "Confirm incident"), conf)
+	if e.lastAnswer() != TextConfirmGone {
+		t.Fatalf("answer %q", e.lastAnswer())
+	}
+	// A confirmation whose task changed since conflicts.
+	a.task(tid('3')).IncidentProposedBy = "subscription:y"
+	card3 := e.taskCardMsg(a.task(tid('3')))
+	e.tapData(find(card3, "Confirm incident"), card3)
+	conf3 := e.last()
+	a.task(tid('3')).Version++
+	e.tapData(find(conf3, "Confirm incident"), conf3)
 	if e.lastAnswer() != TextStale {
 		t.Fatalf("answer %q", e.lastAnswer())
 	}
@@ -614,6 +639,16 @@ func TestMessagesAckResolveReply(t *testing.T) {
 	if e.lastAnswer() != TextStale || a.msgs[mid('1')].State != "acknowledged" {
 		t.Fatalf("stale resolve: %q state %q", e.lastAnswer(), a.msgs[mid('1')].State)
 	}
+	// An acknowledged message keeps Resolve and Reply on its card (and no Acknowledge), and is still listed.
+	ackd := e.last()
+	if find(ackd, "Resolve") == "" || find(ackd, "Reply") == "" || find(ackd, "Acknowledge") != "" {
+		t.Fatalf("acknowledged card: %+v", ackd.ReplyMarkup)
+	}
+	e.tapData(find(ackd, "Resolve"), ackd)
+	if a.msgs[mid('1')].State != "resolved" {
+		t.Fatalf("state %q", a.msgs[mid('1')].State)
+	}
+	a.msgs[mid('1')].State, a.msgs[mid('1')].Version = "available", 2
 	// A system notification can be acknowledged and resolved, but not replied to.
 	e.tapData(find(list, "Heads up"), list)
 	sys := e.lastWith("Resolve")
@@ -761,4 +796,129 @@ func TestControlModeExpiresAndDraftsAreBound(t *testing.T) {
 	if len(a.writes()) != 0 {
 		t.Fatalf("another link sent the draft: %v", a.writes())
 	}
+}
+
+// F5/F3: /messages counts waiting from the API's operators_pending, lists acknowledged-but-unresolved messages
+// separately, and says when the history read is cut.
+func TestMessagesListAcknowledgedAndCount(t *testing.T) {
+	t.Parallel()
+	e, a := newQR(t)
+	a.msgs[mid('5')] = &opMessage{ID: mid('5'), SpaceID: spA, FromKind: "run", ToKind: "operators", Subject: "Seen already", State: "acknowledged", Version: 3}
+	a.extraPending = 5 // waiting beyond what the cut list shows
+	a.extraMsgs = messagesListLimit
+	e.say("/messages")
+	list := e.last()
+	if !strings.Contains(list.Text, "(7 waiting)") || !strings.Contains(list.Text, "Acknowledged, not resolved: 1") ||
+		!strings.Contains(list.Text, "200 most recent") {
+		t.Fatalf("list: %q", list.Text)
+	}
+	texts, _ := buttons(list)
+	if !containsText(texts, "⏳ Need a decision") || !containsText(texts, "✔ Seen already") || containsText(texts, "Old") {
+		t.Fatalf("buttons: %v", texts)
+	}
+}
+
+// F4: free text on the cards is content: shown at the full level only.
+func TestCardsGateFreeTextOnContentLevel(t *testing.T) {
+	t.Parallel()
+	e, a := newQR(t)
+	tk := *a.tasks[0]
+	tk.StatusReason, tk.Waiting = "SECRET-REASON", []string{"SECRET-WAIT"}
+	tk.Blockers = []queueBlocker{{Kind: "human", Note: "SECRET-NOTE"}}
+	m := *a.msgs[mid('3')]
+	m.Resolution = "SECRET-RES"
+	for _, c := range []struct {
+		sp   string
+		full bool
+	}{{spA, true}, {spS, false}} {
+		s := spaceRef{ID: c.sp, Slug: "x", Name: "X"}
+		got := e.h.taskCard(tk, s).text + "\n" + e.h.messageCard(m, s).text
+		for _, w := range []string{"SECRET-REASON", "SECRET-WAIT", "SECRET-NOTE", "SECRET-RES"} {
+			if strings.Contains(got, w) != c.full {
+				t.Fatalf("space %s: %q present=%v, want %v in %q", c.sp, w, !c.full, c.full, got)
+			}
+		}
+		if !strings.Contains(got, "Blocked: human") {
+			t.Fatalf("blocker kind missing: %q", got)
+		}
+	}
+}
+
+// tapAs taps data on a message as the given link.
+func (e *env) tapAs(l updates.Link, data string, on botapi.Message) {
+	e.upd++
+	u := botapi.Update{UpdateID: e.upd, CallbackQuery: &botapi.CallbackQuery{ID: fmt.Sprintf("cb%d", e.upd), From: botapi.User{ID: chatID}, Message: &on, Data: data}}
+	e.srv.PushUpdate(u)
+	e.h.Handle(context.Background(), u, l)
+}
+
+// F1/F2: a confirmation is bound to its own message, link, TTL and one use; a forged Confirm callback on any other
+// message, an expired or another link's confirmation and a second tap are refused.
+func TestConfirmationsAreBound(t *testing.T) {
+	t.Parallel()
+	type scenario struct {
+		name  string
+		start func(e *env, a *qrAPI) (conf botapi.Message, label string)
+	}
+	stop := func(e *env, a *qrAPI) (botapi.Message, string) {
+		e.say("/runs")
+		list := e.last()
+		e.tapData(find(list, "implementor"), list)
+		card := e.last()
+		e.tapData(find(card, "Stop"), card)
+		return e.last(), "Stop run"
+	}
+	inc := func(e *env, a *qrAPI) (botapi.Message, string) {
+		a.task(tid('4')).IncidentProposedBy = "subscription:x"
+		e.say("/queue")
+		list := e.last()
+		e.tapData(find(list, "Ready four"), list)
+		card := e.lastWith("Confirm incident")
+		e.tapData(find(card, "Confirm incident"), card)
+		return e.last(), "Confirm incident"
+	}
+	for _, sc := range []scenario{{"stop", stop}, {"incident", inc}} {
+		t.Run(sc.name, func(t *testing.T) {
+			t.Parallel()
+			// A forged tap on a message that is not the confirmation.
+			e, a := newQR(t)
+			conf, label := sc.start(e, a)
+			data := find(conf, label)
+			other := e.say2("")
+			e.tapData(data, other)
+			if len(a.writes()) != 0 || e.lastAnswer() != TextConfirmGone {
+				t.Fatalf("forged confirm: writes %v answer %q", a.writes(), e.lastAnswer())
+			}
+			// Another link's tap on the real confirmation is refused, and leaves it usable.
+			o := e.l
+			o.ID = "tgl_2"
+			e.tapAs(o, data, conf)
+			if len(a.writes()) != 0 || e.lastAnswer() != TextConfirmGone {
+				t.Fatalf("other link: writes %v answer %q", a.writes(), e.lastAnswer())
+			}
+			// The link's own tap works once; the second is refused.
+			e.tapData(data, conf)
+			if len(a.writes()) != 1 {
+				t.Fatalf("confirm: writes %v", a.writes())
+			}
+			e.tapData(data, conf)
+			if len(a.writes()) != 1 || e.lastAnswer() != TextConfirmGone {
+				t.Fatalf("second tap: writes %v answer %q", a.writes(), e.lastAnswer())
+			}
+			// An expired confirmation is refused.
+			e2, a2 := newQR(t)
+			conf2, label2 := sc.start(e2, a2)
+			e2.clk.Advance(pendingTTL + time.Minute)
+			e2.tapData(find(conf2, label2), conf2)
+			if len(a2.writes()) != 0 || e2.lastAnswer() != TextConfirmGone {
+				t.Fatalf("expired: writes %v answer %q", a2.writes(), e2.lastAnswer())
+			}
+		})
+	}
+}
+
+// taskCardMsg sends a task's card and returns it.
+func (e *env) taskCardMsg(t *queueTask) botapi.Message {
+	e.h.send(context.Background(), chatID, e.h.taskCard(*t, spaceRef{ID: spA, Slug: "alpha", Name: "Alpha"}))
+	return e.last()
 }

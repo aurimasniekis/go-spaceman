@@ -33,6 +33,7 @@ type qrState struct {
 	mu      sync.Mutex
 	prompts map[pendingKey]replyPrompt
 	drafts  map[pendingKey]controlDraft
+	confirm map[pendingKey]confirmation
 	control map[string]controlMode // link ID -> mode
 }
 
@@ -44,6 +45,14 @@ type replyPrompt struct {
 type controlDraft struct {
 	linkID, spaceID, text string
 	at                    time.Time
+}
+
+// confirmation is what a Confirm button on a stop or incident confirmation message is bound to: the tap only acts when
+// it comes from that message, for the link it was sent to, for the run or task it names, within pendingTTL, once.
+type confirmation struct {
+	linkID, kind, spaceID, id, decision string
+	version                             int64
+	at                                  time.Time
 }
 
 type controlMode struct {
@@ -108,6 +117,53 @@ func (h *Handler) qrAddDraft(k pendingKey, d controlDraft) {
 		delete(h.qr.drafts, oldest)
 	}
 	h.qr.drafts[k] = d
+}
+
+func (h *Handler) qrAddConfirm(k pendingKey, c confirmation) {
+	now := h.o.Clock.Now()
+	c.at = now
+	h.qr.mu.Lock()
+	defer h.qr.mu.Unlock()
+	if h.qr.confirm == nil {
+		h.qr.confirm = map[pendingKey]confirmation{}
+	}
+	var oldest pendingKey
+	var oldestAt time.Time
+	n := 0
+	for pk, v := range h.qr.confirm {
+		switch {
+		case now.Sub(v.at) > pendingTTL:
+			delete(h.qr.confirm, pk)
+		case v.linkID == c.linkID:
+			n++
+			if oldestAt.IsZero() || v.at.Before(oldestAt) {
+				oldest, oldestAt = pk, v.at
+			}
+		}
+	}
+	if n >= maxQRPerLink {
+		delete(h.qr.confirm, oldest)
+	}
+	h.qr.confirm[k] = c
+}
+
+// takeConfirm consumes the confirmation of a tapped message when it is the link's and matches kind, space, ID, decision
+// and version, and has not expired. Another link's entry is left alone; any other mismatch or expiry consumes it.
+func (h *Handler) takeConfirm(k pendingKey, linkID, kind, spaceID, id, decision string, version int64) (confirmation, bool) {
+	h.qr.mu.Lock()
+	defer h.qr.mu.Unlock()
+	c, ok := h.qr.confirm[k]
+	if !ok || c.linkID != linkID {
+		return confirmation{}, false
+	}
+	delete(h.qr.confirm, k)
+	if h.o.Clock.Now().Sub(c.at) > pendingTTL {
+		return confirmation{}, false
+	}
+	if c.kind != kind || c.spaceID != spaceID || c.id != id || c.decision != decision || c.version != version {
+		return confirmation{}, false
+	}
+	return c, true
 }
 
 // takeDraft removes and returns the draft of a message for the link (if it is the link's and not expired).
@@ -263,8 +319,14 @@ type opMessage struct {
 	Version    int64     `json:"version"`
 }
 
-func (m opMessage) pending() bool {
+// waiting is a message to operators nobody has acknowledged yet; open also covers the acknowledged ones, which still
+// need a Resolve (and a Reply, for a run's request).
+func (m opMessage) waiting() bool {
 	return m.ToKind == "operators" && (m.State == "stored" || m.State == "available")
+}
+
+func (m opMessage) open() bool {
+	return m.waiting() || (m.ToKind == "operators" && m.State == "acknowledged")
 }
 
 // Callback data: "ml:<space>:<page>" lists, "mk:<space>:<msg>" opens, "ma:…:<version>" acknowledges, "mv:…:<version>"
@@ -291,31 +353,53 @@ func (h *Handler) cmdMessages(ctx context.Context, l updates.Link, arg string) {
 	h.send(ctx, l.ChatID, h.messagesList(ctx, c, s, 0))
 }
 
+// messagesListLimit is how many recent messages /messages reads; a longer history is cut and the list says so.
+const messagesListLimit = 200
+
 func (h *Handler) messagesList(ctx context.Context, c caller, s spaceRef, page int) reply {
 	var out struct {
-		Items []opMessage `json:"items"`
+		Items            []opMessage `json:"items"`
+		OperatorsPending int64       `json:"operators_pending"`
 	}
-	r := c.get(ctx, "/spaces/"+s.ID+"/messages?limit=200", &out)
+	r := c.get(ctx, fmt.Sprintf("/spaces/%s/messages?limit=%d", s.ID, messagesListLimit), &out)
 	if !r.ok() {
 		return reply{text: failText(r)}
 	}
-	var pend []opMessage
+	// Waiting messages first, then the acknowledged ones that still need resolving.
+	var shown []opMessage
+	nWait := 0
 	for _, m := range out.Items {
-		if m.pending() && m.SpaceID == s.ID {
-			pend = append(pend, m)
+		if m.waiting() && m.SpaceID == s.ID {
+			shown = append(shown, m)
+			nWait++
+		}
+	}
+	for _, m := range out.Items {
+		if m.ToKind == "operators" && m.State == "acknowledged" && m.SpaceID == s.ID {
+			shown = append(shown, m)
 		}
 	}
 	const size = 8
-	last := max(0, (len(pend)-1)/size)
+	last := max(0, (len(shown)-1)/size)
 	page = max(0, min(page, last))
 	var b strings.Builder
-	fmt.Fprintf(&b, "Messages to operators in %s (%d waiting)", s.title(), len(pend))
-	if len(pend) == 0 {
-		b.WriteString("\nNothing waiting.")
+	fmt.Fprintf(&b, "Messages to operators in %s (%d waiting)", s.title(), out.OperatorsPending)
+	if len(shown) == 0 {
+		b.WriteString("\nNothing waiting or acknowledged.")
+	} else {
+		fmt.Fprintf(&b, "\nWaiting: %d · Acknowledged, not resolved: %d", nWait, len(shown)-nWait)
+	}
+	if len(out.Items) >= messagesListLimit {
+		fmt.Fprintf(&b, "\nOnly the %d most recent messages are read; older ones are in the app.", messagesListLimit)
 	}
 	var rows [][]botapi.InlineKeyboardButton
-	for _, m := range pend[min(page*size, len(pend)):min((page+1)*size, len(pend))] {
-		rows = append(rows, []botapi.InlineKeyboardButton{button(clean(m.Subject, 55), msgData("mk", s.ID, m.ID, 0))})
+	lo := min(page*size, len(shown))
+	for i, m := range shown[lo:min((page+1)*size, len(shown))] {
+		mark := "⏳ "
+		if lo+i >= nWait {
+			mark = "✔ "
+		}
+		rows = append(rows, []botapi.InlineKeyboardButton{button(mark+clean(m.Subject, 50), msgData("mk", s.ID, m.ID, 0))})
 	}
 	var nav []botapi.InlineKeyboardButton
 	if page > 0 {
@@ -333,16 +417,17 @@ func (h *Handler) messageCard(m opMessage, s spaceRef) reply {
 	b.WriteString(clean(m.Subject, 200))
 	fmt.Fprintf(&b, "\nFrom: %s (%s) · %s", orDash(clean(m.FromLabel, 80)), clean(m.FromKind, 20), clean(m.Kind, 20))
 	fmt.Fprintf(&b, "\nState: %s", clean(m.State, 20))
-	if m.Resolution != "" {
+	// The resolution is free text written by a person or an agent: content, shown only at the full level.
+	if m.Resolution != "" && h.o.Space(s.ID).ContentLevel == settings.ContentFull {
 		fmt.Fprintf(&b, "\nResolution: %s", clean(m.Resolution, 200))
 	}
 	fmt.Fprintf(&b, "\nSpace: %s", s.title())
 	var row []botapi.InlineKeyboardButton
-	if m.pending() {
+	if m.open() {
 		if m.FromKind == "run" {
 			row = append(row, button("Reply", msgData("mr", s.ID, m.ID, 0)))
 		}
-		if m.State != "acknowledged" {
+		if m.waiting() {
 			row = append(row, button("Acknowledge", msgData("ma", s.ID, m.ID, m.Version)))
 		}
 		row = append(row, button("Resolve", msgData("mv", s.ID, m.ID, m.Version)))
@@ -397,7 +482,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 		h.send(ctx, l.ChatID, h.messageCard(m, s))
 		h.sendMessageBody(ctx, l, s, m)
 	case "mr":
-		if !m.pending() || m.FromKind != "run" {
+		if !m.open() || m.FromKind != "run" {
 			h.answer(ctx, q.ID, TextStale)
 			h.show(ctx, l.ChatID, q.Message, h.messageCard(m, s))
 			return
@@ -420,7 +505,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 		}
 		// Neither operation takes a version, so the card's is compared with the message's: a card that went stale
 		// (acknowledged or resolved elsewhere, or changed) gets a conflict and a refresh.
-		if m.Version != v || !m.pending() {
+		if m.Version != v || !m.open() || (f[0] == "ma" && !m.waiting()) {
 			h.answer(ctx, q.ID, TextStale)
 			h.show(ctx, l.ChatID, q.Message, h.messageCard(m, s))
 			return

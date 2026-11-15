@@ -186,7 +186,9 @@ func (h *Handler) taskCard(t queueTask, s spaceRef) reply {
 	if t.Position > 0 {
 		fmt.Fprintf(&b, "\nPlace in the queue: %d", t.Position)
 	}
-	if t.StatusReason != "" {
+	// Reasons, blocker notes and waiting entries are free text from agents or people: content, full level only.
+	full := h.o.Space(s.ID).ContentLevel == settings.ContentFull
+	if t.StatusReason != "" && full {
 		fmt.Fprintf(&b, "\nReason: %s", clean(t.StatusReason, 200))
 	}
 	if t.AssigneeRole != "" {
@@ -203,11 +205,15 @@ func (h *Handler) taskCard(t queueTask, s spaceRef) reply {
 	}
 	for _, bl := range t.Blockers {
 		if bl.ResolvedAt == nil {
-			fmt.Fprintf(&b, "\nBlocked: %s %s", clean(bl.Kind, 20), clean(bl.Note, 120))
+			if full {
+				fmt.Fprintf(&b, "\nBlocked: %s %s", clean(bl.Kind, 20), clean(bl.Note, 120))
+			} else {
+				fmt.Fprintf(&b, "\nBlocked: %s", clean(bl.Kind, 20))
+			}
 		}
 	}
 	for i, w := range t.Waiting {
-		if i == 3 {
+		if !full || i == 3 {
 			break
 		}
 		fmt.Fprintf(&b, "\nWaiting: %s", clean(w, 120))
@@ -345,6 +351,11 @@ func (h *Handler) queueCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
+		// Bound to the confirmation message, link, task, decision and version; single use, with a TTL.
+		if _, ok := h.takeConfirm(pendingKey{q.Message.Chat.ID, q.Message.MessageID}, l.ID, "incident", s.ID, id, f[3], version); !ok {
+			h.answer(ctx, q.ID, TextConfirmGone)
+			return
+		}
 		h.decideIncident(ctx, c, l, q, s, id, f[3] == "c", version)
 	default:
 		h.answer(ctx, q.ID, TextUnavailable)
@@ -472,9 +483,11 @@ func (h *Handler) askIncident(ctx context.Context, c caller, l updates.Link, q *
 	if decision == "d" {
 		verb, yes = "Dismiss the incident proposal (it stays an ordinary task)", "Dismiss"
 	}
-	h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("%s?\n%s", verb, clean(t.Title, 200)),
+	if m, sent := h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("%s?\n%s", verb, clean(t.Title, 200)),
 		markup: markup([]botapi.InlineKeyboardButton{button(yes, qData("qj", s.ID, id, decision, strconv.FormatInt(version, 10))),
-			button("Cancel", qData("qk", s.ID, id))})})
+			button("Cancel", qData("qk", s.ID, id))})}); sent {
+		h.qrAddConfirm(pendingKey{l.ChatID, m.MessageID}, confirmation{linkID: l.ID, kind: "incident", spaceID: s.ID, id: id, decision: decision, version: version})
+	}
 }
 
 func (h *Handler) decideIncident(ctx context.Context, c caller, l updates.Link, q *botapi.CallbackQuery, s spaceRef, id string, confirm bool, version int64) {
