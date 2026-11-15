@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram needs-you common actions (ADR-0083, TG-7-3, not usable until the bot ships): every pending card can be
+  claimed or released, commented on, answered with a question to the requester (a clarification, which never answers the
+  request), and withdrawn after a confirmation tied to that card's version. A photo or file sent as the reply to a comment
+  prompt becomes an attachment of the comment, and the card's attachments come back to the chat with forwarding and saving
+  off, where the space shows content. A card that went stale gets a conflict and is redrawn, never overwritten.
+  Approvals still can't be withdrawn from Telegram.
 - Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
   and what waits, with status changes, placement (top, up, down, bottom) and incident decisions after a confirmation;
   `/runs` shows the live runs and stops one after a confirmation (the API requires `run:control`); `/messages` lists what

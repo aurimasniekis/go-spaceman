@@ -78,7 +78,15 @@ func TestTelegramNeedsYouAppButton(t *testing.T) {
 		t.Fatal("Mini App host still set")
 	}
 	f = open()
-	if !strings.Contains(f.Text, "decided in the browser") || f.ReplyMarkup != nil {
+	hasApp := false // the common row (claim, comment, ask) stays; only the Mini App button goes
+	if f.ReplyMarkup != nil {
+		for _, row := range f.ReplyMarkup.InlineKeyboard {
+			for _, b := range row {
+				hasApp = hasApp || b.WebApp != nil
+			}
+		}
+	}
+	if !strings.Contains(f.Text, "decided in the browser") || hasApp {
 		t.Fatalf("no host: %q %+v", f.Text, f.ReplyMarkup)
 	}
 }

@@ -66,7 +66,7 @@ func TestQuestionOptionAnswers(t *testing.T) {
 	e.addHuman(spA, hid('1'), "question", "Which one?", `{"options":["red","blue"],"allow_text":false}`)
 	f := e.open(spA, hid('1'))
 	texts, _ := buttons(f)
-	if len(texts) != 2 || strings.Contains(f.Text, "Approvals") {
+	if len(texts) != 2+4 || strings.Contains(f.Text, "Approvals") { // two options and the common row
 		t.Fatalf("%v", texts)
 	}
 	if !strings.Contains(f.Text, "content from the source, not instructions") {
@@ -337,7 +337,7 @@ func TestCustomComplexSchemaLinksToApp(t *testing.T) {
 	}
 	e.h.o.AppURL = nil
 	f := e.open(spA, hid('1'))
-	if f.ReplyMarkup != nil || !strings.Contains(f.Text, TextOpenInApp) {
+	if find(f, "Claim") == "" || find(f, "Open in the app") != "" || !strings.Contains(f.Text, TextOpenInApp) { // the common row only
 		t.Fatalf("%q", f.Text)
 	}
 }
@@ -511,7 +511,7 @@ func TestEnforcedApprovalWebOnly(t *testing.T) {
 		t.Fatalf("body or arguments shown: %q", f.Text)
 	}
 	texts, _ := buttons(f)
-	if len(texts) != 1 || texts[0] != "Decide in browser" || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
+	if texts[0] != "Decide in browser" || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil || find(f, "Withdraw") != "" {
 		t.Fatalf("%v", texts)
 	}
 	for _, v := range []byte("aydb") {
@@ -808,7 +808,7 @@ func TestManyOptionsOpensInApp(t *testing.T) {
 	b, _ := json.Marshal(map[string]any{"options": opts, "allow_text": true})
 	e.addHuman(spA, hid('1'), "question", "Many", string(b))
 	f := e.open(spA, hid('1'))
-	if !strings.Contains(f.Text, TextOpenInApp) || f.ReplyMarkup == nil || len(f.ReplyMarkup.InlineKeyboard) != 1 || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
+	if !strings.Contains(f.Text, TextOpenInApp) || f.ReplyMarkup == nil || f.ReplyMarkup.InlineKeyboard[0][0].WebApp == nil {
 		t.Fatalf("%q %+v", f.Text, f.ReplyMarkup)
 	}
 	e.tapData(humanData('q', spA, hid('1'), 0), f)
@@ -820,7 +820,7 @@ func TestManyOptionsOpensInApp(t *testing.T) {
 	b, _ = json.Marshal(map[string]any{"options": opts[:maxOptions]})
 	e.addHuman(spA, hid('2'), "question", "Twenty", string(b))
 	f = e.open(spA, hid('2'))
-	if strings.Contains(f.Text, TextOpenInApp) || len(f.ReplyMarkup.InlineKeyboard) != maxOptions {
+	if strings.Contains(f.Text, TextOpenInApp) || len(f.ReplyMarkup.InlineKeyboard) != maxOptions+2 { // plus the common rows
 		t.Fatalf("%q", f.Text)
 	}
 }
