@@ -9,6 +9,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
+	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
 
 // TestTelegramTopicsRenameAndRelinkReuseTopics (ADR-0089 T7): a space's rename edits its topic in the link's chat
@@ -20,6 +21,15 @@ func TestTelegramTopicsRenameAndRelinkReuseTopics(t *testing.T) {
 	e.startBot(t)
 	ctx := t.Context()
 	e.h.c.TelegramLinks.Start(ctx)
+	// A rename reaches only a link that may read the space, and the space has to be visible to Telegram.
+	on := true
+	if _, err := e.h.c.TelegramSettings.PutSpace(ctx, audit.System, e.space, 0, tgsettings.SpaceInput{Enabled: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.h.c.TelegramSettings.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runNotifier(t, e) // its link list is what a rename checks
 	bot, err := botapi.New(botapi.Options{BaseURL: e.tg.URL(), Token: e.tg.Token()})
 	if err != nil {
 		t.Fatal(err)
@@ -146,4 +156,57 @@ func listLiveLinks(t *testing.T, e *miniAppEnv) []struct {
 		}{r.ID, r.TgUserID})
 	}
 	return out
+}
+
+// TestTelegramTopicsRelinkToAnotherUserDoesNotReuseTopics: the same chat linked again by a different SpaceMan user starts
+// with no topics (the revoked link's topics came from what the first user could read), so the bot creates its own.
+func TestTelegramTopicsRelinkToAnotherUserDoesNotReuseTopics(t *testing.T) {
+	e := newMiniAppEnv(t)
+	e.startBot(t)
+	ctx := t.Context()
+	e.h.c.TelegramLinks.Start(ctx)
+	bot, err := botapi.New(botapi.Options{BaseURL: e.tg.URL(), Token: e.tg.Token()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(linkID string) botapi.Message {
+		t.Helper()
+		m, err := e.h.c.TelegramTopics.Send(ctx, bot, linkID, 42, e.space, botapi.SendMessageParams{Text: "a message"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	first := send("tgl_mini")
+	if err := e.h.c.TelegramLink.UnlinkAny(ctx, audit.System, "tgl_mini"); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, e.root.do("POST", "/users", map[string]any{"email": "other@example.com", "display_name": "Other", "password": "correct horse battery staple",
+		"grants": []map[string]string{{"role": "operator", "domain": e.space}}}), 201)
+	other := enrolledSession(t, e.h, "other@example.com")
+	relinkTelegramUser42(t, e, other)
+	var relinked string
+	for _, l := range listLiveLinks(t, e) {
+		if l.TgUserID == 42 {
+			relinked = l.ID
+		}
+	}
+	if relinked == "" || relinked == "tgl_mini" {
+		t.Fatalf("no new live link for the chat (got %q)", relinked)
+	}
+	if got := send(relinked); got.MessageThreadID == first.MessageThreadID {
+		t.Fatalf("another user's link reused topic %d", first.MessageThreadID)
+	}
+	if n := len(e.tg.Calls("createForumTopic")); n != 2 {
+		t.Fatalf("%d topic creates, want 2: the new user's link makes its own", n)
+	}
+}
+
+// runNotifier runs the notifier (which keeps the link list the topics' read check uses) until the test ends.
+func runNotifier(t *testing.T, e *miniAppEnv) {
+	t.Helper()
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = e.h.c.TelegramNotify.Run(ctx); close(done) }()
+	t.Cleanup(func() { stop(); <-done })
 }

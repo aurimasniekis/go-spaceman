@@ -5455,6 +5455,10 @@
   grows by `editForumTopic`, `pinChatMessage`, `unpinChatMessage` and `deleteMessages` (T1, no behaviour change). The
   facts the design relies on are recorded in the contract with a source; the new rows were checked against the Bot API
   page on 2026-11-15. Nothing has been observed against a real bot yet.
+  T7 known limitation: a space renamed while the bot is off is not replayed; its topics keep the old title until the
+  space is renamed again or a topic is created again. A rename edits only the topics of links that may read the space
+  (checked when queued and when sent, in memory), and a relink reuses only the topics of the same user's link on the
+  same bot.
 - **Evidence:** T1: `internal/telegram/botapi` `TestGetMeTopicFlags`, `TestEditForumTopic`, `TestMessagesInRecordsThread`,
   `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` (it covers the flags after a reconfigure only; the reset to false on a disable or a
   failed getMe is not tested). T2 (routing): `notification_defaults.threads` (`auto`/`on`/`off`, default `auto`) with

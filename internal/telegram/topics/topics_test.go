@@ -380,7 +380,7 @@ func TestCreatesAreRateLimited(t *testing.T) {
 }
 
 // renameEnv is a Manager whose renames go through a real sender running against the fake, with the space named title.
-func renameEnv(t *testing.T, title *atomic.Value) (*tgtest.Server, *botapi.Client, *memStore, *topics.Manager) {
+func renameEnv(t *testing.T, title *atomic.Value, may func(linkID, spaceID string) bool) (*tgtest.Server, *botapi.Client, *memStore, *topics.Manager) {
 	t.Helper()
 	srv, c, st, _ := setup(t)
 	snd, err := sender.New(sender.Options{Client: c})
@@ -391,8 +391,12 @@ func renameEnv(t *testing.T, title *atomic.Value) (*tgtest.Server, *botapi.Clien
 	done := make(chan struct{})
 	go func() { _ = snd.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
+	if may == nil {
+		may = func(string, string) bool { return true }
+	}
 	m := topics.New(topics.Options{Store: st, Mode: func(string) string { return settings.ThreadsOn },
 		SpaceName: func(context.Context, string) string { return title.Load().(string) },
+		MayRead:   func(linkID string, _ int64, spaceID string) bool { return may(linkID, spaceID) },
 		Sender:    func() *sender.Sender { return snd }})
 	return srv, c, st, m
 }
@@ -413,12 +417,13 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 func TestRenamedEditsTheTopicOnceAndSkipsNoOps(t *testing.T) {
 	var title atomic.Value
 	title.Store("Alpha")
-	srv, c, _, m := renameEnv(t, &title)
+	srv, c, _, m := renameEnv(t, &title, nil)
 	first := send(t, m, c, "spc_1", "one")
 	if n := len(srv.Calls("createForumTopic")); n != 1 {
 		t.Fatalf("%d creates before the rename, want 1", n)
 	}
 
+	title.Store("Beta")
 	m.Renamed(context.Background(), "spc_1", "Beta")
 	waitFor(t, "the rename", func() bool { return srv.Topics(chat)[first.MessageThreadID] == "Beta" })
 	if n := len(srv.Calls("editForumTopic")); n != 1 {
@@ -444,9 +449,10 @@ func TestRenamedEditsTheTopicOnceAndSkipsNoOps(t *testing.T) {
 func TestRenamedDeletedTopicIsLeftAlone(t *testing.T) {
 	var title atomic.Value
 	title.Store("Alpha")
-	srv, c, _, m := renameEnv(t, &title)
+	srv, c, _, m := renameEnv(t, &title, nil)
 	first := send(t, m, c, "spc_1", "one")
 	srv.DeleteTopic(chat, first.MessageThreadID)
+	title.Store("Beta")
 	m.Renamed(context.Background(), "spc_1", "Beta")
 	time.Sleep(50 * time.Millisecond)
 	if n := len(srv.Calls("createForumTopic")); n != 1 {
@@ -454,5 +460,93 @@ func TestRenamedDeletedTopicIsLeftAlone(t *testing.T) {
 	}
 	if got := send(t, m, c, "spc_1", "two"); got.MessageThreadID == first.MessageThreadID {
 		t.Fatal("the deleted topic was used again")
+	}
+}
+
+// A link that may not read the space (no read permission, not visible, revoked) gets no edit, whether it lost access
+// before the rename was queued or between the queueing and the send; a link that may still read it does.
+func TestRenamedSkipsLinksThatMayNotRead(t *testing.T) {
+	var title atomic.Value
+	title.Store("Alpha")
+	var allowed atomic.Bool
+	allowed.Store(true)
+	srv, c, _, m := renameEnv(t, &title, func(string, string) bool { return allowed.Load() })
+	first := send(t, m, c, "spc_1", "one")
+
+	allowed.Store(false) // a live link without read access on the space
+	title.Store("Secret")
+	m.Renamed(context.Background(), "spc_1", "Secret")
+	time.Sleep(100 * time.Millisecond)
+	if n := len(srv.Calls("editForumTopic")); n != 0 {
+		t.Fatalf("%d edits for a link without read access, want 0", n)
+	}
+	allowed.Store(true)
+	m.Renamed(context.Background(), "spc_1", "Secret")
+	waitFor(t, "the rename of a link that may read", func() bool { return srv.Topics(chat)[first.MessageThreadID] == "Secret" })
+}
+
+// A link revoked (forgotten) or losing access between Renamed and the send gets no editForumTopic, and the send does not
+// bring the link's state back.
+func TestRenamedLinkRevokedBeforeTheSendGetsNoEdit(t *testing.T) {
+	var title atomic.Value
+	title.Store("Alpha")
+	var checks atomic.Int32
+	// The check at queue time passes (the first rename check); the one at send time finds the link revoked.
+	srv, c, _, m := renameEnv(t, &title, func(string, string) bool { return checks.Add(1) == 1 })
+	send(t, m, c, "spc_1", "one")
+	title.Store("Beta")
+	m.Renamed(context.Background(), "spc_1", "Beta")
+	m.Forget("tgl_1")
+	time.Sleep(150 * time.Millisecond)
+	if n := checks.Load(); n < 2 {
+		t.Fatalf("%d checks, want one at queue time and one at send time", n)
+	}
+	if n := len(srv.Calls("editForumTopic")); n != 0 {
+		t.Fatalf("%d edits for a link revoked after the rename was queued, want 0", n)
+	}
+}
+
+// A rename committed while a topic is being created ends with the new title: the create used the old one, and the
+// title is read again once the topic is saved.
+func TestRenameDuringCreateEndsWithTheNewTitle(t *testing.T) {
+	var calls atomic.Int32
+	srv, c, st, _ := setup(t)
+	snd, err := sender.New(sender.Options{Client: c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = snd.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	m := topics.New(topics.Options{Store: st, Mode: func(string) string { return settings.ThreadsOn },
+		SpaceName: func(context.Context, string) string { // the first read is the create's; the space is renamed after it
+			if calls.Add(1) == 1 {
+				return "Alpha"
+			}
+			return "Beta"
+		},
+		MayRead: func(string, int64, string) bool { return true },
+		Sender:  func() *sender.Sender { return snd }})
+	msg := send(t, m, c, "spc_1", "one")
+	if got := srv.Topics(chat)[msg.MessageThreadID]; got != "Beta" {
+		t.Fatalf("the new topic is titled %q, want Beta", got)
+	}
+}
+
+// Two renames in quick succession end with the latest name, whatever order they are sent in.
+func TestQuickRenamesEndWithTheLatestName(t *testing.T) {
+	var title atomic.Value
+	title.Store("Alpha")
+	srv, c, _, m := renameEnv(t, &title, nil)
+	first := send(t, m, c, "spc_1", "one")
+	title.Store("Beta")
+	m.Renamed(context.Background(), "spc_1", "Beta")
+	title.Store("Gamma")
+	m.Renamed(context.Background(), "spc_1", "Gamma")
+	waitFor(t, "the latest name", func() bool { return srv.Topics(chat)[first.MessageThreadID] == "Gamma" })
+	time.Sleep(100 * time.Millisecond)
+	if got := srv.Topics(chat)[first.MessageThreadID]; got != "Gamma" {
+		t.Fatalf("the topic ends titled %q, want Gamma", got)
 	}
 }

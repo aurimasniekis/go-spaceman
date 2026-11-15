@@ -1145,7 +1145,11 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 	links.OnChange = c.Human.Kick // a changed zone or digest time moves the next digest: the deadline loop looks again
 	// Chat layout per link (ADR-0089): with the link's threads mode on (or auto while the bot has topics enabled), each
 	// space gets a topic in the link's private chat. Both inputs are read from memory at send time.
+	var notifier *tgnotify.Notifier // set below; MayRead runs only at rename time, after construction
 	c.TelegramTopics = tgtopics.New(tgtopics.Options{
+		MayRead: func(linkID string, chatID int64, spaceID string) bool {
+			return notifier != nil && notifier.MayRead(linkID, chatID, spaceID)
+		},
 		Store: tgtopics.StoreTopics{S: c.Store},
 		Mode: func(linkID string) string {
 			return links.ThreadsMode(linkID, c.TelegramSettings.Current().NotificationDefaults)
@@ -1161,11 +1165,12 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		},
 		Now: c.Clock.Now, Log: obs.Component(log, "telegram.topics"),
 	})
-	return tgnotify.New(tgnotify.Options{
+	notifier = tgnotify.New(tgnotify.Options{
 		Topics: c.TelegramTopics,
 		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
 		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
+	return notifier
 }
 
 // gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts

@@ -437,7 +437,8 @@ func (s *Service) Confirm(ctx context.Context, p *auth.Principal, id, maxRole, t
 		}
 		// A relink of the same chat and Telegram user reuses the topics of the revoked link (ADR-0089 T7): they are the
 		// same chat, and SpaceOf only maps a thread to a space, so authorization is still checked per tap.
-		prev, err := tx.Q.GetLatestRevokedTelegramLinkTopics(ctx, db.GetLatestRevokedTelegramLinkTopicsParams{ChatID: tgUser, TgUserID: tgUser})
+		prev, err := tx.Q.GetLatestRevokedTelegramLinkTopics(ctx, db.GetLatestRevokedTelegramLinkTopicsParams{ChatID: tgUser, TgUserID: tgUser,
+			UserID: p.User.ID, BotID: bot.BotID})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}

@@ -83,6 +83,11 @@ type Options struct {
 	BotTopics func() bool
 	// SpaceName is a space's title for its topic (default: the ID).
 	SpaceName func(ctx context.Context, spaceID string) string
+	// MayRead reports whether the link may see the space now (the notifier's in-memory check: the link is current and
+	// usable, holds the space's read permission, and the space is visible to Telegram). A rename of a topic is checked
+	// with it when queued and again when sent, so a space's new name never reaches a link that may not read the space.
+	// nil: no renames.
+	MayRead func(linkID string, chatID int64, spaceID string) bool
 	// Sender queues the renames of topics (Renamed); it returns nil while the bot is off, and then nothing is renamed.
 	// nil: no renames.
 	Sender func() *sender.Sender
@@ -268,8 +273,8 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 	// A rename that committed while the topic was being created may have found no thread to edit. The thread is saved
 	// now, so the title is read again: a rename committed before this read is seen here, one committed after finds the
 	// saved thread in Renamed.
-	if now := m.name(ctx, key); now != title {
-		if err := m.rename(ctx, c, LinkThread{LinkID: linkID, ChatID: chatID, ID: topic.MessageThreadID}, key, now); err != nil {
+	if m.name(ctx, key) != title {
+		if err := m.rename(ctx, c, LinkThread{LinkID: linkID, ChatID: chatID, ID: topic.MessageThreadID}, key); err != nil {
 			m.o.Log.Debug("telegram topics: the title of a new topic was not brought up to date", slog.String("error", err.Error()))
 		}
 	}
@@ -397,25 +402,28 @@ func (m *Manager) forget(ctx context.Context, linkID, key string, thread int) {
 // whose topic is already known to have the name is skipped. The topics are read once for all links (Store.Threads),
 // never per recipient. It runs on the request that renamed the space, so it does one read and queues the calls; it never
 // waits for Telegram.
-func (m *Manager) Renamed(ctx context.Context, spaceID, name string) {
-	if m == nil || m.o.Sender == nil || m.o.Store == nil || spaceID == "" {
+func (m *Manager) Renamed(ctx context.Context, spaceID, _ string) {
+	// The name argument is not used: each rename reads the space's name when it is sent (see rename).
+	if m == nil || m.o.Sender == nil || m.o.MayRead == nil || m.o.Store == nil || spaceID == "" {
 		return
 	}
 	snd := m.o.Sender()
 	if snd == nil {
 		return // the bot is off: no link's chat is written to, and the names follow the next rename
 	}
-	name = clip(name, 128)
 	threads, err := m.o.Store.Threads(ctx, spaceID)
 	if err != nil {
 		m.o.Log.Warn("telegram topics: reading the topics of a renamed space failed", slog.String("error", err.Error()))
 		return
 	}
 	for _, t := range threads {
+		if !m.o.MayRead(t.LinkID, t.ChatID, spaceID) {
+			continue
+		}
 		m.link(t.LinkID) // its state exists until Forget (a revoked link), which skips the queued rename
 		err := snd.Enqueue(sender.Message{ChatID: t.ChatID, Priority: sender.Edit, Key: "topic-rename:" + spaceID,
 			Send: func(ctx context.Context, c *botapi.Client) error {
-				return m.rename(ctx, c, t, spaceID, name)
+				return m.rename(ctx, c, t, spaceID)
 			}})
 		if err != nil {
 			m.o.Log.Warn("telegram topics: a topic rename was not queued", slog.String("error", err.Error()))
@@ -425,13 +433,19 @@ func (m *Manager) Renamed(ctx context.Context, spaceID, name string) {
 
 // rename edits one topic's title. It runs on a sender worker. A topic that is gone is left alone: the next send that
 // needs it creates it again with the current title.
-func (m *Manager) rename(ctx context.Context, c *botapi.Client, t LinkThread, key, name string) error {
+func (m *Manager) rename(ctx context.Context, c *botapi.Client, t LinkThread, key string) error {
+	if m.o.MayRead == nil || !m.o.MayRead(t.LinkID, t.ChatID, key) {
+		return nil // revoked, or no longer allowed to read the space, since the rename was queued
+	}
 	m.mu.Lock()
 	ls := m.links[t.LinkID]
 	m.mu.Unlock()
 	if ls == nil {
 		return nil // the link was revoked (Forget) after the rename was queued
 	}
+	// The title is read now, not when the rename was queued: renames commit and call Renamed concurrently, and the
+	// sender keeps only the last one enqueued, which may carry an older name.
+	name := m.name(ctx, key)
 	ls.mu.Lock()
 	if ls.loaded && ls.threads[key] != t.ID {
 		ls.mu.Unlock()
