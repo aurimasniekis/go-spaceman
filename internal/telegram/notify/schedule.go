@@ -75,7 +75,11 @@ const (
 
 var sectionTitle = [numSections]string{"Reminders", "New inbox items", "Tasks in review", "Failed or lost runs"}
 
+// maxDigestAge: an item older than this is not worth listing any more.
+const maxDigestAge = 48 * time.Hour
+
 type digestItem struct {
+	at      time.Time
 	res     Resource // the state when it was noted; the digest shows the title and label only
 	section int
 }
@@ -93,13 +97,13 @@ func newDigestBuf() *digestBuf {
 	return &digestBuf{items: map[string][]digestItem{}, more: map[string]int{}, last: map[string]time.Time{}}
 }
 
-func (d *digestBuf) add(linkID string, r *Resource, section int) {
+func (d *digestBuf) add(linkID string, r *Resource, section int, now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	list := d.items[linkID]
 	for i := range list {
 		if list[i].res.Key == r.Key {
-			list[i] = digestItem{*r, section}
+			list[i] = digestItem{now, *r, section}
 			return
 		}
 	}
@@ -107,7 +111,7 @@ func (d *digestBuf) add(linkID string, r *Resource, section int) {
 		d.more[linkID]++
 		return
 	}
-	d.items[linkID] = append(list, digestItem{*r, section})
+	d.items[linkID] = append(list, digestItem{now, *r, section})
 }
 
 // drop removes a resource from every link's digest (it finished, or is no longer worth a notification).
@@ -124,10 +128,16 @@ func (d *digestBuf) drop(k Key) {
 	}
 }
 
-func (d *digestBuf) take(linkID string) ([]digestItem, int) {
+func (d *digestBuf) take(linkID string, now time.Time) ([]digestItem, int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	list, more := d.items[linkID], d.more[linkID]
+	var list []digestItem
+	for _, it := range d.items[linkID] {
+		if now.Sub(it.at) <= maxDigestAge {
+			list = append(list, it)
+		}
+	}
+	more := d.more[linkID]
 	delete(d.items, linkID)
 	delete(d.more, linkID)
 	return list, more
@@ -154,6 +164,9 @@ func (d *digestBuf) forgetExcept(live map[string]bool) {
 // first sight of the link counts as the last, so a restart sends nothing at once).
 func (n *Notifier) nextDigestFor(l *Link, p settings.EffectivePrefs, now time.Time) (time.Time, bool) {
 	if !p.Digest || l.Zone == nil {
+		n.digest.mu.Lock()
+		delete(n.digest.last, l.ID) // re-enabling starts from then, not from an old digest
+		n.digest.mu.Unlock()
 		return time.Time{}, false
 	}
 	n.digest.mu.Lock()
@@ -201,7 +214,7 @@ func (n *Notifier) DigestDue(context.Context) (int, error) {
 		n.digest.mu.Lock()
 		n.digest.last[l.ID] = now
 		n.digest.mu.Unlock()
-		items, more := n.digest.take(l.ID)
+		items, more := n.digest.take(l.ID, now)
 		if snd == nil || len(items) == 0 {
 			continue // the bot is off, or nothing to report
 		}
@@ -209,7 +222,9 @@ func (n *Notifier) DigestDue(context.Context) (int, error) {
 			sent++
 		}
 	}
-	n.digest.forgetExcept(live)
+	if len(links) > 0 { // an empty snapshot may be a failed reload: keep what was collected
+		n.digest.forgetExcept(live)
+	}
 	return sent, nil
 }
 

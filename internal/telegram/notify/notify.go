@@ -382,7 +382,9 @@ func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link
 				}
 				switch delivery(p, r, l.UserID) {
 				case settings.DeliveryDigest:
-					n.digest.add(l.ID, r, digestSection(r))
+					if l.Zone != nil && p.Digest { // a digest that can never be sent collects nothing
+						n.digest.add(l.ID, r, digestSection(r), now)
+					}
 					continue
 				case settings.DeliveryPush:
 				default:
@@ -408,12 +410,14 @@ func (n *Notifier) announce(snd *sender.Sender, l *Link, r *Resource, p settings
 	switch {
 	case escalated && p.Escalations:
 		n.enqueueAlert(snd, l, r, "Escalated")
-	case (reassigned || escalated) && mine && p.AssignedToMe:
+	case reassigned && mine && p.AssignedToMe:
 		n.enqueueAlert(snd, l, r, "Assigned to you")
 	case reminded && p.Reminders == settings.DeliveryPush:
 		n.enqueueAlert(snd, l, r, "Reminder")
 	case reminded && p.Reminders == settings.DeliveryDigest:
-		n.digest.add(l.ID, r, secReminders)
+		if l.Zone != nil && p.Digest {
+			n.digest.add(l.ID, r, secReminders, n.o.Now())
+		}
 	}
 }
 
@@ -421,7 +425,7 @@ func (n *Notifier) announce(snd *sender.Sender, l *Link, r *Resource, p settings
 // carries the title only: the body is the Mini App's.
 func (n *Notifier) enqueueAlert(snd *sender.Sender, l *Link, r *Resource, what string) {
 	chat, linkID, res := l.ChatID, l.ID, *r
-	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: sender.NeedsYou, Key: "alert:" + r.String(),
+	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: sender.NeedsYou, Key: "alert:" + what + ":" + r.String(),
 		Send: func(ctx context.Context, c *botapi.Client) error {
 			cur := n.currentLink(linkID, chat)
 			if cur == nil || !n.stillMay(linkID, chat, &res) {

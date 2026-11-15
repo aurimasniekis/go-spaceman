@@ -4573,7 +4573,7 @@
       in a bounded in-memory buffer (50 per link, lost on restart, removed when the resource finishes); `NextDigest` and
       `DigestDue` of the `telegram.digest` deadline read memory only, `DigestDue` enqueues and never returns an error,
       and the digest is rechecked (access, mute, space visibility) and rendered with titles only when it is sent;
-      a link with nothing collected gets none. `telegram_messages.created_at` is refreshed by every send, edit and
+      a link with nothing collected gets none; a link without a zone or with the digest off collects nothing, and items older than 48 hours are left out. Announcements are at-most-once: after a restart a card's assignee is unknown until its next change, so the first assignment seen on such a card is not announced, and an alert queued when the process stops is lost. `telegram_messages.created_at` is refreshed by every send, edit and
       announcement, and retention prunes rows older than 30 days in batches of 200.
   16. **What SpaceMan uses of Telegram's newer features:** private-chat topics (opt-in per link, M3, **(Q6)**), rich
       messages with an entity fallback **(Q12)**, styled buttons, `copy_text`, `disabled`, and ephemeral messages in group
