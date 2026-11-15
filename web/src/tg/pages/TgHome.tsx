@@ -16,11 +16,14 @@ const NEEDS_YOU_TOP = 5
 
 const URGENCY: Record<HumanAction['priority'], number> = { urgent: 0, high: 1, normal: 2, low: 3 }
 
+/** An unknown priority ranks as normal, so a value the web does not know yet is neither first nor last. */
+const rank = (a: HumanAction) => URGENCY[a.priority] ?? URGENCY.normal
+
 /** The most urgent first, then the oldest; the server's order breaks the rest. */
 function topNeedsYou(items: HumanAction[], n = NEEDS_YOU_TOP): HumanAction[] {
   return items
     .map((a, i) => ({ a, i }))
-    .sort((x, y) => URGENCY[x.a.priority] - URGENCY[y.a.priority] || x.a.created_at.localeCompare(y.a.created_at) || x.i - y.i)
+    .sort((x, y) => rank(x.a) - rank(y.a) || x.a.created_at.localeCompare(y.a.created_at) || x.i - y.i)
     .slice(0, n)
     .map((x) => x.a)
 }
@@ -57,7 +60,7 @@ export function TgHome() {
         </Group>
         {human.isSuccess && pending.length === 0 && <Text size="sm" c="dimmed">Nothing is waiting for you.</Text>}
         {pending.length > 0 && (
-          <ActionList actions={topNeedsYou(pending)} spaceNames={names} empty="Nothing is waiting for you." />
+          <ActionList actions={topNeedsYou(pending)} spaceNames={names} empty="Nothing is waiting for you." noBulk />
         )}
       </Stack>
       <Group gap="xs" justify="space-between" wrap="nowrap">
