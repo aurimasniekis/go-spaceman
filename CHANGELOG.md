@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   answered with an ack. A webhook update is acknowledged before it is handled, so an update in flight when central
   restarts is lost together with its ack; send it again. Reading an item in chat also sends its first attachments,
   with forwarding and saving off.
+- Telegram notifications (ADR-0083, TG-6-2, not usable until the bot ships): quiet hours send silently, reminders, escalations
+  and assignments to you arrive as their own messages, a daily digest is sent at each user's own local time, and the bot's
+  message mappings are pruned after 30 days.
 - Configuration: `telegram.api_base_url` (default `https://api.telegram.org`), the Bot API endpoint for the planned
   Telegram bot (ADR-0083). It is settable only in central's configuration, never through the API. Nothing uses it yet.
 - Telegram groundwork (ADR-0083, not usable yet): migration 0051 with every Telegram table, and the inbound side of the

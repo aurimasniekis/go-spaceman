@@ -43,6 +43,39 @@ func (q *Queries) InsertNotificationPrefs(ctx context.Context, arg InsertNotific
 	return result.RowsAffected()
 }
 
+const listNotificationPrefsOfLinkedUsers = `-- name: ListNotificationPrefsOfLinkedUsers :many
+SELECT user_id, prefs_json FROM notification_prefs WHERE user_id IN (SELECT user_id FROM telegram_links WHERE state <> 'revoked')
+`
+
+type ListNotificationPrefsOfLinkedUsersRow struct {
+	UserID    string
+	PrefsJson string
+}
+
+// The time zones of the users with a live Telegram link (the digest and quiet hours), in one read.
+func (q *Queries) ListNotificationPrefsOfLinkedUsers(ctx context.Context) ([]ListNotificationPrefsOfLinkedUsersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listNotificationPrefsOfLinkedUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListNotificationPrefsOfLinkedUsersRow{}
+	for rows.Next() {
+		var i ListNotificationPrefsOfLinkedUsersRow
+		if err := rows.Scan(&i.UserID, &i.PrefsJson); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateNotificationPrefs = `-- name: UpdateNotificationPrefs :execrows
 UPDATE notification_prefs SET prefs_json = ?, updated_at = ?, version = version + 1 WHERE user_id = ? AND version = ?
 `

@@ -43,9 +43,16 @@ type cardKey struct {
 type card struct {
 	messageID int
 	version   int64
+	// remindedSeen and escalatedSeen are the reminder and escalation instants (microseconds) already announced to this
+	// chat. A card loaded after a restart starts at the time it was last touched, so what happened before is not announced
+	// again. assignee is the action's assignee as last seen, once known.
+	remindedSeen, escalatedSeen int64
+	assignee                    string
+	known                       bool
 }
 
 type cards struct {
+	now   func() time.Time
 	store Mappings
 	rows  int
 	full  chan struct{}
@@ -57,8 +64,8 @@ type cards struct {
 	queued  map[cardKey]int      // sends enqueued and not yet finished
 }
 
-func newCards(st Mappings, rows int) *cards {
-	return &cards{store: st, rows: rows, full: make(chan struct{}, 1), byCard: map[cardKey]card{}, loaded: map[Key]bool{},
+func newCards(st Mappings, rows int, now func() time.Time) *cards {
+	return &cards{now: now, store: st, rows: rows, full: make(chan struct{}, 1), byCard: map[cardKey]card{}, loaded: map[Key]bool{},
 		pending: map[[2]int64]Mapping{}, queued: map[cardKey]int{}}
 }
 
@@ -94,7 +101,8 @@ func (c *cards) load(ctx context.Context, k Key) {
 	for _, m := range rows {
 		ck := cardKey{m.ChatID, k}
 		if _, ok := c.byCard[ck]; !ok {
-			c.byCard[ck] = card{messageID: m.MessageID, version: m.Version}
+			seen := m.CreatedAt.UnixMicro()
+			c.byCard[ck] = card{messageID: m.MessageID, version: m.Version, remindedSeen: seen, escalatedSeen: seen}
 		}
 	}
 }
@@ -116,11 +124,20 @@ func (c *cards) bound() {
 	}
 }
 
-func (c *cards) record(m Mapping) {
+// record remembers a sent or edited card. r is the state it shows (nil: only the mapping is refreshed).
+func (c *cards) record(m Mapping, r *Resource) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.bound()
-	c.byCard[cardKey{m.ChatID, m.Key}] = card{messageID: m.MessageID, version: m.Version}
+	cur := c.byCard[cardKey{m.ChatID, m.Key}]
+	cur.messageID, cur.version = m.MessageID, m.Version
+	if r != nil {
+		cur.remindedSeen, cur.escalatedSeen = max(cur.remindedSeen, r.RemindedAt), max(cur.escalatedSeen, r.EscalatedAt)
+		if !cur.known {
+			cur.assignee, cur.known = r.Assignee, true
+		}
+	}
+	c.byCard[cardKey{m.ChatID, m.Key}] = cur
 	if c.store == nil {
 		return
 	}
@@ -136,6 +153,32 @@ func (c *cards) record(m Mapping) {
 		case c.full <- struct{}{}:
 		default:
 		}
+	}
+}
+
+// observe notes the reminder, escalation and assignee state of the resource for a chat's card and says what changed
+// since the last observation: a reminder or escalation newer than the ones announced, and an assignment (the assignee
+// became a different one than the last seen, which is known). The first sight of an assignee announces nothing.
+func (c *cards) observe(chat int64, r *Resource) (reminded, escalated, reassigned bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ck := cardKey{chat, r.Key}
+	cur, ok := c.byCard[ck]
+	if !ok {
+		return false, false, false
+	}
+	reminded, escalated = r.RemindedAt > cur.remindedSeen, r.EscalatedAt > cur.escalatedSeen
+	reassigned = cur.known && cur.assignee != r.Assignee
+	cur.remindedSeen, cur.escalatedSeen = max(cur.remindedSeen, r.RemindedAt), max(cur.escalatedSeen, r.EscalatedAt)
+	cur.assignee, cur.known = r.Assignee, true
+	c.byCard[ck] = cur
+	return reminded, escalated, reassigned
+}
+
+// touch refreshes the stored time of a card, which is also when its reminders and escalations were last announced.
+func (c *cards) touch(linkID string, chat int64, r *Resource, now time.Time) {
+	if cd := c.get(chat, r.Key); cd != nil {
+		c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: r.SpaceID, Key: r.Key, Version: cd.version, CreatedAt: now}, nil)
 	}
 }
 
@@ -174,12 +217,12 @@ func (c *cards) flush(ctx context.Context) error {
 
 // upsert sends the resource's card, or edits it when it was sent before. It runs on a sender goroutine, so it sees
 // the card of a send that completed ahead of it in the chat's queue.
-func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, chat int64, r *Resource, spaceID, text string, ents []botapi.MessageEntity, protect bool) error {
+func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, chat int64, r *Resource, spaceID, text string, ents []botapi.MessageEntity, protect, silent bool) error {
 	if cd := c.get(chat, r.Key); cd != nil {
 		_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: text, Entities: ents})
 		switch {
 		case err == nil || isNotModified(err):
-			c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: time.Now()})
+			c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now()}, r)
 			return nil
 		case isGone(err) && !r.Final:
 			c.forget(chat, r.Key) // the message was deleted: send the card again
@@ -190,11 +233,11 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, ch
 			return err
 		}
 	}
-	m, err := cl.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, ProtectContent: protect})
+	m, err := cl.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, ProtectContent: protect, DisableNotification: silent})
 	if err != nil {
 		return err
 	}
-	c.record(Mapping{ChatID: chat, MessageID: m.MessageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: time.Now()})
+	c.record(Mapping{ChatID: chat, MessageID: m.MessageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now()}, r)
 	return nil
 }
 
