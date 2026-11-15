@@ -26,7 +26,7 @@ func TestTelegramMiniAppUpload(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, s.minisrv.URL+api.Prefix+"/spaces/"+space+"/attachments", &b)
 		req.Header.Set("Content-Type", mw.FormDataContentType())
 		req.Header.Set("Origin", s.minisrv.URL)
-		req.Header.Set("Idempotency-Key", "k-"+name)
+		req.Header.Set("Idempotency-Key", "upload-key-"+name)
 		for i := 0; i+1 < len(hdr); i += 2 {
 			req.Header.Set(hdr[i], hdr[i+1])
 		}
