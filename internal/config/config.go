@@ -255,6 +255,10 @@ type HTTPConfig struct {
 	// client that stops reading is disconnected instead of holding the response in central's memory. WebSocket
 	// connections (nodes, terminals) keep their own timeouts.
 	WriteIdleTimeout Duration `yaml:"write_idle_timeout"`
+	// StreamHeartbeat is how often an otherwise idle live stream (the change feed, a run's recording) sends a
+	// heartbeat event. A proxy in front of central (Cloudflare drops an idle proxied connection after about 100 s)
+	// must see traffic well inside its idle limit. 1 s to 45 s, default 15 s.
+	StreamHeartbeat Duration `yaml:"stream_heartbeat"`
 }
 
 // AuthConfig configures operator authentication (SM-AUTH-001).

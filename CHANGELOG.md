@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
+  proxy that drops idle connections (about 100 s) never sees them idle.
 - Telegram needs-you forms (ADR-0083, TG-7-1, not usable until the bot ships): `/needsyou` lists what waits for you; questions
   (options and free text), todos (steps), messages and custom types with a simple response schema (a step-by-step wizard)
   are answered in chat as you, with the same checks as the web. Approvals stay in the app.

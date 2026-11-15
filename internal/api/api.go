@@ -60,6 +60,8 @@ type Deps struct {
 	MaxUploadBytes int64
 	// StreamRevalidate bounds how long an open watch stream outlives a revoked session or token (SM-AUTH-007).
 	StreamRevalidate time.Duration
+	// StreamHeartbeat is the interval of the heartbeat event on idle live streams (zero: DefaultStreamHeartbeat).
+	StreamHeartbeat time.Duration
 	// Extra registers additional operation groups (nodes, spaces, runs…) supplied by other packages.
 	Extra []func(api huma.API, d *Deps)
 	// ExtraRules are the authorization rules of the Extra operations.
