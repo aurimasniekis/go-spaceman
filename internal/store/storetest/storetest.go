@@ -17,14 +17,19 @@ import (
 
 // MaxTxDuration is the longest a write transaction may hold the write lock in tests (Hallpass HP-DB-004). Time spent
 // waiting for the writer and SQLITE_BUSY retries does not count (ADR-0070).
-// SM_TEST_TX_MAX overrides it for slow runners; the default matches the requirement. On GitHub's hosted runners CI's
-// coverage and race steps use 1s, its login-timing and fuzz jobs 250ms (ADR-0062).
-var MaxTxDuration = func() time.Duration {
-	if v, err := time.ParseDuration(os.Getenv("SM_TEST_TX_MAX")); err == nil && v > 0 {
+// The default is 100 ms, multiplied by 5 when the tests are built with -race (the race_on.go build tag), because the
+// race detector slows a transaction several times and a loaded machine more. SM_TEST_TX_MAX overrides the default
+// exactly, scaled or not. On GitHub's hosted runners CI's coverage and race steps use 1s, its login-timing and fuzz
+// jobs 250ms (ADR-0062).
+var MaxTxDuration = txMaxFrom(os.Getenv("SM_TEST_TX_MAX"), raceScale)
+
+// txMaxFrom picks the guard: a positive duration in env wins as is, otherwise 100 ms times scale.
+func txMaxFrom(env string, scale int) time.Duration {
+	if v, err := time.ParseDuration(env); err == nil && v > 0 {
 		return v
 	}
-	return 100 * time.Millisecond
-}()
+	return time.Duration(scale) * 100 * time.Millisecond
+}
 
 // Option customizes Open.
 type Option func(*store.Options)

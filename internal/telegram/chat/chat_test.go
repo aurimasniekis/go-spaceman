@@ -41,11 +41,12 @@ var (
 
 // fakeAPI answers the operations the commands call, like the in-process API handler would for one user.
 type fakeAPI struct {
-	mu    sync.Mutex
-	reqs  []string
-	hdrs  map[string]string // last If-Match per path
-	posts []map[string]any
-	items map[string]*inboxItem
+	listFirst []spaceRef // spaces the list answers before the usual ones
+	mu        sync.Mutex
+	reqs      []string
+	hdrs      map[string]string // last If-Match per path
+	posts     []map[string]any
+	items     map[string]*inboxItem
 	// forbidden item IDs answer 403 on every call.
 	conflict bool
 	// badDetail makes a status change answer 400 with this detail.
@@ -105,9 +106,9 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	seg := strings.Split(strings.Trim(path, "/"), "/")
 	switch {
 	case path == "/spaces":
-		out(200, map[string]any{"items": []spaceRef{
+		out(200, map[string]any{"items": append(append([]spaceRef{}, f.listFirst...), []spaceRef{
 			{ID: spA, Slug: "alpha", Name: "Alpha", State: "active"}, {ID: spB, Slug: "beta", Name: "Beta", State: "active"},
-			{ID: spC, Slug: "gamma", Name: "Gamma", State: "active"}, {ID: spS, Slug: "sum", Name: "Summary", State: "active"}}})
+			{ID: spC, Slug: "gamma", Name: "Gamma", State: "active"}, {ID: spS, Slug: "sum", Name: "Summary", State: "active"}}...)})
 	case path == "/attention":
 		out(200, map[string]any{"spaces": []map[string]any{{"space_id": spA, "human_pending": 2, "tasks_failed": 1}}})
 	case len(seg) == 2 && seg[0] == "spaces":
@@ -362,9 +363,10 @@ type env struct {
 	mu           sync.Mutex                 // guards sent and files (albums are captured from a timer)
 	files        []sentFile
 	allow        func(string, updates.Kind) bool
-	hideA        atomic.Bool // spA stops being visible to Telegram
-	apConfirm    atomic.Bool // spA allows enforced approvals in chat (enforced_approvals = confirm)
-	arms         []string    // ArmApproval calls: "link space action outcome version"
+	threadSpace  map[int]string // topic thread -> space it belongs to (what topics.Manager.SpaceOf would answer)
+	hideA        atomic.Bool    // spA stops being visible to Telegram
+	apConfirm    atomic.Bool    // spA allows enforced approvals in chat (enforced_approvals = confirm)
+	arms         []string       // ArmApproval calls: "link space action outcome version"
 	dlNow, dlMax atomic.Int32
 	dlDelay      time.Duration // each download takes this long (to overlap them)
 }
@@ -468,6 +470,10 @@ func newEnv(t *testing.T) *env {
 				s.Enabled, s.ContentLevel = true, settings.ContentOff
 			}
 			return s
+		},
+		SpaceOfThread: func(_ context.Context, _ string, thread int) (string, bool) {
+			id, ok := e.threadSpace[thread]
+			return id, ok
 		},
 		Bot: func() Bot { return recBot{Client: bc, e: e} },
 		Allow: func(id string, k updates.Kind) bool {
