@@ -404,7 +404,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			Summary: "Create (profile_id \"new\") or update a harness profile", Description: "An update bumps the revision; it applies to later launches.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				ProfileID string `path:"profile_id" maxLength:"64"`
-				IfMatch
+				OptionalIfMatch
 				Body ProfileInput
 			}) (*struct{ Body *catalog.Profile }, error) {
 				id, v := in.ProfileID, int64(0)
@@ -492,7 +492,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			Summary: "Create (template_id \"new\") or update a role template", Tags: tags},
 			func(ctx context.Context, in *struct {
 				TemplateID string `path:"template_id" maxLength:"64"`
-				IfMatch
+				OptionalIfMatch
 				Body TemplateInput
 			}) (*struct{ Body *catalog.RoleTemplate }, error) {
 				id, v := in.TemplateID, int64(0)

@@ -22472,11 +22472,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -22592,11 +22592,11 @@
         "operationId": "put-harbor-pilot-connection",
         "parameters": [
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -22797,11 +22797,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -23115,11 +23115,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -23289,11 +23289,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -25438,11 +25438,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -25771,11 +25771,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -25946,11 +25946,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -27123,11 +27123,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -28220,11 +28220,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -28479,11 +28479,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -29552,11 +29552,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -30214,11 +30214,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -30389,11 +30389,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -31054,11 +31054,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -31246,11 +31246,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -31314,11 +31314,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -34175,11 +34175,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -34472,11 +34472,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -34835,11 +34835,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -35205,11 +35205,11 @@
             }
           },
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -35633,11 +35633,11 @@
         "operationId": "put-telegram-bot",
         "parameters": [
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -36051,11 +36051,11 @@
         "operationId": "put-telegram-settings",
         "parameters": [
           {
-            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
             "in": "header",
             "name": "If-Match",
             "schema": {
-              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
