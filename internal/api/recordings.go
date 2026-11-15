@@ -174,6 +174,11 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 	}
 	// Guard from the start, so a revocation committed during catch-up is not missed.
 	guard := d.guardStream(r, PrincipalFrom(ctx), func(p *auth.Principal) bool {
+		// A Telegram link also needs the space's terminal_watch setting, so turning it off ends a live stream at the
+		// next re-check (the opening request checks it too, in authorizeRaw).
+		if p.ViaTelegram() && !d.telegramFeature(ctx, spaceID, TelegramFeatureTerminalWatch) {
+			return false
+		}
 		return d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), spaceID, authz.TerminalWatch)
 	})
 	defer guard.close()

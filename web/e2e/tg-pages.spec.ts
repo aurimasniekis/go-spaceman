@@ -47,11 +47,12 @@ function basePrefs(): Record<string, unknown> {
 }
 
 /** The fixtures a test can replace: the queue's tasks, the scheduled messages to control and the space's attention counts. */
-type Fixtures = { prefs?: Record<string, unknown>; putStatus?: number; role?: string; path: string; tasks?: unknown[]; scheduled?: unknown[]; attention?: Record<string, unknown> }
+type Fixtures = { terminalWatch?: boolean; prefs?: Record<string, unknown>; putStatus?: number; role?: string; path: string; tasks?: unknown[]; scheduled?: unknown[]; attention?: Record<string, unknown> }
 
 async function launch(page: Page, o: Fixtures) {
   const moves: unknown[] = []
   const created: unknown[] = []
+  const streams: { auth: string; cookie: string }[] = []
   const requests: string[] = []
   const puts: Array<{ ifMatch?: string; body: Record<string, unknown> }> = []
   let prefs = o.prefs ?? basePrefs()
@@ -95,6 +96,13 @@ async function launch(page: Page, o: Fixtures) {
     }
     if (p === `/spaces/${SPACE}/runs`) return route.fulfill(json({ items: [run] }))
     if (p === `/spaces/${SPACE}/runs/${run.id}`) return route.fulfill(json(run))
+    if (p === `/telegram/spaces/${SPACE}/features`) return route.fulfill(json({ terminal_watch: o.terminalWatch === true }))
+    if (p === `/spaces/${SPACE}/runs/${run.id}/terminal`) {
+      streams.push({ auth: req.headers()['authorization'] ?? '', cookie: req.headers()['cookie'] ?? '' })
+      const rec = (r: unknown, id: number) => `event: record\nid: ${id}\ndata: ${JSON.stringify(r)}\n\n`
+      const body = rec({ seq: 1, t: 0, k: 'open', cols: 60, rows: 12, run: run.id }, 1) + rec({ seq: 2, t: 1000000, k: 'o', d: btoa('hello from the run\r\n') }, 2) + 'event: end\ndata: {}\n\n'
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body })
+    }
     // The scheduled list is GET /messages?scheduled=true (api.GET in useScheduledMessages), not a path of its own.
     if (p === `/spaces/${SPACE}/messages`) {
       if (new URL(req.url()).searchParams.get('scheduled') === 'true') return route.fulfill(json({ items: o.scheduled ?? [] }))
@@ -112,7 +120,7 @@ async function launch(page: Page, o: Fixtures) {
     return route.fulfill(json({ items: [], counts: { new: 0, in_progress: 0, done: 0, rejected: 0, deferred: 0 } }))
   })
   await page.goto(`http://127.0.0.1:${PORT}${o.path}`)
-  return { moves, created, requests, puts }
+  return { moves, created, streams, requests, puts }
 }
 
 async function clean(page: Page) {
@@ -212,6 +220,43 @@ test('runs: the list and a read-only run page', async ({ page }) => {
   await page.getByRole('link', { name: 'implementor #2' }).click()
   await expect(page.getByRole('heading', { name: 'implementor #2' })).toBeVisible()
   await expect(page.getByText(/terminal is not available/)).toBeVisible()
+  await clean(page)
+})
+
+test('run page: the watch-only terminal shows only when the space opted in, and has no input', async ({ page }) => {
+  const off = await launch(page, { path: `/spaces/${SPACE}/runs/${run.id}` })
+  await expect(page.getByRole('heading', { name: 'implementor #2' })).toBeVisible()
+  await expect(page.getByText(/terminal is not available/)).toBeVisible()
+  await expect(page.getByTestId('tg-terminal')).toHaveCount(0)
+  expect(off.streams).toHaveLength(0)
+})
+
+test('run page: with the opt-in the terminal streams over the Mini App header and is watch-only (390 px, axe)', async ({ page }) => {
+  const on = await launch(page, { path: `/spaces/${SPACE}/runs/${run.id}`, terminalWatch: true })
+  const term = page.getByTestId('tg-terminal')
+  await expect(term).toBeVisible()
+  await expect(term.getByTestId('terminal')).toBeAttached()
+  await expect.poll(() => on.streams.length).toBeGreaterThan(0)
+  expect(on.streams[0].auth).toBe('Telegram spaceman_tgs_test')
+  expect(on.streams[0].cookie).toBe('')
+  // No way to type. ghostty-web keeps a focus sink (a textarea) for the keyboard; with stdin disabled it ignores keys and
+  // pastes, and nothing listens for its data: typing and pasting send no write request at all, and the page has no size menu
+  // or takeover.
+  await expect(page.getByRole('button', { name: /take over|size/i })).toHaveCount(0)
+  await expect(term.locator('input, select')).toHaveCount(0)
+  const sent: string[] = []
+  page.on('request', (r) => r.method() !== 'GET' && sent.push(`${r.method()} ${new URL(r.url()).pathname}`))
+  const sink = term.locator('textarea')
+  await sink.evaluate((el) => (el as HTMLTextAreaElement).focus())
+  await page.keyboard.type('rm -rf /\n')
+  await sink.evaluate((el) => {
+    const data = new DataTransfer()
+    data.setData('text/plain', 'pasted text')
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  })
+  await page.waitForTimeout(300)
+  expect(sent).toEqual([])
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await clean(page)
 })
 

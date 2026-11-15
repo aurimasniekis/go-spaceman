@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram Mini App watch-only terminal (ADR-0083, TG-10-3; the bot isn't usable yet): off by default. A space's admin turns on
+  `terminal_watch` in its Telegram settings, and a run page in the Mini App then shows the live terminal of that space's
+  runs to links that may watch terminals (operator and up). It is read-only: no keys, paste, size or takeover, and no replay.
+  The stream comes straight from central over the Mini App host, never through Telegram; the server refuses it again
+  unless the space opted in and the link holds `terminal:watch`, and a stream already open ends (`forbidden`) at the next
+  re-check once the setting is turned off. New `get-telegram-space-features` tells the Mini App
+  whether to show it.
 - Mini App: your Telegram settings page is editable (notification categories, quiet hours, digest, muted spaces and your
   time zone, which is per user; topics are shown read-only). Saves send `If-Match`; a stale save reloads the form with a
   conflict notice. The queue page shows the read-only "Next" card (never `record=true`).
