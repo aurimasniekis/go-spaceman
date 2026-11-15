@@ -348,7 +348,7 @@ func (h *Handler) commit(ctx context.Context, l updates.Link, ps []piece, droppe
 		h.send(ctx, l.ChatID, reply{text: TextFailed})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.send(ctx, l.ChatID, h.ack(s, it, len(ids), dropped, skipped))
 }
 
@@ -520,9 +520,9 @@ func (h *Handler) sendAttachments(ctx context.Context, c caller, l updates.Link,
 		sctx, cancel := context.WithTimeout(ctx, 3*apiTimeout)
 		f := &botapi.InputFile{Name: name, Reader: io.LimitReader(rc, maxSendBytes+1)}
 		if meta.Inline && meta.Size <= maxPhotoBytes && (meta.MIME == "image/jpeg" || meta.MIME == "image/png") {
-			_, err = b.SendPhoto(sctx, botapi.SendPhotoParams{ChatID: l.ChatID, Photo: f, Caption: name, ProtectContent: true})
+			_, err = b.SendPhoto(sctx, botapi.SendPhotoParams{ChatID: l.ChatID, MessageThreadID: threadOf(sctx), Photo: f, Caption: name, ProtectContent: true})
 		} else {
-			_, err = b.SendDocument(sctx, botapi.SendDocumentParams{ChatID: l.ChatID, Document: f, Caption: name, ProtectContent: true})
+			_, err = b.SendDocument(sctx, botapi.SendDocumentParams{ChatID: l.ChatID, MessageThreadID: threadOf(sctx), Document: f, Caption: name, ProtectContent: true})
 		}
 		cancel()
 		_ = rc.Close()

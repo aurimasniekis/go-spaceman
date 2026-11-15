@@ -229,9 +229,12 @@ func (c *cards) flush(ctx context.Context) error {
 	return nil
 }
 
+// sendFunc sends a message, to the topic its caller chose (or the main chat).
+type sendFunc func(ctx context.Context, cl *botapi.Client, p botapi.SendMessageParams) (botapi.Message, error)
+
 // upsert sends the resource's card, or edits it when it was sent before. It runs on a sender goroutine, so it sees
 // the card of a send that completed ahead of it in the chat's queue.
-func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, chat int64, r *Resource, spaceID, text string, ents []botapi.MessageEntity, protect, silent bool) error {
+func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, linkID string, chat int64, r *Resource, spaceID, text string, ents []botapi.MessageEntity, protect, silent bool) error {
 	if cd := c.get(chat, r.Key); cd != nil {
 		_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: text, Entities: ents})
 		switch {
@@ -247,7 +250,7 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, ch
 			return err
 		}
 	}
-	m, err := cl.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, ProtectContent: protect, DisableNotification: silent})
+	m, err := send(ctx, cl, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, ProtectContent: protect, DisableNotification: silent})
 	if err != nil {
 		return err
 	}
