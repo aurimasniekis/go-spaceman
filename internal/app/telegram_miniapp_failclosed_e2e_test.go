@@ -336,16 +336,20 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 		c.UI = webui.Handler(dlFiles)
 		c.MiniAppUI = webui.MiniAppHandler(dlFiles)
 	}, false)
-	seedLegacyHost(t, e, false) // disabled: a started bot would legitimately serve the Mini App itself
+	// Disabled: an enabled bot with no key serves the legacy host, so a started bot would legitimately answer the Mini App
+	// host itself and break the ordering assertion.
+	seedLegacyHost(t, e, false)
 
 	const heldAttempts = 150
 	var attempts atomic.Int64
 	release := make(chan struct{})
 	var once sync.Once
 	e.h.c.TelegramBot.SetLoadStoredHostHook(func(ctx context.Context) {
-		// Hold until the client has tried enough times while the load is pending (or give up after a bound).
+		// Hold until the client has tried enough times while the load is pending (or give up after a bound). Count from
+		// hook entry: attempts are already non-zero if the client started before the load began.
+		base := attempts.Load()
 		deadline := time.After(10 * time.Second)
-		for attempts.Load() < heldAttempts {
+		for attempts.Load() < base+heldAttempts {
 			select {
 			case <-deadline:
 				return
