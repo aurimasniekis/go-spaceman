@@ -308,10 +308,12 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     // without tails sends none and the whole recording follows, as before.
     let sawTail = false
     // The stream is over for good (ended or refused): a reload still waiting for its records never gets them, so it
-    // stops waiting (the load-earlier button comes back) rather than staying "reloading".
+    // stops waiting (the load-earlier button comes back) rather than staying "reloading". A run that ended sends its
+    // records and then the end at once, before the feed has drawn them: once the records queued reach the record the screen
+    // ended on, the feed finishes the reload itself.
     const over = (state: 'ended' | 'denied') => {
       setState(state)
-      if (reload.current !== null) {
+      if (reload.current !== null && !(state === 'ended' && !first && queued >= reloadUntil.current)) {
         reload.current = null
         setReloading(false)
       }

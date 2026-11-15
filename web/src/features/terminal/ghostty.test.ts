@@ -16,8 +16,12 @@ const ghostty = vi.hoisted(() => {
       constructor(public options: { ghostty?: unknown }) {
         created.push(this)
       }
+      cols = 80
+      rows = 24
+      resizeHandler?: (size: { cols: number; rows: number }) => void
       open() {}
-      onResize() {
+      onResize(h: (size: { cols: number; rows: number }) => void) {
+        this.resizeHandler = h
         return { dispose() {} }
       }
       dispose() {
@@ -359,9 +363,29 @@ describe('resetTerminal', () => {
   it('erases a new terminal out to the largest size the terminal has had, then back to its own size', async () => {
     const { resetTerminal } = await import('./ghostty')
     const calls: string[] = []
-    const term = { cols: 80, rows: 24, reset: () => calls.push('reset'), write: () => calls.push('term.write'), wasmTerm: { resize: (c: number, r: number) => calls.push(`resize ${c}x${r}`), write: () => calls.push('erase') } }
+    const term = { cols: 80, rows: 24, reset: () => calls.push('reset'), write: () => calls.push('term.write'), scrollToBottom: () => calls.push('bottom'), wasmTerm: { resize: (c: number, r: number) => calls.push(`resize ${c}x${r}`), write: () => calls.push('erase') } }
     // No size history recorded for a terminal createTerminal did not make: its own size is the largest.
     resetTerminal(term as never)
-    expect(calls).toEqual(['reset', 'erase'])
+    expect(calls).toEqual(['reset', 'erase', 'bottom'])
+  })
+
+  it('remembers the largest size createTerminal saw resized, and erases out to it', async () => {
+    const { resetTerminal } = await import('./ghostty')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new Uint8Array([0, 97, 115, 109]), { headers: { 'Content-Type': 'application/octet-stream' } }))
+    vi.spyOn(WebAssembly, 'compile').mockResolvedValue({} as WebAssembly.Module)
+    vi.spyOn(WebAssembly, 'instantiate').mockResolvedValue({ exports: { memory: {} } } as never)
+    try {
+      const term = await createTerminal(document.createElement('div'))
+      const fake = ghostty.created[ghostty.created.length - 1] as unknown as { cols: number; rows: number; resizeHandler: (s: { cols: number; rows: number }) => void }
+      fake.resizeHandler({ cols: 200, rows: 120 })
+      fake.cols = 80
+      fake.rows = 24
+      const calls: string[] = []
+      Object.assign(term, { reset: () => calls.push('reset'), scrollToBottom: () => {}, wasmTerm: { resize: (c: number, r: number) => calls.push(`resize ${c}x${r}`), write: () => calls.push('erase') } })
+      resetTerminal(term)
+      expect(calls).toEqual(['reset', 'resize 200x120', 'erase', 'resize 80x24'])
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })

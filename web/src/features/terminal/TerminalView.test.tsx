@@ -24,7 +24,7 @@ const fake = vi.hoisted(() => {
     getScrollbackLength: () => 0,
     buffer: { active: { type: 'normal' } },
     scrollToBottom: () => {},
-    scrollLines: () => {},
+    scrollLines: vi.fn(),
   }
   /** The feeds started by seeks: each applies its records only when the test finishes it. */
   const feeds: { finish(): void }[] = []
@@ -278,6 +278,23 @@ describe('tails (ADR-0081)', () => {
         expect(screen.queryByTestId('load-earlier')).toBeNull()
         send(1, 'record', out(8, 'y'))
         await act(async () => fake.feeds[1].finish())
+        expect(reloading(container)).toBe('false')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('does not cancel a reload whose records are queued when the end arrives before they are drawn', async () => {
+      try {
+        const container = await loadEarlier()
+        vi.mocked(fake.term.scrollLines).mockClear()
+        send(1, 'tail', { ...tail, from: 3 })
+        send(1, 'record', out(8, 'y'))
+        send(1, 'end', {})
+        expect(reloading(container)).toBe('true')
+        expect(fake.term.scrollLines).not.toHaveBeenCalled()
+        await act(async () => fake.feeds[1].finish())
+        expect(fake.term.scrollLines).toHaveBeenCalled()
         expect(reloading(container)).toBe('false')
       } finally {
         vi.unstubAllGlobals()

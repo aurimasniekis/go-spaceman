@@ -379,8 +379,10 @@ export function resetTerminal(term: Terminal) {
   term.reset()
   const w = (term as unknown as { wasmTerm?: Erasable }).wasmTerm
   const high = largest.get(term) ?? { cols: term.cols, rows: term.rows }
-  if (w) eraseFreed(w, term.cols, term.rows, high)
-  else term.write(ERASE_ALL)
+  if (w) {
+    eraseFreed(w, term.cols, term.rows, high)
+    term.scrollToBottom()
+  } else term.write(ERASE_ALL)
 }
 
 /** The parts of a ghostty-web 0.4.0 Terminal that holdDrawing reaches (private in its typings). */
