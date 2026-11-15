@@ -5440,6 +5440,12 @@
   - A switch's park and resume carry the switch on the limit-wait event; control gets one message per switch at its
     resume (`account-switch:` plus the switch ID, a control message, not a human action or task, so no reserved
     dedup prefix is involved), naming both runs and both accounts by name.
+  - The target is resolved from the limited account (bound, so a space without a default still resolves; avoided,
+    so the pool's order decides). A preferred target stays only while it is an eligible member of the run's pool (the
+    role's pool when it has one); a re-targeted switch is audited (`account.switch_retargeted`).
+  - An armed switch that ends without moving the run while it is still alive at its limit (a near reset re-read,
+    failover turned off before the idle point, the run already parked) lets control's held-back "kept alive" notice
+    go out, so control never loses the ADR-0079 message.
   - A resumed run that hits a limit before its first turn keeps the session it was resumed with: its next switch
     resumes it again (a plain ADR-0079 re-park is unchanged).
   - A switch's failed resume gets ADR-0079's fresh retry on the account it moved to (`limit_waits.switch_to_account_id`

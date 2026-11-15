@@ -8,6 +8,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics/metricstest"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
@@ -18,6 +19,8 @@ type switchEnv struct {
 	failoverOn bool
 	within     time.Duration
 	budget     int
+	// notices are the runs control was told are kept alive at a limit (OnRunLimitTx with an opened limit).
+	notices []string
 }
 
 func newSwitchEnv(t *testing.T) *switchEnv {
@@ -28,6 +31,17 @@ func newSwitchEnv(t *testing.T) *switchEnv {
 	}
 	e.exec(`INSERT INTO accounts (id, name, kind, secret_enc, secret_rotated_at, created_at, created_by, updated_at) VALUES
 		('acc_3', 'three', 'claude_oauth_token', x'00', 0, 0, 't', 0)`)
+	e.svc.opts.OnRunLimitTx = func(ctx context.Context, tx *store.Tx, r *Run, _, opened *RunLimit) error {
+		// As control does: no "kept alive" notice for a run with an armed switch.
+		if opened == nil || !Live(r.Observed) {
+			return nil
+		}
+		if _, err := tx.Q.GetPendingAccountSwitchByRun(ctx, r.ID); err == nil {
+			return nil
+		}
+		e.notices = append(e.notices, r.ID)
+		return nil
+	}
 	return e
 }
 
@@ -228,11 +242,18 @@ func TestAccountSwitchNearResetWaits(t *testing.T) {
 	if sw := e.switchOf("run_o"); sw.State != SwitchPending || sw.ToAccountID != "acc_2" {
 		t.Fatalf("a reset outside the window: %+v", sw)
 	}
+	if strings.Contains(strings.Join(e.notices, ","), "run_o") {
+		t.Fatal("control told to keep alive a run with an armed switch")
+	}
 
 	// The armed switch's limit is re-read with a reset inside the window: it falls back and the run waits.
 	e.report("run_o", "working", 1, &proto.RunLimit{Kind: proto.LimitFiveHour, Since: e.clk.Now(), ResetsAt: ptrTime(e.clk.Now().Add(10 * time.Minute))})
 	if sw := e.switchOf("run_o"); sw.State != SwitchFellBack || sw.Reason != SwitchResetNear {
 		t.Fatalf("re-read reset near: %+v", sw)
+	}
+	// Control now hears the run is kept alive (the notice held back while the switch was armed).
+	if !strings.Contains(strings.Join(e.notices, ","), "run_o") {
+		t.Fatalf("control not told after the fallback: %v", e.notices)
 	}
 
 	e.running("run_u", "worker", 1)
@@ -321,6 +342,9 @@ func TestAccountSwitchTargetGone(t *testing.T) {
 	}
 	if got := e.switchOf("run_d"); got.ID != sw.ID || got.State != SwitchResumed || got.ToAccountID != "acc_3" {
 		t.Fatalf("switch %+v", got)
+	}
+	if e.count(`SELECT count(*) FROM audit_events WHERE action = 'account.switch_retargeted' AND target_id = 'run_d'`) != 1 {
+		t.Fatal("re-targeting not audited")
 	}
 
 	e.running("run_e", "worker", 2)
@@ -570,5 +594,55 @@ func TestAccountSwitchWaitReleased(t *testing.T) {
 	}
 	if got, _ := e.s.R().GetAccountSwitch(e.ctx, sw.ID); got.State != SwitchCancelled || got.Reason != WaitReleasedByOp {
 		t.Fatalf("switch %+v", got)
+	}
+}
+
+// The target must still be in the run's role pool at the resume: an operator who takes it out of the pool moves the
+// switch to the pool's next account (a role pool never widens).
+func TestAccountSwitchTargetLeftRolePool(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`INSERT INTO space_accounts (space_id, account_id, harness, created_at, created_by) VALUES ('spc_a', 'acc_3', 'claude-code', 1, 't')`)
+	e.running("run_p", "worker", 2)
+	if sw := e.armAndPark("run_p"); sw.ToAccountID != "acc_2" {
+		t.Fatalf("target %s", sw.ToAccountID)
+	}
+	e.exec(`INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES ('spc_a', 'implementor', 'acc_1', 100, 0, 't'),
+		('spc_a', 'implementor', 'acc_3', 100, 0, 't')`)
+	e.clk.Advance(limitRetrySoon)
+	if n := e.due(); n != 1 {
+		t.Fatalf("resumed %d", n)
+	}
+	if _, p := e.launchOf(e.instance("run_p")); p.AccountRef != "acc_3" {
+		t.Fatalf("resumed on %s, want the role pool's acc_3", p.AccountRef)
+	}
+}
+
+// A space with several accounts and no default still switches (the pool is resolved from the limited account).
+func TestAccountSwitchNoDefaultAccount(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`UPDATE space_accounts SET is_default = 0 WHERE space_id = 'spc_a'`)
+	e.running("run_n", "worker", 1)
+	e.report("run_n", "working", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_n"); sw.State != SwitchPending || sw.ToAccountID != "acc_2" {
+		t.Fatalf("switch %+v", sw)
+	}
+}
+
+// Failover turned off while a switch is armed: at the idle point the switch falls back (failover_off), the run stays
+// alive at its limit as ADR-0079 keeps it, and control hears it is kept alive.
+func TestAccountSwitchFailoverOffWhileArmed(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_f", "worker", 1)
+	e.report("run_f", "working", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	e.failoverOn = false
+	e.report("run_f", "idle", 1, nil)
+	if sw := e.switchOf("run_f"); sw.State != SwitchFellBack || sw.Reason != SwitchFailoverOff {
+		t.Fatalf("switch %+v", sw)
+	}
+	if r := e.observed("run_f"); r.Desired != "running" || e.count(`SELECT count(*) FROM limit_waits WHERE run_id = 'run_f'`) != 0 {
+		t.Fatal("the run was parked with failover off")
+	}
+	if strings.Join(e.notices, ",") != "run_f" {
+		t.Fatalf("control notices %v", e.notices)
 	}
 }

@@ -173,11 +173,36 @@ func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, h
 		}
 		return accountHeld(ctx, tx.Q, id, now)
 	}
-	id, err := svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, prefer, avoid)
-	if err != nil && prefer != "" && apperr.CodeOf(err) == apperr.CodePrecondition {
-		// The preferred account is gone (deleted, disabled or unbound): the pool decides.
-		id, err = svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, "", avoid)
+	// Resolve from the limited account: it is bound (so a space without a default still resolves) and avoided, so the
+	// pool's order decides; when it is gone too, from no account.
+	resolve := func(av func(string) (bool, error)) (string, error) {
+		if from != "" {
+			id, err := svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, from, av)
+			if err == nil || apperr.CodeOf(err) != apperr.CodePrecondition {
+				return id, err
+			}
+		}
+		return svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, "", av)
 	}
+	if prefer != "" {
+		// The preferred account stays only while it is an eligible member of the run's pool: resolving with every other
+		// account avoided returns it only if the pool (the role's, when it has one) still holds it. Gone, held, unbound,
+		// disabled or out of the role's pool, the pool decides.
+		only := func(id string) (bool, error) {
+			if id != prefer {
+				return true, nil
+			}
+			return avoid(id)
+		}
+		if id, err := resolve(only); err == nil && id == prefer {
+			if held, err := only(id); err != nil || !held {
+				return id, err
+			}
+		} else if err != nil && apperr.CodeOf(err) != apperr.CodePrecondition {
+			return "", err
+		}
+	}
+	id, err := resolve(avoid)
 	if err != nil {
 		if apperr.CodeOf(err) == apperr.CodePrecondition {
 			return "", nil // a configuration that names no usable account: nothing to switch to
@@ -333,8 +358,13 @@ func (svc *Service) switchOnLimitTx(ctx context.Context, tx *store.Tx, r db.Run,
 		_, _, err = svc.moveSwitchTx(ctx, tx, pending, SwitchCancelled, SwitchLimitCleared, nil)
 		return err
 	case hasPending && next.resets.Valid && time.UnixMicro(next.resets.Int64).Sub(tx.Now) <= ul.WaitIfResetWithin:
-		_, _, err = svc.moveSwitchTx(ctx, tx, pending, SwitchFellBack, SwitchResetNear, nil)
-		return err
+		if _, _, err = svc.moveSwitchTx(ctx, tx, pending, SwitchFellBack, SwitchResetNear, nil); err != nil {
+			return err
+		}
+		if live {
+			return svc.keptAliveNoticeTx(ctx, tx, r.ID)
+		}
+		return nil
 	case hasPending || !opened || !live || r.Desired != "running":
 		return nil
 	}
@@ -396,20 +426,46 @@ func (svc *Service) switchAtIdleTx(ctx context.Context, tx *store.Tx, runID, sta
 
 // parkSwitchedTx parks a live run for its armed switch and stops it.
 func (svc *Service) parkSwitchedTx(ctx context.Context, tx *store.Tx, r db.Run, sw db.AccountSwitch, why string) error {
+	// Failover turned off since the switch was armed: the run stays alive at its limit as ADR-0079 keeps it.
+	if !svc.ulSettings(ctx, tx.Q, r.SpaceID).Failover {
+		if _, _, err := svc.moveSwitchTx(ctx, tx, sw, SwitchFellBack, SwitchFailoverOff, nil); err != nil {
+			return err
+		}
+		return svc.keptAliveNoticeTx(ctx, tx, r.ID)
+	}
 	w, err := svc.parkWithTx(ctx, tx, r, storedLimit(r), why, &sw)
 	if err != nil {
 		return err
 	}
 	if w == nil {
 		// The run already has a wait (or can't be parked): the switch can't go on, and must not stay armed.
-		_, _, err := svc.moveSwitchTx(ctx, tx, sw, SwitchCancelled, WaitSuperseded, nil)
-		return err
+		if _, _, err := svc.moveSwitchTx(ctx, tx, sw, SwitchCancelled, WaitSuperseded, nil); err != nil {
+			return err
+		}
+		return svc.keptAliveNoticeTx(ctx, tx, r.ID)
 	}
 	if err := svc.stopRunTx(ctx, tx, r, "interrupt", "SpaceMan moves the run to another account of its pool at its usage limit; it continues there"); err != nil {
 		return err
 	}
 	tx.AfterCommit(func() { svc.hub.Kick(r.NodeID) })
 	return nil
+}
+
+// keptAliveNoticeTx tells control (OnRunLimitTx) about a live run's open limit after its armed switch ended without
+// moving it: the "kept alive" notice was held back while the switch was armed, and the run now waits as ADR-0079
+// keeps it. Control's notice is deduplicated per run and limit window, so a notice already sent isn't repeated.
+func (svc *Service) keptAliveNoticeTx(ctx context.Context, tx *store.Tx, runID string) error {
+	if svc.opts.OnRunLimitTx == nil {
+		return nil
+	}
+	r, err := tx.Q.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if r.LimitKind == "" || !Live(r.Observed) || r.Desired != "running" {
+		return nil
+	}
+	return svc.opts.OnRunLimitTx(ctx, tx, runFromRow(r), nil, runLimitOf(r))
 }
 
 // parkEndedTx parks a run that ended at its limit without central asking (ADR-0079 decision 4), switching it when its
@@ -589,11 +645,7 @@ func (svc *Service) switchResumeCheckTx(ctx context.Context, tx *store.Tx, w *db
 			if target == "" {
 				_, _, err = svc.moveSwitchTx(ctx, tx, sw, SwitchFellBack, reason, nil)
 			} else {
-				_, err = tx.Q.UpdateAccountSwitch(ctx, db.UpdateAccountSwitchParams{State: sw.State, ToAccountID: target, NewRunID: sw.NewRunID,
-					LimitWaitID: sw.LimitWaitID, Reason: sw.Reason, Now: now, ID: sw.ID, Version: sw.Version})
-				if err == nil {
-					err = svc.record(ctx, tx, sw.SpaceID, "account_switch", sw.ID, "updated", sw.Version+1)
-				}
+				err = svc.retargetSwitchTx(ctx, tx, sw, target)
 			}
 			if err != nil {
 				return false, err
@@ -611,6 +663,22 @@ func (svc *Service) switchResumeCheckTx(ctx context.Context, tx *store.Tx, w *db
 	}
 	tx.AfterCommit(svc.wakeDeadlines)
 	return resumeAt <= now, nil
+}
+
+// retargetSwitchTx points a parked switch at another target (its first one is held or gone), audited with both.
+func (svc *Service) retargetSwitchTx(ctx context.Context, tx *store.Tx, sw db.AccountSwitch, target string) error {
+	n, err := tx.Q.UpdateAccountSwitch(ctx, db.UpdateAccountSwitchParams{State: sw.State, ToAccountID: target, NewRunID: sw.NewRunID,
+		LimitWaitID: sw.LimitWaitID, Reason: sw.Reason, Now: tx.NowMicros(), ID: sw.ID, Version: sw.Version})
+	if err != nil || n == 0 {
+		return err
+	}
+	if err := svc.record(ctx, tx, sw.SpaceID, "account_switch", sw.ID, "updated", sw.Version+1); err != nil {
+		return err
+	}
+	_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: SwitchActor, Action: "account.switch_retargeted", Target: audit.Target{Type: "run", ID: sw.FromRunID},
+		Details: map[string]any{"space_id": sw.SpaceID, "from_account_id": sw.FromAccountID, "previous_to_account_id": sw.ToAccountID, "to_account_id": target,
+			"state": sw.State}})
+	return err
 }
 
 // switchResumedTx runs in a switch wait's resume transaction: the switch is resumed with its new run and the account
