@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
