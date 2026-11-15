@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -517,12 +518,33 @@ func (svc *Service) GetRun(ctx context.Context, id string) (*Run, error) {
 	return out, nil
 }
 
-// ListRuns returns a space's runs, newest first.
+// ListRuns returns a space's runs, newest first. The limit bounds the history: every live run (pending, starting,
+// running, stopping, or wanted running) is always included however old it is, so a long-lived control run is never
+// pushed out of the list by newer ended worker runs.
 func (svc *Service) ListRuns(ctx context.Context, spaceID string, limit int) ([]*Run, error) {
 	rows, err := svc.s.R().ListRunsBySpace(ctx, db.ListRunsBySpaceParams{SpaceID: spaceID, Limit: int64(limit)})
 	if err != nil {
 		return nil, err
 	}
+	live, err := svc.s.R().ListActiveRunsBySpace(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		seen[r.ID] = true
+	}
+	for _, r := range live {
+		if !seen[r.ID] {
+			rows = append(rows, r)
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].CreatedAt != rows[j].CreatedAt {
+			return rows[i].CreatedAt > rows[j].CreatedAt
+		}
+		return rows[i].ID > rows[j].ID
+	})
 	out := make([]*Run, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, runFromRow(r))

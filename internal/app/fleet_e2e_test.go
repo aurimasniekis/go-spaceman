@@ -602,3 +602,48 @@ func TestCodexChatGPTLoginIsSharedByInstances(t *testing.T) {
 		t.Fatalf("the rotated login did not replace the live copy: %s", got)
 	}
 }
+
+// A space's run list is newest first and limited, but a live run is always in it: a long-lived control run must not be
+// pushed out of the Terminals tree, the tabs and Runs by newer ended worker runs.
+func TestListRunsKeepsOldLiveRunBeyondLimit(t *testing.T) {
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "old-live", Name: "Old live", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	ctrl, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: hns.KindClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "control running", func() bool { return e.run1(ctrl.ID).Observed == "running" })
+	for i := 0; i < 3; i++ {
+		w, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "dev", Harness: hns.KindClaude})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "worker running", func() bool { return e.run1(w.ID).Observed == "running" })
+		if _, err := e.c.Fleet.StopRun(ctx, admin, w.ID, "kill", "test"); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "worker ended", func() bool { o := e.run1(w.ID).Observed; return o == "exited" || o == "failed" })
+		time.Sleep(2 * time.Millisecond) // distinct created_at
+	}
+	rs, err := e.c.Fleet.ListRuns(ctx, sp.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rs {
+		found = found || r.ID == ctrl.ID
+	}
+	if !found || len(rs) != 3 || rs[0].ID == ctrl.ID {
+		t.Fatalf("limit 2 listed %d runs, control present=%v; want the 2 newest plus the live control, newest first", len(rs), found)
+	}
+}
