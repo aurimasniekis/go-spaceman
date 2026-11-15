@@ -49,6 +49,8 @@ type runRow struct {
 	UpdatedAt                                                                                   int64
 	// Bin is the harness binary the run launched (ADR-0077); written once by setRunHarness, never by updateRun.
 	Bin harnessRun
+	// Limit is the usage limit the transcript scan found (ADR-0079); written only by setRunLimit, never by updateRun.
+	Limit runLimit
 }
 
 // harnessRun is the harness binary a run launched: for managed Claude Code the cached version and its absolute path, the
@@ -59,15 +61,17 @@ type harnessRun struct {
 
 const runCols = `run_id, space_id, generation, kind, role, harness, instance_id, terminal_name, terminal_id, core_id, identity, pid, desired, state,
   exit_code, reason, error, session_id, status, status_kind, turn, adopted, updated_at, harness_version, harness_path, harness_requested,
-  harness_fallback`
+  harness_fallback, limit_kind, limit_resets_at, limit_since, limit_offset`
 
 func scanRun(sc interface{ Scan(...any) error }) (runRow, error) {
 	var r runRow
 	var exit sql.NullInt64
 	var adopted int64
+	var resets, since sql.NullInt64
 	err := sc.Scan(&r.RunID, &r.SpaceID, &r.Generation, &r.Kind, &r.Role, &r.Harness, &r.InstanceID, &r.TerminalName, &r.TerminalID, &r.CoreID,
 		&r.Identity, &r.PID, &r.Desired, &r.State, &exit, &r.Reason, &r.Error, &r.SessionID, &r.Status, &r.StatusKind, &r.Turn, &adopted, &r.UpdatedAt,
-		&r.Bin.Version, &r.Bin.Path, &r.Bin.Requested, &r.Bin.Fallback)
+		&r.Bin.Version, &r.Bin.Path, &r.Bin.Requested, &r.Bin.Fallback, &r.Limit.Kind, &resets, &since, &r.Limit.Offset)
+	r.Limit.ResetsAt, r.Limit.Since = timeOf(resets), timeOf(since)
 	if exit.Valid {
 		v := int(exit.Int64)
 		r.ExitCode = &v
@@ -76,11 +80,20 @@ func scanRun(sc interface{ Scan(...any) error }) (runRow, error) {
 	return r, err
 }
 
-func (r runRow) report() proto.RunReport {
+// report is the run's report; its usage limit is normalized at now.
+func (r runRow) report(now time.Time) proto.RunReport {
 	return proto.RunReport{RunID: r.RunID, SpaceID: r.SpaceID, Generation: r.Generation, State: r.State, TerminalID: r.TerminalID, CoreID: r.CoreID,
 		Identity: r.Identity, PID: r.PID, ExitCode: r.ExitCode, Reason: r.Reason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind,
 		Turn: r.Turn, SessionID: r.SessionID, Adopted: r.Adopted, HarnessVersion: r.Bin.Version, HarnessRequested: r.Bin.Requested,
-		HarnessFallback: r.Bin.Fallback, ObservedAt: time.UnixMicro(r.UpdatedAt).UTC()}
+		HarnessFallback: r.Bin.Fallback, Limit: r.Limit.wire(now), ObservedAt: time.UnixMicro(r.UpdatedAt).UTC()}
+}
+
+func timeOf(v sql.NullInt64) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := time.UnixMicro(v.Int64).UTC()
+	return &t
 }
 
 func ended(state string) bool {
@@ -171,6 +184,15 @@ func (j *Journal) setRunHarness(ctx context.Context, runID string, h harnessRun)
 	return j.s.W().TxNamed(ctx, "journal.run_harness", func(tx *store.Tx) error {
 		_, err := tx.SQL.ExecContext(ctx, `UPDATE runs SET harness_version = ?, harness_path = ?, harness_requested = ?, harness_fallback = ?,
 			updated_at = ? WHERE run_id = ?`, h.Version, h.Path, h.Requested, h.Fallback, tx.NowMicros(), runID)
+		return err
+	})
+}
+
+// setRunLimit records a run's usage limit and how far its transcript has been scanned.
+func (j *Journal) setRunLimit(ctx context.Context, runID string, l runLimit) error {
+	return j.s.W().TxNamed(ctx, "journal.run_limit", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE runs SET limit_kind = ?, limit_resets_at = ?, limit_since = ?, limit_offset = ? WHERE run_id = ?`,
+			l.Kind, nullTime(l.ResetsAt), nullTime(l.Since), l.Offset, runID)
 		return err
 	})
 }

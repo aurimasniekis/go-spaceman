@@ -553,6 +553,9 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	switch {
 	case ended(row.State) && !ended(prev.State):
 		bctx := context.WithoutCancel(ctx)
+		if row.Harness == harness.KindClaude {
+			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
+		}
 		a.goTrack(func() {
 			a.mem.flush(bctx, row, "run ended")
 			a.usageFinal(bctx, row)
@@ -562,6 +565,11 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)
+	}
+	// Usage limits (ADR-0079): scanned when a turn ends (idle, done) or fails (error), never per output chunk.
+	if row.State == proto.RunRunning && row.Harness == harness.KindClaude && limitScanned(row.Status) &&
+		(prev.Status != row.Status || prev.Turn != row.Turn) {
+		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
 }
 

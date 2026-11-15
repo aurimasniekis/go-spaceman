@@ -47,7 +47,7 @@ func TestManagedClaudePinDownloadsExactVersion(t *testing.T) {
 		t.Fatalf("argv[0] %q, want %q", argv[0], want)
 	}
 	// Every report from now on carries what ran (central stores it on the run row).
-	if rep := r.report(); rep.HarnessVersion != "2.1.1" || rep.HarnessRequested != "2.1.1" || rep.HarnessFallback != "" {
+	if rep := r.report(time.Now()); rep.HarnessVersion != "2.1.1" || rep.HarnessRequested != "2.1.1" || rep.HarnessFallback != "" {
 		t.Fatalf("report %+v", rep)
 	}
 	// An unpinned launch still follows the channel.
