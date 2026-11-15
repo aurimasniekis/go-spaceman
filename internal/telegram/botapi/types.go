@@ -75,22 +75,30 @@ type Document struct {
 // Message is a message (API#message). ForwardOrigin is kept raw: MessageOrigin has several variants and the inbox
 // capture (TG-8a) decodes the ones it shows.
 type Message struct {
-	MessageID       int                   `json:"message_id"`
-	MessageThreadID int                   `json:"message_thread_id,omitempty"`
-	From            *User                 `json:"from,omitempty"`
-	Chat            Chat                  `json:"chat"`
-	Date            int64                 `json:"date"`
-	EditDate        int64                 `json:"edit_date,omitempty"`
-	MediaGroupID    string                `json:"media_group_id,omitempty"`
-	ForwardOrigin   json.RawMessage       `json:"forward_origin,omitempty"`
-	ReplyToMessage  *Message              `json:"reply_to_message,omitempty"`
-	Text            string                `json:"text,omitempty"`
-	Entities        []MessageEntity       `json:"entities,omitempty"`
-	Caption         string                `json:"caption,omitempty"`
-	CaptionEntities []MessageEntity       `json:"caption_entities,omitempty"`
-	Photo           []PhotoSize           `json:"photo,omitempty"`
-	Document        *Document             `json:"document,omitempty"`
-	ReplyMarkup     *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+	MessageID       int             `json:"message_id"`
+	MessageThreadID int             `json:"message_thread_id,omitempty"`
+	From            *User           `json:"from,omitempty"`
+	Chat            Chat            `json:"chat"`
+	Date            int64           `json:"date"`
+	EditDate        int64           `json:"edit_date,omitempty"`
+	MediaGroupID    string          `json:"media_group_id,omitempty"`
+	ForwardOrigin   json.RawMessage `json:"forward_origin,omitempty"`
+	ReplyToMessage  *Message        `json:"reply_to_message,omitempty"`
+	Text            string          `json:"text,omitempty"`
+	Entities        []MessageEntity `json:"entities,omitempty"`
+	Caption         string          `json:"caption,omitempty"`
+	CaptionEntities []MessageEntity `json:"caption_entities,omitempty"`
+	Photo           []PhotoSize     `json:"photo,omitempty"`
+	Document        *Document       `json:"document,omitempty"`
+	// Media the inbox capture doesn't carry, kept raw only to know it is there: such a message is refused, not
+	// captured as its caption alone.
+	Video       json.RawMessage       `json:"video,omitempty"`
+	VideoNote   json.RawMessage       `json:"video_note,omitempty"`
+	Voice       json.RawMessage       `json:"voice,omitempty"`
+	Audio       json.RawMessage       `json:"audio,omitempty"`
+	Animation   json.RawMessage       `json:"animation,omitempty"`
+	Sticker     json.RawMessage       `json:"sticker,omitempty"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
 // CallbackQuery is a tap on an inline button (API#callbackquery). Message may be an inaccessible message (date 0).

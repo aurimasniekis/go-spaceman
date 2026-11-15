@@ -4755,6 +4755,27 @@
     principal on every `approval` action (enforced ones are always that type, ADR-0024), whatever the space's
     `enforced_approvals` setting; questions, todos, messages and custom types stay open. TG-7 relaxes this guard to the
     per-space `confirm` opt-in for enforced approvals.
+  - **Inbox capture (TG-8a-2).** A linked user's non-command message becomes an inbox item in the link's current space
+    (or its only visible one), created as the link's Telegram principal through the in-process API, so the web's
+    authorization (`inbox:write`, `attachment:write`), size cap, content sniffing, quota and audit apply; a space hidden
+    from Telegram is never a target. Text or caption is the body; a photo (largest size) or a document is downloaded
+    server-side (20 MB, the Bot API's limit; a file known to be larger is refused before any download) and uploaded
+    through `upload-attachment`; the sender's claimed MIME type is not used. A forward puts "Forwarded from <name>" in
+    the body as a quoted line (names stripped of control and markup characters); `source_label` is whatever the API
+    sets for the principal, never the origin. An album (`media_group_id`) is collected per link (at most 3 open albums,
+    10 parts each, flushed after 1.5 s without a part or 10 s at the latest) and becomes one item. Each item costs the
+    link one `inbox_items` unit, each file one `downloads` unit (the same unit is taken for each attachment sent back).
+    The item is created with an `Idempotency-Key` naming the first message. Captured text is untrusted data.
+  - **Every capture is acked** with one message: the item was added (title only where the content level is full, and
+    an Open button) or why not. **Limitation:** a webhook update is acknowledged with 200 before it is handled, so
+    Telegram never redelivers it. An update in flight when central restarts (an album still collecting, a download or
+    upload under way) is lost, and so is its ack; the user, who gets no ack, sends it again. Polling mode has the same
+    gap between a poll's offset advancing and the handler finishing. Nothing durable is kept for capture.
+  - **Attachments back to Telegram.** Reading an item in a space with content level `full` also sends its first three
+    attachments: the metadata is read through `get-attachment` as the principal (that is the authorization), the stored
+    bytes are opened by `chat.Options.Content` (the raw content route stays Mini App only), and the file goes out with
+    `protect_content` (a PNG or JPEG raster image as a photo up to 10 MB, anything else as a document up to 20 MB).
+    A `summary` space sends no files.
 
 ## 2. Open items and unresolved contracts
 
