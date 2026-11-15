@@ -302,10 +302,8 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     // without tails sends none and the whole recording follows, as before.
     let sawTail = false
     const handle = watchTransport().open(url, {
-      onOpen: () => {
-        failures.current = 0
-        setState('live')
-      },
+      // The failure count is reset by the first record, not by the open: a stream that opens and closes with nothing keeps backing off.
+      onOpen: () => setState('live'),
       onReconnecting: () => setState('connecting'),
       onClosed: (status) => {
         if (closed) return
@@ -329,12 +327,14 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
           // One per stream; another would count its gaps twice.
           if (sawTail) return
           sawTail = true
+          failures.current = 0
           const tail = JSON.parse(data) as RecordingTail
           setEarlier(tail.skipped_bytes)
           if (first) catchUp(1)
           first = false
           fed.push(tailRecords(tail))
         } else if (type === 'record') {
+          failures.current = 0
           const r = JSON.parse(data) as RecordingRecord
           // A reconnect resumes after the last record, so a record is never applied twice.
           if (r.seq <= queued) return
@@ -355,8 +355,9 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
             setState('connecting')
             void watchTransport().sessionStillValid().then((ok) => {
               if (closed) return
-              if (ok) setAttempt((n) => n + 1)
-              else setState('ended')
+              if (!ok || failures.current >= 8) return setState('ended')
+              // Back off like any refused stream: a session the server no longer accepts must not loop.
+              retry = setTimeout(() => !closed && setAttempt((n) => n + 1), Math.min(30_000, 1_000 * 2 ** failures.current++))
             })
           }
         }
@@ -378,7 +379,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
         <StatusBadges sum={sum} live={state} typing={!!onInput} loading={loading || (!term && !error)} />
         {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} />}
       </Group>
-      {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
+      {state === 'denied' && <Text c="owlRed" size="sm">The terminal is not available (the space has not enabled it, or your access ended).</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
       <Box pos="relative" style={{ minWidth: 0 }}>
         <Box ref={box} className="sm-terminal" data-earlier={earlier} data-reloading={reloading} style={{ overflow: 'auto', maxHeight: '70vh', overscrollBehavior: 'contain' }}>
