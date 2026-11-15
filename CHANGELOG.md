@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Security
+
+- The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
+  that carried WebSocket upgrade headers used to be exempt from it.
+
 ## [0.1.5] - 2026-11-15
 
 Release on top of v0.1.4. It adds the Telegram integration (ADR-0083): a bot you chat with, a Mini App that opens inside

@@ -22,7 +22,7 @@ func readServer(t *testing.T, readIdle time.Duration, h func(w http.ResponseWrit
 	t.Helper()
 	done := make(chan error, 8)
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { done <- h(w, r) })
-	srv := httptest.NewUnstartedServer(WriteProgress(ReadProgress(inner, readIdle), time.Minute))
+	srv := httptest.NewUnstartedServer(WriteProgress(ReadProgress(inner, readIdle), time.Minute, "/agent/"))
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.Start()
 	t.Cleanup(srv.Close)
