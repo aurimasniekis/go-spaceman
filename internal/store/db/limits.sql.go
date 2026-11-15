@@ -202,7 +202,7 @@ func (q *Queries) LastBudgetNotice(ctx context.Context, arg LastBudgetNoticePara
 }
 
 const listActiveWorkRunsInSpace = `-- name: ListActiveWorkRunsInSpace :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic') AND desired = 'running'
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic') AND desired = 'running'
   AND observed IN ('pending', 'starting', 'running', 'unknown')
 ORDER BY created_at DESC, id DESC
 `
@@ -254,6 +254,9 @@ func (q *Queries) ListActiveWorkRunsInSpace(ctx context.Context, spaceID string)
 			&i.HarnessVersion,
 			&i.HarnessRequested,
 			&i.HarnessFallback,
+			&i.LimitKind,
+			&i.LimitResetsAt,
+			&i.LimitSince,
 		); err != nil {
 			return nil, err
 		}

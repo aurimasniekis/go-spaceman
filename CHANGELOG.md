@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Usage limits, groundwork (ADR-0079, Proposed): central migration 0050 (a run's reported limit, the `usage_limits` and
+  `limit_waits` tables), the agent's journal migration 0008, and node protocol 1.12, whose run reports may carry the
+  limit a node detected. Nothing detects or acts on limits yet. Both migrations are forward-only in production: take a
+  backup first. Upgrade central first, then the node agents; a node agent below 1.12 keeps working as before.
+
 ## [0.1.3] - 2026-11-13
 
 Patch release on top of v0.1.2. It makes no production-readiness claim (docs/RELEASE_READINESS.md §17). It contains:
