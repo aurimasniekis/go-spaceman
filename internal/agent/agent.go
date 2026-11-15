@@ -122,7 +122,10 @@ type Agent struct {
 	// finalSent and finalAcked are, per ended run, the journal update time of the final state this process sent to central
 	// and the one central acknowledged (prune.go); memory only.
 	finalSent, finalAcked map[string]int64
-	connCtx               context.Context
+	// followSnap is, per run, the journal update time of the final state in this connection's follow-up snapshot
+	// (helloRuns): the follow-up reports it, so the connection's reconcile does not report it inline (finalAck).
+	followSnap map[string]int64
+	connCtx    context.Context
 	// minor is the negotiated protocol minor version of the current connection.
 	minor int
 	// toolCalls are the agent tool calls waiting for central's result, by call ID.
