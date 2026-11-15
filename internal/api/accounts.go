@@ -13,14 +13,16 @@ import (
 // AccountRules are the authorization rules of the account operations. Binding an account to a space hands its
 // credential to that space's runs, so it needs account:write, not only space configuration rights.
 var AccountRules = map[string]Rule{
-	"list-account-kinds":  FilteredRead(),
-	"list-accounts":       Global(authz.AccountRead),
-	"get-account":         Global(authz.AccountRead),
-	"create-account":      Global(authz.AccountWrite),
-	"update-account":      Global(authz.AccountWrite),
-	"delete-account":      Global(authz.AccountWrite),
-	"list-space-accounts": InSpace(authz.SpaceConfigRead),
-	"set-space-accounts":  Global(authz.AccountWrite),
+	"list-account-kinds":    FilteredRead(),
+	"list-accounts":         Global(authz.AccountRead),
+	"get-account":           Global(authz.AccountRead),
+	"create-account":        Global(authz.AccountWrite),
+	"update-account":        Global(authz.AccountWrite),
+	"delete-account":        Global(authz.AccountWrite),
+	"list-space-accounts":   InSpace(authz.SpaceConfigRead),
+	"set-space-accounts":    Global(authz.AccountWrite),
+	"list-space-role-pools": InSpace(authz.SpaceConfigRead),
+	"put-space-role-pool":   Global(authz.AccountWrite),
 }
 
 // AccountPath identifies an account.
@@ -47,6 +49,7 @@ func (b AccountBody) input() accounts.Input {
 type BindingInput struct {
 	AccountID string `json:"account_id" maxLength:"64"`
 	Default   bool   `json:"default,omitempty" doc:"The account the space's runs of its harness use unless a launch names another"`
+	Priority  int    `json:"priority,omitempty" minimum:"0" maximum:"1000" doc:"Pool order for usage-limit failover, lower first; 0 or omitted is 100"`
 }
 
 // AccountList is every account.
@@ -56,7 +59,24 @@ type AccountList struct {
 
 // SpaceAccounts is the accounts a space's runs may use.
 type SpaceAccounts struct {
-	Items []accounts.Binding `json:"items"`
+	Items           []accounts.Binding `json:"items"`
+	AccountsVersion int64              `json:"accounts_version" doc:"The version of the space's account configuration; the ETag header carries it too"`
+}
+
+// SpaceRolePools is the role pools of a space.
+type SpaceRolePools struct {
+	Items           []accounts.RolePool `json:"items"`
+	AccountsVersion int64               `json:"accounts_version" doc:"The version of the space's account configuration; the ETag header carries it too"`
+}
+
+type spaceAccountsOut struct {
+	ETag string `header:"ETag" doc:"The version of the space's account configuration (bindings, priorities, role pools), for If-Match"`
+	Body SpaceAccounts
+}
+
+type spaceRolePoolsOut struct {
+	ETag string `header:"ETag" doc:"The version of the space's account configuration, for If-Match"`
+	Body SpaceRolePools
 }
 
 type accountOut struct {
@@ -142,31 +162,79 @@ func RegisterAccounts(svc *accounts.Service) func(api huma.API, d *Deps) {
 			})
 		huma.Register(api, huma.Operation{OperationID: "list-space-accounts", Method: http.MethodGet, Path: "/spaces/{space_id}/accounts",
 			Summary: "Accounts the space's runs may use", Tags: tags},
-			func(ctx context.Context, in *SpacePath) (*struct{ Body SpaceAccounts }, error) {
+			func(ctx context.Context, in *SpacePath) (*spaceAccountsOut, error) {
+				v, err := svc.AccountsVersion(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "accounts.bindings", err)
+				}
 				l, err := svc.Bindings(ctx, in.SpaceID)
 				if err != nil {
 					return nil, d.fail(ctx, "accounts.bindings", err)
 				}
-				return &struct{ Body SpaceAccounts }{Body: SpaceAccounts{Items: l}}, nil
+				return &spaceAccountsOut{ETag: ETag(v), Body: SpaceAccounts{Items: l, AccountsVersion: v}}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "set-space-accounts", Method: http.MethodPut, Path: "/spaces/{space_id}/accounts",
 			Summary: "Set the accounts the space's runs may use", Description: "At most one default per harness. Launches use the named account, else the " +
-				"default, else the only bound account; otherwise they are refused.", Tags: tags},
+				"default, else the only bound account; otherwise they are refused. The order of the items is the binding order; a priority " +
+				"(lower first, default 100) orders the pool for usage-limit failover. With If-Match, a change made since that version is refused.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
+				OptionalIfMatch
 				Body struct {
 					Items []BindingInput `json:"items" maxItems:"50"`
 				}
-			}) (*struct{ Body SpaceAccounts }, error) {
-				bs := make([]accounts.Binding, 0, len(in.Body.Items))
-				for _, b := range in.Body.Items {
-					bs = append(bs, accounts.Binding{AccountID: b.AccountID, Default: b.Default})
-				}
-				l, err := svc.SetBindings(ctx, Actor(ctx), in.SpaceID, bs)
+			}) (*spaceAccountsOut, error) {
+				v, err := optionalVersion(in.OptionalIfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "accounts.bind", err)
 				}
-				return &struct{ Body SpaceAccounts }{Body: SpaceAccounts{Items: l}}, nil
+				bs := make([]accounts.Binding, 0, len(in.Body.Items))
+				for _, b := range in.Body.Items {
+					bs = append(bs, accounts.Binding{AccountID: b.AccountID, Default: b.Default, Priority: b.Priority})
+				}
+				l, err := svc.SetBindingsIf(ctx, Actor(ctx), in.SpaceID, bs, v)
+				if err != nil {
+					return nil, d.fail(ctx, "accounts.bind", err)
+				}
+				nv, err := svc.AccountsVersion(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "accounts.bind", err)
+				}
+				return &spaceAccountsOut{ETag: ETag(nv), Body: SpaceAccounts{Items: l, AccountsVersion: nv}}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-role-pools", Method: http.MethodGet, Path: "/spaces/{space_id}/account-pools",
+			Summary: "A space's role pools", Description: "A role with a pool uses those accounts only (each must also be bound to the space), ordered by " +
+				"priority; a role without one uses the space's bindings. Pools apply when the space's usage_limit_failover is on.", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*spaceRolePoolsOut, error) {
+				l, v, err := svc.Pools(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "accounts.pools", err)
+				}
+				return &spaceRolePoolsOut{ETag: ETag(v), Body: SpaceRolePools{Items: l, AccountsVersion: v}}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "put-space-role-pool", Method: http.MethodPut, Path: "/spaces/{space_id}/account-pools/{role}",
+			Summary: "Set a role's pool", Description: "Replaces the role's pool; an empty list removes it, so the role uses the space's bindings again. " +
+				"If-Match is the version of the space's account configuration.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				Role string `path:"role" pattern:"^[a-z][a-z0-9-]{0,47}$"`
+				IfMatch
+				Body struct {
+					Items []accounts.PoolEntry `json:"items" maxItems:"50"`
+				}
+			}) (*spaceRolePoolsOut, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "accounts.role_pool", err)
+				}
+				if _, err := svc.SetRolePool(ctx, Actor(ctx), in.SpaceID, in.Role, in.Body.Items, v); err != nil {
+					return nil, d.fail(ctx, "accounts.role_pool", err)
+				}
+				l, nv, err := svc.Pools(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "accounts.role_pool", err)
+				}
+				return &spaceRolePoolsOut{ETag: ETag(nv), Body: SpaceRolePools{Items: l, AccountsVersion: nv}}, nil
 			})
 	}
 }

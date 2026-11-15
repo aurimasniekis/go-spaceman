@@ -189,6 +189,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "priority": {
+            "description": "Pool order for usage-limit failover, lower first; 0 or omitted is 100",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -231,6 +238,48 @@
           "harness",
           "env",
           "delivery"
+        ],
+        "type": "object"
+      },
+      "AccountsPoolEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priority": {
+            "description": "Lower first; 0 or omitted is 100",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "account_id"
+        ],
+        "type": "object"
+      },
+      "AccountsRolePool": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AccountsPoolEntry"
+            },
+            "type": "array"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "items"
         ],
         "type": "object"
       },
@@ -1986,6 +2035,13 @@
           "default": {
             "description": "The account the space's runs of its harness use unless a launch names another",
             "type": "boolean"
+          },
+          "priority": {
+            "description": "Pool order for usage-limit failover, lower first; 0 or omitted is 100",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -13977,6 +14033,31 @@
         ],
         "type": "object"
       },
+      "Put-space-role-poolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Put-space-role-poolRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AccountsPoolEntry"
+            },
+            "maxItems": 50,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "Queue-decisionsResponse": {
         "additionalProperties": false,
         "properties": {
@@ -17595,6 +17676,11 @@
             "readOnly": true,
             "type": "string"
           },
+          "accounts_version": {
+            "description": "The version of the space's account configuration; the ETag header carries it too",
+            "format": "int64",
+            "type": "integer"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/AccountsBinding"
@@ -17603,7 +17689,8 @@
           }
         },
         "required": [
-          "items"
+          "items",
+          "accounts_version"
         ],
         "type": "object"
       },
@@ -17660,6 +17747,36 @@
         },
         "required": [
           "template_id"
+        ],
+        "type": "object"
+      },
+      "SpaceRolePools": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SpaceRolePools.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "accounts_version": {
+            "description": "The version of the space's account configuration; the ETag header carries it too",
+            "format": "int64",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AccountsRolePool"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "accounts_version"
         ],
         "type": "object"
       },
@@ -26280,6 +26397,136 @@
         ]
       }
     },
+    "/spaces/{space_id}/account-pools": {
+      "get": {
+        "description": "A role with a pool uses those accounts only (each must also be bound to the space), ordered by priority; a role without one uses the space's bindings. Pools apply when the space's usage_limit_failover is on.",
+        "operationId": "list-space-role-pools",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceRolePools"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "description": "The version of the space's account configuration, for If-Match",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's role pools",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/spaces/{space_id}/account-pools/{role}": {
+      "put": {
+        "description": "Replaces the role's pool; an empty list removes it, so the role uses the space's bindings again. If-Match is the version of the space's account configuration.",
+        "operationId": "put-space-role-pool",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9-]{0,47}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Put-space-role-poolRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceRolePools"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "description": "The version of the space's account configuration, for If-Match",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set a role's pool",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
     "/spaces/{space_id}/accounts": {
       "get": {
         "operationId": "list-space-accounts",
@@ -26303,7 +26550,15 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "description": "The version of the space's account configuration (bindings, priorities, role pools), for If-Match",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -26322,7 +26577,7 @@
         ]
       },
       "put": {
-        "description": "At most one default per harness. Launches use the named account, else the default, else the only bound account; otherwise they are refused.",
+        "description": "At most one default per harness. Launches use the named account, else the default, else the only bound account; otherwise they are refused. The order of the items is the binding order; a priority (lower first, default 100) orders the pool for usage-limit failover. With If-Match, a change made since that version is refused.",
         "operationId": "set-space-accounts",
         "parameters": [
           {
@@ -26331,6 +26586,15 @@
             "required": true,
             "schema": {
               "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
               "type": "string"
             }
           }
@@ -26354,7 +26618,15 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "description": "The version of the space's account configuration (bindings, priorities, role pools), for If-Match",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {

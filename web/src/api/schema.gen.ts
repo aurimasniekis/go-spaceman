@@ -1927,6 +1927,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/account-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's role pools
+         * @description A role with a pool uses those accounts only (each must also be bound to the space), ordered by priority; a role without one uses the space's bindings. Pools apply when the space's usage_limit_failover is on.
+         */
+        get: operations["list-space-role-pools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/account-pools/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a role's pool
+         * @description Replaces the role's pool; an empty list removes it, so the role uses the space's bindings again. If-Match is the version of the space's account configuration.
+         */
+        put: operations["put-space-role-pool"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/accounts": {
         parameters: {
             query?: never;
@@ -1938,7 +1978,7 @@ export interface paths {
         get: operations["list-space-accounts"];
         /**
          * Set the accounts the space's runs may use
-         * @description At most one default per harness. Launches use the named account, else the default, else the only bound account; otherwise they are refused.
+         * @description At most one default per harness. Launches use the named account, else the default, else the only bound account; otherwise they are refused. The order of the items is the binding order; a priority (lower first, default 100) orders the pool for usage-limit failover. With If-Match, a change made since that version is refused.
          */
         put: operations["set-space-accounts"];
         post?: never;
@@ -4911,6 +4951,11 @@ export interface components {
              */
             harness?: "claude-code" | "codex";
             name?: string;
+            /**
+             * Format: int64
+             * @description Pool order for usage-limit failover, lower first; 0 or omitted is 100
+             */
+            priority?: number;
         };
         AccountsKind: {
             /** @enum {string} */
@@ -4920,6 +4965,19 @@ export interface components {
             harness: "claude-code" | "codex";
             label: string;
             name: string;
+        };
+        AccountsPoolEntry: {
+            account_id: string;
+            name?: string;
+            /**
+             * Format: int64
+             * @description Lower first; 0 or omitted is 100
+             */
+            priority?: number;
+        };
+        AccountsRolePool: {
+            items: components["schemas"]["AccountsPoolEntry"][];
+            role: string;
         };
         "Add-task-blockerRequest": {
             /**
@@ -5582,6 +5640,11 @@ export interface components {
             account_id: string;
             /** @description The account the space's runs of its harness use unless a launch names another */
             default?: boolean;
+            /**
+             * Format: int64
+             * @description Pool order for usage-limit failover, lower first; 0 or omitted is 100
+             */
+            priority?: number;
         };
         BreakGlassStatus: {
             /**
@@ -10155,6 +10218,15 @@ export interface components {
             held_subscriptions: string[];
             version: components["schemas"]["EventsTemplateVersion"];
         };
+        "Put-space-role-poolRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Put-space-role-poolRequest.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["AccountsPoolEntry"][];
+        };
         "Queue-decisionsResponse": {
             /**
              * Format: uri
@@ -11706,6 +11778,11 @@ export interface components {
              * @example /api/v1/schemas/SpaceAccounts.json
              */
             readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The version of the space's account configuration; the ETag header carries it too
+             */
+            accounts_version: number;
             items: components["schemas"]["AccountsBinding"][];
         };
         SpaceRoleInput: {
@@ -11726,6 +11803,20 @@ export interface components {
             /** @description Added to the template's skills; a pin here wins */
             skills?: components["schemas"]["CatalogSkillRef"][];
             template_id: string;
+        };
+        SpaceRolePools: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceRolePools.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The version of the space's account configuration; the ETag header carries it too
+             */
+            accounts_version: number;
+            items: components["schemas"]["AccountsRolePool"][];
         };
         SpaceTelegramList: {
             /**
@@ -17143,6 +17234,78 @@ export interface operations {
             };
         };
     };
+    "list-space-role-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceRolePools"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-space-role-pool": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Put-space-role-poolRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceRolePools"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-space-accounts": {
         parameters: {
             query?: never;
@@ -17157,6 +17320,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -17177,7 +17341,10 @@ export interface operations {
     "set-space-accounts": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
             };
@@ -17192,6 +17359,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {

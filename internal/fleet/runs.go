@@ -282,11 +282,11 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
 			}
 			ref := in.AccountRef
-			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, avoid); err != nil {
+			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, avoid); err != nil {
 				return err
 			}
 			if avoid != nil {
-				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, nil); err == nil && base != in.AccountRef {
+				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, func(string) (bool, error) { return false, nil }); err == nil && base != in.AccountRef {
 					if resolved == nil {
 						resolved = map[string]any{}
 					}

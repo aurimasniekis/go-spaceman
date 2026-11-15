@@ -207,6 +207,8 @@ var Ops = map[string]api.TelegramClass{
 	"list-schedules":                api.TelegramExcluded,
 	"list-skills":                   api.TelegramExcluded,
 	"list-space-accounts":           api.TelegramExcluded,
+	"list-space-role-pools":         api.TelegramExcluded,
+	"put-space-role-pool":           api.TelegramExcluded,
 	"list-space-git-ssh-keys":       api.TelegramExcluded,
 	"list-space-human-policies":     api.TelegramExcluded,
 	"list-space-limit-waits":        api.TelegramExcluded,

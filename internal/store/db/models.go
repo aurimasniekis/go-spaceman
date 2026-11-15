@@ -1285,6 +1285,7 @@ type Space struct {
 	CreatedBy            string
 	UpdatedAt            int64
 	ArchivedAt           sql.NullInt64
+	AccountsVersion      int64
 }
 
 type SpaceAccount struct {
@@ -1294,6 +1295,7 @@ type SpaceAccount struct {
 	IsDefault int64
 	CreatedAt int64
 	CreatedBy string
+	Priority  int64
 }
 
 type SpaceHarborPilot struct {
@@ -1395,6 +1397,15 @@ type SpaceRole struct {
 	UpdatedAt    int64
 	Version      int64
 	SkillsJson   string
+}
+
+type SpaceRoleAccount struct {
+	SpaceID   string
+	Role      string
+	AccountID string
+	Priority  int64
+	CreatedAt int64
+	CreatedBy string
 }
 
 type SpaceSchedule struct {

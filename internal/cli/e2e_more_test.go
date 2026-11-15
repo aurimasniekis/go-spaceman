@@ -110,6 +110,22 @@ func newGroupsAgainstCentral(t *testing.T, c *central, e env, adaID string) {
 	if out := e.ok(t, "account", "space", "--space", s); !strings.Contains(out, "bound") {
 		t.Fatalf("space accounts %s", out)
 	}
+	// Priorities and a role pool round-trip through the API; a pool account must be bound, and unbinding drops it.
+	acct2 := e.obj(t, "account", "create", "--name", "bound-two", "--kind", "anthropic_api_key", "--secret-file", writeFile(t, "k2", "sk-ant-bound-2\n", 0o600))
+	id1, id2 := str(acct, "id"), str(acct2, "id")
+	e.ok(t, "account", "set-space", "--space", s, "--account", id1, "--account", id2, "--default", id1, "--priority", id2+"=10")
+	if out := e.ok(t, "account", "space", "--space", s); !strings.Contains(out, "10") {
+		t.Fatalf("priority not listed: %s", out)
+	}
+	e.ok(t, "account", "pool", "set", "--space", s, "reviewer", "--account", id2, "--priority", id2+"=5")
+	if out := e.ok(t, "account", "pool", "list", "--space", s); !strings.Contains(out, "reviewer") || !strings.Contains(out, "bound-two") {
+		t.Fatalf("role pool %s", out)
+	}
+	e.code(t, ExitUsage, "account", "pool", "set", "--space", s, "reviewer", "--account", id1, "--priority", id2+"=5")
+	e.ok(t, "account", "set-space", "--space", s, "--account", id1, "--default", id1)
+	if out := e.ok(t, "account", "pool", "list", "--space", s); strings.Contains(out, "reviewer") {
+		t.Fatalf("pool of an unbound account kept: %s", out)
+	}
 	e.ok(t, "mcp", "space-servers", "--space", s)
 	e.ok(t, "role", "options", "--space", s)
 	if u := e.obj(t, "space", "usage", s); u["known_runs"] == nil {
