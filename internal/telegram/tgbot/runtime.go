@@ -114,15 +114,6 @@ type runtime struct {
 // It is telegram.miniapp_host when that is set, whatever the bot's miniapp_host says.
 func (svc *Service) MiniAppHost() string { return *svc.miniAppHost.Load() }
 
-// Username is the live bot's username without @ (from getMe, or the stored one), or "" before the bot is known. It
-// answers from memory, for building t.me links.
-func (svc *Service) Username() string {
-	rt := &svc.run
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.username
-}
-
 // StoredMiniAppHost is the stored bot's miniapp_host, enabled or not, or "" when there is no bot or it has none.
 // Central routes it to the Mini App handler whatever the bot's state, like telegram.miniapp_host; the handler serves
 // only MiniAppHost. Before Start has loaded the bot it is "".
