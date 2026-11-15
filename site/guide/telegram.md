@@ -149,7 +149,7 @@ web page for these settings):
 | `enabled` | off (default), on | Whether the space is visible through Telegram at all. |
 | `content_level` | `full` (default once enabled), `summary`, `off` | `full` shows bodies in chat; `summary` keeps bodies in the Mini App; `off` hides the space. |
 | `enforced_approvals` | `web_only` (default), `confirm` | Whether an enforced approval may be decided in chat. |
-| `topics` | off (default) | A topic per space ([Topics mode](#topics-mode)). |
+| `topics` | off (default) | Deprecated, no effect: the chat layout is chosen per link ([Topics mode](#topics-mode)). |
 | `terminal_watch` | off (default) | Shows the run's live terminal, read-only, in the Mini App ([below](#the-watch-only-terminal)). |
 | `group_chat_id` | none (default) | The forum group bound to the space ([Group mode](#group-mode)); changing it needs the admin-only `telegram_group:write`. |
 
@@ -169,15 +169,28 @@ end-to-end encrypted: choose `summary` or `off` for spaces whose content must no
 
 ## Topics mode
 
-In a private chat with topics enabled for the bot (in BotFather), a space with `topics` on gets its **own topic**, and what
-needs you goes to a **Needs you** topic. The bot creates a topic when it first has something to put there, and remembers it
-for your link. A message you write inside a space's topic works on that space without changing your current space.
-`/space` still switches it explicitly. If a topic was deleted or closed, the bot makes it again once, and otherwise falls
-back to the main chat, so a notification isn't lost. If Telegram refuses topics in your chat, the bot uses the main chat and
-asks again after 10 minutes. Topics only choose where a message appears, never whether you may see it.
+The chat layout is chosen **per link**, by the `threads` notification preference: `auto` (the default), `on` or `off`.
+`auto` is on when the bot has topics enabled in BotFather (the bot status shows `has_topics_enabled`). An administrator sets
+the default in `notification_defaults.threads`; a user can override it for their own link with the link preferences.
 
-The per-space `topics` setting is the switch. The global `topics_mode_default` is stored with the settings, but nothing reads
-it yet, so it changes nothing.
+When it is on, **every message about a space goes to that space's own topic**: needs-you cards with their reminders,
+escalations and assignments, inbox items, tasks in review, messages to the operators and failed runs. What concerns several
+spaces, such as the daily digest and the "many changes" notice, stays in the chat without a topic. The bot creates a topic
+when it first has something to put there, and remembers it for your link. The first time a message lands in a topic, the
+bot says so once in the chat without a topic.
+
+A message you write inside a space's topic works on that space without changing your current space. `/space` still
+switches it explicitly. If a topic was deleted or closed, the bot makes it again once, and otherwise falls back to the main
+chat, so a notification isn't lost. If Telegram refuses topics in your chat, the bot uses the main chat and asks again
+after 10 minutes. With the layout off, everything goes to the main chat. Topics only choose where a message appears, never
+whether you may see it.
+
+Older versions put what needs you in one shared **Needs you** topic. It is no longer used: the bot posts a note in it and
+leaves it, because deleting a topic deletes its messages. You can delete it yourself. Cards already in it still update.
+Topics the bot created stay in your chat when the layout is turned off.
+
+The per-space `topics` setting and the global `topics_mode_default` are deprecated: they are stored and returned, and have
+no effect.
 
 ## Group mode
 

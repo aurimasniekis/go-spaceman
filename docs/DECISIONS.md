@@ -5457,8 +5457,19 @@
   page on 2026-11-15. Nothing has been observed against a real bot yet.
 - **Evidence:** T1: `internal/telegram/botapi` `TestGetMeTopicFlags`, `TestEditForumTopic`, `TestMessagesInRecordsThread`,
   `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` (it covers the flags after a reconfigure only; the reset to false on a disable or a
-  failed getMe is not tested). All of it is
-  simulated (`internal/telegram/tgtest`); the real-bot run is TG-14 (plan §6.3).
+  failed getMe is not tested). T2 (routing): `notification_defaults.threads` (`auto`/`on`/`off`, default `auto`) with
+  the link override; `topics.Manager.Route(link, space)` and `Enabled(link, chat)` read the link's effective mode from
+  the notifier's in-memory link list and getMe's `has_topics_enabled` at send time; the digest and the "many changes"
+  notice go home (`Route(link, "")`); the legacy `needs` key gets one note and is dropped (never deleted); one home
+  announcement per link, kept as a `telegram_messages` row of kind `notice` (retention keeps it). Topic creation is
+  bounded to 5/s over every chat, and a link's lookups no longer wait for its topic create. Tests:
+  `internal/telegram/topics` `TestRoutePerLink`, `TestEnabledFollowsRefusal`, `TestLegacyNeedsRetiredOnceUnderConcurrentSends`,
+  `TestCreatesAreRateLimited`; `internal/telegram/notify` `TestThreadsEveryKindLandsInItsSpaceTopic`,
+  `TestThreadsDigestAndOverflowGoHome`, `TestThreadsFallbacks`, `TestThreadsModeReadAtSendTime`,
+  `TestThreadsAnnouncedOncePerLink`; `internal/app` `TestTelegramThreadsRouteEachSpaceToItsTopic`,
+  `TestTelegramThreadsFallbacks`, `TestTelegramThreadsRetireTheLegacyNeedsTopic`; `internal/retention`
+  `TestPassKeepsTelegramNotices`. All of it is simulated (`internal/telegram/tgtest`); the real-bot run is TG-14
+  (plan §6.3).
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9

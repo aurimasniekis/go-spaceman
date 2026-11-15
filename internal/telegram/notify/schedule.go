@@ -248,7 +248,8 @@ func (n *Notifier) enqueueDigest(snd *sender.Sender, l *Link, items []digestItem
 			if text == "" {
 				return nil
 			}
-			_, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, DisableNotification: n.silent(cur, now), ProtectContent: true})
+			// The digest spans spaces: it goes home (ADR-0089).
+			_, err := n.route(linkID, "")(ctx, c, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, DisableNotification: n.silent(cur, now), ProtectContent: true})
 			return err
 		}})
 	if err != nil {

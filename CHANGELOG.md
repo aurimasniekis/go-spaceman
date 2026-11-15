@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+
+- Telegram: the chat layout is chosen per link (ADR-0089). The new `notification_defaults.threads` setting (`auto`, `on`, `off`; default `auto`, which is on when the bot has topics enabled in BotFather) and a link's own override put every message about a space, needs-you cards included, in that space's topic; the digest and the "many changes" notice stay in the chat without a topic. The shared "Needs you" topic is no longer used: the bot posts a note in it once. The per-space `topics` flag and `topics_mode_default` are deprecated and have no effect. **Topics the bot creates stay in users' chats** when the layout is turned off again: Telegram can only delete a topic together with its messages.
+
 ### Fixed
 
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).

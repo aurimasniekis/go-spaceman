@@ -41,9 +41,13 @@ type StoreMappings struct{ S *store.Store }
 func (m StoreMappings) Save(ctx context.Context, rows []Mapping) error {
 	return m.S.W().TxNamed(ctx, "telegram.messages", func(tx *store.Tx) error {
 		for _, r := range rows {
+			kind := r.Kind
+			if kind == "" {
+				kind = MappingCard
+			}
 			if err := tx.Q.UpsertTelegramMessage(ctx, db.UpsertTelegramMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID),
 				LinkID: sql.NullString{String: r.LinkID, Valid: r.LinkID != ""}, SpaceID: sql.NullString{String: r.SpaceID, Valid: r.SpaceID != ""},
-				Kind: "card", ResourceType: r.Key.Type, ResourceID: r.Key.ID, ResourceVersion: r.Version, CreatedAt: r.CreatedAt.UnixMicro()}); err != nil {
+				Kind: kind, ResourceType: r.Key.Type, ResourceID: r.Key.ID, ResourceVersion: r.Version, CreatedAt: r.CreatedAt.UnixMicro()}); err != nil {
 				return err
 			}
 		}
@@ -60,6 +64,21 @@ func (m StoreMappings) Lookup(ctx context.Context, k Key) ([]Mapping, error) {
 	out := make([]Mapping, len(rows))
 	for i, r := range rows {
 		out[i] = Mapping{ChatID: r.ChatID, MessageID: int(r.MessageID), Key: k, Version: r.ResourceVersion, CreatedAt: time.UnixMicro(r.CreatedAt)}
+	}
+	return out, nil
+}
+
+// NoticeLinks returns the links that were sent the one-time notice of a type.
+func (m StoreMappings) NoticeLinks(ctx context.Context, typ string) ([]string, error) {
+	rows, err := m.S.R().ListTelegramNoticeLinks(ctx, typ)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.Valid {
+			out = append(out, r.String)
+		}
 	}
 	return out, nil
 }

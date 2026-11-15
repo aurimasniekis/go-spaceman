@@ -1137,10 +1137,14 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 	}
 	links := tgnotify.NewLinks(c.Store, c.Bus, users, obs.Component(log, "telegram.notify"), 0)
 	links.OnChange = c.Human.Kick // a changed zone or digest time moves the next digest: the deadline loop looks again
-	// Topics mode: a space whose Telegram settings turn it on gets a topic in each link's private chat.
+	// Chat layout per link (ADR-0089): with the link's threads mode on (or auto while the bot has topics enabled), each
+	// space gets a topic in the link's private chat. Both inputs are read from memory at send time.
 	c.TelegramTopics = tgtopics.New(tgtopics.Options{
-		Store:   tgtopics.StoreTopics{S: c.Store},
-		Enabled: func(spaceID string) bool { sp := c.TelegramSettings.Space(spaceID); return sp.Topics && sp.Visible() },
+		Store: tgtopics.StoreTopics{S: c.Store},
+		Mode: func(linkID string) string {
+			return links.ThreadsMode(linkID, c.TelegramSettings.Current().NotificationDefaults)
+		},
+		BotTopics: c.TelegramBot.HasTopics,
 		SpaceName: func(ctx context.Context, spaceID string) string {
 			sp, err := c.Store.R().GetSpace(ctx, spaceID)
 			if err != nil {

@@ -203,6 +203,15 @@ func (svc *Service) Username() string {
 	return rt.username
 }
 
+// HasTopics is getMe's has_topics_enabled from the last getMe (false while unknown or the bot is off). It makes no
+// call; the topics Manager reads it to decide the auto chat layout (ADR-0089).
+func (svc *Service) HasTopics() bool {
+	rt := &svc.run
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.hasTopics
+}
+
 // MiniAppBot is the running bot's ID with the key its Mini App initData is signed with (miniapp.SecretKey of its
 // token; the token itself stays here), or false while no bot runs or it has no Mini App host.
 func (svc *Service) MiniAppBot() (miniapp.Bot, bool) {

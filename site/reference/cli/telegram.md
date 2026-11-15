@@ -137,7 +137,7 @@ spaceman telegram set --file telegram.yaml --links-per-user 2
 | `--links-per-user` | integer |  | Telegram accounts per user, 1 to 3 (default 1) |
 | `--miniapp-session-absolute` | integer |  | Mini App session lifetime, 900 to 43200 seconds (default 3600) |
 | `--miniapp-session-idle` | integer |  | Mini App session idle timeout, 300 to 3600 seconds (default 900) |
-| `--topics-mode-default` | bool |  | new links start in topics mode |
+| `--topics-mode-default` | bool |  | deprecated, no effect (notification_defaults.threads chooses the chat layout) |
 
 ## spaceman telegram set-space
 
@@ -167,7 +167,7 @@ spaceman telegram set-space --space payments --enabled --content-level summary
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--terminal-watch` | bool |  | allow watching run terminals (read-only) from the Mini App |
-| `--topics` | bool |  | give the space its own topic for users in topics mode |
+| `--topics` | bool |  | deprecated, no effect (the chat layout is chosen per link) |
 
 ## spaceman telegram settings
 

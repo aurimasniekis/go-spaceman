@@ -162,6 +162,8 @@ type mappings struct {
 	rows    map[[2]int64]notify.Mapping
 	saves   int
 	lookups int
+	// noticeReads counts NoticeLinks calls.
+	noticeReads int
 }
 
 func (m *mappings) Save(_ context.Context, rows []notify.Mapping) error {
@@ -185,6 +187,30 @@ func (m *mappings) Lookup(_ context.Context, k notify.Key) ([]notify.Mapping, er
 		}
 	}
 	return out, nil
+}
+
+func (m *mappings) NoticeLinks(_ context.Context, typ string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.noticeReads++
+	var out []string
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingNotice && r.Key.Type == typ {
+			out = append(out, r.LinkID)
+		}
+	}
+	return out, nil
+}
+
+func (m *mappings) notices() (rows []notify.Mapping, reads int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingNotice {
+			rows = append(rows, r)
+		}
+	}
+	return rows, m.noticeReads
 }
 
 func (m *mappings) lookupCount() int {
@@ -226,7 +252,7 @@ type env struct {
 	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
 	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
 	authz      notify.Authorizer
-	tp         *topics.Manager // topics mode (nil: off)
+	tp         *topics.Manager // chat threads (nil: off)
 }
 
 func linkFor(i int) notify.Link {

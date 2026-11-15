@@ -152,3 +152,34 @@ func TestLinksZoneChangeKicksTheDigest(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 }
+
+// A notice row is stored with its kind, is not a card (Lookup and Card don't see it), and NoticeLinks lists its link.
+func TestStoreNoticeRows(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	if err := st.W().Exec(ctx, `INSERT INTO users (id, display_name, enabled, provisioned_via, created_at, created_by, updated_at) VALUES ('usr_a', 'a', 1, 'admin', 0, 't', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.W().Exec(ctx, `INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, prefs_json, created_at, updated_at)
+		VALUES ('tgl_a', 'usr_a', 7, 1, 11, 'active', '{}', 0, 0)`); err != nil {
+		t.Fatal(err)
+	}
+	m := notify.StoreMappings{S: st}
+	k := notify.Key{Type: notify.NoticeThreads, ID: "tgl_a"}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 3, LinkID: "tgl_a", Kind: notify.MappingNotice, Key: k, CreatedAt: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := m.NoticeLinks(ctx, notify.NoticeThreads)
+	if err != nil || len(ids) != 1 || ids[0] != "tgl_a" {
+		t.Fatalf("NoticeLinks = %v, %v", ids, err)
+	}
+	if ids, _ := m.NoticeLinks(ctx, "other"); len(ids) != 0 {
+		t.Errorf("NoticeLinks(other) = %v", ids)
+	}
+	if got, _ := m.Lookup(ctx, k); len(got) != 0 {
+		t.Errorf("a notice is not a card: Lookup = %+v", got)
+	}
+	if _, err := m.Card(ctx, 11, 3); !errors.Is(err, notify.ErrNoCard) {
+		t.Errorf("a notice is not a card: Card error %v", err)
+	}
+}

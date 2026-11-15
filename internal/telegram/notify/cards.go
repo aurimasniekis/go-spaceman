@@ -21,6 +21,8 @@ type Mapping struct {
 	Key       Key
 	Version   int64
 	CreatedAt time.Time
+	// Kind is the row's kind: MappingCard ("" too) or MappingNotice.
+	Kind string
 }
 
 // Mappings persists card mappings. Save is called in batches, never per send.
@@ -28,6 +30,8 @@ type Mappings interface {
 	Save(ctx context.Context, rows []Mapping) error
 	// Lookup returns the cards sent for a resource (all chats).
 	Lookup(ctx context.Context, k Key) ([]Mapping, error)
+	// NoticeLinks returns the links that were sent the one-time notice of a type (kind notice), read once at start.
+	NoticeLinks(ctx context.Context, typ string) ([]string, error)
 }
 
 const (
@@ -145,6 +149,18 @@ func (c *cards) record(m Mapping, r *Resource) {
 		}
 	}
 	c.byCard[cardKey{m.ChatID, m.Key}] = cur
+	c.pendLocked(m)
+}
+
+// pend queues a mapping row for the next batch write without remembering it as a card (a notice).
+func (c *cards) pend(m Mapping) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pendLocked(m)
+}
+
+// pendLocked queues a row for the next batch write. Must hold c.mu.
+func (c *cards) pendLocked(m Mapping) {
 	if c.store == nil {
 		return
 	}
