@@ -1,6 +1,9 @@
-import { Checkbox, Group, Text } from '@mantine/core'
+import { Button, Checkbox, Group, Text } from '@mantine/core'
+import { useDisclosure } from '@mantine/hooks'
+import { IconFilter } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useHumanPendingSearch, useSpaces } from '@/api/queries'
+import { isMiniApp } from '@/api/session'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { ActionFilters, useActionFilters } from '@/features/human/ActionFilters'
@@ -15,6 +18,9 @@ function HumanPage() {
   const pending = useHumanPendingSearch(filters.query)
   const spaces = useSpaces()
   const [view, setView] = useView('human.global.followup', { followUp: false })
+  // A phone has no room for the whole filter bar: in the Mini App it sits behind a Filter button (open while filters apply).
+  const mini = isMiniApp()
+  const [filtersOpen, filterPanel] = useDisclosure(mini && filters.active)
   const names = Object.fromEntries((spaces.data ?? []).map((s) => [s.id, s.name]))
   const overdue = (a: { reminder_count: number; escalated_at?: string }) => a.reminder_count > 0 || !!a.escalated_at
   const all = pending.data?.items ?? []
@@ -24,7 +30,19 @@ function HumanPage() {
     <>
       <PageHeader title="Needs you" description="Questions, approvals, to-dos and messages waiting for a person across your spaces. Search, filter and sort them." />
       <ErrorAlert error={pending.error} />
-      <ActionFilters filters={filters} global spaces={readable.length ? readable : (spaces.data ?? [])} />
+      {mini && (
+        <Group mb="xs">
+          <Button size="xs" variant="default" leftSection={<IconFilter size={14} />} aria-expanded={filtersOpen} aria-controls="needs-you-filters"
+            onClick={filterPanel.toggle}>
+            Filter{filters.active ? ' (on)' : ''}
+          </Button>
+        </Group>
+      )}
+      {(!mini || filtersOpen) && (
+        <div id="needs-you-filters">
+          <ActionFilters filters={filters} global spaces={readable.length ? readable : (spaces.data ?? [])} />
+        </div>
+      )}
       <Group mb="sm" justify="space-between">
         <Text size="xs" c="dimmed" aria-live="polite">
           {filters.active ? `${all.length} matching of ${pending.data?.total ?? 0} pending` : `${pending.data?.total ?? 0} pending`}
