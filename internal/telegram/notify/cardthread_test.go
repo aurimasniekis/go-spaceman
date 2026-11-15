@@ -194,3 +194,105 @@ func TestCardGrowsAfterItsTopicIsClosedOrDeleted(t *testing.T) {
 		})
 	}
 }
+
+// A settled card whose topic is gone keeps what it shows: its last edit stays, the part that can't be sent is left
+// out, and nothing is deleted or sent again.
+func TestFinalCardIsKeptWhenItsTopicIsClosed(t *testing.T) {
+	e, _, _ := topicsEnv(t)
+	defer e.run(e.maps)()
+	e.firstCard(12)
+	e.waitCalls("sendMessage", 4)
+	before := e.cardParts(3)
+	e.fake.CloseTopic(1001, before[0].MessageThreadID)
+
+	r := action("hum_1", 2, true)
+	r.Detail = longBody(20)
+	r.State = "Approved"
+	e.change("hum_1", r, 2, changefeed.Updated)
+	// The card is edited, then the fourth part is refused (the topic is closed).
+	deadline := time.Now().Add(10 * time.Second)
+	for refused := false; !refused; time.Sleep(2 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the new part was never refused")
+		}
+		for _, c := range e.fake.Calls("sendMessage") {
+			refused = refused || c.Status == 400
+		}
+	}
+	time.Sleep(50 * time.Millisecond) // a wrong resend would show by now
+
+	parts := e.cardParts(3)
+	if parts[0].MessageID != before[0].MessageID || !strings.Contains(parts[0].Text, "Approved") {
+		t.Errorf("the card %.30q was not kept and edited", parts[0].Text)
+	}
+	ok := 0
+	for _, c := range e.fake.Calls("sendMessage") {
+		if c.Status == 200 {
+			ok++
+		}
+	}
+	if ok != 4 {
+		t.Errorf("%d messages sent, want the first 4 only (the card was sent again)", ok)
+	}
+	if n := len(e.fake.Calls("deleteMessage")); n != 0 {
+		t.Errorf("%d deletes, want none", n)
+	}
+}
+
+// A delete that fails part way while a card is given up leaves no row of the old parts behind: after a restart the new
+// card has only its own parts.
+func TestRetireQueuesRowsOfPartsItCouldNotDelete(t *testing.T) {
+	e, _, _ := topicsEnv(t)
+	e.flushEvery = 2 * time.Millisecond
+	stop := e.run(e.maps)
+	e.firstCard(12)
+	e.waitCalls("sendMessage", 4)
+	old := e.cardParts(3)
+	e.waitRows(4)
+	e.fake.CloseTopic(1001, old[0].MessageThreadID)
+	e.fake.FailNext("deleteMessage", 500, "Internal Server Error", 0) // the last continuation can't be deleted
+
+	r := action("hum_1", 2, false)
+	r.Detail = longBody(20)
+	e.change("hum_1", r, 2, changefeed.Updated)
+	deadline := time.Now().Add(10 * time.Second)
+	for n := 0; n < 4; { // the new card's four parts (the old part that wouldn't delete is still in the closed topic)
+		if time.Now().After(deadline) {
+			t.Fatalf("%d parts in the new topic, want 4", n)
+		}
+		time.Sleep(2 * time.Millisecond)
+		n = 0
+		for _, m := range e.fake.Messages(1001) {
+			if m.MessageThreadID != old[0].MessageThreadID && m.Text != notify.ThreadsNotice {
+				n++
+			}
+		}
+	}
+	stale := func() (n int) {
+		e.maps.mu.Lock()
+		defer e.maps.mu.Unlock()
+		for _, m := range old {
+			if _, ok := e.maps.rows[[2]int64{1001, int64(m.MessageID)}]; ok {
+				n++
+			}
+		}
+		return n
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	for stale() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d rows of the old parts are left", stale())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+
+	deletes := len(e.fake.Calls("deleteMessage"))
+	defer e.run(e.maps)()
+	r.Version = 3
+	e.change("hum_1", r, 3, changefeed.Updated)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(e.fake.Calls("deleteMessage")); n != deletes {
+		t.Errorf("%d deletes after the restart, the card took old parts with it", n-deletes)
+	}
+}
