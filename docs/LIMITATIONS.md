@@ -771,18 +771,23 @@ Status: built and tested against a fake Bot API server only; **never run against
   Mini App only (not in chat).
 - **Enforced approvals are decided in the browser** unless the space sets `enforced_approvals = confirm`. Withdrawing an
   approval is never possible from Telegram, and a group never decides one.
-- **The terminal is watch-only and opt-in, and not in the Mini App yet.** The server serves a run's terminal stream to
-  Telegram only when the space turns `terminal_watch` on, never with input, takeover or resizing. No Mini App page shows
-  it in the base build (TG-10-3 is unmerged); the Mini App says the terminal isn't available.
+- **The terminal is watch-only and opt-in.** A run's page in the Mini App shows its live terminal only when the space
+  turns `terminal_watch` on and the link holds `terminal:watch`; never with input, takeover, resizing or replay. Turning
+  the setting off, or hiding or disabling the space, ends open streams at once. It exists only in the Mini App, never in a chat.
 - **Chat content lives on Telegram's servers**, not end-to-end encrypted, within the space's content level. Terminal
   output, hidden responses, non-allowlisted attachment contents and secrets are never sent to a chat. Forwarding and
   saving are turned off for messages with a body, which doesn't stop screenshots.
-- **Private chats only, unless a group is bound.** The bot leaves any group it is added to that isn't bound to a space.
-  Telegram has **no `web_app` buttons in groups**, so group messages can't open the Mini App with one tap.
-  *Group mode is not in the base build yet (TG-13): see the guide.*
+- **Private chats only, unless a forum group is bound.** The bot leaves at once a chat that can never be bound (a channel,
+  a basic group, a supergroup without topics), waits 15 minutes in an unbound forum group and then leaves, and leaves a
+  group whose binding is lost. The wait is in memory: after a restart the first update from an unbound group makes the bot
+  leave, and a group that stays silent stays until it produces one. Binding needs the admin-only `telegram_group:write`.
+  Telegram has **no `web_app` buttons in groups**, so a group's forms open the Mini App through a direct link instead,
+  which needs the bot's Main Mini App to be set in BotFather.
 - **The content level is summary-only in groups.** Whatever the space's content level, a group gets summaries, and no
   attachment is ever sent to a group chat. Group membership grants nothing: each tap is authorized as the tapping
-  person's own link.
+  person's own link. A group answers only `/inbox`, `/needsyou`, `/queue`, `/runs` and `/messages` (and a short refusal to
+  `/spaces`, `/space` and `/control`); every other command, and a command for another bot, is ignored silently, so `/needs`
+  works in a private chat only.
 - **One bot per central**, one live link per Telegram account, and a different bot revokes every link.
 - **No Telegram sign-in.** A link never signs anyone in to the web app.
 - **In-memory state is lost on restart:** Mini App sessions and replay memory (see the next section), conversation steps in chat,

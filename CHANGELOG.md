@@ -7,18 +7,37 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram Mini App watch-only terminal (ADR-0083, TG-10-3; the bot isn't usable yet): off by default. A space's admin turns on
+  `terminal_watch` in its Telegram settings, and a run page in the Mini App then shows the live terminal of that space's
+  runs to links that may watch terminals (operator and up). It is read-only: no keys, paste, size or takeover, and no replay.
+  The stream comes straight from central over the Mini App host, never through Telegram; the server refuses it again
+  unless the space opted in and the link holds `terminal:watch`, and a stream already open ends (`forbidden`) at the next
+  re-check once the setting is turned off. New `get-telegram-space-features` tells the Mini App
+  whether to show it.
+- Mini App: your Telegram settings page is editable (notification categories, quiet hours, digest, muted spaces and your
+  time zone, which is per user; topics are shown read-only). Saves send `If-Match`; a stale save reloads the form with a
+  conflict notice. The queue page shows the read-only "Next" card (never `record=true`).
+- `move-task`, `ack-message` and `resolve-message` accept an optional `If-Match` with the resource version; a stale version is a
+  409 `precondition_failed` and changes nothing, and requests without it behave as before. The Telegram chat sends the card's
+  version with them, so a change between its check and the call is a conflict, not a stale action.
+- Telegram topics mode (ADR-0083, TG-11; the bot isn't usable yet): a space whose Telegram settings turn `topics` on gets a
+  topic of its own in each linked private chat, and its open actions go to a "Needs you" topic. The bot creates a topic on
+  first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted
+  or closed is created again once; if that fails, or the chat has topics off for the bot, the message goes to the main
+  chat. Topics only choose where a message appears; who may receive it is unchanged.
 - **Telegram bot and Mini App (ADR-0083), documentation.** A guide (the site's Telegram page) covers linking an
   account, the bot chat (spaces, inbox capture, queue, runs, messages, control), needs-you forms and approvals (including
   the per-space opt-in for enforced approvals), the Mini App, topics mode, group mode, notifications with quiet hours and
   the digest, and the administration settings. An operator page (Telegram setup) covers
   `telegram.miniapp_host` (it must match the bot's host, and it fails closed without it), webhook versus polling, the
   trusted proxy, and that the planned Terraform `spaceman_telegram_bot` needs central's `miniapp_host` set first. LIMITATIONS lists what
-  Telegram can't do (web only, no `web_app` buttons in groups, a server-gated opt-in watch-only terminal (no Mini App page yet), summary-only groups), and
+  Telegram can't do (web only, no `web_app` buttons in groups, an opt-in watch-only terminal, summary-only groups), and
   SECURITY and the threat model cover the link principal, limited links for pending MFA, single-use bound confirmations,
   opt-in enforced approvals, fail-closed Mini App hosts and the stream heartbeat. **The bot and Mini App are tested against a fake
-  Telegram server only; nothing is verified against a real bot yet.** Topics mode, If-Match on move, acknowledge and
-  resolve, editable Mini App settings and group mode are documented from approved branches that are not merged into the
-  base build.
+  Telegram server only; nothing is verified against a real bot yet.** The guide also covers topics mode, group mode
+  (binding by an administrator, summary-only, alerts only the tapper sees, silent on foreign commands, when the bot
+  leaves), the watch-only terminal, the editable Mini App settings and the command menu (`/needs`, `/help`, `/settings`;
+  there is no `/new` or `/digest`).
 - Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
   App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
   muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App

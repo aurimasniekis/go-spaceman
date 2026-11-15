@@ -561,6 +561,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/telegram/settings` | `get-telegram-settings` | The Telegram bot's policy and defaults |
 | `PUT` | `/telegram/settings` | `put-telegram-settings` | Set the Telegram bot's policy and defaults |
 | `GET` | `/telegram/spaces` | `list-space-telegram` | Spaces' Telegram settings |
+| `GET` | `/telegram/spaces/{space_id}/features` | `get-telegram-space-features` | What the Mini App may show in a space |
 
 ### usage
 

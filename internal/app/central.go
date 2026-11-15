@@ -71,6 +71,7 @@ import (
 	tgnotify "github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
+	tgtopics "github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
 	"github.com/aurimasniekis/go-spaceman/internal/xspace"
@@ -182,6 +183,8 @@ type Central struct {
 	// TelegramNotify turns the change feed into Telegram notifications and card edits (ADR-0078, plan §4.2): one
 	// consumer, no per-user feeds, nothing written per tick.
 	TelegramNotify *tgnotify.Notifier
+	// TelegramTopics routes the notifier's messages to topics in topics mode.
+	TelegramTopics *tgtopics.Manager
 	// TelegramSSOGrants reports the link_sso_grants setting (ADR-0083 Q8; TG-3c wires it): whether a link confirmed
 	// from an SSO session acts with the user's SSO grants until that session's absolute expiry. Nil: off, so every
 	// Telegram principal acts with the user's local grants only.
@@ -693,7 +696,7 @@ func (c *Central) APIDeps() *api.Deps {
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink), api.RegisterTelegramLinkPrefs(c.TelegramLink), api.RegisterTelegramMiniApp(c.TelegramMiniApp), api.RegisterTelegramDownloads(c.TelegramDownloads, c.Attachments, c.miniAppOrigin)},
 		Raw: rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
 		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch, Sessions: c.TelegramMiniApp, MiniAppOrigin: c.miniAppOrigin,
-			EnforcedApproval: c.enforcedApproval, ApprovalsInChat: c.approvalsInChat, Confirmations: c.TelegramConfirmations}}
+			EnforcedApproval: c.enforcedApproval, ApprovalsInChat: c.approvalsInChat, SpaceFeature: c.telegramSpaceFeature, Confirmations: c.TelegramConfirmations}}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
 		d.MCP = c.mcpEndpoint
@@ -1093,6 +1096,17 @@ func (c *Central) approvalsInChat(ctx context.Context, spaceID string) bool {
 	return err == nil && sp.Visible() && sp.EnforcedApprovals == tgsettings.ApprovalsConfirm
 }
 
+// telegramSpaceFeature reports whether a space has a Telegram feature on: visible to Telegram with the feature's
+// setting set. Only terminal_watch exists; any other name is off. It reads the store, not the settings cache, so turning
+// the setting off applies to the very next request and to a live stream's next re-check.
+func (c *Central) telegramSpaceFeature(ctx context.Context, spaceID, feature string) bool {
+	if feature != api.TelegramFeatureTerminalWatch || c.TelegramSettings == nil {
+		return false
+	}
+	sp, err := c.TelegramSettings.GetSpace(ctx, spaceID)
+	return err == nil && sp.Visible() && sp.TerminalWatch
+}
+
 // telegramSSOGrants is the link_sso_grants setting (off when unwired).
 func (c *Central) telegramSSOGrants() bool {
 	return c.TelegramSSOGrants != nil && c.TelegramSSOGrants()
@@ -1123,8 +1137,22 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 	}
 	links := tgnotify.NewLinks(c.Store, c.Bus, users, obs.Component(log, "telegram.notify"), 0)
 	links.OnChange = c.Human.Kick // a changed zone or digest time moves the next digest: the deadline loop looks again
+	// Topics mode: a space whose Telegram settings turn it on gets a topic in each link's private chat.
+	c.TelegramTopics = tgtopics.New(tgtopics.Options{
+		Store:   tgtopics.StoreTopics{S: c.Store},
+		Enabled: func(spaceID string) bool { sp := c.TelegramSettings.Space(spaceID); return sp.Topics && sp.Visible() },
+		SpaceName: func(ctx context.Context, spaceID string) string {
+			sp, err := c.Store.R().GetSpace(ctx, spaceID)
+			if err != nil {
+				return ""
+			}
+			return sp.Name
+		},
+		Now: c.Clock.Now, Log: obs.Component(log, "telegram.topics"),
+	})
 	return tgnotify.New(tgnotify.Options{
-		Feed: tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
+		Topics: c.TelegramTopics,
+		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
 		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
 }

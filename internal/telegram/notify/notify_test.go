@@ -21,6 +21,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
 )
 
 var t0 = time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
@@ -127,6 +128,7 @@ type policy struct {
 	set    settings.Settings
 	hidden map[string]bool
 	level  string
+	topics bool
 }
 
 func (p *policy) Current() settings.Settings { return p.set }
@@ -147,6 +149,7 @@ func (p *policy) Space(id string) settings.Space {
 	defer p.mu.Unlock()
 	s := settings.DefaultSpace(id)
 	s.Enabled = !p.hidden[id]
+	s.Topics = p.topics
 	if p.level != "" {
 		s.ContentLevel = p.level
 	}
@@ -223,6 +226,7 @@ type env struct {
 	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
 	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
 	authz      notify.Authorizer
+	tp         *topics.Manager // topics mode (nil: off)
 }
 
 func linkFor(i int) notify.Link {
@@ -289,6 +293,7 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 			go func() { <-e.window; ch <- time.Now() }()
 			return ch
 		}}
+	opts.Topics = e.tp
 	if m != nil {
 		opts.Store = m
 	}

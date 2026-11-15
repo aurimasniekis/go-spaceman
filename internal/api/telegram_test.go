@@ -551,6 +551,32 @@ func TestTelegramRawRoutes(t *testing.T) {
 	}
 }
 
+// Guard: the real terminal stream route is the Mini App's alone (class miniapp, not both): the bot's chat channel is
+// refused it, whatever the space's terminal_watch setting. The in-process handler serves no raw routes, so the route's
+// own gate is exercised directly, with the channel the bot's requests carry.
+func TestTelegramTerminalRouteRefusesChat(t *testing.T) {
+	t.Parallel()
+	d := tgDeps(t, &fakeSessions{p: map[string]*auth.Principal{"good": tgPrincipal()}})
+	d.Telegram.SpaceFeature = func(context.Context, string, string) bool { return true }
+	var terminal *RawRoute
+	for _, rt := range RecordingStreams(nil) {
+		if strings.HasSuffix(rt.Pattern, "/terminal") {
+			terminal = &rt
+		}
+	}
+	if terminal == nil {
+		t.Fatal("no terminal route")
+	}
+	mux := http.NewServeMux()
+	mux.Handle(terminal.Pattern, d.authorizeRaw(*terminal))
+	ctx := context.WithValue(context.WithValue(context.Background(), principalKey{}, tgPrincipal()), telegramChannelKey{}, channelChat)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/spaces/"+tgSpace+"/runs/run_x/terminal", nil).WithContext(ctx))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("chat channel on the terminal: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 // Guard: watchHandler's class (§3.3). The feed is refused to the Mini App unless the policy classes it miniapp or
 // both (the allowed stream is covered end to end in internal/app).
 func TestTelegramWatchClass(t *testing.T) {

@@ -18536,6 +18536,28 @@
         ],
         "type": "object"
       },
+      "TelegramSpaceFeatures": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TelegramSpaceFeatures.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "terminal_watch": {
+            "description": "The watch-only terminal is on for this space and the caller may watch it",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "terminal_watch"
+        ],
+        "type": "object"
+      },
       "TemplateDefinition": {
         "additionalProperties": false,
         "properties": {
@@ -30147,6 +30169,7 @@
     },
     "/spaces/{space_id}/messages/{message_id}/ack": {
       "post": {
+        "description": "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).",
         "operationId": "ack-message",
         "parameters": [
           {
@@ -30164,6 +30187,15 @@
             "required": true,
             "schema": {
               "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
               "type": "string"
             }
           }
@@ -30312,6 +30344,7 @@
     },
     "/spaces/{space_id}/messages/{message_id}/resolve": {
       "post": {
+        "description": "Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).",
         "operationId": "resolve-message",
         "parameters": [
           {
@@ -30329,6 +30362,15 @@
             "required": true,
             "schema": {
               "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
               "type": "string"
             }
           }
@@ -34086,7 +34128,7 @@
     },
     "/spaces/{space_id}/tasks/{task_id}/move": {
       "post": {
-        "description": "Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.",
+        "description": "Optional If-Match: a task that changed since that version is refused as a conflict (409 precondition_failed). Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.",
         "operationId": "move-task",
         "parameters": [
           {
@@ -34104,6 +34146,15 @@
             "required": true,
             "schema": {
               "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
               "type": "string"
             }
           }
@@ -36056,6 +36107,50 @@
           }
         },
         "summary": "Spaces' Telegram settings",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/telegram/spaces/{space_id}/features": {
+      "get": {
+        "description": "Mini App host only (404 elsewhere). terminal_watch is true only when the space's admin turned the watch-only terminal on for Telegram and the caller may watch terminals in the space; otherwise it is false, so the Mini App hides the terminal. The stream route enforces the same two conditions itself.",
+        "operationId": "get-telegram-space-features",
+        "parameters": [
+          {
+            "description": "The space",
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "description": "The space",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSpaceFeatures"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "What the Mini App may show in a space",
         "tags": [
           "telegram"
         ]

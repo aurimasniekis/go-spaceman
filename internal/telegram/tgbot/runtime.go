@@ -157,10 +157,17 @@ func (svc *Service) setStored(row *db.TelegramBot) string {
 // hostNeedsKey is true when a bot stores a miniapp_host while telegram.miniapp_host is not set.
 func (svc *Service) hostNeedsKey(stored string) bool { return stored != "" && svc.o.MiniAppHost == "" }
 
+// SetLoadStoredHostHook installs a hook LoadStoredHost calls before it reads the bot row; the hook may block. It exists
+// so a test can pin that central loads the host before its listener accepts a connection. Production code never calls it.
+func (svc *Service) SetLoadStoredHostHook(f func(context.Context)) { svc.onLoadStoredHost = f }
+
 // LoadStoredHost reads the stored bot row and makes its miniapp_host known to the router. Central calls it before it
 // listens, so the stored host reaches the Mini App handler (and its 404 gate) from the first request, whatever the
 // bot's state or how long the bot takes to start. A failed read is an error: central must not serve without knowing.
 func (svc *Service) LoadStoredHost(ctx context.Context) error {
+	if svc.onLoadStoredHost != nil {
+		svc.onLoadStoredHost(ctx)
+	}
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 	r, err := svc.s.R().GetTelegramBot(ctx)
@@ -220,24 +227,26 @@ func (svc *Service) Start(ctx context.Context) {
 	}
 }
 
-// startRetryLocked ends the running retry loop, a superseded one that would otherwise sleep up to retryMax before it
-// notices, and starts one for gen when gen is not 0. Must hold svc.mu.
-func (svc *Service) startRetryLocked(base context.Context, gen uint64) {
-	if gen != 0 {
-		svc.run.mu.Lock()
-		cur := svc.run.gen
-		svc.run.mu.Unlock()
-		if gen != cur {
-			return // a write reconfigured the bot since the attempt gen and owns the retry decision
-		}
-	}
+// stopRetryLocked ends the running retry loop, a superseded one that would otherwise sleep up to retryMax before it
+// notices. Must hold svc.mu.
+func (svc *Service) stopRetryLocked() {
 	if svc.run.retryStop != nil {
 		svc.run.retryStop()
 		svc.run.retryStop = nil
 	}
-	if gen == 0 {
+}
+
+// startRetryLocked replaces the running retry loop with one for gen, the generation of the attempt that failed (0 when
+// the bot's configuration could not even be read at boot). It does nothing when a write reconfigured the bot since that
+// attempt: that write owns the retry decision. Must hold svc.mu.
+func (svc *Service) startRetryLocked(base context.Context, gen uint64) {
+	svc.run.mu.Lock()
+	cur := svc.run.gen
+	svc.run.mu.Unlock()
+	if gen != cur {
 		return
 	}
+	svc.stopRetryLocked()
 	ctx, stop := context.WithCancel(base)
 	done := make(chan struct{})
 	svc.run.retryStop, svc.run.retryDone = stop, done
@@ -260,7 +269,7 @@ func (svc *Service) retryLoop(ctx context.Context, gen uint64) {
 			return
 		case <-t.C:
 		}
-		retry, gen = svc.startOnce(ctx, gen)
+		retry, gen = svc.startAfter(ctx, gen, true)
 		wait = min(wait*2, svc.retryMax)
 	}
 }
@@ -273,7 +282,7 @@ func (svc *Service) retryAfterWrite(retry bool) {
 		return
 	}
 	if !retry || base.Err() != nil {
-		svc.startRetryLocked(base, 0) // the write applied the newest state: a loop for an older one is superseded
+		svc.stopRetryLocked() // the write applied the newest state: a loop for an older one is superseded
 		return
 	}
 	svc.run.mu.Lock()
@@ -285,12 +294,17 @@ func (svc *Service) retryAfterWrite(retry bool) {
 // startOnce applies the stored configuration and reports whether it should be retried. With after set, it does
 // nothing when anything reconfigured the bot since that attempt (a write already applied the newest state).
 func (svc *Service) startOnce(ctx context.Context, after uint64) (retry bool, gen uint64) {
+	return svc.startAfter(ctx, after, after != 0)
+}
+
+// startAfter is startOnce with the supersede check explicit, since generation 0 (nothing applied yet) is a valid one.
+func (svc *Service) startAfter(ctx context.Context, after uint64, check bool) (retry bool, gen uint64) {
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 	svc.run.mu.Lock()
 	cur := svc.run.gen
 	svc.run.mu.Unlock()
-	if after != 0 && cur != after {
+	if check && cur != after {
 		return false, cur
 	}
 	retry = svc.startLocked(ctx)

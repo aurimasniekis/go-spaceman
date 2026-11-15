@@ -2938,7 +2938,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Acknowledge a message addressed to operators */
+        /**
+         * Acknowledge a message addressed to operators
+         * @description Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).
+         */
         post: operations["ack-message"];
         delete?: never;
         options?: never;
@@ -2995,7 +2998,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Close a message or request */
+        /**
+         * Close a message or request
+         * @description Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).
+         */
         post: operations["resolve-message"];
         delete?: never;
         options?: never;
@@ -3921,7 +3927,7 @@ export interface paths {
         put?: never;
         /**
          * Place a task in the queue
-         * @description Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
+         * @description Optional If-Match: a task that changed since that version is refused as a conflict (409 precondition_failed). Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
          */
         post: operations["move-task"];
         delete?: never;
@@ -4551,6 +4557,26 @@ export interface paths {
          * @description Every space with stored Telegram settings whose configuration you can read; a space not listed is off for Telegram.
          */
         get: operations["list-space-telegram"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/spaces/{space_id}/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the Mini App may show in a space
+         * @description Mini App host only (404 elsewhere). terminal_watch is true only when the space's admin turned the watch-only terminal on for Telegram and the caller may watch terminals in the space; otherwise it is false, so the Mini App hides the terminal. The stream route enforces the same two conditions itself.
+         */
+        get: operations["get-telegram-space-features"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12047,6 +12073,16 @@ export interface components {
             /** @description The session token, sent as "Authorization: Telegram <token>" on the Mini App host only; never in a URL or a cookie */
             token: string;
         };
+        TelegramSpaceFeatures: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSpaceFeatures.json
+             */
+            readonly $schema?: string;
+            /** @description The watch-only terminal is on for this space and the caller may watch it */
+            terminal_watch: boolean;
+        };
         TemplateDefinition: {
             body: string;
             correlation?: string;
@@ -19399,7 +19435,10 @@ export interface operations {
     "ack-message": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 message_id: string;
@@ -19499,7 +19538,10 @@ export interface operations {
     "resolve-message": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 message_id: string;
@@ -21766,7 +21808,10 @@ export interface operations {
     "move-task": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 task_id: string;
@@ -23113,6 +23158,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpaceTelegramList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-space-features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The space */
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSpaceFeatures"];
                 };
             };
             /** @description Error */

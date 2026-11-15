@@ -63,7 +63,8 @@ const MERMAID = '```mermaid\ngraph TD\n  A[Start] --> B[Done]\n```'
 
 const requested: string[] = []
 
-async function launch(page: Page, path: string) {
+// Whether the mocked server holds an enforced approval behind hum_a1 (GET /approval answers 200) or none (404).
+async function launch(page: Page, path: string, enforced = true) {
   requested.length = 0
   await page.route('https://telegram.org/js/telegram-web-app.js', (r) =>
     r.fulfill({
@@ -84,7 +85,7 @@ async function launch(page: Page, path: string) {
     if (p === '/watch') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': ok\n\n' })
     const one = /\/human-actions\/(hum_\w+)$/.exec(p)
     if (one) return route.fulfill(json(ACTIONS.find((a) => a.id === one[1])))
-    if (p.endsWith('/hum_a1/approval')) return route.fulfill(json({ id: 'apr_1', space_id: SPACE, state: 'approved', uses_allowed: 1, uses_left: 1, operation: 'deploy', resource: 'x', requester_run: 'run_1', requester_role: 'impl', args_digest: 'd', args_preview: '{}', request_expires_at: '2099-01-01T00:00:00Z', executions: [] }))
+    if (enforced && p.endsWith('/hum_a1/approval')) return route.fulfill(json({ id: 'apr_1', space_id: SPACE, state: 'approved', uses_allowed: 1, uses_left: 1, operation: 'deploy', resource: 'x', requester_run: 'run_1', requester_role: 'impl', args_digest: 'd', args_preview: '{}', request_expires_at: '2099-01-01T00:00:00Z', executions: [] }))
     if (p.endsWith('/approval')) return route.fulfill(problem(404, 'not_found'))
     if (p === '/human-actions' || p === `/spaces/${SPACE}/human-actions`) return route.fulfill(json({ items: ACTIONS, counts: { [SPACE]: ACTIONS.length }, total: ACTIONS.length }))
     if (p === '/spaces') return route.fulfill(json({ items: [{ id: SPACE, name: 'Mini', slug: 'mini', state: 'active', node_id: 'nod_1', version: 1 }] }))
@@ -103,15 +104,30 @@ async function clean(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 }
 
+// A cold navigation of the SPA (bundle, session, /me, list, then the item) is the slow step here, and it runs six times in
+// a row, so each wait has its own budget instead of the 5 s default of `expect`.
+const NAVIGATION = 20_000
+
 test('needs-you lists every type and opens each form full width, without axe violations', async ({ page }) => {
-  await launch(page, '/human')
-  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
+  // The Approve button is the form of an approval that is not enforced. For an enforced one the page swaps it for the
+  // read-only view as soon as GET /approval answers, so with the mocked 200 the button is there only until that arrives:
+  // asserting it was a race with the request, lost whenever the node was loaded. The mock answers 404 here (no enforced
+  // approval) and the test waits for that answer, so the form it checks is the settled one. The enforced view has its
+  // own test below.
+  await launch(page, '/human', false)
+  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible({ timeout: NAVIGATION })
   await clean(page)
   const forms: Array<[string, string]> = [['hum_q1', 'Send answer'], ['hum_a1', 'Approve'], ['hum_t1', 'Mark completed'], ['hum_m1', 'Acknowledge'], ['hum_c1', 'approved']]
   for (const [id, button] of forms) {
-    await page.goto(`http://127.0.0.1:${PORT}/spaces/${SPACE}/human?action=${id}`)
-    await expect(page.getByRole('button', { name: button, exact: true })).toBeVisible()
-    await clean(page)
+    await test.step(`open ${id}`, async () => {
+      const loaded = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith(`/human-actions/${id}`), { timeout: NAVIGATION })
+      const settled = id === 'hum_a1' ? page.waitForResponse((r) => new URL(r.url()).pathname.endsWith('/hum_a1/approval'), { timeout: NAVIGATION }) : undefined
+      await page.goto(`http://127.0.0.1:${PORT}/spaces/${SPACE}/human?action=${id}`)
+      await loaded
+      await settled
+      await expect(page.getByRole('button', { name: button, exact: true })).toBeVisible({ timeout: NAVIGATION })
+      await clean(page)
+    })
   }
 })
 

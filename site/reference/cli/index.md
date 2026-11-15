@@ -98,6 +98,7 @@ Every other operation of the API has a command. These belong to the browser's si
 | `get-my-telegram-link-prefs` | a Telegram link's own notification preferences: served only on the Mini App host, to that link's Mini App session (ADR-0083 amendment TG-10-4) |
 | `get-telegram-link-code` | Telegram linking (ADR-0083): only the browser session that created the code may use it, and API tokens are refused |
 | `get-telegram-me` | the Telegram Mini App's own identity (the get-me document): served only on the Mini App host, to a Mini App session (ADR-0083) |
+| `get-telegram-space-features` | tells the Telegram Mini App whether to show a space's watch-only terminal: served only on the Mini App host, to a Mini App session (ADR-0083) |
 | `list-my-telegram-links` | Telegram linking (ADR-0083): a person's own browser session on the Account page |
 | `login` | interactive sign-in: it creates a browser session (cookie and CSRF token); the CLI authenticates with an API token |
 | `logout` | ends the browser session it is called from; an API token has none (revoke tokens with `spaceman token revoke`) |

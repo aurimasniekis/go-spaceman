@@ -124,7 +124,7 @@ flowchart LR
 
 Telegram adds a channel through which a linked person acts as themselves. Its assets, actors and boundaries are the
 ones above; what it adds is below. Nothing here has been checked against a real bot: the evidence is simulated
-([TRACEABILITY.md](TRACEABILITY.md)). Sections marked "branch" describe approved work not yet merged into the base build.
+([TRACEABILITY.md](TRACEABILITY.md)).
 
 | ID | Threat | Mitigation |
 |---|---|---|
@@ -138,8 +138,8 @@ ones above; what it adds is below. Nothing here has been checked against a real 
 | T-52 | A forged webhook update or a flood | A secret header compared in constant time before the body is read, a body limit, an optional source allowlist, deduplication, bounded queues with a 503 when full, per-link and global limits |
 | T-53 | The bot token leaks | Write-only, sealed with associated data, never in logs, errors, metrics or audit; the base URL is not settable through the API, because whoever sets it receives the token |
 | T-54 | Content leaves for Telegram's cloud against a space's wishes | Spaces opt in; content level `full`, `summary` or `off`; never terminal output, hidden responses, unlisted attachment contents or secrets; forwarding and saving turned off for bodies; summaries only in groups |
-| T-55 | Group members act through the person who bound the group, or read what they may not | **Branch (TG-13).** Per-tapper authorization with the tapper's own link, one space per group, summary only, no attachments in groups; a member without a link is refused |
+| T-55 | Group members act through the person who bound the group, or read what they may not | Per-tapper authorization with the tapper's own link, one space per group, summary only, no attachments in groups (the Bot API client refuses them); a member without a link is refused with an alert only the tapper sees, and a foreign or unknown command is ignored without an answer. **Binding is admin-only** (`telegram_group:write` on top of `space_config:write`), checks that the bot is a member of a forum supergroup, and deleting the settings or losing the binding makes the bot leave. The bot waits at most 15 minutes in an unbound forum group and leaves anything that can't be bound at once, so nobody can park it in groups |
 | T-56 | A proxy that drops idle connections breaks the Mini App's live feeds, or a stalled stream holds resources | The change feed and terminal stream send a heartbeat (`http.stream_heartbeat`, default 15 s, 1–45 s); streams revalidate the session and link |
-| T-57 | A person watches a terminal they shouldn't | **Server-side gate only:** no Mini App page shows a terminal in the base build. The stream is read-only, needs the space's `terminal_watch` opt-in (off by default) and the person's own permission; no input, takeover or sizing from Telegram |
+| T-57 | A person watches a terminal they shouldn't | The Mini App's run page shows a terminal only for a space that turned `terminal_watch` on (off by default) and a link holding `terminal:watch`, and the server checks both on the stream itself, not just the page. It is read-only: no input, takeover, sizing or replay. Turning the setting off or hiding the space ends open streams at once; the periodic re-check is the backstop |
 | T-58 | Mini App or Telegram state is trusted after a restart | State is in memory by design: sessions, replay memory and download links are lost on restart and re-established, never reconstituted from client claims |
 

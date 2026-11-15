@@ -507,3 +507,20 @@ func (q *Queries) SetTelegramLinkPrefs(ctx context.Context, arg SetTelegramLinkP
 	}
 	return result.RowsAffected()
 }
+
+const setTelegramLinkTopics = `-- name: SetTelegramLinkTopics :execrows
+UPDATE telegram_links SET topics_json = ?1 WHERE id = ?2 AND state <> 'revoked'
+`
+
+type SetTelegramLinkTopicsParams struct {
+	TopicsJson string
+	ID         string
+}
+
+func (q *Queries) SetTelegramLinkTopics(ctx context.Context, arg SetTelegramLinkTopicsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setTelegramLinkTopics, arg.TopicsJson, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

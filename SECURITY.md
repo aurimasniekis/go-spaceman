@@ -22,7 +22,7 @@ capped principal: its grants are the intersection of its own cap (operator by de
 so it is never wider than the person and loses a grant when they do. A person who still has to enroll two-factor
 authentication gets a **limited** link. Step-up, re-authentication, MFA and personal operations are refused to
 Telegram by classification, and a test fails on any operation nobody classified. Confirmations are single-use and bound to
-the link, the card and its version. Enforced approvals are decided in the browser unless a space opts in. The Mini App
+the link, the card and its version. Enforced approvals are decided in the browser unless a space opts in, and never in a group. A forum group can be bound to a space only by an administrator; every tap in it is authorized as the tapping person's own link, at the summary level. The Mini App
 and the webhook have their own routes and hosts: the Mini App host answers `404` and never reaches the web app or the
 API whenever no running bot serves it (a host known from `telegram.miniapp_host` or the bot's stored host is never routed to the web app), and long-lived streams carry a heartbeat. The
 bot token is write-only and sealed. Content goes to Telegram's cloud only for spaces that opt in and at the level they

@@ -102,7 +102,7 @@ func (h *Handler) cmdQueue(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(ctx, l.ID, s.ID)
 	h.send(ctx, l.ChatID, h.queueList(ctx, c, s, 0))
 }
 
@@ -301,7 +301,7 @@ func (h *Handler) queueCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
-		h.setCurrent(l.ID, s.ID)
+		h.setCurrent(ctx, l.ID, s.ID)
 		h.answer(ctx, q.ID, "")
 		h.show(ctx, l.ChatID, q.Message, h.queueList(ctx, c, s, page))
 		return
@@ -398,8 +398,9 @@ func (h *Handler) taskStatus(ctx context.Context, c caller, l updates.Link, q *b
 	h.refreshTask(ctx, c, l, q, s, id)
 }
 
-// taskMove places a task. The move operation takes no version, so the card's version is checked first: a card that
-// went stale gets a conflict and a refresh, not a move relative to a queue it no longer shows.
+// taskMove places a task. The card's version is checked first (a stale card gets a refresh without a call) and is sent
+// as If-Match too, so a change between the check and the move is a 409 conflict, not a move relative to a queue the
+// card no longer shows.
 func (h *Handler) taskMove(ctx context.Context, c caller, l updates.Link, q *botapi.CallbackQuery, s spaceRef, id, code string, version int64) {
 	all, r := h.loadQueue(ctx, c, s.ID)
 	if !r.ok() {
@@ -445,7 +446,7 @@ func (h *Handler) taskMove(ctx context.Context, c caller, l updates.Link, q *bot
 		h.answer(ctx, q.ID, TextUnavailable)
 		return
 	}
-	r = c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/tasks/"+id+"/move", body, nil)
+	r = c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/tasks/"+id+"/move", body, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, version)})
 	if !r.ok() {
 		h.failTask(ctx, c, l, q, s, id, r)
 		return

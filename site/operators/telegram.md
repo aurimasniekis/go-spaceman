@@ -107,15 +107,25 @@ off; links stay and resume if the same bot is configured again.
 | `init_data_max_age_seconds` | 300 | 60–3600 |
 | `miniapp_session_idle_seconds` | 900 | 300–3600 |
 | `miniapp_session_absolute_seconds` | 3600 | 900–43200 |
-| `topics_mode_default` | off | new links start in topics mode (see the unlanded note in the guide) |
+| `topics_mode_default` | off | stored but not read yet: the per-space `topics` setting is the switch |
 | `notification_defaults` | see the guide | each link's starting notification preferences |
 
 ### Spaces
 
-Per space: `enabled`, `content_level`, `enforced_approvals`, `topics`, `terminal_watch` (see the
+Per space: `enabled`, `content_level`, `enforced_approvals`, `topics`, `terminal_watch` and `group_chat_id` (see the
 [guide](/guide/telegram#spaces-content-levels-and-the-terminal)). Writes need `space_config:write` in the space and a
-step-up. A space with no row, or a disabled one, is invisible to Telegram. Binding a forum group to a space is part of
-the group mode work and is not available yet.
+step-up. A space with no row, or a disabled one, is invisible to Telegram.
+
+#### Binding a group
+
+Add the bot to a **forum** supergroup (topics on), then bind it:
+`spaceman telegram set-space --space <space> --group-chat-id <negative chat ID>` (`0` unbinds). Binding or unbinding needs
+`telegram_group:write`, held by administrators only, on top of `space_config:write`; other settings are unaffected and a
+write that leaves `group_chat_id` out keeps the binding. The bot must be running (503 otherwise) and a member of the group,
+and the chat must be a forum supergroup (422 otherwise); a group serves one space (409). Removing the space's Telegram
+settings unbinds it too. Bind within 15 minutes of adding the bot: an unbound forum group is left after that, and so is any
+group whose binding is lost. For forms to open the Mini App from a group, set the bot's Main Mini App in BotFather. See
+[Group mode](/guide/telegram#group-mode).
 
 ### Limits
 
