@@ -142,6 +142,13 @@ func New(o Options) *Handler {
 // Handle routes a linked user's update: commands, button taps, the reply to a reject-reason prompt, and capture: any
 // other message with text, a photo or a file becomes an inbox item in the link's current space (capture.go).
 func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
+	// Replies go to the topic the user wrote in (topics mode), or the main chat for a message outside any topic.
+	switch {
+	case u.CallbackQuery != nil && u.CallbackQuery.Message != nil:
+		ctx = withThread(ctx, u.CallbackQuery.Message.MessageThreadID)
+	case u.Message != nil:
+		ctx = withThread(ctx, u.Message.MessageThreadID)
+	}
 	switch {
 	case u.CallbackQuery != nil:
 		h.callback(ctx, u.CallbackQuery, l)
@@ -215,7 +222,7 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
-	p := botapi.SendMessageParams{ChatID: chatID, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
+	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: threadOf(ctx), Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
 	switch {
 	case r.force != nil:
 		p.ReplyMarkup = r.force
@@ -223,11 +230,31 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 		p.ReplyMarkup = r.markup
 	}
 	m, err := b.SendMessage(ctx, p)
+	if err != nil && p.MessageThreadID != 0 && botapi.IsTopicGone(err) {
+		// The topic was deleted or closed since the user wrote in it: answer in the main chat instead.
+		p.MessageThreadID = 0
+		m, err = b.SendMessage(ctx, p)
+	}
 	if err != nil {
 		h.o.Log.Debug("telegram: a chat reply was not sent", slog.String("error", err.Error()))
 		return botapi.Message{}, false
 	}
 	return m, true
+}
+
+type threadKey struct{}
+
+// withThread records the topic (message_thread_id) an update came from; 0 is the main chat.
+func withThread(ctx context.Context, thread int) context.Context {
+	if thread == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, threadKey{}, thread)
+}
+
+func threadOf(ctx context.Context) int {
+	t, _ := ctx.Value(threadKey{}).(int)
+	return t
 }
 
 // show puts r on the message a button was tapped on, or sends it when there is none (or it can't be edited).

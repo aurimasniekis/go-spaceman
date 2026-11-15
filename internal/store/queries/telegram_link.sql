@@ -77,3 +77,6 @@ WHERE id = sqlc.arg(id) AND state <> 'revoked';
 -- name: ReconfirmTelegramLink :execrows
 UPDATE telegram_links SET reconfirm_due_at = sqlc.arg(reconfirm_due_at), updated_at = sqlc.arg(now), version = version + 1
 WHERE id = sqlc.arg(id) AND state = 'active';
+
+-- name: SetTelegramLinkTopics :execrows
+UPDATE telegram_links SET topics_json = sqlc.arg(topics_json) WHERE id = sqlc.arg(id) AND state <> 'revoked';

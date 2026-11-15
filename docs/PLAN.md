@@ -158,7 +158,7 @@ number) in TG-3a; no agent migration and no protocol change. TG-12a/b/c are in t
 | TG-9a | Mini App server: host routing, Telegram mode, session exchange, signed downloads | SM-TG-005, SM-TG-013 | TG-9a-1 (host routing, allowlist, initData exchange, sessions) implemented, tested (simulated); TG-9a-2 (`tg.html`, headers, `/tg-dl/`) todo |
 | TG-9b | Mini App client shell and transports | SM-TG-011 | TG-9b-1 (`tg.html` entry, slim shell, fetch-SSE watch transport, `credentials: 'omit'`, reopen screen) implemented, tested (simulated); TG-9b-2 (blob images behind a visibility gate and a concurrency cap through the shared `AttachmentResolver`, signed downloads, theme mapping, Back/Main buttons, start-parameter deep links, `/telegram/me`, terminal hidden) implemented, tested (simulated) |
 | TG-10 | Mini App pages (after the ADR-0082 renderer merges) | SM-TG-011 | todo |
-| TG-11 | Topics mode | SM-TG-008 | todo |
+| TG-11 | Topics mode | SM-TG-008 | implemented, tested (simulated): per-space opt-in (`topics` in the space's Telegram settings), a topic per space plus Needs you, thread IDs in `telegram_links.topics_json` (no new migration: the 0051 column is used), recreate or main-chat fallback for a deleted or closed topic |
 | TG-12a/b/c | Provider: `spaceman_telegram_bot`, `spaceman_telegram_settings`, `spaceman_space_telegram` (+ `group_chat_id`) | SM-TG-014 | todo |
 | TG-13 | Group mode | SM-TG-002, SM-TG-008 | todo |
 | TG-14 | Docs, site, screenshots, LIMITATIONS/SECURITY, threat model; real verification (gated on deployment items and a test bot) | SM-TG-001…014 | todo |

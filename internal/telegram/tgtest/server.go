@@ -129,6 +129,8 @@ type Server struct {
 	calls    []Call
 	chats    map[int64]botapi.Chat
 	blocked  map[int64]bool
+	topics   map[int64]map[int]*topic
+	noTopics map[int64]bool
 	messages map[int64]map[int]*botapi.Message
 	nextMsg  map[int64]int
 	files    map[string]*storedFile // by file_id
@@ -171,6 +173,8 @@ func New(t testing.TB, o Options) *Server {
 		token:     randomToken(),
 		chats:     map[int64]botapi.Chat{},
 		blocked:   map[int64]bool{},
+		topics:    map[int64]map[int]*topic{},
+		noTopics:  map[int64]bool{},
 		messages:  map[int64]map[int]*botapi.Message{},
 		nextMsg:   map[int64]int{},
 		files:     map[string]*storedFile{},

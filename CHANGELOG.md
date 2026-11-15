@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Telegram topics mode (ADR-0083, TG-11; the bot isn't usable yet): a space whose Telegram settings turn `topics` on gets a
+  topic of its own in each linked private chat, and its open actions go to a "Needs you" topic. The bot creates a topic on
+  first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted
+  or closed is created again once; if that fails, or the chat has topics off for the bot, the message goes to the main
+  chat. Topics only choose where a message appears; who may receive it is unchanged.
 - `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
   proxy that drops idle connections (about 100 s) never sees them idle.
 - Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
