@@ -1,5 +1,5 @@
 import type { StreamHandlers, WatchTransport } from '@/api/transport'
-import { endMiniAppSession, miniAppFetchInit } from '@/api/session'
+import { endMiniAppSessionWithCode, miniAppFetchInit, problemCode } from '@/api/session'
 import { isSessionEnded } from './session'
 
 /** One parsed server-sent event. */
@@ -56,6 +56,9 @@ export class SseParser {
   }
 }
 
+/** How long a 401's problem body may take to be read before the request is aborted anyway. */
+export const PROBLEM_BODY_WAIT_MS = 1000
+
 /**
  * The Mini App's transport: fetch with `Authorization: Telegram <token>` and `credentials: 'omit'` (EventSource can do
  * neither). It never reconnects by itself and never retries a 401: that ends the session, and the shell shows the
@@ -82,11 +85,15 @@ export const fetchSseTransport: WatchTransport = {
       try {
         const res = await fetch(url, miniAppFetchInit({ headers: { Accept: 'text/event-stream' }, cache: 'no-store', signal: ac.signal }))
         if (res.status === 401) {
-          // Step-up 401s (mfa_required) also end here. Eventually they should show a "finish MFA" message rather than
-          // the generic reopen screen; TG-9b-2 and the Limited-consistency task own that. Behaviour is unchanged until then.
+          // Read the problem code before the body is dropped: mfa_required ends the session with the MFA message,
+          // anything else with the generic reopen screen. The read is bounded, so a body that never ends still ends the
+          // session (without a code) and the request is aborted.
+          let timer: ReturnType<typeof setTimeout> | undefined
+          const code = await Promise.race([problemCode(res), new Promise<string>((r) => (timer = setTimeout(() => r(''), PROBLEM_BODY_WAIT_MS)))])
+          clearTimeout(timer)
           discard(res)
           done = true
-          await endMiniAppSession(res)
+          endMiniAppSessionWithCode(code)
           return
         }
         if (!res.ok || !res.body || !(res.headers.get('Content-Type') ?? '').startsWith('text/event-stream')) {

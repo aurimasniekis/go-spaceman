@@ -200,6 +200,18 @@ test('an inline image uploaded in the composer previews as a blob: URL, not the 
   await page.locator('input[type="file"]').first().setInputFiles({ name: 'shot.png', mimeType: 'image/png', buffer: PNG })
   const img = page.locator('.ProseMirror img').first()
   await expect(img).toHaveAttribute('src', /^blob:/)
+  // What is stored is the attachment reference, never the blob: preview. The POST is captured and aborted, so the
+  // dialog stays open with the body it would have sent.
+  const sent: Array<{ body?: string }> = []
+  await page.route(`**/api/v1/spaces/${SPACE}/inbox`, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    sent.push(route.request().postDataJSON() as { body?: string })
+    return route.abort()
+  })
+  await page.getByRole('button', { name: 'Add to inbox' }).click()
+  await expect.poll(() => sent.length).toBe(1)
+  expect(sent[0].body).toContain(`spaceman://attachment/${IMG}`)
+  expect(sent[0].body).not.toContain('blob:')
 })
 
 test('startapp=needs opens the Needs you page, whose filters sit behind a Filter button', async ({ page }) => {

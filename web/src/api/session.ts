@@ -157,9 +157,14 @@ export function miniAppFetchInit(init: RequestInit = {}): RequestInit {
   return { ...init, headers, credentials: 'omit' }
 }
 
+/** Ends the Mini App's session with the message for a 401's problem code (MFA still to finish, or the reopen screen). */
+export function endMiniAppSessionWithCode(code: string) {
+  tgEnded?.(code === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
+}
+
 /** Ends the Mini App's session after a 401 on a request made outside the API client (an upload, an image, the stream). */
 export async function endMiniAppSession(res: Response) {
-  tgEnded?.((await problemCode(res)) === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
+  endMiniAppSessionWithCode(await problemCode(res))
 }
 
 /** openapi-fetch middleware for the API client. */

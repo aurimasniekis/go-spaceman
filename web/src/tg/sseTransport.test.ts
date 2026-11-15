@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as session from '@/api/session'
 import type { StreamHandlers } from '@/api/transport'
-import { fetchSseTransport, SseParser, type SseEvent } from './sseTransport'
+import { fetchSseTransport, PROBLEM_BODY_WAIT_MS, SseParser, type SseEvent } from './sseTransport'
 
 function parse(chunks: string[]): SseEvent[] {
   const out: SseEvent[] = []
@@ -89,6 +89,20 @@ describe('fetchSseTransport', () => {
     expect(f).toHaveBeenCalledOnce()
   })
 
+  it('ends the session with the MFA message on a 401 mfa_required from the stream', async () => {
+    const end = vi.fn()
+    session.setMiniAppMode(end)
+    const f = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'mfa_required' }), { status: 401, headers: { 'Content-Type': 'application/problem+json' } }))
+    vi.stubGlobal('fetch', f)
+    const { calls, h } = handlers()
+    fetchSseTransport.open('/api/v1/watch', h)
+    await settle()
+    expect(end).toHaveBeenCalledOnce()
+    expect(end).toHaveBeenCalledWith(session.MFA_PENDING_MESSAGE)
+    expect(calls).toEqual([])
+    expect(f).toHaveBeenCalledOnce()
+  })
+
   it('reports another status, or a wrong content type, as closed', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('', { status: 502 })).mockResolvedValueOnce(new Response('x', { status: 200 })))
     const a = handlers()
@@ -100,8 +114,21 @@ describe('fetchSseTransport', () => {
     expect(b.calls).toEqual(['closed:200'])
   })
 
+  it('aborts the request on a 401 whose body never ends, once the bounded read gives up', async () => {
+    const body = new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode('{"code":')) })
+    const f = vi.fn().mockResolvedValue(new Response(body, { status: 401 }))
+    vi.stubGlobal('fetch', f)
+    const end = vi.fn()
+    session.setMiniAppMode(end)
+    const { calls, h } = handlers()
+    fetchSseTransport.open('/u', h)
+    await vi.waitFor(() => expect(end).toHaveBeenCalledOnce(), { timeout: PROBLEM_BODY_WAIT_MS * 3 })
+    const init = f.mock.calls[0][1] as RequestInit
+    expect(init.signal?.aborted).toBe(true)
+    expect(calls).toEqual([])
+  })
+
   it.each([
-    ['401', 401, 'text/event-stream'],
     ['502', 502, 'text/event-stream'],
     ['a wrong content type', 200, 'text/plain'],
   ])('cancels the body and aborts the request on %s', async (_name, status, type) => {
