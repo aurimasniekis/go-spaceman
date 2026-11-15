@@ -10,6 +10,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
@@ -168,5 +169,41 @@ func TestLinkPrefsTimezoneAndValidation(t *testing.T) {
 	}
 	if _, v := storedPrefs(t, s, "tgl_a1"); v != 4 {
 		t.Fatalf("an invalid input was written: v%d", v)
+	}
+}
+
+// The UPDATE repeats the ownership check (defense in depth behind ownLink): another user's link, a revoked link or a
+// stale version writes nothing.
+func TestSetTelegramLinkPrefsQueryGuards(t *testing.T) {
+	t.Parallel()
+	_, s := prefsEnv(t)
+	ctx := context.Background()
+	cases := []struct {
+		link, user string
+		version    int64
+		want       int64
+	}{
+		{"tgl_b1", "usr_a", 1, 0},
+		{"tgl_a3", "usr_a", 1, 0},
+		{"tgl_a1", "usr_a", 7, 0},
+		{"tgl_a1", "usr_a", 1, 1},
+	}
+	for _, c := range cases {
+		var n int64
+		if err := s.W().Tx(ctx, func(tx *store.Tx) error {
+			var err error
+			n, err = tx.Q.SetTelegramLinkPrefs(ctx, db.SetTelegramLinkPrefsParams{PrefsJson: `{"digest":true}`, Now: 1, ID: c.link, UserID: c.user, Version: c.version})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if n != c.want {
+			t.Fatalf("%s as %s v%d: %d rows, want %d", c.link, c.user, c.version, n, c.want)
+		}
+	}
+	for _, l := range []string{"tgl_b1", "tgl_a3"} {
+		if raw, _ := storedPrefs(t, s, l); raw == `{"digest":true}` {
+			t.Fatalf("%s written", l)
+		}
 	}
 }
