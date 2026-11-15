@@ -103,7 +103,7 @@ func TestGroupUnauthorizedTapperRefused(t *testing.T) {
 func TestGroupForeignCommandsFromNoAccessMemberAreSilent(t *testing.T) {
 	e := newEnv(t)
 	nogrant := member("tgl_nogrant", spD)
-	for _, c := range []string{"/start@OtherBot", "/foo", "/inbox@OtherBot"} {
+	for _, c := range []string{"/start@OtherBot", "/foo", "/inbox@OtherBot", "/settings", "/help", "/needs", "/settings@OtherBot"} {
 		e.gsay(nogrant, c)
 	}
 	if n := len(e.group()); n != 0 || len(e.api.seen()) != 0 {
