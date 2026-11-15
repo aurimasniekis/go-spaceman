@@ -69,6 +69,7 @@ import (
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	tgnotify "github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	tgtopics "github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
@@ -348,6 +349,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			if c.Human != nil {
 				c.Human.Kick() // route responses the run had not acknowledged (SM-HUM-009)
+			}
+		},
+		OnSpaceRenamed: func(ctx context.Context, spaceID, name string) {
+			if c.TelegramTopics != nil {
+				go c.TelegramTopics.Renamed(context.WithoutCancel(ctx), spaceID, name) // the topics take the new name (ADR-0089)
 			}
 		},
 		OnSpaceState: func(spaceID, state string) {
@@ -1145,6 +1151,7 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 			return links.ThreadsMode(linkID, c.TelegramSettings.Current().NotificationDefaults)
 		},
 		BotTopics: c.TelegramBot.HasTopics,
+		Sender:    func() *sender.Sender { return c.TelegramBot.Sender() },
 		SpaceName: func(ctx context.Context, spaceID string) string {
 			sp, err := c.Store.R().GetSpace(ctx, spaceID)
 			if err != nil {

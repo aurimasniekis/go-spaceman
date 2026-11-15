@@ -41,6 +41,11 @@ func (s *threadStore) Save(_ context.Context, id string, m map[string]int) error
 	return nil
 }
 
+// Threads is not used by the notifier's tests (no space is renamed in them).
+func (s *threadStore) Threads(_ context.Context, _ string) ([]topics.LinkThread, error) {
+	return nil, nil
+}
+
 func (s *threadStore) get(id string) map[string]int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

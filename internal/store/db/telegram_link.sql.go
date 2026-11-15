@@ -88,6 +88,25 @@ func (q *Queries) CountLiveTelegramLinksByUser(ctx context.Context, userID strin
 	return count, err
 }
 
+const getLatestRevokedTelegramLinkTopics = `-- name: GetLatestRevokedTelegramLinkTopics :one
+SELECT topics_json FROM telegram_links WHERE chat_id = ?1 AND tg_user_id = ?2 AND state = 'revoked'
+ORDER BY revoked_at DESC, id DESC LIMIT 1
+`
+
+type GetLatestRevokedTelegramLinkTopicsParams struct {
+	ChatID   int64
+	TgUserID int64
+}
+
+// A relink of the same chat and Telegram user copies the topics of the most recently revoked link, so it reuses them
+// instead of creating duplicates (ADR-0089).
+func (q *Queries) GetLatestRevokedTelegramLinkTopics(ctx context.Context, arg GetLatestRevokedTelegramLinkTopicsParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getLatestRevokedTelegramLinkTopics, arg.ChatID, arg.TgUserID)
+	var topics_json string
+	err := row.Scan(&topics_json)
+	return topics_json, err
+}
+
 const getLiveTelegramLinkByTgUser = `-- name: GetLiveTelegramLinkByTgUser :one
 SELECT id, user_id FROM telegram_links WHERE tg_user_id = ? AND state <> 'revoked'
 `

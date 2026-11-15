@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
@@ -36,6 +37,19 @@ func (s *memStore) Save(_ context.Context, id string, m map[string]int) error {
 	s.saves++
 	s.rows[id] = m
 	return nil
+}
+
+// Threads returns every link's thread of key; each test link is in chat (42).
+func (s *memStore) Threads(_ context.Context, key string) ([]topics.LinkThread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []topics.LinkThread
+	for id, m := range s.rows {
+		if t := m[key]; t != 0 {
+			out = append(out, topics.LinkThread{LinkID: id, ChatID: chat, ID: t})
+		}
+	}
+	return out, nil
 }
 
 const chat = int64(42)
@@ -362,5 +376,83 @@ func TestCreatesAreRateLimited(t *testing.T) {
 	}
 	if d := time.Since(start); d < 250*time.Millisecond {
 		t.Errorf("13 creates took %v, want them spread by the limit", d)
+	}
+}
+
+// renameEnv is a Manager whose renames go through a real sender running against the fake, with the space named title.
+func renameEnv(t *testing.T, title *atomic.Value) (*tgtest.Server, *botapi.Client, *memStore, *topics.Manager) {
+	t.Helper()
+	srv, c, st, _ := setup(t)
+	snd, err := sender.New(sender.Options{Client: c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = snd.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	m := topics.New(topics.Options{Store: st, Mode: func(string) string { return settings.ThreadsOn },
+		SpaceName: func(context.Context, string) string { return title.Load().(string) },
+		Sender:    func() *sender.Sender { return snd }})
+	return srv, c, st, m
+}
+
+// waitFor polls until ok holds (renames are queued and sent on the sender's goroutines).
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A rename edits the existing topic (no second create), and a rename to the title a topic already has is skipped.
+func TestRenamedEditsTheTopicOnceAndSkipsNoOps(t *testing.T) {
+	var title atomic.Value
+	title.Store("Alpha")
+	srv, c, _, m := renameEnv(t, &title)
+	first := send(t, m, c, "spc_1", "one")
+	if n := len(srv.Calls("createForumTopic")); n != 1 {
+		t.Fatalf("%d creates before the rename, want 1", n)
+	}
+
+	m.Renamed(context.Background(), "spc_1", "Beta")
+	waitFor(t, "the rename", func() bool { return srv.Topics(chat)[first.MessageThreadID] == "Beta" })
+	if n := len(srv.Calls("editForumTopic")); n != 1 {
+		t.Fatalf("%d edits after one rename, want 1", n)
+	}
+
+	m.Renamed(context.Background(), "spc_1", "Beta")  // the same title again: nothing to change
+	m.Renamed(context.Background(), "spc_2", "Gamma") // a space with no topic: nothing to change
+	time.Sleep(50 * time.Millisecond)
+	if n := len(srv.Calls("editForumTopic")); n != 1 {
+		t.Errorf("%d edits after a no-op rename, want 1", n)
+	}
+	if n := len(srv.Calls("createForumTopic")); n != 1 {
+		t.Errorf("%d creates after the rename, want 1: a rename never creates a topic", n)
+	}
+	send(t, m, c, "spc_1", "two") // the topic is still the one used
+	if n := len(srv.Calls("createForumTopic")); n != 1 {
+		t.Errorf("%d creates after a send to the renamed space, want 1", n)
+	}
+}
+
+// A topic that was deleted is left alone by a rename (no error, no create); the next send creates it again.
+func TestRenamedDeletedTopicIsLeftAlone(t *testing.T) {
+	var title atomic.Value
+	title.Store("Alpha")
+	srv, c, _, m := renameEnv(t, &title)
+	first := send(t, m, c, "spc_1", "one")
+	srv.DeleteTopic(chat, first.MessageThreadID)
+	m.Renamed(context.Background(), "spc_1", "Beta")
+	time.Sleep(50 * time.Millisecond)
+	if n := len(srv.Calls("createForumTopic")); n != 1 {
+		t.Fatalf("%d creates, want 1: a rename does not recreate a deleted topic", n)
+	}
+	if got := send(t, m, c, "spc_1", "two"); got.MessageThreadID == first.MessageThreadID {
+		t.Fatal("the deleted topic was used again")
 	}
 }

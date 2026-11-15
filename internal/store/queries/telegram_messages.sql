@@ -12,8 +12,8 @@ SELECT chat_id, message_id, resource_version, created_at FROM telegram_messages
 WHERE resource_type = ? AND resource_id = ? AND kind = 'card';
 
 -- name: PruneTelegramMessages :execrows
--- A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). It is one row
--- per link at most and goes with its link.
+-- A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). Links are never
+-- deleted, so there is one such row per link at most, and the rows stay bounded by the links ever made.
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
   SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < sqlc.arg(cutoff) AND m.kind <> 'notice' LIMIT sqlc.arg(lim));
 

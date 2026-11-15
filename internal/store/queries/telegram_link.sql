@@ -44,6 +44,12 @@ VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(bot_id), sqlc.arg(tg_user_id),
   sqlc.arg(chat_id), 'active', sqlc.arg(via_sso), sqlc.arg(sso_until), sqlc.arg(max_role), sqlc.arg(now), sqlc.arg(now),
   sqlc.arg(reconfirm_due_at), sqlc.arg(now));
 
+-- name: GetLatestRevokedTelegramLinkTopics :one
+-- A relink of the same chat and Telegram user copies the topics of the most recently revoked link, so it reuses them
+-- instead of creating duplicates (ADR-0089).
+SELECT topics_json FROM telegram_links WHERE chat_id = sqlc.arg(chat_id) AND tg_user_id = sqlc.arg(tg_user_id) AND state = 'revoked'
+ORDER BY revoked_at DESC, id DESC LIMIT 1;
+
 -- name: GetTelegramLink :one
 SELECT * FROM telegram_links WHERE id = ?;
 

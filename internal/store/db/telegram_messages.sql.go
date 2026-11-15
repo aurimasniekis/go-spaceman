@@ -125,8 +125,8 @@ type PruneTelegramMessagesParams struct {
 	Lim    int64
 }
 
-// A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). It is one row
-// per link at most and goes with its link.
+// A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). Links are never
+// deleted, so there is one such row per link at most, and the rows stay bounded by the links ever made.
 func (q *Queries) PruneTelegramMessages(ctx context.Context, arg PruneTelegramMessagesParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, pruneTelegramMessages, arg.Cutoff, arg.Lim)
 	if err != nil {
