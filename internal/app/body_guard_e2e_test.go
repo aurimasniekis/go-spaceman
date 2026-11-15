@@ -38,9 +38,14 @@ func servePublic(t *testing.T, h *harness) string {
 
 func guardedHarness(t *testing.T) (*harness, string) {
 	t.Helper()
+	return guardedHarnessIdle(t, guardIdle)
+}
+
+func guardedHarnessIdle(t *testing.T, idle time.Duration) (*harness, string) {
+	t.Helper()
 	h := newHarnessWith(t, func(c *config.Config) {
-		c.HTTP.ReadIdleTimeout = config.Duration(guardIdle)
-		c.HTTP.IdleTimeout = config.Duration(guardIdle)
+		c.HTTP.ReadIdleTimeout = config.Duration(idle)
+		c.HTTP.IdleTimeout = config.Duration(idle)
 	})
 	return h, servePublic(t, h)
 }
@@ -93,7 +98,13 @@ func TestSlowOrEmptyBodyCannotHoldConnection(t *testing.T) {
 // and a large attachment upload trickled over several idle bounds succeeds.
 func TestBodyGuardKeepsStreamsAndUploads(t *testing.T) {
 	t.Parallel()
-	h, addr := guardedHarness(t)
+	// keepIdle is 3 s, not the 1 s the refusal tests use: the slow upload writes a piece every keepIdle/6, and under -race
+	// on a loaded CI runner a write can stall for over a second (one run saw an i/o timeout after 3.7 s with a 1 s bound),
+	// which a 1 s bound cuts as if the client had gone quiet. The ratio of write gap to bound is unchanged (a sixth), so
+	// the test still proves that an upload that keeps moving succeeds, over three idle bounds; the quiet-client cuts are
+	// in the other tests (guardIdle).
+	const keepIdle = 3 * time.Second
+	h, addr := guardedHarnessIdle(t, keepIdle)
 	ctx := context.Background()
 	rootSecret, _, err := h.c.Auth.IssueRootToken(ctx)
 	if err != nil {
@@ -129,11 +140,13 @@ func TestBodyGuardKeepsStreamsAndUploads(t *testing.T) {
 			}
 			close(events)
 		}()
-		time.Sleep(3 * guardIdle)
+		time.Sleep(3 * keepIdle)
 		if _, err := h.c.Fleet.CreateSpace(ctx, actor, fleet.CreateSpaceInput{Slug: "bravo", Name: "Bravo", NodeID: en.Node.ID}); err != nil {
 			t.Fatal(err)
 		}
-		deadline := time.After(10 * time.Second)
+		// The change event is created after the stream sat idle for three bounds; the wait only has to cover the write
+		// queue under load (the bound itself is proven by the stream still being alive), so it is generous.
+		deadline := time.After(30 * time.Second)
 		for {
 			select {
 			case line, ok := <-events:
@@ -150,8 +163,9 @@ func TestBodyGuardKeepsStreamsAndUploads(t *testing.T) {
 	})
 
 	t.Run("slow large upload", func(t *testing.T) {
-		const size, piece = 2 << 20, 64 << 10
-		gap := guardIdle / 6
+		// 20 pieces at keepIdle/6 each span 3.3 idle bounds (10 s), as the 2 MiB did at 1 s.
+		const size, piece = 20 * (64 << 10), 64 << 10
+		gap := keepIdle / 6
 		pr, pw := io.Pipe()
 		mw := multipart.NewWriter(pw)
 		go func() {
@@ -181,7 +195,7 @@ func TestBodyGuardKeepsStreamsAndUploads(t *testing.T) {
 		if res.StatusCode != http.StatusCreated {
 			t.Fatalf("upload: %d %s", res.StatusCode, b)
 		}
-		if took := time.Since(start); took < 3*guardIdle {
+		if took := time.Since(start); took < 3*keepIdle {
 			t.Fatalf("the upload took only %v; it must span several idle bounds", took)
 		}
 		if !strings.Contains(string(b), fmt.Sprint(size)) {

@@ -88,6 +88,7 @@ type Agent struct {
 	// starts after it, so a launch still finishing during drain leaves none running past Run.
 	recorders        map[string]*recorder
 	recordersStopped bool
+	recWG            sync.WaitGroup // every recorder goroutine, so stopRecorders can wait for the flushes it asked for
 	// lostAt is when central was last lost (zero while connected).
 	lostAt time.Time
 	wake   chan struct{}
@@ -293,13 +294,22 @@ func (a *Agent) shutdown(limit time.Duration) {
 	a.drain(limit)
 }
 
-// stopRecorders ends every live recording (each flushes and closes its writer) and refuses new ones.
+// stopRecorders ends every live recording (each flushes and closes its writer) and refuses new ones. It waits, bounded,
+// for the flushes: a recorder writing its last records into the data directory after this returns raced the removal
+// of that directory (a TempDir cleanup failed with "directory not empty").
 func (a *Agent) stopRecorders() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.recordersStopped = true
 	for _, r := range a.recorders {
 		r.cancel()
+	}
+	a.mu.Unlock()
+	done := make(chan struct{})
+	go func() { a.recWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		a.log.Warn("recorders still flushing at shutdown")
 	}
 }
 
