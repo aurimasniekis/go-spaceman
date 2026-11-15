@@ -171,6 +171,20 @@ func TestStreamRevalidateBounds(t *testing.T) {
 	}
 }
 
+// The stream heartbeat stays well under the 100 s idle limit of a proxy: 1 s … 45 s.
+func TestStreamHeartbeatBounds(t *testing.T) {
+	for d, ok := range map[time.Duration]bool{time.Second: true, 15 * time.Second: true, 45 * time.Second: true, 46 * time.Second: false, 500 * time.Millisecond: false} {
+		cfg := Default()
+		cfg.Mode = ModeDevelopment
+		cfg.PublicURL = "http://127.0.0.1:8080"
+		cfg.HTTP.StreamHeartbeat = Duration(d)
+		err := cfg.Validate()
+		if ok != (err == nil) || (!ok && !strings.Contains(err.Error(), "stream_heartbeat")) {
+			t.Errorf("stream_heartbeat %s: %v", d, err)
+		}
+	}
+}
+
 // The command-line client's and the enrollment command's variables may be exported on the central host; central
 // ignores them instead of refusing to start, and still rejects real typos.
 func TestClientVariablesIgnoredByCentral(t *testing.T) {

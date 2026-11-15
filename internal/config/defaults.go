@@ -21,6 +21,7 @@ func Default() *Config {
 			MaxUploadBytes:    25 << 20,
 			ReadHeaderTimeout: Duration(10 * time.Second),
 			WriteIdleTimeout:  Duration(time.Minute),
+			StreamHeartbeat:   Duration(15 * time.Second),
 		},
 		Log: defaultLog(),
 		Auth: AuthConfig{
