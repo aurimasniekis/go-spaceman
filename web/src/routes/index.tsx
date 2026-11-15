@@ -9,8 +9,10 @@ import { PageHeader } from '@/components/PageHeader'
 import { NodeState, RunState, SpaceState } from '@/components/StatusBadge'
 import { hasGlobal } from '@/lib/access'
 import { ago } from '@/lib/format'
+import { isMiniApp } from '@/api/session'
+import { TgHome } from '@/tg/pages/TgHome'
 
-export const Route = createFileRoute('/')({ component: Overview })
+export const Route = createFileRoute('/')({ component: () => (isMiniApp() ? <TgHome /> : <Overview />) })
 
 const ENDED = ['exited', 'failed', 'lost']
 
