@@ -10339,16 +10339,38 @@
       "LinkTopicsPrefs": {
         "additionalProperties": false,
         "properties": {
-          "available": {
-            "description": "Whether topics mode is supported (the bot is running); it is turned on per space, not per link",
+          "active": {
+            "description": "True while the bot tries topics for this chat: the layout is on (or automatic with topics enabled) and the chat has not refused lately. It can be true while available is false (the layout is on but the bot lacks topics): the first topic is then refused and messages go to the main chat",
             "type": "boolean"
           },
+          "available": {
+            "description": "Whether topics can be used now: the bot is running and has topics enabled (BotFather)",
+            "type": "boolean"
+          },
+          "mode": {
+            "description": "The chat layout that applies to this link: your override, else the administrator's default (auto is on while the bot has topics enabled)",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
+          "override": {
+            "description": "Your own choice (the threads field of the preferences); left out when you follow the default",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
           "refused": {
-            "description": "True while the bot is not asking your private chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat",
+            "description": "True while the bot is not asking this chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat",
             "type": "boolean"
           },
           "spaces": {
-            "description": "IDs of the spaces you can read that have topics on, sorted; each gets a topic in your private chat",
+            "description": "IDs of the spaces you can read that already have a topic in this chat, sorted",
             "items": {
               "type": "string"
             },
@@ -10357,6 +10379,8 @@
         },
         "required": [
           "available",
+          "mode",
+          "active",
           "spaces",
           "refused"
         ],

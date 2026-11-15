@@ -171,7 +171,8 @@ end-to-end encrypted: choose `summary` or `off` for spaces whose content must no
 
 The chat layout is chosen **per link**, by the `threads` notification preference: `auto` (the default), `on` or `off`.
 `auto` is on when the bot has topics enabled in BotFather (the bot status shows `has_topics_enabled`). An administrator sets
-the default in `notification_defaults.threads`; a user can override it for their own link with the link preferences.
+the default in `notification_defaults.threads`; a user can override it for their own link with **Chat layout** in the Mini App
+settings ("A topic per space", "One chat" or "Automatic"), which also says when topics are unavailable or Telegram refused them.
 
 When it is on, **every message about a space goes to that space's own topic**: needs-you cards with their reminders,
 escalations and assignments, inbox items, tasks in review, messages to the operators and failed runs. What concerns several

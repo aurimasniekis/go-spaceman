@@ -4,29 +4,31 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { TopicsNote } from './TgSettings'
 
 const names = new Map([['spc_a', 'Alpha']])
-const show = (topics: { available: boolean; spaces: string[]; refused: boolean }) =>
-  render(<MantineProvider><TopicsNote topics={topics} names={names} /></MantineProvider>)
+type T = Parameters<typeof TopicsNote>[0]['topics']
+const base: T = { available: true, mode: 'auto', active: true, spaces: [], refused: false }
+const show = (topics: Partial<T>) =>
+  render(<MantineProvider><TopicsNote topics={{ ...base, ...topics }} names={names} /></MantineProvider>)
 
 describe('TopicsNote', () => {
   beforeEach(() => {
     window.matchMedia ??= ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as unknown as typeof window.matchMedia
   })
-  it('says the bot is off when topics are not available', () => {
-    show({ available: false, spaces: [], refused: false })
-    expect(screen.getByText(/not available: the Telegram bot is not running/)).toBeTruthy()
+  it('says topics are unavailable, with the BotFather hint', () => {
+    show({ available: false, active: false })
+    expect(screen.getByText(/not available now.*not enabled for it in BotFather/)).toBeTruthy()
   })
-  it('lists the spaces that use topics, by name', () => {
-    show({ available: true, spaces: ['spc_a', 'spc_x'], refused: false })
-    expect(screen.getByText(/Topics are on for: Alpha, spc_x\./)).toBeTruthy()
-    expect(screen.getByText(/turned on per space/)).toBeTruthy()
-    expect(screen.queryByText(/refused/)).toBeNull()
+  it('says each space gets a topic and lists the ones that exist, by name', () => {
+    show({ spaces: ['spc_a', 'spc_x'] })
+    expect(screen.getByText(/Each space gets a topic of its own/)).toBeTruthy()
+    expect(screen.getByText(/Topics so far: Alpha, spc_x\./)).toBeTruthy()
   })
-  it('says when no space uses them', () => {
-    show({ available: true, spaces: [], refused: false })
-    expect(screen.getByText('None of your spaces use topics mode.')).toBeTruthy()
+  it('says everything arrives in one chat when the layout is off', () => {
+    show({ mode: 'off', active: false, spaces: ['spc_a'] })
+    expect(screen.getByText('Everything arrives in this one chat.')).toBeTruthy()
+    expect(screen.queryByText(/Topics so far/)).toBeNull()
   })
   it('tells what to do when Telegram refused a topic', () => {
-    show({ available: true, spaces: ['spc_a'], refused: true })
+    show({ active: false, refused: true })
     expect(screen.getByText(/refused to create a topic.*nable topics for this bot in BotFather/)).toBeTruthy()
   })
 })

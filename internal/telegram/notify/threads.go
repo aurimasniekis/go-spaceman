@@ -25,7 +25,7 @@ const NoticeThreads = "threads"
 
 // ThreadsNotice is the announcement, sent home once per link when its first message lands in a space topic.
 const ThreadsNotice = "Messages about each space now arrive in that space's own topic. The daily digest and other " +
-	"messages about several spaces stay here. To keep everything in one chat, turn topics off in the Mini App settings."
+	"messages about several spaces stay here. To keep everything in one chat, set Chat layout to \"One chat\" in the Mini App settings."
 
 // notices remembers which links were announced the topic layout. It is read once from telegram_messages when the
 // notifier starts (one query, not one per recipient) and kept in memory; until that read worked nothing is announced,

@@ -5460,8 +5460,7 @@
   facts the design relies on are recorded in the contract with a source; the new rows were checked against the Bot API
   page on 2026-11-15. Nothing has been observed against a real bot yet.
 - **Evidence:** T1: `internal/telegram/botapi` `TestGetMeTopicFlags`, `TestEditForumTopic`, `TestMessagesInRecordsThread`,
-  `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` (it covers the flags after a reconfigure only; the reset to false on a disable or a
-  failed getMe is not tested). T2 (routing): `notification_defaults.threads` (`auto`/`on`/`off`, default `auto`) with
+  `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` and `TestTopicFlagsResetAndRefresh` (the flags reset on a disable and on a failed getMe, and follow a token for another bot). T2 (routing): `notification_defaults.threads` (`auto`/`on`/`off`, default `auto`) with
   the link override; `topics.Manager.Route(link, space)` and `Enabled(link, chat)` read the link's effective mode from
   the notifier's in-memory link list and getMe's `has_topics_enabled` at send time; the digest and the "many changes"
   notice go home (`Route(link, "")`); the legacy `needs` key gets one note and is dropped (never deleted); one home
@@ -5472,8 +5471,13 @@
   `TestThreadsDigestAndOverflowGoHome`, `TestThreadsFallbacks`, `TestThreadsModeReadAtSendTime`,
   `TestThreadsAnnouncedOncePerLink`; `internal/app` `TestTelegramThreadsRouteEachSpaceToItsTopic`,
   `TestTelegramThreadsFallbacks`, `TestTelegramThreadsRetireTheLegacyNeedsTopic`; `internal/retention`
-  `TestPassKeepsTelegramNotices`. All of it is simulated (`internal/telegram/tgtest`); the real-bot run is TG-14
-  (plan §6.3).
+  `TestPassKeepsTelegramNotices`. T3 (link prefs and the Mini App): `GET/PUT /telegram/link/prefs` return `topics`
+  (`available`, `mode`, `override`, `active`, `spaces`, `refused`); the override is saved through the `threads` field with
+  If-Match, and `active` comes from `topics.Manager.EnabledFor(mode, chat)` (the layout just saved, which the notifier's
+  own view only learns of once the change commits; `Enabled(link, chat)` is the same check for a link the notifier
+  already knows). `spaces` are the readable spaces that have a thread in the link's `topics_json`. The Mini App's
+  "Chat layout" control offers "A topic per space", "One chat" and "Automatic". All of it is simulated
+  (`internal/telegram/tgtest`); the real-bot run is TG-14 (plan §6.3).
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
