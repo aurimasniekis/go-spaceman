@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as session from '@/api/session'
 import { AttachmentBlobs } from './attachments'
-import * as tg from './session'
 import { createAttachmentsHost } from './watchAttachments'
 
 let n = 0
@@ -33,7 +32,7 @@ describe('AttachmentBlobs', () => {
     expect(f).toHaveBeenCalledTimes(2)
     const init = f.mock.calls[0][1]
     expect(init.credentials).toBe('omit')
-    expect(init.headers).toEqual({ Authorization: 'Telegram tok' })
+    expect(new Headers(init.headers).get('Authorization')).toBe('Telegram tok')
     expect(f.mock.calls[0][0]).toBe('/api/v1/spaces/spc_1/attachments/att_a/content')
     while (gates.length) {
       gates.shift()!()
@@ -95,7 +94,8 @@ describe('AttachmentBlobs', () => {
     expect(await b.load(A('att_a'))).toBeNull()
     expect(await b.load(A('att_a'))).toBeNull()
     expect(f).toHaveBeenCalledOnce()
-    const end = vi.spyOn(tg, 'endSession')
+    const end = vi.fn()
+    session.setMiniAppMode(end)
     const u = new AttachmentBlobs((async () => new Response('', { status: 401 })) as unknown as typeof fetch)
     expect(await u.load(A('att_b'))).toBeNull()
     expect(end).toHaveBeenCalled()

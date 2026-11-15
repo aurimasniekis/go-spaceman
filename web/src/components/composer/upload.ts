@@ -1,5 +1,5 @@
 import { apiError, type Schemas } from '@/api/client'
-import { API_PREFIX, csrfToken, endMiniAppSession, isMiniApp, TELEGRAM_AUTH_SCHEME, telegramToken } from '@/api/session'
+import { API_PREFIX, csrfToken, endMiniAppSession, isMiniApp, miniAppFetchInit } from '@/api/session'
 
 export type UploadedAttachment = Schemas['AttachmentOut']
 
@@ -10,15 +10,14 @@ export async function uploadAttachment(spaceId: string, file: File): Promise<Upl
   // The Mini App has no cookie and no CSRF token: its session is the Authorization header (ADR-0083 §3.4.2), exactly as
   // the API client's middleware sends it for every other call.
   const miniApp = isMiniApp()
-  const headers: Record<string, string> = { 'Idempotency-Key': crypto.randomUUID() }
-  if (miniApp) headers.Authorization = `${TELEGRAM_AUTH_SCHEME} ${telegramToken()}`
-  else headers['X-CSRF-Token'] = csrfToken()
-  const res = await fetch(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/attachments`, {
-    method: 'POST',
-    body: form,
-    headers,
-    credentials: miniApp ? 'omit' : 'same-origin',
-  })
+  const url = `${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/attachments`
+  const idem = { 'Idempotency-Key': crypto.randomUUID() }
+  const res = await fetch(
+    url,
+    miniApp
+      ? miniAppFetchInit({ method: 'POST', body: form, headers: idem })
+      : { method: 'POST', body: form, headers: { ...idem, 'X-CSRF-Token': csrfToken() }, credentials: 'same-origin' },
+  )
   if (miniApp && res.status === 401) await endMiniAppSession(res)
   const body: unknown = await res.json().catch(() => ({}))
   if (!res.ok) throw apiError(body, res.status)

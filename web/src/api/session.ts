@@ -147,19 +147,30 @@ async function after(original: Request | undefined, request: Request, response: 
 
 const originals = new WeakMap<Request, Request>()
 
-/** Ends the Mini App's session after a 401 on a request made outside the API client (an upload). */
+/**
+ * The one place that builds a Mini App request's credentials: `credentials: 'omit'` and `Authorization: Telegram <token>`
+ * (omitted while there is no token, never a bare "Telegram "). Merges `init.headers` and keeps the rest of `init`.
+ */
+export function miniAppFetchInit(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers)
+  if (tgToken) headers.set('Authorization', `${TELEGRAM_AUTH_SCHEME} ${tgToken}`)
+  return { ...init, headers, credentials: 'omit' }
+}
+
+/** Ends the Mini App's session with the message for a 401's problem code (MFA still to finish, or the reopen screen). */
+export function endMiniAppSessionWithCode(code: string) {
+  tgEnded?.(code === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
+}
+
+/** Ends the Mini App's session after a 401 on a request made outside the API client (an upload, an image, the stream). */
 export async function endMiniAppSession(res: Response) {
-  tgEnded?.((await problemCode(res)) === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
+  endMiniAppSessionWithCode(await problemCode(res))
 }
 
 /** openapi-fetch middleware for the API client. */
 export const sessionMiddleware: Middleware = {
   onRequest({ request }) {
-    if (miniApp) {
-      const r = new Request(request, { credentials: 'omit' })
-      if (tgToken) r.headers.set('Authorization', `${TELEGRAM_AUTH_SCHEME} ${tgToken}`)
-      return r
-    }
+    if (miniApp) return new Request(request, miniAppFetchInit({ headers: request.headers }))
     prepare(request)
     originals.set(request, request.clone())
     return request
