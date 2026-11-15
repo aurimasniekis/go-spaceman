@@ -28,7 +28,8 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 
 Store-backed tests fail when a write transaction holds the write lock for longer than 100 ms (Hallpass HP-DB-004), or
 the value of `SM_TEST_TX_MAX`. Time spent waiting for the writer and retrying a busy database doesn't count
-(ADR-0070). GitHub's hosted runners are slower, so the coverage and race steps in `ci` and `release` use 1 s, and
+(ADR-0070). A test binary built with the race detector defaults to 500 ms instead, as `make race` already
+sets, because the detector slows SQLite several-fold; the 100 ms limit is enforced by the runs without it. GitHub's hosted runners are slower, so the coverage and race steps in `ci` and `release` use 1 s, and
 the login-timing and fuzz jobs 250 ms (ADR-0062).
 
 A store opened by `storetest.Open` is set up so that setup work doesn't land inside a test's transactions (ADR-0062,
