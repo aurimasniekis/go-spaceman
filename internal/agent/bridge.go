@@ -100,15 +100,36 @@ func (a *Agent) ServeBridge(ctx context.Context) error {
 	}
 }
 
+// bridgeLineMax bounds one bridge request line; a longer one closes the connection, so a local writer cannot make the
+// agent buffer an unbounded line.
+const bridgeLineMax = 1 << 20
+
+var errBridgeLineTooLong = errors.New("bridge line too long")
+
+// readBridgeLine reads up to the next newline, giving up once the line passes bridgeLineMax bytes.
+func readBridgeLine(br *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := br.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > bridgeLineMax {
+			return nil, errBridgeLineTooLong
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return line, err
+		}
+	}
+}
+
 func (a *Agent) serveBridgeConn(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	br := bufio.NewReaderSize(c, 64<<10)
 	enc := json.NewEncoder(c)
 	for {
 		_ = c.SetReadDeadline(time.Now().Add(10 * time.Minute))
-		line, err := br.ReadBytes('\n')
+		line, err := readBridgeLine(br)
 		if err != nil {
-			return
+			return // closed, timed out or over bridgeLineMax: the connection is dropped
 		}
 		var req bridgeRequest
 		if json.Unmarshal(line, &req) != nil {

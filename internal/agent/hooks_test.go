@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -46,7 +50,10 @@ func TestStatusLinePrintsWrappedCommandOutput(t *testing.T) {
 
 // A wrapped command past 2 s is stopped and the SpaceMan line is printed; one that fails, or prints nothing, too.
 func TestStatusLineWrappedCommandTimeoutAndFailure(t *testing.T) {
-	out, took := statusLine(t, hookSample, "", `sleep 10; echo late`)
+	// The sleeps outlive the wrapper on purpose; they are killed at the end so none is left behind.
+	pids := filepath.Join(t.TempDir(), "pids")
+	t.Cleanup(func() { killRecorded(pids) })
+	out, took := statusLine(t, hookSample, "", `sleep 10 & echo $! >> '`+pids+`'; wait; echo late`)
 	if took > StatusLineWrapTimeout+time.Second {
 		t.Fatalf("took %v", took)
 	}
@@ -54,7 +61,7 @@ func TestStatusLineWrappedCommandTimeoutAndFailure(t *testing.T) {
 		t.Fatalf("timeout output %q", out)
 	}
 	// A command that keeps a background process holding its output open does not hold the line up either.
-	if out, took := statusLine(t, hookSample, "", `(sleep 10 >/dev/null 2>&1 </dev/null & exec sleep 0.01 ; true) ; echo ok; (sleep 5 &)`); took > StatusLineWrapTimeout+time.Second || out != "ok\n" {
+	if out, took := statusLine(t, hookSample, "", `(sleep 10 >/dev/null 2>&1 </dev/null & echo $! >> '`+pids+`'; exec sleep 0.01 ; true) ; echo ok; (sleep 5 & echo $! >> '`+pids+`')`); took > StatusLineWrapTimeout+time.Second || out != "ok\n" {
 		t.Fatalf("background holder: %q after %v", out, took)
 	}
 	// A timed-out command's children die with it.
@@ -68,6 +75,54 @@ func TestStatusLineWrappedCommandTimeoutAndFailure(t *testing.T) {
 			t.Errorf("%s: output %q", wrap, out)
 		}
 	}
+}
+
+// killRecorded kills the processes whose IDs are listed one per line in the file.
+func killRecorded(file string) {
+	b, _ := os.ReadFile(file)
+	for _, f := range strings.Fields(string(b)) {
+		if pid, err := strconv.Atoi(f); err == nil && pid > 1 {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+}
+
+// Killing the wrapper (SIGHUP or SIGKILL at run teardown) takes the wrapped command with it, though it has its own group.
+func TestStatusLineWrapperKilledKillsWrappedCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the agent binary's hook")
+	}
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "pid")
+	t.Cleanup(func() { killRecorded(pidFile) })
+	// The test binary is the wrapper: re-run it as a helper that calls StatusLine.
+	cmd := exec.Command(os.Args[0], "-test.run=TestStatusLineWrapperHelper")
+	cmd.Env = append(os.Environ(), "SM_STATUS_HELPER=1", "SM_STATUS_PIDFILE="+pidFile)
+	cmd.Stdout = io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	var pid int
+	waitFor(t, "wrapped command started", func() bool {
+		b, _ := os.ReadFile(pidFile)
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		return pid > 1
+	})
+	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	waitFor(t, "wrapped command killed with the wrapper", func() bool { return syscall.Kill(pid, 0) != nil })
+}
+
+// TestStatusLineWrapperHelper is the wrapper process of the test above; it does nothing in a normal run.
+func TestStatusLineWrapperHelper(t *testing.T) {
+	if os.Getenv("SM_STATUS_HELPER") != "1" {
+		t.Skip("helper process")
+	}
+	pidFile := os.Getenv("SM_STATUS_PIDFILE")
+	StatusLine(context.Background(), strings.NewReader(hookSample), io.Discard, "", "run_x", `echo $$ > '`+pidFile+`'; exec sleep 37`)
 }
 
 // What the wrapped command prints is bounded to 64 KiB.
@@ -241,15 +296,9 @@ func TestStopFailureStartsLimitScan(t *testing.T) {
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	// A StopFailure without a limit record does not open anything.
 	ctx := context.Background()
-	if err := sendHook(ctx, socket, runID, ToolHookStopFailure, harness.StopFailure{Error: "authentication_failed"}); err != nil {
-		t.Fatal(err)
-	}
-	if c := a.FailureClass(runID); c != "authentication_failed" {
-		t.Fatalf("class %q", c)
-	}
-	// The limit record is in the transcript and the settle delay is an hour: the hook's scan finds it.
+	// The limit record is in the transcript and the settle delay is an hour: the hook's scan finds it. It is sent first, so
+	// no earlier StopFailure's scan coalesces it away.
 	StopFailureHook(ctx, strings.NewReader(`{"error":"rate_limit","last_assistant_message":"SECRET","session_id":"`+row.SessionID+`"}`), socket, runID)
 	var found *proto.RunLimit
 	deadline := time.After(5 * time.Second)
@@ -267,7 +316,87 @@ func TestStopFailureStartsLimitScan(t *testing.T) {
 	if found.Kind != proto.LimitFiveHour {
 		t.Fatalf("limit %+v", found)
 	}
+	if c := a.FailureClass(runID); c != "" {
+		t.Fatalf("a rate_limit failure set the health class to %q", c)
+	}
+	if err := sendHook(ctx, socket, runID, ToolHookStopFailure, harness.StopFailure{Error: "authentication_failed"}); err != nil {
+		t.Fatal(err)
+	}
 	if c := a.FailureClass(runID); c != "authentication_failed" {
-		t.Fatalf("a rate_limit failure changed the health class to %q", c)
+		t.Fatalf("class %q", c)
+	}
+}
+
+// A second StopFailure within the gap starts no second scan; one after the gap does. The time of the last scan start
+// is what the coalescing keys on, so the test reads it with a fake clock.
+func TestStopFailureCoalescesScans(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	clk := clock.NewFake(time.Now())
+	a.o.Clock = clk
+	runID := "run_hook"
+	ccLaunch(a, runID)
+	req := bridgeRequest{Run: runID, Tool: ToolHookStopFailure, Args: json.RawMessage(`{"error":"rate_limit"}`)}
+	scans := func() time.Time { a.mu.Lock(); defer a.mu.Unlock(); return a.stopScans[runID] }
+	a.stopFailureIntake(context.Background(), req)
+	first := scans()
+	clk.Advance(stopScanGap - time.Millisecond)
+	a.stopFailureIntake(context.Background(), req)
+	if got := scans(); !got.Equal(first) {
+		t.Fatalf("a second StopFailure inside the gap started a scan (%v != %v)", got, first)
+	}
+	clk.Advance(2 * time.Millisecond)
+	a.stopFailureIntake(context.Background(), req)
+	if got := scans(); !got.After(first) {
+		t.Fatal("a StopFailure after the gap started no scan")
+	}
+}
+
+// A StopFailure that races the run's end leaves nothing behind.
+func TestStopFailureIntakeAfterRunEndKeepsNothing(t *testing.T) {
+	a, _, runID, _, f := startHookAgent(t)
+	row := getRun(t, a, runID)
+	f.Exit(row.TerminalID, 0, "exited")
+	waitFor(t, "run ended", func() bool { r, err := a.j.getRun(context.Background(), runID); return err == nil && ended(r.State) })
+	resp := a.stopFailureIntake(context.Background(), bridgeRequest{Run: runID, Tool: ToolHookStopFailure, Args: json.RawMessage(`{"error":"authentication_failed"}`)})
+	if !resp.OK {
+		t.Fatalf("response %+v", resp)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.failureClasses[runID]; ok {
+		t.Fatal("failure class kept for an ended run")
+	}
+	if _, ok := a.stopScans[runID]; ok {
+		t.Fatal("scan time kept for an ended run")
+	}
+}
+
+// A bridge line over the cap closes the connection; the agent does not buffer it.
+func TestBridgeLineOverCapClosesConnection(t *testing.T) {
+	_, _, _, socket, _ := startHookAgent(t)
+	c, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	chunk := bytes.Repeat([]byte("a"), 64<<10)
+	var werr error
+	for sent := 0; sent <= bridgeLineMax+len(chunk) && werr == nil; sent += len(chunk) {
+		_, werr = c.Write(chunk)
+	}
+	if _, err := io.ReadAll(c); err != nil && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("connection not closed by the agent: %v", err)
+	}
+	// A normal line still works on a new connection.
+	c2, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	_ = c2.SetDeadline(time.Now().Add(5 * time.Second))
+	_, _ = c2.Write([]byte(`{"run":"x","tool":"ping"}` + "\n"))
+	if line, err := bufio.NewReader(c2).ReadString('\n'); err != nil || !strings.Contains(line, "unauthenticated") {
+		t.Fatalf("normal line: %q %v", line, err)
 	}
 }

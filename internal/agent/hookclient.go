@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -126,11 +127,20 @@ func runWrapped(ctx context.Context, command string, stdin []byte) (string, bool
 	buf.max = wrapOutputMax
 	cmd.Stdout = &buf
 	cmd.WaitDelay = 200 * time.Millisecond
-	// Its own process group, killed whole on timeout: a hung status script must not leave orphans at every refresh.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Its own process group, so a timeout kills the whole group: a hung status script must not leave orphans at every
+	// refresh. Background children of a command that exits cleanly are not killed, as when Claude Code runs it directly.
+	// Pdeathsig ends the command if this wrapper is killed first (it is tied to the thread that started the process,
+	// hence the locked thread around Start).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	runtime.LockOSThread()
+	err := cmd.Start()
+	runtime.UnlockOSThread()
+	if err != nil {
+		return "", false
+	}
 	// A clean exit whose background child still holds the output open (ErrWaitDelay) keeps what was printed.
-	if err := cmd.Run(); (err != nil && !errors.Is(err, exec.ErrWaitDelay)) || ctx.Err() != nil {
+	if err := cmd.Wait(); (err != nil && !errors.Is(err, exec.ErrWaitDelay)) || ctx.Err() != nil {
 		return "", false
 	}
 	return buf.b.String(), buf.b.Len() > 0
