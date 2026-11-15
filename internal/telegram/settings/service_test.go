@@ -521,6 +521,9 @@ func TestMalformedLinkCapFallsBackToViewer(t *testing.T) {
 		`{"link_default_max_role":7}`,
 		`{"link_default_max_role":["operator"]}`,
 		`{"LINK_DEFAULT_MAX_ROLE":{}}`,
+		`{"link_default_max_role":null}`,
+		`{"LINK_DEFAULT_MAX_ROLE":null}`,
+		`{"link_default_max_role":null,"LINK_DEFAULT_MAX_ROLE":"operator"}`,
 	} {
 		svc, s := newSvc(t, nil)
 		if got := seedRaw(t, svc, s, js); got.LinkDefaultMaxRole != RoleViewer {

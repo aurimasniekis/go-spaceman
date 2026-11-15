@@ -676,6 +676,79 @@ func TestStaleStartRetryDoesNotReplaceWritesLoop(t *testing.T) {
 	}
 }
 
+// Start's first read of the bot row fails (generation 0, nothing applied yet): that is still a failed attempt, so a
+// retry loop starts and keeps running.
+func TestFailedBootReadStillRetries(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.svc.retryMin, e.svc.retryMax = 5*time.Millisecond, 20*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_ = e.s.Close() // every read now fails while ctx is live
+	e.svc.Start(ctx)
+	e.svc.mu.Lock()
+	done, gen := e.svc.run.retryDone, e.svc.run.gen
+	e.svc.mu.Unlock()
+	if gen != 0 {
+		t.Fatalf("gen %d, want 0 (no apply happened)", gen)
+	}
+	if done == nil {
+		t.Fatal("a failed boot read started no retry loop")
+	}
+	select {
+	case <-done:
+		t.Fatal("the boot retry loop ended")
+	case <-time.After(100 * time.Millisecond): // several attempts at 5-20ms
+	}
+	if st := e.svc.Status(ctx); st.WebhookStatus != StateError {
+		t.Fatalf("status %+v, want error", st)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the loop ignores its context")
+	}
+}
+
+// Start's boot read fails at generation 0, then a write applies (generation 1) and its own failure starts a loop:
+// Start's late call for generation 0 must neither stop nor replace the write's loop.
+func TestStaleGenZeroStartDoesNotStopWritesLoop(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.svc.retryMin, e.svc.retryMax = time.Hour, time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.svc.mu.Lock()
+	e.svc.run.baseCtx = ctx
+	e.svc.mu.Unlock()
+
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	e.tg.FailNext("getMe", http.StatusBadGateway, "transient", 0)
+	if got := e.put(b.Version, Input{Enabled: true}); got.WebhookStatus != StateError {
+		t.Fatalf("put: %+v", got.Health)
+	}
+	e.svc.mu.Lock()
+	writeDone := e.svc.run.retryDone
+	e.svc.mu.Unlock()
+	if writeDone == nil {
+		t.Fatal("the failed write started no retry loop")
+	}
+
+	e.svc.mu.Lock()
+	e.svc.startRetryLocked(ctx, 0) // Start's late call, from before the write
+	after := e.svc.run.retryDone
+	e.svc.mu.Unlock()
+	if after != writeDone {
+		t.Fatal("a stale generation-0 Start replaced the write's retry loop")
+	}
+	select {
+	case <-writeDone:
+		t.Fatal("a stale generation-0 Start stopped the write's retry loop")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 // A Telegram error that echoes the token, or only its secret part, reaches neither the health, the warnings, the
 // Put error nor the logs (botapi redacts both).
 func TestTokenEchoedByTelegramStaysOut(t *testing.T) {
