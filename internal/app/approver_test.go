@@ -9,8 +9,11 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
+	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
 
 // The approver re-check (SM-APPR-003) never counts a SpaceMan MCP call as an approver (ADR-0063): not by its "via",
@@ -55,5 +58,132 @@ func TestApproverRecheckRefusesSpacemanMCP(t *testing.T) {
 		if got := c.approverStillAuthorized(ctx, tc.by, space); got != tc.want {
 			t.Errorf("%s: authorized %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// The approver re-check of a decision made through Telegram (ADR-0083 §3.2 change 5): it holds while the link is
+// active, for the same user, who is enabled and not Limited, and the link's capped subject and the user's grants both
+// allow approval:decide, and the space still has the enforced-approval opt-in (TG-7-2). A revoked or suspended link, a link capped to viewer, a removed user grant, a disabled user, a
+// link of another user, or a missing link each fail it.
+func TestApproverRecheckTelegram(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storetest.Open(t)
+	kr := keyringtest.Load(t, s)
+	e, err := authz.New(ctx, s.R())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := auth.New(s, kr, audit.NewWriter(kr), eventbus.New(), e, auth.Options{})
+	sys := audit.Actor{Type: audit.ActorSystem, ID: "test"}
+	const space = "spc_0000000000000000000000000x"
+	mk := func(email string) *auth.User {
+		u, err := svc.Create(ctx, sys, auth.CreateInput{Email: email, DisplayName: email,
+			Grants: []auth.GrantInput{{Role: authz.RoleOperator, Domain: space}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	if _, err := svc.Create(ctx, sys, auth.CreateInput{Email: "admin@example.com", DisplayName: "Admin",
+		Grants: []auth.GrantInput{{Role: authz.RoleAdmin, Domain: authz.Global}}}); err != nil {
+		t.Fatal(err)
+	}
+	u, other := mk("ada@example.com"), mk("bob@example.com")
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := s.W().Tx(ctx, func(tx *store.Tx) error {
+			_, err := tx.SQL.ExecContext(ctx, q, args...)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Reload(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, created_at, updated_at) VALUES ('tgl_a', ?, 1, 1, 1, 'active', 0, 0)`, u.ID)
+	setCap := func(role string) {
+		exec(`DELETE FROM role_grants WHERE subject = 'telegram:tgl_a'`)
+		exec(`INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES ('telegram:tgl_a', ?, ?, 'telegram', 0, 't')`, role, space)
+	}
+	setCap("operator")
+	// The space, visible to Telegram with the enforced-approval opt-in (TG-7-2: the recheck requires it too).
+	exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_r', 'r', 'active', 0, 't', 0)`)
+	exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES (?, 'r', 'R', 'nod_r', 'active', 'w', 0, 't', 0)`, space)
+	setOptIn := func(enabled int, mode string) {
+		exec(`INSERT INTO space_telegram_settings (space_id, enabled, content_level, enforced_approvals, topics, terminal_watch, created_at, created_by, updated_at, updated_by, version)
+			VALUES (?, ?, 'full', ?, 0, 0, 0, 't', 0, 't', 1) ON CONFLICT (space_id) DO UPDATE SET enabled = excluded.enabled, enforced_approvals = excluded.enforced_approvals`, space, enabled, mode)
+	}
+	setOptIn(1, "confirm")
+	c := &Central{Store: s, Authz: e, Auth: svc, TelegramSettings: tgsettings.New(s, audit.NewWriter(kr), eventbus.New(), nil)}
+	by := audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "telegram:tgl_a", Channel: audit.ChannelTelegram}
+	check := func(what string, by audit.Actor, want bool) {
+		t.Helper()
+		if got := c.approverStillAuthorized(ctx, by, space); got != want {
+			t.Errorf("%s: authorized %v, want %v", what, got, want)
+		}
+	}
+	check("active link", by, true)
+	setOptIn(1, "web_only")
+	check("space opt-in withdrawn", by, false)
+	setOptIn(0, "confirm")
+	check("space hidden from Telegram", by, false)
+	setOptIn(1, "confirm")
+	check("opt-in restored", by, true)
+	check("another user's actor on the link", audit.Actor{Type: audit.ActorUser, ID: other.ID, Via: "telegram:tgl_a"}, false)
+	check("missing link", audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "telegram:tgl_none"}, false)
+	check("empty link id", audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "telegram:"}, false)
+
+	setCap("viewer")
+	check("link capped to viewer", by, false)
+	setCap("operator")
+	check("cap restored", by, true)
+
+	exec(`DELETE FROM role_grants WHERE subject = ?`, auth.UserSubject(u.ID))
+	check("user grant removed (the link's own grant isn't enough)", by, false)
+	exec(`INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'manual', 0, 't')`, auth.UserSubject(u.ID), space)
+	check("user grant restored", by, true)
+
+	exec(`UPDATE users SET mfa_required = 1 WHERE id = ?`, u.ID)
+	check("user must still enroll MFA (Limited)", by, false)
+	exec(`UPDATE users SET mfa_required = 0 WHERE id = ?`, u.ID)
+
+	// SSO-sourced grants count only while the link policy has them on (link_sso_grants, off here): a link confirmed from
+	// an SSO session whose user holds the role only through SSO grants isn't an approver.
+	exec(`UPDATE telegram_links SET via_sso = 1, sso_until = ? WHERE id = 'tgl_a'`, time.Now().Add(time.Hour).UnixMicro())
+	exec(`DELETE FROM role_grants WHERE subject = ?`, auth.UserSubject(u.ID))
+	exec(`INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'sso', 0, 't')`, auth.SSOSubject(u.ID), space)
+	check("SSO-only grants with the link policy off", by, false)
+	exec(`DELETE FROM role_grants WHERE subject = ?`, auth.SSOSubject(u.ID))
+	exec(`UPDATE telegram_links SET via_sso = 0, sso_until = NULL WHERE id = 'tgl_a'`)
+	exec(`INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'manual', 0, 't')`, auth.UserSubject(u.ID), space)
+	check("grants restored", by, true)
+
+	exec(`UPDATE telegram_links SET state = 'suspended' WHERE id = 'tgl_a'`)
+	check("suspended link", by, false)
+	exec(`UPDATE telegram_links SET state = 'active' WHERE id = 'tgl_a'`)
+	check("reactivated link", by, true)
+
+	if _, err := svc.SetEnabled(ctx, sys, u.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	check("disabled user", by, false)
+	if _, err := svc.SetEnabled(ctx, sys, u.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	check("re-enabled user", by, true)
+
+	exec(`UPDATE telegram_links SET state = 'revoked', revoked_at = 1 WHERE id = 'tgl_a'`)
+	check("revoked link", by, false)
+}
+
+// Without an approvals service the Telegram respond rule counts every approval as enforced (never advisory).
+func TestEnforcedApprovalWithoutApprovalsService(t *testing.T) {
+	t.Parallel()
+	c := &Central{}
+	ok, err := c.enforcedApproval(context.Background(), &human.Action{ID: "hum_1"})
+	if err != nil || !ok {
+		t.Fatalf("enforcedApproval with no approvals service = %v, %v; want true", ok, err)
 	}
 }

@@ -171,6 +171,20 @@ func TestStreamRevalidateBounds(t *testing.T) {
 	}
 }
 
+// The stream heartbeat stays well under the 100 s idle limit of a proxy: 1 s … 45 s.
+func TestStreamHeartbeatBounds(t *testing.T) {
+	for d, ok := range map[time.Duration]bool{time.Second: true, 15 * time.Second: true, 45 * time.Second: true, 46 * time.Second: false, 500 * time.Millisecond: false} {
+		cfg := Default()
+		cfg.Mode = ModeDevelopment
+		cfg.PublicURL = "http://127.0.0.1:8080"
+		cfg.HTTP.StreamHeartbeat = Duration(d)
+		err := cfg.Validate()
+		if ok != (err == nil) || (!ok && !strings.Contains(err.Error(), "stream_heartbeat")) {
+			t.Errorf("stream_heartbeat %s: %v", d, err)
+		}
+	}
+}
+
 // The command-line client's and the enrollment command's variables may be exported on the central host; central
 // ignores them instead of refusing to start, and still rejects real typos.
 func TestClientVariablesIgnoredByCentral(t *testing.T) {
@@ -279,6 +293,60 @@ func TestClaudeCodeConfig(t *testing.T) {
 	} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in %v", want, err)
+		}
+	}
+}
+
+func TestTelegramAPIBaseURL(t *testing.T) {
+	if d := Default().Telegram.APIBaseURL; d != "https://api.telegram.org" {
+		t.Fatalf("default telegram.api_base_url = %q", d)
+	}
+	p := writeFile(t, "public_url: https://spaceman.example.com\ntelegram:\n  api_base_url: http://127.0.0.1:8081\n")
+	cfg, err := Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telegram.APIBaseURL != "http://127.0.0.1:8081" {
+		t.Fatalf("telegram.api_base_url = %q", cfg.Telegram.APIBaseURL)
+	}
+	for _, bad := range []string{"", "api.telegram.org", "http://bot.example.com", "https://u:p@api.example.com", "https://api.example.com/?x=1", "ftp://api.example.com"} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Telegram.APIBaseURL = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "telegram.api_base_url") {
+			t.Errorf("api_base_url %q: err = %v", bad, err)
+		}
+	}
+}
+
+// telegram.miniapp_host (ADR-0083 §3.4.1): empty by default, set from the file or the environment, and held to the
+// bot's miniapp_host rules (a bare lower-case DNS name, not an IP address, not public_url's host).
+func TestTelegramMiniAppHost(t *testing.T) {
+	if d := Default().Telegram.MiniAppHost; d != "" {
+		t.Fatalf("default telegram.miniapp_host = %q", d)
+	}
+	p := writeFile(t, "public_url: https://spaceman.example.com\ntelegram:\n  miniapp_host: tg.example.com\n")
+	cfg, err := Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telegram.MiniAppHost != "tg.example.com" {
+		t.Fatalf("telegram.miniapp_host = %q", cfg.Telegram.MiniAppHost)
+	}
+	cfg, err = Load(p, []string{"SPACEMAN_TELEGRAM_MINIAPP_HOST=mini.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telegram.MiniAppHost != "mini.example.com" {
+		t.Fatalf("telegram.miniapp_host from the environment = %q", cfg.Telegram.MiniAppHost)
+	}
+	for _, bad := range []string{"TG.example.com", "tg.example.com:8443", "https://tg.example.com", "tg.example.com/", "127.0.0.1", "[::1]",
+		"localhost", "tg.example.com.", "spaceman.example.com", "tg.123", "-tg.example.com"} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Telegram.MiniAppHost = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "telegram.miniapp_host") {
+			t.Errorf("miniapp_host %q: err = %v", bad, err)
 		}
 	}
 }

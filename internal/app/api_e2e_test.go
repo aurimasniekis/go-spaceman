@@ -44,6 +44,13 @@ func newHarnessWith(t *testing.T, mod func(*config.Config)) *harness {
 // newHarnessLogged is newHarnessWith with central logging to log.
 func newHarnessLogged(t *testing.T, log *slog.Logger, mod func(*config.Config)) *harness {
 	t.Helper()
+	return newHarnessFull(t, log, mod, nil)
+}
+
+// newHarnessFull is newHarnessLogged with pre called on the opened central before its handler is built (to set the UI
+// handlers).
+func newHarnessFull(t *testing.T, log *slog.Logger, mod func(*config.Config), pre func(*app.Central)) *harness {
+	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
 	cfg.Mode = config.ModeDevelopment
@@ -73,6 +80,9 @@ func newHarnessLogged(t *testing.T, log *slog.Logger, mod func(*config.Config)) 
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	h.c = c
+	if pre != nil {
+		pre(c)
+	}
 	h.srv.Config.Handler = c.Handler(c.APIDeps())
 	h.srv.Start()
 	t.Cleanup(h.srv.Close)

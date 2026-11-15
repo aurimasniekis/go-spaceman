@@ -1271,6 +1271,143 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/telegram/link-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start linking your Telegram account
+         * @description Returns a single-use code and a t.me deep link that sends /start <code> to the bot. The code is returned only here and expires after link_code_ttl_seconds; creating one cancels your unfinished codes. The bot then asks the Telegram account to confirm, naming this server and your account; after that, confirm-telegram-link from this same browser session finishes the link. Needs a browser session with a recent re-authentication; API tokens can't link.
+         */
+        post: operations["create-telegram-link-code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/link-codes/{code_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One of your Telegram link codes
+         * @description The page polls this while it is open. Once the Telegram account confirmed in the bot, the state is telegram_confirmed and the answer names that account.
+         */
+        get: operations["get-telegram-link-code"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/link-codes/{code_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel one of your Telegram link codes
+         * @description Cancelling a used or cancelled code changes nothing.
+         */
+        post: operations["cancel-telegram-link-code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/link-codes/{code_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link the Telegram account that confirmed your code
+         * @description Only after the Telegram account confirmed in the bot, before the code expires, from the browser session that created the code and with a recent re-authentication. The link's grants are your grants capped at max_role; every request through it is also checked against your current grants.
+         */
+        post: operations["confirm-telegram-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your linked Telegram accounts */
+        get: operations["list-my-telegram-links"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink your Telegram account
+         * @description Ends the link at once: the account's next message is refused and its grants are removed. Unlinking an already unlinked link changes nothing. To link again, start from the Account page.
+         */
+        delete: operations["delete-my-telegram-link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/links/{link_id}/reconfirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-confirm your Telegram link
+         * @description A link must be re-confirmed from the web every link_reconfirm_days (default 90) or it does nothing. Needs a browser session with a recent re-authentication.
+         */
+        post: operations["reconfirm-telegram-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -2801,7 +2938,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Acknowledge a message addressed to operators */
+        /**
+         * Acknowledge a message addressed to operators
+         * @description Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).
+         */
         post: operations["ack-message"];
         delete?: never;
         options?: never;
@@ -2858,7 +2998,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Close a message or request */
+        /**
+         * Close a message or request
+         * @description Optional If-Match: a message that changed since that version is refused as a conflict (409 precondition_failed).
+         */
         post: operations["resolve-message"];
         delete?: never;
         options?: never;
@@ -3784,7 +3927,7 @@ export interface paths {
         put?: never;
         /**
          * Place a task in the queue
-         * @description Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
+         * @description Optional If-Match: a task that changed since that version is refused as a conflict (409 precondition_failed). Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
          */
         post: operations["move-task"];
         delete?: never;
@@ -3828,6 +3971,34 @@ export interface paths {
          */
         post: operations["set-task-status"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's Telegram settings
+         * @description The defaults (enabled false, version 0) when the space has none: it is then invisible to Telegram.
+         */
+        get: operations["get-space-telegram"];
+        /**
+         * Set a space's Telegram settings
+         * @description Without If-Match this creates the settings (409 if the space has some); with it, it replaces them. A field left out takes its default, except group_chat_id: left out, the space's bound group stays. Needs space_config:write in the space and a step-up; binding or unbinding the group (group_chat_id) also needs telegram_group:write (admins). The group must be a forum supergroup the bot is a member of (422 otherwise), and a group serves one space only (409 when it is bound elsewhere).
+         */
+        put: operations["put-space-telegram"];
+        post?: never;
+        /**
+         * Remove a space's Telegram settings (Telegram is off for it again)
+         * @description Needs space_config:write in the space and a step-up. It also unbinds the space's group, which needs no telegram_group:write (unbinding with group_chat_id 0 on the PUT does).
+         */
+        delete: operations["delete-space-telegram"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4062,7 +4233,7 @@ export interface paths {
         };
         /**
          * This instance's status
-         * @description Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.
+         * @description Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health installation-wide counts and the Telegram bot's health. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.
          */
         get: operations["get-system"];
         put?: never;
@@ -4188,6 +4359,226 @@ export interface paths {
          * @description Records that an administrator has seen the restore. Spaces stay paused until each is resumed.
          */
         post: operations["acknowledge-restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/bot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Telegram bot's connection and health (never its token)
+         * @description The bot's settings, has_token and token_version (the token is never returned), the bot's ID and username from getMe, and its live health: in webhook mode Telegram's getWebhookInfo (reused for 30 seconds). Needs system:read.
+         */
+        get: operations["get-telegram-bot"];
+        /**
+         * Configure the Telegram bot, or replace its configuration
+         * @description Without If-Match this creates the configuration (bot_token required); with it, it replaces every field, and an empty bot_token keeps the stored token. A new token is checked with Telegram's getMe before it is stored, sealed and never returned; the webhook secret is generated by central and rotates with it. Configuring a different bot (another bot ID) revokes every Telegram link, because their chats belong to the old bot; a new token of the same bot keeps them. Then central reconfigures the running bot (commands, menu button, setWebhook or polling); a failure there is reported in health, not as an error. The Bot API's address is not settable here (central's configuration file only). Needs system:write and a step-up.
+         */
+        put: operations["put-telegram-bot"];
+        post?: never;
+        /**
+         * Remove the Telegram bot's configuration
+         * @description Removes the webhook and the stored token: Telegram is off. Links stay, and resume if the same bot is configured again. Needs system:write and a step-up.
+         */
+        delete: operations["delete-telegram-bot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/download-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a signed download link for an attachment
+         * @description Mini App host only (404 elsewhere). Returns a link on the Mini App host that serves one attachment of the space to the caller's Telegram link, for 60 seconds and at most 3 requests. The caller needs attachment:read in the space. The link is re-authorized when it is used: an unlinked or disabled caller gets nothing.
+         */
+        post: operations["create-telegram-download-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/link/prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your Telegram link's notification preferences
+         * @description Mini App host only (404 elsewhere). The preferences of the Telegram link the session belongs to: its overrides, the defaults they apply to, the effective result and your time zone. There is no link ID: it is always the caller's own link.
+         */
+        get: operations["get-my-telegram-link-prefs"];
+        /**
+         * Save your Telegram link's notification preferences
+         * @description Mini App host only (404 elsewhere). Replaces the overrides of the Telegram link the session belongs to: a field left out follows the defaults again. timezone, when sent, sets your user's time zone (empty clears it). Send If-Match with the version you read. It changes nothing else: not another link, the link's role cap, spaces or grants, nor any space's or the global Telegram settings.
+         */
+        put: operations["set-my-telegram-link-prefs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every linked Telegram account
+         * @description Needs user:read. Revoked links are not listed.
+         */
+        get: operations["list-telegram-links"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink anyone's Telegram account
+         * @description An administrator ends a link at once (a lost phone, a departed colleague). Needs user:write and a recent re-authentication with a second factor.
+         */
+        delete: operations["delete-telegram-link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Mini App session's principal
+         * @description Mini App host only (404 elsewhere). The same document as get-me, for the Telegram link's user, so the Mini App can tell what the person may do. It carries no CSRF token and the session never needs one.
+         */
+        get: operations["get-telegram-me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange Telegram Mini App initData for a session
+         * @description Served only on the Mini App host (miniapp_host; 404 elsewhere). The initData must carry a valid signature of the configured bot, be at most init_data_max_age_seconds old and not used before (each initData opens one session); its Telegram user needs an active link. Refused initData is 401 whatever the reason. Rate limited per address and per Telegram user. The session lives in memory only and ends on idle, absolute expiry, unlink, user disable, a bot change or a restart; the Mini App then asks to be reopened.
+         */
+        post: operations["create-telegram-session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Telegram bot's policy and defaults
+         * @description The effective values: built-in defaults for everything never set (version 0 and stored false while nothing is stored).
+         */
+        get: operations["get-telegram-settings"];
+        /**
+         * Set the Telegram bot's policy and defaults
+         * @description Without If-Match this stores the settings for the first time (409 if some are stored); with it, it replaces them. The body replaces everything stored: a field left out takes its built-in default, and only the fields sent are stored, so a later release's new default reaches every field nobody set. Out-of-range values are refused with 422. Changes reach the bot (send and inbound limits, link policy) without a restart. The Bot API base URL is not here: it is set only in central's configuration file. Needs system:write and a step-up.
+         */
+        put: operations["put-telegram-settings"];
+        post?: never;
+        /**
+         * Reset the Telegram bot's policy and defaults
+         * @description Every value goes back to its built-in default. Needs system:write and a step-up.
+         */
+        delete: operations["delete-telegram-settings"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spaces' Telegram settings
+         * @description Every space with stored Telegram settings whose configuration you can read; a space not listed is off for Telegram.
+         */
+        get: operations["list-space-telegram"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/spaces/{space_id}/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the Mini App may show in a space
+         * @description Mini App host only (404 elsewhere). terminal_watch is true only when the space's admin turned the watch-only terminal on for Telegram and the caller may watch terminals in the space; otherwise it is false, so the Mini App hides the terminal. The stream route enforces the same two conditions itself.
+         */
+        get: operations["get-telegram-space-features"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8260,6 +8651,44 @@ export interface components {
             source: string;
             value: string;
         };
+        Link: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Link.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            confirmed_at: string;
+            /** @description The link's capped grants; each request is also checked against the user's current grants */
+            grants: components["schemas"]["AuthzGrant"][];
+            id: string;
+            /**
+             * @description The link's cap: it never has a stronger role than this in any space
+             * @enum {string}
+             */
+            max_role: "viewer" | "operator" | "admin";
+            /** @description The re-confirmation is overdue: the link does nothing until it is re-confirmed */
+            needs_reconfirm: boolean;
+            /**
+             * Format: date-time
+             * @description The link stops working at this time until it is re-confirmed from the web
+             */
+            reconfirm_due_at?: string;
+            /**
+             * Format: date-time
+             * @description Until when the user's SSO grants count for the link
+             */
+            sso_until?: string;
+            /** @enum {string} */
+            state: "active" | "suspended" | "blocked" | "revoked";
+            telegram: components["schemas"]["LinkTelegramUser"];
+            /** @description The time zone sent with the confirmation was saved because you had none */
+            timezone_saved?: boolean;
+            user_id: string;
+            /** @description Confirmed from an SSO session with SSO grants allowed through Telegram */
+            via_sso: boolean;
+        };
         "Link-user-identityRequest": {
             /**
              * Format: uri
@@ -8269,6 +8698,28 @@ export interface components {
             readonly $schema?: string;
             provider_id: string;
             subject: string;
+        };
+        LinkCode: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LinkCode.json
+             */
+            readonly $schema?: string;
+            /** @description The single-use code, returned only when it is created */
+            code?: string;
+            /** @description t.me link that sends /start <code> to the bot, returned only when the code is created */
+            deep_link?: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The code's ID (not the code): use it to read, cancel or confirm */
+            id: string;
+            /** @description Another Telegram account presented this code after one had redeemed it: it leaked and was cancelled. Create a new code, and treat the old one as seen by someone else */
+            reuse_attempted?: boolean;
+            /** @enum {string} */
+            state: "new" | "redeemed" | "telegram_confirmed" | "confirmed" | "cancelled" | "expired";
+            /** @description The Telegram account that wants to link, once it confirmed in the bot */
+            telegram?: components["schemas"]["LinkTelegramUser"];
         };
         LinkInvite: {
             /**
@@ -8283,6 +8734,103 @@ export interface components {
             token: string;
             /** @description Open this path in the browser to sign in at the provider and link the identity */
             url: string;
+        };
+        LinkPrefs: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LinkPrefs.json
+             */
+            readonly $schema?: string;
+            /** @description The administrator's defaults the link follows where it changed nothing */
+            defaults: components["schemas"]["SettingsNotificationDefaults"];
+            /** @description What the link is notified about: the defaults with its overrides applied */
+            effective: components["schemas"]["SettingsEffectivePrefs"];
+            /** @description The link these preferences belong to: always the caller's own */
+            link_id: string;
+            /** @description What this link changed; every field left out follows the defaults */
+            overrides: components["schemas"]["SettingsLinkPrefs"];
+            /** @description Your IANA time zone, shared by your links and the web Account page (empty: unset, so the digest and quiet hours are off) */
+            timezone: string;
+            /** @description Topics mode (a topic per space in the private chat) */
+            topics: components["schemas"]["LinkTopicsPrefs"];
+            /**
+             * Format: int64
+             * @description The link's version; send it as If-Match to save
+             */
+            version: number;
+        };
+        LinkPrefsInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LinkPrefsInput.json
+             */
+            readonly $schema?: string;
+            /** @description Default true */
+            assigned_to_me?: boolean;
+            /** @description Default true */
+            clarifications?: boolean;
+            /** @description Default true */
+            digest?: boolean;
+            /** @description HH:MM, default 09:00 */
+            digest_time?: string;
+            /** @description Default true */
+            escalations?: boolean;
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            failed_runs?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            inbox_items?: "push" | "digest" | "off";
+            /**
+             * @description Default normal
+             * @enum {string}
+             */
+            min_priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Spaces whose notifications are never sent to this link */
+            muted_spaces?: string[];
+            /** @description Default true */
+            new_actions?: boolean;
+            /** @description Default true */
+            operator_messages?: boolean;
+            /** @description Default true */
+            quiet_hours?: boolean;
+            /** @description HH:MM, default 08:00 */
+            quiet_hours_end?: string;
+            /** @description HH:MM, default 23:00 */
+            quiet_hours_start?: string;
+            /**
+             * @description Default push
+             * @enum {string}
+             */
+            reminders?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            tasks_in_review?: "push" | "digest" | "off";
+            /** @description Your IANA time zone, such as Europe/Vilnius; empty clears it, left out keeps it. It is your user's, so it applies to all your links and the web */
+            timezone?: string;
+        };
+        LinkTelegramUser: {
+            /**
+             * Format: int64
+             * @description Telegram user ID
+             */
+            id: number;
+            /** @description The account's name as Telegram shows it */
+            name: string;
+            /** @description Telegram username without @ (empty when the account has none) */
+            username: string;
+        };
+        LinkTopicsPrefs: {
+            /** @description Whether topics mode can be turned on; false until it ships */
+            available: boolean;
         };
         "List-account-kindsResponse": {
             /**
@@ -8884,6 +9432,8 @@ export interface components {
             new_actions: boolean;
             /** @description A reminder for a pending action */
             reminders: boolean;
+            /** @description Your IANA time zone, such as Europe/Vilnius (empty: unset). The Telegram digest and quiet hours use it, and are off while it is unset */
+            timezone?: string;
         };
         NotificationPrefsOut: {
             /**
@@ -8913,6 +9463,8 @@ export interface components {
             new_actions: boolean;
             /** @description A reminder for a pending action */
             reminders: boolean;
+            /** @description Your IANA time zone, such as Europe/Vilnius (empty: unset). The Telegram digest and quiet hours use it, and are off while it is unset */
+            timezone?: string;
             /** Format: date-time */
             updated_at?: string;
             /** Format: int64 */
@@ -10639,6 +11191,501 @@ export interface components {
             readonly $schema?: string;
             grants: components["schemas"]["AuthGrantInput"][];
         };
+        SettingsEffectivePrefs: {
+            /** @description An action was assigned to the user */
+            assigned_to_me: boolean;
+            /** @description Clarification requests and replies */
+            clarifications: boolean;
+            /** @description Send a daily digest */
+            digest: boolean;
+            /** @description When the digest is sent, as HH:MM in the user's time zone */
+            digest_time: string;
+            /** @description An action escalated */
+            escalations: boolean;
+            /**
+             * @description Failed or lost runs
+             * @enum {string}
+             */
+            failed_runs: "push" | "digest" | "off";
+            /**
+             * @description New inbox items
+             * @enum {string}
+             */
+            inbox_items: "push" | "digest" | "off";
+            /**
+             * @description Only new actions of at least this priority (assignments always count)
+             * @enum {string}
+             */
+            min_priority: "low" | "normal" | "high" | "urgent";
+            muted_spaces: string[];
+            /** @description New human actions in spaces the link can read */
+            new_actions: boolean;
+            /** @description Agent messages to operators */
+            operator_messages: boolean;
+            /** @description Send silently (no sound) during quiet hours */
+            quiet_hours: boolean;
+            /** @description Quiet hours end, as HH:MM in the user's time zone (before the start: they run past midnight) */
+            quiet_hours_end: string;
+            /** @description Quiet hours start, as HH:MM in the user's time zone */
+            quiet_hours_start: string;
+            /**
+             * @description Reminders of pending actions
+             * @enum {string}
+             */
+            reminders: "push" | "digest" | "off";
+            /**
+             * @description Tasks entering review
+             * @enum {string}
+             */
+            tasks_in_review: "push" | "digest" | "off";
+        };
+        SettingsInboundLimits: {
+            /**
+             * Format: int64
+             * @description Updates one link may send in a burst (1-100)
+             */
+            actions_burst: number;
+            /**
+             * Format: int64
+             * @description Updates (messages and button taps) one link may send per minute (1-600)
+             */
+            actions_per_minute: number;
+            /**
+             * Format: int64
+             * @description Attachment downloads one link may make per hour (1-1000)
+             */
+            downloads_per_hour: number;
+            /**
+             * Format: int64
+             * @description Inbox items one link may create per hour (1-1000)
+             */
+            inbox_items_per_hour: number;
+            /**
+             * Format: int64
+             * @description Updates central handles per second over every chat (1-100)
+             */
+            updates_per_second: number;
+        };
+        SettingsInboundLimitsInput: {
+            /**
+             * Format: int64
+             * @description Default 10
+             */
+            actions_burst?: number;
+            /**
+             * Format: int64
+             * @description Default 30
+             */
+            actions_per_minute?: number;
+            /**
+             * Format: int64
+             * @description Default 50
+             */
+            downloads_per_hour?: number;
+            /**
+             * Format: int64
+             * @description Default 60
+             */
+            inbox_items_per_hour?: number;
+            /**
+             * Format: int64
+             * @description Default 20
+             */
+            updates_per_second?: number;
+        };
+        SettingsInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsInput.json
+             */
+            readonly $schema?: string;
+            inbound_limits?: components["schemas"]["SettingsInboundLimitsInput"];
+            /**
+             * Format: int64
+             * @description Default 300
+             */
+            init_data_max_age_seconds?: number;
+            /** @description Default false */
+            link_allow_admin_cap?: boolean;
+            /**
+             * Format: int64
+             * @description Default 600
+             */
+            link_code_ttl_seconds?: number;
+            /**
+             * @description Default operator
+             * @enum {string}
+             */
+            link_default_max_role?: "viewer" | "operator";
+            /**
+             * Format: int64
+             * @description Default 90
+             */
+            link_reconfirm_days?: number;
+            /** @description Default false */
+            link_sso_grants?: boolean;
+            /**
+             * Format: int64
+             * @description Default 1
+             */
+            links_per_user?: number;
+            /**
+             * Format: int64
+             * @description Default 3600; at least the idle timeout
+             */
+            miniapp_session_absolute_seconds?: number;
+            /**
+             * Format: int64
+             * @description Default 900
+             */
+            miniapp_session_idle_seconds?: number;
+            notification_defaults?: components["schemas"]["SettingsNotificationDefaultsInput"];
+            send_limits?: components["schemas"]["SettingsSendLimitsInput"];
+            /** @description Default false */
+            topics_mode_default?: boolean;
+        };
+        SettingsLinkPrefs: {
+            /** @description Default true */
+            assigned_to_me?: boolean;
+            /** @description Default true */
+            clarifications?: boolean;
+            /** @description Default true */
+            digest?: boolean;
+            /** @description HH:MM, default 09:00 */
+            digest_time?: string;
+            /** @description Default true */
+            escalations?: boolean;
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            failed_runs?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            inbox_items?: "push" | "digest" | "off";
+            /**
+             * @description Default normal
+             * @enum {string}
+             */
+            min_priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Spaces whose notifications are never sent to this link */
+            muted_spaces?: string[];
+            /** @description Default true */
+            new_actions?: boolean;
+            /** @description Default true */
+            operator_messages?: boolean;
+            /** @description Default true */
+            quiet_hours?: boolean;
+            /** @description HH:MM, default 08:00 */
+            quiet_hours_end?: string;
+            /** @description HH:MM, default 23:00 */
+            quiet_hours_start?: string;
+            /**
+             * @description Default push
+             * @enum {string}
+             */
+            reminders?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            tasks_in_review?: "push" | "digest" | "off";
+        };
+        SettingsNotificationDefaults: {
+            /** @description An action was assigned to the user */
+            assigned_to_me: boolean;
+            /** @description Clarification requests and replies */
+            clarifications: boolean;
+            /** @description Send a daily digest */
+            digest: boolean;
+            /** @description When the digest is sent, as HH:MM in the user's time zone */
+            digest_time: string;
+            /** @description An action escalated */
+            escalations: boolean;
+            /**
+             * @description Failed or lost runs
+             * @enum {string}
+             */
+            failed_runs: "push" | "digest" | "off";
+            /**
+             * @description New inbox items
+             * @enum {string}
+             */
+            inbox_items: "push" | "digest" | "off";
+            /**
+             * @description Only new actions of at least this priority (assignments always count)
+             * @enum {string}
+             */
+            min_priority: "low" | "normal" | "high" | "urgent";
+            /** @description New human actions in spaces the link can read */
+            new_actions: boolean;
+            /** @description Agent messages to operators */
+            operator_messages: boolean;
+            /** @description Send silently (no sound) during quiet hours */
+            quiet_hours: boolean;
+            /** @description Quiet hours end, as HH:MM in the user's time zone (before the start: they run past midnight) */
+            quiet_hours_end: string;
+            /** @description Quiet hours start, as HH:MM in the user's time zone */
+            quiet_hours_start: string;
+            /**
+             * @description Reminders of pending actions
+             * @enum {string}
+             */
+            reminders: "push" | "digest" | "off";
+            /**
+             * @description Tasks entering review
+             * @enum {string}
+             */
+            tasks_in_review: "push" | "digest" | "off";
+        };
+        SettingsNotificationDefaultsInput: {
+            /** @description Default true */
+            assigned_to_me?: boolean;
+            /** @description Default true */
+            clarifications?: boolean;
+            /** @description Default true */
+            digest?: boolean;
+            /** @description HH:MM, default 09:00 */
+            digest_time?: string;
+            /** @description Default true */
+            escalations?: boolean;
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            failed_runs?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            inbox_items?: "push" | "digest" | "off";
+            /**
+             * @description Default normal
+             * @enum {string}
+             */
+            min_priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Default true */
+            new_actions?: boolean;
+            /** @description Default true */
+            operator_messages?: boolean;
+            /** @description Default true */
+            quiet_hours?: boolean;
+            /** @description HH:MM, default 08:00 */
+            quiet_hours_end?: string;
+            /** @description HH:MM, default 23:00 */
+            quiet_hours_start?: string;
+            /**
+             * @description Default push
+             * @enum {string}
+             */
+            reminders?: "push" | "digest" | "off";
+            /**
+             * @description Default digest
+             * @enum {string}
+             */
+            tasks_in_review?: "push" | "digest" | "off";
+        };
+        SettingsOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsOut.json
+             */
+            readonly $schema?: string;
+            /** @description Inbound abuse limits */
+            inbound_limits: components["schemas"]["SettingsInboundLimits"];
+            /**
+             * Format: int64
+             * @description Oldest Mini App initData accepted for a session exchange (60-3600 s)
+             */
+            init_data_max_age_seconds: number;
+            /** @description Whether a link may be given the admin cap at all */
+            link_allow_admin_cap: boolean;
+            /**
+             * Format: int64
+             * @description Lifetime of a link code (120-1800 s)
+             */
+            link_code_ttl_seconds: number;
+            /**
+             * @description The cap a new link gets: its Telegram session never has more than this role in any space, whatever the user's grants
+             * @enum {string}
+             */
+            link_default_max_role: "viewer" | "operator";
+            /**
+             * Format: int64
+             * @description Days after which a link must be confirmed again from the web (7-365)
+             */
+            link_reconfirm_days: number;
+            /** @description Whether a link confirmed from an SSO session also carries the user's SSO-mapped grants, until that session's absolute expiry */
+            link_sso_grants: boolean;
+            /**
+             * Format: int64
+             * @description Telegram accounts one SpaceMan user may link (1-3)
+             */
+            links_per_user: number;
+            /**
+             * Format: int64
+             * @description A Mini App session ends this long after the exchange, whatever its use (900-43200 s, at least the idle timeout)
+             */
+            miniapp_session_absolute_seconds: number;
+            /**
+             * Format: int64
+             * @description A Mini App session ends after this long without a request (300-3600 s)
+             */
+            miniapp_session_idle_seconds: number;
+            /** @description Each link's notification preferences, unless its user changed them */
+            notification_defaults: components["schemas"]["SettingsNotificationDefaults"];
+            /** @description Outbound rate limits and queue bounds */
+            send_limits: components["schemas"]["SettingsSendLimits"];
+            /** @description false: nothing was ever set (or it was reset), every value is the built-in default */
+            stored: boolean;
+            /** @description Whether a new link starts in topics mode (a topic per space in the private chat) */
+            topics_mode_default: boolean;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /**
+             * Format: int64
+             * @description 0 while nothing is stored
+             */
+            version: number;
+        };
+        SettingsSendLimits: {
+            /**
+             * Format: int64
+             * @description Messages one private chat may get in a burst (1-3)
+             */
+            chat_burst: number;
+            /**
+             * Format: double
+             * @description Messages per second to one private chat (above 0, at most 1)
+             */
+            chat_per_second: number;
+            /**
+             * Format: double
+             * @description Messages per second over every chat (above 0, at most 30)
+             */
+            global_per_second: number;
+            /**
+             * Format: int64
+             * @description Messages per minute to one group (1-20)
+             */
+            group_per_minute: number;
+            /**
+             * Format: int64
+             * @description Messages waiting for one chat (1-1000, at most queue_total); beyond it the chat gets one "N updates" notice
+             */
+            queue_per_chat: number;
+            /**
+             * Format: int64
+             * @description Messages waiting over every chat (1-50000); beyond it the least urgent are dropped
+             */
+            queue_total: number;
+        };
+        SettingsSendLimitsInput: {
+            /**
+             * Format: int64
+             * @description Default 3
+             */
+            chat_burst?: number;
+            /**
+             * Format: double
+             * @description Default 1
+             */
+            chat_per_second?: number;
+            /**
+             * Format: double
+             * @description Default 25
+             */
+            global_per_second?: number;
+            /**
+             * Format: int64
+             * @description Default 20
+             */
+            group_per_minute?: number;
+            /**
+             * Format: int64
+             * @description Default 50; at most queue_total
+             */
+            queue_per_chat?: number;
+            /**
+             * Format: int64
+             * @description Default 5000
+             */
+            queue_total?: number;
+        };
+        SettingsSpace: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsSpace.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description full: bodies in chat; summary: bodies only in the Mini App; off: the space stays hidden
+             * @enum {string}
+             */
+            content_level: "full" | "summary" | "off";
+            /** Format: date-time */
+            created_at?: string;
+            created_by?: string;
+            /** @description The space is visible through Telegram */
+            enabled: boolean;
+            /**
+             * @description Whether enforced approvals can be decided in chat with a second confirmation, or only on the web
+             * @enum {string}
+             */
+            enforced_approvals: "web_only" | "confirm";
+            /**
+             * Format: int64
+             * @description The forum supergroup bound to the space (group mode); omitted when none. Members of the group who linked their account can use the space's summaries there
+             */
+            group_chat_id?: number;
+            space_id: string;
+            /** @description false: the defaults (Telegram off for the space) */
+            stored: boolean;
+            /** @description Run terminals can be watched (read-only) from the Mini App */
+            terminal_watch: boolean;
+            /** @description The space gets its own topic for users in topics mode */
+            topics: boolean;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /** Format: int64 */
+            version: number;
+        };
+        SettingsSpaceInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SettingsSpaceInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Default full (bodies are only sent once the space is enabled)
+             * @enum {string}
+             */
+            content_level?: "full" | "summary" | "off";
+            /** @description Default false */
+            enabled?: boolean;
+            /**
+             * @description Default web_only
+             * @enum {string}
+             */
+            enforced_approvals?: "web_only" | "confirm";
+            /**
+             * Format: int64
+             * @description Binds the forum supergroup (its chat ID, negative; the bot must be a member) to the space; 0 unbinds it. Left out, the current binding stays. Changing it needs telegram_group:write (admins); 409 when the group is bound to another space
+             */
+            group_chat_id?: number;
+            /** @description Default false */
+            terminal_watch?: boolean;
+            /** @description Default false */
+            topics?: boolean;
+        };
         SignInProviders: {
             /**
              * Format: uri
@@ -10675,6 +11722,15 @@ export interface components {
             /** @description Added to the template's skills; a pin here wins */
             skills?: components["schemas"]["CatalogSkillRef"][];
             template_id: string;
+        };
+        SpaceTelegramList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceTelegramList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["SettingsSpace"][];
         };
         SpaceexportCounts: {
             /** Format: int64 */
@@ -10874,6 +11930,8 @@ export interface components {
             /** Format: date-time */
             started_at: string;
             storage: components["schemas"]["SystemStorage"];
+            /** @description The Telegram bot's health (webhook_status off when no bot is configured) */
+            telegram: components["schemas"]["TgbotStatus"];
             /** Format: int64 */
             uptime_seconds: number;
         };
@@ -10950,6 +12008,91 @@ export interface components {
             title: string;
             workspace?: string;
         };
+        TelegramDownloadInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramDownloadInBody.json
+             */
+            readonly $schema?: string;
+            attachment_id: string;
+            space_id: string;
+        };
+        TelegramDownloadOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramDownloadOut.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description The link stops working at this time
+             */
+            expires_at: string;
+            /**
+             * Format: int64
+             * @description How many requests the link serves
+             */
+            max_uses: number;
+            /** @description The download link on the Mini App host. It is the capability: do not log or share it */
+            url: string;
+        };
+        TelegramLinkConfirmIn: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramLinkConfirmIn.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description The link's cap; empty takes the policy default. viewer and operator are allowed up to the default; admin (same as your grants) only when the policy allows the admin cap
+             * @enum {string}
+             */
+            max_role?: "viewer" | "operator" | "admin" | "";
+            /** @description The browser's IANA time zone, such as Europe/Vilnius. It is saved as your time zone only if you have none (it never overwrites one you chose); an invalid zone is ignored */
+            timezone?: string;
+        };
+        TelegramSessionInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSessionInBody.json
+             */
+            readonly $schema?: string;
+            /** @description The raw Telegram.WebApp.initData string, as the Mini App received it */
+            init_data: string;
+        };
+        TelegramSessionOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSessionOut.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description When the session ends whatever its use
+             */
+            expires_at: string;
+            /**
+             * Format: int64
+             * @description The session ends after this long without a request
+             */
+            idle_timeout_seconds: number;
+            /** @description The session token, sent as "Authorization: Telegram <token>" on the Mini App host only; never in a URL or a cookie */
+            token: string;
+        };
+        TelegramSpaceFeatures: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSpaceFeatures.json
+             */
+            readonly $schema?: string;
+            /** @description The watch-only terminal is on for this space and the caller may watch it */
+            terminal_watch: boolean;
+        };
         TemplateDefinition: {
             body: string;
             correlation?: string;
@@ -11004,6 +12147,120 @@ export interface components {
             name: string;
             pattern?: string;
             required?: boolean;
+        };
+        TgbotBot: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TgbotBot.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The bot's Telegram user ID, from getMe
+             */
+            bot_id: number;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** @description Central runs the bot (webhook or polling); false: Telegram is off and the webhook is removed */
+            enabled: boolean;
+            /** @description A bot token is stored (it is never returned) */
+            has_token: boolean;
+            health: components["schemas"]["TgbotStatus"];
+            /** @description The Mini App's own host (e.g. tg.central.example.com); empty: the Mini App is off */
+            miniapp_host: string;
+            /**
+             * @description How updates arrive: webhook (public HTTPS) or polling (getUpdates, outbound only)
+             * @enum {string}
+             */
+            mode: "webhook" | "polling";
+            /**
+             * Format: int64
+             * @description Incremented each time a token is written
+             */
+            token_version: number;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            /** @description The bot's username (without @), from getMe */
+            username: string;
+            /** Format: int64 */
+            version: number;
+            warnings: string[];
+            /** @description CIDRs the webhook accepts requests from (after trusted proxies); empty: no source check */
+            webhook_ip_allowlist: string[];
+            /**
+             * @description health.webhook_status
+             * @enum {string}
+             */
+            webhook_status: "off" | "starting" | "polling" | "ok" | "error" | "unknown";
+        };
+        TgbotInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TgbotInput.json
+             */
+            readonly $schema?: string;
+            /** @description The token BotFather gave (123456:ABC…). Required on create; empty keeps the stored one. Checked with getMe before it is stored. Never returned */
+            bot_token?: string;
+            /** @description Run the bot (default false) */
+            enabled?: boolean;
+            /** @description The Mini App's host: a lower-case DNS name, not an IP address, without scheme, port or path, and not the host of central's public_url. Empty: Mini App off */
+            miniapp_host?: string;
+            /**
+             * @description webhook (default; needs central's public_url to be https) or polling
+             * @enum {string}
+             */
+            mode?: "webhook" | "polling" | "";
+            /** @description CIDRs (e.g. 149.154.160.0/20) the webhook accepts requests from, in canonical form; empty: no check. Only safe when the client address behind the proxy is trustworthy */
+            webhook_ip_allowlist?: string[];
+        };
+        TgbotStatus: {
+            /** Format: int64 */
+            bot_id?: number;
+            /**
+             * Format: date-time
+             * @description When Telegram was last asked (getWebhookInfo)
+             */
+            checked_at?: string;
+            /** @description A bot is configured */
+            configured: boolean;
+            enabled: boolean;
+            /** @description Why the bot isn't working (startup, or Telegram's last delivery error) */
+            error?: string;
+            /**
+             * Format: date-time
+             * @description Telegram's last failed webhook delivery
+             */
+            last_error_at?: string;
+            last_error_message?: string;
+            /** @description The host central routes to the Mini App handler only (it never reaches the rest of central; 404 for everything while no bot serves it): telegram.miniapp_host from central's configuration when set, otherwise the bot's miniapp_host */
+            miniapp_host?: string;
+            /** @description The bot's miniapp_host when it differs from telegram.miniapp_host: the configuration wins, and this host answers 404 for everything */
+            miniapp_host_ignored?: string;
+            /** @description The bot stores a miniapp_host but central's configuration does not set telegram.miniapp_host: set it (or clear the bot's miniapp_host) */
+            miniapp_host_needs_key?: boolean;
+            /**
+             * @description Where miniapp_host comes from: config (telegram.miniapp_host) or bot (the bot's miniapp_host)
+             * @enum {string}
+             */
+            miniapp_host_source?: "config" | "bot" | "";
+            /** @enum {string} */
+            mode?: "webhook" | "polling" | "";
+            /**
+             * Format: int64
+             * @description Updates Telegram holds for the webhook
+             */
+            pending_update_count: number;
+            /** @description The bot's username, without @ */
+            username?: string;
+            /**
+             * @description off: no bot or disabled; starting: being configured; polling: getUpdates runs; ok: the webhook is registered and Telegram reports no delivery error since; error: see error; unknown: Telegram couldn't be asked
+             * @enum {string}
+             */
+            webhook_status: "off" | "starting" | "polling" | "ok" | "error" | "unknown";
         };
         TokenListBody: {
             /**
@@ -14282,6 +15539,226 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-telegram-link-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkCode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-link-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The code's ID (not the code) */
+                code_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkCode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-telegram-link-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The code's ID (not the code) */
+                code_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkCode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "confirm-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The code's ID (not the code) */
+                code_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TelegramLinkConfirmIn"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-my-telegram-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-my-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The link's ID */
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reconfirm-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The link's ID */
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"];
                 };
             };
             /** @description Error */
@@ -17968,7 +19445,10 @@ export interface operations {
     "ack-message": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 message_id: string;
@@ -18068,7 +19548,10 @@ export interface operations {
     "resolve-message": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 message_id: string;
@@ -20336,7 +21819,10 @@ export interface operations {
     "move-task": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
                 task_id: string;
@@ -20431,6 +21917,109 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["QueueTask"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsSpace"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsSpaceInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsSpace"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {
@@ -21136,6 +22725,482 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RestoreNotice"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-bot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TgbotBot"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-telegram-bot": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TgbotInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TgbotBot"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-telegram-bot": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-telegram-download-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramDownloadInBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramDownloadOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-my-telegram-link-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkPrefs"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-my-telegram-link-prefs": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkPrefsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkPrefs"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-telegram-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The link's ID */
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-telegram-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramSessionInBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSessionOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-telegram-settings": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-telegram-settings": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceTelegramList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-space-features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The space */
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSpaceFeatures"];
                 };
             };
             /** @description Error */

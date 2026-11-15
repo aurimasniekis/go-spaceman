@@ -1,6 +1,6 @@
 import { keepPreviousData, queryOptions, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api, unwrap } from './client'
-import { setSession } from './session'
+import { isMiniApp, setSession } from './session'
 
 /** Query keys, shared by the watch feed's invalidation. */
 /**
@@ -120,6 +120,11 @@ export interface AuditFilter {
 export const meQuery = queryOptions({
   queryKey: keys.me,
   queryFn: async ({ signal }) => {
+    // The Mini App host does not serve /auth/*: its session's identity is /telegram/me (same document, no CSRF token).
+    if (isMiniApp()) {
+      const res = await api.GET('/telegram/me', { signal })
+      return res.response.status === 401 ? null : unwrap(res)
+    }
     const res = await api.GET('/auth/me', { signal })
     if (res.response.status === 401) {
       setSession('')
@@ -185,9 +190,16 @@ export const useRun = (space: string, run: string) =>
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/runs/{run_id}', { params: { path: { space_id: space, run_id: run } }, signal })),
   })
 
+/** Whether the Mini App may show a space's watch-only terminal (TG-10-3): off unless the space opted in and the link may watch. */
+export const useTelegramTerminalWatch = (space: string) =>
+  useQuery({
+    queryKey: ['telegram-space-features', space],
+    queryFn: async ({ signal }) => unwrap(await api.GET('/telegram/spaces/{space_id}/features', { params: { path: { space_id: space } }, signal })).terminal_watch,
+  })
+
 // Node connectivity (connected, last_seen_at) changes without change-feed entries, so the list also refreshes on a timer.
-export const useNodes = () =>
-  useQuery({ queryKey: keys.nodes, queryFn: async ({ signal }) => unwrap(await api.GET('/nodes', { signal })).items, refetchInterval: 15_000 })
+export const useNodes = (enabled = true) =>
+  useQuery({ queryKey: keys.nodes, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/nodes', { signal })).items, refetchInterval: 15_000 })
 
 export const useUsers = () => useQuery({ queryKey: keys.users, queryFn: async ({ signal }) => unwrap(await api.GET('/users', { signal })).items })
 
@@ -471,8 +483,8 @@ export const useUserIdentities = (id: string) =>
   })
 
 /** A space's cross-space requests, outgoing and incoming (ADR-0038). */
-export const useXSpaceRequests = (spaceId: string) =>
-  useQuery({ queryKey: keys.xspaceRequests(spaceId),
+export const useXSpaceRequests = (spaceId: string, enabled = true) =>
+  useQuery({ queryKey: keys.xspaceRequests(spaceId), enabled,
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/xspace/requests', { params: { path: { space_id: spaceId }, query: { limit: 200 } }, signal })).items })
 /** What a space accepts from and may send to each peer. */
 export const useXSpacePeers = (spaceId: string) =>

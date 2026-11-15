@@ -48,6 +48,59 @@ function Ok({ ok, yes, no }: { ok: boolean | undefined; yes: string; no: string 
   return <Badge color={ok ? 'owlGreen' : 'owlRed'} variant="light">{ok ? yes : no}</Badge>
 }
 
+const tgColor: Record<string, string> = { ok: 'owlGreen', polling: 'owlGreen', starting: 'gray', off: 'gray', unknown: 'owlYellow', error: 'owlRed' }
+
+/**
+ * The Mini App host (ADR-0083 §3.4.1): where it comes from, and a bot miniapp_host that central's telegram.miniapp_host
+ * overrides. That host answers 404 for everything.
+ */
+function MiniAppHostLine({ tg }: { tg: SystemStatus['telegram'] }) {
+  if (!tg.miniapp_host) return null
+  return (
+    <Stack gap={4}>
+      <Text size="sm">
+        Mini App host <span className="mono">{tg.miniapp_host}</span>
+        <Text span size="xs" c="dimmed">{tg.miniapp_host_source === 'config' ? ' (central configuration)' : ' (bot settings)'}</Text>
+        {!(tg.configured && tg.enabled) && <Text span size="xs" c="dimmed"> — answers 404 while no bot runs</Text>}
+      </Text>
+      {tg.miniapp_host_ignored && (
+        <Text size="sm" c="owlYellow" style={{ wordBreak: 'break-word' }} data-testid="system-telegram-host-mismatch">
+          The bot&apos;s Mini App host <span className="mono">{tg.miniapp_host_ignored}</span> differs from telegram.miniapp_host and is
+          ignored: it answers 404 for everything. Set the bot&apos;s Mini App host to the same value, or leave it empty.
+        </Text>
+      )}
+      {tg.miniapp_host_needs_key && (
+        <Text size="sm" c="owlYellow" style={{ wordBreak: 'break-word' }} data-testid="system-telegram-host-needs-key">
+          The bot stores a Mini App host but central&apos;s configuration does not set telegram.miniapp_host. Set telegram.miniapp_host to
+          that host, or clear the bot&apos;s Mini App host.
+        </Text>
+      )}
+    </Stack>
+  )
+}
+
+/** The Telegram bot's health (ADR-0083): who the bot is, how updates arrive and what Telegram reports. */
+function TelegramCard({ tg }: { tg: SystemStatus['telegram'] }) {
+  return (
+    <Card data-testid="system-telegram">
+      <CardTitle>Telegram</CardTitle>
+      {!tg.configured ? <Stack gap="sm"><Text size="sm" c="dimmed">No Telegram bot is configured.</Text><MiniAppHostLine tg={tg} /></Stack> : (
+        <Stack gap="sm">
+          <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} spacing="md">
+            <Field label="Bot"><Text size="sm" className="mono">{tg.username ? `@${tg.username}` : '—'}</Text></Field>
+            <Field label="Mode"><Text size="sm">{tg.enabled ? tg.mode : 'disabled'}</Text></Field>
+            <Field label="Status"><Badge color={tgColor[tg.webhook_status] ?? 'gray'} variant="light">{tg.mode === 'webhook' && tg.webhook_status === 'ok' ? 'webhook: ok' : tg.webhook_status}</Badge></Field>
+            {tg.mode === 'webhook' && tg.enabled && <Field label="Pending updates"><Text size="sm">{tg.pending_update_count}</Text></Field>}
+          </SimpleGrid>
+          {tg.error && <Text size="sm" c="owlRed" style={{ wordBreak: 'break-word' }}>{tg.error}</Text>}
+          {tg.last_error_at && <Text size="xs" c="dimmed">Last delivery error {datetime(tg.last_error_at)}{tg.last_error_message ? `: ${tg.last_error_message}` : ''}</Text>}
+          <MiniAppHostLine tg={tg} />
+        </Stack>
+      )}
+    </Card>
+  )
+}
+
 /** This instance's status for administrators (SM-OBS-006): health, build and versions, activity and where it runs. */
 export function SystemView({ s }: { s: SystemStatus }) {
   const st = s.storage
@@ -86,6 +139,7 @@ export function SystemView({ s }: { s: SystemStatus }) {
           <Field label="Live streams"><Count value={s.counts.live_streams} /></Field>
         </SimpleGrid>
       </Card>
+      {s.telegram && <TelegramCard tg={s.telegram} />}
       <Card data-testid="system-instance">
         <CardTitle>This instance</CardTitle>
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">

@@ -139,6 +139,7 @@ func serveCmd(g *globals) *cobra.Command {
 			defer closeCentral(c)
 			if dist, ok := webui.Dist(); ok {
 				c.UI = webui.Handler(dist)
+				c.MiniAppUI = webui.MiniAppHandler(dist)
 			}
 			if on, at, err := c.Auth.BreakGlassAlert(ctx); err == nil && on {
 				log.Warn("break-glass recovery was used and is not acknowledged", slog.Time("at", at))

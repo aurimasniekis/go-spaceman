@@ -51,6 +51,7 @@ Configures the web/API listener and the separate management listener (SM-OBS-002
 | `http.max_upload_bytes` | `26214400` | `SPACEMAN_HTTP_MAX_UPLOAD_BYTES` | Bounds one attachment upload (SM-ATT-002). |
 | `http.read_header_timeout` | `10s` | `SPACEMAN_HTTP_READ_HEADER_TIMEOUT` | Bounds how long a client may take to send request headers. |
 | `http.write_idle_timeout` | `1m0s` | `SPACEMAN_HTTP_WRITE_IDLE_TIMEOUT` | Bounds how long one piece (32 KiB) of a response may wait for the client to read it (1s to 10m). It bounds progress, not the whole response: a slow download that keeps moving is never cut off, but a client that stops reading is disconnected instead of holding the response in central's memory. WebSocket connections (nodes, terminals) keep their own timeouts. |
+| `http.stream_heartbeat` | `15s` | `SPACEMAN_HTTP_STREAM_HEARTBEAT` | How often an otherwise idle live stream (the change feed, a run's recording) sends a heartbeat event. A proxy in front of central (Cloudflare drops an idle proxied connection after about 100 s) must see traffic well inside its idle limit. 1 s to 45 s, default 15 s. |
 | `http.catch_up_concurrency` | `8` | `SPACEMAN_HTTP_CATCH_UP_CONCURRENCY` | Bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused with 503 and Retry-After (ADR-0081). |
 | `http.catch_up_wait` | `5s` | `SPACEMAN_HTTP_CATCH_UP_WAIT` | Bounds how long a terminal catch-up or recording read waits for one of catch_up_concurrency's slots (0 to 1m; 0 refuses at once). |
 | `http.read_idle_timeout` | `30s` | `SPACEMAN_HTTP_READ_IDLE_TIMEOUT` | Bounds how long one read of a request body may wait for the client to send data (1s to 10m). It bounds progress, not the whole request: the whole body must also arrive within its operation's bound (5 s for JSON operations, 10 minutes for an attachment upload); within that bound a large upload that keeps moving is never cut off, but a client that declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request refused before its body is read closes its connection instead of draining the body. Requests without a body (event streams) and WebSocket connections are unaffected. |
@@ -205,6 +206,15 @@ Bounds graceful shutdown.
 | Key | Default | Environment | Description |
 |---|---|---|---|
 | `shutdown.timeout` | `30s` | `SPACEMAN_SHUTDOWN_TIMEOUT` | How long central waits for requests and background work to finish on stop (1s to 10m). Keep it below the service manager's stop timeout. |
+
+### `telegram`
+
+Holds the Telegram settings that belong to the deployment rather than the API (ADR-0083). The bot itself (token, mode, its Mini App host) is configured through the API and Terraform.
+
+| Key | Default | Environment | Description |
+|---|---|---|---|
+| `telegram.api_base_url` | `https://api.telegram.org` | `SPACEMAN_TELEGRAM_API_BASE_URL` | The Bot API endpoint the bot token is sent to: https, or http on a loopback host (a fake server in tests, a local Bot API server). It is deliberately settable only in central's own configuration (this file or its environment override), never through the API or Terraform: whoever sets it receives the token. |
+| `telegram.miniapp_host` | (empty) | `SPACEMAN_TELEGRAM_MINIAPP_HOST` | The Telegram Mini App's own host (e.g. tg.example.com): a lower-case DNS name, not an IP address, without scheme, port or path, and not the host of public_url. Every request whose Host is this name (compared case-insensitively, without the port) is served only by the Mini App (its page, its assets, its part of the API and its downloads) and never reaches the rest of central, whatever the bot's state: while no bot runs, or it is disabled, the host answers 404 for everything. Empty: the bot's miniapp_host is used, and only while a bot is stored. When both are set and differ, this one wins and the difference is logged and shown on the System page. Set it whenever the Mini App's host points at central (ADR-0083 §3.4.1). |
 
 ## Node agent (`spaceman-agent`)
 

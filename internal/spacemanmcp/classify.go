@@ -48,22 +48,24 @@ func AutoExcluded(r api.Rule) (string, bool) {
 
 // Reasons shared by many entries.
 const (
-	rRead       = "reads what the token's grants reach"
-	rSpaceWrite = "changes a space's work or configuration within the token's grants"
-	rDraft      = "edits a draft or an unpublished catalog entry; publishing is separate"
-	rHuman      = "acts as a person on a human action (answers, assigns, moves, comments or routes it)"
-	rApproval   = "approvals are a person's decision; an agent never reads or decides them through these tools"
-	rTakeover   = "terminal takeover and input belong to a person at the keyboard"
-	rUsers      = "user accounts and identities are managed by people only"
-	rTokens     = "token management: an agent never mints, lists or revokes credentials"
-	rSignIn     = "sign-in providers and settings are managed by people only"
-	rMCP        = "HTTP MCP server and grant writes: outbound calls (SSRF) and tool reach of other runs; AM-5 also refuses spaceman-kind targets"
-	rDelete     = "deletes configuration or data"
-	rSecret     = "handles credentials or keys (write-only secrets pass through the model's context)"
-	rPublish    = "publishes or rolls back what every space's runs execute or render"
-	rPolicy     = "changes who is asked and how for human actions"
-	rRecording  = "reads terminal recordings, which may contain anything a run printed"
-	rSelf       = "SpaceMan MCP servers hand an administrator's authority to agents: managed by people only"
+	rRead            = "reads what the token's grants reach"
+	rSpaceWrite      = "changes a space's work or configuration within the token's grants"
+	rDraft           = "edits a draft or an unpublished catalog entry; publishing is separate"
+	rHuman           = "acts as a person on a human action (answers, assigns, moves, comments or routes it)"
+	rApproval        = "approvals are a person's decision; an agent never reads or decides them through these tools"
+	rTakeover        = "terminal takeover and input belong to a person at the keyboard"
+	rUsers           = "user accounts and identities are managed by people only"
+	rTokens          = "token management: an agent never mints, lists or revokes credentials"
+	rSignIn          = "sign-in providers and settings are managed by people only"
+	rTelegramMiniApp = "a Telegram Mini App operation (a signed download link, the session's identity): served only from a Mini App session on the Mini App host"
+	rTelegram        = "Telegram link policy and what spaces send to Telegram are managed by people only"
+	rMCP             = "HTTP MCP server and grant writes: outbound calls (SSRF) and tool reach of other runs; AM-5 also refuses spaceman-kind targets"
+	rDelete          = "deletes configuration or data"
+	rSecret          = "handles credentials or keys (write-only secrets pass through the model's context)"
+	rPublish         = "publishes or rolls back what every space's runs execute or render"
+	rPolicy          = "changes who is asked and how for human actions"
+	rRecording       = "reads terminal recordings, which may contain anything a run printed"
+	rSelf            = "SpaceMan MCP servers hand an administrator's authority to agents: managed by people only"
 	// rSpaceRole: a space role decides what a launch by role runs (its template's kind, profile, permission mode and
 	// settings), so saving one can make a role diagnostic or widen its runs' access without any later launch saying so.
 	// Every save is dangerous rather than only the widening ones: whether a template is diagnostic or a profile or
@@ -181,11 +183,27 @@ var Table = map[string]Entry{
 	"put-harbor-pilot-connection":    {Dangerous, rSecret},
 	"delete-harbor-pilot-connection": {Dangerous, rSecret},
 	"get-harbor-pilot-connection":    {Read, rRead},
+	"get-telegram-bot":               {Read, rRead},
+	"put-telegram-bot":               {Dangerous, rSecret},
+	"delete-telegram-bot":            {Dangerous, rSecret},
 	"get-harbor-pilot-gateway":       {Read, rRead},
 	"get-space-harbor-pilot":         {Read, rRead},
 	"get-space-harbor-pilot-status":  {Read, rRead},
 	"put-space-harbor-pilot":         {Dangerous, "chooses which Harbor Pilot project (and spend) a space's runs bill against"},
 	"delete-space-harbor-pilot":      {Write, rSpaceWrite},
+	// Telegram settings (ADR-0083): who may link, with which cap, and what a space sends to Telegram's servers are a
+	// person's decision.
+	"put-telegram-settings":         {Excluded, rTelegram},
+	"delete-telegram-settings":      {Excluded, rTelegram},
+	"put-space-telegram":            {Excluded, rTelegram},
+	"delete-space-telegram":         {Excluded, rTelegram},
+	"get-telegram-settings":         {Read, rRead},
+	"list-space-telegram":           {Read, rRead},
+	"get-space-telegram":            {Read, rRead},
+	"list-telegram-links":           {Excluded, rTelegram},
+	"delete-telegram-link":          {Excluded, rTelegram},
+	"create-telegram-download-link": {Excluded, rTelegramMiniApp},
+	"get-telegram-me":               {Excluded, rTelegramMiniApp},
 
 	// Human-action policies.
 	"delete-human-policy":       {Dangerous, rPolicy},

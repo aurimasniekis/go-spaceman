@@ -75,6 +75,24 @@ type Config struct {
 	Limits    LimitsConfig    `yaml:"limits"`
 	Retention RetentionConfig `yaml:"retention"`
 	Shutdown  ShutdownConfig  `yaml:"shutdown"`
+	Telegram  TelegramConfig  `yaml:"telegram"`
+}
+
+// TelegramConfig holds the Telegram settings that belong to the deployment rather than the API (ADR-0083). The bot
+// itself (token, mode, its Mini App host) is configured through the API and Terraform.
+type TelegramConfig struct {
+	// APIBaseURL is the Bot API endpoint the bot token is sent to: https, or http on a loopback host (a fake server in
+	// tests, a local Bot API server). It is deliberately settable only in central's own configuration (this file or
+	// its environment override), never through the API or Terraform: whoever sets it receives the token.
+	APIBaseURL string `yaml:"api_base_url"`
+	// MiniAppHost is the Telegram Mini App's own host (e.g. tg.example.com): a lower-case DNS name, not an IP address,
+	// without scheme, port or path, and not the host of public_url. Every request whose Host is this name (compared
+	// case-insensitively, without the port) is served only by the Mini App (its page, its assets, its part of the API
+	// and its downloads) and never reaches the rest of central, whatever the bot's state: while no bot runs, or it is
+	// disabled, the host answers 404 for everything. Empty: the bot's miniapp_host is used, and only while a bot is
+	// stored. When both are set and differ, this one wins and the difference is logged and shown on the System page.
+	// Set it whenever the Mini App's host points at central (ADR-0083 §3.4.1).
+	MiniAppHost string `yaml:"miniapp_host"`
 }
 
 // RetentionConfig holds the installation-wide retention that cannot be set per space (ADR-0045). Per-space retention
@@ -260,6 +278,10 @@ type HTTPConfig struct {
 	// client that stops reading is disconnected instead of holding the response in central's memory. WebSocket
 	// connections (nodes, terminals) keep their own timeouts.
 	WriteIdleTimeout Duration `yaml:"write_idle_timeout"`
+	// StreamHeartbeat is how often an otherwise idle live stream (the change feed, a run's recording) sends a
+	// heartbeat event. A proxy in front of central (Cloudflare drops an idle proxied connection after about 100 s)
+	// must see traffic well inside its idle limit. 1 s to 45 s, default 15 s.
+	StreamHeartbeat Duration `yaml:"stream_heartbeat"`
 	// CatchUpConcurrency bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each
 	// decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused
 	// with 503 and Retry-After (ADR-0081).

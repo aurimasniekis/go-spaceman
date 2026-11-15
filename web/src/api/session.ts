@@ -62,6 +62,43 @@ export function toLogin() {
   if (!isPublicPath(window.location.pathname)) window.location.assign(loginUrl(here))
 }
 
+/**
+ * The Telegram Mini App's session (ADR-0083 §3.4.2, §4.6): an opaque token held in memory only and sent as
+ * `Authorization: Telegram <token>`, with `credentials: 'omit'` so no cookie is ever sent or kept. A 401 ends the session
+ * (onEnded): there is no sign-in and no retry, because the initData behind it is single-use.
+ */
+let tgToken = ''
+let tgEnded: ((reason?: string) => void) | null = null
+
+export function setTelegramSession(token: string) {
+  tgToken = token
+}
+
+export function telegramToken(): string {
+  return tgToken
+}
+
+/** True once the Mini App entry has installed its mode (before the exchange, so the exchange itself is cookieless). */
+let miniApp = false
+export function setMiniAppMode(onEnded: (reason?: string) => void) {
+  miniApp = true
+  tgEnded = onEnded
+}
+
+/** True in the Telegram Mini App (its entry installed the mode). */
+export function isMiniApp(): boolean {
+  return miniApp
+}
+
+/** What a 401 with this problem code says to the person: MFA still to finish is a browser job, anything else a reopen. */
+export const MFA_PENDING_MESSAGE = 'Multi-factor authentication is required for your SpaceMan account. Finish setting it up in the browser, then reopen this app.'
+
+export function clearTelegramSession() {
+  tgToken = ''
+}
+
+export const TELEGRAM_AUTH_SCHEME = 'Telegram'
+
 const mutating = (method: string) => !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
 
 /** The `code` of a problem response, or "". */
@@ -113,11 +150,20 @@ const originals = new WeakMap<Request, Request>()
 /** openapi-fetch middleware for the API client. */
 export const sessionMiddleware: Middleware = {
   onRequest({ request }) {
+    if (miniApp) {
+      const r = new Request(request, { credentials: 'omit' })
+      if (tgToken) r.headers.set('Authorization', `${TELEGRAM_AUTH_SCHEME} ${tgToken}`)
+      return r
+    }
     prepare(request)
     originals.set(request, request.clone())
     return request
   },
   async onResponse({ request, response }) {
+    if (miniApp) {
+      if (response.status === 401) tgEnded?.((await problemCode(response)) === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
+      return response
+    }
     return after(originals.get(request), request, response, (r) => fetch(r))
   },
 }

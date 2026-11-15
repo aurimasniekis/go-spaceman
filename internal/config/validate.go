@@ -15,6 +15,8 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tghost"
 )
 
 // ValidationError aggregates every configuration problem found.
@@ -58,6 +60,7 @@ func (c *Config) Validate() error {
 	v.positive64("http.max_body_bytes", c.HTTP.MaxBodyBytes)
 	v.positive64("http.max_upload_bytes", c.HTTP.MaxUploadBytes)
 	v.durationRange("http.write_idle_timeout", c.HTTP.WriteIdleTimeout, time.Second, 10*time.Minute)
+	v.durationRange("http.stream_heartbeat", c.HTTP.StreamHeartbeat, time.Second, 45*time.Second)
 	if c.HTTP.CatchUpConcurrency < 1 || c.HTTP.CatchUpConcurrency > 256 {
 		v.add("http.catch_up_concurrency must be within 1..256, got %d", c.HTTP.CatchUpConcurrency)
 	}
@@ -130,6 +133,12 @@ func (c *Config) Validate() error {
 		v.add("retention.audit_days must be 0 (keep forever) or within 30..36500, got %d", a)
 	}
 	v.durationRange("shutdown.timeout", c.Shutdown.Timeout, time.Second, 10*time.Minute)
+	if _, err := botapi.ParseBaseURL(c.Telegram.APIBaseURL); err != nil {
+		v.add("telegram.api_base_url %v", err)
+	}
+	if err := tghost.Check(c.Telegram.MiniAppHost, c.PublicURL); err != nil {
+		v.add("telegram.miniapp_host %v", err)
+	}
 	return v.err()
 }
 

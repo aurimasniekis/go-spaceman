@@ -17,6 +17,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/httpguard"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 )
 
@@ -90,39 +91,16 @@ func (d *Deps) withRequest(next http.Handler) http.Handler {
 }
 
 // clientIP is the TCP peer, or the rightmost X-Forwarded-For entry not in a trusted proxy range when the peer is a
-// trusted proxy.
+// trusted proxy (httpguard.ClientIP); the raw peer host when it isn't an address.
 func (d *Deps) clientIP(r *http.Request) string {
+	if ip := httpguard.ClientIP(r, d.TrustedProxies); ip.IsValid() {
+		return ip.String()
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	peer, err := netip.ParseAddr(host)
-	if err != nil {
-		return host
-	}
-	if !d.trusted(peer) {
-		return peer.Unmap().String()
-	}
-	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
-		if err != nil {
-			break
-		}
-		if !d.trusted(a) {
-			return a.Unmap().String()
-		}
-	}
-	return peer.Unmap().String()
-}
-
-func (d *Deps) trusted(a netip.Addr) bool {
-	for _, p := range d.TrustedProxies {
-		if p.Contains(a.Unmap()) {
-			return true
-		}
-	}
-	return false
+	return host
 }
 
 // limitBody caps request bodies (uploads use their own, larger limit on their own route).
@@ -149,13 +127,36 @@ func (d *Deps) limitBody(next http.Handler) http.Handler {
 
 // authenticate resolves a bearer token (API token or root token) or the session cookie into a principal, and refuses
 // cross-site state-changing requests: a mutation carrying a session cookie, or an unauthenticated mutation (sign-in),
-// must come from the configured public origin. Bearer requests never fall back to the cookie.
+// must come from the configured public origin. Bearer requests never fall back to the cookie. The Telegram scheme is
+// refused with 401 before the cookie is looked at, so it can never combine with a cookie session (ADR-0083 §3.4.1).
+// In Telegram mode (TelegramHandler) only the Telegram scheme authenticates and mutations must come from the Mini App
+// origin (authenticateTelegram, miniAppSameOrigin).
 func (d *Deps) authenticate(next http.Handler) http.Handler {
 	authLimit := newIPLimiter(rate.Limit(20.0/60), 20) // sign-in attempts per address: 20 per minute (burst 20)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		ip := ClientIP(ctx)
 		var p *auth.Principal
+		if telegramChannelFrom(ctx) == channelMiniApp {
+			tok, ok := "", false
+			if p, tok, ok = d.authenticateTelegram(w, r, authLimit); !ok {
+				return
+			}
+			if mutating(r.Method) && !d.miniAppSameOrigin(r) {
+				writeProblem(w, errCrossSite())
+				return
+			}
+			if p != nil {
+				ctx = context.WithValue(obs.WithIDs(ctx, obs.UserID(p.User.ID)), principalKey{}, p)
+				ctx = context.WithValue(ctx, telegramTokenKey{}, tok)
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		if hasTelegramScheme(r) {
+			writeProblem(w, errUnauthenticated())
+			return
+		}
 		authz := r.Header.Get("Authorization")
 		bearer := strings.HasPrefix(authz, bearerPrefix)
 		if bearer && d.Auth != nil {

@@ -27,6 +27,8 @@ const (
 	MethodRoot = "root"
 	// MethodInternal marks a principal central built from an internal token for a SpaceMan MCP call (ADR-0063).
 	MethodInternal = "internal"
+	// MethodTelegram marks a person acting through their Telegram link (TelegramPrincipal, ADR-0083).
+	MethodTelegram = "telegram"
 )
 
 // Principal is the authenticated user behind a request.
@@ -59,6 +61,14 @@ type Principal struct {
 	MCPEndpoint bool
 	// RootTokenID is set when the request used the bootstrap root token (SM-AUTH-005).
 	RootTokenID string
+	// TelegramLinkID is set on a Telegram principal (ADR-0083 §3.2): a person acting through their Telegram link, from
+	// the bot (in process) or the Mini App (its session header). Only TelegramPrincipal sets it, and never together
+	// with TokenID or RootTokenID (Subjects refuses that combination).
+	TelegramLinkID string
+	// TelegramSSO makes the user's SSO subject a Telegram principal's second subject instead of the user's own: the
+	// policy allows SSO grants through Telegram, the link was confirmed from an SSO session, and that session's
+	// absolute expiry (the link's sso_until) has not passed.
+	TelegramSSO bool
 	tokenHash   []byte
 	csrfSecret  []byte
 	// revGen is the revocation generation the principal was authenticated under (StreamWatch).
@@ -72,10 +82,22 @@ func (p *Principal) MFASatisfied() bool { return !p.Limited }
 // its user for API tokens (a token can never exceed its creator); the root token alone for root. An SSO session acts
 // as the user's SSO subject, which holds the user's grants plus the grants the identity provider's group mappings gave
 // it: SSO-sourced grants apply only to SSO sessions, never to password sessions or API tokens (Hallpass SR-26).
+//
+// A Telegram principal is its link's subject and its user's (ADR-0083 §3.2): the link's capped grants intersected with
+// the user's current ones. Its user's subject is the local one unless TelegramSSO is set. A Telegram principal that
+// also carries a token or the root token, or has no user, is malformed and gets no subjects, so nothing allows it.
 func (p *Principal) Subjects() []string {
 	switch {
 	case p == nil:
 		return nil
+	case p.TelegramLinkID != "":
+		if p.User == nil || p.TokenID != "" || p.RootTokenID != "" {
+			return nil
+		}
+		if p.TelegramSSO {
+			return []string{TelegramSubject(p.TelegramLinkID), SSOSubject(p.User.ID)}
+		}
+		return []string{TelegramSubject(p.TelegramLinkID), UserSubject(p.User.ID)}
 	case p.RootTokenID != "":
 		return []string{RootSubject(p.RootTokenID)}
 	case p.User == nil:
@@ -97,6 +119,11 @@ func (p *Principal) Internal() bool { return p != nil && p.TokenPurpose != "" }
 // internal token (Internal) or a bearer token on the external MCP endpoint (MCPEndpoint). Both get the same rails:
 // nothing that needs a person at the keyboard, and diagnostic launches only after a person's approval.
 func (p *Principal) ViaMCP() bool { return p != nil && (p.TokenPurpose != "" || p.MCPEndpoint) }
+
+// ViaTelegram reports whether the principal is a person acting through their Telegram link (ADR-0083): no step-up, no
+// own-account operations except the Telegram self-service ones, no CSRF token (there is no ambient credential), and
+// only the operations the Telegram classification allows.
+func (p *Principal) ViaTelegram() bool { return p != nil && p.TelegramLinkID != "" }
 
 // IsRoot reports whether the request used the root token.
 func (p *Principal) IsRoot() bool { return p != nil && p.RootTokenID != "" }
@@ -129,13 +156,33 @@ type SessionMeta struct {
 
 // createSession inserts a new session inside tx and returns the bearer token (cookie value).
 func (svc *Service) createSession(ctx context.Context, tx *store.Tx, userID, method string, mfaAt *time.Time, meta SessionMeta) (string, error) {
-	token, err := randomToken()
+	token, _, err := svc.newSession(ctx, tx, userID, method, mfaAt, meta)
+	return token, err
+}
+
+// rotatedSession creates the session that replaces the (already revoked) session oldDisplayID and carries what is
+// bound to the old session over to it: the user's unfinished Telegram link codes, which only their creating session
+// may confirm (ADR-0083 decision 2).
+func (svc *Service) rotatedSession(ctx context.Context, tx *store.Tx, oldDisplayID, userID, method string, mfaAt *time.Time, meta SessionMeta) (string, error) {
+	token, displayID, err := svc.newSession(ctx, tx, userID, method, mfaAt, meta)
 	if err != nil {
 		return "", err
 	}
+	if err := tx.Q.MoveTelegramLinkCodeSession(ctx, db.MoveTelegramLinkCodeSessionParams{OldSessionID: oldDisplayID, NewSessionID: displayID, UserID: userID}); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// newSession inserts a session and returns its token and display ID.
+func (svc *Service) newSession(ctx context.Context, tx *store.Tx, userID, method string, mfaAt *time.Time, meta SessionMeta) (token, displayID string, err error) {
+	token, err = randomToken()
+	if err != nil {
+		return "", "", err
+	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
-		return "", err
+		return "", "", err
 	}
 	var mfa sql.NullInt64
 	if mfaAt != nil {
@@ -144,19 +191,20 @@ func (svc *Service) createSession(ctx context.Context, tx *store.Tx, userID, met
 	if len(meta.UserAgent) > 256 {
 		meta.UserAgent = meta.UserAgent[:256]
 	}
+	displayID = ids.New(ids.WebSession)
 	err = tx.Q.InsertWebSession(ctx, db.InsertWebSessionParams{
 		IDHash: hashSessionToken(token), UserID: userID, CsrfSecret: secret, AuthMethod: method, MfaAt: mfa,
 		AuthAt: tx.NowMicros(), CreatedAt: tx.NowMicros(), LastSeenAt: tx.NowMicros(),
-		AbsoluteExpiresAt: tx.Now.Add(svc.opts.SessionAbsolute).UnixMicro(), Ip: meta.IP, UserAgent: meta.UserAgent, DisplayID: ids.New(ids.WebSession),
+		AbsoluteExpiresAt: tx.Now.Add(svc.opts.SessionAbsolute).UnixMicro(), Ip: meta.IP, UserAgent: meta.UserAgent, DisplayID: displayID,
 		AuthProvider: meta.Provider,
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := tx.Q.TouchUserLogin(ctx, db.TouchUserLoginParams{LastLoginAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: userID}); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return token, nil
+	return token, displayID, nil
 }
 
 // ErrUnauthorized means no valid session.
@@ -269,7 +317,7 @@ func (svc *Service) Rotate(ctx context.Context, p *Principal, meta SessionMeta) 
 			mfa = &t
 		}
 		meta.Provider = old.AuthProvider
-		token, err = svc.createSession(ctx, tx, old.UserID, old.AuthMethod, mfa, meta)
+		token, err = svc.rotatedSession(ctx, tx, old.DisplayID, old.UserID, old.AuthMethod, mfa, meta)
 		if err != nil {
 			return err
 		}
@@ -291,7 +339,7 @@ func (svc *Service) rotateTx(ctx context.Context, tx *store.Tx, p *Principal, au
 		return "", ErrUnauthorized
 	}
 	meta.Provider = p.Provider
-	token, err := svc.createSession(ctx, tx, p.User.ID, p.Method, mfaAt, meta)
+	token, err := svc.rotatedSession(ctx, tx, p.SessionID, p.User.ID, p.Method, mfaAt, meta)
 	if err != nil {
 		return "", err
 	}

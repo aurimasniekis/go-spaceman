@@ -6,7 +6,162 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-15
+
+Release on top of v0.1.4. It adds the Telegram integration (ADR-0083): a bot you chat with, a Mini App that opens inside
+Telegram, topics and group mode. All of it is built and tested against a fake Telegram server and none of it is verified
+against a real bot yet, so the release makes no production-readiness claim. It also adds usage-limit handling for Claude
+Code runs (ADR-0079). **Central and the node agent both need upgrading**, central first: central adds migrations 0050
+to 0053, and the node agent adds its journal migration 0008 and node protocol 1.12. Telegram needs one new setting,
+`telegram.miniapp_host`.
+
+**Upgrade notes:**
+- **Upgrade central first and check that it starts** before any node agent. Central's migrations since v0.1.4 are 0050
+  (usage limits), 0051 (every Telegram table; it rebuilds `role_grants` with its rows kept), 0052 (link-code confirmation)
+  and 0053 (the leaked-code signal). They are forward-only in production: take a backup first, and to go back restore a
+  snapshot taken before them.
+- **Upgrade the node agents after central.** The agent's journal gets migration 0008 (a run's reported limit), and the node
+  protocol goes from 1.11 to 1.12, whose run reports may carry the usage limit a node detected. A node agent below 1.12
+  keeps working as before, without usage-limit detection. The journal now deletes ended runs after `journal_retention`
+  (default `720h`).
+- **Restarting a node agent ends its runs**, as before: let them finish or pause the node's spaces first.
+- **New configuration:** `telegram.miniapp_host` (a lower-case DNS name, the host the Mini App is served on; with no host
+  set, the Mini App fails closed). Also new are `telegram.api_base_url`, `http.stream_heartbeat`,
+  `usage_limit_max_wait_hours` and `journal_retention`, each with a default.
+- **Telegram stays off until it is set up:** an administrator configures the bot, and someone with `space_config:write`
+  turns on each space (`enabled`). Nothing changes for a deployment that doesn't do either.
+
 ### Added
+- Telegram Mini App watch-only terminal (ADR-0083, TG-10-3; the bot isn't usable yet): off by default. A space's admin turns on
+  `terminal_watch` in its Telegram settings, and a run page in the Mini App then shows the live terminal of that space's
+  runs to links that may watch terminals (operator and up). It is read-only: no keys, paste, size or takeover, and no replay.
+  The stream comes straight from central over the Mini App host, never through Telegram; the server refuses it again
+  unless the space opted in and the link holds `terminal:watch`, and a stream already open ends (`forbidden`) at the next
+  re-check once the setting is turned off. New `get-telegram-space-features` tells the Mini App
+  whether to show it.
+- Mini App: your Telegram settings page is editable (notification categories, quiet hours, digest, muted spaces and your
+  time zone, which is per user; topics are shown read-only). Saves send `If-Match`; a stale save reloads the form with a
+  conflict notice. The queue page shows the read-only "Next" card (never `record=true`).
+- `move-task`, `ack-message` and `resolve-message` accept an optional `If-Match` with the resource version; a stale version is a
+  409 `precondition_failed` and changes nothing, and requests without it behave as before. The Telegram chat sends the card's
+  version with them, so a change between its check and the call is a conflict, not a stale action.
+- Telegram topics mode (ADR-0083, TG-11; the bot isn't usable yet): a space whose Telegram settings turn `topics` on gets a
+  topic of its own in each linked private chat, and its open actions go to a "Needs you" topic. The bot creates a topic on
+  first use and remembers its thread per link. Chat replies go to the topic the user wrote in. A topic that was deleted
+  or closed is created again once; if that fails, or the chat has topics off for the bot, the message goes to the main
+  chat. Topics only choose where a message appears; who may receive it is unchanged.
+- Telegram group binding (ADR-0083, TG-13-2): `put-space-telegram` takes `group_chat_id` to bind a forum supergroup to a
+  space (`0` unbinds; left out keeps it), for space admins only (`telegram_group:write`). The bot must be a member of a
+  supergroup with topics (422), a group serves one space (409), and `spaceman telegram` gets `--group-chat-id`. In a
+  group, refusals and answers to button taps are alerts only the tapper sees, a refused command gets one short reply
+  that shows nothing, forms link to the Mini App with a `t.me` direct link (Telegram refuses app buttons in groups), and
+  posts to a group take the `send_limits.group_per_minute` limit. The bot stays in a forum supergroup until it is bound
+  (it still leaves chats that can never be bound) and leaves a group that loses its binding.
+- Telegram group mode authorization (ADR-0083, TG-13-1): in a forum supergroup
+  bound to a space, every button tap and command acts as the tapping person's own linked account and grants, never the
+  binder's or the group's. Members without a link, or whose account can't use the space, are refused; nothing outside the
+  bound space is reachable; forms and confirmations belong to whoever opened them; enforced approvals are never decided
+  in a group. Only summaries are ever posted to a group, whatever the space's content level, and files never are.
+- **Telegram bot and Mini App (ADR-0083), documentation.** A guide (the site's Telegram page) covers linking an
+  account, the bot chat (spaces, inbox capture, queue, runs, messages, control), needs-you forms and approvals (including
+  the per-space opt-in for enforced approvals), the Mini App, topics mode, group mode, notifications with quiet hours and
+  the digest, and the administration settings. An operator page (Telegram setup) covers
+  `telegram.miniapp_host` (it must match the bot's host, and it fails closed without it), webhook versus polling, the
+  trusted proxy, and that the planned Terraform `spaceman_telegram_bot` needs central's `miniapp_host` set first. LIMITATIONS lists what
+  Telegram can't do (web only, no `web_app` buttons in groups, an opt-in watch-only terminal, summary-only groups), and
+  SECURITY and the threat model cover the link principal, limited links for pending MFA, single-use bound confirmations,
+  opt-in enforced approvals, fail-closed Mini App hosts and the stream heartbeat. **The bot and Mini App are tested against a fake
+  Telegram server only; nothing is verified against a real bot yet.** The guide also covers topics mode, group mode
+  (binding by an administrator, summary-only, alerts only the tapper sees, silent on foreign commands, when the bot
+  leaves), the watch-only terminal, the editable Mini App settings and the command menu (`/needs`, `/help`, `/settings`;
+  there is no `/new` or `/digest`).
+- Telegram link preferences (ADR-0083 amendment TG-10-4; the Mini App page that edits them comes separately): two Mini
+  App operations read and save the notification preferences of your own Telegram link (categories, quiet hours, digest,
+  muted spaces) and your time zone. The link is always the session's own; nothing else can be changed there. The Mini App
+  may also read what the queue picks next (`queue-next`), without recording the decision.
+- Telegram needs-you common actions (ADR-0083, TG-7-3, not usable until the bot ships): every pending card can be
+  claimed or released, commented on, answered with a question to the requester (a clarification, which never answers the
+  request), and withdrawn after a confirmation tied to that card's version. A photo or file sent as the reply to a comment
+  prompt becomes an attachment of the comment, and the card's attachments come back to the chat with forwarding and saving
+  off, where the space shows content. A card that went stale gets a conflict and is redrawn, never overwritten.
+  Approvals still can't be withdrawn from Telegram.
+- `http.stream_heartbeat` (default 15 s, 1 s to 45 s) sets the heartbeat interval of the change feed and the terminal stream, so a
+  proxy that drops idle connections (about 100 s) never sees them idle.
+- Telegram queue, runs and messages (ADR-0083, TG-8b; the bot isn't usable yet): `/queue` shows what runs, what is ready
+  and what waits, with status changes, placement (top, up, down, bottom) and incident decisions after a confirmation;
+  `/runs` shows the live runs and stops one after a confirmation (the API requires `run:control`); `/messages` lists what
+  agents sent to the operators, to reply to, acknowledge or resolve. `/control` turns plain text into drafts you send to
+  the space's control run; its replies come back to the chat. There is no task creation or run launch in chat.
+- Telegram needs-you forms (ADR-0083, TG-7-1, not usable until the bot ships): `/needsyou` lists what waits for you; questions
+  (options and free text), todos (steps), messages and custom types with a simple response schema (a step-by-step wizard)
+  are answered in chat as you, with the same checks as the web. Approvals stay in the app.
+- Telegram approvals (ADR-0083, TG-7-2, not usable until the bot ships): an advisory approval is decided in chat with
+  Approve → Confirm, and a denial asks for a note. An enforced approval stays in the browser unless its space sets
+  `enforced_approvals = confirm`; then it takes a second confirmation in chat, checked by the server. Withdrawing an
+  approval from Telegram stays refused.
+- Telegram inbox capture (ADR-0083, TG-8a-2; the bot isn't usable yet): a message to the bot becomes an inbox item in
+  the chosen space. Text or a caption is the body, photos and files become attachments (up to 20 MB, through the API's
+  upload checks), a forward adds a "Forwarded from" line to the body, and an album becomes one item. Every capture is
+  answered with an ack. A webhook update is acknowledged before it is handled, so an update in flight when central
+  restarts is lost together with its ack; send it again. Reading an item in chat also sends its first attachments,
+  with forwarding and saving off.
+- Telegram notifications (ADR-0083, TG-6-2, not usable until the bot ships): quiet hours send silently, reminders, escalations
+  and assignments to you arrive as their own messages, a daily digest is sent at each user's own local time, and the bot's
+  message mappings are pruned after 30 days.
+- Configuration: `telegram.api_base_url` (default `https://api.telegram.org`), the Bot API endpoint for the planned
+  Telegram bot (ADR-0083). It is settable only in central's configuration, never through the API. Nothing uses it yet.
+- Telegram groundwork (ADR-0083, not usable yet): migration 0051 with every Telegram table, and the inbound side of the
+  bot: a hardened webhook route `POST /telegram/webhook/<hook id>` outside the API (secret token checked in constant
+  time before the body is read, a refusal before the body closes the connection, a 10 s real-clock read deadline,
+  256 KiB limit, `update_id` dedupe, a bounded queue that answers 503 when full), a long-polling mode, and a dispatcher that serves private chats only and tells unlinked users how to link, at most
+  once an hour. The route answers 404 until bot configuration ships. New metrics `spaceman_telegram_webhook_requests_total`,
+  `spaceman_telegram_updates_total`, `spaceman_telegram_updates_queued` and `spaceman_telegram_poll_errors_total`.
+  **Migration 0051 must follow 0050** (the usage-limit work): it is released only after it.
+- Telegram bot configuration (ADR-0083, not usable yet): `get-telegram-bot`, `put-telegram-bot` and
+  `delete-telegram-bot` (`/api/v1/telegram/bot`, CLI `spaceman telegram bot get|set|delete`; system:read to read,
+  system:write with a step-up to change). The bot token is write-only: checked with Telegram's getMe, sealed, and never
+  returned, logged or audited (reads show `has_token` and `token_version`); the webhook secret is generated and rotates
+  with each token. Settings: `enabled`, `mode` (webhook, which needs an https `public_url`, or polling),
+  `miniapp_host` (a lower-case DNS name, not an IP address or the public URL's host) and `webhook_ip_allowlist`
+  (canonical CIDRs). Central brings the bot up at start and on every change (commands, menu button, then `setWebhook`
+  or polling) and retries a failed start. Configuring a different bot revokes every Telegram link. The System page and
+  `get-system` show the bot's health from `getWebhookInfo`.
+- Telegram settings (ADR-0083, TG-3c; the bot itself is not usable yet): `get/put/delete-telegram-settings` for the link
+  policy, link-code and Mini App lifetimes, send and inbound limits, notification defaults and the topics-mode default,
+  and `get/put/delete-space-telegram` plus `list-space-telegram` for each space's opt-in, content level, enforced
+  approvals, topics and terminal watch. Every write needs `If-Match` and a step-up and is audited; a field left out
+  takes its built-in default and only what was set is stored. Changes apply without a restart. Spaces stay invisible to
+  Telegram until enabled. Linked users over the inbound action limit get one "slow down" answer (new outcome
+  `throttled` on `spaceman_telegram_updates_total`).
+- Notification preferences: an optional `timezone` (IANA name) on the Account page. The planned Telegram digest and
+  quiet hours use it and stay off until you set one; there is no server-wide fallback.
+- Metrics: `spaceman_telegram_*` for the outbound queue of the planned Telegram bot (sends, drops, 429s, overflow
+  notices, queue depth and wait; ADR-0083). Nothing sends through it yet, so they stay at 0.
+- Telegram security core (ADR-0083, not usable yet): the Telegram principal acts as its link's capped subject
+  intersected with the user's current grants, never with step-up, own-account operations or a token. Every API
+  operation, raw route and the change feed has a reviewed Telegram class (a new one is unreachable from Telegram until
+  classified). The main host answers `Authorization: Telegram …` with 401 before any cookie is read; the Mini App's
+  Telegram mode of the API accepts only that scheme, drops cookies and never sets one. Approvals can't be decided
+  from Telegram. Migration 0051 also rebuilds
+  `role_grants` (rows kept) to allow link grants.
+- Telegram linking, protocol core (ADR-0083 decision 2, not usable yet: no chat surfaces): the Account page's
+  operations `create-telegram-link-code`, `get-telegram-link-code`, `cancel-telegram-link-code` and
+  `confirm-telegram-link` (`/api/v1/me/telegram/link-codes`). A browser session with a recent re-authentication (never
+  an API token) creates a single-use code (only its SHA-256 stored, `link_code_ttl_seconds`); `/start <code>` in a
+  private chat with the bot binds it to that Telegram account and asks it to confirm, naming the server's host and the
+  account's display name and masked e-mail ("This wasn't me" cancels and is audited); only then, and only from the
+  session that created the code (a re-authentication carries it, a logout or new sign-in doesn't), does the web
+  confirmation make the link. Its grants are the user's grants at that moment capped by the link policy
+  (`link_default_max_role` as a ceiling, admin only with `link_allow_admin_cap`, SSO grants only from an SSO session
+  with `link_sso_grants`). Migration 0052 adds `tg_confirmed_at` and `created_session_id` to link codes. New outcome
+  `link` on `spaceman_telegram_updates_total`.
+- Telegram Mini App page and downloads (ADR-0083, not usable yet): the Mini App host serves `tg.html` and the build's
+  assets with their own headers (`script-src` pinned to Telegram's loader by its exact URL, `frame-ancestors
+  https://web.telegram.org`, no `X-Frame-Options`); the main host never serves `tg.html` and its headers are
+  unchanged. `create-telegram-download-link` (`POST /api/v1/telegram/download-links`) mints a link to one attachment for
+  the caller's Telegram link, and `GET /tg-dl/<id>` on the Mini App host serves it: random ID kept by hash, valid 60
+  seconds and 3 requests, the link's permissions checked on every use, `Cache-Control: no-store`, `Referrer-Policy:
+  no-referrer`, the one CORS header (`https://web.telegram.org`) of the host, and `/tg-dl/<redacted>` in logs.
 - **Runs survive Claude usage limits** (ADR-0079, Accepted; SM-RUN-004..006). When a Claude Code run reaches its
   subscription's 5-hour or weekly limit, or a Harbor Pilot gateway runs out of accounts or budget, SpaceMan holds the
   account until the reset, keeps a short wait alive, parks a long one with its session and task, resumes it at the
@@ -93,6 +248,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   same permission as the Inbox page and need no takeover; on a phone they are icons.
 
 ### Fixed
+- The Telegram Mini App host fails closed (ADR-0083): new configuration `telegram.miniapp_host`
+  (`SPACEMAN_TELEGRAM_MINIAPP_HOST`). A request for that host, or for the bot's stored `miniapp_host`, is served only
+  by the Mini App and answers 404 for everything while no bot runs or it is disabled; it never reaches the main API,
+  sign-in or web UI. When the configuration and the bot's `miniapp_host` differ, the configuration wins and the System
+  page shows the difference.
+- The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header
+  line, not only the first, so a proxy that appends its own line can't be skipped over (audit source addresses and the
+  sign-in rate limit).
 - **Flaky write-lock guard under `go test -race`.** `TestGatewayRevoked*` (and others) failed with write locks held
   100-300 ms against the 100 ms limit when run directly under the race detector on a busy machine. Not a long
   transaction: purging a space, for one, spends about 60 ms in the cascade over its ~40 child tables with the detector
@@ -241,6 +404,9 @@ Patch release on top of v0.1.2. It makes no production-readiness claim (docs/REL
 
 ### Added
 
+- Telegram renderer (ADR-0083, TG-5; not usable until the bot ships): `internal/telegram/render` turns Markdown into
+  Telegram message entities (UTF-16 offsets, links limited to an allowlist, 4096/1024-character splitting with at most
+  four parts) and turns inbound entities back into Markdown. It isn't wired to a sender yet.
 - `GET /api/v1/watch?live=1` starts the change feed at the newest change, without replaying the retained history, and
   sends a first `position` event with that change's ID.
 
@@ -1672,7 +1838,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...v0.1.2

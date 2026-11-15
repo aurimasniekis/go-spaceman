@@ -67,7 +67,7 @@ func RegisterRetention(ret *retention.Service, exp *spaceexport.Service) func(ap
 
 // SpaceExportDownload is the raw route that streams a space's export archive (application/zip).
 func SpaceExportDownload(exp *spaceexport.Service) RawRoute {
-	return RawRoute{Pattern: "GET " + Prefix + "/spaces/{space_id}/export", Perm: authz.SpaceExport, Handler: func(d *Deps) http.HandlerFunc {
+	return RawRoute{Pattern: "GET " + Prefix + "/spaces/{space_id}/export", Perm: authz.SpaceExport, Telegram: TelegramExcluded, Handler: func(d *Deps) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 			spaceID := r.PathValue("space_id")

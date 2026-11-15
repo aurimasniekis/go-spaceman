@@ -364,3 +364,49 @@ func TestRunWhileRunningIsRefused(t *testing.T) {
 		t.Fatal("next while busy")
 	}
 }
+
+// The bot's message mappings older than 30 days are pruned by the daily pass, in batches; newer ones stay.
+func TestPassPrunesTelegramMessages(t *testing.T) {
+	f := newFx(t, 0)
+	now := f.clk.Now()
+	ins := func(chat, msg int64, age time.Duration) string {
+		return fmt.Sprintf(`INSERT INTO telegram_messages (chat_id, message_id, kind, created_at) VALUES (%d, %d, 'card', %d)`, chat, msg, now.Add(-age).UnixMicro())
+	}
+	var qs []string
+	for i := int64(1); i <= telegramPruneBatch+50; i++ { // more than one batch
+		qs = append(qs, ins(1, i, 31*24*time.Hour))
+		if len(qs) == 50 { // short seed transactions
+			f.exec(qs...)
+			qs = nil
+		}
+	}
+	qs = append(qs, ins(2, 1, 29*24*time.Hour), ins(2, 2, time.Hour))
+	f.exec(qs...)
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if want := int64(telegramPruneBatch + 50); p.Deleted[KindTelegram] != want {
+		t.Fatalf("pruned %d, want %d", p.Deleted[KindTelegram], want)
+	}
+	if n := f.count(`SELECT count(*) FROM telegram_messages`); n != 2 {
+		t.Fatalf("%d mappings left, want the 2 newer ones", n)
+	}
+}
+
+// The 30-day boundary: a mapping an hour past it is pruned, one an hour inside it stays.
+func TestPassPrunesTelegramMessagesAtTheBoundary(t *testing.T) {
+	f := newFx(t, 0)
+	now := f.clk.Now()
+	day := 24 * time.Hour
+	ins := func(msg int64, age time.Duration) string {
+		return fmt.Sprintf(`INSERT INTO telegram_messages (chat_id, message_id, kind, created_at) VALUES (1, %d, 'card', %d)`, msg, now.Add(-age).UnixMicro())
+	}
+	f.exec(ins(1, 30*day+time.Hour), ins(2, 30*day-time.Hour))
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if p.Deleted[KindTelegram] != 1 {
+		t.Fatalf("pruned %d, want only the one past 30 days", p.Deleted[KindTelegram])
+	}
+	if n := f.count(`SELECT count(*) FROM telegram_messages WHERE message_id = 2`); n != 1 {
+		t.Fatal("the mapping an hour inside the window was pruned")
+	}
+}

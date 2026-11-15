@@ -1403,7 +1403,13 @@
     browser session), `start-oidc` and `oidc-callback` (browser redirects to and from the identity provider), and
     `reset-password` (public and token-less; central accepts an anonymous state-changing request only from its own web
     origin, and the CLI does not forge an `Origin` header to pass that check, so the user redeems the token that
-    `user reset-token` issues on the sign-in page). Of the raw routes, the live terminal stream has no command: it
+    `user reset-token` issues on the sign-in page). Added with ADR-0083 (TG-4b): `create-telegram-link-code`,
+    `get-telegram-link-code`, `cancel-telegram-link-code` and `confirm-telegram-link`, because linking a Telegram account
+    works only in the browser session that created the code and refuses API tokens. ADR-0083 (TG-9a) also adds `create-telegram-session`, not a sign-in flow of the web but of the
+    Telegram Mini App: `create-telegram-session` (served only on the Mini App host, from its origin, with initData
+    Telegram signs for the app). ADR-0083 (amendment TG-10-4) adds `get-my-telegram-link-prefs` and
+    `set-my-telegram-link-prefs`: a Telegram link's own preferences, served only on the Mini App host to that link's
+    Mini App session. Of the raw routes, the live terminal stream has no command: it
     replays terminal output with its escape sequences, which belongs in the web terminal viewer
     (`run recording download` saves the recording instead). The change feed is followed with `spaceman watch`
     (`--after`, `--count`; JSON Lines with `-o json`).
@@ -1706,6 +1712,7 @@
 - **Decision — notification preferences:** stored per user (`notification_prefs`, If-Match versions, audited), they
   decide only what the open web UI announces (in-app and, with the browser's permission, desktop notifications). The
   UI reads a changed action once per change-feed entry; nothing polls. SpaceMan sends no e-mail or chat notifications.
+  (ADR-0083, Proposed, adds chat notifications through a Telegram bot; not implemented.)
 - **Decision — attachments beyond the inbox:** tasks (at creation), human-action requests, responses and comments, and
   messages and replies reference attachments through the existing `attachment_refs` (owner kinds `task`,
   `human_action`, `human_response`, `human_comment`, `message`). Every referenced attachment must belong to the item's
@@ -2852,6 +2859,11 @@
   runs keep the 100 ms default and the full gate (`SM_TEST_TX_MAX=500ms make check`) keeps 500 ms, so a slow
   transaction is still caught before a pull request; I/O in a transaction is still rejected by `txscope`. The
   login-timing and fuzz jobs keep 250 ms. Not security-relevant, for the reasons above.
+- **Update, 2026-11-15, race-scaled default (not security-relevant):** a bare `go test -race` on a loaded machine
+  tripped the 100 ms guard on unrelated tests. The default is now 500 ms under `-race` (a `race` build tag in
+  `storetest`) and stays 100 ms without it; `SM_TEST_TX_MAX` still wins unscaled. The non-race runs (local
+  `make check-fast`, coverage) keep enforcing HP-DB-004 at its original value, and `make race`, CI and release already
+  set 500 ms to 1 s, so no run that was strict becomes looser.
 - **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
   the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
   tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock
@@ -4457,6 +4469,795 @@
   few seconds to render rather than minutes (raw HTML nesting has no separate depth limit). A diagram renders on the
   main thread (mermaid needs the DOM): automatically up to about 1 s each, larger ones only on a click, and none over
   the statement limit or the body's budget.
+
+### ADR-0083 — Telegram bot and Mini App as a person's channel (security-relevant change)
+- **Status:** **Proposed**, 2026-11-14 (operator request; design reviewed once and finalized with the operator's answers
+  of 2026-11-14 to Q1–Q14, listed at the end; the points they settle are marked **(Qn)**). Nothing is implemented. Work
+  packages TG-0…TG-14 in PLAN.md; requirements SM-TG-001…014 (GOAL.md); contract `docs/contracts/telegram.md` (Bot API
+  10.4, read 2026-11-14). The Mini App reuses the web Markdown renderer of ADR-0082 (web Markdown renderer, in review).
+- **Why it is security-relevant:**
+  - It adds an **authentication channel**: a Telegram account linked to a SpaceMan user acts as that user, through a
+    link, a Telegram principal and a Mini App session.
+  - It adds **public routes outside `api.Handler()`**: the Telegram webhook and the Mini App session exchange.
+  - It sends **content to a third-party cloud**: chat messages are stored on Telegram's servers and are not end-to-end
+    encrypted.
+  - It **relaxes the UI's frame and script policy** for one host: the Mini App host `tg.<central host>` may be framed
+    by `https://web.telegram.org` and loads one script from telegram.org.
+  - It changes a documented product statement: "SpaceMan sends no e-mail or chat notifications" (ADR-0046,
+    `internal/api/prefs.go`) gets a Telegram exception.
+
+  Nothing is relaxed for the main host, for API tokens, for the SpaceMan MCP or for any existing principal.
+- **Context (code, at v0.1.4, `9de7f15`):**
+  - The UI's headers block a Mini App: `frame-ancestors 'none'` and `script-src 'self' 'wasm-unsafe-eval'` in the CSP
+    (`web/handler.go:15-17`) and `X-Frame-Options: DENY` (`:23`). The session cookie is `__Host-sm_session`
+    (`sm_session` on plain http), host-only, `SameSite=Lax` (`internal/api/middleware.go:46-51`,
+    `internal/api/authn.go:61`), so it doesn't travel into Telegram Web's cross-site iframe.
+  - There is no inbound webhook (`internal/events/source.go:18`, SM-EVT-019), and unauthenticated mutating requests fail
+    the same-origin check (`internal/api/middleware.go:194`, `sameOrigin` at `:225-234` compares `Origin` with
+    `PublicURL`).
+  - `InProcessHandler` accepts only an MCP principal with a token ID (`internal/api/api.go:171-175`, ADR-0063).
+  - `authorizeOps` refuses Session-but-not-Filtered, UserOnly, Reauth and MFA rules for MCP principals
+    (`internal/api/rules.go:122`), checks CSRF for every principal with a `Method` and no token ID (`:152`), and skips
+    step-up for principals with a token ID (`:156`).
+  - Raw routes (`authorizeRaw`, `internal/api/recordings.go:244-262`) and the change feed `GET /api/v1/watch`
+    (`api.go:197`) don't go through `authorizeOps`.
+  - `authenticate` ignores an `Authorization` header that isn't `Bearer` and falls back to the session cookie
+    (`internal/api/middleware.go:159-193`).
+  - `approverStillAuthorized` (`internal/app/central.go:858-895`) treats an unknown `Via` as the user's own subject.
+  - `Principal.Subjects()` returns the token subject and the user subject for a token principal
+    (`internal/auth/sessions.go:72-90`), and `AllowedAll` requires every subject (`internal/authz`), so a token is never
+    wider than its user. SSO-mapped grants live on `user:<id>#sso` and are re-synced only at SSO sign-in
+    (`internal/auth/sso.go:12-14`).
+  - `NotificationPrefs` (`internal/api/prefs.go:20-33`) has no timezone; the only IANA zone in the code is per schedule
+    (`internal/schedule`, embedded `time/tzdata`).
+  - Central's public handler mounts `/api/`, `/agent/` and `/` on one mux (`internal/app/central.go:676-692`); nothing
+    routes by host.
+  - Changes must not fan out (ADR-0078): one read per resource, coalesced windows, no per-user feeds, no per-tick
+    writes.
+- **Decision:**
+  1. **A module inside central, not a separate service.** `internal/telegram` (packages `botapi`, `send`, `updates`,
+     `link`, `render`, `cards`, `notify`), wired in `internal/app/central.go` and enabled only when a bot is configured.
+     It reuses authorization, the change feed, the eventbus, audit, attachments and the in-process handler, so it needs
+     **no new credential** to central. Modes: `webhook` (default) or `polling` (`getUpdates`, outbound only), sharing one
+     dispatcher. One bot per central **(Q5)**: "SpaceMan Bot", created by the operator in BotFather.
+  2. **Linking: a web-initiated code, confirmed in Telegram and in the web (Q7).**
+     1. The web Account page creates a code with `create-telegram-link-code`, rule `{Session, UserOnly, Reauth}` (a fresh
+        login; for SSO users an OIDC step-up). The code is 32 random bytes as base64url (43 characters, fits the
+        64-character `start` parameter); only its SHA-256 is stored; TTL 10 min (`link_code_ttl_seconds`, 120–1800). The
+        page shows `t.me/<bot>?start=<code>` and a QR code.
+     2. The user sends `/start <code>` in a **private** chat (refused in groups). The bot redeems the code (hash matches,
+        unexpired, unused), records the pending Telegram identity (`from.id`, username, name) and asks: "Link this
+        Telegram account to SpaceMan at **central.example.com** as **Jane Doe** (j\*\*\*@example.com)? [Confirm] [This wasn't
+        me]" (the host comes from `PublicURL`; the name and masked e-mail are those of the code's user). "This
+        wasn't me" cancels the code and is audited.
+     3. The web page short-polls `get-telegram-link-code` every 2 s while open, shows "Telegram user *name*
+        (@username, id …) wants to link", and `confirm-telegram-link` (`{Session, UserOnly, Reauth}`, same session)
+        activates it. The page also shows and saves the user's timezone (decision 12).
+     - **Why both sides:** a leaked code can't bind an attacker's Telegram account (the victim must confirm in a fresh
+       web session that names the attacker's Telegram account); an attacker's own code sent to a victim can't bind the
+       victim's Telegram to the attacker's account unseen (the Telegram step names the host and the attacker's account).
+       Every inbox draft card names the current space and account, so a mis-link shows at first use.
+     - One active link per Telegram user and, by default, one per SpaceMan user (`links_per_user`, 1–3, default 1); both
+       are unique indexes. A link belongs to one bot: rotating the same bot's token keeps links; configuring a bot with a
+       different `getMe` ID revokes every link.
+     - **Revocation:** `/unlink` or the Account page (`delete-my-telegram-link`, `{Session, UserOnly}`), an admin
+       (`delete-telegram-link`, StepUp `user:write`), a disabled user (suspended), a different bot. Every path takes
+       effect on the next update and ends Mini App sessions at once; links are cached in memory and invalidated over an
+       in-process eventbus topic `telegram.link`.
+     - Links are reconfirmed from the web every 90 days (`link_reconfirm_days`, 7–365) **(Q8)**.
+  3. **Never wider than the user, checked at request time (Q8).** Every link has its own Casbin subject
+     `telegram:<link_id>` holding the link's capped grants, written with the path API tokens use (`insertGrants`,
+     validated with `authz.Covers` against the user's grants at confirmation and on a cap change). A Telegram
+     principal's `Subjects()` is `[telegram:<link_id>, user:<id>]`, so `AllowedAll` gives the **intersection** of the
+     link's cap and the user's current grants: a grant removed from the user applies at once, and the notifier's
+     recipient check and the `approval:decide` check in `respond-human-action` (`internal/api/human.go:280-285`) apply
+     the cap with no extra code. The default cap is `operator` in every space the user can read
+     (`link_default_max_role`: `viewer` or `operator`); "same as my grants" only if `link_allow_admin_cap` is on
+     (default off). An optional per-link space allowlist narrows further. The second subject is the **local**
+     `user:<id>`; `user:<id>#sso` only when `link_sso_grants` is on (default off), and then only until the absolute
+     expiry of the SSO session that confirmed the link (`sso_until`), after which the link falls back to `user:<id>`.
+  4. **The Telegram principal and the exact `internal/api` changes (review blocker B2).** A new principal method
+     `telegram` with `User`, `TelegramLinkID` and `Channel: telegram`. **`TokenID` and `RootTokenID` are never set.**
+     The bot calls operations through `InProcessHandler`, the Mini App over HTTP with its session header (decision 7).
+     Each change has its own test:
+     1. **`InProcessHandler` guard** (`api.go:171`): from "ViaMCP with a TokenID" to "(ViaMCP and TokenID ≠ "") or
+        (ViaTelegram and TokenID = "" and RootTokenID = "")". Root and any other kind are still refused. Test: a
+        Telegram principal with a TokenID is refused; a plain session principal is refused.
+     2. **Refusal class** (`rules.go:122`): the MCP refusal becomes `p.ViaMCP() || p.ViaTelegram()`, so
+        Session-but-not-Filtered, UserOnly, Reauth and MFA rules are refused. The only exceptions are the Telegram
+        self-service operations (the user's own link preferences and timezone, own unlink), declared with a new rule
+        flag `TelegramSelf`, which are never Reauth or MFA. Test: an exhaustive loop over every rule with Reauth, MFA or
+        UserOnly returns 403 for a Telegram principal.
+     3. **CSRF** (`rules.go:152`): the condition gains `&& !p.ViaTelegram()`. A Telegram principal carries no cookie
+        (in process for the bot; a header for the Mini App), so there is no ambient credential for CSRF to protect.
+        Test: a Telegram mutation succeeds without `X-CSRF-Token`; a cookie-session mutation without it still fails.
+     4. **Step-up** (`rules.go:156`): **unchanged.** With an empty TokenID this branch would demand recent
+        authentication; it is unreachable because change 2 already refused every Reauth/MFA rule. Test (mutation): with
+        change 2 reverted, the request fails with "re-authentication required", never succeeds.
+     5. **`approverStillAuthorized`** (`app/central.go:858-895`): a branch for `Via` prefix `telegram:` requires the
+        link to exist and be `active` and its user to be enabled, builds the subjects of decision 3 and checks
+        `AllowedAll(…, approval:decide)`. Test: an approval decided from Telegram fails its execution recheck after the
+        link is revoked or capped to viewer.
+     - **Audit:** `api.Actor(ctx)` gives `Via: "telegram:<link_id>"` and `Channel: "telegram"` on every mutation's audit
+       row. A Telegram actor is a person, so unlike MCP it may respond to human actions.
+  5. **Operation classification: an allowlist over every entry kind (review blocker B1).** `internal/telegram/ops.go`
+     classifies every OpenAPI operation as `chat`, `miniapp`, `both` or `excluded`, and covers three entry kinds: huma
+     operations (in `authorizeOps`: 403 "not available from Telegram"), raw routes (a new `RawRoute.Telegram` class
+     checked in `authorizeRaw` after authentication) and the change feed (`watchHandler` refuses a Telegram principal
+     unless the class allows it). The MCP endpoint refuses the Telegram scheme outright. A test walks the registered
+     huma operations, every `Deps.Raw` pattern and the watch route, as ADR-0063's test does, and **fails on anything
+     unclassified**, so every new operation or raw route forces a decision.
+     - **Initial allowlist:** list/get spaces, `get-attention`, `list-pending-human-actions`; inbox list/get/create/
+       set-status; tasks list/get/set-status/move/`decide-incident` (`create-task` from the Mini App only, for
+       operators, **(Q10)**); human actions list/get/respond/assign/comment/clarify/cancel/move and
+       `list-space-human-types` (custom schemas come with `get-human-action`'s `type_spec`, so `get-human-type` is not
+       needed); `get-action-approval`; attachments upload/get; messages list/get/send/reply/ack/resolve; runs list/get
+       and `stop-run` **(Q3)**; the user's own Telegram settings (`TelegramSelf`).
+     - **Raw routes:** attachment content `…/attachments/{id}/content` → `miniapp`; the terminal stream
+       `…/runs/{run}/terminal` → `miniapp` only when the space's `terminal_watch` is on **(Q3)**; recording download,
+       transcript and space export → `excluded`; `GET /api/v1/watch` → `miniapp`.
+     - **Never from Telegram** (by classification, not UI hiding): every Reauth, MFA, UserOnly or personal Session
+       operation (API tokens, passwords, sessions, identities, recovery codes); terminal takeover, `send-input`, run
+       launches, terminal sizes; secrets, accounts, credentials, Git keys, Harbor Pilot, gateway and MCP servers,
+       skills, prompts, roles, policies, human type definitions and permissions, event connections, templates and
+       subscriptions, cross-space settings; users, grants, OIDC providers, root token, audit verification, backups,
+       restore, purge, retention, deletions of recordings and transcripts, nodes, relocation, space state; all Telegram
+       configuration; bulk approvals (SM-HUI-005); HallPass approvals (they stay in HallPass, SM-APPR-006); anything in a
+       space whose Telegram content level is `off`.
+  6. **The Mini App on its own cookieless host `tg.<central host>` (Q14; review blocker B4).**
+     - **Why:** with the cookie fallback of `authenticate`, a request carrying `Authorization: Telegram <bad>` and an
+       ambient cookie on a shared origin would run as the full web session. A host of its own removes the ambient
+       credential instead of relying on every future `authenticate` change to keep a rule: `__Host-sm_session` is
+       host-only with no `Domain`, so browsers never send it to `tg.…`, and the `__Host-` prefix stops `tg.…` from
+       planting one on the main host.
+     - **Routing:** the same central process and listener. `Central.Handler` first compares `hostOf(r.Host)` (lower-cased,
+       port stripped) with the stored `miniapp_host`: equal → the Mini App handler; anything else → today's handler,
+       unchanged. Only `r.Host` is used; `X-Forwarded-Host` is never trusted for routing (the proxy must preserve
+       `Host`). With no bot or an empty `miniapp_host`, the Mini App handler isn't mounted. `miniapp_host` must be a bare
+       DNS name (no scheme, port or path), not an IP address and not `PublicURL`'s host; changing it is StepUp
+       `system:write` and audited. **Amended (fail closed, 2026-11-15):** central's configuration
+       `telegram.miniapp_host` names the Mini App host statically, and a request for a Mini App host never reaches
+       today's handler, whatever the bot's state; see "Mini App host fails closed" below.
+     - **Served on `tg.<host>`, and nothing else** (anything not listed is a plain 404, no redirect):
+
+       | Path | Served |
+       |---|---|
+       | `GET /` and the shell's client routes | `tg.html`, SPA fallback, the Mini App headers below, `Cache-Control: no-cache` |
+       | `GET /assets/*` | the hashed build assets of the same `//go:embed` (static code only) |
+       | `POST /api/v1/telegram/session` | the session exchange (decision 7): public, 8 KiB body, rate-limited |
+       | `/api/v1/*`, `GET /api/v1/watch`, allowed raw routes | the **same** API handler in **Telegram mode** |
+       | `GET /tg-dl/{id}` | signed downloads (decision 8); the only route with a CORS header |
+
+     - **Never served on `tg.<host>`:** the main web UI (`index.html` and its routes); `/api/v1/auth/*` (sign-in,
+       callbacks, step-up, sign-out, CSRF: no cookie is ever set or read there); operations classified `excluded` or
+       `chat` (403); `/agent/*` and the MCP endpoint; `POST /telegram/webhook/*` (main host only).
+     - **Never served on the main host:** `tg.html` (excluded from the main UI's static and SPA serving);
+       `POST /api/v1/telegram/session`, `POST /api/v1/telegram/download-links`, `GET /tg-dl/*`; and the
+       `Authorization: Telegram` scheme, which the main host's `authenticate` **rejects with 401 before the cookie is
+       looked at**, so a Telegram header never combines with a cookie.
+     - **Telegram mode of the API handler** (a host flag on the same `api.Handler()`, not a copy): the `Cookie` header
+       is deleted before `authenticate` (defence in depth); only `Authorization: Telegram <token>` authenticates;
+       `Bearer` (API, root or internal tokens) → 401; no header → anonymous, which reaches only the session exchange
+       (every other `Public` operation answers 401 there); a response-writer wrapper drops any `Set-Cookie` and counts
+       it in a metric, and a test asserts it never fires; `sameOrigin` compares `Origin` with `https://<miniapp_host>`;
+       the watch revalidation (`watch.go:160`) gains a `telegram` case (session exists, link active, user enabled).
+     - **No CORS on the API, by decision.** The Mini App document comes from `https://tg.<host>/` (inside Telegram Web's
+       iframe its origin is still `tg.<host>`) and calls only `https://tg.<host>/api/v1/…`: same-origin, no preflight,
+       even with the `Authorization` header. The API sends no `Access-Control-*` header on either host, and `OPTIONS`
+       preflights get no CORS answer; adding CORS would only widen who can call the API from a browser. The one
+       exception is `GET /tg-dl/{id}` (decision 8).
+     - **Headers on `tg.<host>` only:** `script-src 'self' 'wasm-unsafe-eval' https://telegram.org/js/telegram-web-app.js`
+       (the exact script URL, not the host; CSP path matching is exact for a path not ending in `/`) **(Q11)**;
+       `frame-ancestors https://web.telegram.org` and **no** `X-Frame-Options`; `default-src 'self'`,
+       `connect-src 'self'`, `img-src 'self' blob: data:`, `style-src 'self' 'unsafe-inline'`, `font-src 'self' data:`,
+       `worker-src 'self' blob:`, `base-uri 'none'`, `object-src 'none'`, `form-action 'self'`; kept:
+       `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-origin`,
+       `Cross-Origin-Opener-Policy: same-origin` (re-checked on Telegram Web in real verification). `'self'` is
+       `https://tg.<host>`, so the shell can't call the main host. Bot API 10.2's origin hardening confines Mini App
+       methods to that origin; the BotFather opt-out stays off.
+     - **The main host is untouched:** `frame-ancestors 'none'`, `X-Frame-Options: DENY` and its `script-src` stay, with
+       a test.
+     - Development and tests use `http://tg.localhost:<port>/` (Chromium resolves `*.localhost` to loopback) and Go tests
+       set `Host` on requests.
+  7. **Session exchange (validated `initData`, never the cookie).** `POST /api/v1/telegram/session {init_data}`, Mini App
+     host only, 8 KiB body. Validation per the contract: strict query parsing (duplicate keys rejected); the
+     data-check-string of every field but `hash`, sorted; `secret_key = HMAC-SHA256("WebAppData", bot_token)`; the hex
+     HMAC compared with `hash` by `hmac.Equal`; `auth_date` at most 5 min old (`init_data_max_age_seconds`, 60–3600) and
+     at most 30 s in the future; a **single-use replay cache** of accepted initData SHA-256s for the max-age window
+     (in memory, capped at 10 000, oldest dropped); `user.id` must have an active link to an enabled user;
+     `start_param` is a routing hint only and authorizes nothing. Go standard library only (`crypto/hmac`,
+     `crypto/sha256`).
+     - **The session** is an opaque `spaceman_tgs_` plus 43 random characters, held **in memory only** as a SHA-256 →
+       session map (one central, SM-INV-001); idle 15 min (`miniapp_session_idle_seconds`, 300–3600), absolute 1 h
+       (`miniapp_session_absolute_seconds`, 900–43200). It travels only as `Authorization: Telegram <token>`: never a
+       bearer token, never a cookie, **never in a URL**. It ends on unlink, cap change, user disable, a grants change
+       (`grants.changed`), a bot change or a restart. The client then shows "Session ended — close and reopen the app"
+       and never retries in a loop (initData is single-use).
+     - **Rate limits:** 20/min per IP and 10/min per Telegram user; failures are audited in aggregate (one row per IP
+       per window).
+  8. **Transports the existing pages need with a header-only session (review blocker B3).** The change feed and the
+     terminal stream use a **fetch-based SSE reader** (same parser, manual `Last-Event-ID` resume, backoff; `watch.ts`
+     gets a transport interface and the web keeps `EventSource`; ADR-0078's `live=1` and 250 ms window are unchanged).
+     Inline images are fetched with the header into **blob URLs**: only when visible, at most 4 at a time, only the
+     allowlisted raster types, capped at 25 MiB, revoked on unmount. Downloads use **signed single-purpose links**:
+     `POST /api/v1/telegram/download-links {space_id, attachment_id}` (`attachment:read`) returns
+     `https://<miniapp_host>/tg-dl/<id>`, where `<id>` is 32 random bytes (a lookup key held in memory with attachment,
+     space, link and expiry); TTL 60 s, at most 3 uses; redemption re-checks that the link is active, that
+     `attachment:read` holds with the link subject and that the attachment is still in that space; the answer carries
+     `Content-Disposition: attachment`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `nosniff` and exactly
+     `Access-Control-Allow-Origin: https://web.telegram.org` (needed by `WebApp.downloadFile`), never with
+     credentials; logs record `/tg-dl/<redacted>`. Attachments only: recordings, transcripts and exports stay
+     excluded.
+  9. **Webhook hardening.** `POST /telegram/webhook/<hook-id>` (16 random bytes kept with the bot), on central's
+     top-level mux beside `/api/` and `/agent/`, **outside** `api.Handler()`, on the main host only. In order: method
+     and `Content-Type: application/json`; body limit 256 KiB (413 above); `X-Telegram-Bot-Api-Secret-Token` compared
+     with `subtle.ConstantTimeCompare` **before any parsing** (401, a metric, an audit row at most once a minute); an
+     optional source-IP allowlist (`webhook_ip_allowlist`, empty and so off by default, because it is only safe when
+     the proxy's client IP is trustworthy); a bounded JSON decode; `update_id` dedupe over the last 4096; a bounded
+     worker queue (1024 updates, 4 workers, sharded by chat for ordering); **200 at once**, or 503 when the queue is full
+     so Telegram retries. Updates are never handled inside the request, and no method call is returned in the body.
+     `setWebhook`: `allowed_updates = [message, callback_query, my_chat_member]` (`chat_member` only in group mode),
+     `max_connections = 10`, `drop_pending_updates` on reconfiguration. **Accepted:** an update answered with 200 but
+     still queued is lost if central stops; every capture therefore ends with an explicit acknowledgement or card edit,
+     so a user who sees none resends. Unlinked users get one linking reply at most once an hour (an LRU of 10 000, and
+     1 reply/s across all of them); everything else from them is dropped **without any read**. Groups the bot is added
+     to without a binding are left at once. Inbound limits per link (30 actions/min with a burst of 10, 60 inbox items/h,
+     50 attachment downloads/h) and globally (20 updates/s).
+  10. **The bot token.** It reaches central only through the write-only `bot_token_wo` (+ `bot_token_wo_version`) of
+      `spaceman_telegram_bot`, or the equivalent write-only field of `put-telegram-bot`. It is sealed in a singleton
+      `telegram_bot` row with `keyring.Seal("credential", FieldAAD("telegram_bot","token",…))`, like the Harbor Pilot
+      connection, and never readable: reads show `has_token`, `token_version`, the bot ID and username. The webhook
+      `secret_token` (32 random bytes, base64url) is generated by central, sealed the same way and rotated on every token
+      set. The token is used only by the outbound client and never appears in logs, metrics or errors (Bot API URLs
+      contain it, so the client logs method names only); file URLs contain it too, so files are always fetched
+      server-side.
+  11. **Every Telegram setting is configurable through the API and terraform-provider-spaceman (operator requirement,
+      2026-11-14), with one exception.** Each setting has a StepUp, audited operation with `If-Match` versions
+      (`system:write` globally, `space_config:write` per space) and a provider attribute:
+      - `spaceman_telegram_bot` (singleton, import ID `telegram-bot`; `get/put/delete-telegram-bot`): `bot_token_wo`,
+        `bot_token_wo_version`, `enabled` (default `false`), `mode` (`webhook`|`polling`), `miniapp_host` (empty = Mini
+        App off), `webhook_ip_allowlist` (set of CIDRs, empty = off); computed `bot_id`, `username`, `has_token`,
+        `token_version`, `webhook_status`. Delete removes the webhook and turns Telegram off; links stay and resume if the
+        same bot is configured again.
+      - `spaceman_telegram_settings` (singleton, import ID `telegram-settings`; `get/put/delete-telegram-settings`, kept
+        apart from the bot row so a policy change never touches the sealed token): `link_default_max_role`
+        (`viewer`|`operator`, default `operator`), `link_allow_admin_cap` (`false`), `link_sso_grants` (`false`),
+        `link_reconfirm_days` (7–365, `90`), `links_per_user` (1–3, `1`), `link_code_ttl_seconds` (120–1800, `600`),
+        `init_data_max_age_seconds` (60–3600, `300`), `miniapp_session_idle_seconds` (300–3600, `900`),
+        `miniapp_session_absolute_seconds` (900–43200, `3600`), `send_limits {…}` (each at or below Telegram's FAQ
+        limits), `inbound_limits {…}`, `notification_defaults {…}` (the Q9 set), `topics_mode_default` (`false`). Delete
+        resets the built-in defaults.
+      - `spaceman_space_telegram` (per space, import ID = space ID; `get/put/delete-space-telegram`): `enabled`,
+        `content_level` (`full`|`summary`|`off`), `enforced_approvals` (`web_only`|`confirm`), `topics`,
+        `terminal_watch`, and later `group_chat_id` (group mode). A space without a row, or disabled, is invisible to
+        Telegram.
+      - **The exception: the Bot API base URL** (`telegram.api_base_url`, central's YAML config, default
+        `https://api.telegram.org`) has **no** API field and no Terraform attribute, with a schema test. An API-settable
+        URL would let anyone holding `system:write` point the client at their own server and receive the write-only
+        token, defeating `bot_token_wo`. It exists for the fake server in tests and a possible local Bot API server, a
+        deployment setting like `PublicURL`.
+      - Not in Terraform either, as personal runtime data like web notification preferences: links, link codes and each
+        user's own preferences and timezone.
+  12. **A per-user timezone (Q9: per user, no global timezone).** `NotificationPrefs` gains `timezone` (an IANA name,
+      `""` = unset) in the existing `notification_prefs.prefs_json` (no migration), validated with the embedded zone
+      database as `internal/schedule` does, edited on the web Account page, in the Mini App and with `/settings`. The
+      link confirmation page pre-fills it from the browser if the user has none, visibly. The digest time and quiet
+      hours are local wall-clock times in that zone, DST included (a skipped time fires at the next valid minute, a
+      repeated one once). With no timezone the digest and quiet hours are **off** for that user and the bot says why;
+      there is no server-wide fallback zone.
+  13. **Content leaves for Telegram's cloud only per space and within fixed limits (Q1).** Spaces are opt-in;
+      `content_level` `full` (the default once enabled) renders bodies in chat, `summary` keeps bodies in the Mini App
+      (phone to central directly, never through Telegram), `off` hides the space. **Never in chat, at any level:**
+      terminal output, responses hidden by `response_hidden`, contents of non-allowlisted attachment types (a link
+      only), secrets of any kind. `protect_content` is set on every message with a body or attachment (it doesn't stop
+      screenshots). Logs and metrics never contain message text, callback arguments or initData; labels are bounded
+      (method, result, class). Markdown is rendered to Telegram entities or rich-message blocks from SpaceMan's own
+      AST (goldmark), so Telegram's MarkdownV2/HTML parsers never see untrusted text; links are http, https or mailto
+      only; Mermaid is a code block plus a Mini App button (no server-side rendering).
+  14. **Enforced approvals are web-only by default (Q2).** Advisory approvals can be decided in chat (Approve →
+      Confirm; Deny needs a note). Implementation detail (TG-7-2): see "Approvals from Telegram" under the
+      implementation notes below. An enforced approval (ADR-0024) shows operation, resource, scope, expiry, uses and the
+      argument digest (never arguments or secrets, SM-APPR-005) with "Decide in browser"; a space may set
+      `enforced_approvals = confirm` to allow a two-step confirmation in chat. Authorization is rechecked at response
+      time either way (SM-APPR-003), with change 5 of decision 4 for Telegram actors. Never in bulk (SM-HUI-005). Every response
+      carries the card's version as `If-Match`, so a conflict means someone else won (SM-HUM-007).
+  15. **Notifications follow ADR-0078: no fan-out.** One in-process consumer: the eventbus change topic is a doorbell
+      only; `changes` are read after an **in-memory** cursor starting at the newest change (no history replay, no cursor
+      table, no per-tick writes); 250 ms windows reduced to distinct `(resource_type, resource_id)` of `human_action`,
+      `inbox_item`, `task`, `message` and terminal or failed `run`; at most 500 keys per window (then one "many changes"
+      message per chat); **one read per distinct resource** as the system principal; recipients computed in memory from
+      cached links with `AllowedAll` on the link's subjects, the type's `view_role`, the content level and the
+      preferences, with no query per recipient. **Telegram's own state (codes, links, settings) writes no change-feed
+      entries** (a change with a NULL space reaches every watch stream and would leak link IDs); caches use the
+      `telegram.link` eventbus topic and the confirm page short-polls. One outbound sender with token buckets (25/s
+      global, 1/s per chat with a burst of 3, 20/min per group; edits and deletes count as sends), five priority
+      classes, coalescing per (chat, resource), bounds (5000 total, 50 per chat, lowest class dropped first), `retry_after`
+      honoured (at most 3 retries), and a 403 "blocked" marking the link `blocked` until the user writes again. Sent-card
+      mappings (`telegram_messages`) are flushed in batches (at most one transaction a second or per 100 rows) and pruned
+      after 30 days. The digest is one `human.Deadline{Name:"telegram.digest"}` waking at the earliest link's due
+      instant; its `Due` only enqueues and never returns an error caused by Telegram (that would back off the shared
+      human deadline loop). **Measured acceptance:** 1000 `human_action` changes for 50 actions in a second with 5
+      linked users give at most 50 reads; no `changes` reads while idle; no writes for windows that send nothing. **Real bound with
+      updates (`TestBudgetUpdates`):** per window one `changes` read per 200 changes and one resource read per distinct
+      resource; a mapping lookup (`ListTelegramMessagesByResource`) only for a resource whose change is not a creation
+      and that at least one link may see, and at most once per resource per process lifetime (a cold process after a
+      restart pays one per resource, 50 for 50 resources); `LatestChangeSeq` once per window; the permission loads of
+      the reader (`Human.Permissions`) once per space per window. The recipient check is repeated from memory when a
+      queued card is sent, so access revoked while a card waits in the sender drops it. A card with a body at the `full`
+      content level is sent with `protect_content`. A failed `changes` read re-arms one retry after a second for the
+      unread rest.
+      **TG-6-2:** reminders, escalation and expiry stay the human service's (they write a change; the notifier reacts
+      and has no timer of its own). A reminder or escalation of a pending action whose card exists is a separate
+      message (an edit makes no sound), announced once per chat (`escalations`, `reminders` push/digest/off), and an
+      assignment to the link's user is announced by `assigned_to_me`, which also lets a low-priority assignment
+      create the card; the instants announced are kept in memory and, after a restart, start at the mapping's last
+      touch. Quiet hours set `disable_notification` when the message is *sent*, judged in the user's zone
+      (`notification_prefs.timezone`, read for all linked users in one query on each link reload); no zone, no
+      quiet hours and no digest. Digest-delivered items (inbox, tasks in review, failed runs, digest reminders) collect
+      in a bounded in-memory buffer (50 per link, lost on restart, removed when the resource finishes); `NextDigest` and
+      `DigestDue` of the `telegram.digest` deadline read memory only, `DigestDue` enqueues and never returns an error,
+      and the digest is rechecked (access, mute, space visibility) and rendered with titles only when it is sent;
+      a link with nothing collected gets none; a link without a zone or with the digest off collects nothing, and items older than 48 hours are left out. Announcements are at most once, barring a crash before the mapping flush (the announced instants then restart from the mapping's older touch, so one may repeat): after a restart a card's assignee is unknown until its next change, so the first assignment seen on such a card is not announced, and an alert queued when the process stops is lost. A queued alert (reminder, escalation, assignment) is rechecked at send time for the link, the grants and the space's visibility (like a card), but not against the resource's own state: an alert for an action that was resolved while it waited is still sent. `telegram_messages.created_at` is refreshed by every send, edit and
+      announcement, and retention prunes rows older than 30 days in batches of 200.
+  16. **What SpaceMan uses of Telegram's newer features:** private-chat topics (opt-in per space, M3, **(Q6)**), rich
+      messages with an entity fallback **(Q12)**, styled buttons, `copy_text`, `disabled`, and ephemeral messages in group
+      mode. **Not used:** guest mode, bot-to-bot, managed and business bots (each lets content or commands arrive from
+      something that isn't a linked user), widgets, polls, draft streaming (later). v1 is **private chats only**; group
+      mode (a forum supergroup bound to one space by StepUp `space_config:write`, plus `telegram_group:write`, admins only, `summary` by default, every tap
+      authorized as the tapping user's own link, group membership granting nothing) is M3 **(Q4)**. Talking to control
+      from Telegram (a message to the control run as the user) is in M1 **(Q13)**.
+- **Alternatives rejected:**
+  - **A separate service:** it would need an API token per user (bearer tokens skip step-up, and they would have to be
+    stored) or a super-token wider than any user. A central module needs no new credential.
+  - **Bearer tokens for the bot or the Mini App:** a token ID skips step-up (`rules.go:156`) and a bearer token in a
+    browser is a stealable credential; the Telegram principal has no token ID and in-memory sessions only.
+  - **The same origin under `/tg/`:** it works with a Telegram scheme that never falls back to the cookie and
+    `credentials: 'omit'`, but every future `authenticate` change would have to keep those rules, and the main host would
+    need a relaxed `frame-ancestors` for one path.
+  - **An API-settable Bot API URL:** leaks the write-only token to anyone with `system:write` (decision 11).
+  - **Telegram OIDC sign-in** as an `oidc_providers` entry: proves the Telegram identity in the browser but makes Telegram
+    a SpaceMan IdP and widens sign-in **(Q7)**.
+  - **Server-side Mermaid rendering:** a headless browser on central is new runtime and attack surface.
+  - **A local Bot API server:** lifts file limits but needs `api_id`/`api_hash` and another process; the base URL setting
+    leaves it possible later.
+  - **Vendoring `telegram-web-app.js`:** no third-party script, but manual updates when Telegram changes it **(Q11)**.
+- **Consequences:**
+  - Central gains an internet-facing Telegram surface, isolated in its own route group with its own metrics; the first
+    such route outside `api.Handler()` gets a security review (TG-3a), and so does the security core (TG-4a).
+  - A person can act from a phone without the web UI, but never wider than in the web and never on anything that needs
+    step-up. Chat content lives on Telegram's servers within the space's content level.
+  - Production needs a second DNS name and certificate (`tg.<central host>`), a proxy that preserves `Host`, an IPv4
+    TLS route for the webhook and egress to `api.telegram.org`; these are deferred deployment items, not SpaceMan code.
+  - In-memory state (sessions, replay cache, conversation steps, download links) is lost on restart: users reopen the
+    Mini App or tap again.
+  - "SpaceMan sends no e-mail or chat notifications" becomes "no e-mail; chat notifications only through the Telegram
+    bot, once configured" (ADR-0046 is otherwise unchanged).
+  - Expensive to undo, decided here: one bot per central with per-bot links; the subject set (local grants, SSO only
+    bounded); inbox items from Telegram use `source_kind = operator` with `source_label = "Telegram"` (a new kind needs
+    a table rebuild); the webhook path shape; the Mini App host; the Terraform resource and attribute names above.
+  - Evidence stays honest: everything is built and tested against a fake Bot API server (`internal/telegram/tgtest`)
+    and `tg.localhost`; real verification needs an operator-provided test bot (`SPACEMAN_REAL_TELEGRAM=1`, TG-14), and
+    until then the status is "tested (simulated)" at most.
+- **Operator answers (2026-11-14):**
+  - **Q1–Q13:** the proposed defaults, as above: spaces opt-in with `full` bodies once enabled (Q1); enforced approvals
+    web-only with a per-space opt-in (Q2); stop runs for operators with a confirmation, no launch, watch-only terminal
+    off by default per space (Q3); private chats in M1/M2, groups in M3 (Q4); one bot per central (Q5); topics mode
+    opt-in in M3 (Q6); web-initiated code with both-side confirmation, one Telegram account per user, no Telegram sign-in
+    (Q7); local grants, `operator` cap, SSO grants only bounded and off by default, reconfirm every 90 days (Q8); the
+    proposed notification defaults (Q9); no task creation in chat, "New task" in the Mini App for operators (Q10); the
+    official script with an exact-URL CSP (Q11); rich messages with an entity fallback (Q12); talk to control from
+    Telegram in M1 (Q13).
+  - **Q5 bot name:** "SpaceMan Bot", created by the operator in BotFather.
+  - **Q9 timezone:** each user's own timezone, no global timezone; digest and quiet hours are in it (decision 12).
+  - **Q14 Mini App origin:** its own cookieless host `tg.<central host>` (decision 6).
+  - **New requirement:** every Telegram setting configurable through terraform-provider-spaceman, the token write-only
+    (decision 11; the base URL exception follows from it).
+  - **Infra:** no deployment requests for Telegram until the operator says so; development and tests don't need any.
+- **Implementation notes (TG-3a, 2026-11-14):**
+  - **Migration 0051** creates every Telegram table (plan §5.2). It needs 0050 (the usage-limit
+    work) to be released first; central refuses a database with a gap below its version. Departures from the plan's
+    table list, none weakening anything: `telegram_bot` and `telegram_settings` are keyed by a `singleton = 1` column
+    (no ID); `telegram_links` also stores `bot_id` (a link belongs to one bot) and `updated_at`; `telegram_messages`
+    has a nullable `space_id` so a space purge removes its rows; link codes store `created_at` and `redeemed_at`. **One
+    live link per Telegram user** is a partial unique index (`state <> 'revoked'`); links per SpaceMan user are not a
+    unique index, because the `links_per_user` setting allows 1–3, so TG-4b checks it when a link is confirmed.
+  - **Webhook order as built:** a configuration and the hook id (404, compared in constant time), POST (405),
+    `application/json` (415), then the secret token, hashed with SHA-256 and compared in constant time (so the length
+    of a wrong token doesn't show either) **before the body is read**, then the allowlist (403), then the 256 KiB
+    limit (413, on `Content-Length` and on the stream). The body limit therefore applies after the secret check rather
+    than before it; nothing is read before either. A body read gets a 10 s deadline. Refused secrets are audited as
+    `telegram.webhook.refused` (actor `system`, outcome `denied`, the client address and the count since the last row),
+    at most once a minute.
+  - **Queue:** 4 shards of 256 (1024 in total), sharded by chat. A full **shard** answers 503 even if others have room,
+    which keeps one busy chat from taking the whole queue. A refused update isn't remembered, so the retry is accepted.
+    The global 20 updates/s bound is applied by the workers; the per-link limits come with TG-3c.
+  - **Dispatcher:** private chats only in v1. `my_chat_member` in a group, supergroup or channel makes the bot leave
+    it without any read; in a private chat it goes to the linked user's handler (TG-2/TG-4b mark a link `blocked`), and
+    for an unlinked user it is dropped without a reply. Unlinked users' `/start <code>` is not handled yet: linking
+    (TG-4b) adds that path with its own rate limits.
+- **Implementation notes (TG-3b, 2026-11-14):**
+  - **Operations:** `get-telegram-bot` (system:read), `put-telegram-bot` and `delete-telegram-bot` (system:write with a
+    step-up) on `/api/v1/telegram/bot`, with If-Match versions like the Harbor Pilot connection. A put replaces every
+    field; an empty `bot_token` keeps the stored one. Audit actions `telegram.bot.created`, `.updated` and `.deleted`
+    record the settings, `token_changed`, `token_version`, the bot ID and username, `bot_changed` and `links_revoked`,
+    never the token or the secret. The bot row writes no change-feed entry (the 0051 rule for Telegram state).
+  - **Token and secret:** a new token is checked with getMe before anything is stored (401 → field error, other
+    failures → unavailable), then sealed with the credential purpose and associated data naming its column, so a sealed
+    value opens only where it was written. The webhook secret is 32 random bytes as base64url and rotates with every
+    token write. The hook id (the webhook path) is generated once and kept; a new path needs delete and create.
+  - **Validation beyond the plan, none weakening anything:** webhook mode with `enabled` needs an https `public_url`
+    (Telegram calls only HTTPS webhooks); polling has no such need. `miniapp_host` must already be lower case (it is
+    refused, not folded, so a Terraform value never drifts) and have two or more labels (`tg.localhost` works for
+    development, `localhost` doesn't). `webhook_ip_allowlist` takes at most 32 CIDRs in canonical form, stored sorted
+    (the Terraform attribute is a set).
+  - **Different bot:** when a written token's bot ID differs, every live link of any other bot is revoked in the same
+    transaction (`revoked_by = telegram:bot_changed`), and `telegram.link` is published after commit for link caches.
+    Link-subject grants don't exist yet: TG-4b must drop or ignore a revoked link's `telegram:<link_id>` grants.
+  - **Live bot:** brought up at start (Serve) and after every write, outside transactions and serialized with the
+    writes: getMe (the stored bot ID must match), setMyCommands for private chats (the plan §2.0 list, although the
+    chat surfaces arrive with TG-7/TG-8), setChatMenuButton (the Mini App at `https://<miniapp_host>/` when set,
+    otherwise commands), then the local webhook configuration first and `setWebhook` (allowed updates, max_connections
+    10, pending updates dropped only for a new token), or `deleteWebhook` and the poller. A failure doesn't fail the
+    write; it shows in health, and a failed start is retried from 30 s doubling to 10 min unless Telegram refused the
+    token (401). Disabling or deleting calls `deleteWebhook` and turns the route off (404).
+  - **Health:** `webhook_status` is `off`, `starting` (polling before central serves), `polling`, `ok`, `error` (a failed
+    start, another webhook URL registered for the bot, or a delivery error dated at or after central's setWebhook,
+    compared in whole seconds) or `unknown` (getWebhookInfo failed). getWebhookInfo is reused for 30 s and bounded to
+    5 s. It is in `get-telegram-bot`, the `telegram` section of `get-system` and a card on the System page; none of them
+    carries the token, the secret or the webhook path.
+- **Implementation notes (TG-3c, 2026-11-14):**
+  - **Operations:** `get/put/delete-telegram-settings` (`/telegram/settings`; read `system:read`, writes
+    `StepUp(system:write)`), `get/put/delete-space-telegram` (`/spaces/{space_id}/telegram`; read `space_config:read`,
+    writes `space_config:write` in the space plus a step-up) and `list-space-telegram` (`/telegram/spaces`, a filtered
+    read: only spaces whose configuration the caller can read). Writes are `If-Match`-checked (create without it, as
+    the Harbor Pilot connection does) and audited (`telegram.settings.*`, `telegram.space.*`). Through the SpaceMan MCP
+    the reads are read tools and the writes are excluded (a person's decision). Input schemas refuse unknown fields, so
+    `api_base_url` (or a token) is a 422, and a schema test checks that no Telegram settings schema has a URL or token
+    field.
+  - **Only what was set is stored.** A global settings body is a full replacement whose fields are all optional: a
+    field left out takes its built-in default, and `settings_json` holds only the fields sent, so a later release's
+    default reaches every field nobody set (the provider maps them to Optional + Computed attributes). Responses
+    always carry every effective value, `stored` and `version` (0 while nothing is stored). A space's body works the
+    same way over its columns. A stored row that no longer validates (bounds tightened later, a hand edit) falls back
+    to the defaults with a log line instead of stopping Telegram.
+  - **Bounds the plan left open,** chosen here: `inbound_limits` `actions_per_minute` 1–600, `actions_burst` 1–100,
+    `inbox_items_per_hour` and `downloads_per_hour` 1–1000, `updates_per_second` 1–100; `send_limits` use the sender's
+    bounds (global above 0 and at most 30/s, private chat at most 1/s with a burst of 1–3, group 1–20/min, queues
+    1–50000 in total and 1–1000 per chat, the per-chat one at most the total). The Q9 set is `new_actions` and
+    `min_priority` (`normal`), `assigned_to_me`, `escalations`, `clarifications`, `operator_messages` (on);
+    `reminders` push (Q9 didn't name reminders; the web default is off, but in chat they are replies to the card, plan
+    §2.4.3); `inbox_items`, `tasks_in_review`, `failed_runs` digest; `digest` on at `09:00`; `quiet_hours` on,
+    `23:00`–`08:00` (start and end must differ). Raising a limit is an administrator's step-up decision, bounded at or
+    below Telegram's own limits on the send side.
+  - **Cache:** the settings service keeps the effective global settings and every space's row in memory. Each write
+    reloads it after commit and publishes `telegram.settings` on the in-process event bus (never the change feed), and
+    the service's `Run` reloads on that event. Listeners registered with `OnChange` get every change of the global
+    settings in order: central applies `updates_per_second` to the Intake's rate and the per-link limits to the new
+    in-memory limiter at once; `BindSender` applies `send_limits` to an outbound sender (central binds it once, through the bot service, which carries the limits to the sender it
+    builds with the bot). Content level `off` hides a space like `enabled = false` (decision 13).
+  - **Inbound limiter:** per link, in memory, token buckets for actions (every linked update in the dispatcher),
+    inbox items and downloads (for the capture and download paths of TG-8a/TG-9a); idle links are forgotten after
+    2 h, when their buckets would be full anyway. A throttled update isn't handled; the user is told to slow down once
+    until an action is allowed again (a button tap is always answered, with the text only that once). New outcome
+    `throttled` on `spaceman_telegram_updates_total`.
+  - **Link preferences** (`telegram_links.prefs_json`) use the same optional shape plus `muted_spaces`, stored as the
+    user's overrides only; effective preferences are the defaults with them applied (`settings.LinkPrefs`), for TG-4b,
+    TG-6 and TG-10.
+  - **Timezone:** `NotificationPrefs.timezone` is optional in the schema (older clients still save), trimmed, at most
+    64 characters, an IANA name from the embedded zone database (`Local` refused) or empty. The web Account page shows
+    it with a "Use (browser zone)" button and never fills it in by itself; the audit row records only whether one is
+    set.
+- **Implementation notes (TG-4a, 2026-11-14):** the security core as built; nothing here weakens a decision.
+  - **Telegram principal.** `auth.Service.TelegramPrincipal(link, {SSOGrants})` is built per update or request: the
+    link must be `active` and its user enabled. Subjects `[telegram:<link>, user:<id>]`; `user:<id>#sso` replaces the
+    second only when the `link_sso_grants` policy is on (central's `TelegramSSOGrants`, wired by TG-3c; off until
+    then), the link was confirmed from SSO and `sso_until` hasn't passed. A Telegram principal never carries a token or
+    root token ID; if one ever did (or had no user), `Subjects()` returns none, so every check denies. AuthAt and MFAAt
+    stay zero, so `RequireRecentAuth` always refuses it. **Addition:** a user who must still enroll MFA gets a Limited
+    Telegram principal, as their web session would be, so Telegram can't bypass the enrollment mandate.
+  - **Classification.** `internal/telegram/ops.go` lists every operation not already excluded by its rule
+    (`telegram.AutoExcluded`: public, step-up, personal Session/UserOnly without `TelegramSelf`), as the MCP table does.
+    Raw routes carry `RawRoute.Telegram` (and `TelegramFeature`, the space setting the terminal stream needs), the feed
+    `telegram.Watch`. The API gets them through `Deps.Telegram` (`api.TelegramPolicy`); a nil policy or any nil field
+    refuses. **Addition:** a class `exchange` marks the Mini App's session exchange (TG-9a): the only public operation
+    served in Telegram mode, and the only one an anonymous request reaches there; it is refused to the bot.
+  - **Channels.** The bot's calls are channel `chat` (set by `InProcessHandler` for a Telegram principal), the Mini
+    App's `miniapp` (set by `Deps.TelegramHandler`). A Telegram principal off both channels reaches nothing.
+  - **Main host.** Only the Telegram scheme is refused with 401 before the cookie (any case, any of several
+    Authorization headers). Other non-Bearer schemes keep today's behaviour (ignored, cookie used); refusing them all
+    would break deployments whose proxy adds Basic auth.
+  - **Telegram mode.** Exactly one Authorization header, scheme `Telegram`, resolved by `TelegramPolicy.Sessions`
+    (TG-9a) to a Telegram principal without a token; anything else 401 (rate-limited like bearer failures). Mutations
+    are checked against `TelegramPolicy.MiniAppOrigin` (no origin configured: every mutation refused). The MCP endpoint
+    isn't mounted. `Set-Cookie` is dropped and logged as a warning; the metric the plan mentions is left to TG-9a, which
+    owns the Mini App host's metrics.
+  - **Schema.** Link grants are `role_grants` rows with source `telegram`; 0051 (unreleased) rebuilds `role_grants` to
+    allow that source, rows copied as they are.
+  - **Approver recheck.** A decision with `Via telegram:<link>` is rechecked through `TelegramPrincipal` (same user,
+    not Limited) and `AllowedAll(subjects, approval:decide)`.
+  - **Approvals fail closed until TG-7** (control's ruling, 2026-11-14): `respond-human-action` refuses a Telegram
+    principal on every `approval` action (enforced ones are always that type, ADR-0024), whatever the space's
+    `enforced_approvals` setting; questions, todos, messages and custom types stay open. TG-7 relaxes this guard to the
+    per-space `confirm` opt-in for enforced approvals.
+  - **Approvals from Telegram (TG-7-2, security-relevant change: relaxes the TG-4a guard above).** The rule is the
+    server's, in `respond-human-action` (`internal/api/telegram_approvals.go`), and the chat only renders it:
+    - *Advisory* approvals (no `approvals` row behind the action) are decided from the bot or the Mini App like on the
+      web: `approval:decide` on the link's subjects, and a denial needs a note (the human service). The chat asks
+      Approve → `Approve: <action>? [Confirm approve] [Back]`, and Deny → a ForceReply note that it asks for again
+      when empty; both act on the form's version (`If-Match`) within the 15 min form TTL.
+    - *Enforced* approvals: an action counts as enforced when an `approvals` row points at it or its dedup key starts
+      with `approval:` (the approvals package asks before it links its row), and a lookup error refuses. Refused from
+      Telegram unless the **action's own space** has `enforced_approvals = confirm` and is visible to Telegram, read
+      from the store (not the settings cache) on every request, so turning the opt-in off applies to the next request.
+      With the opt-in, the decision must come from the bot in process (never the Mini App over HTTP) and carry a
+      confirmation token armed by the chat's first step (Approve, or Deny) for the same link, space, action, outcome
+      and version: random 128-bit, single use (any attempt uses it up), 15 min TTL, at most 10 per link and 10 000 in
+      all, in memory only (`api.ApprovalConfirmations`; a restart means "tap again"). Only code inside central can arm
+      one; a context value never crosses HTTP. The first step answers Approve with the Confirm step and Deny with the
+      note prompt, so an enforced approve takes two taps and an enforced deny a tap and a note.
+    - The enforced card shows operation, resource, space, uses, request expiry and argument digest, never the action
+      body (it carries the redacted arguments) or the arguments (SM-APPR-005); without the opt-in it says it is decided
+      in the browser and has only "Decide in browser" (the Mini App link). The chat counts an action with the
+      `approval:` dedup key as enforced too, like the server. Notifier cards (TG-6) carry no detail text for an
+      enforced approval (same test: a row or the dedup key; a lookup error counts as enforced).
+    - *Cancel* stays refused from Telegram for every approval, whatever the setting: it finalizes the action (an
+      enforced approval becomes revoked) and the chat has no two-step withdrawal.
+    - The approver recheck before an approved operation runs (SM-APPR-003, decision 4 change 5) applies to decisions
+      made in chat, and for a `telegram:` decision it also requires the space's opt-in (visible, `confirm`) at
+      execution: withdrawing it, or hiding the space, ends approvals already decided in chat.
+    - Invariant (documented on `approvals.ask`): an approvals row is only linked to an action created by `ask` with the
+      `approval:<id>` dedup key, so an action read as advisory can't become enforced before it is finalized.
+    - Known, not changed here: `human.Create` returns any existing action with the same dedup key, so an action planted
+      under `approval:<id>` before `ask` runs would be linked; the chat's enforced card shows the approval row's fields,
+      not that action's body. Tracked as an open item for the human/approvals owners.
+  - **Inbox capture (TG-8a-2).** A linked user's non-command message becomes an inbox item in the link's current space
+    (or its only visible one), created as the link's Telegram principal through the in-process API, so the web's
+    authorization (`inbox:write`, `attachment:write`), size cap, content sniffing, quota and audit apply; a space hidden
+    from Telegram is never a target. Text or caption is the body; a photo (largest size) or a document is downloaded
+    server-side (20 MB, the Bot API's limit; a file known to be larger is refused before any download) and uploaded
+    through `upload-attachment`; the sender's claimed MIME type is not used. A forward puts `Forwarded from <name>` in
+    the body as a quoted line (names stripped of control and markup characters); `source_label` is whatever the API
+    sets for the principal, never the origin. An album (`media_group_id`) is collected per link (at most 3 open albums,
+    10 parts each, flushed after 1.5 s without a part or 10 s at the latest) and becomes one item. Each item costs the
+    link one `inbox_items` unit, each file one `downloads` unit (the same unit is taken for each attachment sent back).
+    The item is created with an `Idempotency-Key` naming the first message. Captured text is untrusted data.
+  - **Every capture is acked** with one message: the item was added (title only where the content level is full, and
+    an Open button) or why not. **Limitation:** a webhook update is acknowledged with 200 before it is handled, so
+    Telegram never redelivers it. An update in flight when central restarts (an album still collecting, a download or
+    upload under way) is lost, and so is its ack; the user, who gets no ack, sends it again. Polling mode has the same
+    gap between a poll's offset advancing and the handler finishing. Nothing durable is kept for capture.
+  - **Attachments back to Telegram.** Reading an item in a space with content level `full` also sends its first three
+    attachments: the metadata is read through `get-attachment` as the principal (that is the authorization), the stored
+    bytes are opened by `chat.Options.Content` (the raw content route stays Mini App only), and the file goes out with
+    `protect_content` (a PNG or JPEG raster image as a photo up to 10 MB, anything else as a document up to 20 MB).
+    A `summary` space sends no files.
+
+- **Mini App host fails closed (2026-11-15, security-relevant change: tightens decision 6).** Infra's review of the
+  exposure found that central routed the Mini App host to the Mini App handler only while a bot ran with that
+  `miniapp_host`. With no bot, a disabled bot, a bot that failed to start or an emptied `miniapp_host`, a request for
+  that host fell through to the main handler: the full API with Bearer tokens and cookies, sign-in, `openapi.json` and
+  the web UI, under the Mini App's name. The edge blocks tokens and cookies on that host, but central must not depend
+  on it.
+  - **Static setting.** `telegram.miniapp_host` in central's configuration (environment
+    `SPACEMAN_TELEGRAM_MINIAPP_HOST`; empty by default) names the Mini App host. It follows the bot's `miniapp_host`
+    rules (`internal/telegram/tghost`: a bare lower-case DNS name of two or more labels, not an IP address and not
+    `public_url`'s host); central refuses to start otherwise. Operators set it whenever the Mini App's DNS name points
+    at central. It is configuration rather than API state for the same reason as `api_base_url`: what is routed where
+    must hold before the database is read and whatever a bot write does.
+  - **Routing.** A request whose `r.Host` (lower-cased, port and one trailing dot stripped; never `X-Forwarded-Host`)
+    equals `telegram.miniapp_host`, or the stored bot's `miniapp_host` whether the bot is enabled or not, goes to the
+    Mini App handler and nowhere else. The handler serves its allowlist (the shell and assets, the API in Telegram
+    mode, `/tg-dl/`) only while a running bot's effective Mini App host is that host; otherwise every path is a plain
+    404 (`not found`, `no-store`, no redirect). So with the setting in place the host answers 404 with no bot, a
+    disabled bot, a failed start or a deleted bot. The webhook stays a main-host route.
+  - **Config and bot.** The effective Mini App host is `telegram.miniapp_host` when set, otherwise the bot's
+    `miniapp_host`. A running bot serves the effective host even when it stores none (menu button, the initData key,
+    the Mini App origin). When both are set and differ, the configuration wins: the bot's `miniapp_host` is ignored,
+    still routed to the Mini App handler (so it answers 404 for everything rather than becoming another name for the
+    main host), logged as a warning when a bot is applied with it, listed in `get-telegram-bot` `warnings`, and shown
+    in the bot's health (`miniapp_host`, `miniapp_host_source` `config`|`bot`, `miniapp_host_ignored`) on the System
+    page and in `get-system`. Writes of a different `miniapp_host` are not refused: Terraform state and the
+    configuration change at different times, and refusing would block unrelated bot changes.
+  - **Without the setting (fix round on the review's M-1).** A bot's `miniapp_host` is refused on create and update
+    (422 naming `telegram.miniapp_host`), because a host that only the database knows can't be routed safely. A row
+    stored before this keeps working as before (served when its bot runs, otherwise a 404 host), and is flagged: a
+    warning in the log at start, in the bot's `warnings` and on the System page (`miniapp_host_needs_key`) telling the
+    operator to set `telegram.miniapp_host`. Central reads the stored bot row **before it listens**
+    (`tgbot.LoadStoredHost`; the bot itself starts later, in the background), so the stored host routes to the Mini App
+    handler, and its 404 gate, from the first request; a failed read refuses to start rather than serve without
+    knowing the host. Every host the bot row has had since central started (a deleted bot's, an emptied or a changed
+    `miniapp_host`) is **retired**, not released: it stays routed to the Mini App handler (404) in memory until central
+    restarts. After a restart, a host that no row names is an ordinary main-host name again with no key set (the edge
+    still blocks credentials there). The setting stays the recommended deployment and the only one where the host
+    never depends on the database.
+  - **Tests:** `internal/app` `TestMiniAppHostFailsClosedWithoutBot` (configured host, no bot, a disabled bot with and
+    without the same `miniapp_host`, a deleted bot: every path in every host spelling is the Mini App 404, including
+    sign-in, `openapi.json`, `/` and admin operations with a valid root Bearer token that answer 200 on the main host)
+    and `TestMiniAppHostFailsClosedWithBot` (only Mini App routes answer; Bearer tokens and cookie sessions are 401,
+    sign-in and openapi 404; a different stored host is the 404 host and the mismatch is logged and in `get-system`;
+    disabling returns everything to 404); `internal/telegram/tgbot` `TestConfiguredMiniAppHostWins`,
+    `TestPutRefusesMiniAppHostWithoutKey`, `TestLoadStoredHostWithoutKey`, `TestRetiredMiniAppHostsStayRouted`,
+    `TestLoadStoredHostReadError`; `internal/app` `TestMiniAppHostFailsClosedNoKeyDisabledBot`,
+    `TestMiniAppHostRoutedBeforeTheBotStarts`, `TestMiniAppHostRetiredNoKey`, `TestServeRefusesWhenTheStoredHostCannotBeRead`;
+    `internal/config` `TestTelegramMiniAppHost`; `internal/telegram/tghost`.
+    Mutants that restore the fall-through (route only while the running bot serves, ignore the configured host, let
+    the 404 gate fall through to the main handler, drop the gate, compare the raw Host, route the ignored stored host
+    to the main handler) are each killed.
+
+- **Group mode authorization (TG-13-1, 2026-11-15, security-relevant change: the bot serves a bound group as well as
+  private chats).** The security core of group mode (plan §3.7); binding a group, ephemeral replies and the provider's
+  `group_chat_id` are TG-13-2 (and TG-12c), which build on the names fixed here.
+  - **Data model.** A space is bound to a group by `space_telegram_settings.group_chat_id` (0051, `UNIQUE`, NULL: none);
+    no new migration. `settings.Space.GroupChatID` carries it in the cache (not in the API yet: `put-space-telegram`
+    gains `group_chat_id` in TG-13-2, StepUp `space_config:write`), and `settings.Service.GroupSpace(chatID)` answers
+    from memory which space a group is bound to, only for a group chat ID and only while the space is visible to
+    Telegram (enabled, content level not `off`), so disabling the space ends the group's access at once. A settings
+    write keeps the binding.
+  - **Which updates count.** `updates.DispatcherOptions.Groups` (the settings service). A message or button tap from a
+    chat of type `supergroup` with a negative ID that `GroupSpace` maps to a space is a group update; every other group
+    update is ignored as before, and the bot still leaves any group it is added to unless it is bound. In a bound group
+    only button taps, commands and replies to a message are read; other chatter is dropped before any lookup, and the
+    linking steps (`/start <code>`, `/unlink`) are never taken there. An update whose `From` is a bot (an anonymous
+    admin posts as one) is ignored.
+  - **Per-tapper authorization.** The person is always the update's `From`, never the chat, the binder or the link a
+    card was sent to. The dispatcher looks up that person's own active link; without one, or with one overdue for
+    re-confirmation, a tap is answered with `GroupUnlinkedText` (a tap's answer is shown only to the tapper) and a
+    message gets nothing, so a stranger can't make the bot talk in the group. Otherwise the handler gets the link with
+    `Link.Group = {ChatID, SpaceID}` and `Link.ChatID` set to the group (where replies go). The chat handler
+    (`chat.handleGroup`) first builds the link's principal and reads the bound space through the in-process API as that
+    principal; a link that can't (no grant, a revoked link, a disabled user) is refused (`TextGroupNoAccess`) before
+    anything else is read. Every operation after that runs as the tapper's principal, so their grants decide: a link
+    capped at `viewer` can read an action but not answer it. The group grants nothing.
+  - **One space.** In a group `Handler.space` admits only the bound space and `Handler.target` always returns it (a
+    `/command` naming another space is refused); `/spaces`, `/space`, `/control` and the space buttons are refused or
+    ignored; capture and control text are never taken; and a group never changes the member's chosen private space.
+    A notifier card in a group (TG-13-2) is accepted whatever link it was sent to, because the space check, not that
+    link, is the authority.
+  - **Summary only, one choke point.** `settings.Full(space, inGroup)` is the only content-level test any Telegram
+    renderer makes: bodies only when the level is `full` and the message isn't for a group. `TestContentLevelOnlyThroughFull`
+    fails when code outside `internal/telegram/settings` reads `ContentLevel` itself. The chat handler marks every
+    space it resolves in a group (`spaceRef.group`, set only by `Handler.space`), and the notifier passes
+    `settings.IsGroupChat(chat)` (Telegram gives private chats the person's positive user ID; groups, supergroups and
+    channels negative IDs; 0 counts as a group). Backstop below the renderers: the Bot API client refuses every file send
+    (`sendDocument`, `sendPhoto`, `sendMediaGroup`) to a non-positive chat ID (`botapi.ErrGroupContent`) before any
+    request.
+  - **Bound to the tapper.** Forms, withdrawal and stop confirmations (`takeConfirm`), ForceReply prompts and drafts
+    are keyed by the message and the link that opened them, so another member's taps on the same message neither
+    complete nor spend them. **Enforced approvals are never decided in a group**: a form opened there is marked
+    (`form.group`), shows no decision buttons, and `arm` refuses to arm the server's confirmation (ADR-0083 TG-7-2), so
+    the server's rule refuses any decision; advisory approvals follow the tapper's own grants.
+  - **Left for later:** topics (a topic per space in the group; TG-13-2 keeps replies in the topic of the message they
+    answer) and the provider's `group_chat_id` (TG-12c). Binding, ephemeral replies, deep links and the group send limit
+    are the TG-13-2 amendment below.
+  - **Tests:** `internal/telegram/updates` `TestDispatcherGroupUsesTheTappersOwnLink`,
+    `TestDispatcherGroupRefusesUnlinkedTapper`, `TestDispatcherGroupRefusesOverdueLink`, `TestDispatcherGroupScope`;
+    `internal/telegram/chat` `TestGroupUnauthorizedTapperRefused`, `TestGroupPinnedToBoundSpace`,
+    `TestGroupNothingAboveSummary`, `TestGroupSpaceRefNeverFull`, `TestGroupConfirmationBoundToTapper`,
+    `TestGroupEnforcedApprovalNeverDecided`, `TestGroupFormNeverArms`, `TestGroupNoCapture`;
+    `internal/telegram/settings` `TestFullNeverInAGroup`, `TestContentLevelOnlyThroughFull`, `TestGroupSpace`;
+    `internal/telegram/botapi` `TestFilesNeverGoToAGroup`; `internal/app` `TestTelegramGroupPerTapperAuthorization`
+    (real dispatcher, authorization and API: unlinked, no-grant and viewer-capped members refused, another member can't
+    complete a form, the operator's own tap answers, no body reaches the group of a `full` space). Each guard's mutant
+    is killed (PLAN.md progress log).
+- **Amendment TG-10-4: a link's own preferences, and queue-next (2026-11-15, security-relevant change: widens what a
+  Telegram principal can reach).** TG-10-2's Mini App settings page was read-only: `get-telegram-settings`,
+  `list-telegram-links` and the web's notification preferences stay excluded for Telegram (they are administration or
+  another channel's personal settings), and nothing could write `telegram_links.prefs_json`, the link overrides of
+  decision 12's notification defaults. This amendment adds the narrowest write that makes the page editable, and
+  classifies `queue-next` for the Mini App's "Next" card.
+  - **Two operations, Mini App only.** `get-my-telegram-link-prefs` and `set-my-telegram-link-prefs`
+    (`GET`/`PUT /api/v1/telegram/link/prefs`), class `miniapp`, rule `{Session, TelegramSelf}` (so the SpaceMan MCP,
+    which is refused on personal Session rules, never reaches them). The handler also answers 404 unless the request
+    came over the Mini App host from a Telegram principal, like `get-telegram-me`; the bot's chat channel is refused by
+    the class. The write is a mutation on the Mini App host, so the Mini App origin check applies.
+  - **The link is the session's, never a parameter.** Neither operation has a path, query or body field naming a
+    link; the body schema allows no extra properties, so a `link_id` (or `max_role`, `spaces`, `grants`, `user_id`,
+    `state`, a global settings field) is a 422. The service (`link.Service.GetPrefs`/`SetPrefs`) takes the link from the
+    authenticated principal's `TelegramLinkID` (`ownLinkID`: a Telegram principal with a user and no token or root
+    token; anything else is 403) and reads it (`ownLink`): it must exist, belong to the principal's user and be
+    `active`, else 404, so a caller can't tell another link exists. The `UPDATE` repeats `user_id` and `state = 'active'`
+    in its `WHERE` with the version from `If-Match` (required), so a race with an unlink or a mismatch writes nothing
+    (409). A revoked link's Mini App sessions end with the unlink (TG-9a), so its requests are 401 before any of this.
+  - **What it can change.** The link's overrides, in the existing `settings.LinkPrefs` shape (the notification
+    categories, minimum priority, reminder, inbox, review and failed-run delivery, digest and its time, quiet hours and
+    their times, `muted_spaces`), validated as the global defaults are (`LinkPrefs.Validate`); `PUT` replaces them, a
+    field left out follows the defaults again. `muted_spaces` must be space IDs (at most 200, de-duplicated); a space
+    the link can't read is accepted, since muting only removes notifications and refusing it would reveal which IDs
+    exist. And the **user's time zone**: decision 12 (Q9) makes the zone per user and editable in the Mini App, so a
+    sent `timezone` sets only the `timezone` field of the user's `notification_prefs` (validated, outside the write
+    transaction, against the embedded zone database; empty clears it; left out keeps it); every other field there is
+    kept. It is shared by the user's links and the web. Unreadable stored web preferences make the write a 409 rather
+    than being overwritten.
+  - **What it can't.** Another link (the same user's or anyone's), the link's cap, spaces, topics map, state or
+    re-confirmation, any grant, the space or global Telegram settings, and any web preference but the zone. No role or
+    grant code runs on this path.
+  - **Topics opt-in: a placeholder.** The answer carries `topics: {available: false}`. Topics mode is TG-11; the opt-in
+    is not accepted yet (an unknown field, 422) and is added with TG-11 and its own review.
+  - **Effects and audit.** The save writes `telegram.link.prefs_saved` (target the link; details record only whether
+    overrides, muted spaces and a zone change were saved, no values) and publishes `telegram.link` after commit, so the
+    notifier re-reads the links and zones at once. No migration: `prefs_json` exists since 0051; a new query
+    `SetTelegramLinkPrefs`.
+  - **queue-next is served read-only (class both).** It returns the next eligible task and the skipped ones with their
+    titles and waiting reasons: a subset of what `list-tasks` (class both, `queue:read`) already shows a Telegram
+    principal, under the same rule. Its `?record=true` stores the decision (a write needing `queue:write`) behind a
+    `GET`, which the Mini App host's origin check does not cover, so the handler refuses `record` to any Telegram
+    principal or channel (403) and Telegram records nothing. `queue-decisions` stays excluded.
+  - **Tests:** `internal/telegram/link` `TestLinkPrefsOwnership` (another user's link, a revoked link, an unknown link,
+    a web session, an API token, a root token, no user and nil are refused on read and write; the other links keep
+    their preferences and version; the version guards the write), `TestLinkPrefsTimezoneAndValidation`;
+    `internal/app` `TestMiniAppLinkPrefsReadAndSave`, `TestMiniAppLinkPrefsOnlyTheSessionsLink` (a `link_id` in the
+    body is 422, in the query ignored, under the path 404; the second link's session sees its own),
+    `TestMiniAppLinkPrefsCannotEscalate` (cap, spaces, grants, user, state and settings fields are 422; the cap,
+    spaces and grants are unchanged and no Telegram settings row appears; the settings, links, web preferences and
+    grants operations stay 403/404 from the Mini App), `TestMiniAppLinkPrefsRefusesOtherPrincipals` (web session, API
+    token and root token 404, the chat channel 403, a revoked link 401) and `TestMiniAppQueueNextIsReadOnly`. Also
+    `TestSetTelegramLinkPrefsQueryGuards` (the `UPDATE` alone writes nothing for another user's or a revoked link).
+    Nine mutants are each killed: the ownership check without the user check, without the state check, accepting a
+    non-Telegram principal, accepting token principals, skipping the in-transaction read; the `UPDATE` without
+    `user_id`/`state`; the handler without the Mini App channel check; `queue-next` without the `record` refusal; the
+    write classified `both`.
+
+- **Group mode plumbing (TG-13-2, 2026-11-15, security-relevant change: binding a group is admin-only).** Builds on the
+  TG-13-1 names; its authorization logic is unchanged.
+  - **Bind and unbind.** `put-space-telegram` and `get-space-telegram` carry `group_chat_id` (the chat ID, negative).
+    Left out, a write keeps the current binding (a settings write never unbinds); `0` unbinds; any other value binds.
+    Changing it (bind, rebind, unbind) needs the new `telegram_group:write` permission, held by admins only (like
+    `retention:write`), on top of the existing step-up `space_config:write`; an operator can still write the space's other
+    settings and repeat the current value. Deleting the space's settings ends the binding with them. The write is audited
+    with the chat ID.
+  - **Checks.** A new binding is checked before the transaction (no network in a write transaction) with `getChat`
+    through the live bot: the bot must be a member (Telegram answers 400/403 otherwise: 422 "not a member"), the chat must
+    be a `supergroup` with `is_forum` true (422), and the ID must be negative (422). A bot that isn't running can't verify:
+    503, nothing bound. A group already bound to another space is 409 (the 0051 `UNIQUE` column; a pre-check isn't needed,
+    the constraint is the authority and its message names no other space). Repeating the current value skips the check.
+    Nothing re-verifies a binding later: if the bot is removed the group is unreachable anyway, and when topics are
+    turned off the binding keeps working (the check guards the act of binding).
+  - **Ephemeral replies.** In a group every answer with text to a tap is an alert (`answerCallbackQuery` with
+    `show_alert`), visible only to the tapper: the unlinked-member refusal, `TextGroupNoAccess`, `TextGroupFixed`,
+    action-specific answers and the slow-down notice. An acknowledgement without text stays silent. A command has no
+    callback query, so Telegram has no ephemeral reply for it: a refused command (`/spaces`, `/space`, `/control`, or any
+    command of a member whose account can't use the space) gets one short reply to it, in its topic, with a fixed text that
+    shows nothing of any space; a message of a member without a link, or a command that isn't one of the bot's, gets
+    nothing. The answers of the allowed commands (`/inbox`, `/needsyou`, `/queue`, `/runs`, `/messages`) are the
+    summary-only posts of TG-13-1, public to the group.
+  - **Mini App links.** Telegram refuses `web_app` buttons outside private chats, so a form in a group gets a URL button
+    with the Mini App's direct link, `https://t.me/<bot>?startapp=human-<space>-<action>` (the deep link of
+    `web/src/tg/deeplink.ts`; a routing hint that authorizes nothing). It uses the bot's Main Mini App (BotFather) and needs
+    the bot's username and the Mini App host; without them the form has no app button but still works. Private chats keep
+    the `web_app` button.
+  - **Lifecycle of the bot's membership (changes TG-13-1's leave-on-add, no authorization).** Binding verifies that the
+    bot is a member, so the bot can't leave a group the moment it is added. It still leaves at once a chat that can never
+    be bound (a channel, a basic group, a supergroup without topics: the update carries `is_forum`). It waits in an
+    unbound forum supergroup, silent and reading nothing (any message or tap there is dropped before any lookup), for at
+    most `updates.DefaultGroupGrace` (15 minutes from the add, `DispatcherOptions.GroupGrace`); `Dispatcher.SweepGroups`
+    (every minute and on every update) then leaves it unless it got bound, so nobody can park the bot in groups. The
+    wait is in memory: after a restart the first message or tap from any unbound group makes the bot leave at once (a
+    restart opens no window that doesn't close). Telegram can't list the bot's groups, so a group that stays completely
+    idle across a restart stays until it produces an update; it reads and answers nothing meanwhile. Activity from a chat
+    that can't be bound also makes the bot leave. A group that stops acting for a space (unbound, rebound to another
+    group, its space disabled, hidden, archived or its settings deleted) is left: `settings.Service.OnGroupLost` reports
+    it after the reload that noticed, and central calls `Dispatcher.LeaveGroup`. The dispatcher change is confined to
+    `updates/groupwait.go` plus three small hooks in `Dispatch`.
+  - **Replies to cards.** `qrReply` (a Telegram reply to a notifier card of a message) takes a group card whatever link
+    it was sent to and authorizes the replier's own link, like a tap (`humanCallback`); `Handler.space` still admits only
+    the bound space.
+  - **Group send limit.** `send_limits.group_per_minute` (1-20, default 20) already existed in the sender but no caller
+    set `Message.Group`. The sender now treats every negative chat ID as a group, whatever the caller set, so the
+    notifier's and the chat handler's group posts take the per-group bucket.
+  - **With topics mode (TG-11; no authorization change).** `Handle` records the thread an update came from for every
+    chat, then hands a group update to `handleGroup` before the private chat's topic pin (`SpaceOfThread`) is looked
+    up: a group's space comes from its binding only, and its replies stay in the forum topic they answer. `send`
+    applies one thread source (an explicit thread or reply target, else the update's thread). `setCurrent` is a no-op
+    in a group as well as in a pinned topic, and `cmdSpace` never moves the current space from a group, so nothing done
+    in a group changes the member's private chat. Tests: `internal/telegram/chat`
+    `TestGroupForumTopicRepliesInTopicAndLeavesPrivateChatAlone`, `TestSendUsesOneThreadSource`,
+    `TestCmdSpaceInAGroupContextKeepsPrivateCurrent`.
+  - **Tests:** `internal/app` `TestTelegramGroupBindOverHTTP` (admin-only, 403 for an operator, getChat checks against
+    the fake, 409 on a duplicate, keep/rebind/unbind, a deleted space), `internal/telegram/chat`
+    `TestGroupEphemeralReplies`, `TestGroupFormLinksToAppWithDirectLink`, `internal/telegram/updates` (the refusal alert),
+    `internal/telegram/sender` `TestNegativeChatIDGetsTheGroupLimit`, `TestGroupPerMinuteIsTheGroupBucket`,
+    `internal/telegram/botapi` `TestGetChat`, `internal/telegram/updates` `TestDispatcherGroupLeavePolicy`, `TestDispatcherUnboundForumGroupWaitIsBounded`,
+    `internal/telegram/settings` `TestLostGroups`, `internal/telegram/chat` `TestGroupReplyToMessageCardIsTheRepliersOwn`.
 
 ### ADR-0084 — "Message the agent" is typed into the running session at once
 - **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.

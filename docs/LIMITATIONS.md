@@ -447,7 +447,7 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Notifications are in the web UI only.** Notification preferences decide what the open web UI announces to a user
   (in-app, and desktop notifications where the browser allows them). Nothing is announced while no SpaceMan page is
   open, and SpaceMan sends no e-mail or chat messages; external systems can follow the outbound `human.action.*` events
-  (SM-HUI-006).
+  (SM-HUI-006). A Telegram bot and Mini App for linked users exist (ADR-0083, SM-TG-001…014); see [Telegram](#telegram).
 - **Retention deletes whole actions, daily.** A finished action is deleted with its comments and notifications once
   its space's `retention_human_actions_days` has passed, by one daily pass; there is no archive tier and no per-type
   period. Open actions and finished ones that open work still refers to are kept (ADR-0045, SM-HUI-007).
@@ -753,6 +753,80 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   credential, 30 s without progress), but many connections
   at once each hold a goroutine for that long. A reverse proxy or firewall in front of central is the place for connection
   limits. A client below about 43 KiB/s can't upload a 25 MiB attachment within its 10 minutes.
+
+## Telegram
+
+Status: built and tested against a fake Bot API server only; **never run against a real bot** (SM-TG-001…014 stay
+"tested (simulated)" in [TRACEABILITY.md](TRACEABILITY.md)). The user guide is the site's Telegram page.
+
+- **Web only.** These are refused from Telegram by classification (not hidden in the UI), in the bot and the Mini App
+  alike: everything that needs a step-up, re-authentication or MFA, and every personal session operation (API tokens,
+  passwords, sessions, identities, recovery codes); linking itself is started and confirmed in the web; terminal takeover,
+  typing into a terminal, terminal sizes and run launches; secrets, accounts, credentials, Git keys, Harbor Pilot, MCP
+  servers, skills, prompts, roles, policies, human type definitions and permissions, event connections, templates and
+  subscriptions, cross-space settings; users, grants, SSO providers, the root token, audit verification, backups,
+  restore, purge, retention, deleting recordings and transcripts, nodes, relocation and space state; all Telegram
+  configuration; bulk approvals; HallPass approvals; the MCP endpoint; and anything in a space whose Telegram content
+  level is `off`. Recording downloads, transcripts and space exports are never served to Telegram. Task creation is in the
+  Mini App only (not in chat).
+- **Enforced approvals are decided in the browser** unless the space sets `enforced_approvals = confirm`. Withdrawing an
+  approval is never possible from Telegram, and a group never decides one.
+- **The terminal is watch-only and opt-in.** A run's page in the Mini App shows its live terminal only when the space
+  turns `terminal_watch` on and the link holds `terminal:watch`; never with input, takeover, resizing or replay. Turning
+  the setting off, or hiding or disabling the space, ends open streams at once. It exists only in the Mini App, never in a chat.
+- **Chat content lives on Telegram's servers**, not end-to-end encrypted, within the space's content level. Terminal
+  output, hidden responses, non-allowlisted attachment contents and secrets are never sent to a chat. Forwarding and
+  saving are turned off for messages with a body, which doesn't stop screenshots.
+- **Private chats only, unless a forum group is bound.** The bot leaves at once a chat that can never be bound (a channel,
+  a basic group, a supergroup without topics), waits 15 minutes in an unbound forum group and then leaves, and leaves a
+  group whose binding is lost. The wait is in memory: after a restart the first update from an unbound group makes the bot
+  leave, and a group that stays silent stays until it produces one. Binding needs the admin-only `telegram_group:write`.
+  Telegram has **no `web_app` buttons in groups**, so a group's forms open the Mini App through a direct link instead,
+  which needs the bot's Main Mini App to be set in BotFather.
+- **The content level is summary-only in groups.** Whatever the space's content level, a group gets summaries, and no
+  attachment is ever sent to a group chat. Group membership grants nothing: each tap is authorized as the tapping
+  person's own link. A group answers only `/inbox`, `/needsyou`, `/queue`, `/runs` and `/messages` (and a short refusal to
+  `/spaces`, `/space` and `/control`); every other command, and a command for another bot, is ignored silently, so `/needs`
+  works in a private chat only.
+- **One bot per central**, one live link per Telegram account, and a different bot revokes every link.
+- **No Telegram sign-in.** A link never signs anyone in to the web app.
+- **In-memory state is lost on restart:** Mini App sessions and replay memory (see the next section), conversation steps in chat,
+  the collected digest, pending confirmations and the update queue. A webhook update that was acknowledged but still queued
+  when central stopped is lost; the bot acknowledges captures so people can resend.
+- **Digest and quiet hours need a time zone,** per user. Without one both are off; there is no server-wide zone.
+- **Telegram's own limits apply:** messages are rate-limited per chat and group, long content is split or cut, and the
+  sender treats a chat that answers 403 as blocked (its queue is dropped, in memory only; the link is not marked).
+- **Screenshots of the Mini App are not part of the guide** (the capture pipeline covers the web app only).
+
+## Telegram Mini App
+
+- **Download links live in memory.** A signed download link (ADR-0083 §3.4.3) is held by central for 60 seconds and 3
+  requests, at most 16 per Telegram link (a new one replaces that link's oldest) and 10,000 in all (past that a mint is refused with 429, never by evicting another link's grant); a restart drops them all and the Mini App mints a new one. A
+  refused request (revoked link, removed grant) still counts as a use, and every refusal is the same 404.
+- **No `tg.html` until the client shell ships.** Central serves the Mini App page from the build when `tg.html` is in
+  it (TG-9b adds the entry); without it the Mini App host answers 404 for pages.
+- **Sessions live in memory.** Mini App sessions (ADR-0083 §3.4.2) are held by central only: a restart, a bot change
+  or turning the Mini App off ends them all, and the user reopens the app. Unsaved form input is lost.
+- **Session capacity can run out.** Central holds at most 20,000 Mini App sessions (5 per link, the oldest of a link
+  dropped). When every slot holds a live session, new exchanges are refused with 429 until sessions expire (idle 15
+  min, absolute 1 h by default). Only valid initData of linked users opens a session, so only linked Telegram accounts
+  can use the capacity up, at 10 exchanges a minute each (SM-TG-005).
+- **Replay memory is bounded.** Used initData is remembered for an hour (the largest allowed max age), at most 10,000
+  entries; under a flood of distinct valid initData the oldest are forgotten first (SM-TG-005). Forgetting one that has
+  not expired raises an auth_date watermark: initData issued at or before it is refused, so a flush can't revive a used
+  one, and a user whose initData is that old reopens the app for fresh data.
+- **Refused-exchange audit is aggregated.** Refusals are counted per address (an IPv6 /64 is one address), at most one
+  audit row per address a minute and 60 rows a minute in all. Refusals the cap withholds, and those an evicted counter
+  still held, are added to one global count that is reported as a single overflow row a minute (source address `*`, outside
+  the 60-row cap), so the rows add up to every refusal; the overflow row appears with the next refusal after its minute,
+  so the latest count can wait for it. At most 10,000 addresses are tracked, the oldest dropped first, so a flood from very
+  many addresses costs per-address detail (an address's refusals then show only in the overflow row), not counts.
+  An address's held-back count waits for its next refusal or its eviction before it is recorded.
+- **Unlinked Telegram users can fill the replay cache.** Valid initData from any Telegram user is remembered before the
+  link check, so users without a link can push entries through the 10,000-entry cache like linked ones (the watermark above
+  still keeps a flushed initData from being reused).
+- **A token rotation ends Mini App sessions.** Each session is bound to a hash of the bot's signing key; a new bot token
+  (same bot ID) refuses the sessions opened under the old one.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The

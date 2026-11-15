@@ -1,0 +1,898 @@
+package app_test
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/aurimasniekis/go-spaceman/internal/api"
+	"github.com/aurimasniekis/go-spaceman/internal/app"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram"
+)
+
+// End-to-end tests of the Telegram security core (ADR-0083 §3.2–§3.4, TG-4a) on a real central: the classification is
+// exhaustive, every personal or step-up operation refuses a Telegram principal, the main host never lets the Telegram
+// scheme combine with a cookie, and the Mini App's Telegram mode authorizes as the link intersected with the user.
+
+func specOps(t *testing.T, d *api.Deps) []*huma.Operation {
+	t.Helper()
+	var ops []*huma.Operation
+	for _, item := range api.Register(http.NewServeMux(), d).OpenAPI().Paths {
+		for _, op := range []*huma.Operation{item.Get, item.Post, item.Put, item.Patch, item.Delete} {
+			if op != nil {
+				ops = append(ops, op)
+			}
+		}
+	}
+	slices.SortFunc(ops, func(a, b *huma.Operation) int { return strings.Compare(a.OperationID, b.OperationID) })
+	return ops
+}
+
+// Every huma operation, every raw route (Deps.Raw) and the change feed has a reviewed Telegram class (§3.3): a new one
+// fails here until someone classifies it. The table names only real operations, uses valid classes, never lets
+// Telegram reach an operation its rule auto-excludes, and keeps the exchange class for public operations.
+func TestTelegramClassificationIsExhaustive(t *testing.T) {
+	t.Parallel()
+	d := app.SpecDeps()
+	ops := specOps(t, d)
+	ids := map[string]api.Rule{}
+	for _, op := range ops {
+		r, ok := d.RuleFor(op.OperationID)
+		if !ok {
+			t.Errorf("%s has no rule", op.OperationID)
+			continue
+		}
+		ids[op.OperationID] = r
+		c, ok := telegram.Classify(op.OperationID, r)
+		if !ok {
+			t.Errorf("operation %s has no Telegram class: add it to telegram.Ops (internal/telegram/ops.go); anything but excluded needs a security review (ADR-0083 §3.3)", op.OperationID)
+			continue
+		}
+		if !slices.Contains(api.TelegramClasses, c) {
+			t.Errorf("%s: class %q", op.OperationID, c)
+		}
+	}
+	for id, c := range telegram.Ops {
+		r, ok := ids[id]
+		if !ok {
+			t.Errorf("telegram.Ops names %s, which the API lacks", id)
+			continue
+		}
+		if !slices.Contains(api.TelegramClasses, c) {
+			t.Errorf("telegram.Ops %s: class %q", id, c)
+		}
+		if c == api.TelegramExchange && !r.Public {
+			t.Errorf("%s: the exchange class is for a public operation only", id)
+		}
+		if why, auto := telegram.AutoExcluded(r); auto && c != api.TelegramExcluded && c != api.TelegramExchange {
+			t.Errorf("%s is %s but its rule excludes it (%s)", id, c, why)
+		}
+		if r.Reauth || r.MFA {
+			if c != api.TelegramExcluded {
+				t.Errorf("%s needs step-up and must be excluded", id)
+			}
+		}
+	}
+	// Raw routes: every route central serves (SpecDeps lists the same ones) has a class; the plan's table holds.
+	want := map[string]api.TelegramClass{
+		"GET /api/v1/spaces/{space_id}/attachments/{attachment_id}/content": api.TelegramMiniApp,
+		"GET /api/v1/spaces/{space_id}/runs/{run_id}/terminal":              api.TelegramMiniApp,
+		"GET /api/v1/spaces/{space_id}/runs/{run_id}/recording/download":    api.TelegramExcluded,
+		"GET /api/v1/spaces/{space_id}/runs/{run_id}/transcript":            api.TelegramExcluded,
+		"GET /api/v1/spaces/{space_id}/export":                              api.TelegramExcluded,
+	}
+	if len(d.Raw) == 0 {
+		t.Fatal("SpecDeps lists no raw routes")
+	}
+	for _, rt := range d.Raw {
+		if !slices.Contains(api.TelegramClasses, rt.Telegram) || rt.Telegram == api.TelegramExchange {
+			t.Errorf("raw route %s has no valid Telegram class (%q): set RawRoute.Telegram (ADR-0083 §3.3)", rt.Pattern, rt.Telegram)
+		}
+		if w, ok := want[rt.Pattern]; ok && w != rt.Telegram {
+			t.Errorf("raw route %s: class %s, want %s", rt.Pattern, rt.Telegram, w)
+		}
+		if strings.HasSuffix(rt.Pattern, "/terminal") && rt.TelegramFeature != api.TelegramFeatureTerminalWatch {
+			t.Errorf("the terminal stream must need terminal_watch, has %q", rt.TelegramFeature)
+		}
+	}
+	for p := range want {
+		if !slices.ContainsFunc(d.Raw, func(rt api.RawRoute) bool { return rt.Pattern == p }) {
+			t.Errorf("raw route %s is gone: update this test and the plan's table", p)
+		}
+	}
+	if !slices.Contains(api.TelegramClasses, telegram.Watch) || telegram.Watch == api.TelegramExchange {
+		t.Errorf("the change feed has no valid Telegram class: %q", telegram.Watch)
+	}
+}
+
+// telegramSetup seeds a space, a user with operator in it, and an active link capped to operator there.
+type telegramSetup struct {
+	h       *harness
+	space   string
+	userID  string
+	linkID  string
+	root    *client
+	ui      *client // the user's web session, MFA enrolled (operators must enroll)
+	minisrv *httptest.Server
+	deps    *api.Deps
+}
+
+func newTelegramSetup(t *testing.T) *telegramSetup {
+	t.Helper()
+	h := newHarness(t)
+	s := &telegramSetup{h: h, space: seedSpace(t, h), linkID: "tgl_e2e"}
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(context.Background())
+	s.root = h.client()
+	s.root.bearer = rootSecret
+	r := s.root.do("POST", "/users", map[string]any{"email": "tg@example.com", "display_name": "Tg", "password": "correct horse battery staple",
+		"grants": []map[string]string{{"role": "operator", "domain": s.space}}})
+	expect(t, r, 201)
+	var u struct {
+		ID string `json:"id"`
+	}
+	r.json(t, &u)
+	s.userID = u.ID
+	s.ui = enrolledSession(t, h, "tg@example.com")
+	s.exec(t, `INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, created_at, updated_at) VALUES (?, ?, 1, 42, 42, 'active', 0, 0)`,
+		s.linkID, s.userID)
+	s.setLinkRole(t, "operator")
+	// The Mini App host: the real API in Telegram mode, with sessions "good" → this link.
+	s.deps = h.c.APIDeps()
+	s.deps.Telegram.Sessions = linkSessions{c: h.c, tokens: map[string]string{"good": s.linkID}}
+	s.deps.Telegram.SpaceFeature = func(context.Context, string, string) bool { return false }
+	s.minisrv = httptest.NewUnstartedServer(s.deps.TelegramHandler())
+	s.minisrv.Start()
+	t.Cleanup(s.minisrv.Close)
+	s.deps.Telegram.MiniAppOrigin = func() string { return s.minisrv.URL }
+	return s
+}
+
+func (s *telegramSetup) exec(t *testing.T, q string, args ...any) {
+	t.Helper()
+	if err := s.h.c.Store.W().Tx(context.Background(), func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(context.Background(), q, args...)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setLinkRole replaces the link subject's grants (TG-4b will do this through insertGrants) and reloads the engine.
+func (s *telegramSetup) setLinkRole(t *testing.T, role string) {
+	t.Helper()
+	s.exec(t, `DELETE FROM role_grants WHERE subject = ?`, auth.TelegramSubject(s.linkID))
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, ?, ?, 'telegram', 0, 't')`,
+		auth.TelegramSubject(s.linkID), role, s.space)
+	if err := s.h.c.Authz.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mini sends a request to the Mini App host.
+func (s *telegramSetup) mini(t *testing.T, method, path, body string, hdr ...string) resp {
+	t.Helper()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, _ := http.NewRequest(method, s.minisrv.URL+api.Prefix+path, rd)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Origin", s.minisrv.URL)
+	for i := 0; i+1 < len(hdr); i += 2 {
+		if hdr[i] == "Origin" {
+			req.Header.Set(hdr[i], hdr[i+1])
+			continue
+		}
+		req.Header.Add(hdr[i], hdr[i+1])
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return resp{status: res.StatusCode, header: res.Header, body: b}
+}
+
+// linkSessions stands in for TG-9a's Mini App sessions: a token names a link, resolved on every request.
+type linkSessions struct {
+	c      *app.Central
+	tokens map[string]string
+}
+
+func (l linkSessions) Authenticate(ctx context.Context, tok string) (*auth.Principal, error) {
+	return l.Validate(ctx, tok)
+}
+
+func (l linkSessions) Validate(ctx context.Context, tok string) (*auth.Principal, error) {
+	id, ok := l.tokens[tok]
+	if !ok {
+		return nil, auth.ErrUnauthorized
+	}
+	return l.c.Auth.TelegramPrincipal(ctx, id, auth.TelegramOptions{})
+}
+
+var pathParam = regexp.MustCompile(`\{[a-z_]+\}`)
+
+// Every operation whose rule needs step-up, or is personal (Session or UserOnly) without being Telegram self-service,
+// refuses a Telegram principal from the bot (§3.2 change 2), even with every operation classified as allowed and the
+// link and user holding admin everywhere: the refusal itself is load-bearing, not the classification or the grants.
+// It never succeeds: with the refusal removed, step-up still refuses (the principal's AuthAt is zero).
+func TestTelegramRefusalIsExhaustive(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'admin', '*', 'manual', 0, 't'), (?, 'admin', '*', 'telegram', 0, 't')`,
+		auth.UserSubject(s.userID), auth.TelegramSubject(s.linkID))
+	if err := s.h.c.Authz.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d := s.h.c.APIDeps()
+	all := map[string]api.TelegramClass{}
+	ops := specOps(t, d)
+	for _, op := range ops {
+		all[op.OperationID] = api.TelegramBoth
+	}
+	d.Telegram = &api.TelegramPolicy{Ops: all, Watch: api.TelegramBoth}
+	h := d.InProcessHandler()
+	p, err := s.h.c.Auth.TelegramPrincipal(context.Background(), s.linkID, auth.TelegramOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := 0
+	for _, op := range ops {
+		r, _ := d.RuleFor(op.OperationID)
+		personal := r.Reauth || r.MFA || (!r.TelegramSelf && (r.Session && !r.Filtered || r.UserOnly))
+		if r.Public || !personal {
+			continue
+		}
+		refused++
+		path := pathParam.ReplaceAllStringFunc(op.Path, func(m string) string {
+			if m == "{space_id}" {
+				return s.space
+			}
+			return "x"
+		})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(op.Method, api.Prefix+path, strings.NewReader("{}")).WithContext(api.WithInProcessPrincipal(context.Background(), p)))
+		if rec.Code < 400 {
+			t.Errorf("SUCCEEDED: %s (%+v) answered %d for a Telegram principal", op.OperationID, r, rec.Code)
+			continue
+		}
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "not available from Telegram") {
+			t.Errorf("%s (%+v): %d %s, want the Telegram refusal", op.OperationID, r, rec.Code, rec.Body.String())
+		}
+	}
+	if refused < 50 {
+		t.Fatalf("only %d personal or step-up operations: the loop is not seeing the rule table", refused)
+	}
+	// A filtered read stays open, so the refusal isn't just "everything fails".
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, api.Prefix+"/spaces", nil).WithContext(api.WithInProcessPrincipal(context.Background(), p)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list-spaces: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Host isolation, the authentication half (§3.4.1, B4). The main host answers any Telegram scheme with 401 even with
+// a valid session cookie; the Mini App host drops the cookie (anonymous), refuses bearer API and root tokens, and
+// authorizes a Telegram session as the link intersected with the user's current grants.
+func TestTelegramHostIsolation(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	ui := s.ui
+	expect(t, ui.do("GET", "/auth/me", nil), 200)
+	for _, v := range []string{"Telegram good", "telegram good", "TELEGRAM x", "Telegram"} {
+		expect(t, ui.do("GET", "/auth/me", nil, "Authorization", v), 401)
+		expect(t, ui.do("POST", "/spaces/"+s.space+"/inbox", map[string]string{"title": "x"}, "Authorization", v), 401)
+	}
+
+	// The Mini App host: the session cookie is dropped, so the request is anonymous.
+	u := s.h.srv.URL
+	cookies := ui.hc.Jar.Cookies(mustURL(t, u))
+	if len(cookies) == 0 {
+		t.Fatal("no session cookie")
+	}
+	ck := cookies[0].Name + "=" + cookies[0].Value
+	expect(t, s.mini(t, "GET", "/auth/me", "", "Cookie", ck), 401)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/inbox", "", "Cookie", ck), 401)
+	r := ui.do("GET", "/spaces/"+s.space+"/inbox", nil)
+	expect(t, r, 200)
+	expect(t, s.mini(t, "GET", "/system/info", ""), 401)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/inbox", "", "Authorization", "Bearer "+s.root.bearer), 401)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/inbox", "", "Authorization", "Telegram nope"), 401)
+
+	// A Telegram session reads and writes the inbox (class both), with no CSRF token, and the audit says so.
+	r = s.mini(t, "GET", "/spaces/"+s.space+"/inbox", "", "Authorization", "Telegram good", "Cookie", ck)
+	expect(t, r, 200)
+	if r.header.Get("Set-Cookie") != "" {
+		t.Fatalf("Set-Cookie on the Mini App host: %q", r.header.Get("Set-Cookie"))
+	}
+	expect(t, s.mini(t, "POST", "/spaces/"+s.space+"/inbox", `{"title":"from telegram","body":"b"}`, "Authorization", "Telegram good"), 201)
+	audit := s.root.do("GET", "/audit?action=inbox.item_created", nil)
+	expect(t, audit, 200)
+	if !strings.Contains(string(audit.body), `"via":"telegram:`+s.linkID+`"`) || !strings.Contains(string(audit.body), `"channel":"telegram"`) {
+		t.Fatalf("audit lacks the Telegram via and channel: %s", audit.body)
+	}
+	// From a foreign origin the same mutation is refused.
+	expect(t, s.mini(t, "POST", "/spaces/"+s.space+"/inbox", `{"title":"x","body":"b"}`, "Authorization", "Telegram good", "Origin", "https://evil.example"), 403)
+	// Excluded: a step-up op, an op outside the allowlist, an excluded raw route, the terminal without terminal_watch.
+	expect(t, s.mini(t, "GET", "/auth/sessions", "", "Authorization", "Telegram good"), 403)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/memory", "", "Authorization", "Telegram good"), 403)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/export", "", "Authorization", "Telegram good"), 403)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/runs/run_x/transcript", "", "Authorization", "Telegram good"), 403)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/runs/run_x/recording/download", "", "Authorization", "Telegram good"), 403)
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/runs/run_x/terminal", "", "Authorization", "Telegram good"), 403)
+	expect(t, s.mini(t, "POST", "/mcp", `{}`, "Authorization", "Telegram good"), 404)
+
+	// The link cap applies at request time: viewer can read, not write.
+	s.setLinkRole(t, "viewer")
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/inbox", "", "Authorization", "Telegram good"), 200)
+	expect(t, s.mini(t, "POST", "/spaces/"+s.space+"/inbox", `{"title":"x","body":"b"}`, "Authorization", "Telegram good"), 403)
+	// So does the user's: with the user's grant gone, the link's own grant counts for nothing.
+	s.setLinkRole(t, "operator")
+	s.exec(t, `DELETE FROM role_grants WHERE subject = ?`, auth.UserSubject(s.userID))
+	if err := s.h.c.Authz.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, s.mini(t, "GET", "/spaces/"+s.space+"/inbox", "", "Authorization", "Telegram good"), 404)
+	// A revoked link is refused on the next request.
+	s.exec(t, `UPDATE telegram_links SET state = 'revoked', revoked_at = 1 WHERE id = ?`, s.linkID)
+	expect(t, s.mini(t, "GET", "/spaces", "", "Authorization", "Telegram good"), 401)
+}
+
+// The change feed on the Mini App host (§3.3, §3.4.1): a Telegram session streams it through the Telegram-mode
+// wrapper, and the stream ends as soon as its link is revoked (the link's revocation signal and the session re-check).
+func TestTelegramWatchStreamEndsOnRevoke(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	req, _ := http.NewRequest(http.MethodGet, s.minisrv.URL+api.Prefix+"/watch?live=1", nil)
+	req.Header.Set("Authorization", "Telegram good")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	res, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/event-stream" || res.Header.Get("Set-Cookie") != "" {
+		t.Fatalf("watch: %d %v", res.StatusCode, res.Header)
+	}
+	br := bufio.NewReader(res.Body)
+	readUntil := func(prefix string) string {
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				t.Fatalf("stream ended before %q: %v", prefix, err)
+			}
+			if strings.HasPrefix(line, prefix) {
+				return line
+			}
+		}
+	}
+	readUntil("event: position")
+	if err := s.h.c.Store.W().Tx(context.Background(), func(tx *store.Tx) error {
+		if _, err := tx.SQL.ExecContext(context.Background(), `UPDATE telegram_links SET state = 'revoked', revoked_at = 1 WHERE id = ?`, s.linkID); err != nil {
+			return err
+		}
+		s.h.c.Auth.TelegramLinkChangedAfterCommit(tx, s.linkID)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	readUntil("event: end")
+	if line := readUntil("data:"); !strings.Contains(line, api.EndUnauthenticated) {
+		t.Fatalf("end reason: %s", line)
+	}
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// enrolledSession signs the user in, enrolls TOTP and verifies it: a full web session with the CSRF token set.
+func enrolledSession(t *testing.T, h *harness, email string) *client {
+	t.Helper()
+	ui := h.client()
+	r := ui.do("POST", "/auth/login", map[string]string{"email": email, "password": "correct horse battery staple"})
+	expect(t, r, 200)
+	var me api.Me
+	r.json(t, &me)
+	ui.csrf = me.CSRFToken
+	r = ui.do("POST", "/auth/mfa/enroll", nil)
+	var enr api.TOTPEnrollment
+	r.json(t, &enr)
+	secret, _ := auth.DecodeTOTPSecret(enr.Secret)
+	expect(t, ui.do("POST", "/auth/mfa/enroll/confirm", map[string]string{"code": auth.TOTPCode(secret, auth.TOTPStep(h.clk.Now()))}), 200)
+	h.clk.Advance(30 * time.Second)
+	r = ui.do("POST", "/auth/mfa/verify", map[string]string{"code": auth.TOTPCode(secret, auth.TOTPStep(h.clk.Now()))})
+	expect(t, r, 200)
+	r.json(t, &me)
+	if me.Limited {
+		t.Fatal("session still limited after MFA")
+	}
+	ui.csrf = me.CSRFToken
+	return ui
+}
+
+// SM-TG-003, SM-TG-006 (TG-7-2, ADR-0083 decision 14): the server's rule for approvals decided from Telegram.
+//   - Advisory: decided from the Mini App or the bot like on the web (approval:decide; a denial needs a note).
+//   - Enforced, in a space without the opt-in: refused from the Mini App and the bot, even with a valid confirmation,
+//     while another space of the same user has the opt-in (the setting read is the action's space's).
+//   - Enforced, in a space with enforced_approvals = confirm: refused from the Mini App, refused from the bot without a
+//     confirmation or with one armed for another outcome, version, link or action; accepted with the confirmation armed
+//     for exactly this decision, once. Turning the opt-in off between the two steps refuses the second (read at request
+//     time).
+//   - The same user still decides an enforced approval on the web.
+func TestTelegramApprovalResponses(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	ctx := context.Background()
+	// A second space, without the opt-in; the user and the link are operators in both.
+	other := ids.New(ids.Space)
+	s.exec(t, `INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES (?, 'web-only', 'Web only', 'nod_oidc', 'active', 'w', 0, 't', 0)`, other)
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'manual', 0, 't')`, auth.UserSubject(s.userID), other)
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'telegram', 0, 't')`, auth.TelegramSubject(s.linkID), other)
+	if err := s.h.c.Authz.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setOptIn := func(space, mode string) {
+		s.exec(t, `INSERT INTO space_telegram_settings (space_id, enabled, content_level, enforced_approvals, topics, terminal_watch, created_at, created_by, updated_at, updated_by, version)
+			VALUES (?, 1, 'full', ?, 0, 0, 0, 't', 0, 't', 1) ON CONFLICT (space_id) DO UPDATE SET enforced_approvals = excluded.enforced_approvals`, space, mode)
+	}
+	setOptIn(s.space, "confirm")
+	setOptIn(other, "web_only")
+	p, err := s.h.c.Auth.TelegramPrincipal(ctx, s.linkID, auth.TelegramOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirm := s.h.c.TelegramConfirmations
+	if confirm == nil || s.deps.Telegram.Confirmations != confirm {
+		t.Fatal("confirmations not wired")
+	}
+	type created struct {
+		ID string `json:"id"`
+	}
+	newApproval := func(space string, enforced bool) string {
+		var ap created
+		s.root.do("POST", "/spaces/"+space+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"}}).json(t, &ap)
+		if ap.ID == "" {
+			t.Fatal("approval not created")
+		}
+		if enforced {
+			s.exec(t, `INSERT INTO approvals (id, space_id, policy_id, operation, resource, args_digest, args_preview, requester_run, requester_role,
+				human_action_id, state, uses_allowed, uses_left, valid_seconds, request_expires_at, created_at, updated_at)
+				VALUES (?, ?, 'pol', 'mcp.x.y', '', 'd', '', 'run_x', 'control', ?, 'pending', 1, 1, 60, 9000000000000000, 0, 0)`, "apr_"+ap.ID, space, ap.ID)
+		}
+		return ap.ID
+	}
+	approval := func(actionID string) (state, via string) {
+		_ = s.h.c.Store.ReadDB().QueryRowContext(ctx, `SELECT state, decided_via FROM approvals WHERE human_action_id = ?`, actionID).Scan(&state, &via)
+		return state, via
+	}
+	path := func(space, id string) string { return "/spaces/" + space + "/human-actions/" + id + "/respond" }
+	bot := func(space, id, body, tok string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, api.Prefix+path(space, id), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"1"`)
+		c := api.WithInProcessPrincipal(ctx, p)
+		if tok != "" {
+			c = api.WithApprovalConfirmation(c, tok)
+		}
+		s.deps.InProcessHandler().ServeHTTP(rec, req.WithContext(c))
+		return rec
+	}
+	refused := func(what string, rec *httptest.ResponseRecorder, text string) {
+		t.Helper()
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), text) {
+			t.Fatalf("%s: %d %s", what, rec.Code, rec.Body.String())
+		}
+	}
+	mini := func(space, id, body string) resp {
+		return s.mini(t, "POST", path(space, id), body, "Authorization", "Telegram good", "If-Match", `"1"`)
+	}
+	const webOnly, needsConfirm = "decided on the web", "with a second confirmation"
+
+	// Advisory: from the Mini App and the bot, in either space; a denial without a note is refused by the server.
+	adv := newApproval(other, false)
+	expect(t, mini(other, adv, `{"outcome":"denied"}`), http.StatusUnprocessableEntity)
+	expect(t, mini(other, adv, `{"outcome":"denied","note":"not today"}`), 200)
+	if rec := bot(s.space, newApproval(s.space, false), `{"outcome":"approved"}`, ""); rec.Code != 200 {
+		t.Fatalf("advisory from the bot: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// The link's cap applies to advisory approvals: capped to viewer, the link can't decide one.
+	capped := newApproval(s.space, false)
+	s.setLinkRole(t, "viewer")
+	expect(t, mini(s.space, capped, `{"outcome":"approved"}`), http.StatusForbidden)
+	if rec := bot(s.space, capped, `{"outcome":"approved"}`, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer-capped link on an advisory approval: %d %s", rec.Code, rec.Body.String())
+	}
+	s.setLinkRole(t, "operator") // replaces every link grant: give back the second space's
+	s.exec(t, `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES (?, 'operator', ?, 'telegram', 0, 't')`, auth.TelegramSubject(s.linkID), other)
+	if err := s.h.c.Authz.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// An action with the approvals package's dedup key counts as enforced before its row is linked. The key is reserved
+	// (ADR-0087): only a service creates it (Internal), as approvals.ask does, so the test creates it the same way.
+	keyed, _, err := s.h.c.Human.Create(ctx, audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}, other, human.CreateInput{
+		Type: human.TypeApproval, Title: "Deploy?", Request: json.RawMessage(`{"action":"deploy"}`),
+		DedupKey: "approval:apr_unlinked", Internal: true, Requester: human.Requester{Kind: "system", Label: "Approvals"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused("dedup key without a row", bot(other, keyed.ID, `{"outcome":"approved"}`, ""), webOnly)
+
+	// Enforced, no opt-in in its space: refused everywhere, even with a confirmation armed for exactly it.
+	enfOther := newApproval(other, true)
+	r := mini(other, enfOther, `{"outcome":"approved"}`)
+	expect(t, r, http.StatusForbidden)
+	if !strings.Contains(string(r.body), webOnly) {
+		t.Fatalf("Mini App refusal: %s", r.body)
+	}
+	refused("bot, no opt-in", bot(other, enfOther, `{"outcome":"approved"}`, ""), webOnly)
+	refused("bot, no opt-in, confirmed", bot(other, enfOther, `{"outcome":"approved"}`, confirm.Arm(s.linkID, other, enfOther, "approved", 1)), webOnly)
+	refused("bot, no opt-in, deny", bot(other, enfOther, `{"outcome":"denied","note":"n"}`, confirm.Arm(s.linkID, other, enfOther, "denied", 1)), webOnly)
+	if st, _ := approval(enfOther); st != "pending" {
+		t.Fatalf("enforced approval after refusals: %q", st)
+	}
+
+	// Enforced, with the opt-in: only the bot with the confirmation armed for exactly this decision.
+	enf := newApproval(s.space, true)
+	r = mini(s.space, enf, `{"outcome":"approved"}`)
+	expect(t, r, http.StatusForbidden)
+	if !strings.Contains(string(r.body), needsConfirm) {
+		t.Fatalf("Mini App with the opt-in: %s", r.body)
+	}
+	refused("no confirmation", bot(s.space, enf, `{"outcome":"approved"}`, ""), needsConfirm)
+	refused("armed for deny", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, enf, "denied", 1)), needsConfirm)
+	refused("armed for another version", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, enf, "approved", 2)), needsConfirm)
+	refused("armed for another link", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm("tgl_other", s.space, enf, "approved", 1)), needsConfirm)
+	refused("armed for another action", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, enfOther, "approved", 1)), needsConfirm)
+	refused("armed in another space", bot(s.space, enf, `{"outcome":"approved"}`, confirm.Arm(s.linkID, other, enf, "approved", 1)), needsConfirm)
+	if st, _ := approval(enf); st != "pending" {
+		t.Fatalf("enforced approval after refusals: %q", st)
+	}
+	tok := confirm.Arm(s.linkID, s.space, enf, "approved", 1)
+	if rec := bot(s.space, enf, `{"outcome":"approved"}`, tok); rec.Code != 200 {
+		t.Fatalf("confirmed in chat: %d %s", rec.Code, rec.Body.String())
+	}
+	if st, via := approval(enf); st != "approved" || via != audit.ViaTelegram+s.linkID {
+		t.Fatalf("decision: %q via %q", st, via)
+	}
+	// A denial with the opt-in: armed for "denied", with its note.
+	enfDeny := newApproval(s.space, true)
+	if rec := bot(s.space, enfDeny, `{"outcome":"denied","note":"risky"}`, confirm.Arm(s.linkID, s.space, enfDeny, "denied", 1)); rec.Code != 200 {
+		t.Fatalf("denied in chat: %d %s", rec.Code, rec.Body.String())
+	}
+	if st, _ := approval(enfDeny); st != "denied" {
+		t.Fatalf("denial: %q", st)
+	}
+
+	// The opt-in is read at request time: turned off between the two steps, the second is refused.
+	late := newApproval(s.space, true)
+	tok = confirm.Arm(s.linkID, s.space, late, "approved", 1)
+	setOptIn(s.space, "web_only")
+	refused("opt-in turned off", bot(s.space, late, `{"outcome":"approved"}`, tok), webOnly)
+	// A space hidden from Telegram doesn't count as opted in either.
+	setOptIn(s.space, "confirm")
+	s.exec(t, `UPDATE space_telegram_settings SET enabled = 0 WHERE space_id = ?`, s.space)
+	refused("space hidden", bot(s.space, late, `{"outcome":"approved"}`, confirm.Arm(s.linkID, s.space, late, "approved", 1)), webOnly)
+
+	// The same user decides an enforced approval on the web.
+	expect(t, s.ui.do("POST", path(other, enfOther), map[string]any{"outcome": "approved"}, "If-Match", `"1"`), 200)
+}
+
+// Cancelling an approval finalizes it (approvals.onFinalized turns it into Revoked, ending an enforced approval), and
+// the chat has no two-step withdrawal, so cancel-human-action stays refused from Telegram for enforced and advisory
+// approvals, from the Mini App and the bot, even in a space with the enforced-approval opt-in (TG-7-2); the same user
+// withdraws it on the web. The approval stays pending after a refusal.
+func TestTelegramRefusesApprovalCancel(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	base := "/spaces/" + s.space
+	p, err := s.h.c.Auth.TelegramPrincipal(context.Background(), s.linkID, auth.TelegramOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.exec(t, `INSERT INTO space_telegram_settings (space_id, enabled, content_level, enforced_approvals, topics, terminal_watch, created_at, created_by, updated_at, updated_by, version)
+		VALUES (?, 1, 'full', 'confirm', 0, 0, 0, 't', 0, 't', 1)`, s.space)
+	newApproval := func(enforced bool) string {
+		var ap struct {
+			ID string `json:"id"`
+		}
+		s.root.do("POST", base+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"}}).json(t, &ap)
+		if ap.ID == "" {
+			t.Fatal("approval not created")
+		}
+		if enforced {
+			// An enforced approval (ADR-0024) is one with an approvals row behind its human action.
+			s.exec(t, `INSERT INTO approvals (id, space_id, policy_id, operation, resource, args_digest, args_preview, requester_run, requester_role,
+				human_action_id, state, uses_allowed, uses_left, valid_seconds, request_expires_at, created_at, updated_at)
+				VALUES (?, ?, 'pol', 'mcp.x.y', '', 'd', '', 'run_x', 'control', ?, 'pending', 1, 1, 60, 9000000000000000, 0, 0)`, "apr_"+ap.ID, s.space, ap.ID)
+		}
+		return ap.ID
+	}
+	approvalState := func(actionID string) string {
+		var st string
+		if err := s.h.c.Store.ReadDB().QueryRowContext(context.Background(), `SELECT state FROM approvals WHERE human_action_id = ?`, actionID).Scan(&st); err != nil {
+			return ""
+		}
+		return st
+	}
+	// Only approvals are refused: a question is withdrawn from Telegram as before.
+	var q struct {
+		ID string `json:"id"`
+	}
+	s.root.do("POST", base+"/human-actions", map[string]any{"type": "question", "title": "Which region?"}).json(t, &q)
+	expect(t, s.mini(t, "POST", base+"/human-actions/"+q.ID+"/cancel", `{"reason":"moot"}`, "Authorization", "Telegram good", "If-Match", `"1"`), 200)
+	for _, enforced := range []bool{true, false} {
+		mini, bot, web := newApproval(enforced), newApproval(enforced), newApproval(enforced)
+		r := s.mini(t, "POST", base+"/human-actions/"+mini+"/cancel", `{"reason":"no"}`, "Authorization", "Telegram good", "If-Match", `"1"`)
+		expect(t, r, http.StatusForbidden)
+		if !strings.Contains(string(r.body), "decided on the web") {
+			t.Fatalf("refusal reason: %s", r.body)
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, api.Prefix+base+"/human-actions/"+bot+"/cancel", strings.NewReader(`{"reason":"no"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"1"`)
+		s.deps.InProcessHandler().ServeHTTP(rec, req.WithContext(api.WithInProcessPrincipal(context.Background(), p)))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "decided on the web") {
+			t.Fatalf("enforced=%v bot cancel: %d %s", enforced, rec.Code, rec.Body.String())
+		}
+		if enforced {
+			for _, id := range []string{mini, bot} {
+				if st := approvalState(id); st != "pending" {
+					t.Fatalf("approval after a refused cancel: %q", st)
+				}
+			}
+		}
+		expect(t, s.ui.do("POST", base+"/human-actions/"+web+"/cancel", map[string]any{"reason": "no"}, "If-Match", `"1"`), 200)
+		if enforced {
+			if st := approvalState(web); st != "revoked" {
+				t.Fatalf("web cancel of an enforced approval: %q", st)
+			}
+		}
+	}
+}
+
+// TelegramSelf lifts the personal-operation refusal only, never step-up: no rule of the real table may set it together
+// with Reauth or MFA (none sets it today, so the walk is a guard for rules added later).
+func TestTelegramSelfRules(t *testing.T) {
+	t.Parallel()
+	d := app.SpecDeps()
+	for _, op := range specOps(t, d) {
+		r, _ := d.RuleFor(op.OperationID)
+		if !r.TelegramSelf {
+			continue
+		}
+		if r.Reauth || r.MFA {
+			t.Errorf("%s sets TelegramSelf on a step-up rule", op.OperationID)
+		}
+		if r.Public {
+			t.Errorf("%s sets TelegramSelf on a public rule", op.OperationID)
+		}
+	}
+}
+
+// SM-TG-006 (TG-10-3, ADR-0083 Q3): the Mini App's watch-only terminal. The stream is refused to a Telegram link unless
+// the space opted in (terminal_watch) AND the link's principal holds terminal:watch in the space (an operator cap; a
+// viewer cap reads runs but not terminals). The refusal for no access is a 404 before the setting is looked at, so a
+// viewer cannot learn what the space turned on. The features read the Mini App uses to hide the terminal gives the same
+// answer. The bot's host (the main host) never serves the stream to a Telegram principal.
+func TestTelegramTerminalWatchGate(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	var on atomic.Bool
+	s.deps.Telegram.SpaceFeature = func(_ context.Context, space, feature string) bool {
+		return on.Load() && space == s.space && feature == api.TelegramFeatureTerminalWatch
+	}
+	runID := ids.New(ids.Run)
+	s.exec(t, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		VALUES (?, ?, 'nod_oidc', 1, 'worker', 'implementor', 'codex', 'ins_1', 'running', 'running', 'idle', '{}', 0, 't', 0)`, runID, s.space)
+	stream := "/spaces/" + s.space + "/runs/" + runID + "/terminal"
+	features := "/telegram/spaces/" + s.space + "/features"
+	// open reads the stream's status and content type only: a live stream never ends by itself.
+	open := func() (int, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.minisrv.URL+api.Prefix+stream, nil)
+		req.Header.Set("Authorization", "Telegram good")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, ct := res.StatusCode, res.Header.Get("Content-Type")
+		cancel() // before closing: a live stream's body would otherwise be drained
+		res.Body.Close()
+		return code, ct
+	}
+	wantFeature := func(want bool) {
+		t.Helper()
+		r := s.mini(t, "GET", features, "", "Authorization", "Telegram good")
+		expect(t, r, 200)
+		var f struct {
+			TerminalWatch bool `json:"terminal_watch"`
+		}
+		r.json(t, &f)
+		if f.TerminalWatch != want {
+			t.Fatalf("features terminal_watch = %v, want %v", f.TerminalWatch, want)
+		}
+	}
+
+	// Off (the default): refused, and the features read says so.
+	if code, _ := open(); code != http.StatusForbidden {
+		t.Fatalf("opt-in off: %d", code)
+	}
+	wantFeature(false)
+	// On, operator: the stream opens, read-only (the server has no input on this route at all).
+	on.Store(true)
+	if code, ct := open(); code != http.StatusOK || !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("opt-in on: %d %q", code, ct)
+	}
+	wantFeature(true)
+	// On, but the link is capped to viewer (no terminal:watch): not found, whatever the setting.
+	s.setLinkRole(t, "viewer")
+	if code, _ := open(); code != http.StatusNotFound {
+		t.Fatalf("viewer: %d", code)
+	}
+	wantFeature(false)
+	// Back to operator, opt-in off again (read at request time): refused again.
+	s.setLinkRole(t, "operator")
+	on.Store(false)
+	if code, _ := open(); code != http.StatusForbidden {
+		t.Fatalf("opt-in off again: %d", code)
+	}
+	// There is no input path: the stream route has no other method, and no terminal input or size operation is
+	// reachable from the Mini App, with or without the opt-in.
+	on.Store(true)
+	expect(t, s.mini(t, "POST", stream, `{}`, "Authorization", "Telegram good"), 405)
+	for _, p := range []string{"/input", "/terminal-size", "/takeover"} {
+		for _, m := range []string{"POST", "PUT", "DELETE"} {
+			if r := s.mini(t, m, "/spaces/"+s.space+"/runs/"+runID+p, `{}`, "Authorization", "Telegram good"); r.status < 400 {
+				t.Fatalf("%s %s from the Mini App: %d", m, p, r.status)
+			}
+		}
+	}
+}
+
+// SM-TG-006 (TG-10-3): terminal_watch through central's own wiring. The other tests inject SpaceFeature; this one keeps
+// what APIDeps builds, and turns the setting on and off through the settings API, so a central that never wires
+// SpaceFeature (the feature then off for ever) fails here.
+//   - Off, or the space disabled: the stream is 403 and the features read says false.
+//   - On: the stream opens and the features read says true.
+//   - Turned off while a stream is open: the stream ends with reason "forbidden" at the next re-check.
+func TestTelegramTerminalWatchProduction(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	s.deps.Telegram.SpaceFeature = s.h.c.APIDeps().Telegram.SpaceFeature // central's, not the test's
+	if s.deps.Telegram.SpaceFeature == nil {
+		t.Fatal("central wires no SpaceFeature")
+	}
+	s.deps.StreamRevalidate = 100 * time.Millisecond
+	runID := ids.New(ids.Run)
+	s.exec(t, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		VALUES (?, ?, 'nod_oidc', 1, 'worker', 'implementor', 'codex', 'ins_1', 'running', 'running', 'idle', '{}', 0, 't', 0)`, runID, s.space)
+	stream := "/spaces/" + s.space + "/runs/" + runID + "/terminal"
+	settingsPath := "/spaces/" + s.space + "/telegram"
+	etag := ""
+	put := func(enabled, watch bool) {
+		t.Helper()
+		var hdr []string
+		if etag != "" {
+			hdr = []string{"If-Match", etag}
+		}
+		r := s.root.do("PUT", settingsPath, map[string]any{"enabled": enabled, "terminal_watch": watch}, hdr...)
+		expect(t, r, 200)
+		etag = r.header.Get("ETag")
+	}
+	open := func(ctx context.Context) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.minisrv.URL+api.Prefix+stream, nil)
+		req.Header.Set("Authorization", "Telegram good")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	status := func() int {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		res := open(ctx)
+		code := res.StatusCode
+		cancel()
+		res.Body.Close()
+		return code
+	}
+	wantFeature := func(want bool) {
+		t.Helper()
+		r := s.mini(t, "GET", "/telegram/spaces/"+s.space+"/features", "", "Authorization", "Telegram good")
+		expect(t, r, 200)
+		var f struct {
+			TerminalWatch bool `json:"terminal_watch"`
+		}
+		r.json(t, &f)
+		if f.TerminalWatch != want {
+			t.Fatalf("features terminal_watch = %v, want %v", f.TerminalWatch, want)
+		}
+	}
+
+	// No settings stored, then stored with the watch off, then a disabled space with the watch on: all refused.
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("no settings: %d", code)
+	}
+	put(true, false)
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("terminal_watch false: %d", code)
+	}
+	wantFeature(false)
+	put(false, true)
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("space disabled: %d", code)
+	}
+	wantFeature(false)
+	// content_level off hides the space: refused though enabled with terminal_watch on.
+	r := s.root.do("PUT", settingsPath, map[string]any{"enabled": true, "terminal_watch": true, "content_level": "off"}, "If-Match", etag)
+	expect(t, r, 200)
+	etag = r.header.Get("ETag")
+	if code := status(); code != http.StatusForbidden {
+		t.Fatalf("content_level off: %d", code)
+	}
+	wantFeature(false)
+	// On.
+	put(true, true)
+	if code := status(); code != http.StatusOK {
+		t.Fatalf("terminal_watch true: %d", code)
+	}
+	wantFeature(true)
+
+	// Turned off while a stream is open: it ends with "forbidden" at the next re-check.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	res := open(ctx)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("open stream: %d", res.StatusCode)
+	}
+	put(true, false)
+	br := bufio.NewReader(res.Body)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("stream ended without an end event: %v", err)
+		}
+		if strings.HasPrefix(line, "event: end") {
+			break
+		}
+	}
+	if line, err := br.ReadString('\n'); err != nil || !strings.Contains(line, api.EndForbidden) {
+		t.Fatalf("end reason: %q %v", line, err)
+	}
+}

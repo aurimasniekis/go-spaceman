@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +65,14 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/spacemanmcp"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram"
+	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
+	tgnotify "github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
+	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
+	tgtopics "github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
 	"github.com/aurimasniekis/go-spaceman/internal/xspace"
 )
@@ -155,9 +162,43 @@ type Central struct {
 	Retention *retention.Service
 	// Exports writes space export archives (ADR-0045).
 	Exports *spaceexport.Service
+	// TelegramUpdates is the Telegram bot's inbound side (ADR-0083): the webhook route, the shared queue and the
+	// dispatcher. Its webhook answers 404 until a bot is configured (TG-3b sets it).
+	TelegramUpdates *updates.Service
+	// TelegramBot keeps the bot's connection (sealed token, mode, Mini App host) and runs the live bot (ADR-0083).
+	TelegramBot *tgbot.Service
+	// TelegramSettings keeps the Telegram policy and defaults and each space's Telegram settings, cached in memory and
+	// applied to the inbound limits (and, through BindSender, to the outbound sender) without a restart (TG-3c).
+	TelegramSettings *tgsettings.Service
+	// TelegramConfirmations are the chat's armed confirmations of enforced approvals (ADR-0083 decision 14), shared by
+	// the bot (arms them) and the respond rule (consumes them).
+	TelegramConfirmations *api.ApprovalConfirmations
+	// TelegramLimiter holds each link's inbound limits (plan §3.5).
+	TelegramLimiter *updates.Limiter
+	// TelegramLink runs the linking protocol (ADR-0083 decision 2): web codes, /start and both confirmations.
+	TelegramLink *tglink.Service
+	// TelegramLinks is the dispatcher's in-memory view of the active links, kept current by the telegram.link eventbus
+	// topic (no change-feed rows): a revoked or re-confirmed link applies to the next update.
+	TelegramLinks *tglink.Cache
+	// TelegramNotify turns the change feed into Telegram notifications and card edits (ADR-0078, plan §4.2): one
+	// consumer, no per-user feeds, nothing written per tick.
+	TelegramNotify *tgnotify.Notifier
+	// TelegramTopics routes the notifier's messages to topics in topics mode.
+	TelegramTopics *tgtopics.Manager
+	// TelegramSSOGrants reports the link_sso_grants setting (ADR-0083 Q8; TG-3c wires it): whether a link confirmed
+	// from an SSO session acts with the user's SSO grants until that session's absolute expiry. Nil: off, so every
+	// Telegram principal acts with the user's local grants only.
+	TelegramSSOGrants func() bool
+	// TelegramMiniApp exchanges Mini App initData for sessions and resolves them (ADR-0083 §3.4.2).
+	TelegramMiniApp *miniapp.Service
+	// TelegramDownloads holds the Mini App's signed download links (ADR-0083 §3.4.3).
+	TelegramDownloads *miniapp.Downloads
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
+	// MiniAppUI serves the Mini App host's tg.html and assets (set by cmd/spaceman; the host answers 404 for pages
+	// without it).
+	MiniAppUI http.Handler
 }
 
 // Options adjust OpenCentral (tests).
@@ -422,6 +463,12 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
+	c.newTelegram(ctx)
+	c.TelegramBot = c.newTelegramBot()
+	c.newTelegramMiniApp()
+	c.TelegramNotify = c.newTelegramNotifier(log)
+	// Once: the settings keep their listeners, and the bot carries the limits to every sender it makes.
+	c.TelegramSettings.BindSender(c.TelegramBot)
 	c.Queue.Workers = c.Fleet
 	c.Queue.Notify = c.Supervisor.Notify
 	c.Supervisor.Inbox = c.Inbox
@@ -575,6 +622,7 @@ func (c *Central) wireSpacemanMCP() error {
 	}
 	c.Gateway.Tokens = c.Auth
 	h := d.InProcessHandler()
+	c.wireTelegramChat(h)
 	c.Gateway.Spaceman = &spacemanmcp.Backend{Cat: cat, Handler: h, Tokens: c.Auth}
 	// The external MCP endpoint (ADR-0063 §External endpoint): the same catalog and executor for operators' own MCP
 	// clients, behind the API's guard (api.MCPPath).
@@ -637,21 +685,18 @@ func (c *Central) Close() error {
 
 // APIDeps returns the API dependencies.
 func (c *Central) APIDeps() *api.Deps {
-	var trusted []netip.Prefix
-	for _, p := range c.Cfg.HTTP.TrustedProxies {
-		if pf, err := netip.ParsePrefix(p); err == nil {
-			trusted = append(trusted, pf)
-		}
-	}
+	trusted := c.trustedProxies()
 	d := &api.Deps{Log: obs.Component(c.Log, "api"), Store: c.Store, Auth: c.Auth, Authz: c.Authz, Audit: c.Audit, Bus: c.Bus,
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
-		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
+		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), StreamHeartbeat: c.Cfg.HTTP.StreamHeartbeat.D(), ExtraRules: rules(),
 		CatchUps: make(chan struct{}, max(1, c.Cfg.HTTP.CatchUpConcurrency)), CatchUpWait: c.Cfg.HTTP.CatchUpWait.D(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources())},
-		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink), api.RegisterTelegramLinkPrefs(c.TelegramLink), api.RegisterTelegramMiniApp(c.TelegramMiniApp), api.RegisterTelegramDownloads(c.TelegramDownloads, c.Attachments, c.miniAppOrigin)},
+		Raw: rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
+		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch, Sessions: c.TelegramMiniApp, MiniAppOrigin: c.miniAppOrigin,
+			EnforcedApproval: c.enforcedApproval, ApprovalsInChat: c.approvalsInChat, SpaceFeature: c.telegramSpaceFeature, Confirmations: c.TelegramConfirmations}}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
 		d.MCP = c.mcpEndpoint
@@ -723,15 +768,42 @@ func (c *Central) systemSources() *api.SystemSources {
 		Storage:     c.attentionSources(),
 		StoreSizes:  c.Store.Sizes,
 		LiveStreams: c.Metrics.SSEClients,
+		Telegram:    c.TelegramBot.Status,
 	}
 }
 
 // Handler is the public listener's handler: the API under /api/ and the web UI elsewhere.
+//
+// It routes on the request's Host (ADR-0083 §3.4.1): the Mini App host (telegram.miniapp_host, otherwise the stored
+// bot's miniapp_host) gets the Mini App handler and nothing else, whatever the bot's state (404 while no bot serves
+// it); every other host gets the main one. Only r.Host counts; X-Forwarded-Host is never trusted for routing.
 func (c *Central) Handler(d *api.Deps) http.Handler {
+	main := c.mainHandler(d)
+	mini := c.miniAppHandler(d)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c.isMiniAppHost(r.Host) {
+			mini.ServeHTTP(w, r)
+			return
+		}
+		main.ServeHTTP(w, r)
+	})
+	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
+	// reads, with central keeping every response): writes must make progress. A client that declares a body and doesn't
+	// send it must not hold a connection either: body reads must make progress, and a refusal doesn't drain the body.
+	// Both guards wrap both hosts (the main host and the Mini App host).
+	return httpguard.WriteProgress(httpguard.ReadProgress(h, c.Cfg.HTTP.ReadIdleTimeout.D()), c.Cfg.HTTP.WriteIdleTimeout.D())
+}
+
+// mainHandler serves the main host: the API, the node protocol, the Telegram webhook and the web UI.
+func (c *Central) mainHandler(d *api.Deps) http.Handler {
 	mux := http.NewServeMux()
 	apiH := d.Handler()
 	mux.Handle("/api/", apiH)
 	mux.Handle("/agent/", c.Fleet.AgentHandler())
+	// The Telegram webhook (ADR-0083, SM-TG-004): its own route group outside the API handler and its middleware, with
+	// the webhook's own checks (secret token before the body, body limit, dedupe, bounded queue). Main host only: the
+	// Mini App host never routes here (miniAppHandler).
+	mux.Handle(updates.WebhookPath, c.TelegramUpdates.Webhook)
 	ui := c.UI
 	if ui == nil {
 		ui = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -740,10 +812,7 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 		})
 	}
 	mux.Handle("/", ui)
-	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
-	// reads, with central keeping every response): writes must make progress. A client that declares a body and doesn't
-	// send it must not hold a connection either: body reads must make progress, and a refusal doesn't drain the body.
-	return httpguard.WriteProgress(httpguard.ReadProgress(mux, c.Cfg.HTTP.ReadIdleTimeout.D()), c.Cfg.HTTP.WriteIdleTimeout.D())
+	return mux
 }
 
 // ManagementHandler serves /healthz, /readyz and /metrics (SM-OBS-002). Bind it to a private address.
@@ -769,6 +838,13 @@ func (c *Central) publicServer(ctx context.Context) *http.Server {
 
 // Serve runs every listener until ctx ends, then shuts down gracefully within the configured timeout.
 func (c *Central) Serve(ctx context.Context) error {
+	// The stored bot's Mini App host is read before anything listens: the router must know it from the first request
+	// (the bot itself starts later, in the background). A failed read refuses to start.
+	if c.TelegramBot != nil {
+		if err := c.TelegramBot.LoadStoredHost(ctx); err != nil {
+			return fmt.Errorf("telegram: %w", err)
+		}
+	}
 	srv := c.publicServer(ctx)
 	errc := make(chan error, 2)
 	go func() {
@@ -826,8 +902,20 @@ func (c *Central) Serve(ctx context.Context) error {
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
-		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
+		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due},
+		// The Telegram digest, at each linked user's own wall-clock time: it reads memory and only enqueues (ADR-0083).
+		human.Deadline{Name: "telegram.digest", Next: c.TelegramNotify.NextDigest, Due: c.TelegramNotify.DigestDue})
 	go c.Notifier.Run(ctx)
+	// Telegram links: the cache loads before the dispatcher's workers run, so the first update already sees them.
+	c.TelegramLinks.Start(ctx)
+	// Telegram updates: the dispatcher's workers (the webhook answers 503 until they run).
+	go c.TelegramUpdates.Run(ctx)
+	// The configured bot comes up (getMe, commands, menu button, setWebhook or polling) outside any transaction.
+	go c.TelegramBot.Start(ctx)
+	// Telegram settings: the cache reloads on every published change.
+	go c.TelegramSettings.Run(ctx)
+	// Telegram notifications: starts at the newest change; sends nothing while the bot is off.
+	go func() { _ = c.TelegramNotify.Run(ctx) }()
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)
 	// Terminal takeovers end when their holder stops renewing them (one timer; SM-UI-004).
@@ -906,13 +994,20 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil), api.RegisterTelegramBot(nil), api.RegisterTelegramSettings(nil), api.RegisterTelegramLink(nil), api.RegisterTelegramLinkPrefs(nil), api.RegisterTelegramMiniApp(nil), api.RegisterTelegramDownloads(nil, nil, nil)},
+		Raw: rawRoutes(nil, nil, nil, nil)}
+}
+
+// rawRoutes are the API's plain HTTP routes (Deps.Raw): streams and downloads. SpecDeps lists them too, so the
+// Telegram classification test sees exactly the routes central serves.
+func rawRoutes(f *fleet.Service, att *attachments.Service, us *usage.Service, exp *spaceexport.Service) []api.RawRoute {
+	return append(api.RecordingStreams(f), api.AttachmentContent(att), api.TranscriptDownload(us), api.SpaceExportDownload(exp))
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules, api.TelegramBotRules, api.TelegramSettingsRules, api.TelegramLinkRules, api.TelegramLinkPrefsRules, api.TelegramMiniAppRules, api.TelegramDownloadRules} {
 		for k, v := range m {
 			out[k] = v
 		}
@@ -940,6 +1035,21 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 			// An agent acting through a SpaceMan MCP server is never an approver (ADR-0063).
 			return false
 		}
+		if linkID, ok := strings.CutPrefix(by.Via, audit.ViaTelegram); ok {
+			// Decided through a Telegram link (ADR-0083 §3.2 change 5): the link must still be active, for the same
+			// user, who is enabled, and its capped subject must still allow it, intersected with the user's grants.
+			p, err := c.Auth.TelegramPrincipal(ctx, linkID, auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})
+			if err != nil || p.User.ID != by.ID || p.Limited {
+				return false
+			}
+			// Only enforced approvals reach this check, and from Telegram they are decided only with the space's
+			// opt-in (ADR-0083 decision 14): withdrawing it, or hiding the space from Telegram, also ends approvals
+			// already decided in chat.
+			if !c.approvalsInChat(ctx, spaceID) {
+				return false
+			}
+			return c.Authz.AllowedAll(p.Subjects(), spaceID, authz.ApprovalDecide)
+		}
 		u, err := c.Store.R().GetUser(ctx, by.ID)
 		if err != nil || u.DisabledAt.Valid {
 			return false
@@ -962,6 +1072,46 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 	return c.Authz.AllowedAll(subjects, spaceID, authz.ApprovalDecide)
 }
 
+// enforcedApproval reports whether an enforced approval (ADR-0024) stands behind an approval action, for the Telegram
+// respond rule. The approvals package asks with the dedup key "approval:<id>" before it links its row to the action, so
+// that key alone counts too: in that window the action is never taken for advisory.
+func (c *Central) enforcedApproval(ctx context.Context, a *human.Action) (bool, error) {
+	if strings.HasPrefix(a.DedupKey, "approval:") {
+		return true, nil
+	}
+	if c.Approvals == nil {
+		return true, nil
+	}
+	return c.Approvals.Enforced(ctx, a.ID)
+}
+
+// approvalsInChat reports whether a space lets enforced approvals be decided in the chat with a second confirmation:
+// visible to Telegram with enforced_approvals = confirm. It reads the store, not the settings cache, so turning the
+// opt-in off applies to the very next request.
+func (c *Central) approvalsInChat(ctx context.Context, spaceID string) bool {
+	if c.TelegramSettings == nil {
+		return false
+	}
+	sp, err := c.TelegramSettings.GetSpace(ctx, spaceID)
+	return err == nil && sp.Visible() && sp.EnforcedApprovals == tgsettings.ApprovalsConfirm
+}
+
+// telegramSpaceFeature reports whether a space has a Telegram feature on: visible to Telegram with the feature's
+// setting set. Only terminal_watch exists; any other name is off. It reads the store, not the settings cache, so turning
+// the setting off applies to the very next request and to a live stream's next re-check.
+func (c *Central) telegramSpaceFeature(ctx context.Context, spaceID, feature string) bool {
+	if feature != api.TelegramFeatureTerminalWatch || c.TelegramSettings == nil {
+		return false
+	}
+	sp, err := c.TelegramSettings.GetSpace(ctx, spaceID)
+	return err == nil && sp.Visible() && sp.TerminalWatch
+}
+
+// telegramSSOGrants is the link_sso_grants setting (off when unwired).
+func (c *Central) telegramSSOGrants() bool {
+	return c.TelegramSSOGrants != nil && c.TelegramSSOGrants()
+}
+
 // usageWithBudgets stores usage, then checks the run's budgets: a warning is sent once when a budget passes its
 // warning share or its limit (budgets never stop a run).
 type usageWithBudgets struct {
@@ -972,6 +1122,39 @@ type usageWithBudgets struct {
 func (u usageWithBudgets) Report(ctx context.Context, nodeID string, rep proto.UsageReport) {
 	u.Service.Report(ctx, nodeID, rep)
 	u.limits.OnUsage(ctx, rep.RunID)
+}
+
+// newTelegramNotifier builds the notifier from the services the bot already runs on. Its sender is the live bot's,
+// fetched for each window, so it never holds one from before a (re)start; nothing is sent while the bot is off.
+func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
+	users := func(ctx context.Context, id string) (bool, error) {
+		u, err := c.Auth.Get(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		// Like the link's principal: a disabled user, or one who must still enroll MFA, acts for nobody.
+		return u.Enabled && (!u.MFARequired || u.MFAEnrolled), nil
+	}
+	links := tgnotify.NewLinks(c.Store, c.Bus, users, obs.Component(log, "telegram.notify"), 0)
+	links.OnChange = c.Human.Kick // a changed zone or digest time moves the next digest: the deadline loop looks again
+	// Topics mode: a space whose Telegram settings turn it on gets a topic in each link's private chat.
+	c.TelegramTopics = tgtopics.New(tgtopics.Options{
+		Store:   tgtopics.StoreTopics{S: c.Store},
+		Enabled: func(spaceID string) bool { sp := c.TelegramSettings.Space(spaceID); return sp.Topics && sp.Visible() },
+		SpaceName: func(ctx context.Context, spaceID string) string {
+			sp, err := c.Store.R().GetSpace(ctx, spaceID)
+			if err != nil {
+				return ""
+			}
+			return sp.Name
+		},
+		Now: c.Clock.Now, Log: obs.Component(log, "telegram.topics"),
+	})
+	return tgnotify.New(tgnotify.Options{
+		Topics: c.TelegramTopics,
+		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
+		Links: links, Sender: c.TelegramBot.Sender,
+		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
 }
 
 // gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts

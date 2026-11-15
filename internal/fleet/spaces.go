@@ -13,6 +13,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -288,6 +289,7 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 		return nil, err
 	}
 	svc.hub.Kick(nodeID)
+	svc.telegramSpaceChanged(id)
 	if state == "active" {
 		// Runs parked at a usage limit that waited for the space to resume look again now (ADR-0079).
 		svc.wakeWaits(ctx, []string{id}, WaitSpacePaused)
@@ -351,6 +353,7 @@ func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string
 	if err != nil {
 		return err
 	}
+	svc.telegramSpaceChanged(id)
 	for _, runID := range runIDs {
 		if err := svc.rec.Delete(ctx, runID); err != nil {
 			svc.opts.Log.Warn("purge: recording not deleted from the artifact store", slog.String("run.id", runID), slog.Any("error", err))
@@ -360,6 +363,15 @@ func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string
 		svc.opts.OnSpacePurged(ctx, runIDs)
 	}
 	return nil
+}
+
+// telegramSpaceChanged tells the Telegram settings cache that a space's state changed (archived, restored, purged: the
+// purge removes the space's Telegram settings through the foreign key without any other signal), so it reloads and an
+// archived or purged space stops being visible through Telegram.
+func (svc *Service) telegramSpaceChanged(spaceID string) {
+	if svc.bus != nil {
+		svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTelegramSettings, Key: spaceID})
+	}
 }
 
 // spaceRunIDs lists the IDs of a space's runs.

@@ -1,0 +1,773 @@
+package settings
+
+import (
+	"cmp"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+)
+
+// SettingsOut is the effective global settings with their storage state.
+type SettingsOut struct {
+	Settings
+	Stored    bool       `json:"stored" doc:"false: nothing was ever set (or it was reset), every value is the built-in default"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy string     `json:"updated_by,omitempty"`
+	Version   int64      `json:"version" doc:"0 while nothing is stored"`
+}
+
+// Service reads and writes the settings and keeps the in-memory copy every Telegram component reads (the cache).
+// Writes are version-checked (If-Match) and audited; after each commit the cache is refreshed and a
+// eventbus.TopicTelegramSettings event is published, so every subscriber picks the change up without a restart.
+type Service struct {
+	s     *store.Store
+	audit *audit.Writer
+	bus   *eventbus.Bus
+	sub   *eventbus.Subscription
+	log   *slog.Logger
+
+	refreshMu sync.Mutex // serializes refreshes, so listeners see changes in order
+
+	mu        sync.RWMutex
+	cur       Settings
+	curVer    int64
+	loaded    bool
+	spaces    map[string]Space
+	listeners []func(Settings)
+	spaceOff  []func(spaceID string)
+
+	// Reload pacing, fields so tests can shorten them: while the last Load failed it is retried with a backoff from
+	// retryMin up to retryMax; otherwise the cache is reloaded every reloadEvery, the backstop for dropped events and
+	// backup restores (archives and purges publish an event too).
+	retryMin, retryMax, reloadEvery time.Duration
+	loader                          func(context.Context) error
+	verify                          GroupVerifier
+	groupLost                       []func(int64)
+}
+
+// New returns the service with the built-in defaults cached; Load (or Run) reads the stored state.
+// GroupVerifier asks Telegram about a chat the bot should be a member of (botapi.Client.GetChat).
+type GroupVerifier func(ctx context.Context, chatID int64) (botapi.Chat, error)
+
+// SetGroupVerifier sets how a group is checked before it is bound (nil: binding is refused, the bot isn't running).
+func (svc *Service) SetGroupVerifier(v GroupVerifier) {
+	svc.mu.Lock()
+	svc.verify = v
+	svc.mu.Unlock()
+}
+
+func fieldErr(msg string) error {
+	v := &apperr.Validation{}
+	v.Add("group_chat_id", "%s", msg)
+	return v.Err()
+}
+
+// checkGroup refuses a chat that can't serve as a space's group: not a supergroup, not in forum mode (topics), or one
+// the bot isn't a member of (getChat only finds chats the bot is in). It reaches Telegram, so it runs outside any
+// write transaction.
+func (svc *Service) checkGroup(ctx context.Context, chatID int64) error {
+	if chatID >= 0 {
+		return fieldErr("must be the negative chat ID of a supergroup (or 0 to unbind)")
+	}
+	svc.mu.RLock()
+	verify := svc.verify
+	svc.mu.RUnlock()
+	if verify == nil {
+		return apperr.New(apperr.CodeUnavailable, "the Telegram bot isn't running, so the group can't be checked: try again once it is")
+	}
+	vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	c, err := verify(vctx, chatID)
+	if err != nil {
+		var ae *botapi.Error
+		if errors.As(err, &ae) && (ae.Code == http.StatusBadRequest || ae.Code == http.StatusForbidden) {
+			return fieldErr("the bot is not a member of that group: add it first")
+		}
+		svc.log.Warn("telegram: checking a group failed", slog.String("error", err.Error()))
+		return apperr.New(apperr.CodeUnavailable, "Telegram could not be asked about the group: try again")
+	}
+	if c.ID != chatID || c.Type != botapi.ChatSupergroup {
+		return fieldErr("must be a supergroup")
+	}
+	if !c.IsForum {
+		return fieldErr("must have topics (forum mode) turned on")
+	}
+	return nil
+}
+
+func New(s *store.Store, aw *audit.Writer, bus *eventbus.Bus, log *slog.Logger) *Service {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	svc := &Service{s: s, audit: aw, bus: bus, log: log, cur: Defaults(), spaces: map[string]Space{},
+		retryMin: time.Second, retryMax: 30 * time.Second, reloadEvery: time.Minute}
+	svc.loader = svc.Load
+	if bus != nil {
+		// Subscribed at construction, so a change committed before Run starts is still seen. Events only say "reload";
+		// a full queue drops events but a reload is pending anyway.
+		svc.sub = bus.Subscribe(4, eventbus.TopicTelegramSettings)
+	}
+	return svc
+}
+
+// Run reloads the cache whenever a settings or space change is published, until ctx ends. A failed load is retried
+// with a backoff until one succeeds; after that the cache is reloaded periodically, the backstop for dropped events (the
+// bus drops when a queue is full) and for backup restores, which publish nothing.
+func (svc *Service) Run(ctx context.Context) {
+	var events <-chan eventbus.Event
+	if svc.sub != nil {
+		defer svc.sub.Close()
+		events = svc.sub.C
+	}
+	failures := 0
+	reload := func(what string) time.Duration {
+		err := svc.loader(ctx)
+		if err == nil {
+			failures = 0
+			return svc.reloadEvery
+		}
+		if ctx.Err() == nil {
+			svc.log.Warn("telegram: "+what+" the settings failed; using the last known values", slog.String("error", err.Error()))
+		}
+		d := svc.retryMin
+		for i := 0; i < failures && d < svc.retryMax; i++ {
+			d *= 2
+		}
+		failures++
+		return min(d, svc.retryMax)
+	}
+	timer := time.NewTimer(reload("loading"))
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-events:
+			if !ok {
+				return
+			}
+			d := reload("reloading")
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(d)
+		case <-timer.C:
+			timer.Reset(reload("reloading"))
+		}
+	}
+}
+
+// Current returns the cached effective global settings.
+func (svc *Service) Current() Settings {
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	return svc.cur
+}
+
+// Space returns a space's cached settings (the defaults, so invisible, when it has none).
+func (svc *Service) Space(spaceID string) Space {
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	if s, ok := svc.spaces[spaceID]; ok {
+		return s
+	}
+	return DefaultSpace(spaceID)
+}
+
+// GroupSpace returns the space a group chat is bound to (group mode, ADR-0083 amendment TG-13). Only a group chat ID
+// counts, and only a space Telegram may see: a binding of a disabled or hidden space acts for nobody. It answers from
+// memory, so the dispatcher can ask for every group update.
+func (svc *Service) GroupSpace(chatID int64) (string, bool) {
+	if !IsGroupChat(chatID) || chatID == 0 {
+		return "", false
+	}
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	for id, s := range svc.spaces {
+		if s.GroupChatID == chatID && s.Visible() {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// VisibleSpaces returns the IDs of the spaces enabled for Telegram, sorted.
+func (svc *Service) VisibleSpaces() []string {
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	out := make([]string, 0, len(svc.spaces))
+	for id, s := range svc.spaces {
+		if s.Visible() {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// OnChange registers fn: it is called at once with the current settings, then after every change of the global
+// settings, one call at a time, in order. fn must not block for long and must not call back into OnChange.
+func (svc *Service) OnChange(fn func(Settings)) {
+	svc.refreshMu.Lock()
+	defer svc.refreshMu.Unlock()
+	svc.mu.Lock()
+	svc.listeners = append(svc.listeners, fn)
+	cur := svc.cur
+	svc.mu.Unlock()
+	fn(cur)
+}
+
+// OnSpaceOff registers fn: it is called with a space's ID after a reload in which the space went from visible to
+// Telegram, or from terminal_watch on, to off (the settings turned off, or the space deleted, archived or purged).
+// It is not called for the first load. fn runs on the reloading goroutine and must not block for long.
+func (svc *Service) OnSpaceOff(fn func(spaceID string)) {
+	svc.refreshMu.Lock()
+	defer svc.refreshMu.Unlock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	svc.spaceOff = append(svc.spaceOff, fn)
+}
+
+// spacesOff returns the spaces that lost visibility or terminal watching between two caches, sorted.
+func spacesOff(prev, next map[string]Space) []string {
+	var out []string
+	for id, p := range prev {
+		n := next[id] // zero value: not visible, no terminal watch
+		if p.Visible() && (!n.Visible() || (p.TerminalWatch && !n.TerminalWatch)) {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Load reads the stored settings into the cache and tells the listeners if the global settings changed.
+func (svc *Service) Load(ctx context.Context) error {
+	svc.refreshMu.Lock()
+	defer svc.refreshMu.Unlock()
+	q := svc.s.R()
+	cur, ver := Defaults(), int64(0)
+	r, err := q.GetTelegramSettings(ctx)
+	switch {
+	case err == nil:
+		cur, ver = svc.effective(r), r.Version
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	rows, err := q.ListSpaceTelegram(ctx)
+	if err != nil {
+		return err
+	}
+	live, err := svc.liveSpaces(ctx)
+	if err != nil {
+		return err
+	}
+	spaces := make(map[string]Space, len(rows))
+	for _, row := range rows {
+		if live[row.SpaceID] { // a purged or archived space is never visible
+			spaces[row.SpaceID] = spaceFromRow(row)
+		}
+	}
+	svc.mu.Lock()
+	changed := !svc.loaded || ver != svc.curVer || cur != svc.cur
+	var off []string
+	var lost []int64
+	if svc.loaded {
+		off = spacesOff(svc.spaces, spaces)
+		lost = lostGroups(svc.spaces, spaces)
+	}
+	svc.cur, svc.curVer, svc.spaces, svc.loaded = cur, ver, spaces, true
+	ls := slices.Clone(svc.listeners)
+	offFns := slices.Clone(svc.spaceOff)
+	gl := slices.Clone(svc.groupLost)
+	svc.mu.Unlock()
+	for _, id := range off {
+		for _, fn := range offFns {
+			fn(id)
+		}
+	}
+	for _, chatID := range lost {
+		for _, fn := range gl {
+			fn(chatID)
+		}
+	}
+	if changed {
+		for _, fn := range ls {
+			fn(cur)
+		}
+	}
+	return nil
+}
+
+// lostGroups returns the group chats that acted for a space before (bound to a space visible to Telegram) and no longer
+// do for that space: unbound, rebound elsewhere, or their space disabled, hidden, archived or removed.
+func lostGroups(old, cur map[string]Space) []int64 {
+	var out []int64
+	for id, o := range old {
+		if o.GroupChatID == 0 || !o.Visible() {
+			continue
+		}
+		if n, ok := cur[id]; ok && n.GroupChatID == o.GroupChatID && n.Visible() {
+			continue
+		}
+		out = append(out, o.GroupChatID)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// OnGroupLost registers fn: it is called with the chat ID of every group that stopped acting for a space (see
+// lostGroups) after a reload, so the bot can leave it. Not for the first load.
+func (svc *Service) OnGroupLost(fn func(chatID int64)) {
+	svc.mu.Lock()
+	svc.groupLost = append(svc.groupLost, fn)
+	svc.mu.Unlock()
+}
+
+// liveSpaces returns the IDs of the spaces that exist and are not archived.
+func (svc *Service) liveSpaces(ctx context.Context) (map[string]bool, error) {
+	rows, err := svc.s.ReadDB().QueryContext(ctx, `SELECT id FROM spaces WHERE state <> 'archived'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// effective applies a stored row to the defaults. A row that no longer validates (bounds tightened in a later release)
+// is applied leaf by leaf: the leaves that still validate keep their stored values (so a stricter link cap stays),
+// the others take their defaults, logged, rather than stopping Telegram.
+func (svc *Service) effective(r db.TelegramSetting) Settings {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(r.SettingsJson), &fields); err != nil || fields == nil {
+		// Not a JSON object: nothing in it can be trusted, so the link cap is the stricter one, not the default's.
+		svc.log.Warn("telegram: the stored settings are unreadable; using the defaults")
+		s := Defaults()
+		s.LinkDefaultMaxRole = RoleViewer
+		return s
+	}
+	// Keys that differ only in case would all decode into one field (the last in document order wins), so such a row
+	// never takes the fast path: it is split into leaves, which are applied in a fixed order.
+	seen := make(map[string]bool, len(fields))
+	dup := false
+	for k := range fields {
+		lk := strings.ToLower(k)
+		dup = dup || seen[lk]
+		seen[lk] = true
+	}
+	if !dup {
+		var in Input
+		if err := json.Unmarshal([]byte(r.SettingsJson), &in); err == nil {
+			if s := Resolve(in); s.Validate() == nil {
+				// A stored null role decodes as unset (operator), but the field is present: it caps at viewer.
+				s.LinkDefaultMaxRole = storedRole(fields, s.LinkDefaultMaxRole)
+				return s
+			}
+		}
+	}
+	// The paths are lower-cased: encoding/json matches field names case-insensitively, so a stored "LINK_DEFAULT_MAX_ROLE"
+	// still decodes and must be recognized by its path too.
+	// One candidate per leaf: a nested object (send_limits, inbound_limits, notification_defaults) is split into its own
+	// fields, so one invalid sibling never widens a stricter stored leaf.
+	type leaf struct {
+		path string
+		raw  json.RawMessage
+	}
+	var leaves []leaf
+	for k, v := range fields {
+		var sub map[string]json.RawMessage
+		if v[0] == '{' && json.Unmarshal(v, &sub) == nil {
+			for sk, sv := range sub {
+				raw, _ := json.Marshal(map[string]map[string]json.RawMessage{k: {sk: sv}})
+				leaves = append(leaves, leaf{strings.ToLower(k) + "." + strings.ToLower(sk), raw})
+			}
+			continue
+		}
+		raw, _ := json.Marshal(map[string]json.RawMessage{k: v})
+		leaves = append(leaves, leaf{strings.ToLower(k), raw})
+	}
+	// Map order is random: sort by path, then by the leaf's text, so two keys that differ only in case apply in the
+	// same order on every load.
+	slices.SortFunc(leaves, func(a, b leaf) int {
+		return cmp.Or(strings.Compare(a.path, b.path), strings.Compare(string(a.raw), string(b.raw)))
+	})
+	s := Defaults()
+	// A leaf is judged against everything applied so far, so a cross-field rule (queue_per_chat <= queue_total, quiet
+	// hours start != end) can reject a leaf only because its partner has not been applied yet. The rejected leaves are
+	// therefore retried until a pass applies none, and only then fall back to their defaults.
+	applied := map[string]bool{}
+	pending := leaves
+	for len(pending) > 0 {
+		var rejected []leaf
+		for _, l := range pending {
+			var one Input
+			cand := s
+			if err := json.Unmarshal(l.raw, &one); err == nil {
+				cand.Apply(one)
+				if err = cand.Validate(); err == nil {
+					s = cand
+					applied[l.path] = true
+					continue
+				}
+			}
+			rejected = append(rejected, l)
+		}
+		if len(rejected) == len(pending) {
+			break
+		}
+		pending = rejected
+	}
+	for _, l := range pending {
+		// A total below the default per-chat queue is rejected only because of that default: when per_chat is not stored
+		// (or was itself rejected), clamp it to the stored total instead of dropping the total.
+		if l.path == "send_limits.queue_total" && !applied["send_limits.queue_per_chat"] {
+			var one Input
+			cand := s
+			if json.Unmarshal(l.raw, &one) == nil {
+				cand.Apply(one)
+				cand.SendLimits.QueuePerChat = min(cand.SendLimits.QueuePerChat, cand.SendLimits.QueueTotal)
+				if cand.Validate() == nil {
+					s = cand
+					continue
+				}
+			}
+		}
+		svc.log.Warn("telegram: a stored setting is out of bounds; using its default", slog.String("field", l.path))
+	}
+	s.LinkDefaultMaxRole = storedRole(fields, s.LinkDefaultMaxRole)
+	return s
+}
+
+// storedRole is the link cap for a row whose field "link_default_max_role" may be stored under any case. A row that
+// has the field is never read as the wider operator default: the cap is viewer unless every variant is exactly
+// "operator" (a malformed value, a nested object or an empty one all count as unknown), and viewer wins over operator
+// when variants disagree. A row without the field keeps def.
+func storedRole(fields map[string]json.RawMessage, def string) string {
+	role, present := RoleOperator, false
+	for k, v := range fields {
+		if !strings.EqualFold(k, "link_default_max_role") {
+			continue
+		}
+		present = true
+		var got string
+		if json.Unmarshal(v, &got) != nil || got != RoleOperator {
+			role = RoleViewer
+		}
+	}
+	if !present {
+		return def
+	}
+	return role
+}
+
+// publish wakes every cache after the transaction commits.
+func (svc *Service) publish(tx *store.Tx, key string) {
+	if svc.bus == nil {
+		return
+	}
+	tx.AfterCommit(func() { svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTelegramSettings, Key: key}) })
+}
+
+// refreshNow reloads the cache after a write, so the writer's next read and the sender already see the change; a
+// failure only delays it until the bus event's reload.
+func (svc *Service) refreshNow(ctx context.Context) {
+	if err := svc.Load(ctx); err != nil {
+		svc.log.Warn("telegram: reloading the settings failed", slog.String("error", err.Error()))
+	}
+}
+
+func actorRef(a audit.Actor) string {
+	if a.Type == audit.ActorRoot {
+		return "root"
+	}
+	return a.Type + ":" + a.ID
+}
+
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// Get returns the stored global settings with their version (the defaults, version 0, when none are stored).
+func (svc *Service) Get(ctx context.Context) (*SettingsOut, error) {
+	r, err := svc.s.R().GetTelegramSettings(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &SettingsOut{Settings: Defaults()}, nil
+	} else if err != nil {
+		return nil, err
+	}
+	t := time.UnixMicro(r.UpdatedAt).UTC()
+	return &SettingsOut{Settings: svc.effective(r), Stored: true, UpdatedAt: &t, UpdatedBy: r.UpdatedBy, Version: r.Version}, nil
+}
+
+// Put stores the global settings: created with version 0 (no If-Match) or replaced at version. Only the fields in
+// are stored; everything else follows the built-in defaults.
+func (svc *Service) Put(ctx context.Context, actor audit.Actor, version int64, in Input) (*SettingsOut, error) {
+	if s := Resolve(in); s.Validate() != nil {
+		return nil, s.Validate()
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	err = svc.s.W().TxNamed(ctx, "telegram.settings.put", func(tx *store.Tx) error {
+		now, by := tx.NowMicros(), actorRef(actor)
+		var n int64
+		var err error
+		action := "telegram.settings.created"
+		if version == 0 {
+			n, err = tx.Q.InsertTelegramSettings(ctx, db.InsertTelegramSettingsParams{SettingsJson: string(raw), UpdatedAt: now, UpdatedBy: by})
+			if err == nil && n == 0 {
+				return apperr.New(apperr.CodeConflict, "the Telegram settings are already stored: replace them with If-Match")
+			}
+		} else {
+			action = "telegram.settings.updated"
+			n, err = tx.Q.UpdateTelegramSettings(ctx, db.UpdateTelegramSettingsParams{SettingsJson: string(raw), Now: now, By: by, Version: version})
+			if err == nil && n == 0 {
+				return svc.versionErr(ctx, tx, version)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		svc.publish(tx, "")
+		var details map[string]any
+		_ = json.Unmarshal(raw, &details)
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "telegram_settings", ID: "telegram-settings"},
+			Details: map[string]any{"set": details}})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	svc.refreshNow(ctx)
+	return svc.Get(ctx)
+}
+
+func (svc *Service) versionErr(ctx context.Context, tx *store.Tx, sent int64) error {
+	cur, err := tx.Q.GetTelegramSettings(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperr.New(apperr.CodeNotFound, "no Telegram settings are stored: create them without If-Match")
+	} else if err != nil {
+		return err
+	}
+	return apperr.New(apperr.CodeConflict, "the Telegram settings changed (version %d, you sent %d); reload and retry", cur.Version, sent)
+}
+
+// Delete removes the stored settings (version-checked): every value goes back to its built-in default.
+func (svc *Service) Delete(ctx context.Context, actor audit.Actor, version int64) error {
+	err := svc.s.W().TxNamed(ctx, "telegram.settings.delete", func(tx *store.Tx) error {
+		n, err := tx.Q.DeleteTelegramSettings(ctx, version)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return svc.versionErr(ctx, tx, version)
+		}
+		svc.publish(tx, "")
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "telegram.settings.deleted", Target: audit.Target{Type: "telegram_settings", ID: "telegram-settings"}})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	svc.refreshNow(ctx)
+	return nil
+}
+
+func spaceFromRow(r db.SpaceTelegramSetting) Space {
+	ca, ua := time.UnixMicro(r.CreatedAt).UTC(), time.UnixMicro(r.UpdatedAt).UTC()
+	return Space{SpaceID: r.SpaceID, Stored: true, Enabled: r.Enabled == 1, ContentLevel: r.ContentLevel, EnforcedApprovals: r.EnforcedApprovals,
+		Topics: r.Topics == 1, TerminalWatch: r.TerminalWatch == 1, CreatedAt: &ca, CreatedBy: r.CreatedBy, UpdatedAt: &ua, UpdatedBy: r.UpdatedBy,
+		Version: r.Version, GroupChatID: r.GroupChatID.Int64}
+}
+
+var errSpaceNotFound = apperr.New(apperr.CodeNotFound, "space not found")
+
+func (svc *Service) checkSpace(ctx context.Context, q *db.Queries, spaceID string) error {
+	if _, err := q.GetSpace(ctx, spaceID); errors.Is(err, sql.ErrNoRows) {
+		return errSpaceNotFound
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetSpace returns a space's stored settings (the defaults, version 0, when it has none).
+func (svc *Service) GetSpace(ctx context.Context, spaceID string) (*Space, error) {
+	q := svc.s.R()
+	if err := svc.checkSpace(ctx, q, spaceID); err != nil {
+		return nil, err
+	}
+	r, err := q.GetSpaceTelegram(ctx, spaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		d := DefaultSpace(spaceID)
+		return &d, nil
+	} else if err != nil {
+		return nil, err
+	}
+	s := spaceFromRow(r)
+	return &s, nil
+}
+
+// ListSpaces returns every space with stored settings, by space ID.
+func (svc *Service) ListSpaces(ctx context.Context) ([]Space, error) {
+	rows, err := svc.s.R().ListSpaceTelegram(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Space, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, spaceFromRow(r))
+	}
+	return out, nil
+}
+
+func spaceVersionErr(exists bool, cur, sent int64) error {
+	switch {
+	case !exists && sent != 0:
+		return apperr.New(apperr.CodeNotFound, "the space has no Telegram settings yet: create them without If-Match")
+	case exists && sent == 0:
+		return apperr.New(apperr.CodeConflict, "the space has Telegram settings: replace them with If-Match \"%d\"", cur)
+	case exists && sent != cur:
+		return apperr.New(apperr.CodeConflict, "the space's Telegram settings changed (version %d, you sent %d); reload and retry", cur, sent)
+	}
+	return nil
+}
+
+// GroupChanged reports whether in would bind, rebind or unbind the space's group (the API then needs
+// telegram_group:write). A body that leaves group_chat_id out, or repeats the current one, changes nothing.
+func (svc *Service) GroupChanged(ctx context.Context, spaceID string, in SpaceInput) (bool, error) {
+	if in.GroupChatID == nil {
+		return false, nil
+	}
+	cur, err := svc.GetSpace(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
+	return cur.GroupChatID != *in.GroupChatID, nil
+}
+
+// PutSpace stores a space's settings: created with version 0 (no If-Match) or replaced at version. Fields left out
+// take their defaults.
+func (svc *Service) PutSpace(ctx context.Context, actor audit.Actor, spaceID string, version int64, in SpaceInput) (*Space, error) {
+	s, err := in.apply(spaceID)
+	if err != nil {
+		return nil, err
+	}
+	// A new binding is checked with Telegram first (no network inside the transaction below).
+	if g := in.GroupChatID; g != nil && *g != 0 {
+		if cur, err := svc.GetSpace(ctx, spaceID); err == nil && cur.GroupChatID != *g {
+			if err := svc.checkGroup(ctx, *g); err != nil {
+				return nil, err
+			}
+		}
+	}
+	err = svc.s.W().TxNamed(ctx, "telegram.space.put", func(tx *store.Tx) error {
+		if err := svc.checkSpace(ctx, tx.Q, spaceID); err != nil {
+			return err
+		}
+		cur, err := tx.Q.GetSpaceTelegram(ctx, spaceID)
+		exists := err == nil
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err := spaceVersionErr(exists, cur.Version, version); err != nil {
+			return err
+		}
+		now, by := tx.NowMicros(), actorRef(actor)
+		action := "telegram.space.created"
+		if version == 0 {
+			if _, err := tx.Q.InsertSpaceTelegram(ctx, db.InsertSpaceTelegramParams{SpaceID: spaceID, Enabled: b2i(s.Enabled), ContentLevel: s.ContentLevel,
+				EnforcedApprovals: s.EnforcedApprovals, Topics: b2i(s.Topics), TerminalWatch: b2i(s.TerminalWatch), CreatedAt: now, CreatedBy: by,
+				UpdatedAt: now, UpdatedBy: by}); err != nil {
+				return err
+			}
+		} else {
+			action = "telegram.space.updated"
+			if _, err := tx.Q.UpdateSpaceTelegram(ctx, db.UpdateSpaceTelegramParams{Enabled: b2i(s.Enabled), ContentLevel: s.ContentLevel,
+				EnforcedApprovals: s.EnforcedApprovals, Topics: b2i(s.Topics), TerminalWatch: b2i(s.TerminalWatch), Now: now, By: by,
+				SpaceID: spaceID, Version: version}); err != nil {
+				return err
+			}
+		}
+		details := map[string]any{"space_id": spaceID, "enabled": s.Enabled, "content_level": s.ContentLevel, "enforced_approvals": s.EnforcedApprovals,
+			"topics": s.Topics, "terminal_watch": s.TerminalWatch}
+		// The binding is only changed when the body names it (left out, the current one stays); 0 unbinds.
+		if g := in.GroupChatID; g != nil && (!exists && *g != 0 || exists && cur.GroupChatID.Int64 != *g) {
+			val := sql.NullInt64{Int64: *g, Valid: *g != 0}
+			if _, err := tx.Q.SetSpaceTelegramGroup(ctx, db.SetSpaceTelegramGroupParams{GroupChatID: val, SpaceID: spaceID}); store.IsConstraint(err) {
+				return apperr.New(apperr.CodeConflict, "that group is already bound to another space: unbind it there first")
+			} else if err != nil {
+				return err
+			}
+			details["group_chat_id"] = *g
+		}
+		svc.publish(tx, spaceID)
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "space_telegram", ID: spaceID}, Details: details})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	svc.refreshNow(ctx)
+	return svc.GetSpace(ctx, spaceID)
+}
+
+// DeleteSpace removes a space's settings (version-checked): Telegram is off for the space again.
+func (svc *Service) DeleteSpace(ctx context.Context, actor audit.Actor, spaceID string, version int64) error {
+	err := svc.s.W().TxNamed(ctx, "telegram.space.delete", func(tx *store.Tx) error {
+		cur, err := tx.Q.GetSpaceTelegram(ctx, spaceID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperr.New(apperr.CodeNotFound, "the space has no Telegram settings")
+		} else if err != nil {
+			return err
+		}
+		if err := spaceVersionErr(true, cur.Version, version); err != nil {
+			return err
+		}
+		if _, err := tx.Q.DeleteSpaceTelegram(ctx, db.DeleteSpaceTelegramParams{SpaceID: spaceID, Version: version}); err != nil {
+			return err
+		}
+		svc.publish(tx, spaceID)
+		details := map[string]any{"space_id": spaceID, "was_enabled": cur.Enabled == 1}
+		if cur.GroupChatID.Valid {
+			details["group_chat_id"] = cur.GroupChatID.Int64 // deleting the settings also unbinds the group
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "telegram.space.deleted", Target: audit.Target{Type: "space_telegram", ID: spaceID},
+			Details: details})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	svc.refreshNow(ctx)
+	return nil
+}

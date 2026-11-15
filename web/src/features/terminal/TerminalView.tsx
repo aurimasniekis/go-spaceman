@@ -3,8 +3,9 @@ import { IconArrowDown, IconArrowUp, IconDownload, IconPlayerPauseFilled, IconPl
 import type { Terminal } from 'ghostty-web'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, unwrap, type RecordingPage, type RecordingRecord, type RecordingTail, type Run } from '@/api/client'
-import { API_PREFIX } from '@/api/session'
-import { endReason, sessionStillValid } from '@/api/streams'
+import { API_PREFIX, isMiniApp } from '@/api/session'
+import { endReasonOf } from '@/api/streams'
+import { watchTransport } from '@/api/transport'
 import { clock } from '@/lib/format'
 import { createTerminal, disposeTerminal, fitFont, followCursor, holdDrawing, regularCell, rowHeight, scrollWithWheelAndTouch, setInputMode } from './ghostty'
 import { jumpToLive, keepingPosition, scrolledAway } from './scroll'
@@ -293,71 +294,79 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     let queued = after
     let first = true
     const query = after > 0 ? `?after=${after}` : tailBytes.current > 0 ? `?tail=${tailBytes.current}` : ''
-    const es = new EventSource(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/terminal${query}`)
     let retry: ReturnType<typeof setTimeout> | undefined
-    es.onopen = () => {
-      failures.current = 0
-      setState('live')
-    }
-    es.onerror = () => {
-      if (es.readyState !== EventSource.CLOSED) {
-        setState('connecting')
-        return
-      }
-      // The server answered with an error (central busy reading recordings answers 503, ADR-0081), which the browser
-      // never retries: try again, backing off, a few times.
-      if (failures.current >= 8) {
-        setState('ended')
-        return
-      }
-      setState('connecting')
-      const delay = Math.min(30_000, 1_000 * 2 ** failures.current++)
-      retry = setTimeout(() => !closed && setAttempt((n) => n + 1), delay)
-    }
+    // The browser reads the stream with EventSource; the Mini App with fetch and its session header (the same
+    // transport as the change feed). Either way it only reads: this component has no write path on the stream.
+    const url = `${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/terminal${query}`
     // A tail catch-up starts with what the output before it left: the size, modes, gaps (records with seq 0). A server
     // without tails sends none and the whole recording follows, as before.
     let sawTail = false
-    es.addEventListener('tail', (ev) => {
-      // One per stream; another would count its gaps twice.
-      if (sawTail) return
-      sawTail = true
-      const tail = JSON.parse((ev as MessageEvent<string>).data) as RecordingTail
-      setEarlier(tail.skipped_bytes)
-      if (first) catchUp(1)
-      first = false
-      fed.push(tailRecords(tail))
-    })
-    es.addEventListener('record', (ev) => {
-      const r = JSON.parse((ev as MessageEvent<string>).data) as RecordingRecord
-      // EventSource resumes after a reconnect with Last-Event-ID, so a record is never applied twice.
-      if (r.seq <= queued) return
-      queued = r.seq
-      // The whole recording, with no tail event before it: nothing comes before what this terminal draws.
-      if (first && after === 0) setEarlier(0)
-      // Drawing is held from the stream's first record (the stored output starts there; its first slice resizes the
-      // terminal, which would draw it at once). Later, only a backlog left after a slice holds it.
-      if (first) catchUp(1)
-      first = false
-      fed.push([r])
-    })
-    es.addEventListener('end', (ev) => {
-      es.close()
-      const reason = endReason(ev)
-      if (reason === 'forbidden') setState('denied')
-      else if (reason !== 'unauthenticated') setState('ended')
-      else {
+    const handle = watchTransport().open(url, {
+      // The failure count is reset by the first record, not by the open: a stream that opens and closes with nothing keeps backing off.
+      onOpen: () => setState('live'),
+      onReconnecting: () => setState('connecting'),
+      onClosed: (status) => {
+        if (closed) return
+        // Refused outright (the Mini App's stream is off for this space, or the viewer may not watch): never retried.
+        if (status === 403 || status === 404) {
+          setState('denied')
+          return
+        }
+        // The server answered with an error (central busy reading recordings answers 503, ADR-0081), which the browser
+        // never retries: try again, backing off, a few times.
+        if (failures.current >= 8) {
+          setState('ended')
+          return
+        }
         setState('connecting')
-        void sessionStillValid().then((ok) => {
-          if (closed) return
-          if (ok) setAttempt((n) => n + 1)
-          else setState('ended')
-        })
-      }
-    })
+        const delay = Math.min(30_000, 1_000 * 2 ** failures.current++)
+        retry = setTimeout(() => !closed && setAttempt((n) => n + 1), delay)
+      },
+      onEvent: (type, data) => {
+        if (type === 'tail') {
+          // One per stream; another would count its gaps twice.
+          if (sawTail) return
+          sawTail = true
+          failures.current = 0
+          const tail = JSON.parse(data) as RecordingTail
+          setEarlier(tail.skipped_bytes)
+          if (first) catchUp(1)
+          first = false
+          fed.push(tailRecords(tail))
+        } else if (type === 'record') {
+          failures.current = 0
+          const r = JSON.parse(data) as RecordingRecord
+          // A reconnect resumes after the last record, so a record is never applied twice.
+          if (r.seq <= queued) return
+          queued = r.seq
+          // The whole recording, with no tail event before it: nothing comes before what this terminal draws.
+          if (first && after === 0) setEarlier(0)
+          // Drawing is held from the stream's first record (the stored output starts there; its first slice resizes the
+          // terminal, which would draw it at once). Later, only a backlog left after a slice holds it.
+          if (first) catchUp(1)
+          first = false
+          fed.push([r])
+        } else if (type === 'end') {
+          handle.close()
+          const reason = endReasonOf(data)
+          if (reason === 'forbidden') setState('denied')
+          else if (reason !== 'unauthenticated') setState('ended')
+          else {
+            setState('connecting')
+            void watchTransport().sessionStillValid().then((ok) => {
+              if (closed) return
+              if (!ok || failures.current >= 8) return setState('ended')
+              // Back off like any refused stream: a session the server no longer accepts must not loop.
+              retry = setTimeout(() => !closed && setAttempt((n) => n + 1), Math.min(30_000, 1_000 * 2 ** failures.current++))
+            })
+          }
+        }
+      },
+    }, ['tail', 'record', 'end'])
     return () => {
       closed = true
       clearTimeout(retry)
-      es.close()
+      handle.close()
       // Records not applied yet are dropped; the next stream resumes after the last one applied.
       fed.stop()
       catchUp(0)
@@ -370,7 +379,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
         <StatusBadges sum={sum} live={state} typing={!!onInput} loading={loading || (!term && !error)} />
         {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} />}
       </Group>
-      {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
+      {state === 'denied' && <Text c="owlRed" size="sm">The terminal is not available (the space has not enabled it, or your access ended).</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
       <Box pos="relative" style={{ minWidth: 0 }}>
         <Box ref={box} className="sm-terminal" data-earlier={earlier} data-reloading={reloading} style={{ overflow: 'auto', maxHeight: '70vh', overscrollBehavior: 'contain' }}>
@@ -647,7 +656,20 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
  * A run's terminal. Each run gets a terminal of its own (keyed by the run): what one run's terminal drew and how far
  * its stream had read never carry over to another run's, whoever renders this.
  */
-export function TerminalView({ spaceId, runId, mode, onInput, resize }: Props) {
+/**
+ * In the Mini App the terminal is the optional watch-only one (TG-10-3, off by default; the page only renders it when the
+ * space opted in): the live stream only, read over the Mini App host, never a replay, and no input or resize, whatever
+ * the caller passes. The server refuses the stream again unless the space opted in and the link may watch terminals.
+ */
+export function TerminalView(props: Props) {
+  if (isMiniApp()) {
+    if (props.mode !== 'live') return <Text size="sm" c="dimmed">Replays are not available in the Telegram app.</Text>
+    return <LiveTerminal key={`${props.spaceId}/${props.runId}`} spaceId={props.spaceId} runId={props.runId} />
+  }
+  return <BrowserTerminalView {...props} />
+}
+
+function BrowserTerminalView({ spaceId, runId, mode, onInput, resize }: Props) {
   const key = `${spaceId}/${runId}`
   return mode === 'live' ? <LiveTerminal key={key} spaceId={spaceId} runId={runId} onInput={onInput} resize={resize} /> : <ReplayTerminal key={key} spaceId={spaceId} runId={runId} />
 }

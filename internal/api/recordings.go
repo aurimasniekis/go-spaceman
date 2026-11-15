@@ -12,6 +12,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
@@ -130,10 +131,10 @@ func RecordingStreams(f *fleet.Service) []RawRoute {
 	return []RawRoute{
 		{Pattern: "GET " + Prefix + "/spaces/{space_id}/runs/{run_id}/terminal", Perm: authz.TerminalWatch, Handler: func(d *Deps) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) { d.terminalStream(w, r, f) }
-		}},
+		}, Telegram: TelegramMiniApp, TelegramFeature: TelegramFeatureTerminalWatch},
 		{Pattern: "GET " + Prefix + "/spaces/{space_id}/runs/{run_id}/recording/download", Perm: authz.RecordingRead, Handler: func(d *Deps) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) { d.recordingDownload(w, r, f) }
-		}},
+		}, Telegram: TelegramExcluded},
 	}
 }
 
@@ -173,6 +174,11 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 	}
 	// Guard from the start, so a revocation committed during catch-up is not missed.
 	guard := d.guardStream(r, PrincipalFrom(ctx), func(p *auth.Principal) bool {
+		// A Telegram link also needs the space's terminal_watch setting, so turning it off ends a live stream at the
+		// next re-check (the opening request checks it too, in authorizeRaw).
+		if p.ViaTelegram() && !d.telegramFeature(ctx, spaceID, TelegramFeatureTerminalWatch) {
+			return false
+		}
 		return d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), spaceID, authz.TerminalWatch)
 	})
 	defer guard.close()
@@ -239,7 +245,7 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 		fl.Flush()
 		return
 	}
-	heartbeat := time.NewTicker(15 * time.Second)
+	heartbeat := time.NewTicker(d.streamHeartbeat())
 	defer heartbeat.Stop()
 	for {
 		select {
@@ -326,9 +332,14 @@ type RawRoute struct {
 	Pattern string
 	Perm    authz.Permission
 	Handler func(d *Deps) http.HandlerFunc
+	// Telegram is the route's Telegram class (ADR-0083 §3.3); unclassified refuses Telegram.
+	Telegram TelegramClass
+	// TelegramFeature is the per-space Telegram setting a Telegram principal additionally needs ("" none).
+	TelegramFeature string
 }
 
-// authorizeRaw applies a space-scoped permission to a raw route.
+// authorizeRaw applies a space-scoped permission to a raw route, and its Telegram class and feature to a Telegram
+// principal.
 func (d *Deps) authorizeRaw(rt RawRoute) http.Handler {
 	h := rt.Handler(d)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -341,9 +352,19 @@ func (d *Deps) authorizeRaw(rt RawRoute) http.Handler {
 			writeProblem(w, errLimited())
 			return
 		}
+		ch := telegramChannelFrom(r.Context())
+		if prob := telegramGate(ch, p, rt.Telegram); prob != nil {
+			writeProblem(w, prob)
+			return
+		}
 		space := r.PathValue("space_id")
 		if !authz.ValidDomain(space) || space == authz.Global || d.Authz == nil || !d.Authz.AllowedAll(p.Subjects(), space, rt.Perm) {
 			writeProblem(w, newProblem(http.StatusNotFound, "not_found", "run not found", nil))
+			return
+		}
+		if p.ViaTelegram() && rt.TelegramFeature != "" && !d.telegramFeature(r.Context(), space, rt.TelegramFeature) {
+			// Checked after the permission, so it never tells a caller without access what a space has turned on.
+			writeProblem(w, newProblem(http.StatusForbidden, apperr.CodeForbidden, "this space does not allow this from Telegram", nil))
 			return
 		}
 		h(w, r)
