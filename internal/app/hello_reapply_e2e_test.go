@@ -81,24 +81,38 @@ func TestHelloReapplyOfUnchangedRunsWritesNothing(t *testing.T) {
 	}
 	connect := func(runs []proto.RunReport) time.Duration {
 		t.Helper()
-		start := time.Now()
 		n := dialRawNodeHello(t, e, proto.Hello{AgentVersion: "test", MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor, Runs: runs, Leases: []proto.LeaseState{}})
-		n.next(t, proto.TypeWelcome)
-		// The reconcile is sent once every hello report is applied.
-		deadline := time.After(2 * time.Minute)
+		// The welcome follows the connect transaction, which queues behind the previous hello's run-ended hook writes.
+		n.nextWithin(t, proto.TypeWelcome, 2*time.Minute)
+		// The budget times applying the hello, not the welcome queue, so the clock starts once the welcome arrives.
+		start := time.Now()
+		// The reconcile is sent once every hello report is applied. Applying a hello that ends live runs queues a write
+		// transaction per run plus the asynchronous run-ended hooks (recordings, gateway, KB, repos, control notices),
+		// all through the one serialised writer, so under -race and a loaded machine it takes minutes. The wait is
+		// therefore for progress, not for wall time: it gives up only after the change feed has stopped growing for
+		// the whole stall window. A hello that changes nothing writes nothing, so there the window is a plain timeout.
+		const stall = 2 * time.Minute
+		deadline := time.Now().Add(stall)
+		lastChanges, _ := counts()
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+	wait:
 		for {
 			select {
 			case env, ok := <-n.ch:
 				if !ok {
 					t.Fatal("connection closed before the reconcile")
 				}
-				if env.Type != proto.TypeReconcile {
-					continue
+				if env.Type == proto.TypeReconcile {
+					break wait
 				}
-			case <-deadline:
-				t.Fatal("no reconcile")
+			case <-tick.C:
+				if c, _ := counts(); c != lastChanges {
+					lastChanges, deadline = c, time.Now().Add(stall)
+				} else if time.Now().After(deadline) {
+					t.Fatalf("no reconcile and no progress for %v", stall)
+				}
 			}
-			break
 		}
 		took := time.Since(start)
 		_ = n.conn.CloseNow()

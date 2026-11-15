@@ -52,6 +52,10 @@ Configures the web/API listener and the separate management listener (SM-OBS-002
 | `http.read_header_timeout` | `10s` | `SPACEMAN_HTTP_READ_HEADER_TIMEOUT` | Bounds how long a client may take to send request headers. |
 | `http.write_idle_timeout` | `1m0s` | `SPACEMAN_HTTP_WRITE_IDLE_TIMEOUT` | Bounds how long one piece (32 KiB) of a response may wait for the client to read it (1s to 10m). It bounds progress, not the whole response: a slow download that keeps moving is never cut off, but a client that stops reading is disconnected instead of holding the response in central's memory. WebSocket connections (nodes, terminals) keep their own timeouts. |
 | `http.stream_heartbeat` | `15s` | `SPACEMAN_HTTP_STREAM_HEARTBEAT` | How often an otherwise idle live stream (the change feed, a run's recording) sends a heartbeat event. A proxy in front of central (Cloudflare drops an idle proxied connection after about 100 s) must see traffic well inside its idle limit. 1 s to 45 s, default 15 s. |
+| `http.catch_up_concurrency` | `8` | `SPACEMAN_HTTP_CATCH_UP_CONCURRENCY` | Bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused with 503 and Retry-After (ADR-0081). |
+| `http.catch_up_wait` | `5s` | `SPACEMAN_HTTP_CATCH_UP_WAIT` | Bounds how long a terminal catch-up or recording read waits for one of catch_up_concurrency's slots (0 to 1m; 0 refuses at once). |
+| `http.read_idle_timeout` | `30s` | `SPACEMAN_HTTP_READ_IDLE_TIMEOUT` | Bounds how long one read of a request body may wait for the client to send data (1s to 10m). It bounds progress, not the whole request: the whole body must also arrive within its operation's bound (5 s for JSON operations, 10 minutes for an attachment upload); within that bound a large upload that keeps moving is never cut off, but a client that declares a body and sends nothing (or stops half-way) is disconnected instead of holding a connection. A request refused before its body is read closes its connection instead of draining the body. Requests without a body (event streams) and WebSocket connections are unaffected. |
+| `http.idle_timeout` | `2m0s` | `SPACEMAN_HTTP_IDLE_TIMEOUT` | Bounds how long a kept-alive connection may wait for its next request (1s to 1h). |
 
 ### `log`
 
@@ -182,6 +186,10 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.control_idle_stop_minutes` | `30` | `SPACEMAN_LIMITS_CONTROL_IDLE_STOP_MINUTES` | Stops a control run that has been idle this long (finished its turn, nothing waiting for it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at most 10080). |
 | `limits.terminal_cols` | `0` | `SPACEMAN_LIMITS_TERMINAL_COLS` | The width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_rows is set too. |
 | `limits.terminal_rows` | `0` | `SPACEMAN_LIMITS_TERMINAL_ROWS` | The height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_cols is set too. |
+| `limits.usage_limit_failover` | `0` | `SPACEMAN_LIMITS_USAGE_LIMIT_FAILOVER` | Lets a launch or resume whose account is held at a usage limit use another account bound to the space for the same harness that is not held (1: on; 0: off, the default). A space routed through an LLM gateway never falls back to a direct account (ADR-0079 decision 8). |
+| `limits.usage_limit_keep_alive_max_minutes` | `360` | `SPACEMAN_LIMITS_USAGE_LIMIT_KEEP_ALIVE_MAX_MINUTES` | How long a run at a usage limit waits for the reset with its process kept alive, and the longest gap between checks of a hold whose reset time is unknown (1-1440, default 360; ADR-0079). |
+| `limits.usage_limit_max_wait_hours` | `168` | `SPACEMAN_LIMITS_USAGE_LIMIT_MAX_WAIT_HOURS` | How long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned (1-720, default 168: 7 days; control is never given up on; ADR-0079 Q2). |
+| `limits.usage_limit_notify_after_hours` | `12` | `SPACEMAN_LIMITS_USAGE_LIMIT_NOTIFY_AFTER_HOURS` | How far away a usage-limit hold's reset must be for the space's people to get one human action about it, once per account window (0-720, default 12: weekly limits, not 5-hour ones; 0: never; ADR-0079 Q5). |
 
 ### `retention`
 
@@ -215,6 +223,7 @@ Holds the Telegram settings that belong to the deployment rather than the API (A
 | `data_dir` | `/var/lib/spaceman-agent` | `SPACEMAN_AGENT_DATA_DIR` | Holds the node journal, the agent's herdr-core home, space folders and memory (absolute). |
 | `management_listen` | (empty) | `SPACEMAN_AGENT_MANAGEMENT_LISTEN` | Validated (host:port) but not served by this build: the node agent has no management listener yet (docs/LIMITATIONS.md). |
 | `capacity` | `4` | `SPACEMAN_AGENT_CAPACITY` | The maximum number of concurrent runs this node accepts (SM-LIMIT-001; 1-256). |
+| `journal_retention` | `720h0m0s` | `SPACEMAN_AGENT_JOURNAL_RETENTION` | How long the journal keeps an ended run after its final state: older ended runs are deleted once central acknowledged their final state, their recording is fully shipped and their transcript upload is finished (30 days to 1 year; default 30 days, the harness pin window of ADR-0077). |
 
 ### `central`
 

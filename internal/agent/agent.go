@@ -62,6 +62,9 @@ type Options struct {
 	RecordingCreate func(path string) (recording.File, error)
 	// Claude configures node-managed Claude Code (ADR-0077); the zero value keeps runs on HarnessBinaries.
 	Claude ClaudeOptions
+	// JournalRetention is how long the journal keeps an ended run (prune.go); 0 and anything below the Claude Code pin window
+	// (30 days) mean that window.
+	JournalRetention time.Duration
 	// DefaultCols and DefaultRows are the size the runner starts programs at (runner.terminal_size); a takeover open
 	// when a run's held size is cleared is resized back to it (ADR-0075). 0: left as it is.
 	DefaultCols, DefaultRows int
@@ -81,8 +84,11 @@ type Agent struct {
 	connected bool
 	leases    map[string]leaseRow
 	heartbeat time.Duration
-	// recorders are the live recordings by run ID.
-	recorders map[string]*recorder
+	// recorders are the live recordings by run ID. recordersStopped is set at shutdown (stopRecorders): no recorder
+	// starts after it, so a launch still finishing during drain leaves none running past Run.
+	recorders        map[string]*recorder
+	recordersStopped bool
+	recWG            sync.WaitGroup // every recorder goroutine, so stopRecorders can wait for the flushes it asked for
 	// lostAt is when central was last lost (zero while connected).
 	lostAt time.Time
 	wake   chan struct{}
@@ -113,7 +119,10 @@ type Agent struct {
 	catchUpConn  *websocket.Conn
 	catchUpCtx   context.Context
 	caughtUp     map[string]bool
-	connCtx      context.Context
+	// finalSent and finalAcked are, per ended run, the journal update time of the final state this process sent to central
+	// and the one central acknowledged (prune.go); memory only.
+	finalSent, finalAcked map[string]int64
+	connCtx               context.Context
 	// minor is the negotiated protocol minor version of the current connection.
 	minor int
 	// toolCalls are the agent tool calls waiting for central's result, by call ID.
@@ -147,6 +156,13 @@ type Agent struct {
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time
+	// limitMu serializes transcript limit scans, limitSend a limit's journal write and report with every other run
+	// report; limitTimers are the pending (debounced) scans and limitFiles the
+	// transcript each run was last scanned in (a replaced file is scanned from the start), by run ID.
+	limitMu     sync.Mutex
+	limitSend   sync.Mutex
+	limitTimers map[string]*time.Timer
+	limitFiles  map[string]os.FileInfo
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
@@ -228,12 +244,7 @@ func RunName(runID string) string     { return "r-" + strings.TrimPrefix(runID, 
 // agent adopts its programs instead of starting duplicates (SM-NODE-009).
 func (a *Agent) Run(ctx context.Context) error {
 	a.mem.base = context.WithoutCancel(ctx)
-	defer a.drain(30 * time.Second)
-	// Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
-	// recorder attached when the next one adopts the run.
-	defer a.stopRecorders()
-	defer a.stopTakeovers()
-	defer a.stopHolds()
+	defer a.shutdown(30 * time.Second)
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err
@@ -279,12 +290,33 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
-// stopRecorders ends every live recording (each flushes and closes its writer).
+// shutdown is Run's stop sequence: holds, takeovers and recordings end first, then background work drains (bounded
+// by limit). Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
+// recorder attached when the next one adopts the run, so none starts once they stopped, not even from a launch that
+// finishes during the drain.
+func (a *Agent) shutdown(limit time.Duration) {
+	a.stopHolds()
+	a.stopTakeovers()
+	a.stopRecorders()
+	a.drain(limit)
+}
+
+// stopRecorders ends every live recording (each flushes and closes its writer) and refuses new ones. It waits, bounded,
+// for the flushes: a recorder writing its last records into the data directory after this returns raced the removal
+// of that directory (a TempDir cleanup failed with "directory not empty").
 func (a *Agent) stopRecorders() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.recordersStopped = true
 	for _, r := range a.recorders {
 		r.cancel()
+	}
+	a.mu.Unlock()
+	done := make(chan struct{})
+	go func() { a.recWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		a.log.Warn("recorders still flushing at shutdown")
 	}
 }
 
@@ -367,7 +399,7 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 	conn.SetReadLimit(proto.MaxMessage)
 	defer func() { _ = conn.CloseNow() }()
-	runs, err := a.j.runs(ctx, false)
+	runs, follow, err := a.helloRuns(ctx)
 	if err != nil {
 		return err
 	}
@@ -378,7 +410,8 @@ func (a *Agent) session(ctx context.Context) error {
 	helloCaps := a.capsGen
 	a.mu.Unlock()
 	for _, r := range runs {
-		hello.Runs = append(hello.Runs, r.report())
+		// Central drops the limit when the session settles below MinorUsageLimit (RunReport.ForMinor).
+		hello.Runs = append(hello.Runs, r.report(a.now()))
 	}
 	a.mu.Lock()
 	a.conn = conn
@@ -386,6 +419,7 @@ func (a *Agent) session(ctx context.Context) error {
 	if err := a.send(ctx, proto.TypeHello, hello); err != nil {
 		return err
 	}
+	a.noteSent(runs)
 	defer func() {
 		a.mu.Lock()
 		a.conn, a.connected, a.lostAt = nil, false, a.now()
@@ -431,6 +465,9 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.capsAfterHello(hbCtx, helloCaps)
+			if len(follow) > 0 {
+				go a.sendFollowUp(hbCtx, conn, follow)
+			}
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant
@@ -456,6 +493,7 @@ func (a *Agent) session(ctx context.Context) error {
 				return err
 			}
 			a.reconcileDesired(ctx, rec)
+			a.finalAck(ctx, rec)
 		case proto.TypeRecordingAck:
 			var ack proto.RecordingAck
 			if err := env.Decode(&ack); err == nil {
@@ -577,8 +615,23 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 
 // report sends a run's journaled state when connected (state-based: the next hello re-sends everything, so a report
 // lost to a disconnect is not lost information).
+// report sends a run's report. Its usage limit is read from the journal under limitSend, so a report built from an
+// older row never undoes a limit change the scan has sent.
 func (a *Agent) report(ctx context.Context, r runRow) {
-	if err := a.send(ctx, proto.TypeRunReport, r.report()); err != nil {
+	a.limitSend.Lock()
+	defer a.limitSend.Unlock()
+	if cur, err := a.j.getRun(ctx, r.RunID); err == nil {
+		r.Limit = cur.Limit
+	}
+	a.sendReport(ctx, r)
+}
+
+// sendReport sends a run's report as it is (limitSend held).
+func (a *Agent) sendReport(ctx context.Context, r runRow) {
+	a.mu.Lock()
+	minor := a.minor
+	a.mu.Unlock()
+	if err := a.send(ctx, proto.TypeRunReport, r.report(a.now()).ForMinor(minor)); err != nil {
 		a.log.Debug("run report deferred until reconnect", slog.String(obs.FieldRunID, r.RunID))
 	}
 }

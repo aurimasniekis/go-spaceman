@@ -1,13 +1,16 @@
 import { Accordion, ActionIcon, Alert, Badge, Box, Button, CopyButton, Group, Menu, ScrollArea, SegmentedControl, Stack, Text, Title, Tooltip } from '@mantine/core'
 import {
-  IconCheck, IconChevronDown, IconCopy, IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconPlayerStop, IconSend,
+  IconCheck, IconChevronDown, IconCopy, IconInbox, IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand,
+  IconPlayerStop, IconSend,
 } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useRouter } from '@tanstack/react-router'
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, check, unwrap, type Run } from '@/api/client'
 import { keys, useHumanActions, useMe, useNodes, useQueue, useSpaceAccounts } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { useAppForm } from '@/components/form/appForm'
+import { useCanCreateInboxItem, useNewInboxItem } from '@/features/inbox/useNewInboxItem'
 import { holderRef, TakeoverPanel, useTakeoverInput } from '@/features/terminal/Takeover'
 import { resizeBlocker } from '@/features/terminal/TerminalSize'
 import { TerminalView } from '@/features/terminal/TerminalView'
@@ -15,7 +18,8 @@ import { atLeast, roleIn } from '@/lib/access'
 import { useNarrow } from '@/lib/media'
 import { datetime, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
-import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText } from './runInfo'
+import { RunLimitBadge } from '@/features/limits/LimitTime'
+import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText, agentMessageBody } from './runInfo'
 import { type Dependency, dependencyText, runHarnessVersion } from './harnessVersion'
 
 /** A clock that ticks every second, for live durations. */
@@ -83,14 +87,27 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
     defaultValues: { text: '' },
     onSubmit: async ({ value }) => {
       try {
-        check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: r.id } }, body: { text: value.text } }))
+        check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: r.id } }, body: agentMessageBody(value.text) }))
         inputForm.reset()
-        notifyOk('Delivered when the agent is idle')
+        notifyOk('Queued for the agent')
       } catch (e) {
         notifyError(e, 'Could not send input')
       }
     },
   })
+  // "New inbox item" and "Send as inbox item" (operator request, 2026-11-13): the Inbox page's permission, no takeover.
+  const canAddItem = useCanCreateInboxItem(spaceId)
+  const newItem = useNewInboxItem(spaceId)
+  const router = useRouter()
+  const sendAsItem = () => {
+    const text = inputForm.state.values.text.trim()
+    if (!text) return
+    // The dialog opens prefilled (nothing is added by accident; a title, urgency or files can still be added), and the
+    // message box clears only once the item is added. Nothing goes to the terminal.
+    const href = router.buildLocation({ to: '/spaces/$spaceId/runs/$runId', params: { spaceId, runId: r.id } }).href
+    const url = new URL(href, window.location.origin).href
+    newItem.open({ body: `${text}\n\nFrom the terminal of [${r.role}](${url}) (run \`${r.id}\`).` }, { onCreated: () => inputForm.reset() })
+  }
   const duration = runDuration(r, now)
 
   return (
@@ -105,12 +122,22 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
           {!narrow && <Text size="sm" c="dimmed" truncate style={{ minWidth: 0, flexShrink: 1 }}>{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text>}
           {r.turn > 0 && <Badge variant="light" color="gray" data-testid="run-header-turn" style={{ flexShrink: 0, overflow: 'visible' }}>#{r.turn}</Badge>}
           <Text size="sm" data-testid="run-header-state" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{runStateText(r, now)}</Text>
+          {!narrow && <RunLimitBadge run={r} now={now} />}
           {r.adopted && <Tooltip label="Adopted from the node after a restart"><Badge color="gray" variant="outline" style={{ flexShrink: 0 }}>adopted</Badge></Tooltip>}
         </Group>
         <Group gap="xs" wrap="nowrap" data-testid="run-header-actions" style={narrow ? { flexBasis: '100%' } : { flexShrink: 0, marginLeft: 'auto' }}>
           <SegmentedControl value={mode} onChange={(v) => onMode(v as 'live' | 'replay')} aria-label="Terminal view"
             data={[{ value: 'live', label: 'Live', disabled: ended }, { value: 'replay', label: 'Replay' }]} />
           <TakeoverPanel spaceId={spaceId} runId={r.id} run={r} me={me} canTakeOver={canTakeOver} ended={ended} part="button" compact={narrow} />
+          {canAddItem && (narrow ? (
+            <Tooltip label="New inbox item">
+              <ActionIcon variant="default" aria-label="New inbox item" onClick={() => newItem.open()}><IconInbox size={16} /></ActionIcon>
+            </Tooltip>
+          ) : (
+            <Tooltip label="Add an item to this space's inbox for control to triage">
+              <Button size="xs" variant="default" leftSection={<IconInbox size={14} />} onClick={() => newItem.open()}>New inbox item</Button>
+            </Tooltip>
+          ))}
           {operator && !ended && (
             <Menu position="bottom-end">
               <Menu.Target>
@@ -134,6 +161,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
         </Group>
       </Group>
 
+      {narrow && <Group gap="xs"><RunLimitBadge run={r} now={now} /></Group>}
       <TakeoverPanel spaceId={spaceId} runId={r.id} run={r} me={me} canTakeOver={canTakeOver} ended={ended} part="banner" />
       {r.error && <Alert color="owlRed" title="Run error" p="xs">{r.error}</Alert>}
 
@@ -154,10 +182,25 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
             <form onSubmit={(e) => { e.preventDefault(); if (inputForm.state.values.text.trim()) void inputForm.handleSubmit() }}>
               <Group gap="xs" wrap="nowrap">
                 <inputForm.AppField name="text">
-                  {(f) => <f.TextField flex={1} placeholder={`Message ${r.role} (delivered at its next idle point)`} aria-label="Message the agent" />}
+                  {(f) => <f.TextField flex={1} placeholder={`Message ${r.role} (typed into its session at once; the agent acts on it when it can)`} aria-label="Message the agent" />}
                 </inputForm.AppField>
                 <inputForm.Subscribe selector={(st) => st.values.text.trim() !== ''}>
-                  {(has) => <Button type="submit" leftSection={<IconSend size={14} />} disabled={!has}>Send</Button>}
+                  {(has) => (
+                    <>
+                      {canAddItem && (
+                        <Tooltip label="Add this text to the space's inbox instead of sending it to the agent">
+                          {narrow ? (
+                            <ActionIcon type="button" size="input-sm" variant="default" aria-label="Send as inbox item" disabled={!has} onClick={sendAsItem}>
+                              <IconInbox size={16} />
+                            </ActionIcon>
+                          ) : (
+                            <Button type="button" variant="default" leftSection={<IconInbox size={14} />} disabled={!has} onClick={sendAsItem}>Send as inbox item</Button>
+                          )}
+                        </Tooltip>
+                      )}
+                      <Button type="submit" leftSection={<IconSend size={14} />} disabled={!has}>Send</Button>
+                    </>
+                  )}
                 </inputForm.Subscribe>
               </Group>
             </form>
@@ -165,6 +208,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
         </Stack>
         {inspector && <Inspector spaceId={spaceId} run={r} now={now} />}
       </Box>
+      {canAddItem && newItem.modal}
     </Stack>
   )
 }

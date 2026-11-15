@@ -675,7 +675,7 @@ func (svc *Service) Accept(ctx context.Context, actor audit.Actor, spaceID, id s
 			status = queue.Ready
 		}
 		t, _, err := svc.queue.Create(ctx, actor, spaceID, queue.CreateInput{Title: title, Objective: task.Objective, Acceptance: task.Acceptance,
-			Priority: task.Priority, Status: status, OriginKind: originKind, OriginID: r.ID, DedupKey: "xspace:" + r.ID})
+			Priority: task.Priority, Status: status, OriginKind: originKind, OriginID: r.ID, DedupKey: "xspace:" + r.ID, Internal: true})
 		if err != nil {
 			return nil, err
 		}

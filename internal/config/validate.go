@@ -60,6 +60,12 @@ func (c *Config) Validate() error {
 	v.positive64("http.max_upload_bytes", c.HTTP.MaxUploadBytes)
 	v.durationRange("http.write_idle_timeout", c.HTTP.WriteIdleTimeout, time.Second, 10*time.Minute)
 	v.durationRange("http.stream_heartbeat", c.HTTP.StreamHeartbeat, time.Second, 45*time.Second)
+	if c.HTTP.CatchUpConcurrency < 1 || c.HTTP.CatchUpConcurrency > 256 {
+		v.add("http.catch_up_concurrency must be within 1..256, got %d", c.HTTP.CatchUpConcurrency)
+	}
+	v.durationRange("http.catch_up_wait", c.HTTP.CatchUpWait, 0, time.Minute)
+	v.durationRange("http.read_idle_timeout", c.HTTP.ReadIdleTimeout, time.Second, 10*time.Minute)
+	v.durationRange("http.idle_timeout", c.HTTP.IdleTimeout, time.Second, time.Hour)
 	v.logConfig(c.Log)
 
 	v.durationRange("auth.session_idle", c.Auth.SessionIdle, time.Minute, 24*time.Hour)
@@ -241,6 +247,14 @@ var LimitRanges = map[string][2]int64{
 	// (TerminalLimitFloor).
 	"terminal_cols": {0, proto.TerminalMaxCols},
 	"terminal_rows": {0, proto.TerminalMaxRows},
+	// Usage limits (ADR-0079): a switch, and minutes a limited run is kept alive (at most a day: Claude Code's own
+	// auto-continue never arms for longer waits).
+	"usage_limit_failover":               {0, 1},
+	"usage_limit_keep_alive_max_minutes": {1, 1440},
+	// Hours a parked worker waits before its task is released (at most 30 days).
+	"usage_limit_max_wait_hours": {1, 720},
+	// Hours a hold's reset must be away for the space's people to be told (0: never).
+	"usage_limit_notify_after_hours": {0, 720},
 }
 
 // TerminalLimitFloor is the smallest value other than 0 that the terminal_cols and terminal_rows limits accept.
@@ -259,7 +273,9 @@ func (c *Config) LimitValues() map[string]int64 {
 		"retention_attachments_days": l.RetentionAttachmentsDays, "retention_human_actions_days": l.RetentionHumanActionsDays,
 		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
 		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes,
-		"terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows}
+		"terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows,
+		"usage_limit_failover": l.UsageLimitFailover, "usage_limit_keep_alive_max_minutes": l.UsageLimitKeepAliveMaxMinutes,
+		"usage_limit_max_wait_hours": l.UsageLimitMaxWaitHours, "usage_limit_notify_after_hours": l.UsageLimitNotifyAfterHours}
 }
 
 func (v *validator) limits(c *Config) {
@@ -317,6 +333,7 @@ func (c *AgentConfig) Validate() error {
 	if c.ManagementListen != "" {
 		v.listen("management_listen", c.ManagementListen)
 	}
+	v.durationRange("journal_retention", c.JournalRetention, 30*24*time.Hour, 365*24*time.Hour)
 	if c.Capacity < 1 || c.Capacity > 256 {
 		v.add("capacity must be within 1..256")
 	}

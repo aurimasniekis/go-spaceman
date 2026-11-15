@@ -1827,6 +1827,12 @@
             "format": "date-time",
             "type": "string"
           },
+          "resumed_spaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "run_credentials_revoked": {
             "format": "int64",
             "type": "integer"
@@ -1846,6 +1852,7 @@
           "restored_at",
           "applied_at",
           "paused_spaces",
+          "resumed_spaces",
           "leases_renewed",
           "runs_unknown",
           "commands_cancelled",
@@ -2735,6 +2742,34 @@
           "current",
           "new"
         ],
+        "type": "object"
+      },
+      "Clear-account-usage-limitsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Clear-account-usage-limitsRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "kind": {
+            "description": "Only holds of this kind; every kind when absent",
+            "enum": [
+              "five_hour",
+              "seven_day",
+              "seven_day_opus",
+              "seven_day_sonnet",
+              "seven_day_overage_included",
+              "overage",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "CodeInBody": {
@@ -4699,6 +4734,120 @@
         ],
         "type": "object"
       },
+      "FleetLimitWait": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetLimitWait.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "attempts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "harness": {
+            "enum": [
+              "claude-code",
+              "codex"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "instance_id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "new_run_id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "release_at": {
+            "description": "When a worker's task is given back to the queue; absent for control",
+            "format": "date-time",
+            "type": "string"
+          },
+          "resume_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "run_kind": {
+            "enum": [
+              "control",
+              "worker",
+              "kb",
+              "dreamer",
+              "diagnostic"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "waiting",
+              "resuming",
+              "resumed",
+              "released",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "usage_limit_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "run_id",
+          "run_kind",
+          "role",
+          "node_id",
+          "instance_id",
+          "harness",
+          "resume_at",
+          "state",
+          "attempts",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "FleetLossReport": {
         "additionalProperties": false,
         "properties": {
@@ -5184,6 +5333,7 @@
             "type": "string"
           },
           "end_reason": {
+            "description": "Why the run ended: the node's reason (exited, stopped, killed, lease_expired, …), usage_limit when it ended while at a usage limit, or central's stale_not_on_node, stale_lease_lost or relocated_source_unavailable",
             "type": "string"
           },
           "ended_at": {
@@ -5239,6 +5389,10 @@
           },
           "launch": {
             "$ref": "#/components/schemas/FleetLaunchSpec"
+          },
+          "limit": {
+            "$ref": "#/components/schemas/FleetRunLimit",
+            "description": "The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset"
           },
           "manifest": {
             "description": "Omitted from run lists unless include=manifest"
@@ -5329,6 +5483,40 @@
           "version",
           "created_at",
           "created_by"
+        ],
+        "type": "object"
+      },
+      "FleetRunLimit": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "five_hour",
+              "seven_day",
+              "seven_day_opus",
+              "seven_day_sonnet",
+              "seven_day_overage_included",
+              "overage",
+              "gateway_quota",
+              "gateway_budget",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "resets_at": {
+            "description": "When the limit resets; absent when unknown (Claude Code's wrap-up path and gateway limits carry none)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "since": {
+            "description": "When the node first saw the limit",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "since"
         ],
         "type": "object"
       },
@@ -5677,6 +5865,129 @@
           "goals",
           "standing_instructions",
           "disconnect_policy"
+        ],
+        "type": "object"
+      },
+      "FleetUsageLimit": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "check_at": {
+            "description": "When a hold with an unknown reset is next probed",
+            "format": "date-time",
+            "type": "string"
+          },
+          "cleared_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cleared_by": {
+            "description": "run:\u003cid\u003e (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it",
+            "type": "string"
+          },
+          "first_run_id": {
+            "type": "string"
+          },
+          "gateway_ref": {
+            "description": "harbor-pilot (a quota exhaustion: the whole connection) or harbor-pilot:project:\u003cid\u003e (a project's budget)",
+            "type": "string"
+          },
+          "id": {
+            "description": "Absent on a shared hold",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "five_hour",
+              "seven_day",
+              "seven_day_opus",
+              "seven_day_sonnet",
+              "seven_day_overage_included",
+              "overage",
+              "gateway_quota",
+              "gateway_budget",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "resets_at": {
+            "description": "Absent when unknown",
+            "format": "date-time",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "account",
+              "gateway"
+            ],
+            "type": "string"
+          },
+          "seen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "shared": {
+            "description": "Opened by another space's run on an account or gateway this space uses; it holds this space too",
+            "type": "boolean"
+          },
+          "source": {
+            "enum": [
+              "transcript",
+              "quota_board",
+              "budget_status",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "description": "The space whose run opened it; absent on a shared hold",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope",
+          "kind",
+          "source",
+          "seen_at"
+        ],
+        "type": "object"
+      },
+      "FleetUsageLimitClear": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetUsageLimitClear.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "cleared": {
+            "description": "The holds this request cleared",
+            "items": {
+              "$ref": "#/components/schemas/FleetUsageLimit"
+            },
+            "type": "array"
+          },
+          "held_elsewhere": {
+            "description": "Other spaces still hold the account or gateway reference, so launches here may still be refused",
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cleared",
+          "held_elsewhere"
         ],
         "type": "object"
       },
@@ -9355,6 +9666,7 @@
               "bytes",
               "per_minute",
               "minutes",
+              "hours",
               "days",
               "tokens",
               "usd_cents",
@@ -9552,6 +9864,7 @@
               "bytes",
               "per_minute",
               "minutes",
+              "hours",
               "days",
               "tokens",
               "usd_cents",
@@ -9859,6 +10172,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/AccountsKind"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-account-usage-limitsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-account-usage-limitsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetUsageLimit"
             },
             "type": "array"
           }
@@ -10521,6 +10858,30 @@
         ],
         "type": "object"
       },
+      "List-space-limit-waitsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-space-limit-waitsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetLimitWait"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-space-mcp-grantsResponse": {
         "additionalProperties": false,
         "properties": {
@@ -10560,6 +10921,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/CatalogSpaceRole"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-space-usage-limitsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-space-usage-limitsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetUsageLimit"
             },
             "type": "array"
           }
@@ -13922,6 +14307,23 @@
         ],
         "type": "object"
       },
+      "RecordingMode": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "on"
+        ],
+        "type": "object"
+      },
       "RecordingPage": {
         "additionalProperties": false,
         "properties": {
@@ -13935,7 +14337,7 @@
             "type": "string"
           },
           "gaps": {
-            "description": "Sequence discontinuities and explicit gap records",
+            "description": "Sequence discontinuities and explicit gap records up to the end of this page (the read stops after it)",
             "format": "int64",
             "type": "integer"
           },
@@ -13954,8 +14356,12 @@
             },
             "type": "array"
           },
+          "tail": {
+            "$ref": "#/components/schemas/RecordingTail",
+            "description": "Set when the page is a tail (tail=): what comes before its records"
+          },
           "truncated": {
-            "description": "A segment ended in an incomplete frame (interrupted writer)",
+            "description": "A segment read for this page ended in an incomplete frame (interrupted writer)",
             "type": "boolean"
           }
         },
@@ -14014,6 +14420,58 @@
           "seq",
           "t",
           "k"
+        ],
+        "type": "object"
+      },
+      "RecordingTail": {
+        "additionalProperties": false,
+        "properties": {
+          "cols": {
+            "description": "Terminal columns where the tail starts (0 when no size was recorded before it)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "from": {
+            "description": "Sequence number of the tail's first record (0 when the recording is empty)",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "gaps": {
+            "description": "Gap records before the tail",
+            "format": "int64",
+            "type": "integer"
+          },
+          "modes": {
+            "description": "DEC private modes the output before the tail set (on) or reset, in the order they last changed",
+            "items": {
+              "$ref": "#/components/schemas/RecordingMode"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "description": "Terminal rows where the tail starts",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skipped_bytes": {
+            "description": "Bytes of output before the tail; 0 when the tail is the whole recording",
+            "format": "int64",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "Whether a truncation record comes before the tail",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "from",
+          "skipped_bytes",
+          "cols",
+          "rows",
+          "modes",
+          "gaps",
+          "truncated"
         ],
         "type": "object"
       },
@@ -19214,6 +19672,101 @@
           }
         },
         "summary": "Edit or rotate an account",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/accounts/{account_id}/usage-limits": {
+      "get": {
+        "operationId": "list-account-usage-limits",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-account-usage-limitsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "An account's open usage-limit holds in every space",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/accounts/{account_id}/usage-limits/clear": {
+      "post": {
+        "description": "Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose hold was cleared has its control told once.",
+        "operationId": "clear-account-usage-limits",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Clear-account-usage-limitsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetUsageLimitClear"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Clear an account's usage-limit holds in every space now",
         "tags": [
           "accounts"
         ]
@@ -28322,6 +28875,152 @@
         ]
       }
     },
+    "/spaces/{space_id}/limit-waits": {
+      "get": {
+        "operationId": "list-space-limit-waits",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-space-limit-waitsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's runs parked at a usage limit, waiting to resume",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/limit-waits/{wait_id}/release": {
+      "post": {
+        "description": "Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and unassigned, and control is told. Audited.",
+        "operationId": "release-limit-wait",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "wait_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetLimitWait"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Give up on a run parked at a usage limit",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/limit-waits/{wait_id}/resume": {
+      "post": {
+        "description": "Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space or a node that isn't connected refuses it, and the wait keeps waiting. Audited.",
+        "operationId": "resume-limit-wait",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "wait_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetLimitWait"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resume a run parked at a usage limit now",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
     "/spaces/{space_id}/limits": {
       "get": {
         "description": "Budgets are usage-based: usage arrives late or not at all, so they warn and stop new runs but are never a hard currency limit.",
@@ -30781,6 +31480,19 @@
               "format": "int64",
               "maximum": 5000,
               "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after.",
+            "explode": false,
+            "in": "query",
+            "name": "tail",
+            "schema": {
+              "description": "Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after.",
+              "format": "int64",
+              "maximum": 16777216,
+              "minimum": 0,
               "type": "integer"
             }
           }
@@ -33355,6 +34067,101 @@
         "summary": "A space's usage",
         "tags": [
           "usage"
+        ]
+      }
+    },
+    "/spaces/{space_id}/usage-limits": {
+      "get": {
+        "description": "The holds the space's runs opened when they reached a usage limit (newest first, cleared ones included), then the open holds other spaces opened on the accounts this space binds or the gateway it routes through: those hold this space too, and are marked shared, without the other space's identifiers.",
+        "operationId": "list-space-usage-limits",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-space-usage-limitsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's usage-limit holds",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/usage-limits/{limit_id}/clear": {
+      "post": {
+        "description": "Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write (clear-account-usage-limits).",
+        "operationId": "clear-space-usage-limit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "limit_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetUsageLimitClear"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Clear one of the space's usage-limit holds now",
+        "tags": [
+          "runs"
         ]
       }
     },

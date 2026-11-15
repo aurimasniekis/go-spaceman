@@ -434,6 +434,33 @@ func (g *Gateway) IssueCredential(ctx context.Context, name string, scopes []str
 	return out.Credential.ID, out.Token, nil
 }
 
+// SetQuotaExhaustedBelow sets every quota monitor's exhausted_below, as the demo administrator: at 0.99 every account
+// with a demo monitor becomes unavailable for routing ("quota exhausted", with its bucket's reset as until), and at 0 they
+// are available again (contract: "Quota board and the all-exhausted 429"). The demo's local model account has no
+// monitor and stays available.
+func (g *Gateway) SetQuotaExhaustedBelow(ctx context.Context, v float64) error {
+	var l struct {
+		Items []struct {
+			ID   string         `json:"id"`
+			Name string         `json:"name"`
+			Spec map[string]any `json:"spec"`
+		} `json:"items"`
+	}
+	if err := g.admin.do(ctx, http.MethodGet, "/api/v1/quota-monitors", nil, &l, http.StatusOK); err != nil {
+		return err
+	}
+	if len(l.Items) == 0 {
+		return errors.New("quota monitors: none (not the demo seed?)")
+	}
+	for _, m := range l.Items {
+		m.Spec["exhausted_below"] = v
+		if err := g.admin.do(ctx, http.MethodPut, "/api/v1/quota-monitors/"+m.ID, map[string]any{"name": m.Name, "spec": m.Spec}, nil, http.StatusOK); err != nil {
+			return fmt.Errorf("quota monitor %s: %w", m.Name, err)
+		}
+	}
+	return nil
+}
+
 // RevokeParent revokes the provisioned parent credential as the demo administrator. Harbor Pilot revokes its children
 // with it (the cascade), and the parent can no longer mint.
 func (g *Gateway) RevokeParent(ctx context.Context) error {
