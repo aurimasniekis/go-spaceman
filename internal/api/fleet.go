@@ -263,7 +263,7 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				Limit   int      `query:"limit" minimum:"1" maximum:"500" default:"100"`
+				Limit   int      `query:"limit" minimum:"1" maximum:"500" default:"100" doc:"How many of the newest runs to list; live runs are always included on top"`
 				Include []string `query:"include" enum:"manifest,prompt" doc:"What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text"`
 			}) (*struct {
 				Body struct {
