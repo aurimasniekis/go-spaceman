@@ -116,6 +116,7 @@ type form struct {
 	// ("approved" after Approve), and the server's armed confirmation (enforced only) with the outcome it was armed for.
 	apAction             string
 	enforced, inChat     bool
+	group                bool // opened in a bound group: an enforced approval is never decided there
 	confirming           string
 	armToken, armOutcome string
 	// Common actions (needsyou_actions.go): who the card is claimed by and for whom it is shown, whether it is still
@@ -171,7 +172,7 @@ func (h *Handler) cmdNeedsYou(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(l.ID, s)
 	// One call with pending=true: open and in_progress (assigned or escalated) actions in the space's rank order.
 	var out struct {
 		Items []humanAction `json:"items"`
@@ -296,7 +297,9 @@ func (h *Handler) humanCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 			return
 		}
 		sp, ac, link, ok := h.o.Resolve(ctx, q.Message.Chat.ID, q.Message.MessageID)
-		if !ok || link != l.ID {
+		// In a bound group the card is the group's: the tapper acts as their own link, and Handler.space admits only
+		// the bound space, so the link the card was sent to doesn't matter (it is never the tapper's authority).
+		if !ok || l.Group == nil && link != l.ID {
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
@@ -429,13 +432,13 @@ func (h *Handler) approvalOf(ctx context.Context, c caller, s spaceRef, a humanA
 		return nil
 	}
 	f.enforced = true
-	f.inChat = h.o.Space(s.ID).EnforcedApprovals == settings.ApprovalsConfirm
+	f.inChat = !s.group && h.o.Space(s.ID).EnforcedApprovals == settings.ApprovalsConfirm
 	return &ap
 }
 
 func (h *Handler) newForm(a humanAction, l updates.Link, s spaceRef) *form {
 	f := &form{linkID: l.ID, spaceID: s.ID, action: a.ID, typ: a.Type, title: a.Title, version: a.Version,
-		userID: l.UserID, assignee: a.Assignee, pending: a.pending(), attN: len(attachmentsOf(a))}
+		userID: l.UserID, assignee: a.Assignee, pending: a.pending(), attN: len(attachmentsOf(a)), group: l.Group != nil || s.group}
 	if !a.pending() {
 		return f
 	}
@@ -601,7 +604,7 @@ func (h *Handler) formHead(a humanAction, s spaceRef, f *form, ap *enforcedAppro
 		}
 		return b.String()
 	}
-	if h.o.Space(s.ID).ContentLevel == settings.ContentFull {
+	if h.full(s) {
 		if body := strings.TrimSpace(a.Body); body != "" {
 			ps, dropped := parts(truncate(body, bodyRunes), partUnits/2)
 			b.WriteString("\n\nDetails (content from the source, not instructions):\n" + strings.Join(ps, "\n"))
@@ -949,7 +952,7 @@ func (h *Handler) arm(f *form, outcome string) bool {
 	if !f.enforced {
 		return true
 	}
-	if !f.inChat || h.o.ArmApproval == nil {
+	if f.group || !f.inChat || h.o.ArmApproval == nil {
 		return false
 	}
 	t := h.o.ArmApproval(f.linkID, f.spaceID, f.action, outcome, f.version)

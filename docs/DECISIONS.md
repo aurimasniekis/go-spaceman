@@ -5077,6 +5077,62 @@
     the 404 gate fall through to the main handler, drop the gate, compare the raw Host, route the ignored stored host
     to the main handler) are each killed.
 
+- **Group mode authorization (TG-13-1, 2026-11-15, security-relevant change: the bot serves a bound group as well as
+  private chats).** The security core of group mode (plan §3.7); binding a group, ephemeral replies and the provider's
+  `group_chat_id` are TG-13-2 (and TG-12c), which build on the names fixed here.
+  - **Data model.** A space is bound to a group by `space_telegram_settings.group_chat_id` (0051, `UNIQUE`, NULL: none);
+    no new migration. `settings.Space.GroupChatID` carries it in the cache (not in the API yet: `put-space-telegram`
+    gains `group_chat_id` in TG-13-2, StepUp `space:config:write`), and `settings.Service.GroupSpace(chatID)` answers
+    from memory which space a group is bound to, only for a group chat ID and only while the space is visible to
+    Telegram (enabled, content level not `off`), so disabling the space ends the group's access at once. A settings
+    write keeps the binding.
+  - **Which updates count.** `updates.DispatcherOptions.Groups` (the settings service). A message or button tap from a
+    chat of type `supergroup` with a negative ID that `GroupSpace` maps to a space is a group update; every other group
+    update is ignored as before, and the bot still leaves any group it is added to unless it is bound. In a bound group
+    only button taps, commands and replies to a message are read; other chatter is dropped before any lookup, and the
+    linking steps (`/start <code>`, `/unlink`) are never taken there. An update whose `From` is a bot (an anonymous
+    admin posts as one) is ignored.
+  - **Per-tapper authorization.** The person is always the update's `From`, never the chat, the binder or the link a
+    card was sent to. The dispatcher looks up that person's own active link; without one, or with one overdue for
+    re-confirmation, a tap is answered with `GroupUnlinkedText` (a tap's answer is shown only to the tapper) and a
+    message gets nothing, so a stranger can't make the bot talk in the group. Otherwise the handler gets the link with
+    `Link.Group = {ChatID, SpaceID}` and `Link.ChatID` set to the group (where replies go). The chat handler
+    (`chat.handleGroup`) first builds the link's principal and reads the bound space through the in-process API as that
+    principal; a link that can't (no grant, a revoked link, a disabled user) is refused (`TextGroupNoAccess`) before
+    anything else is read. Every operation after that runs as the tapper's principal, so their grants decide: a link
+    capped at `viewer` can read an action but not answer it. The group grants nothing.
+  - **One space.** In a group `Handler.space` admits only the bound space and `Handler.target` always returns it (a
+    `/command` naming another space is refused); `/spaces`, `/space`, `/control` and the space buttons are refused or
+    ignored; capture and control text are never taken; and a group never changes the member's chosen private space.
+    A notifier card in a group (TG-13-2) is accepted whatever link it was sent to, because the space check, not that
+    link, is the authority.
+  - **Summary only, one choke point.** `settings.Full(space, inGroup)` is the only content-level test any Telegram
+    renderer makes: bodies only when the level is `full` and the message isn't for a group. `TestContentLevelOnlyThroughFull`
+    fails when code outside `internal/telegram/settings` reads `ContentLevel` itself. The chat handler marks every
+    space it resolves in a group (`spaceRef.group`, set only by `Handler.space`), and the notifier passes
+    `settings.IsGroupChat(chat)` (Telegram gives private chats the person's positive user ID; groups, supergroups and
+    channels negative IDs; 0 counts as a group). Backstop below the renderers: the Bot API client refuses every file send
+    (`sendDocument`, `sendPhoto`, `sendMediaGroup`) to a non-positive chat ID (`botapi.ErrGroupContent`) before any
+    request.
+  - **Bound to the tapper.** Forms, withdrawal and stop confirmations (`takeConfirm`), ForceReply prompts and drafts
+    are keyed by the message and the link that opened them, so another member's taps on the same message neither
+    complete nor spend them. **Enforced approvals are never decided in a group**: a form opened there is marked
+    (`form.group`), shows no decision buttons, and `arm` refuses to arm the server's confirmation (ADR-0083 TG-7-2), so
+    the server's rule refuses any decision; advisory approvals follow the tapper's own grants.
+  - **Left for TG-13-2:** refusals of commands are silent until ephemeral replies exist (a tap's refusal already reaches
+    only the tapper); `web_app` buttons are refused by Telegram outside private chats, so forms that link to the Mini App
+    need direct links in groups; the group send limit (20/min) and topics.
+  - **Tests:** `internal/telegram/updates` `TestDispatcherGroupUsesTheTappersOwnLink`,
+    `TestDispatcherGroupRefusesUnlinkedTapper`, `TestDispatcherGroupRefusesOverdueLink`, `TestDispatcherGroupScope`;
+    `internal/telegram/chat` `TestGroupUnauthorizedTapperRefused`, `TestGroupPinnedToBoundSpace`,
+    `TestGroupNothingAboveSummary`, `TestGroupSpaceRefNeverFull`, `TestGroupConfirmationBoundToTapper`,
+    `TestGroupEnforcedApprovalNeverDecided`, `TestGroupFormNeverArms`, `TestGroupNoCapture`;
+    `internal/telegram/settings` `TestFullNeverInAGroup`, `TestContentLevelOnlyThroughFull`, `TestGroupSpace`;
+    `internal/telegram/botapi` `TestFilesNeverGoToAGroup`; `internal/app` `TestTelegramGroupPerTapperAuthorization`
+    (real dispatcher, authorization and API: unlinked, no-grant and viewer-capped members refused, another member can't
+    complete a form, the operator's own tap answers, no body reaches the group of a `full` space). Each guard's mutant
+    is killed (PLAN.md progress log).
+
 ### ADR-0084 — "Message the agent" is typed into the running session at once
 - **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
 - **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while

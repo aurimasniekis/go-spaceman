@@ -136,6 +136,23 @@ func (svc *Service) Space(spaceID string) Space {
 	return DefaultSpace(spaceID)
 }
 
+// GroupSpace returns the space a group chat is bound to (group mode, ADR-0083 amendment TG-13). Only a group chat ID
+// counts, and only a space Telegram may see: a binding of a disabled or hidden space acts for nobody. It answers from
+// memory, so the dispatcher can ask for every group update.
+func (svc *Service) GroupSpace(chatID int64) (string, bool) {
+	if !IsGroupChat(chatID) || chatID == 0 {
+		return "", false
+	}
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	for id, s := range svc.spaces {
+		if s.GroupChatID == chatID && s.Visible() {
+			return id, true
+		}
+	}
+	return "", false
+}
+
 // VisibleSpaces returns the IDs of the spaces enabled for Telegram, sorted.
 func (svc *Service) VisibleSpaces() []string {
 	svc.mu.RLock()
@@ -397,7 +414,7 @@ func spaceFromRow(r db.SpaceTelegramSetting) Space {
 	ca, ua := time.UnixMicro(r.CreatedAt).UTC(), time.UnixMicro(r.UpdatedAt).UTC()
 	return Space{SpaceID: r.SpaceID, Stored: true, Enabled: r.Enabled == 1, ContentLevel: r.ContentLevel, EnforcedApprovals: r.EnforcedApprovals,
 		Topics: r.Topics == 1, TerminalWatch: r.TerminalWatch == 1, CreatedAt: &ca, CreatedBy: r.CreatedBy, UpdatedAt: &ua, UpdatedBy: r.UpdatedBy,
-		Version: r.Version}
+		Version: r.Version, GroupChatID: r.GroupChatID.Int64}
 }
 
 var errSpaceNotFound = apperr.New(apperr.CodeNotFound, "space not found")

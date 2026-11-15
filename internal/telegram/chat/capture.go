@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -348,7 +347,7 @@ func (h *Handler) commit(ctx context.Context, l updates.Link, ps []piece, droppe
 		h.send(ctx, l.ChatID, reply{text: TextFailed})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(l.ID, s)
 	h.send(ctx, l.ChatID, h.ack(s, it, len(ids), dropped, skipped))
 }
 
@@ -382,7 +381,7 @@ func captureTitle(text string, files []fileRef) string {
 func (h *Handler) ack(s spaceRef, it inboxItem, files, dropped, skipped int) reply {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Added to the inbox of %s", s.title())
-	if h.o.Space(s.ID).ContentLevel == settings.ContentFull {
+	if h.full(s) {
 		fmt.Fprintf(&b, ": %s", clean(it.Title, titleRunes))
 	}
 	b.WriteString(".")
@@ -490,7 +489,7 @@ func (h *Handler) sendAttachments(ctx context.Context, c caller, l updates.Link,
 	if b == nil || h.o.Content == nil || len(atts) == 0 {
 		return
 	}
-	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
+	if !h.full(s) {
 		return
 	}
 	sent := 0

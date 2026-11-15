@@ -58,7 +58,8 @@ func (c *Central) newTelegram(ctx context.Context) {
 		Intake: updates.IntakeOptions{Metrics: c.Metrics, Log: log},
 		Webhook: updates.WebhookOptions{TrustedProxies: c.trustedProxies(), Clock: c.Clock, Log: log,
 			OnUnauthorized: c.auditTelegramUnauthorized},
-		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter, Links: c.TelegramLinks, Linker: c.TelegramLink, Unlinker: c.TelegramLink},
+		Dispatcher: updates.DispatcherOptions{Clock: c.Clock, Metrics: c.Metrics, Log: log, Limiter: c.TelegramLimiter, Links: c.TelegramLinks, Linker: c.TelegramLink, Unlinker: c.TelegramLink,
+			Groups: c.TelegramSettings},
 	})
 	// link_sso_grants (ADR-0083 Q8) is read per use, so a change applies to the next principal without a restart.
 	c.TelegramSSOGrants = func() bool { return c.TelegramSettings.Current().LinkSSOGrants }

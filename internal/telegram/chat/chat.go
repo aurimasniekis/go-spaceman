@@ -142,6 +142,10 @@ func New(o Options) *Handler {
 // Handle routes a linked user's update: commands, button taps, the reply to a reject-reason prompt, and capture: any
 // other message with text, a photo or a file becomes an inbox item in the link's current space (capture.go).
 func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
+	if l.Group != nil {
+		h.handleGroup(ctx, u, l)
+		return
+	}
 	switch {
 	case u.CallbackQuery != nil:
 		h.callback(ctx, u.CallbackQuery, l)

@@ -34,6 +34,10 @@ type Space struct {
 	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
 	UpdatedBy         string     `json:"updated_by,omitempty"`
 	Version           int64      `json:"version"`
+
+	// GroupChatID is the forum supergroup bound to the space (group mode, ADR-0083 amendment TG-13; 0: none), read
+	// from space_telegram_settings.group_chat_id. The API field and the binding come with TG-13-2.
+	GroupChatID int64 `json:"-"`
 }
 
 // DefaultSpace is a space's settings before anyone set them.
@@ -44,6 +48,18 @@ func DefaultSpace(spaceID string) Space {
 // Visible reports whether the space can be seen through Telegram at all: enabled, with a content level other than off
 // (ADR-0083 decision 13: off hides the space).
 func (s Space) Visible() bool { return s.Enabled && s.ContentLevel != ContentOff }
+
+// IsGroupChat reports whether a chat ID is anything but a private chat with a person. Telegram gives a private chat the
+// person's user ID (positive) and groups, supergroups and channels negative IDs; zero (unknown) counts as a group, so
+// the summary rule below fails closed.
+func IsGroupChat(chatID int64) bool { return chatID <= 0 }
+
+// Full reports whether bodies of the space may be sent: only when its content level is full AND the message isn't for a
+// group chat. Anything posted to a group chat is summary whatever the space says (ADR-0083 amendment TG-13). Every
+// Telegram renderer asks this, never the content level itself (TestContentLevelOnlyThroughFull).
+func Full(s Space, inGroup bool) bool {
+	return s.ContentLevel == ContentFull && !inGroup
+}
 
 // SpaceInput sets a space's Telegram settings. A field left out takes its default.
 type SpaceInput struct {

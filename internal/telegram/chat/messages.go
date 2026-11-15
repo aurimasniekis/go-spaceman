@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -232,7 +231,7 @@ func (h *Handler) cmdControl(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(l.ID, s)
 	h.setControl(l.ID, s.ID)
 	h.send(ctx, l.ChatID, reply{text: fmt.Sprintf("Control mode for %s. Your next text messages become drafts you can send to its control run; images, files and forwards still go to the inbox. Control's replies come back here. /control off ends it.", s.title())})
 }
@@ -349,7 +348,7 @@ func (h *Handler) cmdMessages(ctx context.Context, l updates.Link, arg string) {
 		h.send(ctx, l.ChatID, reply{text: msg})
 		return
 	}
-	h.setCurrent(l.ID, s.ID)
+	h.setCurrent(l.ID, s)
 	h.send(ctx, l.ChatID, h.messagesList(ctx, c, s, 0))
 }
 
@@ -418,7 +417,7 @@ func (h *Handler) messageCard(m opMessage, s spaceRef) reply {
 	fmt.Fprintf(&b, "\nFrom: %s (%s) · %s", orDash(clean(m.FromLabel, 80)), clean(m.FromKind, 20), clean(m.Kind, 20))
 	fmt.Fprintf(&b, "\nState: %s", clean(m.State, 20))
 	// The resolution is free text written by a person or an agent: content, shown only at the full level.
-	if m.Resolution != "" && h.o.Space(s.ID).ContentLevel == settings.ContentFull {
+	if m.Resolution != "" && h.full(s) {
 		fmt.Fprintf(&b, "\nResolution: %s", clean(m.Resolution, 200))
 	}
 	fmt.Fprintf(&b, "\nSpace: %s", s.title())
@@ -461,7 +460,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 			h.answer(ctx, q.ID, TextUnavailable)
 			return
 		}
-		h.setCurrent(l.ID, s.ID)
+		h.setCurrent(l.ID, s)
 		h.answer(ctx, q.ID, "")
 		h.show(ctx, l.ChatID, q.Message, h.messagesList(ctx, c, s, page))
 		return
@@ -534,7 +533,7 @@ func (h *Handler) messagesCallback(ctx context.Context, q *botapi.CallbackQuery,
 // sendMessageBody sends a message's body as plain text (content from an agent, not instructions), only where the
 // space's content level is full.
 func (h *Handler) sendMessageBody(ctx context.Context, l updates.Link, s spaceRef, m opMessage) {
-	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
+	if !h.full(s) {
 		h.send(ctx, l.ChatID, reply{text: "The message text isn't shown in chat for this space. Open it in the app to read it."})
 		return
 	}

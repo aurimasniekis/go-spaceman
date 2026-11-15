@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -334,7 +333,7 @@ func (h *Handler) files(ctx context.Context, q *botapi.CallbackQuery, l updates.
 		h.answer(ctx, q.ID, TextNoFilesHere)
 		return
 	}
-	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
+	if !h.full(s) {
 		h.answer(ctx, q.ID, TextNoFilesHere)
 		return
 	}

@@ -37,7 +37,25 @@ type Link struct {
 	// ReconfirmDueAt is when the link must be re-confirmed from the web (zero: never). Past it the link is treated as
 	// suspended: the user gets ReconfirmText and nothing else.
 	ReconfirmDueAt time.Time
+	// Group is set when the update comes from a group chat bound to a space (group mode, ADR-0083 amendment TG-13).
+	// Then ChatID is the group's chat (where replies go) and the link is the tapping person's own, never the binder's.
+	Group *Group
 }
+
+// Group is the bound group chat an update comes from.
+type Group struct {
+	ChatID  int64  // the forum supergroup (negative)
+	SpaceID string // the space it is bound to: the only space a group update may act on
+}
+
+// Groups finds the space a group chat is bound to (settings.Service.GroupSpace). Like Links it answers from memory.
+type Groups interface {
+	GroupSpace(chatID int64) (spaceID string, ok bool)
+}
+
+// GroupUnlinkedText answers a tap in a bound group by a member without a usable link. It is the tap's answer, which
+// Telegram shows only to the tapper, and names no host, user or space.
+const GroupUnlinkedText = "Link your Telegram account in SpaceMan's web UI first (Account → Telegram)."
 
 // ReconfirmText is what a user whose link needs its periodic web re-confirmation is sent.
 const ReconfirmText = "Your SpaceMan link needs to be re-confirmed. Open SpaceMan's web UI: Account → Telegram → Re-confirm."
@@ -102,6 +120,8 @@ type DispatcherOptions struct {
 	Linker Linker
 	// Unlinker handles /unlink from a linked user (nil: /unlink goes to the Handler like any message).
 	Unlinker Unlinker
+	// Groups maps a group chat to its bound space (nil: no group mode; the bot leaves every group).
+	Groups Groups
 	// Limiter enforces the per-link inbound limits (nil: none). Every linked user's update costs one KindAction.
 	Limiter *Limiter
 	// Bot sends the dispatcher's own replies; SetBot replaces it when the bot is (re)configured. Without one, nothing
@@ -117,9 +137,11 @@ type DispatcherOptions struct {
 	Log     *slog.Logger
 }
 
-// Dispatcher routes one update. v1 serves private chats only:
-//   - the bot leaves any group, supergroup or channel it is added to, without reading anything about it;
-//   - messages and button taps from anything but a private chat with a person are ignored;
+// Dispatcher routes one update. It serves private chats, and supergroups bound to a space (group mode):
+//   - the bot leaves any group, supergroup or channel it is added to that isn't bound, without reading anything about it;
+//   - in a bound supergroup, a button tap, a command or a reply goes to the Handler as the tapping person's own link
+//     (groupUpdate); membership in the group grants nothing;
+//   - other messages and button taps from anything but a private chat with a person are ignored;
 //   - a linked user's update goes to the Handler;
 //   - an unlinked user gets UnlinkedText at most once per UnlinkedPerUser, and at most one such reply goes out per
 //     UnlinkedGlobal over every user; otherwise the update is dropped. Nothing is read for an unlinked user, with one
@@ -130,6 +152,7 @@ type Dispatcher struct {
 	handler atomic.Pointer[handlerRef]
 	linker  Linker
 	unlink  Unlinker
+	groups  Groups
 	limiter *Limiter
 	bot     atomic.Pointer[botRef]
 	clock   clock.Clock
@@ -160,7 +183,7 @@ func NewDispatcher(o DispatcherOptions) *Dispatcher {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	d := &Dispatcher{links: o.Links, linker: o.Linker, unlink: o.Unlinker, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
+	d := &Dispatcher{links: o.Links, linker: o.Linker, unlink: o.Unlinker, groups: o.Groups, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
 		perUser: o.UnlinkedPerUser, global: o.UnlinkedGlobal, replied: newLRU(o.UnlinkedUsers)}
 	d.SetBot(o.Bot)
 	d.SetHandler(o.Handler)
@@ -231,7 +254,15 @@ func sender(u *botapi.Update) (from botapi.User, ok bool) {
 // Dispatch handles one update; the Intake's workers call it.
 func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 	if c := u.MyChatMember; c != nil && c.Chat.Type != botapi.ChatPrivate {
+		if _, ok := d.boundGroup(c.Chat); ok {
+			d.metrics.TelegramUpdate(metrics.TelegramUpdateIgnored)
+			return
+		}
 		d.leaveGroup(ctx, c)
+		return
+	}
+	if g, from, ok := d.groupUpdate(&u); ok {
+		d.dispatchGroup(ctx, u, g, from)
 		return
 	}
 	from, ok := sender(&u)
@@ -272,6 +303,96 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 		return
 	}
 	d.unlinked(ctx, &u, from.ID)
+}
+
+// boundGroup returns the group mode binding of a chat: only a supergroup with a negative ID bound to a visible space.
+func (d *Dispatcher) boundGroup(c botapi.Chat) (Group, bool) {
+	if d.groups == nil || c.Type != botapi.ChatSupergroup || c.ID >= 0 {
+		return Group{}, false
+	}
+	sp, ok := d.groups.GroupSpace(c.ID)
+	if !ok || sp == "" {
+		return Group{}, false
+	}
+	return Group{ChatID: c.ID, SpaceID: sp}, true
+}
+
+// groupUpdate picks out an update of a bound group: a button tap on one of the group's messages, or a message from a
+// person. The person is always the update's From (the tapper or the author), never the chat or a sender_chat: an
+// anonymous admin posts as a bot account and is ignored.
+func (d *Dispatcher) groupUpdate(u *botapi.Update) (Group, botapi.User, bool) {
+	var chat botapi.Chat
+	var from botapi.User
+	switch {
+	case u.CallbackQuery != nil:
+		q := u.CallbackQuery
+		if q.Message == nil {
+			return Group{}, botapi.User{}, false
+		}
+		chat, from = q.Message.Chat, q.From
+	case u.Message != nil:
+		m := u.Message
+		if m.From == nil {
+			return Group{}, botapi.User{}, false
+		}
+		chat, from = m.Chat, *m.From
+	default:
+		return Group{}, botapi.User{}, false
+	}
+	if chat.Type == botapi.ChatPrivate {
+		return Group{}, botapi.User{}, false
+	}
+	g, ok := d.boundGroup(chat)
+	return g, from, ok && from.ID > 0 && !from.IsBot
+}
+
+// dispatchGroup routes an update of a bound group. It is authorized as the tapping person's OWN link and nothing else:
+// a member without an active link (or with one overdue for re-confirmation) gets a refusal on a tap (the tap's answer,
+// seen only by them) and nothing for a message. Only commands and replies to a message reach the Handler; other
+// chatter in the group is never read, and the linking steps (/start, /unlink) are never taken in a group.
+func (d *Dispatcher) dispatchGroup(ctx context.Context, u botapi.Update, g Group, from botapi.User) {
+	if m := u.Message; m != nil && !strings.HasPrefix(strings.TrimSpace(m.Text), "/") && m.ReplyToMessage == nil {
+		d.metrics.TelegramUpdate(metrics.TelegramUpdateIgnored)
+		return
+	}
+	var l Link
+	ok := false
+	if d.links != nil {
+		l, ok = d.links.Lookup(from.ID)
+	}
+	if !ok || !l.ReconfirmDueAt.IsZero() && !d.clock.Now().Before(l.ReconfirmDueAt) {
+		d.groupRefuse(ctx, &u)
+		return
+	}
+	if d.limiter != nil {
+		if ok, warn := d.limiter.allow(l.ID, KindAction); !ok {
+			if u.CallbackQuery != nil {
+				d.throttled(ctx, &u, l, warn)
+			}
+			return
+		}
+	}
+	d.metrics.TelegramUpdate(metrics.TelegramUpdateLinked)
+	l.ChatID = g.ChatID
+	l.Group = &g
+	if h := d.handler.Load(); h != nil {
+		h.Handle(ctx, u, l)
+	}
+}
+
+// groupRefuse answers a bound group's update from a member who can't act: a tap gets GroupUnlinkedText as its answer
+// (only the tapper sees it); a message gets nothing, so strangers can't make the bot talk in the group.
+func (d *Dispatcher) groupRefuse(ctx context.Context, u *botapi.Update) {
+	d.metrics.TelegramUpdate(metrics.TelegramUpdateUnlinkedDropped)
+	bot := d.client()
+	if bot == nil || u.CallbackQuery == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	if err := bot.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: u.CallbackQuery.ID, Text: GroupUnlinkedText}); err != nil {
+		d.log.Debug("telegram: a group button tap was not answered", slog.String("error", err.Error()))
+	}
 }
 
 // isUnlink reports whether a message is the /unlink command (alone, or addressed to a bot: /unlink@name).
@@ -371,8 +492,7 @@ func (d *Dispatcher) throttled(ctx context.Context, u *botapi.Update, l Link, wa
 	}
 }
 
-// leaveGroup leaves a group, supergroup or channel the bot was added to (v1 is private chats only; group binding is a
-// later task). A status change that already removed the bot needs nothing.
+// leaveGroup leaves a group, supergroup or channel the bot was added to that isn't bound to a space. A status change that already removed the bot needs nothing.
 func (d *Dispatcher) leaveGroup(ctx context.Context, c *botapi.ChatMemberUpdated) {
 	switch c.NewChatMember.Status {
 	case botapi.MemberLeft, botapi.MemberKicked:
