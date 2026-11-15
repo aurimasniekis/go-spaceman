@@ -67,10 +67,14 @@ func (f *fx) add(name, kind, secret string) *Account {
 }
 
 func (f *fx) resolve(harness, ref string) (string, error) {
+	return f.resolveAvoiding(harness, ref, nil)
+}
+
+func (f *fx) resolveAvoiding(harness, ref string, avoid func(string) (bool, error)) (string, error) {
 	var id string
 	err := f.s.W().TxNamed(f.ctx, "resolve", func(tx *store.Tx) error {
 		var err error
-		id, err = Resolve(f.ctx, tx, "spc_a", harness, ref)
+		id, err = Resolve(f.ctx, tx, "spc_a", harness, ref, avoid)
 		return err
 	})
 	return id, err
@@ -160,6 +164,49 @@ func TestResolution(t *testing.T) {
 	}
 	if id, err := f.resolve("claude-code", "claude-one"); err != nil || id != c1.ID {
 		t.Fatalf("named while default disabled: %s %v", id, err)
+	}
+}
+
+// ADR-0079 decision 8: with failover, an avoided (held) account gives way to the next usable account of the harness,
+// the default first; a named account fails over too (a resume names the old run's account). When every account is
+// avoided the usual choice stands, and failover never hides a configuration error.
+func TestResolutionFailover(t *testing.T) {
+	f := newFx(t)
+	c1 := f.add("claude-one", "claude_oauth_token", "t1")
+	c2 := f.add("claude-two", "claude_oauth_token", "t2")
+	c3 := f.add("claude-three", "claude_oauth_token", "t3")
+	cx := f.add("codex", "openai_api_key", "o1")
+	_, err := f.svc.SetBindings(f.ctx, admin, "spc_a", []Binding{{AccountID: c1.ID}, {AccountID: c2.ID}, {AccountID: c3.ID, Default: true}, {AccountID: cx.ID}})
+	must(t, err)
+	held := map[string]bool{}
+	avoid := func(id string) (bool, error) { return held[id], nil }
+	if id, err := f.resolveAvoiding("claude-code", "", avoid); err != nil || id != c3.ID {
+		t.Fatalf("nothing held: %s %v", id, err)
+	}
+	held[c3.ID] = true
+	if id, err := f.resolveAvoiding("claude-code", "", avoid); err != nil || id != c1.ID {
+		t.Fatalf("default held: %s %v", id, err)
+	}
+	held[c1.ID] = true
+	if id, err := f.resolveAvoiding("claude-code", "claude-one", avoid); err != nil || id != c2.ID {
+		t.Fatalf("named and held: %s %v", id, err)
+	}
+	if id, err := f.resolveAvoiding("claude-code", "claude-one", nil); err != nil || id != c1.ID {
+		t.Fatalf("failover off: %s %v", id, err)
+	}
+	held[c2.ID] = true
+	if id, err := f.resolveAvoiding("claude-code", "", avoid); err != nil || id != c3.ID {
+		t.Fatalf("all held keeps the default: %s %v", id, err)
+	}
+	held[cx.ID] = true
+	if id, err := f.resolveAvoiding("codex", "", avoid); err != nil || id != cx.ID {
+		t.Fatalf("never another harness: %s %v", id, err)
+	}
+	_, err = f.resolveAvoiding("claude-code", "nope", avoid)
+	code(t, err, apperr.CodePrecondition)
+	boom := errors.New("boom")
+	if _, err := f.resolveAvoiding("claude-code", "", func(string) (bool, error) { return false, boom }); !errors.Is(err, boom) {
+		t.Fatalf("avoid error: %v", err)
 	}
 }
 

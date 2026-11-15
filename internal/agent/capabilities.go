@@ -52,7 +52,8 @@ func (a *Agent) capsLoop(ctx context.Context) {
 		case <-changes:
 		case <-t.C:
 			a.mu.Lock()
-			due := a.now().Sub(a.capsAt) >= proto.NodeCapabilitiesInterval
+			// Nothing detected yet: the first session's own detection (before its hello) takes it, not the loop.
+			due := !a.capsAt.IsZero() && a.now().Sub(a.capsAt) >= proto.NodeCapabilitiesInterval
 			a.mu.Unlock()
 			if !due {
 				continue

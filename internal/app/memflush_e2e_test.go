@@ -69,7 +69,13 @@ func (n *rawNode) send(t *testing.T, typ string, body any) {
 // next returns the next message of type typ (others are skipped), or fails after a timeout.
 func (n *rawNode) next(t *testing.T, typ string) proto.Envelope {
 	t.Helper()
-	deadline := time.After(10 * time.Second)
+	return n.nextWithin(t, typ, 10*time.Second)
+}
+
+// nextWithin is next with its own bound, for a wait that queues behind a burst of writes.
+func (n *rawNode) nextWithin(t *testing.T, typ string, d time.Duration) proto.Envelope {
+	t.Helper()
+	deadline := time.After(d)
 	for {
 		select {
 		case env, ok := <-n.ch:

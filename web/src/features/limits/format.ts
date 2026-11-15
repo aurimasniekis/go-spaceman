@@ -1,9 +1,9 @@
 import { bytes } from '@/lib/format'
 
-/** What 0 means for a limit whose 0 means none: "Kept" for a retention period, "Never" for minutes, "Node default" for a
- * terminal size, otherwise "No limit". */
+/** What 0 means for a limit whose 0 means none: "Kept" for a retention period, "Never" for minutes or hours, "Node
+ * default" for a terminal size, otherwise "No limit". */
 export function zeroLabel(unit: string): string {
-  return unit === 'days' ? 'Kept' : unit === 'minutes' ? 'Never' : unit === 'columns' || unit === 'rows' ? 'Node default' : 'No limit'
+  return unit === 'days' ? 'Kept' : unit === 'minutes' || unit === 'hours' ? 'Never' : unit === 'columns' || unit === 'rows' ? 'Node default' : 'No limit'
 }
 
 /** A limit's value in its unit: zeroLabel for 0 where 0 means none, sizes in binary units, cents as dollars, a switch as
@@ -21,6 +21,8 @@ export function limitValue(value: number, unit: string, zeroMeansNone = false): 
       return `${value.toLocaleString('en-US')} / min`
     case 'minutes':
       return duration(value)
+    case 'hours':
+      return duration(value * 60)
     case 'percent':
       return `${value} %`
     case 'tokens':
