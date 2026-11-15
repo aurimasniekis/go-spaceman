@@ -16,7 +16,7 @@ function status(extra: Partial<SystemStatus> = {}): SystemStatus {
     storage: { readiness: 'ready', checks: [{ name: 'store', status: 'ok' }, { name: 'store.writable', status: 'ok' }], store_state: 'ok', disk_total_bytes: 100 * 2 ** 30,
       disk_available_bytes: 40 * 2 ** 30, disk_used_percent: 60, disk_reserve_bytes: 2 ** 30, below_reserve: false, problem: false, db_bytes: 3 * 2 ** 20, wal_bytes: 2 ** 20 },
     counts: { spaces: 3, nodes_active: 2, nodes_connected: 1, runs_running: 4, human_pending: 5, live_streams: 6 },
-    telegram: { configured: false, enabled: false, webhook_status: 'off', pending_update_count: 0 },
+    telegram: { configured: false, enabled: false, webhook_status: 'off', pending_update_count: 0, has_topics_enabled: false, allows_users_to_create_topics: false },
     ...extra,
   } as SystemStatus
 }
@@ -78,7 +78,8 @@ describe('System page', () => {
   })
 
   it('shows a working webhook and a failing one', () => {
-    const tg = { configured: true, enabled: true, mode: 'webhook' as const, bot_id: 42, username: 'spaceman_bot', webhook_status: 'ok' as const, pending_update_count: 3 }
+    const tg = { configured: true, enabled: true, mode: 'webhook' as const, bot_id: 42, username: 'spaceman_bot', webhook_status: 'ok' as const, pending_update_count: 3,
+      has_topics_enabled: false, allows_users_to_create_topics: false }
     const { unmount } = wrap(status({ telegram: tg }))
     const card = screen.getByTestId('system-telegram')
     expect(card).toHaveTextContent('@spaceman_bot')
@@ -95,7 +96,7 @@ describe('System page', () => {
 
   it('shows the Mini App host and a bot host the configuration overrides', () => {
     const tg = { configured: true, enabled: true, mode: 'polling' as const, bot_id: 42, username: 'spaceman_bot', webhook_status: 'polling' as const, pending_update_count: 0,
-      miniapp_host: 'tg.example.com', miniapp_host_source: 'config' as const }
+      has_topics_enabled: false, allows_users_to_create_topics: false, miniapp_host: 'tg.example.com', miniapp_host_source: 'config' as const }
     const { unmount } = wrap(status({ telegram: tg }))
     const card = screen.getByTestId('system-telegram')
     expect(card).toHaveTextContent('Mini App host tg.example.com (central configuration)')
@@ -107,7 +108,8 @@ describe('System page', () => {
     const r3 = wrap(status({ telegram: { ...tg, miniapp_host_source: 'bot' as const, miniapp_host_needs_key: true } }))
     expect(screen.getByTestId('system-telegram-host-needs-key')).toHaveTextContent('does not set telegram.miniapp_host')
     r3.unmount()
-    wrap(status({ telegram: { configured: false, enabled: false, webhook_status: 'off', pending_update_count: 0, miniapp_host: 'tg.example.com', miniapp_host_source: 'config' } }))
+    wrap(status({ telegram: { configured: false, enabled: false, webhook_status: 'off', pending_update_count: 0, has_topics_enabled: false, allows_users_to_create_topics: false,
+      miniapp_host: 'tg.example.com', miniapp_host_source: 'config' } }))
     const off = screen.getByTestId('system-telegram')
     expect(off).toHaveTextContent('No Telegram bot is configured.')
     expect(off).toHaveTextContent('answers 404 while no bot runs')
