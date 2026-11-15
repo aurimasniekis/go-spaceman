@@ -33,10 +33,12 @@ type Prefs struct {
 	Version   int64                         `json:"version" doc:"The link's version; send it as If-Match to save"`
 }
 
-// TopicsPrefs is the placeholder of the topics opt-in: topics mode is not implemented yet (TG-11), so a link can't opt
-// in. The field reserves the shape; the opt-in is added with TG-11 and its own review.
+// TopicsPrefs is the read-only state of topics mode (ADR-0083 decision 16). The switch is per space (a space's
+// Telegram settings, space_config:write); a link only sees which of its spaces use it and whether its chat refused.
 type TopicsPrefs struct {
-	Available bool `json:"available" doc:"Whether topics mode can be turned on; false until it ships"`
+	Available bool     `json:"available" doc:"Whether topics mode is supported (the bot is running); it is turned on per space, not per link"`
+	Spaces    []string `json:"spaces" doc:"IDs of the spaces you can read that have topics on, sorted; each gets a topic in your private chat"`
+	Refused   bool     `json:"refused" doc:"True while the bot is not asking your private chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat"`
 }
 
 // PrefsInput replaces a link's overrides. A field left out (or null) follows the defaults again.
@@ -69,10 +71,30 @@ func ownLink(ctx context.Context, q *db.Queries, p *auth.Principal) (db.Telegram
 	return l, err
 }
 
-func (s *Service) prefsOut(l db.TelegramLink, zone string) *Prefs {
+func (s *Service) prefsOut(l db.TelegramLink, p *auth.Principal, zone string) *Prefs {
 	d := s.o.Settings().NotificationDefaults
 	o := settings.ParseLinkPrefs(l.PrefsJson)
-	return &Prefs{LinkID: l.ID, Overrides: o, Defaults: d, Effective: o.Effective(d), Timezone: zone, Version: l.Version}
+	return &Prefs{LinkID: l.ID, Overrides: o, Defaults: d, Effective: o.Effective(d), Timezone: zone, Topics: s.topicsOut(l, p), Version: l.Version}
+}
+
+// topicsOut reports topics mode for the link: only spaces the link may read are named, so it learns nothing about others.
+func (s *Service) topicsOut(l db.TelegramLink, p *auth.Principal) TopicsPrefs {
+	out := TopicsPrefs{Spaces: []string{}}
+	if s.o.TopicSpaces == nil {
+		return out
+	}
+	if s.o.TopicsAvailable != nil && !s.o.TopicsAvailable() {
+		return out
+	}
+	out.Available = true
+	subj := p.Subjects()
+	for _, id := range s.o.TopicSpaces() {
+		if s.o.CanRead != nil && s.o.CanRead(subj, id) {
+			out.Spaces = append(out.Spaces, id)
+		}
+	}
+	out.Refused = len(out.Spaces) > 0 && s.o.TopicsRefused != nil && s.o.TopicsRefused(l.ChatID)
+	return out
 }
 
 // userZone reads the user's stored time zone ("" when none or unreadable).
@@ -97,7 +119,7 @@ func (s *Service) GetPrefs(ctx context.Context, p *auth.Principal) (*Prefs, erro
 	if err != nil {
 		return nil, err
 	}
-	return s.prefsOut(l, zone), nil
+	return s.prefsOut(l, p, zone), nil
 }
 
 // normalizeMuted trims, de-duplicates and checks muted space IDs. Muting only ever removes notifications, so a space
@@ -176,7 +198,7 @@ func (s *Service) SetPrefs(ctx context.Context, p *auth.Principal, actor audit.A
 		if err != nil {
 			return err
 		}
-		out = s.prefsOut(l, cur)
+		out = s.prefsOut(l, p, cur)
 		// The notifier and the dispatcher re-read the link (and the user's zone) once this commits.
 		s.publishAfterCommit(tx, l.ID)
 		return nil

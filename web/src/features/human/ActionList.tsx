@@ -89,8 +89,9 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
             </Group>
           </Card>
         ))}
-        {actions.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">{empty}</Text>}
       </Stack>
+      {/* Outside the list: a role=list may only hold listitems. */}
+      {actions.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">{empty}</Text>}
       <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size={isMiniApp() ? "100%" : "lg"} title="Human action">
         {current && <ActionDetail action={current} spaceName={spaceNames?.[current.space_id]} onChanged={setOpenState} />}
       </Drawer>

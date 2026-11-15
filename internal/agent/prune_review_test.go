@@ -65,7 +65,7 @@ func expectReport(t *testing.T, reports chan string, id string) {
 
 // After a central restore the node counted a run as acknowledged, but central lists it as active again: the final state
 // is reported at once (not at the next hello, after the stale sweeper ended the run lost) and is unacknowledged again.
-func TestReviewRestoreAckedRunNeverResent(t *testing.T) {
+func TestReviewRestoreAckedRunReportedAgain(t *testing.T) {
 	a := pruneAgent(t, t.TempDir())
 	_, reports := wsSink(t, a)
 	seedRun(t, a, "run_x", proto.RunExited, 2*day)
@@ -83,12 +83,16 @@ func TestReviewRestoreAckedRunNeverResent(t *testing.T) {
 }
 
 // A follow-up report that was written but never applied is reported again when central still lists the run.
-func TestReviewFollowUpLostNeverResent(t *testing.T) {
+func TestReviewFollowUpLostReportedAgain(t *testing.T) {
 	a := pruneAgent(t, t.TempDir())
 	_, reports := wsSink(t, a)
 	seedRun(t, a, "run_old", proto.RunExited, 3*day)
 	_, follow, _ := a.helloRuns(context.Background())
 	a.noteSent(follow) // written to the connection, which dropped before central applied it
+	// The next connection's hello has nothing to carry or follow up (sent, not acknowledged); its reconcile still lists it.
+	if hello, follow, _ := a.helloRuns(context.Background()); len(hello)+len(follow) != 0 {
+		t.Fatalf("hello %d follow-up %d", len(hello), len(follow))
+	}
 	ack(a, "run_old")
 	expectReport(t, reports, "run_old")
 	if _, follow, _ = a.helloRuns(context.Background()); !slices.Equal(runRowIDs(follow), []string{"run_old"}) {
@@ -102,4 +106,54 @@ func runRowIDs(rs []runRow) []string {
 		out = append(out, r.RunID)
 	}
 	return out
+}
+
+// A run still waiting in this connection's follow-up is not reported inline by the reconcile as well: the paced
+// follow-up is its one report.
+func TestReviewFollowUpPendingNotReportedInline(t *testing.T) {
+	a := pruneAgent(t, t.TempDir())
+	_, reports := wsSink(t, a)
+	seedRun(t, a, "run_old", proto.RunExited, 3*day)
+	_, follow, _ := a.helloRuns(context.Background())
+	if len(follow) != 1 {
+		t.Fatalf("follow %d", len(follow))
+	}
+	ack(a, "run_old") // central lists it as active: the follow-up has not sent it yet
+	select {
+	case id := <-reports:
+		t.Fatalf("reconcile reported %s inline", id)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// The follow-up can send its first slice before central's reconcile is read (central sends the welcome first and lists
+// runs as active until it applies the follow-up): the reconcile must not report those runs a second time, and must not
+// acknowledge them either.
+func TestReviewFollowUpSentBeforeReconcileNotReportedAgain(t *testing.T) {
+	ctx := context.Background()
+	a := pruneAgent(t, t.TempDir())
+	conn, reports := wsSink(t, a)
+	seedRun(t, a, "run_old", proto.RunExited, 3*day)
+	_, follow, _ := a.helloRuns(ctx)
+	a.sendFollowUp(ctx, conn, follow)
+	expectReport(t, reports, "run_old")
+	ack(a, "run_old") // central has not applied the follow-up yet: still listed active
+	select {
+	case id := <-reports:
+		t.Fatalf("reconcile reported %s a second time", id)
+	case <-time.After(200 * time.Millisecond):
+	}
+	a.mu.Lock()
+	acked := a.finalAcked["run_old"]
+	a.mu.Unlock()
+	if acked != 0 {
+		t.Fatal("a run central still lists was acknowledged")
+	}
+	if n := a.pruneRuns(ctx); n != 0 {
+		t.Fatalf("pruned %d", n)
+	}
+	// The next connection has no snapshot for it: a reconcile that still lists it reports it again.
+	_, _, _ = a.helloRuns(ctx)
+	ack(a, "run_old")
+	expectReport(t, reports, "run_old")
 }

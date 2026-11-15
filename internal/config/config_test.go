@@ -350,3 +350,52 @@ func TestTelegramMiniAppHost(t *testing.T) {
 		}
 	}
 }
+
+// telegram.webhook_base_url: empty by default, read from the file, https only with a lower-case host.
+func TestTelegramWebhookBaseURL(t *testing.T) {
+	if d := Default().Telegram.WebhookBaseURL; d != "" {
+		t.Fatalf("default telegram.webhook_base_url = %q", d)
+	}
+	p := writeFile(t, "public_url: http://127.0.0.1:8080\ntelegram:\n  webhook_base_url: https://hooks.example.com\n")
+	cfg, err := Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telegram.WebhookBaseURL != "https://hooks.example.com" {
+		t.Fatalf("telegram.webhook_base_url = %q", cfg.Telegram.WebhookBaseURL)
+	}
+	for _, bad := range []string{"http://hooks.example.com", "hooks.example.com", "https://Hooks.Example.com", "https://u:p@hooks.example.com",
+		"https://hooks.example.com/?x=1", "https://hooks.example.com/#f", "ftp://hooks.example.com", "https://",
+		"HTTPS://hooks.example.com", "Https://hooks.example.com", "https://hooks.example.com/a b", "https://hooks.example.com/a\t",
+		"https://hooks.example.com/../x", "https://hooks.example.com/./x", "https://hooks.example.com/a/.."} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Telegram.WebhookBaseURL = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "telegram.webhook_base_url") {
+			t.Errorf("webhook_base_url %q: err = %v", bad, err)
+		}
+	}
+	for _, ok := range []string{"", "https://hooks.example.com", "https://hooks.example.com:8443/telegram"} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Telegram.WebhookBaseURL = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("webhook_base_url %q: %v", ok, err)
+		}
+	}
+}
+
+// telegram.webhook_base_url must not share telegram.miniapp_host's host: Handler would route the webhook to the Mini App.
+func TestTelegramWebhookBaseURLMiniAppHostCollision(t *testing.T) {
+	c := Default()
+	c.PublicURL = "https://spaceman.example.com"
+	c.Telegram.MiniAppHost = "tg.example.com"
+	c.Telegram.WebhookBaseURL = "https://tg.example.com:8443/hook"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "telegram.webhook_base_url must not use the host of telegram.miniapp_host") {
+		t.Fatalf("err = %v", err)
+	}
+	c.Telegram.WebhookBaseURL = "https://hooks.example.com"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("distinct hosts: %v", err)
+	}
+}

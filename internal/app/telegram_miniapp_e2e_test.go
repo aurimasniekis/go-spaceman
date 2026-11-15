@@ -404,6 +404,10 @@ func TestMiniAppSessionExchange(t *testing.T) {
 	if r := e.send(t, miniHost+":"+e.port, "POST", path, exchangeBody(e.initData(e.tg.Token(), 42, 0)), "Origin", e.h.srv.URL); r.status != 403 {
 		t.Errorf("exchange from the main origin: %d %s", r.status, r.body)
 	}
+	// The old origin, built from public_url's scheme and port, is no longer the Mini App's origin.
+	if r := e.send(t, miniHost+":"+e.port, "POST", path, exchangeBody(e.initData(e.tg.Token(), 42, 0)), "Origin", "http://"+miniHost+":"+e.port); r.status != 403 {
+		t.Errorf("exchange from the old http origin: %d %s", r.status, r.body)
+	}
 	if r := e.mini(t, "POST", path, exchangeBody(strings.Repeat("a", 9000))); r.status != 413 && r.status != 422 {
 		t.Errorf("oversized exchange: %d", r.status)
 	}

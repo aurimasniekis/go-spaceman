@@ -102,11 +102,16 @@ func qrFind(m botapi.Message, label string) string {
 
 // withButton is the latest message with a button of this label (a tap is answered before the message it opens is sent,
 // so it waits for it).
-func (c *qrChat) withButton(label string) botapi.Message {
+func (c *qrChat) withButton(label string) botapi.Message { return c.withButtonSince(label, 0) }
+
+// withButtonSince is withButton among the messages after the first n: a confirmation asked for again must not be
+// mistaken for the (already used) one from the earlier ask, which would be found at once while the new one is still
+// being sent, and answered "expired or already used".
+func (c *qrChat) withButtonSince(label string, n int) botapi.Message {
 	var found botapi.Message
 	eventuallyFor(c.t, "a message with a "+label+" button", 10*time.Second, func() bool {
 		ms := c.e.tg.Messages(42)
-		for i := len(ms) - 1; i >= 0; i-- {
+		for i := len(ms) - 1; i >= n && i >= 0; i-- {
 			if qrFind(ms[i], label) != "" {
 				found = ms[i]
 				return true
@@ -200,11 +205,12 @@ func TestTelegramQueueAndRunsRespectTheLinksRole(t *testing.T) {
 	if c.answer() != "Moved" || position(tasks[1]) >= position(tasks[0]) {
 		t.Fatalf("operator move: answer %q, positions %d %d", c.answer(), position(tasks[0]), position(tasks[1]))
 	}
+	sent := len(c.e.tg.Messages(42))
 	c.tap(qrFind(rc, "Stop"), rc)
 	if runDesired() != "running" {
 		t.Fatal("asking to stop stopped the run")
 	}
-	conf = c.withButton("Stop run")
+	conf = c.withButtonSince("Stop run", sent)
 	c.tap(qrFind(conf, "Stop run"), conf)
 	if runDesired() != "stopped" {
 		t.Fatalf("operator stop: answer %q, desired %q", c.answer(), runDesired())
