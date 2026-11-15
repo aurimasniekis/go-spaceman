@@ -6,16 +6,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
-### Security
+### Added
 
-- The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
-  that carried WebSocket upgrade headers used to be exempt from it.
+- `telegram.webhook_base_url` (environment `SPACEMAN_TELEGRAM_WEBHOOK_BASE_URL`): the public https base URL the Telegram
+  webhook is registered under, for a deployment whose `public_url` is not reachable from the internet. Empty keeps the
+  webhook under `public_url`. The webhook path and secret-token check are unchanged.
+  A path prefix is for the reverse proxy, which must strip it before forwarding (central serves only
+  `/telegram/webhook/<id>`). The host must differ from `telegram.miniapp_host`; the Mini App origin still derives from
+  `public_url`.
 
 ### Fixed
 
 - Telegram cards now show a message body as formatting (bold, code, lists, links) instead of raw Markdown, and send the whole body instead of cutting it at 600 characters: what doesn't fit in the card goes in numbered reply messages ("(2/3)"), up to four messages, and the rest is left to the app. The continuation messages are edited, added or deleted when the card changes, each call within the sender's rate limits, and a deleted one is not remembered after a restart. A message card says "Unread" or "Read" instead of the internal state "stored". At content level `summary` a card still never shows a body.
+- Attaching a file or image in the Telegram Mini App (new inbox item, human-action responses, messages, tasks) no longer fails with "authentication required". The upload sent a cookie and CSRF token, which the Mini App never has; it now sends the Mini App's `Authorization: Telegram` session like every other call.
 - The Telegram Mini App settings page no longer says topics mode is "Not available yet". It shows, read-only, which of your spaces use topics and what to do in BotFather if Telegram refused a topic in your chat. `get-my-telegram-link-prefs` reports `topics.spaces` and `topics.refused`, and `topics.available` is true while the bot runs.
 - The restore banner now goes away when an administrator dismisses it. Before, the Dismiss button only hid itself and the banner stayed while any space was paused, even on purpose. A new restore shows it again. The `acknowledge-restore` operation is now also an admin MCP tool (a dangerous one, so it needs approval).
+
+### Security
+
+- The response write bound (`http.write_idle_timeout`) skips only the node WebSocket route. A download or event stream
+  that carried WebSocket upgrade headers used to be exempt from it.
 
 ## [0.1.5] - 2026-11-15
 

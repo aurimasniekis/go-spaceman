@@ -147,6 +147,11 @@ async function after(original: Request | undefined, request: Request, response: 
 
 const originals = new WeakMap<Request, Request>()
 
+/** Ends the Mini App's session after a 401 on a request made outside the API client (an upload). */
+export async function endMiniAppSession(res: Response) {
+  tgEnded?.((await problemCode(res)) === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
+}
+
 /** openapi-fetch middleware for the API client. */
 export const sessionMiddleware: Middleware = {
   onRequest({ request }) {
@@ -161,7 +166,7 @@ export const sessionMiddleware: Middleware = {
   },
   async onResponse({ request, response }) {
     if (miniApp) {
-      if (response.status === 401) tgEnded?.((await problemCode(response)) === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
+      if (response.status === 401) await endMiniAppSession(response)
       return response
     }
     return after(originals.get(request), request, response, (r) => fetch(r))

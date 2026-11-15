@@ -219,3 +219,46 @@ func TestHubShutdownDropsQueuedMemorySync(t *testing.T) {
 	default:
 	}
 }
+
+// Central's shutdown waits for a background relocation advance (relocKick) before the store is closed, and an advance
+// started after it began is refused.
+func TestHubShutdownWaitsForRelocationAdvance(t *testing.T) {
+	e := newStaleEnv(t)
+	h := e.svc.hub
+	// Holding the relocation's lock keeps the advance running (it waits for it first).
+	unlock := e.svc.relocLock("rel_1")
+	e.svc.relocKick(e.ctx, "rel_1")
+
+	shut := make(chan struct{})
+	go func() { h.Shutdown("test", time.Minute); close(shut) }()
+	select {
+	case <-shut:
+		t.Fatal("Shutdown returned while a relocation advance was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case <-shut:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Shutdown did not return after the relocation advance finished")
+	}
+	e.svc.reloc.mu.Lock()
+	stopped := e.svc.reloc.stopped
+	e.svc.reloc.mu.Unlock()
+	if !stopped {
+		t.Fatal("Shutdown left relocKick accepting advances")
+	}
+}
+
+// A stuck relocation advance cannot hold Shutdown past its grace.
+func TestHubShutdownRelocationAdvanceBoundedByGrace(t *testing.T) {
+	e := newStaleEnv(t)
+	unlock := e.svc.relocLock("rel_1")
+	defer unlock()
+	e.svc.relocKick(e.ctx, "rel_1")
+	start := time.Now()
+	e.svc.hub.Shutdown("test", 200*time.Millisecond)
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("Shutdown took %v with a stuck relocation advance", d)
+	}
+}

@@ -93,6 +93,14 @@ type TelegramConfig struct {
 	// stored. When both are set and differ, this one wins and the difference is logged and shown on the System page.
 	// Set it whenever the Mini App's host points at central (ADR-0083 §3.4.1).
 	MiniAppHost string `yaml:"miniapp_host"`
+	// WebhookBaseURL is the public base URL Telegram calls the webhook on (e.g. https://hooks.example.com), for a
+	// deployment whose public_url is not reachable from the internet. The bot registers its webhook under it instead
+	// of under public_url; the webhook path and the secret-token check are unchanged. https only, a lower-case host,
+	// no credentials, query or fragment. Empty: the webhook is registered under public_url. Only the webhook uses it:
+	// links, the Mini App origin and the login flow still use public_url. A path prefix (https://example.com/tg) is for
+	// the reverse proxy: it must strip the prefix before forwarding, because central serves only /telegram/webhook/<id>.
+	// The host must differ from miniapp_host (central would route the webhook to the Mini App, which answers 404).
+	WebhookBaseURL string `yaml:"webhook_base_url"`
 }
 
 // RetentionConfig holds the installation-wide retention that cannot be set per space (ADR-0045). Per-space retention
