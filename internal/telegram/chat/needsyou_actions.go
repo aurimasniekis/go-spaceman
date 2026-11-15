@@ -114,7 +114,7 @@ func (h *Handler) commonRows(f *form) [][]botapi.InlineKeyboardButton {
 	}
 	first = append(first, button("💬 Comment", humanData('r', f.spaceID, f.action, -1)), button("❓ Ask requester", humanData('i', f.spaceID, f.action, -1)))
 	var second []botapi.InlineKeyboardButton
-	if f.attN > 0 {
+	if f.attN > 0 && !f.enforced { // an enforced approval's attachments may hold its arguments (SM-APPR-005)
 		second = append(second, button(fmt.Sprintf("📎 Files (%d)", f.attN), humanData('p', f.spaceID, f.action, -1)))
 	}
 	if f.typ != "approval" {
@@ -247,7 +247,7 @@ func (h *Handler) commonAction(ctx context.Context, q *botapi.CallbackQuery, l u
 		rows := []botapi.InlineKeyboardButton{
 			styled(button("Confirm: cancel request", cancelConfirmData(s.ID, f.action, f.version)), botapi.StyleDanger),
 			button("Keep it", humanData('g', s.ID, f.action, -1))}
-		m, ok := h.send(ctx, l.ChatID, reply{text: TextCancelAsk + "\n\n" + typeMark(f.typ) + clean(f.title, 200), markup: markup(rows)})
+		m, ok := h.send(ctx, l.ChatID, reply{text: TextCancelAsk + "\n\n" + typeMark(f.typ) + clean(f.title, 200), markup: markup(rows), protect: true})
 		if ok {
 			h.qrAddConfirm(pendingKey{l.ChatID, m.MessageID}, confirmation{linkID: l.ID, kind: kindHumanCancel, spaceID: s.ID, id: f.action, decision: "cancel", version: f.version})
 		}
@@ -330,6 +330,10 @@ func (h *Handler) cancelConfirmTap(ctx context.Context, q *botapi.CallbackQuery,
 // files sends an action's attachments back as files, the way an inbox item's are: the content level must be full, each
 // is read through the API as the link's principal first, and each goes with protect_content.
 func (h *Handler) files(ctx context.Context, q *botapi.CallbackQuery, l updates.Link, c caller, s spaceRef, f *form) {
+	if f.enforced {
+		h.answer(ctx, q.ID, TextNoFilesHere)
+		return
+	}
 	if h.o.Space(s.ID).ContentLevel != settings.ContentFull {
 		h.answer(ctx, q.ID, TextNoFilesHere)
 		return
@@ -356,6 +360,13 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 		h.send(ctx, l.ChatID, reply{text: text})
 		h.addPrompt(k, p)
 	}
+	if m.MediaGroupID != "" {
+		// An album's other parts reply to the same prompt: only the first is taken, the rest are dropped quietly rather
+		// than captured as inbox items.
+		h.mu.Lock()
+		h.refused[albumKey{l.ID, m.MediaGroupID}] = h.o.Clock.Now()
+		h.mu.Unlock()
+	}
 	pc, ok := extract(m)
 	if !ok {
 		if len(m.Video)+len(m.VideoNote)+len(m.Voice)+len(m.Audio)+len(m.Animation)+len(m.Sticker) > 0 {
@@ -381,7 +392,7 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 	}
 	s, r, ok := h.space(ctx, c, f.spaceID)
 	if !ok {
-		h.send(ctx, l.ChatID, reply{text: failText(r)})
+		retry(failText(r) + " Nothing was sent.")
 		return
 	}
 	var ids []string
@@ -411,7 +422,11 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 	}
 	r = c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/human-actions/"+f.action+path, in, nil)
 	if !r.ok() {
-		h.send(ctx, l.ChatID, reply{text: failText(r)})
+		if conflict(r) || r.status == http.StatusForbidden || r.status == http.StatusNotFound {
+			h.send(ctx, l.ChatID, reply{text: failText(r)}) // final: the action changed or isn't yours to comment on
+		} else {
+			retry(failText(r) + " Nothing was sent; reply again.")
+		}
 		return
 	}
 	h.send(ctx, l.ChatID, reply{text: done})

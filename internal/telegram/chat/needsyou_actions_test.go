@@ -456,3 +456,41 @@ func TestInAppFormsKeepOnlyCommonVerbs(t *testing.T) {
 }
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
+
+// An enforced approval's attachments may hold its arguments: no Files button, and a crafted tap sends nothing.
+func TestEnforcedApprovalFilesWithheld(t *testing.T) {
+	e := newEnv(t)
+	e.apConfirm.Store(true)
+	e.api.enforced[hid('1')] = true
+	a := e.addHuman(spA, hid('1'), "approval", "Merge", `{"action":"x"}`)
+	e.api.atts["att_1"] = &storedAtt{meta: attachmentRef{ID: "att_1", Name: "args.json", Size: 5}, content: []byte("{}...")}
+	a.Attachments = []attachmentRef{e.api.atts["att_1"].meta}
+	f := e.open(spA, hid('1'))
+	if find(f, "Files") != "" {
+		t.Fatal("Files offered for an enforced approval")
+	}
+	e.tapData(humanData('p', spA, hid('1'), -1), f)
+	if len(e.files) != 0 {
+		t.Fatal("attachments of an enforced approval sent")
+	}
+}
+
+// The other parts of an album sent as the reply to a comment prompt are dropped, not captured as inbox items.
+func TestCommentAlbumPartsAreNotCaptured(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	e.addHuman(spA, hid('1'), "message", "FYI", `{}`)
+	f := e.open(spA, hid('1'))
+	e.tapData(find(f, "Comment"), f)
+	pr := e.last()
+	for i := 0; i < 2; i++ {
+		e.upd++
+		e.h.Handle(context.Background(), botapi.Update{UpdateID: e.upd, Message: &botapi.Message{MessageID: int(e.upd) + 500, From: &botapi.User{ID: chatID},
+			Chat: botapi.Chat{ID: chatID, Type: botapi.ChatPrivate}, MediaGroupID: "g1", Photo: photo(e, []byte("\x89PNG\r\n\x1a\n-x")),
+			ReplyToMessage: &botapi.Message{MessageID: pr.MessageID, Chat: botapi.Chat{ID: chatID}}}}, e.l)
+	}
+	time.Sleep(200 * time.Millisecond) // past the album's quiet time
+	if len(e.acts()) != 1 || e.createdN() != 0 {
+		t.Fatalf("acts %v, inbox items %d", e.acts(), e.createdN())
+	}
+}
