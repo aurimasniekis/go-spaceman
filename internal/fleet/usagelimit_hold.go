@@ -45,6 +45,9 @@ type UsageLimitSettings struct {
 	WaitIfResetWithin time.Duration
 	// SwitchMaxPerDay bounds an instance's account switches in 24 hours (ADR-0090 decision 5); 0: never switch.
 	SwitchMaxPerDay int
+	// MinHeadroomPercent is the launch-time headroom gate (ADR-0090 decision 6): a new run is not started on an
+	// account when a window with known usage leaves less than this percentage free. 0: off.
+	MinHeadroomPercent int
 }
 
 // HoldTarget is what a launch would use that a usage-limit hold can hold: an account, or the gateway references of a

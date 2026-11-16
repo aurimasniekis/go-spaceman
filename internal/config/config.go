@@ -210,6 +210,10 @@ type LimitsConfig struct {
 	// UsageLimitSwitchMaxPerDay is how many times one instance may move to another account in 24 hours before it waits
 	// as ADR-0079 does (0-50, default 6; 0: never switch; ADR-0090 decision 5).
 	UsageLimitSwitchMaxPerDay int64 `yaml:"usage_limit_switch_max_per_day"`
+	// UsageLimitMinHeadroomPercent is the launch-time headroom gate: a new run does not start on an account whose known
+	// window usage leaves less than this percentage free (0-100, default 0: off; ADR-0090 decision 6). Running agents
+	// are never moved because of it.
+	UsageLimitMinHeadroomPercent int64 `yaml:"usage_limit_min_headroom_percent"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual

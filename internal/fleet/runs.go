@@ -284,16 +284,30 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			if ul.Failover {
 				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
 			}
+			// The launch-time headroom gate (a space setting, off by default) only removes accounts from what Resolve may
+			// choose: with it on, the pool's order applies even without failover, and no pool account passing refuses
+			// the launch. Running agents are never moved for it.
+			gated := svc.withHeadroom(ctx, tx.Q, ul, avoid)
 			ref := in.AccountRef
-			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, avoid); err != nil {
+			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, gated); err != nil {
 				return err
 			}
+			if svc.headroomOn(ul) {
+				if err := svc.checkHeadroom(ctx, tx, ul, spaceID, in.Harness, in.Role, in.AccountRef); err != nil {
+					return err
+				}
+			}
+			avoid = gated
 			if avoid != nil {
 				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, func(string) (bool, error) { return false, nil }); err == nil && base != in.AccountRef {
 					if resolved == nil {
 						resolved = map[string]any{}
 					}
-					resolved["account_failover"] = map[string]any{"from": base, "to": in.AccountRef, "reason": "usage_limit"}
+					reason := "usage_limit"
+					if below, _, err := svc.belowHeadroom(ctx, tx.Q, ul, base); err == nil && below {
+						reason = "headroom"
+					}
+					resolved["account_failover"] = map[string]any{"from": base, "to": in.AccountRef, "reason": reason}
 				}
 			}
 		}

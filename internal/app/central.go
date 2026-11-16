@@ -419,6 +419,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				out.NotifyAfter = time.Duration(v.Get(limits.UsageLimitNotifyAfter)) * time.Hour // 0: never
 				out.WaitIfResetWithin = time.Duration(v.Get(limits.UsageLimitWaitIfResetWithin)) * time.Minute
 				out.SwitchMaxPerDay = int(v.Get(limits.UsageLimitSwitchMaxPerDay))
+				out.MinHeadroomPercent = int(v.Get(limits.UsageLimitMinHeadroomPercent))
 			}
 			return out
 		},

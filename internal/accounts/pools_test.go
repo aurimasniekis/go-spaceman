@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -301,5 +302,33 @@ func TestRolePoolRefusalNamesTheWayOut(t *testing.T) {
 	code(t, err, apperr.CodePrecondition)
 	if !strings.Contains(err.Error(), "or name an account in the launch") {
 		t.Fatalf("refusal %q", err)
+	}
+}
+
+// PoolIDs is the pool a launch may choose from: a scoped role's own accounts (never widened), else the space's.
+func TestPoolIDs(t *testing.T) {
+	f := newFx(t)
+	a, b, c := f.add("a", "claude_oauth_token", "tok-a"), f.add("b", "claude_oauth_token", "tok-b"), f.add("c", "claude_oauth_token", "tok-c")
+	_, err := f.svc.SetBindings(f.ctx, admin, "spc_a", []Binding{{AccountID: a.ID, Default: true}, {AccountID: b.ID}, {AccountID: c.ID}})
+	must(t, err)
+	_, err = f.svc.SetRolePool(f.ctx, admin, "spc_a", "rev", []PoolEntry{{AccountID: c.ID, Priority: 10}}, 0)
+	must(t, err)
+	pool := func(role string) []string {
+		var ids []string
+		must(t, f.s.W().TxNamed(f.ctx, "pool", func(tx *store.Tx) error {
+			var err error
+			ids, err = PoolIDs(f.ctx, tx, "spc_a", "claude-code", role)
+			return err
+		}))
+		slices.Sort(ids)
+		return ids
+	}
+	if got := pool("rev"); !slices.Equal(got, []string{c.ID}) {
+		t.Fatalf("scoped pool %v", got)
+	}
+	want := []string{a.ID, b.ID, c.ID}
+	slices.Sort(want)
+	if got := pool("dev"); !slices.Equal(got, want) {
+		t.Fatalf("space pool %v", got)
 	}
 }

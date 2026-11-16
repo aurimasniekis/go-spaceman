@@ -73,6 +73,9 @@ const (
 	// move to another account of its pool; UsageLimitSwitchMaxPerDay bounds the moves per instance (ADR-0090).
 	UsageLimitWaitIfResetWithin = "usage_limit_wait_if_reset_within"
 	UsageLimitSwitchMaxPerDay   = "usage_limit_switch_max_per_day"
+	// UsageLimitMinHeadroomPercent gates launches: a new run skips an account with less than this percentage of a known
+	// window left (0: off). Running agents are never moved for it.
+	UsageLimitMinHeadroomPercent = "usage_limit_min_headroom_percent"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -189,6 +192,9 @@ var Defs = []Def{
 	{Key: UsageLimitSwitchMaxPerDay, Label: "Account switches per day", Unit: "count",
 		Scope:    "how many times one agent instance may move to another account of its pool at a usage limit in 24 hours; beyond it the run waits for the reset (0: never move)",
 		Enforced: "run reports (account switch decision)", OnLower: "Applies to limits reached from then on; a switch already armed goes on.", Overridable: true},
+	{Key: UsageLimitMinHeadroomPercent, Label: "Launch headroom gate", Unit: "percent",
+		Scope:    "a new agent (a launch or a fresh resume) does not start on an account when a window with known usage leaves less than this percentage free; it uses the next eligible account of its pool, or the launch is refused until the earliest reset. An account with no known usage is not refused, a running agent is never moved because of it (0: off)",
+		Enforced: "launches and resumes (account choice)", OnLower: "Applies to launches from then on; running agents are untouched.", Overridable: true},
 }
 
 const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."
