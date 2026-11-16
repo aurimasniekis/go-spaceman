@@ -23,6 +23,11 @@
 #   RACE_APP_PARALLEL  go test -parallel for internal/app (default min(16, nproc/2), at least 4; CI sets 4)
 #   RACE_APP_SPLIT     1 runs internal/app's serial tests in a process of their own, 0 doesn't (default 1 with 16 or
 #                      more CPUs, else 0)
+#   RACE_TIMEOUT       go test -timeout for every package except internal/app (default 15m)
+#   RACE_APP_TIMEOUT   go test -timeout for internal/app, per process (default 25m)
+#   RACE_P             go test -p (packages run at once) for the other packages when set (default: go's, GOMAXPROCS)
+#   RACE_OUT_DIR       when set, every invocation's output is kept there (app-*.out, others.out) instead of a
+#                      temporary directory, so CI can upload it as an artifact when a run fails or hangs
 #   RACE_COUNT         go test -count when set (CI sets 1, so a cached pass never stands in for a run)
 #   SM_TEST_TX_MAX     write-transaction guard (default 500ms, relaxed for the race detector as in CI)
 set -euo pipefail
@@ -45,6 +50,12 @@ for v in RACE_PARALLEL RACE_APP_PARALLEL; do
 done
 [[ "$RACE_APP_SPLIT" =~ ^[01]$ ]] || { echo "race: RACE_APP_SPLIT must be 0 or 1" >&2; exit 2; }
 [[ -z "${RACE_COUNT:-}" || "$RACE_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "race: RACE_COUNT must be a positive integer" >&2; exit 2; }
+RACE_TIMEOUT="${RACE_TIMEOUT:-15m}"
+RACE_APP_TIMEOUT="${RACE_APP_TIMEOUT:-25m}"
+[[ -z "${RACE_P:-}" || "$RACE_P" =~ ^[1-9][0-9]*$ ]] || { echo "race: RACE_P must be a positive integer" >&2; exit 2; }
+# A hung test must end as a Go panic that dumps every goroutine (go test -timeout, on top of GOTRACEBACK=all for
+# crashes), never as a run that starves the machine until the CI runner is lost.
+export GOTRACEBACK=all
 export SM_TEST_TX_MAX="${SM_TEST_TX_MAX:-500ms}"
 
 # -race also turns on the compiler's checkptr instrumentation (unsafe.Pointer rule checks) in every package. In
@@ -52,7 +63,7 @@ export SM_TEST_TX_MAX="${SM_TEST_TX_MAX:-500ms}"
 # of all test CPU and half the CPU spent inside write transactions, so on a CPU-bound runner it doubled how long they
 # held the write lock (HP-DB-004 guard). It stays on for every other package, ours included; the race detector itself
 # stays on everywhere. The non-race runs (coverage) have no checkptr to begin with.
-flags=(-race -timeout 30m '-gcflags=modernc.org/...=-d=checkptr=0')
+flags=(-race '-gcflags=modernc.org/...=-d=checkptr=0')
 [[ -n "${RACE_COUNT:-}" ]] && flags+=("-count=$RACE_COUNT")
 
 # The package list is captured first, so a failing go list fails the run instead of testing less.
@@ -74,34 +85,55 @@ if (( RACE_APP_SPLIT )); then
   ' "$APP_DIR"/*_test.go | sort -u | paste -sd'|' -)
 fi
 
-tmp=$(mktemp -d)
+if [[ -n "${RACE_OUT_DIR:-}" ]]; then
+  mkdir -p "$RACE_OUT_DIR"
+  tmp=$RACE_OUT_DIR
+  keep=1
+else
+  tmp=$(mktemp -d)
+  keep=0
+fi
 pids=()
+monitor_pid=
 # shellcheck disable=SC2329 # invoked by the EXIT trap
 cleanup() {
   # Interrupted: stop the internal/app runs too, and the test binaries go test started for them.
+  [[ -z "$monitor_pid" ]] || { pkill -TERM -P "$monitor_pid" 2>/dev/null || true; kill -TERM "$monitor_pid" 2>/dev/null || true; }
   for pid in "${pids[@]}"; do
     pkill -TERM -P "$pid" 2>/dev/null || true
     kill -TERM "$pid" 2>/dev/null || true
   done
-  rm -rf "$tmp"
+  (( keep )) || rm -rf "$tmp"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# With RACE_OUT_DIR set (CI), sample memory and the biggest processes every 20 s into mem.log next to the test output:
+# if a runner is lost again, the artifact shows whether memory ran out and which test binary held it.
+if (( keep )); then
+  (
+    while :; do
+      { date -u +%T; free -m; ps -eo rss,pcpu,args --sort=-rss | head -8 | cut -c1-160; echo; } >>"$tmp/mem.log" 2>&1 || true
+      sleep 20
+    done
+  ) &
+  monitor_pid=$!
+fi
 
 start=$SECONDS
 names=()
 if [[ -n "$serial" ]]; then
   echo "race: internal/app serial tests ($(tr -cd '|' <<<"$serial" | wc -c | awk '{print $1 + 1}')) and parallel tests" \
     "(-parallel $RACE_APP_PARALLEL) as two processes, ${#others[@]} other packages with -parallel $RACE_PARALLEL (SM_TEST_TX_MAX=$SM_TEST_TX_MAX)"
-  "$GO" test "${flags[@]}" -run "^($serial)\$" "$APP_PKG" >"$tmp/app-serial.out" 2>&1 &
+  "$GO" test "${flags[@]}" -timeout "$RACE_APP_TIMEOUT" -run "^($serial)\$" "$APP_PKG" >"$tmp/app-serial.out" 2>&1 &
   pids+=($!); names+=("internal/app (serial tests)")
-  "$GO" test "${flags[@]}" -parallel "$RACE_APP_PARALLEL" -skip "^($serial)\$" "$APP_PKG" >"$tmp/app-parallel.out" 2>&1 &
+  "$GO" test "${flags[@]}" -timeout "$RACE_APP_TIMEOUT" -parallel "$RACE_APP_PARALLEL" -skip "^($serial)\$" "$APP_PKG" >"$tmp/app-parallel.out" 2>&1 &
   pids+=($!); names+=("internal/app (parallel tests)")
   outs=("$tmp/app-serial.out" "$tmp/app-parallel.out")
 else
   echo "race: internal/app with -parallel $RACE_APP_PARALLEL, ${#others[@]} other packages with -parallel $RACE_PARALLEL (SM_TEST_TX_MAX=$SM_TEST_TX_MAX)"
-  "$GO" test "${flags[@]}" -parallel "$RACE_APP_PARALLEL" "$APP_PKG" >"$tmp/app.out" 2>&1 &
+  "$GO" test "${flags[@]}" -timeout "$RACE_APP_TIMEOUT" -parallel "$RACE_APP_PARALLEL" "$APP_PKG" >"$tmp/app.out" 2>&1 &
   pids+=($!); names+=("internal/app")
   outs=("$tmp/app.out")
 fi
@@ -109,7 +141,10 @@ fi
 # The other packages stream their output as they go, but run in the background like the rest: bash runs a trap only
 # between commands, and `wait` returns at once on a trapped signal, so a TERM stops every invocation right away. (A
 # kill -9 of this script can't run the trap: its go test children go on running; stop the process group instead.)
-"$GO" test "${flags[@]}" -parallel "$RACE_PARALLEL" "${others[@]}" &
+pflag=()
+[[ -n "${RACE_P:-}" ]] && pflag=(-p "$RACE_P")
+# tee keeps a copy for the artifact; the pipeline's status is go test's (pipefail), and the subshell is the job we wait for.
+( "$GO" test "${flags[@]}" -timeout "$RACE_TIMEOUT" ${pflag[@]+"${pflag[@]}"} -parallel "$RACE_PARALLEL" "${others[@]}" 2>&1 | tee "$tmp/others.out" ) &
 others_pid=$!
 pids+=("$others_pid")
 rc=0
@@ -125,5 +160,6 @@ for (( i = 0; i < ${#names[@]}; i++ )); do
   (( prc == 0 )) || rc=$prc
 done
 pids=()
+[[ -z "$monitor_pid" ]] || kill -TERM "$monitor_pid" 2>/dev/null || true
 echo "race: $summary, total $(( SECONDS - start )) s"
 exit "$rc"

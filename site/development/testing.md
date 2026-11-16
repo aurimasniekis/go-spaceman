@@ -66,6 +66,13 @@ exits, even when it's killed.
 `RACE_PARALLEL` (4). On 16 or more CPUs, internal/app's serial tests run in a second process at the same time
 (`RACE_APP_SPLIT`, `0` turns it off).
 
+Every race invocation has a `go test -timeout`: `RACE_APP_TIMEOUT` (25m) for `internal/app`, per process, and
+`RACE_TIMEOUT` (15m) for the other packages, and `GOTRACEBACK=all` is set. A hung test ends as a panic that dumps every
+goroutine, instead of a run that starves the runner until it is lost (a healthy CI run takes about 15 minutes). With
+`RACE_OUT_DIR` set (CI and the release gate), `scripts/race.sh` keeps each invocation's output there, plus `mem.log`
+(memory and the largest processes every 20 s); both workflows upload the directory as the `race-output` artifact when the
+job fails or is cancelled. `RACE_P` caps how many packages run at once (`go test -p`).
+
 ### When a release gate fails
 
 - **`write transaction "…" held the write lock for … (> 1s, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once

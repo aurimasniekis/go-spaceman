@@ -83,6 +83,7 @@ jobs:
   test:
     name: vet, race tests and coverage floor (release gate)
     runs-on: ubuntu-24.04
+    timeout-minutes: 50 # race tests end by go test's own timeouts (25 m / 15 m), see ci.yaml; this is the backstop
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,7 +95,18 @@ jobs:
         env:
           SM_TEST_TX_MAX: 1s # race detector overhead on shared runners; see ci.yaml
           RACE_APP_PARALLEL: "4" # internal/app's own invocation keeps the runner-sized cap; see ci.yaml
+          RACE_OUT_DIR: ${{ runner.temp }}/race-out # kept as an artifact on failure; see ci.yaml
         run: make vet race RACE_COUNT=1 # every test runs (only local runs use go test's cache)
+      - name: upload race output
+        # The test output, the goroutine dump of a timed-out test and mem.log (memory samples) of the run, kept when
+        # the run fails or is cancelled, so a hang can be read without the job log (scripts/race.sh, RACE_OUT_DIR).
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: race-output-release
+          path: ${{ runner.temp }}/race-out
+          if-no-files-found: warn
+          retention-days: 14
       - name: coverage floor (non-race, so the write-transaction guard applies)
         # 1 s on GitHub's hosted runners, as in ci.yaml; 100 ms locally
         # (ADR-0062, update 2026-11-13, coverage at 1 s).

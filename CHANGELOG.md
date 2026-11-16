@@ -57,6 +57,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `backups.max_duration`), records it as failed with an error naming the stage,
   and the next backup can start. HTTP/2 connections to object storage now send health pings, so a silently dead
   connection no longer blocks a transfer forever.
+- The CI and release race jobs no longer run until the hosted runner is lost. Every `go test -race` invocation has a
+  timeout (25 minutes for `internal/app`, 15 for the other packages) and `GOTRACEBACK=all`, so a hung test ends as a
+  panic with a dump of every goroutine; the job has a time limit, and its test output and a memory log are uploaded as
+  the `race-output` artifact when it fails.
 
 ## [0.1.7] - 2026-11-16
 
