@@ -105,6 +105,13 @@ minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to 0060, agent m
 
 ### Fixed
 
+- **The race gate running its runner out of memory.** CI's and the release workflow's `go race tests` died about 15
+  minutes in with exit 143 (on v0.1.8 too): `internal/app`'s race test binary peaked at 13-15 GB on a 16 GB runner. The
+  `testing` package keeps a finished parallel test, and the cleanup closures it already ran, reachable until every
+  parallel test is done, so each test's whole central stayed in memory. The test harnesses now release what their cleanups
+  hold (`cleanupReleased`): the binary peaks under 2 GB (live heap about 200 MB instead of 5.3 GB at the end).
+  `scripts/race.sh` prints internal/app's peak RSS in its summary, and when it is interrupted it prints the last memory
+  sample and the end of internal/app's output into the log, since a runner that goes down skips the artifact upload.
 - **Run reports around a node agent's reconnect.** A run report issued between the agent's hello and its welcome went out
   before the protocol minor was negotiated, so a usage limit it carried was stripped; a run report issued between the hello
   snapshot and the connection being set went nowhere, and a run end that had only gone out live was never re-sent. Such

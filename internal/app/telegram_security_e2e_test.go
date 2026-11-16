@@ -159,7 +159,11 @@ func newTelegramSetup(t *testing.T) *telegramSetup {
 	s.deps.Telegram.SpaceFeature = func(context.Context, string, string) bool { return false }
 	s.minisrv = httptest.NewUnstartedServer(s.deps.TelegramHandler())
 	s.minisrv.Start()
-	t.Cleanup(s.minisrv.Close)
+	cleanupReleased(t, func() { // the Mini App server holds a second API built from central's deps (helpers_test.go)
+		s.minisrv.Close()
+		s.minisrv.Config.Handler = nil
+		s.deps = nil
+	})
 	s.deps.Telegram.MiniAppOrigin = func() string { return s.minisrv.URL }
 	return s
 }
