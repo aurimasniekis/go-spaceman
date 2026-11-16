@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
@@ -134,6 +136,11 @@ type LaunchInput struct {
 	// Dream prepares a dream workspace (set by the dream scheduler, not part of the API).
 	Dream      *proto.DreamSpec `json:"-"`
 	AccountRef string           `json:"account_ref,omitempty"`
+	// RequirePoolMember is set by SpaceMan's own resume, switch and restart launches (not part of the API): the launch
+	// transaction then checks that a named AccountRef is still in the role's pool, so a pool change between the decision
+	// and the launch can't widen the pool (ADR-0090). A ref that left a scoped pool is dropped and the pool picks.
+	// Operator- and API-launched runs that name an account leave it unset and keep the named account.
+	RequirePoolMember bool `json:"-"`
 	// RecordingMaxBytes is the space's recording quota, filled by launch resolution (not part of the API).
 	RecordingMaxBytes int64 `json:"-"`
 	// TerminalSize is the size the run's terminal is held at from the start: the space's terminal_cols and
@@ -285,6 +292,15 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
 			}
 			ref := in.AccountRef
+			// Role pools apply only while failover is on (ADR-0090 decision 3): with it off the resolver ignores them, so
+			// a run launched on the space default outside the pool keeps its account. Phrased as "the avoid function is
+			// set" so a later gate on the same function (the headroom gate) switches this with one line.
+			rolePoolsApply := avoid != nil
+			if in.RequirePoolMember && ref != "" && rolePoolsApply {
+				if ref, err = poolMemberRef(ctx, tx, spaceID, in.Harness, in.Role, ref); err != nil {
+					return err
+				}
+			}
 			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, avoid); err != nil {
 				return err
 			}
@@ -1209,4 +1225,25 @@ func (svc *Service) KickSpace(ctx context.Context, spaceID string) {
 	if sp, err := svc.s.R().GetSpace(ctx, spaceID); err == nil {
 		svc.hub.Kick(sp.NodeID)
 	}
+}
+
+// poolMemberRef keeps a named account ref only while it is still in the role's pool. A role with a pool of its own never
+// widens (ADR-0090), so a ref that left it is dropped to "" and the resolver's scoped path picks from the pool (priority,
+// holds) or refuses when nothing is usable. A role without a pool of its own keeps the ref. Callers run it only when role
+// pools apply at all (failover on); see the call site.
+func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref string) (string, error) {
+	scoped, err := accounts.RoleScoped(ctx, tx, spaceID, harness, role)
+	if err != nil || !scoped {
+		return ref, err
+	}
+	pool, err := accounts.PoolAccounts(ctx, tx, spaceID, harness, role)
+	if err != nil {
+		return "", err
+	}
+	// Stored refs (a run's launch spec, a wait's account) are resolved account IDs, and PoolAccounts returns IDs, so
+	// comparing IDs is enough.
+	if slices.Contains(pool, ref) {
+		return ref, nil
+	}
+	return "", nil
 }

@@ -5472,6 +5472,20 @@
     dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
     or a pool with a free account, raises none. The action is created after the park's transaction commits, so a crash
     in between loses it; the control message is in the transaction.
+- **Launch-time pool check (2026-11-16):**
+  - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
+    account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
+    launches SpaceMan makes itself: `LaunchInput.RequirePoolMember` (not part of the API) is set by the limit-wait resume
+    (a switch, a pool-exhausted resume and ADR-0079's resume alike) and by the control supervisor's and autostart's
+    relaunch. Role pools apply only while failover is on (decision 3), so the check runs only then. When the role has a
+    pool of its own for the harness and the named account is not in it, the ref is dropped and the pool picks (priority,
+    holds), or refuses the launch when nothing in it is usable (the wait defers). A role without a pool of its own keeps
+    the named account. With failover off, role pools don't apply and the ref is kept: a run launched on the space's
+    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen.
+  - Launches that an operator or the API make with a named account do not set the flag and keep today's behaviour: an
+    explicit ref names any enabled account bound to the space, inside the role's pool or not. `accounts.Resolve` itself is
+    unchanged. The claim-time check of T10 stays as an early decision; this one closes the window after it.
+  - Evidence: simulated (`internal/fleet/launchpool_test.go`), with a mutation check: removing the check fails the tests.
 - **Security-relevant because:**
   - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
   - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now
