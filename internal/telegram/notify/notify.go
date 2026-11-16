@@ -554,6 +554,8 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 	var done func(error)
 	if !edit {
 		done = n.cards.queue(chat, r)
+	} else {
+		n.cards.want(chat, r.Key, r.Version) // from now on the chat's edits of an older version lose
 	}
 	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: prio, Key: "card:" + r.String(), Done: done,
 		Send: func(ctx context.Context, c *botapi.Client) error {

@@ -84,6 +84,9 @@ type cardState struct {
 	// alert is the last reminder, escalation or assignment alert sent as a reply to the card (0: none); a newer one
 	// and the card's final state delete it (best effort: Telegram deletes only within 48 h).
 	alert int
+	// queued is the newest version of the resource an edit of the card was queued for: the chat handler's edits of an
+	// older version are refused from then on, even while that edit waits in the sender (or was given up).
+	queued int64
 }
 
 // cont is a continuation message and a signature of what it shows (0 after a restart), so a retried update doesn't
@@ -371,6 +374,16 @@ func (c *cards) shown(chat int64, k Key, version int64, form, final bool) {
 	defer c.mu.Unlock()
 	if cd, ok := c.byCard[cardKey{chat, k}]; ok {
 		cd.version, cd.form, cd.final, cd.sig = version, form, final, 0
+		c.byCard[cardKey{chat, k}] = cd
+	}
+}
+
+// want records that an edit of the card to version is queued.
+func (c *cards) want(chat int64, k Key, version int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cd, ok := c.byCard[cardKey{chat, k}]; ok && version > cd.queued {
+		cd.queued = version
 		c.byCard[cardKey{chat, k}] = cd
 	}
 }

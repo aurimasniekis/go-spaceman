@@ -156,8 +156,8 @@ type ChatEdit struct {
 }
 
 // EditCard runs edit, the chat handler's edit of a card message, under the chat's card lock, unless the card already
-// shows something that must win: a later version, the same version settled while the chat's isn't, or card.Gone (the
-// link may no longer see it). It reports whether edit ran and succeeded; the card then counts as showing what e says,
+// shows something that must win: a later version (shown, or queued in the sender), the same version settled while the
+// chat's isn't, or card.Gone (the link may no longer see it). It reports whether edit ran and succeeded; the card then counts as showing what e says,
 // so the notifier's next edit of the same version doesn't undo it, while a newer state of the resource replaces it.
 // A message that is no card known here is edited as is.
 func (n *Notifier) EditCard(chat int64, msg int, k Key, e ChatEdit, edit func() bool) bool {
@@ -168,7 +168,7 @@ func (n *Notifier) EditCard(chat int64, msg int, k Key, e ChatEdit, edit func() 
 	if cd != nil && cd.messageID != msg {
 		cd = nil
 	}
-	if cd != nil && (cd.gone || cd.version > e.Version || cd.version == e.Version && cd.final && !e.Final) {
+	if cd != nil && (cd.gone || cd.version > e.Version || cd.queued > e.Version || cd.version == e.Version && cd.final && !e.Final) {
 		return false
 	}
 	if !edit() {
