@@ -54,6 +54,15 @@ const (
 	KindHumanActions = "human_actions"
 	KindAudit        = "audit_events"
 	KindTelegram     = "telegram_messages"
+
+	// The usage ledger and the closed limit rows (ADR-0090, Q9): counts of rows deleted; rolled-up hourly rows count
+	// under KindUsageBuckets too.
+	KindUsageBuckets    = "usage_buckets"
+	KindWindowSamples   = "account_window_samples"
+	KindLedgerMarks     = "usage_ledger_marks"
+	KindUsageLimits     = "usage_limits"
+	KindLimitWaits      = "limit_waits"
+	KindAccountSwitches = "account_switches"
 )
 
 // Actor is who retention deletions are attributed to.
@@ -409,6 +418,9 @@ func (svc *Service) work(ctx context.Context) (Counts, error) {
 	n, err := svc.pruneTelegramMessages(ctx)
 	counts[KindTelegram] += n
 	if err != nil {
+		errs = append(errs, err)
+	}
+	if err := svc.pruneUsageLedger(ctx, counts); err != nil {
 		errs = append(errs, err)
 	}
 	return counts, errors.Join(errs...)

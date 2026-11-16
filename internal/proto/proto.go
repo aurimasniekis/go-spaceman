@@ -760,6 +760,33 @@ type UsageReport struct {
 	Transcript *TranscriptRef `json:"transcript,omitempty"`
 	Final      bool           `json:"final" doc:"The run ended; nothing more will be added"`
 	Note       string         `json:"note,omitempty"`
+	// Windows (minor ≥ 13) are the rate-limit windows of the run's account as the status line last showed them; central
+	// validates them again and keeps the newest observation per account and kind. Empty below minor 13 (ForMinor).
+	Windows []UsageWindow `json:"windows,omitempty"`
+}
+
+// Rate-limit window kinds a usage report may carry (a subset of the limit kinds).
+const (
+	WindowFiveHour = LimitFiveHour
+	WindowSevenDay = LimitSevenDay
+)
+
+// UsageWindow is one rate-limit window of the run's account: how much of it was used (percent) when it was observed,
+// and when it resets. Typed numbers only.
+type UsageWindow struct {
+	Kind       string     `json:"kind" enum:"five_hour,seven_day"`
+	UsedPct    float64    `json:"used_pct"`
+	ResetsAt   *time.Time `json:"resets_at,omitempty"`
+	ObservedAt time.Time  `json:"observed_at"`
+}
+
+// ForMinor returns the report as a session negotiated at minor may carry it: below MinorAccountUsage it has no windows.
+// The receiver is never changed.
+func (r UsageReport) ForMinor(minor int) UsageReport {
+	if minor < MinorAccountUsage {
+		r.Windows = nil
+	}
+	return r
 }
 
 // TranscriptMax bounds a stored transcript; TranscriptChunkMax one chunk.
