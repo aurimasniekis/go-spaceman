@@ -29,6 +29,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Queue policy changes reach control.** When a queue policy write changes `max_active` or an incident setting, control
+  gets one system message with each changed field's old and new value (`max_active 2 → 4`) and the audit event; a write
+  that changes nothing sends none.
 - **Account switching** (ADR-0090, security-relevant). With `usage_limit_failover` on, a Claude Code run that reaches
   its usage limit moves to another account of its pool: at its next idle point it is parked and resumed at once with its
   session (`--resume`) under the next eligible account. Nothing is sent to the running process and no credential is

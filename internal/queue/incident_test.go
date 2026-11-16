@@ -323,3 +323,50 @@ func TestIncidentCapacity(t *testing.T) {
 		t.Fatalf("an ordinary task used the incident slot: %v", err)
 	}
 }
+
+func TestSetPolicyNotifiesControl(t *testing.T) {
+	op := audit.Actor{Type: "user", ID: "usr_op"}
+	f := newFx(t)
+	type note struct{ dedup, subject, body string }
+	var notes []note
+	f.svc.Notify = func(space, dedup, subject, body string) {
+		if space != "spc_a" {
+			t.Fatalf("space %q", space)
+		}
+		notes = append(notes, note{dedup, subject, body})
+	}
+	f.svc.DefaultMaxActive = 2
+	base := Policy{MaxActive: 2, IncidentInsertion: "top", IncidentUntrusted: "propose", IncidentWorkers: "finish", IncidentResume: "manual"}
+	// First write equal to the defaults: nothing changed.
+	_, err := f.svc.SetPolicy(f.ctx, op, "spc_a", base)
+	must(t, err)
+	if len(notes) != 0 {
+		t.Fatalf("unchanged policy notified: %+v", notes)
+	}
+	// Same again: still nothing.
+	_, err = f.svc.SetPolicy(f.ctx, op, "spc_a", base)
+	must(t, err)
+	if len(notes) != 0 {
+		t.Fatalf("repeat notified: %+v", notes)
+	}
+	next := base
+	next.MaxActive = 4
+	_, err = f.svc.SetPolicy(f.ctx, op, "spc_a", next)
+	must(t, err)
+	if len(notes) != 1 || !strings.Contains(notes[0].subject, "max_active 2 → 4") || strings.Contains(notes[0].subject, "incident") {
+		t.Fatalf("notes: %+v", notes)
+	}
+	// The notification links to the audit event of the change.
+	var id string
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT id FROM audit_events WHERE action = 'queue.policy_updated' ORDER BY id DESC LIMIT 1`).Scan(&id))
+	if !strings.Contains(notes[0].body, id) || notes[0].dedup != "queue-policy:"+id {
+		t.Fatalf("audit link: %q want %s", notes[0].body, id)
+	}
+	// An incident setting is reported too.
+	next.IncidentCapacity = 1
+	_, err = f.svc.SetPolicy(f.ctx, op, "spc_a", next)
+	must(t, err)
+	if len(notes) != 2 || !strings.Contains(notes[1].subject, "incident_capacity 0 → 1") {
+		t.Fatalf("notes: %+v", notes)
+	}
+}

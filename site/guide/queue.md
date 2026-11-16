@@ -60,6 +60,11 @@ They are stored as the space's attachments, listed in the task's drawer, and giv
 **Policy** sets how many top-level tasks may run at once, where new incident tasks go (top or by priority), whether a
 new incident preempts running ordinary tasks, whether escalation may reorder, and the incident rules below.
 
+When a policy write changes a field (from the web, the API, the CLI or Terraform), control gets one system message
+naming each changed field with its old and new value, for example `max_active 2 → 4`, and a link to the audit event.
+It can then launch work that became eligible. A write that changes nothing sends no message, and the message holds
+only field names and values.
+
 ## Incidents
 
 An incident is a task of kind `incident`. The queue policy decides who may raise one and what happens to the work it
