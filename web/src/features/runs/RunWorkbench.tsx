@@ -80,7 +80,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
   useEffect(() => {
     const runId = r.id
     const listener = (c: Change) => {
-      if (c.resource_type === 'run_input_rejected' && c.resource_id === runId) {
+      if (c.resource_type === 'run_input_rejected' && c.resource_id === runId && Date.now() - c.at / 1000 < 60_000) { // `at` is microseconds; an older entry is a reconnect replay
         notifications.show({ color: 'owlRed', title: 'Message not delivered', message: 'The program did not take it (it may be busy, waiting on a prompt, or taken over). Send it again when it is ready.', closeButtonProps })
       }
     }

@@ -5270,8 +5270,10 @@
   act on it (the fake runner queues typed input; real Claude Code and Codex are unverified). Safe input stays the rule for automated input (notices). Takeover
   still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
 - **Consequences:** The text may sit in the harness's own queue while it works. A harness that reports `blocked` refuses
-  the text (hc refuses a blocked program without its own force) and the text is dropped, and the operator is not told yet;
-  central answers 202 when it queues the command, so the box says "Queued for the agent". The risk that a modal takes
+  the text (hc refuses a blocked program without its own force) and the text is dropped. Central answers 202 when it queues the command, so the box says "Queued for the agent"; when
+  the node later rejects the command (blocked program, takeover, ending run), central audits `run.input_rejected` with the
+  reason and records a change the run page shows as a "Message not delivered" toast (rejected notices are not reported).
+  Operator input with control characters (C0, DEL, C1 except tab and newline) is refused with a 400. The risk that a modal takes
   the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
   `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
 - **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.

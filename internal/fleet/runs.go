@@ -1280,8 +1280,9 @@ func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, re
 	return "", nil
 }
 
-// isRefusedControl reports a C0 control (or DEL) other than tab and newline: an escape sequence or a carriage return
-// typed into the terminal would act on the program instead of being read as the message.
+// isRefusedControl reports a C0 control, DEL or C1 control (U+0080-U+009F) other than tab and newline: an escape
+// sequence or a carriage return typed into the terminal would act on the program instead of being read as the message,
+// and U+009B (CSI) is one in terminals that read C1 (it ends a bracketed paste). Other non-ASCII text is accepted.
 func isRefusedControl(r rune) bool {
-	return (r < 0x20 && r != '\t' && r != '\n') || r == 0x7f
+	return (r < 0x20 && r != '\t' && r != '\n') || (r >= 0x7f && r <= 0x9f)
 }

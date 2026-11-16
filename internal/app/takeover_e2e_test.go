@@ -318,7 +318,7 @@ func TestRejectedInputIsSurfaced(t *testing.T) {
 	eventually(t, "running", func() bool { return e.run1(r.ID).Observed == "running" })
 	e.run.SetStatus(e.run1(r.ID).TerminalID, "working")
 
-	for _, bad := range []string{"\x1b[31mred", "a\rb", "bell\a", "nul\x00"} {
+	for _, bad := range []string{"\x1b[31mred", "a\rb", "bell\a", "nul\x00", "del\x7f", "\u009b201~", "\u0085"} {
 		if err := e.c.Fleet.SendInput(ctx, admin, r.ID, bad, true); err == nil {
 			t.Fatalf("input %q was accepted", bad)
 		}
@@ -326,11 +326,14 @@ func TestRejectedInputIsSurfaced(t *testing.T) {
 	if err := e.c.Fleet.SendInput(ctx, admin, r.ID, "tab\tand\r\nnewline\n", true); err != nil {
 		t.Fatalf("plain text refused: %v", err)
 	}
+	if err := e.c.Fleet.SendInput(ctx, admin, r.ID, "naïve ✓ 日本", true); err != nil {
+		t.Fatalf("non-ASCII text refused: %v", err)
+	}
 	// A normal message still reaches the program (the submit keystroke is the runner's, not part of the text); CRLF is read as LF.
 	term := e.run1(r.ID).TerminalID
 	eventually(t, "normal message submitted", func() bool {
 		in := e.run.Inputs(term)
-		return len(in) == 1 && in[0] == "tab\tand\nnewline\n"
+		return len(in) == 2 && in[0] == "tab\tand\nnewline\n" && in[1] == "naïve ✓ 日本"
 	})
 
 	if err := e.c.Fleet.SendInput(ctx, admin, r.ID, "too early", false); err != nil {
@@ -341,4 +344,30 @@ func TestRejectedInputIsSurfaced(t *testing.T) {
 		err := e.c.Store.ReadDB().QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE action = 'run.input_rejected' AND target_id = ?`, r.ID).Scan(&n)
 		return err == nil && n == 1
 	})
+	// A rejected notice (automated input, "notice:" key) is not the operator's input: no audit entry, no change entry.
+	var noticeID string
+	if err := e.c.Store.W().Tx(ctx, func(tx *store.Tx) error {
+		noticeID = ids.New(ids.Command)
+		pl, _ := json.Marshal(proto.InputPayload{Text: "notice while busy"})
+		return tx.Q.InsertNodeCommand(ctx, db.InsertNodeCommandParams{ID: noticeID, NodeID: nodes[0].ID, SpaceID: sp.ID,
+			RunID: sql.NullString{String: r.ID, Valid: true}, Generation: e.run1(r.ID).Generation, Kind: proto.CmdInput,
+			IdempotencyKey: "notice:" + noticeID, PayloadJson: string(pl), CreatedAt: tx.NowMicros()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.c.Fleet.KickRun(ctx, r.ID)
+	eventually(t, "notice refused on the node", func() bool {
+		c, err := e.c.Store.R().GetNodeCommand(ctx, noticeID)
+		return err == nil && c.State == proto.AckRejected
+	})
+	time.Sleep(200 * time.Millisecond)
+	for q, want := range map[string]int{
+		`SELECT count(*) FROM audit_events WHERE action = 'run.input_rejected' AND target_id = ?`:     1,
+		`SELECT count(*) FROM changes WHERE resource_type = 'run_input_rejected' AND resource_id = ?`: 1,
+	} {
+		var n int
+		if err := e.c.Store.ReadDB().QueryRowContext(ctx, q, r.ID).Scan(&n); err != nil || n != want {
+			t.Fatalf("%s: %d (%v), want %d", q, n, err, want)
+		}
+	}
 }
