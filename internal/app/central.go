@@ -490,6 +490,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	// Control lifecycle (ADR-0056): started for waiting work, stopped after its idle time.
 	c.Supervisor.Limit = func(ctx context.Context, spaceID, key string) int64 { return c.Limits.Value(ctx, nil, spaceID, key) }
 	c.Supervisor.ControlRole = c.Catalog.ControlRole
+	c.Supervisor.RoleName = c.Catalog.CurrentRoleName
 	c.Notifier.ControlWanted = c.Supervisor.ControlWanted
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Human.Inbox = c.Inbox // routed responses become inbox items when the human policy says so (SM-INBOX-001)
