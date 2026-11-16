@@ -47,7 +47,7 @@ const cardVerbs = "qfcmadn"
 func isCardVerb(v byte) bool { return strings.IndexByte(cardVerbs, v) >= 0 }
 
 // cardTap handles a card button tapped on a message with no live form: it adopts the card message as the form of the
-// action and runs the verb on it. Holds formMu.
+// action and runs the verb on it. Holds the chat's form lock.
 func (h *Handler) cardTap(ctx context.Context, q *botapi.CallbackQuery, l updates.Link, c caller, s spaceRef, actionID string, verb byte, n int) {
 	key := pendingKey{q.Message.Chat.ID, q.Message.MessageID}
 	if h.o.Card == nil || l.Group != nil {

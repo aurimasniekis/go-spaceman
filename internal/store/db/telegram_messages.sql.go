@@ -11,7 +11,7 @@ import (
 )
 
 const deleteTelegramMessage = `-- name: DeleteTelegramMessage :exec
-DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'cont'
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind IN ('cont', 'alert')
 `
 
 type DeleteTelegramMessageParams struct {
@@ -19,7 +19,8 @@ type DeleteTelegramMessageParams struct {
 	MessageID int64
 }
 
-// A continuation the notifier deleted (the body shrank): its row must not come back after a restart.
+// A continuation or an alert the notifier deleted (the body shrank, a newer alert, the card settled): its row must not
+// come back after a restart.
 func (q *Queries) DeleteTelegramMessage(ctx context.Context, arg DeleteTelegramMessageParams) error {
 	_, err := q.db.ExecContext(ctx, deleteTelegramMessage, arg.ChatID, arg.MessageID)
 	return err
@@ -59,7 +60,7 @@ func (q *Queries) GetTelegramMessage(ctx context.Context, arg GetTelegramMessage
 
 const listTelegramMessagesByResource = `-- name: ListTelegramMessagesByResource :many
 SELECT chat_id, message_id, kind, resource_version, created_at, message_thread_id FROM telegram_messages
-WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont')
+WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont', 'alert')
 `
 
 type ListTelegramMessagesByResourceParams struct {
@@ -76,7 +77,8 @@ type ListTelegramMessagesByResourceRow struct {
 	MessageThreadID sql.NullInt64
 }
 
-// Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
+// Cards, their continuation messages ('cont'; the rest of a long body, replies to the card) and the last alert sent as a
+// reply to the card ('alert'), so a restart doesn't leave it behind.
 func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTelegramMessagesByResourceParams) ([]ListTelegramMessagesByResourceRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTelegramMessagesByResource, arg.ResourceType, arg.ResourceID)
 	if err != nil {

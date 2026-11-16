@@ -10,9 +10,10 @@ ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.reso
   message_thread_id = COALESCE(excluded.message_thread_id, telegram_messages.message_thread_id);
 
 -- name: ListTelegramMessagesByResource :many
--- Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
+-- Cards, their continuation messages ('cont'; the rest of a long body, replies to the card) and the last alert sent as a
+-- reply to the card ('alert'), so a restart doesn't leave it behind.
 SELECT chat_id, message_id, kind, resource_version, created_at, message_thread_id FROM telegram_messages
-WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont');
+WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont', 'alert');
 
 -- name: PruneTelegramMessages :execrows
 -- A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). Links are never
@@ -30,5 +31,6 @@ SELECT link_id, space_id, resource_type, resource_id, resource_version FROM tele
 WHERE chat_id = ? AND message_id = ? AND kind = 'card';
 
 -- name: DeleteTelegramMessage :exec
--- A continuation the notifier deleted (the body shrank): its row must not come back after a restart.
-DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'cont';
+-- A continuation or an alert the notifier deleted (the body shrank, a newer alert, the card settled): its row must not
+-- come back after a restart.
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind IN ('cont', 'alert');

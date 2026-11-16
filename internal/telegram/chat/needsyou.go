@@ -354,8 +354,9 @@ func (h *Handler) humanCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 		}
 		n = v
 	}
-	h.formMu.Lock() // one change to a form at a time: taps and replies may be handled concurrently
-	defer h.formMu.Unlock()
+	fl := h.formLock(q.Message.Chat.ID)
+	fl.Lock() // one change to a chat's forms at a time: taps and replies may be handled concurrently
+	defer fl.Unlock()
 	key := pendingKey{q.Message.Chat.ID, q.Message.MessageID}
 	fm := h.formFor(key, l.ID)
 	if fm != nil && fm.fromCard && fm.back == backCard && isCardVerb(verb) {
@@ -1065,11 +1066,12 @@ func (h *Handler) promptReply(ctx context.Context, m *botapi.Message, l updates.
 		return false
 	}
 	if p.field == promptComment || p.field == promptClarify {
-		h.commentReply(ctx, m, l, k, p) // takes formMu itself, only around the form lookups and the API call
+		h.commentReply(ctx, m, l, k, p) // takes the form lock itself, only around the form lookups and the API call
 		return true
 	}
-	h.formMu.Lock()
-	defer h.formMu.Unlock()
+	formMu := h.formLock(p.form.chat)
+	formMu.Lock()
+	defer formMu.Unlock()
 	f := h.formFor(p.form, l.ID)
 	if f == nil {
 		h.send(ctx, l.ChatID, reply{text: TextFormExpired})

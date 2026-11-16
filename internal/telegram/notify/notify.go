@@ -173,6 +173,8 @@ type Notifier struct {
 	notices *notices
 
 	cursor int64 // only the Run goroutine touches it
+
+	sweepNow chan struct{} // the link list was reloaded: sweep (see kickSweep)
 }
 
 // New returns a Notifier; Run starts it.
@@ -196,7 +198,7 @@ func New(o Options) *Notifier {
 		o.FlushRows = 100
 	}
 	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf(),
-		notices: &notices{sent: map[string]bool{}}}
+		notices: &notices{sent: map[string]bool{}}, sweepNow: make(chan struct{}, 1)}
 }
 
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
@@ -204,6 +206,11 @@ func New(o Options) *Notifier {
 func (n *Notifier) Run(ctx context.Context) error {
 	sub := n.o.Bus.Subscribe(16, eventbus.TopicChange)
 	defer sub.Close()
+	// What decides who may see a card changes without a change-feed entry: grants, links and their mutes, the spaces'
+	// Telegram settings. The events only say "look again": each sweeps the cards in memory (see sweep).
+	access := n.o.Bus.Subscribe(16, eventbus.TopicGrantsChanged, eventbus.TopicTelegramLink, eventbus.TopicTelegramSettings, eventbus.TopicUserChanged)
+	defer access.Close()
+	n.o.Links.afterReload = n.kickSweep
 	n.o.Links.Start(ctx)
 	defer n.flush(context.WithoutCancel(ctx)) //nolint:contextcheck // the last mappings are written after shutdown
 
@@ -222,6 +229,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 	n.loadNotices(ctx)
 	flush := time.NewTicker(n.o.FlushEvery)
 	defer flush.Stop()
+	var late <-chan time.Time  // armed after an access event: the caches it refreshes may be read a moment later than it
 	var again <-chan time.Time // armed once after a failed feed read: the unread rest is processed without a new change
 	for {
 		select {
@@ -236,6 +244,15 @@ func (n *Notifier) Run(ctx context.Context) error {
 				start()
 			}
 			n.loadNotices(ctx)
+			n.sweep() // the backstop for an event that was dropped, or seen before the caches it concerns were reloaded
+		case <-access.C:
+			n.sweep()
+			late = time.After(Window)
+		case <-n.sweepNow:
+			n.sweep()
+		case <-late:
+			late = nil
+			n.sweep()
 		case <-again:
 			again = nil
 			if n.process(ctx) {
@@ -365,6 +382,45 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 			continue
 		}
 		n.deliver(ctx, snd, links, r, now, w.seen[k].Action == changefeed.Created)
+	}
+}
+
+// kickSweep asks Run for a sweep, after the link list was reloaded (a mute, a link's grants or its user changed).
+func (n *Notifier) kickSweep() {
+	select {
+	case n.sweepNow <- struct{}{}:
+	default:
+	}
+}
+
+// sweep retracts the cards in memory whose link may no longer see the item: its access was revoked, the space muted
+// or hidden, the link overdue for re-confirmation. It is the eager counterpart of the check deliver and a queued send
+// make, and uses the same ones (may, Visible) on what the card was sent with, so it can only take content away: a
+// card is never edited to show more, and nothing is read. A retraction is queued like any other (it is checked
+// against the current link when it is sent, and a card already retracted costs nothing).
+func (n *Notifier) sweep() {
+	snd := n.o.Sender()
+	if snd == nil {
+		return
+	}
+	cs := n.cards.sweepable()
+	if len(cs) == 0 {
+		return
+	}
+	links := n.o.Links.Snapshot()
+	byID := make(map[string]*Link, len(links))
+	for i := range links {
+		byID[links[i].ID] = &links[i]
+	}
+	set, now := n.o.Policy.Current(), n.o.Now()
+	for i := range cs {
+		l := byID[cs[i].link]
+		if l == nil || l.ChatID != cs[i].chat {
+			continue // unlinked or moved: the bot no longer writes to that chat for this link
+		}
+		if !n.o.Policy.Space(cs[i].r.SpaceID).Visible() || !n.may(l, &cs[i].r, set, now) {
+			n.retract(snd, l, &cs[i].r)
+		}
 	}
 }
 

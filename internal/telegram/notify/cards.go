@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
@@ -78,6 +79,12 @@ type cardState struct {
 	// linkID and spaceID are the link and space the card was sent for ("" for a card loaded from its row: the chat
 	// handler's lookup then reads the row).
 	linkID, spaceID string
+	// perm and viewRole are what the API checks to show the resource (set when a card is sent or edited; permKnown
+	// false for a card loaded from its row), so a change of access, mute or visibility can be swept over the cards in
+	// memory without reading the resource (sweep).
+	perm      authz.Permission
+	viewRole  string
+	permKnown bool
 	// final: what the card shows is settled. form: the chat handler shows the action's form on the card message (at
 	// version), not the card. gone: the card says only card.Gone (the link may no longer see the item).
 	final, form, gone bool
@@ -153,14 +160,19 @@ func (c *cards) load(ctx context.Context, k Key) {
 	c.loaded[k] = true
 	for _, m := range rows {
 		ck := cardKey{m.ChatID, k}
-		if _, ok := c.byCard[ck]; !ok && !m.Cont {
+		if _, ok := c.byCard[ck]; !ok && !m.Cont && m.Kind != MappingAlert {
 			seen := m.CreatedAt.UnixMicro()
 			c.byCard[ck] = cardState{messageID: m.MessageID, version: m.Version, remindedSeen: seen, escalatedSeen: seen, thread: m.Thread, threadKnown: m.ThreadKnown}
 			c.byMsg[[2]int64{m.ChatID, int64(m.MessageID)}] = k
 		}
 	}
-	for _, m := range rows { // continuations after the cards, oldest first (message IDs grow)
+	for _, m := range rows { // continuations and alerts after the cards, oldest first (message IDs grow)
 		ck := cardKey{m.ChatID, k}
+		if cd, ok := c.byCard[ck]; ok && m.Kind == MappingAlert {
+			cd.alert = max(cd.alert, m.MessageID) // the newest one; an older one that survived is deleted by the next
+			c.byCard[ck] = cd
+			continue
+		}
 		if cd, ok := c.byCard[ck]; ok && m.Cont && !slices.ContainsFunc(cd.conts, func(x cont) bool { return x.id == m.MessageID }) {
 			cd.conts = append(slices.Clone(cd.conts), cont{id: m.MessageID})
 			slices.SortFunc(cd.conts, func(a, b cont) int { return a.id - b.id })
@@ -217,6 +229,7 @@ func (c *cards) record(m Mapping, r *Resource) {
 	if r != nil {
 		// The notifier's own state of the card: what the chat handler or a retraction left is replaced.
 		cur.final, cur.form, cur.gone = r.Final, false, false
+		cur.perm, cur.viewRole, cur.permKnown = r.Perm, r.ViewRole, true
 		cur.remindedSeen, cur.escalatedSeen = max(cur.remindedSeen, r.RemindedAt), max(cur.escalatedSeen, r.EscalatedAt)
 		if !cur.known {
 			cur.assignee, cur.known = r.Assignee, true
@@ -414,7 +427,8 @@ func (c *cards) markGone(chat int64, k Key) {
 	}
 }
 
-// swapAlert remembers the alert just sent as a reply to a card and returns the one before it (0: none).
+// swapAlert remembers the alert just sent as a reply to a card and returns the one before it (0: none). The alert's
+// row is queued with the card's (and the old one's removed), so a restart still knows which message to delete.
 func (c *cards) swapAlert(chat int64, k Key, id int) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -425,6 +439,14 @@ func (c *cards) swapAlert(chat int64, k Key, id int) int {
 	old := cd.alert
 	cd.alert = id
 	c.byCard[cardKey{chat, k}] = cd
+	if c.store != nil {
+		if old != 0 && old != id {
+			c.pending[[2]int64{chat, int64(old)}] = Mapping{ChatID: chat, MessageID: old, Key: k, Kind: MappingAlert, Delete: true}
+		}
+		if id != 0 {
+			c.pendLocked(Mapping{ChatID: chat, MessageID: id, LinkID: cd.linkID, SpaceID: cd.spaceID, Key: k, Version: cd.version, CreatedAt: c.now(), Kind: MappingAlert})
+		}
+	}
 	return old
 }
 
@@ -787,4 +809,27 @@ func clip(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n-1]) + "…"
+}
+
+// swept is a card in memory that a sweep may have to retract.
+type swept struct {
+	chat int64
+	r    Resource // Key, SpaceID, Perm and ViewRole only
+	link string
+}
+
+// sweepable lists the cards in memory that still show something of their item and were sent for a link: the ones a
+// change of access, mute or visibility can affect. A card loaded from its row after a restart (no link, no permission
+// known) is not among them; the item's next change, or a queued send, retracts it.
+func (c *cards) sweepable() []swept {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []swept
+	for ck, cd := range c.byCard {
+		if cd.linkID == "" || !cd.permKnown || cd.retracted() {
+			continue
+		}
+		out = append(out, swept{chat: ck.chat, link: cd.linkID, r: Resource{Key: ck.key, SpaceID: cd.spaceID, Perm: cd.perm, ViewRole: cd.viewRole}})
+	}
+	return out
 }
