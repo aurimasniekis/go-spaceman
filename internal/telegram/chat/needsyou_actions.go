@@ -172,6 +172,10 @@ func (h *Handler) formByAction(linkID, spaceID, actionID string, chatID int64) *
 // of the action, or closed when the action is no longer pending. Nothing the person had built up in the old card is
 // sent anywhere.
 func (h *Handler) reloadCard(ctx context.Context, c caller, l updates.Link, s spaceRef, f *form) {
+	if f.fromCard {
+		h.backToCard(ctx, l, c, s, f) // a form on a notifier card: the card itself shows the current state
+		return
+	}
 	a, r := h.getAction(ctx, c, s, f.action)
 	at := &botapi.Message{MessageID: f.key.msg}
 	if !r.ok() {
@@ -273,6 +277,10 @@ func (h *Handler) resync(ctx context.Context, c caller, l updates.Link, s spaceR
 	}
 	if !a.pending() {
 		h.dropForm(f.key)
+		if f.fromCard {
+			h.showCard(ctx, l, s, a, f.key, f.thread, f.enforced)
+			return
+		}
 		h.show(ctx, l.ChatID, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\nThis is already " + clean(orDash(a.Status), 20) + "."})
 		return
 	}
@@ -323,6 +331,10 @@ func (h *Handler) cancelConfirmTap(ctx context.Context, q *botapi.CallbackQuery,
 	h.show(ctx, l.ChatID, q.Message, reply{text: "🗑 The request was cancelled."})
 	if f != nil {
 		h.dropForm(f.key)
+		if f.fromCard {
+			h.settleCard(ctx, l, s, f, r.body, "cancelled", "")
+			return
+		}
 		h.show(ctx, f.key.chat, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\n🗑 Cancelled."})
 	}
 }

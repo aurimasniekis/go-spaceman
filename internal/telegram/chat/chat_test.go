@@ -275,6 +275,8 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.respHdr = append(f.respHdr, r.Header.Get("If-Match"))
 		f.respTok = append(f.respTok, api.ApprovalConfirmationFrom(r.Context()))
 		switch {
+		case a.SpaceID == spViewer: // a viewer may not respond, whatever a card offered
+			out(403, map[string]any{"status": 403, "detail": "forbidden"})
 		case r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, a.Version):
 			out(412, map[string]any{"status": 412, "detail": "changed"})
 		case !a.pending():

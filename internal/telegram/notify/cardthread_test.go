@@ -195,8 +195,8 @@ func TestCardGrowsAfterItsTopicIsClosedOrDeleted(t *testing.T) {
 	}
 }
 
-// A settled card whose topic is gone keeps what it shows: its last edit stays, the part that can't be sent is left
-// out, and nothing is deleted or sent again.
+// A settled card whose topic is closed is kept and edited in place to its compact final line: nothing is sent again,
+// and its continuations (which carry the body) are deleted.
 func TestFinalCardIsKeptWhenItsTopicIsClosed(t *testing.T) {
 	e, _, _ := topicsEnv(t)
 	defer e.run(e.maps)()
@@ -207,23 +207,13 @@ func TestFinalCardIsKeptWhenItsTopicIsClosed(t *testing.T) {
 
 	r := action("hum_1", 2, true)
 	r.Detail = longBody(20)
-	r.State = "Approved"
 	e.change("hum_1", r, 2, changefeed.Updated)
-	// The card is edited, then the fourth part is refused (the topic is closed).
-	deadline := time.Now().Add(10 * time.Second)
-	for refused := false; !refused; time.Sleep(2 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("the new part was never refused")
-		}
-		for _, c := range e.fake.Calls("sendMessage") {
-			refused = refused || c.Status == 400
-		}
+	parts := e.cardParts(1)
+	if parts[0].MessageID != before[0].MessageID || parts[0].Text != "✅ Approved · Deploy hum_1" {
+		t.Errorf("the card %.40q was not kept and edited to its final line", parts[0].Text)
 	}
-	time.Sleep(50 * time.Millisecond) // a wrong resend would show by now
-
-	parts := e.cardParts(3)
-	if parts[0].MessageID != before[0].MessageID || !strings.Contains(parts[0].Text, "Approved") {
-		t.Errorf("the card %.30q was not kept and edited", parts[0].Text)
+	if mk := parts[0].ReplyMarkup; mk != nil && len(mk.InlineKeyboard) != 0 {
+		t.Errorf("the settled card keeps a keyboard: %+v", mk)
 	}
 	ok := 0
 	for _, c := range e.fake.Calls("sendMessage") {
@@ -233,9 +223,6 @@ func TestFinalCardIsKeptWhenItsTopicIsClosed(t *testing.T) {
 	}
 	if ok != 4 {
 		t.Errorf("%d messages sent, want the first 4 only (the card was sent again)", ok)
-	}
-	if n := len(e.fake.Calls("deleteMessage")); n != 0 {
-		t.Errorf("%d deletes, want none", n)
 	}
 }
 

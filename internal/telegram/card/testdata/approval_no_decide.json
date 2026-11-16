@@ -1,0 +1,28 @@
+[
+  {
+    "text": "🔐 Approval\nCreate the issue\nPriority normal · from worker\n\nargs: secret-ish",
+    "entities": [
+      {
+        "type": "bold",
+        "offset": 12,
+        "length": 16
+      }
+    ],
+    "markup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "More…",
+            "callback_data": "hn:aaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          {
+            "text": "Open in app",
+            "web_app": {
+              "url": "https://tg.example.com/spaces/x/human?action=y"
+            }
+          }
+        ]
+      ]
+    }
+  }
+]

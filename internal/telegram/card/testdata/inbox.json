@@ -1,0 +1,29 @@
+[
+  {
+    "text": "📥 Inbox · Alpha\nA note from the web\nnew\n\nHello there.",
+    "entities": [
+      {
+        "type": "bold",
+        "offset": 17,
+        "length": 19
+      },
+      {
+        "type": "italic",
+        "offset": 48,
+        "length": 5
+      }
+    ],
+    "markup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "Open in app",
+            "web_app": {
+              "url": "https://tg.example.com/spaces/x/human?action=y"
+            }
+          }
+        ]
+      ]
+    }
+  }
+]

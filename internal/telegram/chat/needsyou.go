@@ -14,6 +14,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
@@ -70,6 +71,8 @@ type humanAction struct {
 	Assignee       string          `json:"assignee"`
 	Attachments    []attachmentRef `json:"attachments"`
 	Comments       []humanComment  `json:"comments"`
+	ReminderCount  int64           `json:"reminder_count"`
+	EscalatedAt    *time.Time      `json:"escalated_at"`
 	TypeSpec       *struct {
 		Outcomes       []string        `json:"outcomes"`
 		ResponseSchema json.RawMessage `json:"response_schema"`
@@ -125,6 +128,12 @@ type form struct {
 	pending          bool
 	attN             int
 	ap               *enforcedApproval
+	// A form on a notifier card (cards.go): it lives on the card's own message, in that message's thread; back says
+	// where its Back goes (backCard or backForm). headEnt formats head (the card header's bold title).
+	fromCard bool
+	thread   int
+	back     int
+	headEnt  []botapi.MessageEntity
 }
 
 // prompt is a free-text reply being waited for.
@@ -146,18 +155,16 @@ const promptDenyNote = -2
 // q option n, t toggle step n, c complete, m acknowledge, f free-text answer, w wizard choice n, k skip the field,
 // s submit with outcome n, x cancel, a approve (asks to confirm), y confirm approve, b back, d deny (asks for a note),
 // l claim, u release, r comment, i ask the requester (clarify), p list attachments, e withdraw (asks to confirm on a new
-// message), v confirm the withdrawal (carries the card's version: "hv:<space>:<action>:<version>"), g keep it.
-// A bare "ho" on a notifier card resolves its action from the card mapping.
+// message), v confirm the withdrawal (carries the card's version: "hv:<space>:<action>:<version>"), g keep it,
+// n the whole form on the card's message (More…), z back from that form to the card.
+// A bare "ho" on a notifier card resolves its action from the card mapping. The builder is the card package's, shared
+// with the notifier's cards.
 func humanData(verb byte, spaceID, actionID string, n int) string {
-	d := fmt.Sprintf("h%c:%s:%s", verb, strings.TrimPrefix(spaceID, "spc_"), strings.TrimPrefix(actionID, "hum_"))
-	if n >= 0 {
-		d += ":" + strconv.Itoa(n)
-	}
-	return d
+	return card.Data(verb, spaceID, actionID, n)
 }
 
 func isHumanData(d string) bool {
-	return len(d) >= 2 && d[0] == 'h' && (d[1] == 'o' || strings.ContainsRune("qtcmfwksxaybdluripevg", rune(d[1]))) && (len(d) == 2 || d[2] == ':')
+	return len(d) >= 2 && d[0] == 'h' && (d[1] == 'o' || strings.ContainsRune("qtcmfwksxaybdluripevgnz", rune(d[1]))) && (len(d) == 2 || d[2] == ':')
 }
 
 // --- /needsyou ---
@@ -347,14 +354,30 @@ func (h *Handler) humanCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 		}
 		n = v
 	}
-	fm := h.formFor(pendingKey{q.Message.Chat.ID, q.Message.MessageID}, l.ID)
+	h.formMu.Lock() // one change to a form at a time: taps and replies may be handled concurrently
+	defer h.formMu.Unlock()
+	key := pendingKey{q.Message.Chat.ID, q.Message.MessageID}
+	fm := h.formFor(key, l.ID)
+	if fm != nil && fm.fromCard && fm.back == backCard && isCardVerb(verb) {
+		// A quick action left its form behind (a prompt pending, a refused answer) while the card stayed on screen: a
+		// card button starts over from the card.
+		h.dropForm(key)
+		fm = nil
+	}
+	if fm != nil && h.cardMoved(ctx, fm) {
+		h.dropForm(key) // the notifier drew a newer state of the card over the form: the form is stale
+		fm = nil
+	}
+	if fm == nil && isCardVerb(verb) {
+		// A card's own button: the card message becomes the form (cards.go), never a new message.
+		h.cardTap(ctx, q, l, c, s, actionID, verb, n)
+		return
+	}
 	if fm == nil || fm.spaceID != spaceID || fm.action != actionID {
 		// Never respond from a form that isn't known: show the current state again.
 		h.answer(ctx, q.ID, TextFormExpired)
 		return
 	}
-	h.formMu.Lock() // one change to a form at a time: taps and replies may be handled concurrently
-	defer h.formMu.Unlock()
 	h.formAction(ctx, q, l, c, s, fm, verb, n)
 }
 
@@ -580,17 +603,22 @@ func parseWizard(a humanAction) *wizard {
 
 // --- rendering ---
 
+// formHead is the text above a form's controls: the card's header (the shared renderer's, so a form on a card keeps
+// the card's top lines), then what the form adds. It sets f.headEnt to the header's formatting.
 func (h *Handler) formHead(a humanAction, s spaceRef, f *form, ap *enforcedApproval) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s%s", typeMark(a.Type), clean(a.Title, 200))
-	fmt.Fprintf(&b, "\nFrom: %s · Priority: %s · Space: %s", orDash(clean(a.RequesterLabel, 80)), clean(a.Priority, 20), s.title())
+	v := card.View{Label: card.Label(a.Type, a.TypeSlug), Title: a.Title, SpaceID: s.ID, Space: s.title(), ShowSpace: !f.fromCard || f.thread == 0,
+		Priority: a.Priority, Action: &card.Action{ID: a.ID, Type: a.Type, Requester: a.RequesterLabel, Reminders: a.ReminderCount, Escalated: a.EscalatedAt != nil}}
 	switch a.Assignee {
 	case "":
 	case f.userID:
-		b.WriteString("\nClaimed by you")
+		v.Action.Claimed = "you"
 	default:
-		b.WriteString("\nClaimed by someone else")
+		v.Action.Claimed = "someone else"
 	}
+	head, ents := card.Head(v)
+	b.WriteString(head)
+	f.headEnt = ents
 	if f.typ == "approval" && f.apAction != "" {
 		b.WriteString("\nApprove: " + f.apAction)
 	}
@@ -645,7 +673,7 @@ func (h *Handler) appButton(s spaceRef, actionID, label string) []botapi.InlineK
 // renderForm is the form of an action as it stands now.
 func (h *Handler) renderForm(f *form, a humanAction, s spaceRef, ap *enforcedApproval) reply {
 	f.head = h.formHead(a, s, f, ap)
-	rp := reply{text: f.head, protect: true}
+	rp := reply{text: f.head, entities: f.headEnt, protect: true}
 	app := h.appButton(s, a.ID, "Open in the app")
 	switch {
 	case !a.pending():
@@ -673,11 +701,22 @@ func (h *Handler) renderForm(f *form, a humanAction, s spaceRef, ap *enforcedApp
 	return h.withCommon(f, rp)
 }
 
-// formView is the controls part for a live interactive form.
-func (h *Handler) formView(f *form) reply { return h.withCommon(f, h.formViewBase(f)) }
+// formView is the controls part for a live interactive form. A form on a card has a Back to the card under it (not
+// during a confirmation step, which has its own Back).
+func (h *Handler) formView(f *form) reply {
+	rp := h.withCommon(f, h.formViewBase(f))
+	if f.fromCard && f.confirming == "" {
+		var rows [][]botapi.InlineKeyboardButton
+		if rp.markup != nil {
+			rows = rp.markup.InlineKeyboard
+		}
+		rp.markup = markup(append(rows, []botapi.InlineKeyboardButton{button("‹ Back", humanData(card.VerbCard, f.spaceID, f.action, -1))})...)
+	}
+	return rp
+}
 
 func (h *Handler) formViewBase(f *form) reply {
-	rp := reply{text: f.head, protect: true}
+	rp := reply{text: f.head, entities: f.headEnt, protect: true}
 	var rows [][]botapi.InlineKeyboardButton
 	switch f.typ {
 	case "question":
@@ -737,7 +776,7 @@ func (h *Handler) formViewBase(f *form) reply {
 
 func (h *Handler) wizardView(f *form) reply {
 	w := f.wiz
-	rp := reply{text: f.head, protect: true}
+	rp := reply{text: f.head, entities: f.headEnt, protect: true}
 	var rows [][]botapi.InlineKeyboardButton
 	if w.idx >= len(w.fields) {
 		rp.text += "\n\nYour answers:"
@@ -793,12 +832,20 @@ func (h *Handler) refresh(ctx context.Context, f *form) {
 // reports whether the view was shown.
 func (h *Handler) draw(ctx context.Context, f *form) bool {
 	rp := h.formView(f)
+	if f.fromCard {
+		// On a card: through the card lock, and never moved to a new message. A card that moved on drops the form.
+		if !h.editCard(ctx, f.key, f.action, f.version, true, false, rp) {
+			h.dropForm(f.key)
+			return false
+		}
+		return true
+	}
 	b := h.bot()
 	if b == nil {
 		return false
 	}
 	ectx, cancel := context.WithTimeout(ctx, apiTimeout)
-	_, err := b.EditMessageText(ectx, botapi.EditMessageTextParams{ChatID: f.key.chat, MessageID: f.key.msg, Text: rp.text,
+	_, err := b.EditMessageText(ectx, botapi.EditMessageTextParams{ChatID: f.key.chat, MessageID: f.key.msg, Text: rp.text, Entities: rp.entities,
 		LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: rp.markup})
 	cancel()
 	if err == nil {
@@ -842,6 +889,12 @@ func (h *Handler) formAction(ctx context.Context, q *botapi.CallbackQuery, l upd
 		return
 	}
 	if h.commonAction(ctx, q, l, c, s, f, verb) {
+		return
+	}
+	if f.fromCard && (verb == card.VerbCard || verb == 'b' && f.back == backCard || verb == 'x' && f.wiz != nil) {
+		// Back to the card: from the form (More…), from a step a quick action opened, or a wizard given up.
+		h.answer(ctx, q.ID, "")
+		h.backToCard(ctx, l, c, s, f)
 		return
 	}
 	if !f.interactive() { // answered in the app: only the common actions are offered here
@@ -937,11 +990,17 @@ func (h *Handler) respond(ctx context.Context, c caller, l updates.Link, q *bota
 		if msg == TextStale {
 			h.dropForm(f.key)
 			msg = "That request changed or was already answered. Reopen it from /needsyou."
+			if f.fromCard {
+				msg = TextCardChanged
+			}
 		}
 		if q != nil {
 			h.answer(ctx, q.ID, msg)
 		} else {
 			h.send(ctx, l.ChatID, reply{text: msg})
+		}
+		if f.fromCard && msg == TextCardChanged {
+			h.backToCard(ctx, l, c, s, f) // the card shows the server's state again
 		}
 		return false
 	}
@@ -950,6 +1009,10 @@ func (h *Handler) respond(ctx context.Context, c caller, l updates.Link, q *bota
 		h.answer(ctx, q.ID, "Done")
 	}
 	outcome, _ := body["outcome"].(string)
+	if f.fromCard {
+		h.settleCard(ctx, l, s, f, r.body, "resolved", outcome) // the card collapses to its final line
+		return true
+	}
 	h.show(ctx, l.ChatID, &botapi.Message{MessageID: f.key.msg}, reply{text: f.head + "\n\n✅ Done: " + clean(outcome, 32) + "."})
 	return true
 }

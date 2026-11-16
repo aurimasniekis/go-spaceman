@@ -27,6 +27,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
@@ -100,6 +101,11 @@ type Resource struct {
 	RemindedAt, EscalatedAt int64
 	// Notify: the state is worth a notification when no card exists yet (an open action, a task in review, a failed run).
 	Notify bool
+	// SpaceName is the space's name, shown in a card's header outside the space's own topic.
+	SpaceName string
+	// Action is what a human action's card shows beyond the common fields and offers as buttons (nil for the other
+	// types). Its Claimed is set per recipient when the card is rendered.
+	Action *card.Action
 }
 
 // Reader reads a resource once for a window. It returns nil for a resource that is gone or of no interest. scope is
@@ -139,6 +145,9 @@ type Options struct {
 	Store Mappings
 	// AppURL is the Mini App link offered on a card whose body was cut at the message cap (empty: no button).
 	AppURL string
+	// ItemURL returns the Mini App URL of one resource, for a card's "Open in app" button and its cut body ("" or nil:
+	// AppURL).
+	ItemURL func(spaceID string, k Key) string
 	// Topics routes messages to each link's space topics when its chat layout is on (nil: everything goes to the main
 	// chat).
 	Topics *topics.Manager
@@ -364,23 +373,33 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link, r *Resource, now time.Time, created bool) {
 	set := n.o.Policy.Current()
 	sp := n.o.Policy.Space(r.SpaceID)
+	loaded := false
+	load := func() {
+		if !created && !loaded {
+			n.cards.load(ctx, r.Key) // a card may exist from before a restart
+			loaded = true
+		}
+	}
 	if !sp.Visible() {
+		// A hidden space shows nothing: a card that exists says only that it is gone.
+		for i := range links {
+			load()
+			n.retract(snd, &links[i], r)
+		}
 		return
 	}
 	if r.Final || !r.Notify {
 		n.digest.drop(r.Key) // it no longer needs anybody's attention
 	}
-	loaded := false
 	for i := range links {
 		l := &links[i]
 		if !n.may(l, r, set, now) {
+			// Access lost, the space muted, or the link overdue for re-confirmation: the card stops showing the item.
+			load()
+			n.retract(snd, l, r)
 			continue
 		}
-		if !created && !loaded {
-			// A card may exist from before a restart, but only for a link that may see the resource.
-			n.cards.load(ctx, r.Key)
-			loaded = true
-		}
+		load()
 		p := l.Prefs.Effective(set.NotificationDefaults)
 		card, queued := n.cards.state(l.ChatID, r.Key)
 		if card == nil {
@@ -410,8 +429,11 @@ func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link
 		} else if r.Kind == KindAction && !r.Final {
 			n.announce(snd, l, r, p)
 		}
-		if card != nil && card.version >= r.Version && r.Version != 0 {
-			continue // the card already shows this state
+		if card != nil && !card.gone && card.version >= r.Version && r.Version != 0 &&
+			(!r.Final || len(card.conts) == 0 && card.alert == 0) {
+			// The card already shows this state. Not a settled one that still has continuations or an alert: the chat
+			// handler's own edit settled the message (EditCard), but the rest of the card is the upsert's to clean up.
+			continue
 		}
 		n.enqueue(snd, l, r, card != nil)
 	}
@@ -449,10 +471,14 @@ func (n *Notifier) enqueueAlert(snd *sender.Sender, l *Link, r *Resource, what s
 			}
 			head := what + ": " + res.Label
 			text := head + "\n" + clip(oneLine(res.Title), maxTitle)
-			_, err := n.sender(&res, linkID)(ctx, c, botapi.SendMessageParams{ChatID: chat, Text: text, DisableNotification: n.silent(cur, n.o.Now()),
-				Entities: []botapi.MessageEntity{{Type: "bold", Offset: 0, Length: len(utf16.Encode([]rune(head)))}}, ProtectContent: true})
+			p := botapi.SendMessageParams{ChatID: chat, Text: text, DisableNotification: n.silent(cur, n.o.Now()),
+				Entities: []botapi.MessageEntity{{Type: "bold", Offset: 0, Length: len(utf16.Encode([]rune(head)))}}, ProtectContent: true}
+			m, err := n.sendAlert(ctx, c, linkID, chat, &res, p)
 			if err == nil {
 				n.cards.touch(linkID, chat, &res, n.o.Now()) // the mapping's time carries the announcement across a restart
+				if old := n.cards.swapAlert(chat, res.Key, m.MessageID); old != 0 && old != m.MessageID && sender.Take(ctx) == nil {
+					_ = c.DeleteMessage(ctx, chat, old) // the alert before it (best effort: within 48 h)
+				}
 			}
 			return err
 		}})
@@ -531,20 +557,25 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 	var done func(error)
 	if !edit {
 		done = n.cards.queue(chat, r)
+	} else {
+		n.cards.want(chat, r.Key, r.Version) // from now on the chat's edits of an older version lose
 	}
 	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: prio, Key: "card:" + r.String(), Done: done,
 		Send: func(ctx context.Context, c *botapi.Client) error {
 			// The send may run long after it was queued (behind a chat's rate limit): access is checked again, from
 			// memory, so a revoked link, grant, mute or hidden space never gets a card that was queued before.
 			cur := n.currentLink(linkID, chat)
-			if cur == nil || !n.stillMay(linkID, chat, &res) {
+			if cur == nil {
 				return nil
+			}
+			if !n.stillMay(linkID, chat, &res) {
+				return n.cards.retract(ctx, c, chat, res.Key) // a card that exists stops showing the item; none is sent
 			}
 			// The card is rendered here, from the space's current content level: a body queued at "full" is never sent
 			// after the space was lowered to "summary" while it waited. A group chat only ever gets the summary.
-			full := settings.Full(n.o.Policy.Space(res.SpaceID), settings.IsGroupChat(chat))
-			parts := renderCard(&res, full, n.o.AppURL)
-			protect := full && res.Detail != ""                                                                                              // plan 3.8: a card with a body can't be forwarded or saved
+			v := n.view(cur, chat, &res)
+			parts := card.Render(v, n.caps(cur, chat, &res))
+			protect := v.Full && res.Detail != ""                                                                                            // plan 3.8: a card with a body can't be forwarded or saved
 			return n.cards.upsert(ctx, c, n.sender(&res, linkID), linkID, chat, &res, res.SpaceID, parts, protect, n.silent(cur, n.o.Now())) // quiet hours: no sound
 		}})
 	if err != nil {

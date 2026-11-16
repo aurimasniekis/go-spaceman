@@ -1,0 +1,15 @@
+[
+  {
+    "text": "⚠ Run\nworker\nfailed",
+    "entities": [
+      {
+        "type": "bold",
+        "offset": 6,
+        "length": 6
+      }
+    ],
+    "markup": {
+      "inline_keyboard": []
+    }
+  }
+]

@@ -106,7 +106,7 @@ func TestLongBodySplitsIntoContinuations(t *testing.T) {
 	if len(msgs[0].Entities) < 2 || msgs[0].Entities[0].Type != "bold" {
 		t.Errorf("card entities = %+v, want the bold head and the body's formatting", msgs[0].Entities)
 	}
-	if !strings.Contains(msgs[0].Text, "Unread") && !strings.Contains(msgs[0].Text, "open") {
+	if !strings.Contains(msgs[0].Text, "Priority normal") {
 		t.Errorf("card has no state line: %q", msgs[0].Text[:40])
 	}
 }
@@ -135,14 +135,15 @@ func TestContinuationsFollowTheCard(t *testing.T) {
 	e.change("hum_1", r3, 3, changefeed.Updated)
 	e.waitExactly(1)
 	msgs := e.fake.Messages(1001)
-	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "Short now.") || !strings.Contains(msgs[0].Text, "resolved: approved") {
+	if len(msgs) != 1 || strings.Contains(msgs[0].Text, "Short now.") || !strings.Contains(msgs[0].Text, "✅ Approved") {
 		t.Fatalf("messages = %+v, want the card alone in its final state", msgs)
 	}
 
-	r4 := action("hum_1", 4, true)
+	r4 := action("hum_1", 4, true) // a settled card never shows a body again, however long
 	r4.Detail = longBody(12)
 	e.change("hum_1", r4, 4, changefeed.Updated)
-	e.waitExactly(n)
+	time.Sleep(50 * time.Millisecond)
+	e.waitExactly(1)
 }
 
 // TestLongBodyIsCapped: a body beyond four messages ends with the "continued in the app" line.

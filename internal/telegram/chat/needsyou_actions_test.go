@@ -73,7 +73,7 @@ func TestClaimAndRelease(t *testing.T) {
 		t.Fatalf("%v %v %v", got, e.api.actionBody, e.api.actionHdr)
 	}
 	c := e.cardOf(f.MessageID)
-	if !strings.Contains(c.Text, "Claimed by you") || find(c, "Claim") != "" && find(c, "Release") == "" || find(c, "Release") == "" {
+	if !strings.Contains(c.Text, "claimed by you") || find(c, "Claim") != "" && find(c, "Release") == "" || find(c, "Release") == "" {
 		t.Fatalf("%q", c.Text)
 	}
 	// the question can still be answered from the card, with the version the claim produced
@@ -96,7 +96,7 @@ func TestClaimAndRelease(t *testing.T) {
 	// claimed by someone else: no Claim button and the card says so
 	e.addHuman(spA, hid('4'), "message", "Other", `{}`).Assignee = "usr_9"
 	c = e.open(spA, hid('4'))
-	if !strings.Contains(c.Text, "Claimed by someone else") || find(c, "Claim") != "" || find(c, "Release") != "" {
+	if !strings.Contains(c.Text, "claimed by someone else") || find(c, "Claim") != "" || find(c, "Release") != "" {
 		t.Fatalf("%q", c.Text)
 	}
 }
@@ -112,7 +112,7 @@ func TestClaimStaleCardRefreshes(t *testing.T) {
 		t.Fatalf("%q %+v", e.lastAnswer(), a)
 	}
 	c := e.cardOf(f.MessageID)
-	if !strings.Contains(c.Text, "Claimed by someone else") || find(c, "Claim") != "" {
+	if !strings.Contains(c.Text, "claimed by someone else") || find(c, "Claim") != "" {
 		t.Fatalf("card not refreshed: %q", c.Text)
 	}
 	// the refreshed card acts on the new version
@@ -371,7 +371,7 @@ func TestCancelStaleCardRefreshes(t *testing.T) {
 	if a.Status != "in_progress" || e.lastAnswer() != TextStale {
 		t.Fatalf("%q %s", e.lastAnswer(), a.Status)
 	}
-	if !strings.Contains(e.cardOf(cf.MessageID).Text, "Nothing was cancelled") || !strings.Contains(e.cardOf(f.MessageID).Text, "Claimed by someone else") {
+	if !strings.Contains(e.cardOf(cf.MessageID).Text, "Nothing was cancelled") || !strings.Contains(e.cardOf(f.MessageID).Text, "claimed by someone else") {
 		t.Fatalf("%q / %q", e.cardOf(cf.MessageID).Text, e.cardOf(f.MessageID).Text)
 	}
 }

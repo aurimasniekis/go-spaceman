@@ -1,0 +1,34 @@
+[
+  {
+    "text": "✉ Message\nHeads up\n\nRead me.",
+    "entities": [
+      {
+        "type": "bold",
+        "offset": 10,
+        "length": 8
+      }
+    ],
+    "markup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "Acknowledge",
+            "callback_data": "hm:aaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        [
+          {
+            "text": "More…",
+            "callback_data": "hn:aaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          {
+            "text": "Open in app",
+            "web_app": {
+              "url": "https://tg.example.com/spaces/x/human?action=y"
+            }
+          }
+        ]
+      ]
+    }
+  }
+]
