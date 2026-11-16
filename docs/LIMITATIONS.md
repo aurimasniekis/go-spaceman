@@ -290,7 +290,7 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Subscription accounts are the case covered.** The status line reports windows for subscription accounts; an
   account that reports none shows unknown use.
 - **Pool-exhausted notices can be late.** A space at its open-action cap, or a crash in between, raises the notice
-  later, within the hour or at the next limit report; it is dropped once its window passes, never raised for a reset in
+  later, within the hour; it is dropped once its window passes, never raised for a reset in
   the past.
 - **Web UI not built.** The usage page, the switches list and the pools editor are not in the web UI yet; they are
   available through the API and the CLI.

@@ -2,12 +2,11 @@
 
 A claude.ai subscription has a 5-hour window and a weekly window. When a Claude Code run uses one up, Claude Code ends
 the turn and refuses new requests until the window resets. A Harbor Pilot gateway does the same when every account it
-could route to is exhausted, or when a budget blocks. SpaceMan notices this. With usage-limit failover on, it first
-tries to **move the run to another account** of its pool and continue the same session there
-([moving a run](#moving-a-run-to-another-account)). Otherwise, or when no other account is free, it waits and does four
-things:
+could route to is exhausted, or when a budget blocks. SpaceMan notices this and **holds the account**, so no new run is
+started into the same limit. With usage-limit failover on, it first tries to **move the run to another account** of its
+pool and continue the same session there ([moving a run](#moving-a-run-to-another-account)). Otherwise (no free account,
+a reset within 15 minutes, no session to resume, or the daily move budget spent) it waits and does three things:
 
-- It **holds the account** until the reset, so no new run is started into the same limit.
 - It keeps a short wait **alive** and **parks** a long one, keeping the run's session and task.
 - At the reset it **resumes** parked runs with their conversation.
 - It **tells control and the people** of the space, once each.
@@ -72,15 +71,16 @@ keeps the account it was launched on, and role pools are ignored. With either on
   or a relaunch SpaceMan makes itself never uses an account outside the role's pool. Set a role's pool with
   `spaceman account pool set --space <space> <role> --account <id> … --priority <id>=<n>`; setting it with no
   `--account` removes the pool, so the role uses the bindings again. A pool never widens for a limit-wait resume, a
-  relaunch or a failover move: those never use an account outside it. An account a launch names is kept unless it is
-  held or fails the headroom gate.
+  relaunch or a failover move: those never use an account outside it. An account a launch names is kept unless failover
+  is on and it is held, or it fails the headroom gate.
 
-An account is **eligible** for a launch, a resume or a switch when it is enabled, bound to the space, of the run's
-harness, and has no open hold in any space. With the headroom gate on, it must also pass the gate for a new run (below).
-A launch with no role pool uses the space's default account when that is eligible. Otherwise, and for a role pool,
+An account is **eligible** for a launch, a resume or a switch when it is enabled, bound to the space, and of the run's
+harness. With failover on, it must also have no open hold in any space; with the headroom gate on, it must pass the gate
+for a new run (below). A launch with no role pool uses the space's default account when that is eligible. A space with
+several accounts and no default still needs the launch to name one (or a role pool). Otherwise, and for a role pool,
 eligible accounts are taken in priority order, then by the fewest live runs on the account, then by binding order. A
-switch always takes priority order. Account utilisation is not part of that order yet. A switch never moves a run to an
-account that is held.
+switch ignores the default and takes the pool order (priority, then the fewest live runs, then binding order). Account
+utilisation is not part of that order yet. A switch never moves a run to an account that is held.
 
 The latest 5-hour and 7-day windows of each account (from the status line) are shown on the usage API and in the CLI.
 They decide which account a new run may start on only when the headroom gate is on; see [the headroom gate](#launch-headroom-gate).
@@ -110,10 +110,11 @@ Every move is recorded with its outcome (succeeded, failed, fell back to waiting
 
 ## When the whole pool is at its limit
 
-When every account of the run's pool (its role's pool, or the space's bindings) has a hold that hasn't reset, there is
-no account to move to. The run then waits for the pool's **earliest reset**, not its own account's. An account whose
-hold has no known reset counts as still limited and is left out of that earliest reset. When no reset in the pool is
-known, the wait uses the usual time, and the run is tried again then.
+With failover on, when every account of the run's pool (its role's pool, or the space's bindings) has a hold that hasn't
+reset, there is no account to move to. The run then waits for the pool's **earliest reset**, not its own account's. An
+account whose hold has no known reset counts as still limited and is left out of that earliest reset. When no reset in
+the pool is known, the wait uses the usual time, and the run is tried again then. This section applies only with
+failover on.
 
 Control gets one message naming the pool's accounts and when the run resumes. The people get one informational human
 action per space, harness, role and limit window, titled *Every claude-code account of the `<role>` pool is at its
@@ -135,13 +136,13 @@ are not gated.
 
 When the gate is on:
 
-- **The next eligible account is chosen.** The gate removes the failing accounts from the pool, and the launch uses the
-  first of the rest in the usual order (priority, then the fewest live runs, then binding order). The role's pool
-  applies even when failover is off.
-- **If none qualifies, the launch is refused** with `rate_limited` and the earliest reset among the pool's failing
-  windows. The refusal lasts at most an hour from now: a window's usage older than an hour no longer counts. Control and
-  parked runs retry then (a known reset adds a two-minute margin), and when no reset is known they retry in an hour. An
-  interactive launch gets the refusal at once. A window that has reset counts as free.
+- **The next eligible account is chosen.** The launch keeps its named or default account if that passes, otherwise
+  takes the first of the rest in the usual order (priority, then the fewest live runs, then binding order); the gate
+  removes the failing accounts from the pool. The role's pool applies even when failover is off.
+- **If none qualifies, the launch is refused** with `rate_limited` and the earliest reset of the failing accounts'
+  fullest windows. The refusal lasts at most an hour from now: a window's usage older than an hour no longer counts.
+  Parked runs retry two minutes after a known reset and control retries at it; with no known reset, both retry in an
+  hour. An interactive launch gets the refusal at once. A window that has reset counts as free.
 - **Accounts with no known usage are not refused.** The gate reads the usage ledger; if the ledger can't be read, it
   **fails open** and the account stays eligible.
 
@@ -215,8 +216,8 @@ isn't built yet.
 ## Usage page, API and CLI
 
 The space's usage page (totals by role, account and model, the switches, and the windows of the accounts) is **web UI:
-coming**. Until it ships, the same figures are on the API and in the CLI. The Limits page's **Usage limits** card and
-each run's usage card remain in the web UI.
+coming**. Until it ships, the same figures are on the API and in the CLI. The space overview has a small usage totals
+card, the Limits page's **Usage limits** card and each run's usage card remain in the web UI.
 
 - **Usage over time** (tokens first; the cost is a list-price estimate, labelled as one):
   `GET /api/v1/spaces/{space_id}/usage/series` (group by `role`, `account`, `model` or `harness`),
@@ -226,7 +227,8 @@ each run's usage card remain in the web UI.
 - **Windows:** `GET /api/v1/accounts/{account_id}/windows` and `GET /api/v1/spaces/{space_id}/account-windows`. CLI:
   `spaceman account windows <account>` and `spaceman account space-windows --space <space>`.
 - **Pools:** `GET /api/v1/spaces/{space_id}/account-pools` and `PUT /api/v1/spaces/{space_id}/account-pools/{role}`
-  (with `If-Match` once the space has a pool). CLI: `spaceman account pool list` and `spaceman account pool set`.
+  (requires `If-Match` with the space's `accounts_version` from the GET; the CLI sends it for you). CLI:
+  `spaceman account pool list` and `spaceman account pool set`.
 - **Bindings and priority:** `PUT /api/v1/spaces/{space_id}/accounts`, or `spaceman account set-space`.
 - **Holds and waits:** `spaceman limits holds` and `spaceman limits waits` for a space, `spaceman account holds` for an
   account in every space.
