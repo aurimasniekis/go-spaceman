@@ -189,7 +189,11 @@ func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, h
 		if err == nil || apperr.CodeOf(err) != apperr.CodePrecondition || from != "" || prefer == "" {
 			return id, err
 		}
-		if scoped, serr := accounts.RoleScoped(ctx, tx, spaceID, harness, role); serr != nil || scoped {
+		scoped, serr := accounts.RoleScoped(ctx, tx, spaceID, harness, role)
+		if serr != nil {
+			return "", serr
+		}
+		if scoped {
 			return "", err
 		}
 		return svc.opts.ResolveAccount(ctx, tx, spaceID, harness, role, prefer, av)

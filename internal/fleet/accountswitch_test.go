@@ -804,3 +804,26 @@ func TestAccountSwitchResumeFailedRespectsRolePool(t *testing.T) {
 		t.Fatalf("fresh retry on %s, want acc_3", p.AccountRef)
 	}
 }
+
+// A role pool whose only account is disabled has no usable account: the fresh retry is not widened to another bound
+// account through the anchor, it stays unresolved (review of PR 159).
+func TestAccountSwitchResumeFailedAllDisabledPool(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`UPDATE space_accounts SET is_default = 0 WHERE space_id = 'spc_a'`)
+	e.exec(`INSERT INTO space_accounts (space_id, account_id, harness, created_at, created_by) VALUES ('spc_a', 'acc_3', 'claude-code', 1, 't')`)
+	e.running("run_d", "worker", 2)
+	e.armAndPark("run_d")
+	e.clk.Advance(limitRetrySoon)
+	e.due()
+	newID, _ := e.launchOf(e.instance("run_d"))
+	e.exec(`UPDATE runs SET observed = 'running' WHERE id = ?`, newID)
+	e.endRun(newID, proto.RunFailed, "error", 0)
+	e.exec(`INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES ('spc_a', 'implementor', 'acc_3', 100, 0, 't')`)
+	e.exec(`UPDATE accounts SET enabled = 0 WHERE id = 'acc_3'`)
+	if n := e.due(); n != 0 {
+		t.Fatalf("retried %d: wait %+v", n, e.waitOf(newID))
+	}
+	if w := e.waitOf(newID); w.SwitchToAccountID != "" {
+		t.Fatalf("wait target %q, want none", w.SwitchToAccountID)
+	}
+}
