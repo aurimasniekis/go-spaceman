@@ -152,6 +152,9 @@ type Agent struct {
 	holdsStopped bool
 	// runLocks serialize a run's launch (its last check and start) with its stop, by run ID (runLock).
 	runLocks map[string]*refMutex
+	// launching counts the launches in flight by run ID, from before the run is journaled until its process is started and
+	// observed. The runner reconcile leaves those runs alone (reconcileRunner).
+	launching map[string]int
 	// claudeStage, when set, runs at a managed Claude Code launch's stages ("acquired": the version is held;
 	// "recorded": the journal holds it and the hold is still taken; "released": the hold is released). Tests race GC
 	// and stops there.
@@ -240,7 +243,7 @@ func New(j *Journal, o Options) *Agent {
 		o.HTTPClient = http.DefaultClient
 	}
 	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
-		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, runLocks: map[string]*refMutex{}, takeovers: map[string]*takeover{}}
+		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, runLocks: map[string]*refMutex{}, launching: map[string]int{}, takeovers: map[string]*takeover{}}
 	a.mem = newMemManager(a)
 	return a
 }
@@ -278,7 +281,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	var claudeWG sync.WaitGroup
 	defer claudeWG.Wait()
 	a.startClaude(ctx, &claudeWG)
-	go a.monitor(ctx)
+	// Run returns after the monitor does (bounded): it reacts to runner events with the agent's state, and a Run that
+	// had returned must not leave it still reading what the caller restores or tears down next.
+	monitorDone := make(chan struct{})
+	defer func() {
+		select {
+		case <-monitorDone:
+		case <-time.After(10 * time.Second):
+			a.log.Warn("the runner monitor did not stop")
+		}
+	}()
+	go func() { defer close(monitorDone); a.monitor(ctx) }()
 	go a.enforce(ctx)
 	go a.capsLoop(ctx)
 	go a.pruneLoop(ctx)
