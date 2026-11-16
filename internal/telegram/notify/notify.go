@@ -27,7 +27,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
@@ -101,6 +103,11 @@ type Resource struct {
 	RemindedAt, EscalatedAt int64
 	// Notify: the state is worth a notification when no card exists yet (an open action, a task in review, a failed run).
 	Notify bool
+	// SpaceName is the space's name, shown in a card's header outside the space's own topic.
+	SpaceName string
+	// Action is what a human action's card shows beyond the common fields and offers as buttons (nil for the other
+	// types). Its Claimed is set per recipient when the card is rendered.
+	Action *card.Action
 }
 
 // Reader reads a resource once for a window. It returns nil for a resource that is gone or of no interest. scope is
@@ -138,13 +145,34 @@ type Options struct {
 	Sender func() *sender.Sender
 	// Store records card mappings (nil: cards are not remembered across restarts).
 	Store Mappings
-	// AppURL is the Mini App link offered on a card whose body was cut at the message cap, per card (nil, or an empty
-	// result: no button). It is a function because the link names the card's own item.
-	AppURL func(Resource) string
-	// Topics routes messages to topics in topics mode (nil: everything goes to the main chat).
+	// AppURL is the Mini App link offered on a card whose body was cut at the message cap (empty: no button).
+	AppURL string
+	// ItemURL returns the Mini App URL of one resource, for a card's "Open in app" button and its cut body ("" or nil:
+	// AppURL). It is per card because the link names the card's own item.
+	ItemURL func(spaceID string, k Key) string
+	// Topics routes messages to each link's space topics when its chat layout is on (nil: everything goes to the main
+	// chat).
 	Topics *topics.Manager
-	Bus    *eventbus.Bus
-	Log    *slog.Logger
+	// Pending reads the number of pending human actions per space, once per rebuild of the home summaries (nil: no
+	// summaries). Each link's summary keeps only the spaces it may read.
+	Pending func(ctx context.Context) ([]SpaceCount, error)
+	// Perms loads a space's human-action type permissions, once per space per rebuild of the summaries (nil: the
+	// defaults, every type visible to a viewer). A space it fails for is left out of the summaries.
+	Perms func(ctx context.Context, spaceID string) (human.PermissionSet, error)
+	// NeedsURL is the Mini App's cross-space Needs-you page, the summary's web_app button; without it NeedsLink (the
+	// t.me/<bot>?startapp=needs link) is a plain URL button; with neither there is no button. Both are read when a summary
+	// is sent (the Mini App host can change while running).
+	NeedsURL, NeedsLink func() string
+	// SpaceLink is the Mini App link of a space (t.me/<bot>?startapp=space-<id>) for a summary line whose space has no
+	// topic (the layout is off); BotUsername builds the topic links. Nil or "": no link.
+	SpaceLink   func(spaceID string) string
+	BotUsername func() string
+	// HomeEvery is the least time between two edits of a link's summary (default DefaultHomeEvery); HomeAfter waits
+	// for it (default time.After; tests pass one they control).
+	HomeEvery time.Duration
+	HomeAfter func(time.Duration) <-chan time.Time
+	Bus       *eventbus.Bus
+	Log       *slog.Logger
 	// Now is the clock (default time.Now); After waits (default time.After; tests pass one they control).
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
@@ -158,13 +186,16 @@ type Options struct {
 
 // Notifier is the single change-feed consumer.
 type Notifier struct {
-	o      Options
-	log    *slog.Logger
-	cards  *cards
-	digest *digestBuf
+	o       Options
+	log     *slog.Logger
+	cards   *cards
+	digest  *digestBuf
+	notices *notices
+	home    *home
 
 	cursor int64 // only the Run goroutine touches it
 
+	sweepNow  chan struct{} // the link list was reloaded: sweep (see kickSweep)
 	ready     chan struct{} // closed once Run has subscribed and read its start position
 	readyOnce sync.Once
 }
@@ -186,10 +217,14 @@ func New(o Options) *Notifier {
 	if o.RetryAfter <= 0 {
 		o.RetryAfter = time.Second
 	}
+	if o.HomeAfter == nil {
+		o.HomeAfter = time.After
+	}
 	if o.FlushRows <= 0 {
 		o.FlushRows = 100
 	}
-	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf(), ready: make(chan struct{})}
+	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf(),
+		notices: &notices{sent: map[string]bool{}}, home: newHome(), sweepNow: make(chan struct{}, 1), ready: make(chan struct{})}
 }
 
 // Ready is closed once Run is subscribed and has its start position. A change made before that is history that Run
@@ -201,6 +236,11 @@ func (n *Notifier) Ready() <-chan struct{} { return n.ready }
 func (n *Notifier) Run(ctx context.Context) error {
 	sub := n.o.Bus.Subscribe(16, eventbus.TopicChange)
 	defer sub.Close()
+	// What decides who may see a card changes without a change-feed entry: grants, links and their mutes, the spaces'
+	// Telegram settings. The events only say "look again": each sweeps the cards in memory (see sweep).
+	access := n.o.Bus.Subscribe(16, eventbus.TopicGrantsChanged, eventbus.TopicTelegramLink, eventbus.TopicTelegramSettings, eventbus.TopicUserChanged)
+	defer access.Close()
+	n.o.Links.afterReload = n.kickSweep
 	n.o.Links.Start(ctx)
 	defer n.flush(context.WithoutCancel(ctx)) //nolint:contextcheck // the last mappings are written after shutdown
 
@@ -217,8 +257,17 @@ func (n *Notifier) Run(ctx context.Context) error {
 		n.readyOnce.Do(func() { close(n.ready) })
 	}
 	start()
+	n.loadNotices(ctx)
+	n.loadHome(ctx)
 	flush := time.NewTicker(n.o.FlushEvery)
 	defer flush.Stop()
+	var homeWake <-chan time.Time // armed while a summary waits for its next edit
+	armHome := func() {
+		if d := n.homeTick(ctx); d > 0 {
+			homeWake = n.o.HomeAfter(d)
+		}
+	}
+	var late <-chan time.Time  // armed after an access event: the caches it refreshes may be read a moment later than it
 	var again <-chan time.Time // armed once after a failed feed read: the unread rest is processed without a new change
 	for {
 		select {
@@ -232,11 +281,27 @@ func (n *Notifier) Run(ctx context.Context) error {
 			if !started {
 				start()
 			}
+			n.loadNotices(ctx)
+			n.loadHome(ctx)
+			armHome()
+			n.sweep() // the backstop for an event that was dropped, or seen before the caches it concerns were reloaded
+		case <-access.C:
+			n.sweep()
+			late = time.After(Window)
+		case <-n.sweepNow:
+			n.sweep()
+		case <-late:
+			late = nil
+			n.sweep()
+		case <-homeWake:
+			homeWake = nil
+			armHome()
 		case <-again:
 			again = nil
 			if n.process(ctx) {
 				again = time.After(n.o.RetryAfter)
 			}
+			armHome()
 		case _, ok := <-sub.C:
 			if !ok {
 				return nil
@@ -254,6 +319,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 			if n.process(ctx) {
 				again = time.After(n.o.RetryAfter)
 			}
+			armHome()
 		}
 	}
 }
@@ -349,9 +415,13 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 	if w.overflow {
 		// Above the cap the details are skipped: one "many changes" notice per chat (plan 4.2 step 3).
 		n.overflow(snd, links, w.spaces, now)
+		n.homeTouch()
 		return
 	}
 	for _, k := range w.keys {
+		if k.Type == TypeHumanAction {
+			n.homeTouch()
+		}
 		r, err := n.o.Reader.Read(ctx, scope, k)
 		if err != nil {
 			n.log.Warn("telegram notifier: reading a resource failed", slog.String("type", k.Type), slog.String("error", err.Error()))
@@ -364,28 +434,77 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 	}
 }
 
+// kickSweep asks Run for a sweep, after the link list was reloaded (a mute, a link's grants or its user changed).
+func (n *Notifier) kickSweep() {
+	select {
+	case n.sweepNow <- struct{}{}:
+	default:
+	}
+}
+
+// sweep retracts the cards in memory whose link may no longer see the item: its access was revoked, the space muted
+// or hidden, the link overdue for re-confirmation. It is the eager counterpart of the check deliver and a queued send
+// make, and uses the same ones (may, Visible) on what the card was sent with, so it can only take content away: a
+// card is never edited to show more, and nothing is read. A retraction is queued like any other (it is checked
+// against the current link when it is sent, and a card already retracted costs nothing).
+func (n *Notifier) sweep() {
+	snd := n.o.Sender()
+	if snd == nil {
+		return
+	}
+	cs := n.cards.sweepable()
+	if len(cs) == 0 {
+		return
+	}
+	links := n.o.Links.Snapshot()
+	byID := make(map[string]*Link, len(links))
+	for i := range links {
+		byID[links[i].ID] = &links[i]
+	}
+	set, now := n.o.Policy.Current(), n.o.Now()
+	for i := range cs {
+		l := byID[cs[i].link]
+		if l == nil || l.ChatID != cs[i].chat {
+			continue // unlinked or moved: the bot no longer writes to that chat for this link
+		}
+		if !n.o.Policy.Space(cs[i].r.SpaceID).Visible() || !n.may(l, &cs[i].r, set, now) {
+			n.retract(snd, l, &cs[i].r)
+		}
+	}
+}
+
 // deliver enqueues the resource's card for every link that may see it, and the reminders, escalations and
 // assignments of a card that exists as messages of their own.
 func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link, r *Resource, now time.Time, created bool) {
 	set := n.o.Policy.Current()
 	sp := n.o.Policy.Space(r.SpaceID)
+	loaded := false
+	load := func() {
+		if !created && !loaded {
+			n.cards.load(ctx, r.Key) // a card may exist from before a restart
+			loaded = true
+		}
+	}
 	if !sp.Visible() {
+		// A hidden space shows nothing: a card that exists says only that it is gone.
+		for i := range links {
+			load()
+			n.retract(snd, &links[i], r)
+		}
 		return
 	}
 	if r.Final || !r.Notify {
 		n.digest.drop(r.Key) // it no longer needs anybody's attention
 	}
-	loaded := false
 	for i := range links {
 		l := &links[i]
 		if !n.may(l, r, set, now) {
+			// Access lost, the space muted, or the link overdue for re-confirmation: the card stops showing the item.
+			load()
+			n.retract(snd, l, r)
 			continue
 		}
-		if !created && !loaded {
-			// A card may exist from before a restart, but only for a link that may see the resource.
-			n.cards.load(ctx, r.Key)
-			loaded = true
-		}
+		load()
 		p := l.Prefs.Effective(set.NotificationDefaults)
 		card, queued := n.cards.state(l.ChatID, r.Key)
 		if card == nil {
@@ -415,8 +534,11 @@ func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link
 		} else if r.Kind == KindAction && !r.Final {
 			n.announce(snd, l, r, p)
 		}
-		if card != nil && card.version >= r.Version && r.Version != 0 {
-			continue // the card already shows this state
+		if card != nil && !card.gone && card.version >= r.Version && r.Version != 0 &&
+			(!r.Final || len(card.conts) == 0 && card.alert == 0) {
+			// The card already shows this state. Not a settled one that still has continuations or an alert: the chat
+			// handler's own edit settled the message (EditCard), but the rest of the card is the upsert's to clean up.
+			continue
 		}
 		n.enqueue(snd, l, r, card != nil)
 	}
@@ -454,10 +576,14 @@ func (n *Notifier) enqueueAlert(snd *sender.Sender, l *Link, r *Resource, what s
 			}
 			head := what + ": " + res.Label
 			text := head + "\n" + clip(oneLine(res.Title), maxTitle)
-			_, err := n.sender(&res, linkID)(ctx, c, botapi.SendMessageParams{ChatID: chat, Text: text, DisableNotification: n.silent(cur, n.o.Now()),
-				Entities: []botapi.MessageEntity{{Type: "bold", Offset: 0, Length: len(utf16.Encode([]rune(head)))}}, ProtectContent: true})
+			p := botapi.SendMessageParams{ChatID: chat, Text: text, DisableNotification: n.silent(cur, n.o.Now()),
+				Entities: []botapi.MessageEntity{{Type: "bold", Offset: 0, Length: len(utf16.Encode([]rune(head)))}}, ProtectContent: true}
+			m, err := n.sendAlert(ctx, c, linkID, chat, &res, p)
 			if err == nil {
 				n.cards.touch(linkID, chat, &res, n.o.Now()) // the mapping's time carries the announcement across a restart
+				if old := n.cards.swapAlert(chat, res.Key, m.MessageID); old != 0 && old != m.MessageID && sender.Take(ctx) == nil {
+					_ = c.DeleteMessage(ctx, chat, old) // the alert before it (best effort: within 48 h)
+				}
 			}
 			return err
 		}})
@@ -536,20 +662,25 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 	var done func(error)
 	if !edit {
 		done = n.cards.queue(chat, r)
+	} else {
+		n.cards.want(chat, r.Key, r.Version) // from now on the chat's edits of an older version lose
 	}
 	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: prio, Key: "card:" + r.String(), Done: done,
 		Send: func(ctx context.Context, c *botapi.Client) error {
 			// The send may run long after it was queued (behind a chat's rate limit): access is checked again, from
 			// memory, so a revoked link, grant, mute or hidden space never gets a card that was queued before.
 			cur := n.currentLink(linkID, chat)
-			if cur == nil || !n.stillMay(linkID, chat, &res) {
+			if cur == nil {
 				return nil
+			}
+			if !n.stillMay(linkID, chat, &res) {
+				return n.cards.retract(ctx, c, chat, res.Key) // a card that exists stops showing the item; none is sent
 			}
 			// The card is rendered here, from the space's current content level: a body queued at "full" is never sent
 			// after the space was lowered to "summary" while it waited. A group chat only ever gets the summary.
-			full := settings.Full(n.o.Policy.Space(res.SpaceID), settings.IsGroupChat(chat))
-			parts := renderCard(&res, full, n.appURL(&res))
-			protect := full && res.Detail != ""                                                                                              // plan 3.8: a card with a body can't be forwarded or saved
+			v := n.view(cur, chat, &res)
+			parts := card.Render(v, n.caps(cur, chat, &res))
+			protect := v.Full && res.Detail != ""                                                                                            // plan 3.8: a card with a body can't be forwarded or saved
 			return n.cards.upsert(ctx, c, n.sender(&res, linkID), linkID, chat, &res, res.SpaceID, parts, protect, n.silent(cur, n.o.Now())) // quiet hours: no sound
 		}})
 	if err != nil {
@@ -560,15 +691,27 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 	}
 }
 
-// sender is the send function for a resource's messages to a link: to the resource's topic when its space is in topics
-// mode (open actions go to Needs you, the rest to the space's topic) and otherwise to the main chat.
+// sender is the send function for a resource's messages to a link: its card and its alerts go to the space's topic when
+// the link's chat layout is a topic per space, and to the main chat otherwise.
 func (n *Notifier) sender(r *Resource, linkID string) sendFunc {
-	key := n.o.Topics.Route(r.SpaceID, r.Kind == KindAction)
+	return n.route(linkID, r.SpaceID)
+}
+
+// route is the send function for a link's messages about a space (spaceID "": home, for what concerns no single
+// space). The topic is chosen when the message is sent, never when it was queued: a layout the link changed while the
+// message waited applies (ADR-0089). The first message of a link that lands in a topic queues the link's one-time
+// announcement of the new layout.
+func (n *Notifier) route(linkID, spaceID string) sendFunc {
 	return func(ctx context.Context, c *botapi.Client, p botapi.SendMessageParams) (botapi.Message, error) {
+		key := n.o.Topics.Route(linkID, spaceID)
 		if key == "" {
 			return c.SendMessage(ctx, p)
 		}
-		return n.o.Topics.Send(ctx, c, linkID, p.ChatID, key, p)
+		msg, err := n.o.Topics.Send(ctx, c, linkID, p.ChatID, key, p)
+		if err == nil && msg.MessageThreadID != 0 {
+			n.announceThreads(linkID, p.ChatID)
+		}
+		return msg, err
 	}
 }
 
@@ -580,6 +723,32 @@ func (n *Notifier) stillMay(linkID string, chat int64, r *Resource) bool {
 	}
 	l := n.currentLink(linkID, chat)
 	return l != nil && n.may(l, r, n.o.Policy.Current(), n.o.Now())
+}
+
+// MayRead reports whether the link may see the space as it is now, all in memory: the link is current (not revoked,
+// not moved to another chat) and usable, its subjects hold the space's read permission, and the space is visible to
+// Telegram. It is the check a topic rename makes before it writes a space's name into a chat (no database read).
+func (n *Notifier) MayRead(linkID string, chat int64, spaceID string) bool {
+	if !n.o.Policy.Space(spaceID).Visible() {
+		return false
+	}
+	l := n.currentLink(linkID, chat)
+	if l == nil {
+		return false
+	}
+	now := n.o.Now()
+	return l.Usable(now) && n.o.Authz.AllowedAll(l.Subjects(n.o.Policy.Current().LinkSSOGrants, now), spaceID, authz.SpaceRead)
+}
+
+// Muted reports whether the link muted a space, from memory (false for a link that is gone).
+func (n *Notifier) Muted(linkID, spaceID string) bool {
+	links := n.o.Links.Snapshot()
+	for i := range links {
+		if links[i].ID == linkID {
+			return links[i].Prefs.IsMuted(spaceID)
+		}
+	}
+	return false
 }
 
 // currentLink is the link as it is now (nil: gone, or moved to another chat).
@@ -609,10 +778,10 @@ func (n *Notifier) overflow(snd *sender.Sender, links []Link, spaces map[string]
 			if !n.o.Policy.Space(sp).Visible() || l.Prefs.IsMuted(sp) || !n.o.Authz.AllowedAll(subj, sp, authz.SpaceRead) {
 				continue
 			}
-			chat := l.ChatID
+			chat, send := l.ChatID, n.route(l.ID, "") // home: the notice is about several spaces
 			_ = snd.Enqueue(sender.Message{ChatID: chat, Priority: sender.Notification, Key: "many",
 				Send: func(ctx context.Context, c *botapi.Client) error {
-					_, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: "Many changes at once — open the app to see them."})
+					_, err := send(ctx, c, botapi.SendMessageParams{ChatID: chat, Text: "Many changes at once — open the app to see them."})
 					return err
 				}})
 			break // one notice per chat, whatever the number of spaces

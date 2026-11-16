@@ -10,8 +10,24 @@ import (
 	"database/sql"
 )
 
+const deleteTelegramHomeMessage = `-- name: DeleteTelegramHomeMessage :exec
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'home'
+`
+
+type DeleteTelegramHomeMessageParams struct {
+	ChatID    int64
+	MessageID int64
+}
+
+// A home summary that was deleted or left behind (its link moved to another chat): its row must not come back after a
+// restart.
+func (q *Queries) DeleteTelegramHomeMessage(ctx context.Context, arg DeleteTelegramHomeMessageParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTelegramHomeMessage, arg.ChatID, arg.MessageID)
+	return err
+}
+
 const deleteTelegramMessage = `-- name: DeleteTelegramMessage :exec
-DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'cont'
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind IN ('cont', 'alert')
 `
 
 type DeleteTelegramMessageParams struct {
@@ -19,7 +35,8 @@ type DeleteTelegramMessageParams struct {
 	MessageID int64
 }
 
-// A continuation the notifier deleted (the body shrank): its row must not come back after a restart.
+// A continuation or an alert the notifier deleted (the body shrank, a newer alert, the card settled): its row must not
+// come back after a restart.
 func (q *Queries) DeleteTelegramMessage(ctx context.Context, arg DeleteTelegramMessageParams) error {
 	_, err := q.db.ExecContext(ctx, deleteTelegramMessage, arg.ChatID, arg.MessageID)
 	return err
@@ -57,9 +74,50 @@ func (q *Queries) GetTelegramMessage(ctx context.Context, arg GetTelegramMessage
 	return i, err
 }
 
+const listTelegramHomeMessages = `-- name: ListTelegramHomeMessages :many
+SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL ORDER BY created_at, message_id
+`
+
+type ListTelegramHomeMessagesRow struct {
+	LinkID          sql.NullString
+	ChatID          int64
+	MessageID       int64
+	ResourceVersion int64
+}
+
+// The pinned home summaries (kind home), one per link: the message to edit and whether it was pinned (resource_version 1).
+// Read once when the notifier starts.
+func (q *Queries) ListTelegramHomeMessages(ctx context.Context) ([]ListTelegramHomeMessagesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTelegramHomeMessages)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTelegramHomeMessagesRow{}
+	for rows.Next() {
+		var i ListTelegramHomeMessagesRow
+		if err := rows.Scan(
+			&i.LinkID,
+			&i.ChatID,
+			&i.MessageID,
+			&i.ResourceVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTelegramMessagesByResource = `-- name: ListTelegramMessagesByResource :many
-SELECT chat_id, message_id, kind, resource_version, created_at FROM telegram_messages
-WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont')
+SELECT chat_id, message_id, kind, resource_version, created_at, message_thread_id FROM telegram_messages
+WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont', 'alert')
 `
 
 type ListTelegramMessagesByResourceParams struct {
@@ -73,9 +131,11 @@ type ListTelegramMessagesByResourceRow struct {
 	Kind            string
 	ResourceVersion int64
 	CreatedAt       int64
+	MessageThreadID sql.NullInt64
 }
 
-// Cards and their continuation messages ('cont'; the rest of a long body, replies to the card).
+// Cards, their continuation messages ('cont'; the rest of a long body, replies to the card) and the last alert sent as a
+// reply to the card ('alert'), so a restart doesn't leave it behind.
 func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTelegramMessagesByResourceParams) ([]ListTelegramMessagesByResourceRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTelegramMessagesByResource, arg.ResourceType, arg.ResourceID)
 	if err != nil {
@@ -91,6 +151,7 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 			&i.Kind,
 			&i.ResourceVersion,
 			&i.CreatedAt,
+			&i.MessageThreadID,
 		); err != nil {
 			return nil, err
 		}
@@ -105,9 +166,37 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 	return items, nil
 }
 
+const listTelegramNoticeLinks = `-- name: ListTelegramNoticeLinks :many
+SELECT DISTINCT link_id FROM telegram_messages WHERE kind = 'notice' AND resource_type = ?
+`
+
+// The links that were sent a one-time notice of a type (read once when the notifier starts).
+func (q *Queries) ListTelegramNoticeLinks(ctx context.Context, resourceType string) ([]sql.NullString, error) {
+	rows, err := q.db.QueryContext(ctx, listTelegramNoticeLinks, resourceType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []sql.NullString{}
+	for rows.Next() {
+		var link_id sql.NullString
+		if err := rows.Scan(&link_id); err != nil {
+			return nil, err
+		}
+		items = append(items, link_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneTelegramMessages = `-- name: PruneTelegramMessages :execrows
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
-  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < ?1 LIMIT ?2)
+  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < ?1 AND m.kind NOT IN ('notice', 'home') LIMIT ?2)
 `
 
 type PruneTelegramMessagesParams struct {
@@ -115,6 +204,9 @@ type PruneTelegramMessagesParams struct {
 	Lim    int64
 }
 
+// A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). So is a link's
+// home summary (kind home): it is the pinned message the notifier keeps editing. Links are never deleted, so there is
+// one such row per link at most, and the rows stay bounded by the links ever made.
 func (q *Queries) PruneTelegramMessages(ctx context.Context, arg PruneTelegramMessagesParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, pruneTelegramMessages, arg.Cutoff, arg.Lim)
 	if err != nil {
@@ -125,9 +217,10 @@ func (q *Queries) PruneTelegramMessages(ctx context.Context, arg PruneTelegramMe
 
 const upsertTelegramMessage = `-- name: UpsertTelegramMessage :exec
 
-INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at
+INSERT INTO telegram_messages (chat_id, message_id, link_id, space_id, kind, resource_type, resource_id, resource_version, created_at, message_thread_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (chat_id, message_id) DO UPDATE SET resource_version = excluded.resource_version, created_at = excluded.created_at,
+  message_thread_id = COALESCE(excluded.message_thread_id, telegram_messages.message_thread_id)
 `
 
 type UpsertTelegramMessageParams struct {
@@ -140,11 +233,13 @@ type UpsertTelegramMessageParams struct {
 	ResourceID      string
 	ResourceVersion int64
 	CreatedAt       int64
+	MessageThreadID sql.NullInt64
 }
 
 // Messages the notifier sent that it may edit later (ADR-0083, plan 4.2 step 7). Written in batches.
 // created_at is when the message was last sent, edited or alerted: retention prunes by it, and a card loaded after a
 // restart takes it as the time up to which reminders and escalations were already announced.
+// message_thread_id is the topic a card was sent in; a write that doesn't know it keeps the one stored.
 func (q *Queries) UpsertTelegramMessage(ctx context.Context, arg UpsertTelegramMessageParams) error {
 	_, err := q.db.ExecContext(ctx, upsertTelegramMessage,
 		arg.ChatID,
@@ -156,6 +251,7 @@ func (q *Queries) UpsertTelegramMessage(ctx context.Context, arg UpsertTelegramM
 		arg.ResourceID,
 		arg.ResourceVersion,
 		arg.CreatedAt,
+		arg.MessageThreadID,
 	)
 	return err
 }

@@ -5413,8 +5413,127 @@
 - **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`, `TestWorkerInboxDedupKeyEffectiveLimit`;
   `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
 
-> **Number gap:** ADR-0089 is reserved by the Telegram chat-threads work on another branch (its topic and thread design).
-> Both branches reach main, so this decision takes the next free number. The gap on this branch is expected.
+### ADR-0089 — Telegram chat threads per link: a thread per space, cards edited in place, a home summary
+- **Status:** Accepted, 2026-11-15. The operator accepted every planner default, Q1–Q10 below, on 2026-11-15 (the epic;
+  plan `docs/plans/2026-11-15-telegram-chat-ux.md` on `plan/telegram-chat-ux`). Amends
+  ADR-0083 decision 16 and its topics answer (Q6): the per-space topics opt-in becomes a per-link mode. The work is in
+  T1–T9 on `feat/tg-chat-threads`; T6 (Mini App home) goes straight to `next/v0.1.6`. Not security-relevant (see below).
+  Requirement IDs are unchanged: SM-TG-008 and SM-TG-009 keep their wording.
+- **Security label:** not security-relevant. **Authorization is unchanged.** A topic only chooses where a message is
+  shown. `may()`/`stillMay()` run at send time, a tap is authorized as the tapping link, `SpaceOf` is taken only from
+  bot-created threads, enforced approvals follow ADR-0083 decision 14, and content levels are unchanged (a `summary`
+  space never shows a body, a group is always `summary`). The one new path that acts on a person's tap is the card's
+  Approve/Deny button (Q6); its callback handling is the security review point in T4, before T4 merges.
+- **Context:**
+  - Topics mode (TG-11, #107) puts a space's messages into a topic of the private chat, chosen by one per-space flag.
+    Cards stay new messages forever, resolved cards keep their buttons, and the chat without a topic mixes everything.
+  - What Telegram allows, and what is undocumented, is in `docs/contracts/telegram.md` § Topics (sources and the list of
+    open points). The design uses only documented calls; each undocumented point has a fallback.
+- **Decision:**
+  1. **Thread mode per link (Q1).** `threads` is `auto`, `on` or `off`, default `auto` (on when the bot has topics
+     enabled). It is stored with the link's preferences (T3). The space `topics` flag and `topics_mode_default` are
+     deprecated and have no effect; they are removed later.
+  2. **Home is the chat without a topic (Q2).** A bot-created "🏠 Home" topic is the switch when the real-bot check
+     shows that untargeted messages are awkward.
+  3. **The legacy "Needs you" topic is left alone (Q3).** It gets a note and is no longer used. It is never deleted,
+     because deleting a topic deletes all its messages.
+  4. **A resolved card is edited to one compact line with no buttons (Q4).** It is never deleted: deletion is possible
+     only within 48 h and would lose the history.
+  5. **The pinned home summary is edited in place, at most once per 30 s (Q5).**
+  6. **Approve/Deny on the card (Q6).** For approvals that are not enforced, with the existing two-step confirm. Enforced
+     approvals follow the space's `enforced_approvals` setting (`web_only` by default).
+  7. **The Mini App's "Needs you" lists human actions only (Q7),** like the web's `/human`. Operator messages, tasks in
+     review and failed runs stay in `/attention` and on the space pages. Another kind needs a new API operation and a
+     security review.
+  8. **BotFather (Q8).** The operator enables private-chat topics and turns off user topic creation and deletion. The
+     bot status shows both flags from getMe: `has_topics_enabled` and `allows_users_to_create_topics`.
+  9. **Reminders and escalations are replies to the card (Q9).** The previous alert is deleted, and the card gets a
+     "reminded 2×" line. A silent card edit was rejected: it sends no alert.
+  10. **No new run notices (Q10).** Failed or lost runs only, as today.
+- **Alternatives rejected:**
+  - Keeping the per-space flag: one setting for every linked user, and it can't show a user's own choice.
+  - A Home topic by default (Q2): it creates a topic the user didn't ask for, and untargeted messages are not known to
+    be a problem.
+  - Deleting resolved cards (Q4) or using silent edits for reminders (Q9): see decisions 4 and 9.
+- **Consequences:** Topic creation becomes a per-link action, and a user can have no topic at all. The Bot API surface
+  grows by `editForumTopic`, `pinChatMessage`, `unpinChatMessage` and `deleteMessages` (T1, no behaviour change). The
+  facts the design relies on are recorded in the contract with a source; the new rows were checked against the Bot API
+  page on 2026-11-15. Nothing has been observed against a real bot yet.
+  T7 known limitation: a space renamed while the bot is off is not replayed; its topics keep the old title until the
+  space is renamed again or a topic is created again. A rename edits only the topics of links that may read the space
+  (checked when queued and when sent, in memory), and a relink reuses only the topics of the same user's link on the
+  same bot.
+- **Evidence:** T1: `internal/telegram/botapi` `TestGetMeTopicFlags`, `TestEditForumTopic`, `TestMessagesInRecordsThread`,
+  `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` and `TestTopicFlagsResetAndRefresh` (the flags reset on a disable and on a failed getMe, and follow a token for another bot). T2 (routing): `notification_defaults.threads` (`auto`/`on`/`off`, default `auto`) with
+  the link override; `topics.Manager.Route(link, space)` and `Enabled(link, chat)` read the link's effective mode from
+  the notifier's in-memory link list and getMe's `has_topics_enabled` at send time; the digest and the "many changes"
+  notice go home (`Route(link, "")`); the legacy `needs` key gets one note and is dropped (never deleted); one home
+  announcement per link, kept as a `telegram_messages` row of kind `notice` (retention keeps it). Topic creation is
+  bounded to 5/s over every chat, and a link's lookups no longer wait for its topic create. Tests:
+  `internal/telegram/topics` `TestRoutePerLink`, `TestEnabledFollowsRefusal`, `TestLegacyNeedsRetiredOnceUnderConcurrentSends`,
+  `TestCreatesAreRateLimited`; `internal/telegram/notify` `TestThreadsEveryKindLandsInItsSpaceTopic`,
+  `TestThreadsDigestAndOverflowGoHome`, `TestThreadsFallbacks`, `TestThreadsModeReadAtSendTime`,
+  `TestThreadsAnnouncedOncePerLink`; `internal/app` `TestTelegramThreadsRouteEachSpaceToItsTopic`,
+  `TestTelegramThreadsFallbacks`, `TestTelegramThreadsRetireTheLegacyNeedsTopic`; `internal/retention`
+  `TestPassKeepsTelegramNotices`. T3 (link prefs and the Mini App): `GET/PUT /telegram/link/prefs` return `topics`
+  (`available`, `mode`, `override`, `active`, `spaces`, `refused`); the override is saved through the `threads` field with
+  If-Match, and `active` comes from `topics.Manager.EnabledFor(mode, chat)` (the layout just saved, which the notifier's
+  own view only learns of once the change commits; `Enabled(link, chat)` is the same check for a link the notifier
+  already knows). `spaces` are the readable spaces that have a thread in the link's `topics_json`. The Mini App's
+  "Chat layout" control offers "A topic per space", "One chat" and "Automatic". All of it is simulated
+  (`internal/telegram/tgtest`); the real-bot run is TG-14 (plan §6.3).
+  T4 (cards edited in place): a pure renderer, `internal/telegram/card`, draws every card (header with the space's name
+  outside its topic, bold title, meta line, body only at `full` and never for an enforced approval, the keyboard), for
+  the notifier and for the chat's redraw of a card. Quick actions by type use explicit `h<verb>:<space>:<action>` data;
+  More… (`hn`) shows the form on the card's own message and Back (`hz`) draws the card again; a settled card is one
+  compact line with an empty keyboard; a link that loses access, mutes the space or a hidden space gets its card edited
+  to "No longer available here." with nothing of the item and its continuations deleted; reminders, escalations and
+  assignments reply to the card, the newer deleting the older and the settled card deleting the last. Security review:
+  a card tap adopts the card message only when the notifier's record of it (memory first, then the row) names the
+  tapping link and the button's space and action and shows the server's version; the action is then read and answered
+  as the tapping link through the in-process API with that version as If-Match, so a hidden button protects nothing and
+  a shown one permits nothing; the second step of an approval never adopts a card; an enforced approval in a
+  `web_only` space has no callback on its card and a forged one is refused as before (server rule unchanged); the
+  retraction renders no content and needs no recipient check. Ordering: notifier and chat edits of a card take one
+  lock per chat; a chat edit loses to a newer version shown or queued and to a settled or retracted card, and the
+  notifier's settled state replaces the chat's form. T4 follow-ups: the chat's form lock is per chat (a rate-limit
+  pause in one chat no longer delays another chat's taps); the last alert of a card is a `telegram_messages` row of
+  kind `alert` (no migration), so a restart still deletes it; a sweep over the cards in memory retracts a card when the
+  link's grants, mute or the space's visibility change (on the bus events, after a link reload, and every 10 s as the
+  backstop), using the same recipient check as a send and removing content only. Known limits: a card loaded from its
+  row after a restart is not swept until its item next changes or a queued send re-checks it; the card's final line
+  names no responder (the only responder stored is the actor's ID, which the API exposes to readers but which is not a
+  name; showing a name would need a user read and would expose a display name that a reader of the action does not get
+  today). Tests: TRACEABILITY SM-TG-006. Simulated only.
+  T5 (home): `/needs` with no pinned space and no argument lists the pending actions of every space from
+  `GET /human-actions`, grouped by space, with a "See all" web_app button for the Mini App's `/human`; the API leaves out
+  spaces the link's principal can't read, and the chat drops spaces Telegram may not show and spaces the link muted
+  before it counts or lists anything. In a space's topic, or with a space named, it lists that space only, as before.
+  `/spaces` rows get a "Go to topic" URL button (`t.me/<bot>/<thread>`) when the link has that topic. The notifier keeps
+  one pinned "Needs you" summary per link in home: one read of the pending counts per rebuild (not per recipient), each
+  link's view filtered in memory by the card rule (link usable, space read and human-action read held, visible to
+  Telegram, not muted) and checked again when it is sent, edited at most once per 30 s per chat, sent and pinned once,
+  and stored as a `telegram_messages` row of kind `home` (resource version 1 once the pin worked) that retention keeps
+  like a notice, so a restart edits the message instead of sending and pinning another. Per-space lines link to the
+  topic, or to `startapp=space-<id>` with the layout off; without the Mini App host the button is the `startapp=needs`
+  link. The counts are read per space and action type, and a link's view counts only the types whose view role (the
+  space's type permissions, loaded once per space per rebuild) the link holds, as a card and the API's counts do; a
+  space left with nothing to show for it isn't listed, and one whose permissions can't be read is left out. `/needs`
+  at home takes its items and counts from `GET /human-actions`, which applies the same type permissions. A rebuild reads
+  the counts only when a link's summary is due; a link that moves chats mid-send leaves no row and the message it sent
+  in the old chat is dropped from the record. Known limit: a mute or grant change shows on the next human-action
+  window, not at once. Simulated only.
+- **Integration into v0.1.8 (2026-11-16):**
+  - The migration is `0059_telegram_message_thread`, after account switching's 0054–0058 (ADR-0090). Evidence:
+    `internal/store` `TestTelegramThreadMigrationFrom0058` (a database at 0058 upgrades to 0059, and a fresh one applies
+    every migration).
+  - v0.1.7's topic-creation charge (#161) is kept on top of this ADR's two link locks. A topic create, the legacy note
+    and the title fix after a create are each charged to the sender's rate limits (`sender.Take` after the dispatch's
+    free call). That wait holds only `create`, never `mu`, so `SpaceOf`, `ThreadOf` and sends to an existing topic don't
+    wait for it. The 5/s create limiter stays.
+  - v0.1.7's Open-in-app link on long cards (#162) is this ADR's per-item `ItemURL`: a human action's Mini App page, and
+    no button on other cards. The notifier keeps one link option (`ItemURL`, central's `cardAppURL`) instead of v0.1.7's
+    `AppURL func(Resource)`.
 
 ### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
 - **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the

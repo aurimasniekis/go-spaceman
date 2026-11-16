@@ -10556,6 +10556,15 @@
             ],
             "type": "string"
           },
+          "threads": {
+            "description": "Default auto",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
           "timezone": {
             "description": "Your IANA time zone, such as Europe/Vilnius; empty clears it, left out keeps it. It is your user's, so it applies to all your links and the web",
             "maxLength": 64,
@@ -10591,16 +10600,38 @@
       "LinkTopicsPrefs": {
         "additionalProperties": false,
         "properties": {
-          "available": {
-            "description": "Whether topics mode is supported (the bot is running); it is turned on per space, not per link",
+          "active": {
+            "description": "True while the bot tries topics for this chat: the layout is on (or automatic with topics enabled) and the chat has not refused lately. It can be true while available is false (the layout is on but the bot lacks topics): the first topic is then refused and messages go to the main chat",
             "type": "boolean"
           },
+          "available": {
+            "description": "Whether topics can be used now: the bot is running and has topics enabled (BotFather)",
+            "type": "boolean"
+          },
+          "mode": {
+            "description": "The chat layout that applies to this link: your override, else the administrator's default (auto is on while the bot has topics enabled)",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
+          "override": {
+            "description": "Your own choice (the threads field of the preferences); left out when you follow the default",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
           "refused": {
-            "description": "True while the bot is not asking your private chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat",
+            "description": "True while the bot is not asking this chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat",
             "type": "boolean"
           },
           "spaces": {
-            "description": "IDs of the spaces you can read that have topics on, sorted; each gets a topic in your private chat",
+            "description": "IDs of the spaces you can read that already have a topic in this chat, sorted",
             "items": {
               "type": "string"
             },
@@ -10609,6 +10640,8 @@
         },
         "required": [
           "available",
+          "mode",
+          "active",
           "spaces",
           "refused"
         ],
@@ -17040,6 +17073,15 @@
               "off"
             ],
             "type": "string"
+          },
+          "threads": {
+            "description": "Chat layout (ADR-0089): on puts each space's messages in a topic of its own in the private chat, off keeps everything in one chat, auto is on when the bot has topics enabled in BotFather",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
           }
         },
         "required": [
@@ -17058,7 +17100,8 @@
           "digest_time",
           "quiet_hours",
           "quiet_hours_start",
-          "quiet_hours_end"
+          "quiet_hours_end",
+          "threads"
         ],
         "type": "object"
       },
@@ -17221,7 +17264,7 @@
             "$ref": "#/components/schemas/SettingsSendLimitsInput"
           },
           "topics_mode_default": {
-            "description": "Default false",
+            "description": "Deprecated, no effect (notification_defaults.threads replaced it). Default false",
             "type": "boolean"
           }
         },
@@ -17326,6 +17369,15 @@
               "off"
             ],
             "type": "string"
+          },
+          "threads": {
+            "description": "Default auto",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
           }
         },
         "type": "object"
@@ -17418,6 +17470,15 @@
               "off"
             ],
             "type": "string"
+          },
+          "threads": {
+            "description": "Chat layout (ADR-0089): on puts each space's messages in a topic of its own in the private chat, off keeps everything in one chat, auto is on when the bot has topics enabled in BotFather",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
           }
         },
         "required": [
@@ -17435,7 +17496,8 @@
           "digest_time",
           "quiet_hours",
           "quiet_hours_start",
-          "quiet_hours_end"
+          "quiet_hours_end",
+          "threads"
         ],
         "type": "object"
       },
@@ -17530,6 +17592,15 @@
               "off"
             ],
             "type": "string"
+          },
+          "threads": {
+            "description": "Default auto",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
           }
         },
         "type": "object"
@@ -17609,7 +17680,7 @@
             "type": "boolean"
           },
           "topics_mode_default": {
-            "description": "Whether a new link starts in topics mode (a topic per space in the private chat)",
+            "description": "Deprecated, no effect (ADR-0089): notification_defaults.threads chooses the chat layout",
             "type": "boolean"
           },
           "updated_at": {
@@ -17793,7 +17864,7 @@
             "type": "boolean"
           },
           "topics": {
-            "description": "The space gets its own topic for users in topics mode",
+            "description": "Deprecated, no effect (ADR-0089): the chat layout is chosen per link (notification_defaults.threads)",
             "type": "boolean"
           },
           "updated_at": {
@@ -17863,7 +17934,7 @@
             "type": "boolean"
           },
           "topics": {
-            "description": "Default false",
+            "description": "Deprecated, no effect (the chat layout is per link). Default false",
             "type": "boolean"
           }
         },
@@ -19316,6 +19387,10 @@
       "TgbotStatus": {
         "additionalProperties": false,
         "properties": {
+          "allows_users_to_create_topics": {
+            "description": "getMe: users may create and delete the bot's topics in private chats (BotFather)",
+            "type": "boolean"
+          },
           "bot_id": {
             "format": "int64",
             "type": "integer"
@@ -19335,6 +19410,10 @@
           "error": {
             "description": "Why the bot isn't working (startup, or Telegram's last delivery error)",
             "type": "string"
+          },
+          "has_topics_enabled": {
+            "description": "getMe: topic mode is on for the bot in private chats (set in BotFather)",
+            "type": "boolean"
           },
           "last_error_at": {
             "description": "Telegram's last failed webhook delivery",
@@ -19398,6 +19477,8 @@
         "required": [
           "configured",
           "enabled",
+          "has_topics_enabled",
+          "allows_users_to_create_topics",
           "webhook_status",
           "pending_update_count"
         ],

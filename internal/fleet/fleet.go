@@ -97,6 +97,9 @@ type Options struct {
 	// OnSpaceState is called after an operator paused, resumed, archived or restored a space (SetSpaceState), with
 	// the new state: deferred work can go out on resume, and subscriptions that stop while paused stop or start.
 	OnSpaceState func(spaceID, state string)
+	// OnSpaceRenamed is called after a commit that changed a space's name (UpdateSpace), with the new name: the Telegram
+	// topics of the space take it. It runs on the request's goroutine, so it must not block.
+	OnSpaceRenamed func(ctx context.Context, spaceID, name string)
 	// OnCommandAck is called inside the transaction that records a node's command acknowledgement (with the command's
 	// kind and the node's reason).
 	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error

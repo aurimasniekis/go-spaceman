@@ -19,6 +19,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `usage_limit_switch_max_per_day` (default 6; 0 never switches) and `usage_limit_min_headroom_percent` (default 0: off).
   Live switching is off unless the existing `usage_limit_failover` is on, so an installation that leaves it off keeps
   ADR-0079's wait.
+- **Schema migration `0059_telegram_message_thread`**: adds the nullable
+  `telegram_messages.message_thread_id`, the topic a card was sent in. It is applied on start and needs no action. A card
+  row from before it has no topic recorded and is edited in place as before.
+- **Chat layout.** Links start on `notification_defaults.threads = auto`, so a bot with topics enabled in BotFather moves each
+  chat to a topic per space at its next space message, with one announcement in the chat without a topic. To keep one chat,
+  set `threads` to `off`, per link or in the administrator defaults. **Topics the bot creates stay in users' chats**
+  whatever you set later: Telegram deletes a topic only together with its messages.
 
 ### Added
 
@@ -28,8 +35,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   written to the instance folder. Control gets one message per switch. A switch's resume re-checks the target and takes
   the pool's next account, or falls back to ADR-0079's wait, when it is no longer usable.
 - **Pools:** a space's accounts for a harness form its pool, ordered by priority; an optional role pool replaces it for
-  one role. Accounts are chosen by priority, then the lowest known use of the window that limited the run, then the
-  fewest live runs.
+  one role. A launch takes the space's default account first when it is eligible; otherwise, and for a role pool,
+  accounts are taken by priority, then the fewest live runs, then binding order. A switch ignores the default and takes
+  the pool order. Account usage does not rank the pool.
 - **Wait if the reset is near:** a run whose account resets within `usage_limit_wait_if_reset_within` waits for it
   instead of switching; beyond `usage_limit_switch_max_per_day` switches an instance waits too.
 - **Launch headroom gate:** with `usage_limit_min_headroom_percent` above 0, a launch or resume does not start on an
@@ -47,8 +55,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the one into it.
 - **Evidence:** account switching is tested with simulated harnesses only. It has not yet been verified with two real
   claude.ai accounts (open item K-17).
+- Telegram cards are actionable and edited in place (ADR-0089): a question's options, Approve and Deny, Mark completed,
+  Acknowledge and Dismiss sit on the card, **More…** turns it into the full form and **Back** returns, and a resolved card
+  becomes one line with no buttons. Reminders, escalations and assignments are replies to the card. A card of a space you can
+  no longer see is edited to "No longer available here". A card outside its space's topic names the space.
+- Telegram home: `/needs` lists every readable space with its total, and a **Needs you** summary is pinned in the chat without a
+  topic and edited in place (at most once every 30 seconds). It counts only the spaces and action types the link may view.
+  **Known limit:** a `/needs` row opens a form; it doesn't link to the item's card yet.
+- A relink of the same chat by the same user reuses the topics of the revoked link, and a space's rename renames its topic.
 - The backup status shows where a running backup or verification is (`current`: stage, stage start, files done, last
   progress; `stage` on the running item), and central logs every stage's start and end at Info.
+
+### Changed
+
+- Telegram guide: the section "Topics mode" is now "Chat layout" (the old anchor `#topics-mode` is gone). It no longer
+  says a bound group gets notifier cards (it gets none: its replies and taps only), describes `/needs` as cross-space,
+  and the setup page has the BotFather steps for topics.
+- Telegram: the chat layout is chosen per link (ADR-0089). The new `notification_defaults.threads` setting (`auto`, `on`, `off`; default `auto`, which is on when the bot has topics enabled in BotFather) and a link's own override put every message about a space, needs-you cards included, in that space's topic; the digest and the "many changes" notice stay in the chat without a topic. The shared "Needs you" topic is no longer used: the bot posts a note in it once. The per-space `topics` flag and `topics_mode_default` are deprecated and have no effect. **Topics the bot creates stay in users' chats** when the layout is turned off again: Telegram can only delete a topic together with its messages.
 
 ### Fixed
 

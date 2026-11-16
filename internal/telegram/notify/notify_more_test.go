@@ -9,6 +9,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
@@ -94,8 +95,20 @@ func TestSendTimeRecheck(t *testing.T) {
 				if n := len(e.fake.Calls("sendMessage")); (edit && n != 1) || (!edit && n != 0) {
 					t.Errorf("%d sends after the access ended", n)
 				}
-				if n := len(e.fake.Calls("editMessageText")); n != 0 {
-					t.Errorf("%d edits after the access ended", n)
+				// A card that exists is retracted: its one edit says only that it is gone, without a keyboard. A link that
+				// is gone gets nothing at all.
+				edits := e.fake.Calls("editMessageText")
+				want := 0
+				if edit && name != "link gone" && name != "grants revoked and link cache cleared" {
+					want = 1
+				}
+				if len(edits) != want {
+					t.Errorf("%d edits after the access ended, want %d", len(edits), want)
+				}
+				for _, c := range edits {
+					if c.Params["text"] != card.Gone || c.Params["entities"] != "" || c.Params["reply_markup"] != `{"inline_keyboard":[]}` {
+						t.Errorf("retraction shows %q %q %q", c.Params["text"], c.Params["entities"], c.Params["reply_markup"])
+					}
 				}
 			})
 		}
@@ -190,7 +203,7 @@ func TestFeedErrorRetry(t *testing.T) {
 	e.waitCalls("sendMessage", n) // all of them, with no further ring
 	seen := map[string]bool{}
 	for _, c := range e.fake.Calls("sendMessage") {
-		seen[c.Params["text"][:strings.Index(c.Params["text"], "\n")]] = true
+		seen[strings.Split(c.Params["text"], "\n")[1]] = true // the title line
 	}
 	if len(seen) != n {
 		t.Errorf("%d distinct cards, want %d", len(seen), n)

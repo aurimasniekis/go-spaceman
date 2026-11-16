@@ -9030,6 +9030,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review?: "push" | "digest" | "off";
+            /**
+             * @description Default auto
+             * @enum {string}
+             */
+            threads?: "auto" | "on" | "off";
             /** @description Your IANA time zone, such as Europe/Vilnius; empty clears it, left out keeps it. It is your user's, so it applies to all your links and the web */
             timezone?: string;
         };
@@ -9045,11 +9050,23 @@ export interface components {
             username: string;
         };
         LinkTopicsPrefs: {
-            /** @description Whether topics mode is supported (the bot is running); it is turned on per space, not per link */
+            /** @description True while the bot tries topics for this chat: the layout is on (or automatic with topics enabled) and the chat has not refused lately. It can be true while available is false (the layout is on but the bot lacks topics): the first topic is then refused and messages go to the main chat */
+            active: boolean;
+            /** @description Whether topics can be used now: the bot is running and has topics enabled (BotFather) */
             available: boolean;
-            /** @description True while the bot is not asking your private chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat */
+            /**
+             * @description The chat layout that applies to this link: your override, else the administrator's default (auto is on while the bot has topics enabled)
+             * @enum {string}
+             */
+            mode: "auto" | "on" | "off";
+            /**
+             * @description Your own choice (the threads field of the preferences); left out when you follow the default
+             * @enum {string}
+             */
+            override?: "auto" | "on" | "off";
+            /** @description True while the bot is not asking this chat for topics again because Telegram refused one (topics are off for the bot in that chat); messages go to the main chat */
             refused: boolean;
-            /** @description IDs of the spaces you can read that have topics on, sorted; each gets a topic in your private chat */
+            /** @description IDs of the spaces you can read that already have a topic in this chat, sorted */
             spaces: string[];
         };
         "List-account-kindsResponse": {
@@ -11476,6 +11493,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review: "push" | "digest" | "off";
+            /**
+             * @description Chat layout (ADR-0089): on puts each space's messages in a topic of its own in the private chat, off keeps everything in one chat, auto is on when the bot has topics enabled in BotFather
+             * @enum {string}
+             */
+            threads: "auto" | "on" | "off";
         };
         SettingsInboundLimits: {
             /**
@@ -11580,7 +11602,7 @@ export interface components {
             miniapp_session_idle_seconds?: number;
             notification_defaults?: components["schemas"]["SettingsNotificationDefaultsInput"];
             send_limits?: components["schemas"]["SettingsSendLimitsInput"];
-            /** @description Default false */
+            /** @description Deprecated, no effect (notification_defaults.threads replaced it). Default false */
             topics_mode_default?: boolean;
         };
         SettingsLinkPrefs: {
@@ -11631,6 +11653,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review?: "push" | "digest" | "off";
+            /**
+             * @description Default auto
+             * @enum {string}
+             */
+            threads?: "auto" | "on" | "off";
         };
         SettingsNotificationDefaults: {
             /** @description An action was assigned to the user */
@@ -11678,6 +11705,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review: "push" | "digest" | "off";
+            /**
+             * @description Chat layout (ADR-0089): on puts each space's messages in a topic of its own in the private chat, off keeps everything in one chat, auto is on when the bot has topics enabled in BotFather
+             * @enum {string}
+             */
+            threads: "auto" | "on" | "off";
         };
         SettingsNotificationDefaultsInput: {
             /** @description Default true */
@@ -11725,6 +11757,11 @@ export interface components {
              * @enum {string}
              */
             tasks_in_review?: "push" | "digest" | "off";
+            /**
+             * @description Default auto
+             * @enum {string}
+             */
+            threads?: "auto" | "on" | "off";
         };
         SettingsOut: {
             /**
@@ -11780,7 +11817,7 @@ export interface components {
             send_limits: components["schemas"]["SettingsSendLimits"];
             /** @description false: nothing was ever set (or it was reset), every value is the built-in default */
             stored: boolean;
-            /** @description Whether a new link starts in topics mode (a topic per space in the private chat) */
+            /** @description Deprecated, no effect (ADR-0089): notification_defaults.threads chooses the chat layout */
             topics_mode_default: boolean;
             /** Format: date-time */
             updated_at?: string;
@@ -11887,7 +11924,7 @@ export interface components {
             stored: boolean;
             /** @description Run terminals can be watched (read-only) from the Mini App */
             terminal_watch: boolean;
-            /** @description The space gets its own topic for users in topics mode */
+            /** @description Deprecated, no effect (ADR-0089): the chat layout is chosen per link (notification_defaults.threads) */
             topics: boolean;
             /** Format: date-time */
             updated_at?: string;
@@ -11921,7 +11958,7 @@ export interface components {
             group_chat_id?: number;
             /** @description Default false */
             terminal_watch?: boolean;
-            /** @description Default false */
+            /** @description Deprecated, no effect (the chat layout is per link). Default false */
             topics?: boolean;
         };
         SignInProviders: {
@@ -12484,6 +12521,8 @@ export interface components {
             webhook_ip_allowlist?: string[];
         };
         TgbotStatus: {
+            /** @description getMe: users may create and delete the bot's topics in private chats (BotFather) */
+            allows_users_to_create_topics: boolean;
             /** Format: int64 */
             bot_id?: number;
             /**
@@ -12496,6 +12535,8 @@ export interface components {
             enabled: boolean;
             /** @description Why the bot isn't working (startup, or Telegram's last delivery error) */
             error?: string;
+            /** @description getMe: topic mode is on for the bot in private chats (set in BotFather) */
+            has_topics_enabled: boolean;
             /**
              * Format: date-time
              * @description Telegram's last failed webhook delivery

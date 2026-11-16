@@ -27,7 +27,7 @@ type Space struct {
 	Enabled           bool       `json:"enabled" doc:"The space is visible through Telegram"`
 	ContentLevel      string     `json:"content_level" enum:"full,summary,off" doc:"full: bodies in chat; summary: bodies only in the Mini App; off: the space stays hidden"`
 	EnforcedApprovals string     `json:"enforced_approvals" enum:"web_only,confirm" doc:"Whether enforced approvals can be decided in chat with a second confirmation, or only on the web"`
-	Topics            bool       `json:"topics" doc:"The space gets its own topic for users in topics mode"`
+	Topics            bool       `json:"topics" doc:"Deprecated, no effect (ADR-0089): the chat layout is chosen per link (notification_defaults.threads)"`
 	TerminalWatch     bool       `json:"terminal_watch" doc:"Run terminals can be watched (read-only) from the Mini App"`
 	CreatedAt         *time.Time `json:"created_at,omitempty"`
 	CreatedBy         string     `json:"created_by,omitempty"`
@@ -66,7 +66,7 @@ type SpaceInput struct {
 	Enabled           *bool   `json:"enabled,omitempty" doc:"Default false"`
 	ContentLevel      *string `json:"content_level,omitempty" enum:"full,summary,off" doc:"Default full (bodies are only sent once the space is enabled)"`
 	EnforcedApprovals *string `json:"enforced_approvals,omitempty" enum:"web_only,confirm" doc:"Default web_only"`
-	Topics            *bool   `json:"topics,omitempty" doc:"Default false"`
+	Topics            *bool   `json:"topics,omitempty" doc:"Deprecated, no effect (the chat layout is per link). Default false"`
 	TerminalWatch     *bool   `json:"terminal_watch,omitempty" doc:"Default false"`
 	GroupChatID       *int64  `json:"group_chat_id,omitempty" doc:"Binds the forum supergroup (its chat ID, negative; the bot must be a member) to the space; 0 unbinds it. Left out, the current binding stays. Changing it needs telegram_group:write (admins); 409 when the group is bound to another space"`
 }

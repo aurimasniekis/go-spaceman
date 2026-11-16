@@ -25,22 +25,31 @@ const FLAG_FIELDS = [
 ] as const
 
 type Topics = Prefs['topics']
+type Layout = Effective['threads']
 
-/** The read-only topics mode state: what it is, which of your spaces use it, and what to do on the Telegram side. */
-export function TopicsNote({ topics, names }: { topics: Topics; names: Map<string, string> }) {
-  if (!topics.available) return <Text size="sm" c="dimmed">Topics mode is not available: the Telegram bot is not running.</Text>
+const LAYOUTS = [{ value: 'on', label: 'A topic per space' }, { value: 'off', label: 'One chat' }, { value: 'auto', label: 'Automatic' }]
+
+/**
+ * What the chat layout does right now for this link (ADR-0089): whether topics can be used, whether they are in use, the
+ * spaces that already have a topic here, and what to do on the Telegram side when they are not available or Telegram refused.
+ */
+export function TopicsNote({ topics, names, pending = false }: { topics: Topics; names: Map<string, string>; pending?: boolean }) {
   const label = (id: string) => names.get(id) ?? id
   return (
-    <Stack gap={4} aria-label="Topics mode">
-      <Text size="sm" c="dimmed">
-        Topics mode is turned on per space, by someone with space settings access; it is not a setting of your link. A space with it on gets its own topic in this chat, and what needs you goes to a "Needs you" topic.
-      </Text>
-      {topics.spaces.length === 0
-        ? <Text size="sm">None of your spaces use topics mode.</Text>
-        : <Text size="sm">Topics are on for: {topics.spaces.map(label).join(', ')}.</Text>}
-      {topics.spaces.length > 0 && !topics.refused && (
-        <Text size="xs" c="dimmed">Topics show in a private chat only when topics are enabled for the bot in BotFather.</Text>
+    <Stack gap={4} aria-label="Chat layout state">
+      {!topics.available && topics.active && topics.mode !== 'off' && (
+        <Text size="sm" c="orange">Topics are on, but the bot does not have them enabled in BotFather; Telegram will refuse them, and messages go to the main chat until it does.</Text>
       )}
+      {!topics.available && !topics.active && !topics.refused && (
+        <Text size="sm" c="orange">Topics are not available now: the Telegram bot is not running, or topics are not enabled for it in BotFather. Everything arrives in this one chat.</Text>
+      )}
+      {topics.available && topics.mode === 'off' && <Text size="sm">Everything arrives in this one chat.</Text>}
+      {topics.available && topics.mode !== 'off' && topics.active && <Text size="sm">Each space gets a topic of its own in this chat.</Text>}
+      {topics.available && topics.mode !== 'off' && !topics.active && !topics.refused && (
+        <Text size="sm" c="dimmed">Topics are not in use for this chat now, so everything arrives in this one chat.</Text>
+      )}
+      {topics.mode !== 'off' && topics.spaces.length > 0 && <Text size="sm">Topics so far: {topics.spaces.map(label).join(', ')}.</Text>}
+      {pending && <Text size="sm" c="dimmed">Save to apply this layout.</Text>}
       {topics.refused && (
         <Text size="sm" c="orange">Telegram refused to create a topic in your chat, so messages go to the main chat. Enable topics for this bot in BotFather; the bot asks again after a while.</Text>
       )}
@@ -75,7 +84,7 @@ export function overridesFrom(p: Prefs, form: Form): Record<string, unknown> {
 /**
  * Your Telegram settings in the Mini App: who this session acts as, and this link's own notification preferences, which you
  * can edit here (GET and PUT /telegram/link/prefs, TG-10-4). Saving always sends If-Match with the version that was read: a
- * stale save (412) reloads the form and says so, and a save without it (428) cannot happen, because Save stays off until the
+ * stale save (409, or 412) reloads the form and says so, and a save without it (428) cannot happen, because Save stays off until the
  * preferences have loaded. Linking, unlinking and the global Telegram settings stay in the web (ADR-0083).
  */
 export function TgSettings() {
@@ -139,7 +148,7 @@ function PrefsForm() {
       qc.setQueryData(PREFS_KEY, saved)
       notifications.show({ color: 'green', title: 'Saved', message: 'Your Telegram notification settings were saved.' })
     } catch (e) {
-      if (e instanceof ApiError && e.status === 412) {
+      if (e instanceof ApiError && (e.status === 412 || e.status === 409)) {
         setConflict(true)
         await qc.invalidateQueries({ queryKey: PREFS_KEY })
       } else notifyError(e, 'Could not save')
@@ -196,10 +205,12 @@ function PrefsForm() {
           {form.eff.muted_spaces.filter((id) => !known.has(id)).map((id) => <Checkbox key={id} label={id} checked onChange={(e) => toggleMuted(id, e.currentTarget.checked)} />)}
         </Stack>
       </Stack></Card>
-      <Stack gap={4}>
-        <Text size="sm" fw={600}>Topics mode</Text>
-        <TopicsNote topics={data.topics} names={names} />
-      </Stack>
+      <Card><Stack gap="xs">
+        <NativeSelect label="Chat layout" data={LAYOUTS} value={form.eff.threads}
+          description="Where messages about your spaces arrive in this chat. Automatic uses a topic per space while topics are enabled for the bot in BotFather."
+          onChange={(e) => set('threads', e.currentTarget.value as Layout)} />
+        <TopicsNote topics={data.topics} names={names} pending={form.eff.threads !== data.effective.threads} />
+      </Stack></Card>
       <Button type="submit" loading={saving} disabled={saving}>Save</Button>
     </Stack>
   )

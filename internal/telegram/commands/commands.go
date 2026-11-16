@@ -16,14 +16,14 @@ type Spec struct {
 
 // table lists the commands in menu order. It is unexported so no caller can change it; All returns a copy.
 var table = []Spec{
-	{"needs", "What needs you", false},
+	{"needs", "What needs you (in a space's topic: that space)", false},
 	{"needsyou", "", true}, // the long name of /needs, kept out of the menu
 	{"inbox", "Inbox of the current space", true},
 	{"queue", "Queue of the current space", true},
 	{"runs", "Runs of the current space", true},
 	{"messages", "Messages waiting for you", true},
 	{"control", "Talk to the control run", true},
-	{"spaces", "Your spaces", true},
+	{"spaces", "Your spaces, with a link to each topic", true},
 	{"space", "Switch the current space", true},
 	{"settings", "Your Telegram settings", false},
 	{"help", "What this bot can do", false},

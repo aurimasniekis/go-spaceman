@@ -392,6 +392,22 @@ func TestPassPrunesTelegramMessages(t *testing.T) {
 	}
 }
 
+// A one-time notice row (ADR-0089) is never pruned: it is what keeps the notice from being sent again.
+func TestPassKeepsTelegramNotices(t *testing.T) {
+	f := newFx(t, 0)
+	old := f.clk.Now().Add(-40 * 24 * time.Hour).UnixMicro()
+	f.exec(fmt.Sprintf(`INSERT INTO telegram_messages (chat_id, message_id, kind, resource_type, created_at) VALUES (1, 1, 'notice', 'threads', %d)`, old),
+		fmt.Sprintf(`INSERT INTO telegram_messages (chat_id, message_id, kind, created_at) VALUES (1, 2, 'card', %d)`, old))
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if p.Deleted[KindTelegram] != 1 {
+		t.Fatalf("pruned %d, want the card only", p.Deleted[KindTelegram])
+	}
+	if n := f.count(`SELECT count(*) FROM telegram_messages WHERE kind = 'notice'`); n != 1 {
+		t.Fatal("the notice row was pruned")
+	}
+}
+
 // The 30-day boundary: a mapping an hour past it is pruned, one an hour inside it stays.
 func TestPassPrunesTelegramMessagesAtTheBoundary(t *testing.T) {
 	f := newFx(t, 0)

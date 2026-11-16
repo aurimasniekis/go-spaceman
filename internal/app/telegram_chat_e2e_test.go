@@ -156,7 +156,7 @@ func TestTelegramChatSpacesAndInbox(t *testing.T) {
 		Version int64  `json:"version"`
 	}
 	r.json(t, &offItem)
-	nMsgs := len(tg.Messages(42))
+	nMsgs := chatMessages(tg.Messages(42))
 	for _, forged := range []string{
 		"ir:" + strings.TrimPrefix(s.space, "spc_") + ":" + strings.TrimPrefix(offItem.ID, "inb_"),
 		statusDataFor(s.space, offItem.ID, "x", offItem.Version),
@@ -168,7 +168,7 @@ func TestTelegramChatSpacesAndInbox(t *testing.T) {
 			t.Fatalf("forged tap %q answered %q", forged, a[len(a)-1].Text)
 		}
 	}
-	if got := len(tg.Messages(42)); got != nMsgs {
+	if got := chatMessages(tg.Messages(42)); got != nMsgs {
 		t.Fatalf("a forged tap sent %d messages", got-nMsgs)
 	}
 	r = s.root.do("GET", "/spaces/"+off+"/inbox/"+offItem.ID, nil)

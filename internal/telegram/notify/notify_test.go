@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,8 +16,10 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
@@ -162,6 +165,8 @@ type mappings struct {
 	rows    map[[2]int64]notify.Mapping
 	saves   int
 	lookups int
+	// noticeReads counts NoticeLinks calls.
+	noticeReads int
 }
 
 func (m *mappings) Save(_ context.Context, rows []notify.Mapping) error {
@@ -189,6 +194,42 @@ func (m *mappings) Lookup(_ context.Context, k notify.Key) ([]notify.Mapping, er
 		}
 	}
 	return out, nil
+}
+
+func (m *mappings) NoticeLinks(_ context.Context, typ string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.noticeReads++
+	var out []string
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingNotice && r.Key.Type == typ {
+			out = append(out, r.LinkID)
+		}
+	}
+	return out, nil
+}
+
+func (m *mappings) HomeMessages(_ context.Context) ([]notify.HomeRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []notify.HomeRow
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingHome {
+			out = append(out, notify.HomeRow{LinkID: r.LinkID, ChatID: r.ChatID, MessageID: r.MessageID, Pinned: r.Version == 1})
+		}
+	}
+	return out, nil
+}
+
+func (m *mappings) notices() (rows []notify.Mapping, reads int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingNotice {
+			rows = append(rows, r)
+		}
+	}
+	return rows, m.noticeReads
 }
 
 func (m *mappings) lookupCount() int {
@@ -230,8 +271,12 @@ type env struct {
 	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
 	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
 	authz      notify.Authorizer
-	tp         *topics.Manager              // topics mode (nil: off)
-	appURL     func(notify.Resource) string // the notifier's Options.AppURL (nil: no continuation button)
+	tp         *topics.Manager                                            // chat threads (nil: off)
+	pending    func(context.Context) ([]notify.SpaceCount, error)         // the home summaries' counts (nil: no summaries)
+	perms      func(context.Context, string) (human.PermissionSet, error) // the type permissions of a space (nil: defaults)
+	homeWake   chan time.Time                                             // the home summary's debounce wait ends when the test sends here
+	needsURL   string
+	itemURL    func(string, notify.Key) string // the notifier's Options.ItemURL (nil: no Open in app button)
 }
 
 func linkFor(i int) notify.Link {
@@ -318,7 +363,13 @@ func (e *env) options(m notify.Mappings) notify.Options {
 			return ch
 		}}
 	opts.Topics = e.tp
-	opts.AppURL = e.appURL
+	if e.pending != nil {
+		opts.Pending, opts.HomeEvery = e.pending, 30*time.Second
+		opts.HomeAfter = func(time.Duration) <-chan time.Time { return e.homeWake }
+		opts.NeedsURL = func() string { return e.needsURL }
+		opts.Perms = e.perms
+	}
+	opts.ItemURL = e.itemURL
 	if m != nil {
 		opts.Store = m
 	}
@@ -352,8 +403,12 @@ func action(id string, version int64, final bool) notify.Resource {
 	if final {
 		st = "resolved: approved"
 	}
+	a := &card.Action{ID: id, Type: "approval", Status: "open"}
+	if final {
+		a.Status, a.Outcome = "resolved", "approved"
+	}
 	return notify.Resource{Key: notify.Key{Type: notify.TypeHumanAction, ID: id}, SpaceID: "spc_1", Version: version, Kind: notify.KindAction,
-		Perm: authz.HumanRead, Label: "Approval", Title: "Deploy " + id, Detail: "Please approve", State: st, Priority: "normal", Notify: !final, Final: final}
+		Perm: authz.HumanRead, Label: "Approval", Title: "Deploy " + id, Detail: "Please approve", State: st, Priority: "normal", Notify: !final, Final: final, Action: a}
 }
 
 // settle waits until the notifier has handled a ring: the feed was read after it.
@@ -704,14 +759,14 @@ func TestCardEdit(t *testing.T) {
 		t.Errorf("%d sends, want the one card", n)
 	}
 	msgs := e.fake.Messages(1001)
-	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "resolved: approved") {
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "✅ Approved") {
 		t.Fatalf("messages = %+v, want one card in its final state", msgs)
 	}
 	if edits[0].Params["message_id"] != fmt.Sprint(msgs[0].MessageID) {
 		t.Errorf("edited message %s, want %d", edits[0].Params["message_id"], msgs[0].MessageID)
 	}
-	if len(msgs[0].Entities) != 1 || msgs[0].Entities[0].Type != "bold" {
-		t.Errorf("entities = %+v, want the bold head", msgs[0].Entities)
+	if len(msgs[0].Entities) != 0 || msgs[0].Text != "✅ Approved · Deploy hum_1" {
+		t.Errorf("final card %q %+v, want the compact line without formatting", msgs[0].Text, msgs[0].Entities)
 	}
 
 	// The same version again changes nothing; a resolved action nobody was told about sends nothing.
@@ -775,7 +830,7 @@ func TestCoalescedStates(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("%d messages for one action, want its single card", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Text, "resolved") {
+	if !strings.Contains(msgs[0].Text, "Approved") {
 		t.Errorf("card %q doesn't show the final state", msgs[0].Text)
 	}
 }
@@ -804,6 +859,7 @@ func notifyDefaults() settings.NotificationDefaults { return settings.Defaults()
 // replyGate holds sendMessage replies after the fake server has logged the request, the gap in which Telegram has
 // the message and the notifier does not yet know its id.
 type replyGate struct {
+	method  string        // the Bot API method whose replies are held
 	reached chan struct{} // one value per held reply
 	release chan struct{}
 }
@@ -812,8 +868,8 @@ type gateTransport struct{ e *env }
 
 func (g gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := http.DefaultTransport.RoundTrip(r)
-	if err == nil && strings.HasSuffix(r.URL.Path, "/sendMessage") {
-		if gate := g.e.gate.Load(); gate != nil {
+	if err == nil {
+		if gate := g.e.gate.Load(); gate != nil && path.Base(r.URL.Path) == gate.method {
 			gate.reached <- struct{}{}
 			select {
 			case <-gate.release:
@@ -826,8 +882,11 @@ func (g gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // holdReplies holds every sendMessage reply from now on. wait blocks until n replies are held; release lets them
 // (and later ones) through.
-func (e *env) holdReplies() (wait func(n int), release func()) {
-	g := &replyGate{reached: make(chan struct{}, 64), release: make(chan struct{})}
+func (e *env) holdReplies() (wait func(n int), release func()) { return e.holdMethod("sendMessage") }
+
+// holdMethod is holdReplies for the replies of any one Bot API method.
+func (e *env) holdMethod(method string) (wait func(n int), release func()) {
+	g := &replyGate{method: method, reached: make(chan struct{}, 64), release: make(chan struct{})}
 	e.gate.Store(g)
 	wait = func(n int) {
 		e.t.Helper()

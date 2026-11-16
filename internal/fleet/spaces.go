@@ -181,8 +181,15 @@ func (svc *Service) UpdateSpace(ctx context.Context, actor audit.Actor, id strin
 	if in.DisconnectPolicy != "interrupt" && in.DisconnectPolicy != "kill" {
 		return nil, apperr.New(apperr.CodeInvalid, "disconnect_policy must be interrupt or kill")
 	}
+	name := strings.TrimSpace(in.Name)
 	err := svc.s.W().TxNamed(ctx, "fleet.update_space", func(tx *store.Tx) error {
-		n, err := tx.Q.UpdateSpaceProfile(ctx, db.UpdateSpaceProfileParams{Name: strings.TrimSpace(in.Name), Description: in.Description, Goals: in.Goals,
+		before, err := tx.Q.GetSpace(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errSpaceNotFound
+		} else if err != nil {
+			return err
+		}
+		n, err := tx.Q.UpdateSpaceProfile(ctx, db.UpdateSpaceProfileParams{Name: name, Description: in.Description, Goals: in.Goals,
 			StandingInstructions: in.StandingInstructions, DisconnectPolicy: in.DisconnectPolicy, UpdatedAt: tx.NowMicros(), ID: id, Version: version})
 		if err != nil {
 			return err
@@ -192,6 +199,9 @@ func (svc *Service) UpdateSpace(ctx context.Context, actor audit.Actor, id strin
 		}
 		if err := svc.record(ctx, tx, id, "space", id, "updated", version+1); err != nil {
 			return err
+		}
+		if before.Name != name && svc.opts.OnSpaceRenamed != nil {
+			tx.AfterCommit(func() { svc.opts.OnSpaceRenamed(ctx, id, name) })
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "space.updated", Target: audit.Target{Type: "space", ID: id}})
 		return err
