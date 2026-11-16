@@ -170,3 +170,8 @@ SELECT count(*) FROM runs WHERE space_id = ? AND instance_id = ? AND id <> ? AND
 SELECT * FROM limit_waits WHERE state = 'waiting' AND resume_at > sqlc.arg(now)
   AND (usage_limit_id = sqlc.arg(usage_limit_id) OR last_error = 'account_held')
 ORDER BY resume_at, id LIMIT sqlc.arg(lim);
+
+-- The latest non-limit StopFailure class a node reported for a run (protocol minor 13); a repeat writes nothing.
+-- name: SetRunFailure :execrows
+UPDATE runs SET failure = sqlc.arg(failure), version = version + 1, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation) AND failure != sqlc.arg(failure);

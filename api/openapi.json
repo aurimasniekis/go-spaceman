@@ -5411,6 +5411,24 @@
             "format": "int64",
             "type": "integer"
           },
+          "failure": {
+            "description": "The latest failure class Claude Code reported for the run (not a usage limit); a run health signal (node protocol 1.13 or later)",
+            "enum": [
+              "authentication_failed",
+              "oauth_org_not_allowed",
+              "account_on_hold",
+              "verification_required",
+              "billing_error",
+              "overloaded",
+              "invalid_request",
+              "model_not_found",
+              "server_error",
+              "unknown",
+              "max_output_tokens",
+              "cloud_credential_error"
+            ],
+            "type": "string"
+          },
           "generation": {
             "description": "Lease generation the run belongs to",
             "format": "int64",

@@ -418,7 +418,8 @@ func (a *Agent) session(ctx context.Context) error {
 	helloCaps := a.capsGen
 	a.mu.Unlock()
 	for _, r := range runs {
-		// Central drops the limit when the session settles below MinorUsageLimit (RunReport.ForMinor).
+		// The hello carries no hook data (failure class, status-line reset): the minor is not negotiated yet, and a central
+		// below 13 would store a filled reset as the transcript's. reportAllHookData sends it after a minor-13 welcome.
 		hello.Runs = append(hello.Runs, r.report(a.now()))
 	}
 	a.mu.Lock()
@@ -473,6 +474,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.capsAfterHello(hbCtx, helloCaps)
+			go a.reportAllHookData(hbCtx)
 			if len(follow) > 0 {
 				go a.sendFollowUp(hbCtx, conn, follow)
 			}
@@ -639,7 +641,7 @@ func (a *Agent) sendReport(ctx context.Context, r runRow) {
 	a.mu.Lock()
 	minor := a.minor
 	a.mu.Unlock()
-	if err := a.send(ctx, proto.TypeRunReport, r.report(a.now()).ForMinor(minor)); err != nil {
+	if err := a.send(ctx, proto.TypeRunReport, a.withHookData(r.report(a.now())).ForMinor(minor)); err != nil {
 		a.log.Debug("run report deferred until reconnect", slog.String(obs.FieldRunID, r.RunID))
 	}
 }
