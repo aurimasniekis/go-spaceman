@@ -38,8 +38,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   live reference to it in one transaction: MCP grants, knowledge-base and dream configuration, schedules, the human policy
   successor, human type permissions, the account pool, memory, open tasks, unacknowledged messages, open knowledge-base
   requests and pending notifications. History keeps the name it was written with. A busy role is refused (`409 role_busy`,
-  listing what to stop), as is a name already used by a role or a memory collection (`409 name_taken`); a stale `If-Match`
-  is `412`. `GET /spaces/{space_id}/role-renames` and `spaceman role renames` list the renames and the state of each
+  listing what to stop), as is a name already used by a role or a memory collection (`409 name_taken`); an invalid name is
+  `422 validation_failed` and a stale `If-Match` is `409 precondition_failed`. `GET /spaces/{space_id}/role-renames` and `spaceman role renames` list the renames and the state of each
   memory move. Telegram does not offer them. See the roles guide.
 - **Memory conflicts close when reconciled** (ADR-0092). Control and the dreamer get `spaceman_memory_conflict_list` and
   `spaceman_memory_conflict_resolve` (control: any role of its space; a dreamer: the roles of its dream), audited as the

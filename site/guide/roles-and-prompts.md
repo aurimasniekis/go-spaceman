@@ -185,8 +185,8 @@ role may reuse a name that was renamed away.
 role has a run that is not finished, an open usage-limit wait or account switch, a queued launch, an unfinished dream run
 in the space, or while the space is being relocated. A run carries the old name in its token, its memory path and its
 prompt, so renaming under it would split its routes and memory. A target name already used by a role or by a memory
-collection is `409 name_taken`; memory is never merged. A stale `If-Match` is `412`, and an invalid or unchanged name is
-`400`. A node too old to move the role's memory makes the rename fail with `409 node_too_old`: upgrade the node first.
+collection is `409 name_taken`; memory is never merged. A stale `If-Match` is `409 precondition_failed`, and an invalid or
+unchanged name is `422 validation_failed`. A node too old to move the role's memory makes the rename fail with `409 node_too_old`: upgrade the node first.
 
 **Memory moves with the role.** The central copy of the role's memory moves at once. The space's node moves its folder on
 its next contact, and `spaceman role renames` shows that move as `pending` until the node reports it (`done`, or

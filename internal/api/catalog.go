@@ -677,7 +677,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				"the human policy successor, human type permissions, the role's account pool, its memory, open tasks, unacknowledged messages, open " +
 				"knowledge-base requests and pending human notifications). Records of what happened (runs, usage, approvals, audit) keep the name they " +
 				"were written with. A role with live work is refused with 409 role_busy, listing what to stop or finish first; a target name already " +
-				"used by a role or a memory collection is 409 name_taken. `If-Match` is optional: with it, the role's revision must match (412 otherwise). " +
+				"used by a role or a memory collection is 409 name_taken. An invalid or unchanged name is 422 validation_failed. `If-Match` is optional: with it, the role's revision must match (409 precondition_failed otherwise). " +
 				"`rename.node_state` is pending while the space's node has not yet moved the role's memory; launches of the role are held until then."},
 			func(ctx context.Context, in *struct {
 				SpacePath
@@ -759,21 +759,17 @@ type RoleRenamesOut struct {
 	Items []*catalog.RoleRename `json:"items"`
 }
 
-// renameProblem maps the rename's refusals to their statuses: a validation error is 400, a busy role, a taken name or a
-// node that cannot move the memory is 409 with the refusal's own code, and a stale revision is 412.
+// renameProblem maps a busy role, a taken name or a node that cannot move the memory to 409 with the refusal's own code.
+// Everything else (an invalid name, a stale revision, a missing role) keeps its code and takes the usual mapping: 422
+// validation_failed, 409 precondition_failed, 404.
 func renameProblem(err error) error {
 	var ae *apperr.Error
 	if !errors.As(err, &ae) {
 		return err
 	}
 	var rr *catalog.RenameRefused
-	switch {
-	case errors.As(err, &rr):
+	if errors.As(err, &rr) {
 		return newProblem(http.StatusConflict, apperr.Code(rr.Reason), ae.Message, nil)
-	case ae.Code == apperr.CodeInvalid:
-		return newProblem(http.StatusBadRequest, apperr.CodeInvalid, ae.Message, ae.Fields)
-	case ae.Code == apperr.CodePrecondition:
-		return newProblem(http.StatusPreconditionFailed, apperr.CodePrecondition, ae.Message, nil)
 	}
 	return err
 }
