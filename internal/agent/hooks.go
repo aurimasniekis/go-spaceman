@@ -207,14 +207,21 @@ func (a *Agent) reportHookData(ctx context.Context, runID string) {
 	a.report(ctx, r)
 }
 
-// failureEnded forgets a run's failure class when it starts a new turn (status working), and keeps an empty entry so the
-// next reports tell central it is over (RunReport.FailureCleared). It runs before the report of that status.
-func (a *Agent) failureEnded(runID string) {
+// failureEnded handles a run's working status. On a new turn (status just changed to working) it forgets the failure
+// class and keeps an empty entry so the next reports tell central it is over (RunReport.FailureCleared). When the status
+// was already working and the node holds no entry at all (it restarted, so a class central stored earlier is unknown to
+// it), it keeps the same empty entry, so the first working report after the start clears the stored class; central makes
+// a repeated clear a no-op. A held class is kept: a StopFailure that arrives while the status is already working (late)
+// belongs to the turn in progress, so it stays until the next turn starts. It runs before the report of that status.
+func (a *Agent) failureEnded(runID string, newTurn bool) {
 	a.mu.Lock()
-	if a.failureClasses[runID] != "" {
+	defer a.mu.Unlock()
+	if a.failureClasses == nil {
+		a.failureClasses = map[string]string{}
+	}
+	if _, held := a.failureClasses[runID]; newTurn || !held {
 		a.failureClasses[runID] = ""
 	}
-	a.mu.Unlock()
 }
 
 // reportAllHookData sends the reports of the runs that hold hook data, after a welcome that settled on minor 13 (the

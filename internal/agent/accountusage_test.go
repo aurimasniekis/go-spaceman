@@ -184,7 +184,6 @@ func TestFillChanged(t *testing.T) {
 // replaces the clear.
 func TestFailureEndedOnNewTurn(t *testing.T) {
 	a, _ := ccAgent(t, t.TempDir(), nil, nil)
-	a.failureEnded("run_1") // nothing held: nothing to clear
 	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.FailureCleared || got.Failure != "" {
 		t.Fatalf("a run without a failure reports a clear: %+v", got)
 	}
@@ -192,7 +191,7 @@ func TestFailureEndedOnNewTurn(t *testing.T) {
 	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "overloaded" || got.FailureCleared {
 		t.Fatalf("held failure: %+v", got)
 	}
-	a.failureEnded("run_1")
+	a.failureEnded("run_1", true)
 	for range 2 { // repeated on every report
 		if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "" || !got.FailureCleared {
 			t.Fatalf("cleared failure: %+v", got)
@@ -201,6 +200,48 @@ func TestFailureEndedOnNewTurn(t *testing.T) {
 	a.failureClasses["run_1"] = "server_error"
 	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "server_error" || got.FailureCleared {
 		t.Fatalf("a new failure: %+v", got)
+	}
+}
+
+// After a node restart nothing is held, so the first working report of a run whose status was already working clears
+// what central stored; a class that arrives late, while the status is already working, is kept.
+func TestFailureEndedAfterRestart(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.failureEnded("run_1", false) // working before and after the restart, nothing held
+	for range 2 {
+		if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "" || !got.FailureCleared {
+			t.Fatalf("no clear after a restart: %+v", got)
+		}
+	}
+	a.failureClasses["run_2"] = "overloaded" // a late StopFailure while already working
+	a.failureEnded("run_2", false)
+	if got := a.withHookData(proto.RunReport{RunID: "run_2"}); got.Failure != "overloaded" || got.FailureCleared {
+		t.Fatalf("a late class was cleared: %+v", got)
+	}
+}
+
+// On the wire at minor 13 a node that holds nothing (as after a restart) clears the run's stored failure with its first
+// working report (the no-transition case is covered by TestFailureEndedAfterRestart).
+func TestFailureClearedAfterRestartOnTheWire(t *testing.T) {
+	a, fc, runID, _, f := startHookAgentMinor(t, proto.MinorAccountUsage, nil)
+	row := getRun(t, a, runID)
+	f.SetStatus(row.TerminalID, "working")
+	fc.collect(t, runID, 500*time.Millisecond)
+	a.mu.Lock()
+	a.failureClasses = nil // the restart
+	a.mu.Unlock()
+	f.SetStatus(row.TerminalID, "idle")
+	fc.collect(t, runID, 300*time.Millisecond)
+	a.mu.Lock()
+	a.failureClasses = nil
+	a.mu.Unlock()
+	f.SetStatus(row.TerminalID, "working")
+	cleared := false
+	for _, r := range fc.collect(t, runID, 500*time.Millisecond) {
+		cleared = cleared || r.FailureCleared && r.Failure == ""
+	}
+	if !cleared {
+		t.Fatal("the first working report after a restart did not clear the failure")
 	}
 }
 
