@@ -398,3 +398,58 @@ func TestSendFollowUpSkipsChangedRowAndUsesItsConn(t *testing.T) {
 		t.Fatal("the skipped run was marked sent")
 	}
 }
+
+// A pruned run's recording directory goes with it; the directory of a run that stays is untouched.
+func TestPruneRemovesRecordingDir(t *testing.T) {
+	ctx := context.Background()
+	a := pruneAgent(t, t.TempDir())
+	seedRun(t, a, "run_old", proto.RunExited, 45*day)
+	seedRun(t, a, "run_recent", proto.RunExited, time.Hour)
+	for _, id := range []string{"run_old", "run_recent"} {
+		w, err := recording.Open(recording.Options{Dir: a.RecordingDir(id)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = w.Close() // no records: nothing to ship
+		r, _ := a.j.getRun(ctx, id)
+		a.noteSent([]runRow{r})
+	}
+	a.finalAck(ctx, proto.Reconcile{})
+	if _, err := os.Stat(a.RecordingDir("run_old")); !os.IsNotExist(err) {
+		t.Fatalf("pruned run's recording dir still there: %v", err)
+	}
+	if _, err := os.Stat(a.RecordingDir("run_recent")); err != nil {
+		t.Fatalf("recording dir of a run still in the journal was removed: %v", err)
+	}
+}
+
+// The periodic prune deletes a run once the clock passes its retention, without a reconcile.
+func TestPruneLoopPrunesOnTimer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake := clock.NewFake(time.Now())
+	a := pruneAgent(t, t.TempDir())
+	a.o.Clock = fake
+	old := pruneEvery
+	pruneEvery = 10 * time.Millisecond
+	t.Cleanup(func() { pruneEvery = old })
+	seedRun(t, a, "run_x", proto.RunExited, time.Hour)
+	r, _ := a.j.getRun(ctx, "run_x")
+	a.noteSent([]runRow{r})
+	a.mu.Lock()
+	a.finalAcked = map[string]int64{"run_x": r.UpdatedAt}
+	a.mu.Unlock()
+	go a.pruneLoop(ctx)
+	time.Sleep(100 * time.Millisecond) // ticks pass; inside the retention nothing goes
+	if got := runIDs(t, a); len(got) != 1 {
+		t.Fatalf("pruned inside the retention: %v", got)
+	}
+	fake.Advance(a.retention() + time.Hour)
+	deadline := time.Now().Add(5 * time.Second)
+	for len(runIDs(t, a)) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("periodic prune did not delete the run")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

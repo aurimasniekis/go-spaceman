@@ -33,6 +33,25 @@ const (
 
 var followUpPause = 250 * time.Millisecond
 
+// pruneEvery is how often the journal is pruned while the process runs, besides after each reconcile: a node whose
+// connection never drops would otherwise never prune.
+var pruneEvery = time.Hour
+
+// pruneLoop prunes the journal every pruneEvery until ctx ends. It deletes only what the acknowledgements this process
+// holds allow, so running it before a connection has been through the reconcile deletes nothing.
+func (a *Agent) pruneLoop(ctx context.Context) {
+	t := time.NewTicker(pruneEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			a.pruneRuns(ctx)
+		}
+	}
+}
+
 // retention returns the configured journal retention, never shorter than claudePinWindow: the journal's runs are where
 // the cache's pinned versions are learned (claudePinned, ADR-0077).
 func (a *Agent) retention() time.Duration {
@@ -157,7 +176,8 @@ func (a *Agent) finalAck(ctx context.Context, rec proto.Reconcile) {
 // stays while any of these holds: it is not ended (live and adoptable runs, and so the versions GC's in-use set reads);
 // its final state is not acknowledged by central (or changed since); it ended within the retention (never below the pin
 // window: the cache's pins read the journal); its recording is not fully acknowledged or is still being written; a
-// transcript upload or a dream's evidence positions for it are pending.
+// transcript upload or a dream's evidence positions for it are pending. A pruned run's recording directory is removed
+// with it (only reached once the recording is fully acknowledged).
 func (a *Agent) pruneRuns(ctx context.Context) int {
 	runs, err := a.j.runs(ctx, false)
 	if err != nil {
@@ -184,6 +204,11 @@ func (a *Agent) pruneRuns(ctx context.Context) int {
 			continue
 		}
 		n++
+		// The run is gone from the journal and its recording is fully acknowledged (recordingPending above): nothing
+		// references the directory any more.
+		if err := os.RemoveAll(a.RecordingDir(r.RunID)); err != nil {
+			a.log.Warn("recording directory removal", slog.String(obs.FieldRunID, r.RunID), obs.Err(err))
+		}
 		a.mu.Lock()
 		delete(a.finalAcked, r.RunID)
 		delete(a.finalSent, r.RunID)
