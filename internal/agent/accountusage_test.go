@@ -184,7 +184,6 @@ func TestFillChanged(t *testing.T) {
 // replaces the clear.
 func TestFailureEndedOnNewTurn(t *testing.T) {
 	a, _ := ccAgent(t, t.TempDir(), nil, nil)
-	a.failureEnded("run_1") // nothing held: nothing to clear
 	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.FailureCleared || got.Failure != "" {
 		t.Fatalf("a run without a failure reports a clear: %+v", got)
 	}
@@ -192,7 +191,7 @@ func TestFailureEndedOnNewTurn(t *testing.T) {
 	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "overloaded" || got.FailureCleared {
 		t.Fatalf("held failure: %+v", got)
 	}
-	a.failureEnded("run_1")
+	a.failureEnded("run_1", true)
 	for range 2 { // repeated on every report
 		if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "" || !got.FailureCleared {
 			t.Fatalf("cleared failure: %+v", got)
@@ -201,6 +200,73 @@ func TestFailureEndedOnNewTurn(t *testing.T) {
 	a.failureClasses["run_1"] = "server_error"
 	if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "server_error" || got.FailureCleared {
 		t.Fatalf("a new failure: %+v", got)
+	}
+}
+
+// After a node restart nothing is held, so the first working report of a run whose status was already working clears
+// what central stored; a class that arrives late, while the status is already working, is kept.
+func TestFailureEndedAfterRestart(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.failureEnded("run_1", false) // working before and after the restart, nothing held
+	for range 2 {
+		if got := a.withHookData(proto.RunReport{RunID: "run_1"}); got.Failure != "" || !got.FailureCleared {
+			t.Fatalf("no clear after a restart: %+v", got)
+		}
+	}
+	a.failureClasses["run_2"] = "overloaded" // a late StopFailure while already working
+	a.failureEnded("run_2", false)
+	if got := a.withHookData(proto.RunReport{RunID: "run_2"}); got.Failure != "overloaded" || got.FailureCleared {
+		t.Fatalf("a late class was cleared: %+v", got)
+	}
+}
+
+// On the wire at minor 13, through observe: a node restarted while the run's status was already working holds no class,
+// so the next working observe (no transition) sends a clear; a class stored late, while already working, survives the
+// next working observe and no clear is sent.
+func TestFailureClearedAfterRestartOnTheWire(t *testing.T) {
+	a, fc, runID, _, f := startHookAgentMinor(t, proto.MinorAccountUsage, nil)
+	ctx := context.Background()
+	row := getRun(t, a, runID)
+	f.SetStatus(row.TerminalID, "working")
+	fc.collect(t, runID, 500*time.Millisecond)
+	observe := func() []proto.RunReport {
+		t.Helper()
+		p, err := f.Get(ctx, row.TerminalID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cur := getRun(t, a, runID)
+		if cur.Status != "working" {
+			t.Fatalf("journal status %q, want working before the observe", cur.Status)
+		}
+		a.observe(ctx, cur, *p, false)
+		return fc.collect(t, runID, 500*time.Millisecond)
+	}
+
+	a.mu.Lock()
+	a.failureClasses = nil // the restart: nothing held, status working in the journal
+	a.mu.Unlock()
+	cleared := false
+	for _, r := range observe() {
+		cleared = cleared || r.FailureCleared && r.Failure == ""
+	}
+	if !cleared {
+		t.Fatal("a working observe after a restart did not clear the stored failure")
+	}
+
+	a.mu.Lock()
+	a.failureClasses = map[string]string{runID: "overloaded"} // a late StopFailure, status still working
+	a.mu.Unlock()
+	for _, r := range observe() {
+		if r.FailureCleared {
+			t.Fatalf("a late class was cleared by a working observe: %+v", r)
+		}
+	}
+	a.mu.Lock()
+	got := a.failureClasses[runID]
+	a.mu.Unlock()
+	if got != "overloaded" {
+		t.Fatalf("late class = %q, want overloaded", got)
 	}
 }
 
@@ -276,4 +342,33 @@ func countFailure(rs []proto.RunReport, class string) int {
 		}
 	}
 	return n
+}
+
+// A usage report carries the status line's windows (minor ≥ 13, snapshot not older than statusMaxAge) as typed numbers.
+func TestUsageWindows(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	now := time.Now().UTC().Truncate(time.Second)
+	a.o.Clock = clock.NewFake(now)
+	reset := now.Add(time.Hour)
+	a.statusSnaps = map[string]StatusObservation{
+		"run_1": {ObservedAt: now.Add(-time.Minute), StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 42.5, ResetsAt: reset.Unix()}, SevenDay: &harness.Window{UsedPct: 7}}},
+		"run_2": {ObservedAt: now.Add(-statusMaxAge - time.Second), StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 1}}},
+	}
+	a.mu.Lock()
+	a.connected, a.minor = true, proto.MinorAccountUsage
+	a.mu.Unlock()
+	got := a.usageWindows("run_1")
+	if len(got) != 2 || got[0].Kind != proto.WindowFiveHour || got[0].UsedPct != 42.5 || got[0].ResetsAt == nil || !got[0].ResetsAt.Equal(reset) ||
+		got[1].Kind != proto.WindowSevenDay || got[1].ResetsAt != nil || !got[1].ObservedAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("%+v", got)
+	}
+	if a.usageWindows("run_2") != nil || a.usageWindows("run_3") != nil {
+		t.Fatal("a stale or missing snapshot gave windows")
+	}
+	a.mu.Lock()
+	a.minor = proto.MinorAccountUsage - 1
+	a.mu.Unlock()
+	if a.usageWindows("run_1") != nil {
+		t.Fatal("windows below minor 13")
+	}
 }

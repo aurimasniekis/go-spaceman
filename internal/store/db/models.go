@@ -49,6 +49,26 @@ type AccountSwitch struct {
 	UpdatedAt     int64
 }
 
+type AccountWindow struct {
+	AccountID  string
+	Kind       string
+	UsedPct    float64
+	ResetsAt   sql.NullInt64
+	ObservedAt int64
+	RunID      string
+	UpdatedAt  int64
+}
+
+type AccountWindowSample struct {
+	AccountID  string
+	Kind       string
+	Slot       int64
+	UsedPct    float64
+	ResetsAt   sql.NullInt64
+	ObservedAt int64
+	RunID      string
+}
+
 type ApiToken struct {
 	ID            string
 	Name          string
@@ -1255,6 +1275,9 @@ type RunUsage struct {
 	Final           int64
 	Note            string
 	UpdatedAt       int64
+	AccountID       string
+	Role            string
+	Harness         string
 }
 
 type ScheduleOccurrence struct {
@@ -1658,6 +1681,31 @@ type TelegramSetting struct {
 	UpdatedAt    int64
 	UpdatedBy    string
 	Version      int64
+}
+
+type UsageBucket struct {
+	SpaceID          string
+	AccountID        string
+	Role             string
+	Harness          string
+	Model            string
+	Granularity      string
+	BucketStart      int64
+	InputTokens      int64
+	OutputTokens     int64
+	CacheWriteTokens int64
+	CacheReadTokens  int64
+	ReasoningTokens  int64
+	Requests         int64
+	CostUsd          float64
+}
+
+type UsageLedgerMark struct {
+	SpaceID     string
+	MarkKey     string
+	CountedJson string
+	CountedCost float64
+	UpdatedAt   int64
 }
 
 type UsageLimit struct {

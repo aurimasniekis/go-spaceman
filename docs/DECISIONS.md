@@ -5476,6 +5476,21 @@
     crash in between, a space at its open-action cap (rate limited) or an archived one leaves the row, and the deadline
     loop raises it on a later round (at the latest within the hour, or at the next limit report), so the notice is late,
     never lost. While a space is at its cap the notice waits until a person answers an action.
+- **Launch-time pool check (2026-11-16):**
+  - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
+    account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
+    launches SpaceMan makes itself: `LaunchInput.RequirePoolMember` (not part of the API) is set by the limit-wait resume
+    (a switch, a pool-exhausted resume and ADR-0079's resume alike) and by the control supervisor's and autostart's
+    relaunch. Role pools apply only while failover is on (decision 3), so the check runs only then. When the role has a
+    pool of its own for the harness and the named account is not in it, the ref is dropped and the pool picks (priority,
+    holds), or refuses the launch when nothing in it is usable (the wait defers). A role without a pool of its own keeps
+    the named account. With failover off, role pools don't apply and the ref is kept: a run launched on the space's
+    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen.
+  - Launches that an operator or the API make with a named account do not set the flag and keep today's behaviour: an
+    explicit ref names any enabled account bound to the space, inside the role's pool or not. `accounts.Resolve` itself is
+    unchanged. The claim-time check of T10 stays as an early decision; this one closes the window after it.
+  - Evidence: simulated (`internal/fleet/launchpool_test.go`), with a mutation check: removing the check fails the tests.
+- **Known limitation (T6 usage ledger):** a run's growth is booked when its report arrives, to the account the run was launched with. If the final report of run A is lost or arrives late, A's last tokens are booked with a later report of the session, which is the next run's (the account after a switch). The tokens are misattributed to that account, never counted twice: the per-session high-water marks (`usage_ledger_marks`) guarantee each token is booked once.
 - **Security-relevant because:**
   - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
   - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now
@@ -5557,6 +5572,19 @@
   - A run whose reset is near waits rather than switching, so it can be stopped for up to the reset, as today.
   - The headroom gate only changes behaviour when set above 0; the default leaves launches unchanged.
   - Until two real accounts are tested (K-17, plan T1), the switch is implemented and simulated only.
+- **Implementation notes (T6, the usage ledger):**
+  - Buckets take the growth of a run's cumulative counters, not the counters. The counters already counted are kept per
+    harness session (`usage_ledger_marks`), not per run, because a resumed run (a switch) continues the same native
+    transcript and so starts at the earlier run's totals; each account is booked only with what its own run added. A
+    repeat, a stale report that arrives late and the report after the final one add nothing; unknown counters count as zero.
+    A session idle for more than 180 days that reports again counts its whole history once more (its mark was pruned).
+  - The estimated cost of a report is one figure for the run; its growth is booked under the model whose tokens grew most.
+  - Windows are the account's latest `five_hour` and `seven_day` observation (newest wins), sampled at most once per 10
+    minutes, taken from the status line's snapshot in `UsageReport.windows` (minor 13) and validated again at central. The
+    status line's own cost figure (`cost.total_usd_estimate`) is not on the wire yet: buckets carry the transcript
+    estimate.
+  - Retention periods are the fixed ones of Q9 (not per-space limits): hourly buckets 90 days, then rolled into daily buckets
+    by whole UTC days, daily 730 days, window samples 30 days, closed holds, finished waits and finished switches 180 days.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
