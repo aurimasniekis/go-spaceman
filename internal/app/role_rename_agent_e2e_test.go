@@ -112,11 +112,10 @@ func (e *agentRenameEnv) renameState(id string) catalog.RoleRename {
 	return catalog.RoleRename{}
 }
 
-// nodeResults are the node's memory.renamed results central recorded for the rename, in order (its audit events).
-func (e *agentRenameEnv) nodeResults(id string) []string {
+// texts runs a query of one text column and returns its rows.
+func (e *agentRenameEnv) texts(q string, args ...any) []string {
 	e.t.Helper()
-	rows, err := e.c.Store.ReadDB().QueryContext(e.ctx, `SELECT json_extract(details_json, '$.result') FROM audit_events
-		WHERE action = 'space.role_rename_node' AND json_extract(details_json, '$.rename_id') = ? ORDER BY seq`, id)
+	rows, err := e.c.Store.ReadDB().QueryContext(e.ctx, q, args...)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -129,27 +128,24 @@ func (e *agentRenameEnv) nodeResults(id string) []string {
 		}
 		out = append(out, s)
 	}
+	if err := rows.Err(); err != nil {
+		e.t.Fatal(err)
+	}
 	return out
+}
+
+// nodeResults are the node's memory.renamed results central recorded for the rename, in order (its audit events).
+func (e *agentRenameEnv) nodeResults(id string) []string {
+	e.t.Helper()
+	return e.texts(`SELECT json_extract(details_json, '$.result') FROM audit_events
+		WHERE action = 'space.role_rename_node' AND json_extract(details_json, '$.rename_id') = ? ORDER BY seq`, id)
 }
 
 // renameCommands are the states of the rename's memory.rename commands.
 func (e *agentRenameEnv) renameCommands(id string) []string {
 	e.t.Helper()
-	rows, err := e.c.Store.ReadDB().QueryContext(e.ctx, `SELECT state FROM node_commands WHERE kind = ? AND idempotency_key LIKE ? ORDER BY created_at`,
+	return e.texts(`SELECT state FROM node_commands WHERE kind = ? AND idempotency_key LIKE ? ORDER BY created_at`,
 		proto.CmdMemoryRename, catalog.RenameCommandKey(id)+"%")
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			e.t.Fatal(err)
-		}
-		out = append(out, s)
-	}
-	return out
 }
 
 func (e *agentRenameEnv) launchHeld(role string) bool {
