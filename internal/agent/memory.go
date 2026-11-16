@@ -431,7 +431,7 @@ func (m *memManager) statusOf(ctx context.Context, spaceID, role string) proto.M
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	head := m.git.RevParse(ctx, shared, "refs/heads/main")
 	c := proto.MemoryCollectionStatus{SpaceID: spaceID, Role: role, Head: head, Acked: st.Acked, LastAckAt: st.LastAckAt, LastCheckpoint: st.LastCheckpoint,
-		Conflicts: st.Conflicts, Retries: st.Retries, LastError: st.LastError}
+		Conflicts: st.Conflicts, Retries: st.Retries, LastError: st.LastError, ConflictFolders: m.git.ConflictFolders(ctx, shared, head)}
 	if head != "" && head != st.Acked {
 		c.Pending = true
 		base := st.Acked

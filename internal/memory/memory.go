@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
+
+// ReFolder is a valid name of a folder under conflicts/ (an instance and a time stamp).
+var ReFolder = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // ReRole is a valid collection (role) name.
 var ReRole = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
@@ -191,7 +195,7 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 		if _, err := svc.git.Run(ctx, dir, nil, "update-ref", ref, m.Head); err != nil {
 			return fail("internal error", err)
 		}
-		if err := svc.conflict(ctx, col, "central", ref, m.Head, "the node's history does not continue central's acknowledged history"); err != nil {
+		if err := svc.conflict(ctx, col, "central", ref, m.Head, "the node's history does not continue central's acknowledged history", ""); err != nil {
 			return fail("internal error", err)
 		}
 		ack.Result, ack.Message = proto.MemoryConflict, "the history does not continue central's head; it was kept as "+ref
@@ -206,6 +210,7 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 	if _, err := svc.git.Run(ctx, dir, nil, args...); err != nil {
 		return fail("internal error", err)
 	}
+	removed := svc.removedFolders(ctx, dir, cur, m.Head)
 	err = svc.s.W().TxNamed(ctx, "memory.apply", func(tx *store.Tx) error {
 		n, err := tx.Q.SetMemoryHead(ctx, db.SetMemoryHeadParams{Head: m.Head, Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: col.ID, Expected: col.Head})
 		if err != nil {
@@ -221,9 +226,11 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 			NodeID: nodeID, FromCommit: col.Head, ToCommit: m.Head}, Correlation: col.ID, Causation: m.SyncID}); err != nil {
 			return err
 		}
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorNode, ID: nodeID}, Action: "memory.synced",
-			Target: audit.Target{Type: "memory", ID: col.ID}, Details: map[string]any{"space_id": col.SpaceID, "role": col.Role, "from": col.Head, "to": m.Head}})
-		return err
+		if _, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorNode, ID: nodeID}, Action: "memory.synced",
+			Target: audit.Target{Type: "memory", ID: col.ID}, Details: map[string]any{"space_id": col.SpaceID, "role": col.Role, "from": col.Head, "to": m.Head}}); err != nil {
+			return err
+		}
+		return svc.autoResolve(ctx, tx, col, removed, m.Head)
 	})
 	if err != nil {
 		// Roll the repository back so it matches the record.
@@ -238,11 +245,11 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 	return ack
 }
 
-func (svc *Service) conflict(ctx context.Context, col db.MemoryCollection, source, ref, commit, detail string) error {
+func (svc *Service) conflict(ctx context.Context, col db.MemoryCollection, source, ref, commit, detail, folder string) error {
 	return svc.s.W().TxNamed(ctx, "memory.conflict", func(tx *store.Tx) error {
 		id := ids.New("mcf")
 		if err := tx.Q.InsertMemoryConflict(ctx, db.InsertMemoryConflictParams{ID: id, CollectionID: col.ID, Source: source, Ref: ref, CommitID: commit,
-			Detail: detail, CreatedAt: tx.NowMicros()}); err != nil {
+			Detail: detail, CreatedAt: tx.NowMicros(), Folder: folder}); err != nil {
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, col.SpaceID, "memory", col.ID, "updated", 0); err != nil {
@@ -279,8 +286,34 @@ func (svc *Service) Report(ctx context.Context, nodeID string, st proto.MemorySt
 			continue
 		}
 		if c.Conflicts > prev.Conflicts {
-			_ = svc.conflict(ctx, col, "node", "", "", fmt.Sprintf("the node preserved %d conflicting change(s) between instances; see conflicts/ in the collection", c.Conflicts-prev.Conflicts))
+			svc.nodeConflicts(ctx, col, c.Conflicts-prev.Conflicts, c.ConflictFolders)
 		}
+	}
+}
+
+// nodeConflicts records n conflicts the node preserved. A folder the node reports that no conflict is recorded for yet
+// is tied to one (at most n, newest names first), so removing the folder later closes it; the rest are recorded
+// without a folder, as before.
+func (svc *Service) nodeConflicts(ctx context.Context, col db.MemoryCollection, n int, folders []string) {
+	known, _ := svc.s.R().ListMemoryConflictFolders(ctx, col.ID)
+	have := map[string]bool{}
+	for _, f := range known {
+		have[f] = true
+	}
+	var fresh []string
+	for _, f := range folders {
+		if !have[f] && ReFolder.MatchString(f) {
+			fresh = append(fresh, f)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(fresh)))
+	for ; n > 0; n-- {
+		folder, ref := "", ""
+		if len(fresh) > 0 {
+			folder, fresh = fresh[0], fresh[1:]
+			ref = "refs/conflicts/" + folder
+		}
+		_ = svc.conflict(ctx, col, "node", ref, "", "the node preserved a conflicting change between instances; see conflicts/ in the collection", folder)
 	}
 }
 
@@ -430,6 +463,47 @@ func (svc *Service) Conflicts(ctx context.Context, spaceID, role string) ([]Conf
 	}
 	return out, nil
 }
+
+// removedFolders lists the conflicts/ folders the old head had and the new head no longer has. A folder that never
+// was in an accepted head is not in the list.
+func (svc *Service) removedFolders(ctx context.Context, dir, from, to string) []string {
+	if from == "" {
+		return nil
+	}
+	now := map[string]bool{}
+	for _, f := range svc.git.ConflictFolders(ctx, dir, to) {
+		now[f] = true
+	}
+	var gone []string
+	for _, f := range svc.git.ConflictFolders(ctx, dir, from) {
+		if !now[f] {
+			gone = append(gone, f)
+		}
+	}
+	return gone
+}
+
+// autoResolve closes the conflicts whose folder an accepted checkpoint removed: the role reconciled them, as the
+// folder's README asks. The preserved ref stays. It is idempotent: only open conflicts are touched.
+func (svc *Service) autoResolve(ctx context.Context, tx *store.Tx, col db.MemoryCollection, folders []string, head string) error {
+	for _, f := range folders {
+		ids, err := tx.Q.ResolveMemoryConflictsByFolder(ctx, db.ResolveMemoryConflictsByFolderParams{ResolvedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
+			ResolvedBy: AutoResolver.ID, CollectionID: col.ID, Folder: f})
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: AutoResolver, Action: "memory.conflict_resolved", Target: audit.Target{Type: "memory", ID: col.ID},
+				Details: map[string]any{"space_id": col.SpaceID, "role": col.Role, "conflict": id, "folder": f, "head": head, "auto": true}}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// AutoResolver is the audited actor of conflicts closed because their folder was removed.
+var AutoResolver = audit.Actor{Type: audit.ActorSystem, ID: "memory-reconcile"}
 
 // ResolveConflict records that a person reconciled a conflict. The preserved history stays.
 func (svc *Service) ResolveConflict(ctx context.Context, actor audit.Actor, spaceID, role, id string) error {

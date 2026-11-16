@@ -825,6 +825,7 @@ type MemoryConflict struct {
 	CreatedAt    int64
 	ResolvedAt   sql.NullInt64
 	ResolvedBy   string
+	Folder       string
 }
 
 type Message struct {

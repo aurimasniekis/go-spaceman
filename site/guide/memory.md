@@ -51,7 +51,9 @@ When two instances change the same lines at the same time, nothing is overwritte
 - The other instance's version is preserved twice: as a Git ref (`refs/conflicts/<instance>-<time>`) and as files under
   `conflicts/<instance>-<time>/` in the memory, with a README listing them.
 - The conflict is reported in the Memory section. The role's next runs see the `conflicts/` folder and reconcile the
-  notes; an operator marks the conflict reconciled.
+  notes and delete the folder. When a checkpoint that central accepts no longer contains the folder, the conflict is
+  marked reconciled by itself (by `memory-reconcile`; the preserved ref stays). Otherwise an operator, control or the
+  dreamer marks it reconciled.
 
 If central receives history that does not continue what it has (for example after a restore), it keeps that history
 under `refs/conflicts/` too and reports it, instead of replacing what it acknowledged.
@@ -66,7 +68,9 @@ under `refs/conflicts/` too and reports it, instead of replacing what it acknowl
 | Retries, last error | Failed syncs and why |
 | Conflicts | Conflicts preserved and not yet marked reconciled |
 
-Agents can check the same with the `spaceman_memory_status` tool.
+Agents can check the same with the `spaceman_memory_status` tool. Control and the dreamer can also list the open
+conflicts and mark one reconciled with `spaceman_memory_conflict_list` and `spaceman_memory_conflict_resolve`: control for
+any role of its space, a dreamer for the roles its dream covers. The action is audited with the run as the actor.
 
 ::: warning Memory is untrusted content
 Memory is written by agents. Treat it like any other agent output: it can be wrong, and it can contain prompt

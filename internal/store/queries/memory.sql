@@ -18,7 +18,7 @@ WHERE id = sqlc.arg(id) AND head = sqlc.arg(expected);
 UPDATE memory_collections SET node_status_json = ?, status_at = ?, updated_at = ? WHERE id = ?;
 
 -- name: InsertMemoryConflict :exec
-INSERT INTO memory_conflicts (id, collection_id, source, ref, commit_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO memory_conflicts (id, collection_id, source, ref, commit_id, detail, created_at, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListMemoryConflicts :many
 SELECT * FROM memory_conflicts WHERE collection_id = ? ORDER BY created_at DESC LIMIT 50;
@@ -31,3 +31,9 @@ SELECT * FROM memory_conflicts WHERE id = ?;
 
 -- name: ResolveMemoryConflict :execrows
 UPDATE memory_conflicts SET resolved_at = ?, resolved_by = ? WHERE id = ? AND resolved_at IS NULL;
+
+-- name: ListMemoryConflictFolders :many
+SELECT folder FROM memory_conflicts WHERE collection_id = ? AND folder != '';
+
+-- name: ResolveMemoryConflictsByFolder :many
+UPDATE memory_conflicts SET resolved_at = ?, resolved_by = ? WHERE collection_id = ? AND folder = ? AND resolved_at IS NULL RETURNING id;

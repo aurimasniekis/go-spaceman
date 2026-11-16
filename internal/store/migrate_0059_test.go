@@ -69,8 +69,8 @@ func TestTelegramThreadMigrationFrom0058(t *testing.T) {
 	}
 	defer fresh.Close()
 	cur, latest, err = SchemaVersions(ctx, fresh.rdb, EmbeddedMigrations())
-	if err != nil || cur != 59 || latest != 59 {
-		t.Fatalf("fresh database: version %d of %d, %v; want 59 of 59", cur, latest, err)
+	if err != nil || cur != latest || cur < 59 {
+		t.Fatalf("fresh database: version %d of %d, %v; want the latest, at least 59", cur, latest, err)
 	}
 	if !hasColumn(ctx, t, fresh, "telegram_messages", "message_thread_id") {
 		t.Fatal("a fresh database lacks telegram_messages.message_thread_id")

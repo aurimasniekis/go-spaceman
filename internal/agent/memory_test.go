@@ -114,6 +114,9 @@ func TestMemoryInstancesShareAndPreserve(t *testing.T) {
 	if st.Conflicts != 1 || st.Instances != 2 || !st.Pending || st.LocalCommits == 0 || st.Uncheckpointed != 0 {
 		t.Fatalf("status: %+v", st)
 	}
+	if len(st.ConflictFolders) != 1 || !strings.HasPrefix(st.ConflictFolders[0], "ins_two-") {
+		t.Fatalf("conflict folders: %v", st.ConflictFolders)
+	}
 	write(t, one, "scratch.md", "unsaved")
 	if st := m.statusOf(ctx, "spc_a", "implementor-backend"); st.Uncheckpointed != 1 {
 		t.Fatalf("uncheckpointed: %+v", st)

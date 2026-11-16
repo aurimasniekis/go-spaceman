@@ -574,7 +574,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory, c.Dreams.MemoryRolesOfRun), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
 	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)
 	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), OnAccepted: c.gatewayQuotaKick, RateFor: func(ctx context.Context, spaceID string) int64 {

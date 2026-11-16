@@ -22,6 +22,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **Schema migration `0059_telegram_message_thread`**: adds the nullable
   `telegram_messages.message_thread_id`, the topic a card was sent in. It is applied on start and needs no action. A card
   row from before it has no topic recorded and is edited in place as before.
+- **Schema migration `0060_memory_conflict_folder`**: adds `memory_conflicts.folder`. It is applied on start and needs no
+  action (ADR-0092).
 - **Chat layout.** Links start on `notification_defaults.threads = auto`, so a bot with topics enabled in BotFather moves each
   chat to a topic per space at its next space message, with one announcement in the chat without a topic. To keep one chat,
   set `threads` to `off`, per link or in the administrator defaults. **Topics the bot creates stay in users' chats**
@@ -29,6 +31,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Memory conflicts close when reconciled** (ADR-0092). Control and the dreamer get `spaceman_memory_conflict_list` and
+  `spaceman_memory_conflict_resolve` (control: any role of its space; a dreamer: the roles of its dream), audited as the
+  run. A conflict also resolves by itself, as the system actor `memory-reconcile`, when an accepted checkpoint removes
+  its `conflicts/<name>/` folder; the preserved ref stays. Schema migration `0060_memory_conflict_folder` (applied on
+  start, forward-only); conflicts recorded before it close through the tool, the CLI or the web UI.
 - **Queue policy changes reach control.** When a queue policy write changes `max_active` or an incident setting, control
   gets one system message with each changed field's old and new value (`max_active 2 → 4`) and the audit event; a write
   that changes nothing sends none.

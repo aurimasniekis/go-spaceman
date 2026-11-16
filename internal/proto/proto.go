@@ -674,6 +674,9 @@ type MemoryCollectionStatus struct {
 	Conflicts      int        `json:"conflicts" doc:"Conflicts preserved on the node and not yet reconciled"`
 	Retries        int        `json:"retries"`
 	LastError      string     `json:"last_error,omitempty"`
+	// ConflictFolders are the folders under conflicts/ in the node's shared history, so central can tell which
+	// preserved conflict a folder holds and close it when the folder is removed.
+	ConflictFolders []string `json:"conflict_folders,omitempty"`
 }
 
 // KBAcceptPayload asks the node to merge a KB proposal (ADR-0026): Commit must be on Branch (the session's branch); it
