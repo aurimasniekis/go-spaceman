@@ -6917,6 +6917,11 @@ export interface components {
             /** Format: int64 */
             exit_code?: number;
             /**
+             * @description The latest failure class Claude Code reported for the run (not a usage limit); a run health signal (node protocol 1.13 or later)
+             * @enum {string}
+             */
+            failure?: "authentication_failed" | "oauth_org_not_allowed" | "account_on_hold" | "verification_required" | "billing_error" | "overloaded" | "invalid_request" | "model_not_found" | "server_error" | "unknown" | "max_output_tokens" | "cloud_credential_error";
+            /**
              * Format: int64
              * @description Lease generation the run belongs to
              */

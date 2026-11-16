@@ -1164,6 +1164,7 @@ type Run struct {
 	LimitKind          string
 	LimitResetsAt      sql.NullInt64
 	LimitSince         sql.NullInt64
+	Failure            string
 }
 
 type RunCredential struct {
