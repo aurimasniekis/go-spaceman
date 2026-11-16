@@ -32,28 +32,30 @@ const (
 
 // cardReply handles a reply to a card. It reports whether it took the message.
 func (h *Handler) cardReply(ctx context.Context, m *botapi.Message, l updates.Link) bool {
-	if m.ReplyToMessage == nil {
+	// A group is never answered from a reply: members reply to cards to talk about them, and the buttons there open a
+	// form on a new message (cards.go refuses a card tap in a group for the same reason).
+	if m.ReplyToMessage == nil || l.Group != nil {
 		return false
 	}
 	chat, msg := m.Chat.ID, m.ReplyToMessage.MessageID
 	var spaceID, actionID, linkID string
-	var version int64 // 0: the card's version isn't known (a continuation message)
+	var version int64
 	if h.o.Card != nil {
 		if ref, ok := h.o.Card(ctx, chat, msg); ok {
 			spaceID, actionID, linkID, version = ref.SpaceID, ref.ActionID, ref.LinkID, ref.Version
 		}
 	}
 	if actionID == "" && h.o.Resolve != nil {
-		if sp, ac, link, ok := h.o.Resolve(ctx, chat, msg); ok {
-			spaceID, actionID, linkID = sp, ac, link
+		// A continuation message of a long card: it shows no version and isn't the card's message, so it answers
+		// nothing; the reply goes to the card's space.
+		if sp, _, link, ok := h.o.Resolve(ctx, chat, msg); ok && link == l.ID && spaceIDRe.MatchString(sp) {
+			return h.routeToSpace(ctx, m, l, sp)
 		}
 	}
 	if actionID == "" {
 		return h.cardSpaceReply(ctx, m, l, chat, msg)
 	}
-	// A card in a bound group is the group's (the replier acts as their own link; Handler.space admits only the bound
-	// space): the same rule as a tap on it.
-	if l.Group == nil && linkID != l.ID || !spaceIDRe.MatchString(spaceID) || !humanIDRe.MatchString(actionID) {
+	if linkID != l.ID || !spaceIDRe.MatchString(spaceID) || !humanIDRe.MatchString(actionID) {
 		return false
 	}
 	c, ok := h.caller(ctx, l)
@@ -74,8 +76,9 @@ func (h *Handler) cardReply(ctx context.Context, m *botapi.Message, l updates.Li
 		h.send(ctx, l.ChatID, reply{text: TextCardReplyResolved})
 		return true
 	}
-	if version != 0 && a.Version != version {
+	if a.Version != version {
 		h.send(ctx, l.ChatID, reply{text: TextCardChanged})
+		h.showCard(ctx, l, s, a, pendingKey{chat, msg}, m.ReplyToMessage.MessageThreadID, h.enforcedFor(ctx, c, s, a))
 		return true
 	}
 	text := strings.TrimSpace(m.Text)
@@ -173,7 +176,7 @@ func optionsHint(options []string) string {
 // cardSpaceReply routes a reply to a card that is no human action's (an item, a message the operators sent...) to the
 // card's own space, when the card is this link's.
 func (h *Handler) cardSpaceReply(ctx context.Context, m *botapi.Message, l updates.Link, chat int64, msg int) bool {
-	if h.o.CardSpace == nil || l.Group != nil {
+	if h.o.CardSpace == nil {
 		return false
 	}
 	sp, link, ok := h.o.CardSpace(ctx, chat, msg)
@@ -184,12 +187,8 @@ func (h *Handler) cardSpaceReply(ctx context.Context, m *botapi.Message, l updat
 }
 
 // routeToSpace captures a reply into spaceID instead of the link's current space (the space of a card the reply is
-// to). In a bound group nothing is captured: only prompts and cards' answers are taken there.
+// to).
 func (h *Handler) routeToSpace(ctx context.Context, m *botapi.Message, l updates.Link, spaceID string) bool {
-	if l.Group != nil {
-		h.send(ctx, l.ChatID, reply{text: "That reply isn't an answer to the request, and messages aren't captured in a group. Nothing was sent.", replyTo: m.MessageID, thread: m.MessageThreadID})
-		return true
-	}
 	h.capture(context.WithValue(ctx, pinKey{}, spaceID), m, l)
 	return true
 }

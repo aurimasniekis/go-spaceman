@@ -102,8 +102,8 @@ func (h *Handler) handleGroup(ctx context.Context, u botapi.Update, l updates.Li
 		return
 	}
 	// A reply to one of the bot's prompts; any other message (capture, control text) is never taken in a group.
-	if m.ReplyToMessage != nil && !h.promptReply(ctx, m, l) && !h.rejectReply(ctx, m, l) && !h.qrReply(ctx, m, l) {
-		h.cardReply(ctx, m, l)
+	if m.ReplyToMessage != nil && !h.promptReply(ctx, m, l) && !h.rejectReply(ctx, m, l) {
+		h.qrReply(ctx, m, l)
 	}
 }
 

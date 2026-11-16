@@ -195,4 +195,21 @@ func TestCardSpaceReply(t *testing.T) {
 	}
 }
 
+// A reply to a continuation message of a long card (no version, not the card's message) answers nothing: it goes to
+// the card's space.
+func TestCardReplyToContinuationGoesToSpace(t *testing.T) {
+	e := newEnv(t)
+	e.withCards()
+	e.pickAlpha()
+	a := e.addHuman(spS, hid('1'), "question", "Which one?", `{"options":["red","blue"]}`)
+	e.h.o.Resolve = func(_ context.Context, _ int64, msg int) (string, string, string, bool) {
+		return spS, a.ID, "tgl_1", msg == 888
+	}
+	s0, a0 := e.itemsInSpace(spS), e.itemsInSpace(spA)
+	e.reply("A", 888, chatID, e.l)
+	if e.responded() != 0 || e.itemsInSpace(spS) != s0+1 || e.itemsInSpace(spA) != a0 {
+		t.Fatalf("%d responds, items S %d A %d", e.responded(), e.itemsInSpace(spS), e.itemsInSpace(spA))
+	}
+}
+
 var _ = botapi.Message{}
