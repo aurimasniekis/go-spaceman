@@ -270,6 +270,18 @@ func TestHeadroomGateEndToEnd(t *testing.T) {
 	if h.Until.Before(resetB.Add(-time.Minute)) || h.Until.After(resetB.Add(5*time.Minute)) {
 		t.Fatalf("the wait ends %v, the earliest reset is %v", h.Until, resetB)
 	}
+	// A reset more than an hour away is capped: the wait ends at most an hour from now (usage.WindowMaxAge).
+	farNow := time.Now().UTC()
+	report(w1.ID, 96, farNow.Add(2*time.Hour), accA)
+	report(w3.ID, 92, farNow.Add(3*time.Hour), accB)
+	_, err = e.c.Fleet.LaunchRun(ctx, admin, sp.ID, worker)
+	h, ok = fleet.AsHold(err)
+	if !ok || !h.Gate {
+		t.Fatalf("launch with both resets far away: %v", err)
+	}
+	if limit := time.Now().UTC().Add(usage.WindowMaxAge); h.Until.After(limit) {
+		t.Fatalf("the wait ends %v, more than %v from now (%v)", h.Until, usage.WindowMaxAge, limit)
+	}
 	// The gate off (0) changes nothing.
 	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 1, limits.Input{Values: map[string]int64{limits.UsageLimitMinHeadroomPercent: 0}}); err != nil {
 		t.Fatal(err)

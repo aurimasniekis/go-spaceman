@@ -25,10 +25,17 @@ K-17).
 - **Two Claude subscription accounts** (setup-token accounts), A and B, that you may spend. Use accounts you can afford to
   exhaust for a few hours: the test needs A at its limit. Prefer a Pro account with a 5-hour window as A.
 - Both accounts created in SpaceMan (write-only: never paste a token into a ticket, a log or this file) and bound to the
-  space as Claude accounts, A first (lowest priority number, the default), B second.
-- Space settings: `usage_limit_failover` = 1; leave `usage_limit_wait_if_reset_within` at its default (15 minutes) and
-  `usage_limit_min_headroom_percent` at 0 for now.
-- Write down: SpaceMan version, node agent version, Claude Code version, the date and the account names (not tokens).
+  space as Claude accounts, with A as the space's default and explicit priorities (A first, B second). Without a default
+  an unnamed launch is refused:
+  `spaceman account set-space --space <space> --account <A> --account <B> --default <A> --priority <A>=1 --priority <B>=2`.
+  If the role has a role pool, both accounts must be in it.
+- Space settings (see [Usage limits](../site/guide/usage-limits.md)): failover on, and leave
+  `usage_limit_wait_if_reset_within` at its default (15 minutes) and `usage_limit_min_headroom_percent` at 0 for now:
+  `spaceman limits set --space <space> --set usage_limit_failover=1 --set usage_limit_min_headroom_percent=0`.
+  Optionally cap switches with `--set usage_limit_switch_max_per_day=<n>`. Verify with
+  `spaceman limits get --space <space>`.
+- Write down: SpaceMan version, node agent version, Claude Code version and the date. Label the accounts A and B; record
+  no email or account identity (K-17).
 
 ## Procedure
 
@@ -38,7 +45,8 @@ work around it.
 ### 1. Baseline
 
 - [ ] Launch a worker (any role) in the space. It starts on account A and works (a short coding task is enough).
-- [ ] `spaceman account space-windows --space <space>`: account A shows a 5-hour window with a used percentage after the
+- [ ] `spaceman account space-windows --space <space> -o json` (the table shows only account, name and harness; the used
+      percentage and reset time are in the JSON): account A shows a 5-hour window with a used percentage after the
       run's first turn. Compare it with what Claude Code's own `/usage` shows in the run's terminal. Note the difference.
 - [ ] `spaceman usage space --space <space> --group-by account`: tokens appear for account A only.
 
@@ -52,10 +60,12 @@ work around it.
 ### 3. The switch
 
 - [ ] SpaceMan arms a switch, waits for the run's idle point, stops the run and starts a new run of the same agent on
-      account B. Check with the runs list and the space's events (they show
-      `fleet.account_switch.*`).
+      account B. Check with the runs list and the audit log
+      (`spaceman audit list --target <old run ID>`; the actions are `account.switch_started`, `_parked`, `_resumed` and
+      `_succeeded`).
 - [ ] The new run's session ID equals the old run's, and it continued the conversation (ask it what it was doing: it must
-      know). Its credential is B's: `/status` in its terminal names account B, never A.
+      know). Its credential is B's: both `/status` in its terminal and the `oauthAccount` in
+      the run's `.claude.json` must name account B, never A (compare locally; don't write the identity down).
 - [ ] The task follows the new run.
 - [ ] Control got **one** message about the move and none saying "parked" or "resumed".
 - [ ] The new run finishes a turn: the switch is recorded as succeeded.
@@ -66,8 +76,8 @@ work around it.
       The sum is about what Claude Code reports for the whole session (the session is counted once, not twice).
 - [ ] `spaceman usage space --space <space> --group-by role`: the role's total equals the sum of both accounts.
 - [ ] `spaceman usage account <B> --group-by role` shows the role.
-- [ ] `spaceman account windows <A>` still shows the 5-hour window near 100 % with its reset time; `<B>` shows its own.
-      Note any window that is missing, stale or wrong.
+- [ ] `spaceman account windows <A> -o json` still shows the 5-hour window near 100 % with its reset time (JSON output
+      shows used % and reset; the table doesn't); `<B>` shows its own. Note any window that is missing, stale or wrong.
 
 ### 5. A near reset waits (optional, needs a second limit event)
 
@@ -76,11 +86,12 @@ work around it.
 
 ### 6. Headroom gate
 
-- [ ] Set `usage_limit_min_headroom_percent` to 20. With account A's window above 80 % used, launch a new worker with no
+- [ ] `spaceman limits set --space <space> --set usage_limit_min_headroom_percent=20`. With account A's window above 80 % used, launch a new worker with no
       account named: it starts on B. A worker already running on A is not touched.
-- [ ] With both accounts' windows above 80 % used, a launch is refused with a wait that ends at the earliest reset. (A
-      window not observed in the last hour counts as unknown and is not refused.)
-- [ ] Set it back to 0.
+- [ ] With both accounts' windows above 80 % used, a launch is refused with a wait that ends at the earliest reset
+      **or one hour from now, whichever is sooner**. The refusal creates no hold row, so `spaceman limits holds` won't
+      show it. (A window not observed in the last hour counts as unknown and is not refused.)
+- [ ] Set it back to 0: `spaceman limits set --space <space> --set usage_limit_min_headroom_percent=0`.
 
 ### 7. Pool exhausted
 
