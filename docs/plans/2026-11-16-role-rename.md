@@ -514,6 +514,10 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 - **Risks:**
   - The dream symlink layout. Central's dream blocker and the node busy check both cover it; add a test.
   - Lease checks for the command.
+- **Done (2026-11-16, `feat/role-rename-node`).** The agent advertises minor 14. The node journal migration is **0010**
+  (0009 is v0.1.9's conflict folders). Deviations are in ADR-0093's T-H3 implementation notes: a `moving` journal state
+  makes crash recovery exact; the busy check covers runs of both names; the node holds syncs of both names until central
+  acknowledges its `ok`.
 
 ### T-M1: API, CLI, admin MCP, docs (medium)
 - **Goal:** §3.4.

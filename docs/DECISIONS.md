@@ -6328,8 +6328,34 @@
     nodes. An error leaves the space's memory untouched by the caller.
   - **`.retained` repositories are not in backups** (the bundler takes only `<space>/<role>.git`). They are leftovers
     without a collection, kept on central's disk for an operator to look at.
-  - **The agent advertises minor 13 until T-H3** (`agentMaxMinor` in `internal/agent/agent.go`): a node that claimed 14
-    without moving its folder would hold a renamed role forever, while one at 13 makes central refuse the rename.
+  - **The agent advertised minor 13 until T-H3**: a node that claimed 14 without moving its folder would hold a renamed
+    role forever, while one at 13 makes central refuse the rename. T-H3 raised it to 14.
+- **Implementation notes (T-H3, 2026-11-16):** the node's move (`internal/agent/rolerename.go`, node journal migration
+  **0010** `role_renames`). Where the code differs from the plan, or adds to it:
+  - **Journal states.** A rename is `pending`, then `moving` (journaled before the folder is renamed), then `done` (in the
+    same journal transaction that moves the `memory_sync` row, drops one the new name had, and resets retries and the
+    last error). A `moving` rename found at start is finished: the old folder is renamed if it is still there, otherwise
+    the rename happened before the crash. Because of that marker a folder under the new name is set aside only while the
+    rename has not started moving, so a crash after `os.Rename` never sets the moved folder aside. `dropped` is a rename
+    central answered with an ack error (unknown, or not this node's) before it moved: it is never tried again.
+  - **The busy check** covers an active run of **either** name in the space (central holds launches of both) and an active
+    dream run in the space. It reads the node's journal, so a run central no longer counts as live still defers the move.
+    A pending dream commit does not defer it: central's blockers cover it, and a commit whose run is gone would otherwise
+    defer the move forever.
+  - **Retries.** A deferred move is tried again when a run of the space ends (after that run's memory flush); every open
+    rename (deferred, failed or interrupted) is tried again at agent start, after the runner reconcile. A failed move is
+    not retried at a run's end. An unchanged outcome central already acknowledged is not reported again.
+  - **Unsynced edits.** Before the move every instance checkout of the old name is checkpointed, so edits a run left in
+    a checkout become history that syncs under the new name; a checkout that cannot be checkpointed keeps its changes in
+    its files, which move with the folder. A checkpoint of the old name that was waiting for the collection's lock during
+    the move finds no checkout and writes nothing.
+  - **Sync after the ack.** The node sends no `memory.sync` for either name from the rename until
+    central has acknowledged its `ok`, then syncs the new name at once. The sync bundles from the moved `acked`, so
+    central applies the node's newer history as a fast-forward of the renamed collection.
+  - **A repeat.** A `memory.rename` the journal already holds (a repeated delivery, or central's re-queued command with a
+    new key) is acknowledged and answered from the journal: `ok` again for a done rename, another attempt for an open
+    one. A rename ID reused for other names is refused. A first delivery without a valid lease at the command's
+    generation is refused and journals nothing, so central's re-queue retries it.
 
 ## 2. Open items and unresolved contracts
 

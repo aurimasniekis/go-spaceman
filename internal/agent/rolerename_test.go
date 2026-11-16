@@ -392,7 +392,7 @@ func TestRoleRenameRetainsLeftover(t *testing.T) {
 					t.Fatal("the leftover was merged into the renamed role")
 				}
 			}
-			if c := m.collections(); !slices.Equal(c, want) && len(c)+len(want) > 0 {
+			if c := m.collections(); !slices.Equal(c, want) {
 				t.Fatalf("collections %v, want %v (.retained is not one)", c, want)
 			}
 			if validMemoryKey(rnSpace, ".retained", "ins_x") {

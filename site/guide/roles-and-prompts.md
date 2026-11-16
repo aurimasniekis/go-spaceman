@@ -194,7 +194,11 @@ upgrade the node's agent and let it connect first.
 that moment, right after it). The space's node moves its folder when it next receives the rename, and
 `spaceman role renames` shows that move as `pending` until the node reports it: `done` once the folder has moved, or
 `failed` with the node's reason when it could not move it (the node tries again when its agent next starts).
-`not_needed` is a space without a node. While the move is `pending` or `failed`, launches of the role under either name
+`not_needed` is a space without a node. If a run of either name, or a dream run, is still active on the node (one
+central no longer counted as live), the node waits: the move stays `pending` with that run named as the reason, and the
+node moves the folder as soon as the run ends. On the node the role's instance checkouts and preserved `conflicts/`
+folders move with the folder, and edits a run left in a checkout are checkpointed first; a folder that was already
+under the new name there is set aside under `.retained/` in the space's memory folder, never merged or deleted. While the move is `pending` or `failed`, launches of the role under either name
 and dream runs in the space are held, with the node named in the reason, and the space cannot be relocated; a node that
 is offline keeps them held until it reconnects. Nothing the node wrote meanwhile is lost: it wrote under the old folder
 name, which is the folder that moves, and central refuses that history under the old name (`role renamed`) without
