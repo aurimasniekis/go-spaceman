@@ -239,7 +239,7 @@ func TestScaleFromLoadavg(t *testing.T) {
 		{"0.50 0.40 0.30 2/300 123", 8, 1},
 		{"8.00 4.00 2.00 3/300 123", 8, 1},  // exactly one runnable thread per CPU is not overload
 		{"16.00 4.00 2.00 3/300 123", 8, 3}, // 2 per CPU: 1+2
-		{"1.00 1.00 1.00 24/300 123", 8, 4}, // the instantaneous run queue counts when it is higher
+		{"1.00 1.00 1.00 24/300 123", 8, 1}, // the instantaneous run queue is ignored
 		{"900.0 4.00 2.00 3/300 123", 8, 8}, // capped
 		{"garbage", 8, 1},
 		{"16.00 4.00 2.00 3/300 123", 0, 1},
