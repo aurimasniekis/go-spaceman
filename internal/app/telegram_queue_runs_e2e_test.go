@@ -34,6 +34,12 @@ func newQRChat(t *testing.T) (*qrChat, string) {
 	nctx, stopNotify := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = e.h.c.TelegramNotify.Run(nctx); close(done) }()
+	t.Cleanup(func() {
+		st := time.Now()
+		stopNotify()
+		<-done
+		t.Logf("notifier stopped in %v", time.Since(st))
+	})
 	// Changes made before the notifier has its start position are history it doesn't replay: wait, or a loaded runner
 	// that starts the goroutine late loses the first card.
 	select {
@@ -41,12 +47,6 @@ func newQRChat(t *testing.T) (*qrChat, string) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the notifier did not start")
 	}
-	t.Cleanup(func() {
-		st := time.Now()
-		stopNotify()
-		<-done
-		t.Logf("notifier stopped in %v", time.Since(st))
-	})
 	on := true
 	if _, err := e.h.c.TelegramSettings.PutSpace(ctx, audit.System, e.space, 0, tgsettings.SpaceInput{Enabled: &on}); err != nil {
 		t.Fatal(err)
