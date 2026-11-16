@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
@@ -126,5 +127,91 @@ func TestPoolExhaustedDedupReserved(t *testing.T) {
 	u := PoolExhaustedDedup("spc_a", &fleet.PoolExhausted{Harness: "claude-code"}, now)
 	if !human.ReservedDedup(u) || u == k || !strings.HasSuffix(u, "day-20261114") {
 		t.Fatalf("unknown-reset key %q (known %q)", u, k)
+	}
+}
+
+func (e *peopleEnv) pendingPoolRows() int {
+	e.t.Helper()
+	var n int
+	if err := e.s.ReadDB().QueryRowContext(e.ctx, `SELECT count(*) FROM pool_exhausted_notices`).Scan(&n); err != nil {
+		e.t.Fatal(err)
+	}
+	return n
+}
+
+// A notice whose create is refused (the space's open-action cap, an archived space) stays recorded and is raised by a
+// later sweep, exactly once; a sweep that finds the action already there (a crash between the create and the delete)
+// only deletes the row.
+func TestPoolExhaustedNoticeRetried(t *testing.T) {
+	e := newPeopleEnv(t)
+	e.sv.msgs = messages.New(e.s, e.aw, e.ch)
+	reset := e.clk.Now().Add(2 * time.Hour)
+	pool := &fleet.PoolExhausted{Harness: "claude-code", Role: "implementor", Accounts: []string{"acc_1"}, ResetsAt: &reset}
+
+	e.perSpace.Store(1)
+	if _, _, err := e.human.Create(e.ctx, audit.System, "spc_a", human.CreateInput{Type: human.TypeMessage, Title: "other", Body: "b",
+		Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.park("spc_a", "wt_1", "worker", pool, false)
+	if n := len(e.poolNotices("spc_a")); n != 0 || e.pendingPoolRows() != 1 {
+		t.Fatalf("rate limited: %d notices, %d recorded, want 0 and 1", n, e.pendingPoolRows())
+	}
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 1 {
+		t.Fatalf("still full: raised %d (%v), %d recorded", n, err, e.pendingPoolRows())
+	}
+	// Archived: refused too, and kept.
+	e.exec(`UPDATE spaces SET state = 'archived' WHERE id = 'spc_a'`)
+	e.perSpace.Store(100)
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 1 {
+		t.Fatalf("archived: raised %d (%v), %d recorded", n, err, e.pendingPoolRows())
+	}
+	e.exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_a'`)
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 1 || e.pendingPoolRows() != 0 || len(e.poolNotices("spc_a")) != 1 {
+		t.Fatalf("with room: raised %d (%v), %d recorded, %d notices", n, err, e.pendingPoolRows(), len(e.poolNotices("spc_a")))
+	}
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 {
+		t.Fatalf("again: raised %d (%v)", n, err)
+	}
+
+	// A crash after the create, before the delete: the row is still there, the sweep finds the action and drops it.
+	e.park("spc_a", "wt_2", "worker", pool, false)
+	if len(e.poolNotices("spc_a")) != 1 || e.pendingPoolRows() != 0 {
+		t.Fatalf("same window: %d notices, %d recorded", len(e.poolNotices("spc_a")), e.pendingPoolRows())
+	}
+	e.exec(`INSERT INTO pool_exhausted_notices (space_id, dedup_key, wait_id, title, body, created_at) VALUES ('spc_a', '` +
+		PoolExhaustedDedup("spc_a", pool, e.clk.Now()) + `', 'wt_2', 't', 'b', 0)`)
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 0 || len(e.poolNotices("spc_a")) != 1 {
+		t.Fatalf("after a crash: raised %d (%v), %d recorded, %d notices", n, err, e.pendingPoolRows(), len(e.poolNotices("spc_a")))
+	}
+}
+
+// Two roles' pools of one harness exhausted at the same reset get a notice each, naming their own role; a reset that
+// moves by a few seconds stays in its window.
+func TestPoolExhaustedNoticePerRole(t *testing.T) {
+	e := newPeopleEnv(t)
+	e.sv.msgs = messages.New(e.s, e.aw, e.ch)
+	reset := e.clk.Now().Add(2 * time.Hour).Truncate(poolWindow).Add(time.Minute)
+	pool := func(role string, at time.Time) *fleet.PoolExhausted {
+		return &fleet.PoolExhausted{Harness: "claude-code", Role: role, Accounts: []string{"acc_1"}, ResetsAt: &at}
+	}
+	e.park("spc_a", "wt_1", "worker", pool("implementor", reset), false)
+	e.park("spc_a", "wt_2", "worker", pool("reviewer", reset), false)
+	l := e.poolNotices("spc_a")
+	if len(l) != 2 || l[0].DedupKey == l[1].DedupKey {
+		t.Fatalf("%d notices, want 2 with their own keys", len(l))
+	}
+	for _, a := range l {
+		role := "implementor"
+		if strings.Contains(a.DedupKey, ":reviewer:") {
+			role = "reviewer"
+		}
+		if !strings.Contains(a.Title, role) || !strings.Contains(a.Body, "role "+role) {
+			t.Errorf("notice %q does not name %s: %s", a.Title, role, a.Body)
+		}
+	}
+	e.park("spc_a", "wt_3", "worker", pool("implementor", reset.Add(3*time.Second)), false)
+	if n := len(e.poolNotices("spc_a")); n != 2 {
+		t.Fatalf("a reset 3 s later raised another notice (%d)", n)
 	}
 }

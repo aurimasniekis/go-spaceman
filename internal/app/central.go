@@ -903,7 +903,12 @@ func (c *Central) Serve(ctx context.Context) error {
 		// Gateway usage-limit holds: their reset estimated from Harbor Pilot, re-read every 15 minutes (ADR-0079 decision 9).
 		human.Deadline{Name: "gateway_waits", Next: c.HarborPilotWaits.Next, Due: c.HarborPilotWaits.Due},
 		// Holds whose reset is far away: the space's people get one human action each (ADR-0079 Q5). A limit report wakes it.
-		human.Deadline{Name: "usage_limit_people", Due: c.Supervisor.TellLongHolds},
+		human.Deadline{Name: "usage_limit_people", Due: func(ctx context.Context) (int, error) {
+			// Pool-exhausted notices whose action wasn't created yet (a crash, the space's open-action cap) are raised again here.
+			n, err := c.Supervisor.TellPoolExhausted(ctx)
+			m, err2 := c.Supervisor.TellLongHolds(ctx)
+			return n + m, errors.Join(err, err2)
+		}},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.

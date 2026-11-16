@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // Dedup keys of the usage-limit notices: one "limited" and one "cleared" per run and limit window (its since).
@@ -89,7 +91,9 @@ func limitTask(ctx context.Context, tx *store.Tx, runID string) string {
 func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.LimitWaitEvent) error {
 	w := ev.Wait
 	if ev.Change == fleet.LimitWaitParked && ev.PoolExhausted != nil {
-		sv.tellPoolExhaustedTx(ctx, tx, w, ev.PoolExhausted)
+		if err := sv.tellPoolExhaustedTx(ctx, tx, w, ev.PoolExhausted); err != nil {
+			return err
+		}
 	}
 	if w.RunKind == agenttools.KindControl {
 		return nil
@@ -206,21 +210,30 @@ func resumeWhen(p *fleet.PoolExhausted, at time.Time) string {
 	return fmt.Sprintf("at %s (no reset in the pool is known, so it tries again then)", at.UTC().Format(time.RFC3339))
 }
 
-// PoolExhaustedDedup is the dedup key of the people notice of a pool: one human action per space, harness and limit window (the pool's earliest reset; with none known, the day).
+// poolWindow is the width the pool's earliest reset is rounded down to in the dedup key. A hold's reset only ever moves
+// later (a report of a later reset replaces it), and a status line can restate the same window a few seconds apart, so
+// the exact second would raise a notice per restatement.
+const poolWindow = 10 * time.Minute
+
+// PoolExhaustedDedup is the dedup key of the people notice of a pool: one human action per space, harness, role and limit
+// window (the pool's earliest reset, rounded down to poolWindow; with none known, the day). The role is part of it
+// because two roles' pools on one harness can be exhausted at the same reset and each notice names its own pool.
 func PoolExhaustedDedup(spaceID string, p *fleet.PoolExhausted, now time.Time) string {
 	window := "day-" + now.UTC().Format("20060102")
 	if p.ResetsAt != nil {
-		window = fmt.Sprintf("%d", p.ResetsAt.Unix())
+		window = fmt.Sprintf("%d", p.ResetsAt.Truncate(poolWindow).Unix())
 	}
-	return fmt.Sprintf("account-pool-exhausted:%s:%s:%s", spaceID, p.Harness, window)
+	return fmt.Sprintf("account-pool-exhausted:%s:%s:%s:%s", spaceID, p.Harness, p.Role, window)
 }
 
-// tellPoolExhaustedTx raises the people notice of a pool whose accounts are all at their usage limit, once the park's
-// transaction commits (a human action is written in a transaction of its own, never inside this one). It is one
-// informational action per space and window, deduplicated on its reserved key, so a second park in the same window
-// only finds it. People, and so Telegram, hear about the pool only here: a switch or a single limited account never
-// raises one. A failure is logged: control's own message of the park is already in the transaction.
-func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w fleet.LimitWait, p *fleet.PoolExhausted) {
+// tellPoolExhaustedTx records the people notice of a pool whose accounts are all at their usage limit, in the park's
+// transaction, and raises it once that commits (a human action is written in a transaction of its own, never inside
+// this one). It is one informational action per space, role and window, deduplicated on its reserved key, so a second
+// park in the same window only finds it. People, and so Telegram, hear about the pool only here: a switch or a single
+// limited account never raises one. The row stays until the action exists: a crash after the commit, a space at its
+// open-action cap (RateLimited) or an archived one (Precondition) leaves it for TellPoolExhausted, which the deadline
+// loop runs again later, so the notice is late in those cases, never lost.
+func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w fleet.LimitWait, p *fleet.PoolExhausted) error {
 	space := w.SpaceID
 	if sp, err := tx.Q.GetSpace(ctx, w.SpaceID); err == nil {
 		space = sp.Name
@@ -231,19 +244,55 @@ func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w f
 	if p.ResetsAt != nil {
 		reset = fmt.Sprintf("%s (in about %s)", p.ResetsAt.UTC().Format(time.RFC3339), approxDuration(p.ResetsAt.Sub(now)))
 	}
-	title := fmt.Sprintf("Every %s account of the pool is at its usage limit", p.Harness)
-	body := fmt.Sprintf("In %s, every account of a run's pool (%s) has reached its usage limit, so a run that hits a limit cannot move to another "+
-		"account. The earliest reset in the pool is at %s. Runs parked on it resume then, on the account that is free by that time.\n\nNothing "+
-		"is needed if the work can wait. To keep it going sooner, bind or enable another account for the pool. You get one such notice per space "+
-		"and limit window.", space, names, reset)
-	key, spaceID := PoolExhaustedDedup(w.SpaceID, p, now), w.SpaceID
+	title := fmt.Sprintf("Every %s account of the %s pool is at its usage limit", p.Harness, p.Role)
+	body := fmt.Sprintf("In %s, every account of the pool of role %s (%s) has reached its usage limit, so a run that hits a limit cannot move to "+
+		"another account. The earliest reset in the pool is at %s. Runs parked on it resume then, on the account that is free by that time.\n\nNothing "+
+		"is needed if the work can wait. To keep it going sooner, bind or enable another account for the pool. You get one such notice per space, "+
+		"role and limit window.", space, p.Role, names, reset)
+	key := PoolExhaustedDedup(w.SpaceID, p, now)
+	if err := tx.Q.InsertPoolExhaustedNotice(ctx, db.InsertPoolExhaustedNoticeParams{SpaceID: w.SpaceID, DedupKey: key, WaitID: w.ID, Title: title,
+		Body: body, CreatedAt: tx.NowMicros()}); err != nil {
+		return err
+	}
 	tx.AfterCommit(func() {
-		bg := context.WithoutCancel(ctx)
-		_, _, err := sv.human.Create(bg, audit.System, spaceID, human.CreateInput{Type: human.TypeMessage, Priority: "normal", Title: title, Body: body,
-			Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "Usage limits"}, CorrelationID: w.ID,
-			DedupKey: key, Internal: true})
-		if err != nil {
-			sv.log.Info("pool exhausted people notice deferred", slog.String("limit_wait.id", w.ID), obs.Err(err))
+		if _, err := sv.TellPoolExhausted(context.WithoutCancel(ctx)); err != nil {
+			sv.log.Info("pool exhausted people notice left for the next sweep", slog.String("limit_wait.id", w.ID), obs.Err(err))
 		}
 	})
+	return nil
+}
+
+// poolNoticePage bounds the notices one sweep reads.
+const poolNoticePage = 200
+
+// TellPoolExhausted raises the recorded pool-exhausted notices that have no human action yet and deletes each row once
+// its action exists (created now, or found by its dedup key). A space at its open-action cap or archived since is
+// skipped and tried again on a later round, as TellLongHolds does: the cap frees up when a person answers an action.
+// It returns the number of actions created.
+func (sv *Supervisor) TellPoolExhausted(ctx context.Context) (int, error) {
+	rows, err := sv.fl.PoolExhaustedNotices(ctx, poolNoticePage)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range rows {
+		_, created, err := sv.human.Create(ctx, audit.System, r.SpaceID, human.CreateInput{Type: human.TypeMessage, Priority: "normal", Title: r.Title,
+			Body: r.Body, Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "Usage limits"},
+			CorrelationID: r.WaitID, DedupKey: r.DedupKey, Internal: true})
+		switch apperr.CodeOf(err) {
+		case "":
+		case apperr.CodeRateLimited, apperr.CodePrecondition:
+			sv.log.Info("pool exhausted people notice postponed", slog.String("limit_wait.id", r.WaitID), obs.Err(err))
+			continue
+		default:
+			return n, err
+		}
+		if err := sv.fl.DeletePoolExhaustedNotice(ctx, r.SpaceID, r.DedupKey); err != nil {
+			return n, err
+		}
+		if created {
+			n++
+		}
+	}
+	return n, nil
 }
