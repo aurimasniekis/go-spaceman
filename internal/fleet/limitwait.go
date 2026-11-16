@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -919,13 +920,21 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 		if sp, err = tx.Q.GetSpace(ctx, w.SpaceID); err != nil {
 			return err
 		}
-		// A resume with failover on that isn't a switch re-resolves its account through the run's pool. A role's pool
-		// never widens, so the launch doesn't name the old account: it could have left the pool since.
+		// A resume with failover on that isn't a switch goes through the run's pool. A role's pool never widens, so when
+		// the parked run's account has left it, the launch doesn't name that account: the pool picks.
 		var spec LaunchSpec
 		direct := json.Unmarshal([]byte(w.LaunchJson), &spec) == nil && (spec.Gateway == nil || spec.Gateway.Kind == "")
-		if direct && w.SwitchToAccountID == "" && svc.ulSettings(ctx, tx.Q, w.SpaceID).Failover {
-			if poolResolve, err = accounts.RoleScoped(ctx, tx, w.SpaceID, w.Harness, w.Role); err != nil {
+		if direct && spec.AccountRef != "" && w.SwitchToAccountID == "" && svc.ulSettings(ctx, tx.Q, w.SpaceID).Failover {
+			scoped, err := accounts.RoleScoped(ctx, tx, w.SpaceID, w.Harness, w.Role)
+			if err != nil {
 				return err
+			}
+			if scoped {
+				pool, err := accounts.PoolAccounts(ctx, tx, w.SpaceID, w.Harness, w.Role)
+				if err != nil {
+					return err
+				}
+				poolResolve = !slices.Contains(pool, spec.AccountRef)
 			}
 		}
 		// The parked run has ended: it no longer holds the space's single control slot (or anything else) as wanted.

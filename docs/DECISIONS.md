@@ -5464,8 +5464,9 @@
     ADR-0079's slack) instead of its own account's. An account frees up when its last hold resets; an account whose
     hold has no known reset counts as limited and is left out of the earliest. When no reset in the pool is known the
     wait keeps ADR-0079's time. No new state is stored: exhaustion is read when the wait is parked.
-  - The resume re-resolves through the launch path. With failover on and a role pool, a resume that is not a switch no
-    longer names the parked run's account: the role's pool picks, so an account that left the pool is never used.
+  - The resume re-resolves through the launch path. With failover on and a role pool, a resume that is not a switch and whose
+    parked account has left the pool no longer names it: the role's pool picks, so an account outside the pool is never used.
+    The window of the people notice is the pool's earliest reset, so a reset that moves later raises another notice.
   - Control gets its park message with the pool's accounts and the resume time. The people get one informational human
     action per space, harness and window (the pool's earliest reset; the day when none is known) under the reserved
     dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
