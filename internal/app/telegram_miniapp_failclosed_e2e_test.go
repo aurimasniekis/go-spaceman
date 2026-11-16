@@ -321,8 +321,26 @@ func TestMiniAppServeRefusesWhenTheStoredHostCannotBeRead(t *testing.T) {
 // hammers the real port with Host: <mini host>; Serve is not yet listening, so no request is answered (each is refused).
 // Once the load is released, every answer from the first one on is the Mini App host's 404. A Serve that loads the host
 // after the listener goroutine has started answers the hammering with the main UI while the load is held.
+//
+// The test picks a free port by listening and closing, and then Serve binds it a moment later. Another parallel test's
+// listener (the fake Bot API server, any ephemeral dial) can be handed that port in between; Serve then fails to bind
+// and the hammering is answered by that other server. Such an attempt proves nothing about the ordering and is not
+// judged: it is run again on a new port.
 func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 	t.Parallel()
+	const attempts = 5
+	for range attempts {
+		if !miniAppLoadBeforeListeningOnce(t) {
+			return
+		}
+	}
+	t.Fatalf("the port picked for Serve was taken by another listener in %d attempts in a row", attempts)
+}
+
+// miniAppLoadBeforeListeningOnce is one attempt of the test above. It reports whether the port was taken before Serve
+// could bind it (nothing is asserted then).
+func miniAppLoadBeforeListeningOnce(t *testing.T) (portTaken bool) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -364,15 +382,21 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
 	go func() { served <- e.h.c.Serve(ctx) }()
-	defer func() {
+	var serveErr error
+	stopped := false
+	stop := func() {
+		if stopped {
+			return
+		}
+		stopped = true
 		cancel()
 		select {
-		case err := <-served:
-			_ = err // the shutdown error is not what this test checks
+		case serveErr = <-served:
 		case <-time.After(20 * time.Second):
 			t.Error("Serve did not stop")
 		}
-	}()
+	}
+	defer stop()
 
 	hc := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
 	type answer struct {
@@ -381,6 +405,7 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 	}
 	var answers []answer
 	var firstRefused int
+	startedAt := time.Now()
 	deadline := time.Now().Add(15 * time.Second)
 	for len(answers) < 20 && time.Now().Before(deadline) {
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", nil)
@@ -391,7 +416,12 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 			if len(answers) == 0 {
 				firstRefused++
 			}
-			time.Sleep(time.Millisecond)
+			select {
+			case serveErr = <-served: // it lost its port or failed: nothing will ever listen
+				stopped = true
+				deadline = time.Now()
+			case <-time.After(time.Millisecond):
+			}
 			continue
 		}
 		b := make([]byte, 512)
@@ -400,7 +430,37 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 		answers = append(answers, answer{resp.StatusCode, string(b[:n])})
 	}
 	if len(answers) == 0 {
-		t.Fatalf("Serve never answered (%d refused)", firstRefused)
+		select {
+		case serveErr = <-served:
+			stopped = true
+		default:
+		}
+		if serveErr != nil && strings.Contains(serveErr.Error(), "address already in use") {
+			return true
+		}
+		t.Fatalf("Serve never answered (%d refused in %s, Serve returned: %v)", firstRefused, time.Since(startedAt).Round(time.Millisecond), serveErr)
+	}
+	released := false
+	select {
+	case <-release:
+		released = true
+	default:
+	}
+	good := released
+	for _, a := range answers {
+		good = good && a.status == 404 && a.body == "not found\n"
+	}
+	if !good {
+		// Before blaming the ordering, rule out that someone else answered: a Serve that lost its port returns by itself.
+		select {
+		case serveErr = <-served:
+			stopped = true
+			if strings.Contains(serveErr.Error(), "address already in use") {
+				return true
+			}
+		case <-time.After(30 * time.Second):
+		}
+		t.Logf("the answers are not the Mini App host's; Serve returned: %v", serveErr)
 	}
 	select {
 	case <-release:
@@ -412,4 +472,5 @@ func TestMiniAppServeLoadsTheStoredHostBeforeListening(t *testing.T) {
 			t.Errorf("answer %d on Host %q: %d %q, want the Mini App host's 404", i, miniHost, a.status, a.body)
 		}
 	}
+	return false
 }

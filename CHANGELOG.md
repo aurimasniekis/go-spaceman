@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- The node agent's runner reconcile (the monitor's first "snapshot" event, a restarted or missed-events notice) no longer
+  marks a run whose launch is still in flight as lost or failed: it leaves those alone and re-checks the runner for the
+  others before judging them. Before, a reconcile that landed between the journal's run and the process start ended the
+  run, so its bridge calls answered "run is not active".
+- A bridge hook's refusal now carries the agent's reason, instead of only "refused the hook data".
+
 ## [0.1.9] - 2026-11-16
 
 **v0.1.8 was tagged but never released** (its release build produced no images), so its changes ship in v0.1.9.
