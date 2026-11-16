@@ -159,7 +159,9 @@ const promptDenyNote = -2
 // n the whole form on the card's message (More…), z back from that form to the card.
 // A bare "ho" on a notifier card resolves its action from the card mapping. The builder is the card package's, shared
 // with the notifier's cards.
-func humanData(verb byte, spaceID, actionID string, n int) string { return card.Data(verb, spaceID, actionID, n) }
+func humanData(verb byte, spaceID, actionID string, n int) string {
+	return card.Data(verb, spaceID, actionID, n)
+}
 
 func isHumanData(d string) bool {
 	return len(d) >= 2 && d[0] == 'h' && (d[1] == 'o' || strings.ContainsRune("qtcmfwksxaybdluripevgnz", rune(d[1]))) && (len(d) == 2 || d[2] == ':')

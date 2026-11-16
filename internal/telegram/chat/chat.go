@@ -248,8 +248,8 @@ type reply struct {
 	text string
 	// entities format text (a card's bold title); they must lie inside it.
 	entities []botapi.MessageEntity
-	markup *botapi.InlineKeyboardMarkup
-	force  *botapi.ForceReply
+	markup   *botapi.InlineKeyboardMarkup
+	force    *botapi.ForceReply
 	// replyTo makes the message a reply to that message of the chat (0: none), and thread puts it in that forum topic.
 	replyTo, thread int
 	// protect sets protect_content (no forwarding or saving), for message bodies (ADR-0083 decision 13).

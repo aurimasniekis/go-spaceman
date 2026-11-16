@@ -20,7 +20,9 @@ func (c *threadsChat) cardNow(t *testing.T, id int) botapi.Message {
 	return botapi.Message{}
 }
 
-func noKeyboard(m botapi.Message) bool { return m.ReplyMarkup == nil || len(m.ReplyMarkup.InlineKeyboard) == 0 }
+func noKeyboard(m botapi.Message) bool {
+	return m.ReplyMarkup == nil || len(m.ReplyMarkup.InlineKeyboard) == 0
+}
 
 // ADR-0089 T4: a question's card carries its options; answering it on the web collapses the same message to its final
 // line, without a keyboard, and nothing new is sent for it.

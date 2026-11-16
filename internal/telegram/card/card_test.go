@@ -90,8 +90,8 @@ func goldenCases() []goldenCase {
 }
 
 type goldenPart struct {
-	Text     string                          `json:"text"`
-	Entities []botapi.MessageEntity          `json:"entities,omitempty"`
+	Text     string                 `json:"text"`
+	Entities []botapi.MessageEntity `json:"entities,omitempty"`
 	// Markup is what an edit sends (an empty keyboard removes it); a send leaves an empty one out.
 	Markup *botapi.InlineKeyboardMarkup `json:"markup"`
 }
