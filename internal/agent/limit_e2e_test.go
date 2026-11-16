@@ -299,3 +299,45 @@ func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
 		wantOpen(t, "after welcome", r, proto.LimitFiveHour, reset, at)
 	}
 }
+
+// A limit the transcript scan finds between the hello and the welcome (the hello is already built) is held and sent
+// after the welcome, not dropped.
+func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
+	old := limitSettle
+	limitSettle = 10 * time.Millisecond
+	t.Cleanup(func() { limitSettle = old })
+	dir := t.TempDir()
+	a, f := ccAgent(t, dir, nil, nil)
+	hold := make(chan struct{})
+	fc := newHeldWSCentral(t, proto.MinorUsageLimit, hold)
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	startAgent(t, a, fc, clk)
+	fc.next(t, proto.TypeHello)
+	ccLaunch(a, "run_scan")
+	row := getRun(t, a, "run_scan")
+	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	at := clk.Now().Add(-time.Minute)
+	reset := at.Add(5 * time.Hour).Truncate(time.Second)
+	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
+		t.Fatal(err)
+	}
+	a.limitScan(context.Background(), "run_scan", false)
+	if j := getRun(t, a, "run_scan").Limit; j.Kind != proto.LimitFiveHour {
+		t.Fatalf("limit not journaled: %+v", j)
+	}
+	if rs := fc.collect(t, "run_scan", 200*time.Millisecond); len(rs) != 0 {
+		t.Fatalf("%d reports before the welcome", len(rs))
+	}
+	close(hold)
+	rs := fc.collect(t, "run_scan", 500*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the welcome")
+	}
+	wantOpen(t, "after welcome", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+}

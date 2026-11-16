@@ -648,9 +648,12 @@ func (a *Agent) report(ctx context.Context, r runRow) {
 // resendHeldReports sends, from the journal, the reports held back before the welcome.
 func (a *Agent) resendHeldReports(ctx context.Context, held map[string]struct{}) {
 	for id := range held {
+		// The row is read under limitSend, so a newer report is never followed by this older state.
+		a.limitSend.Lock()
 		if r, err := a.j.getRun(ctx, id); err == nil {
-			a.report(ctx, r)
+			a.sendReport(ctx, r)
 		}
+		a.limitSend.Unlock()
 	}
 }
 
