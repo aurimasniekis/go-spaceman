@@ -743,9 +743,32 @@ func TestUnreadableHeadResolvesNothing(t *testing.T) {
 	tree, terr := f.git.Run(f.ctx, repo, nil, "rev-parse", h1+":conflicts")
 	must(t, terr)
 	tree = strings.TrimSpace(tree)
+	// Central stores synced objects in packs, so the tree is only loose after the packs are unpacked: move each pack out
+	// of the repository, feed it to unpack-objects and then delete the loose tree.
+	packDir := filepath.Join(repo, "objects", "pack")
+	packs, gerr := filepath.Glob(filepath.Join(packDir, "*.pack"))
+	must(t, gerr)
+	if len(packs) == 0 {
+		t.Fatal("no pack holds the synced objects")
+	}
+	stash := t.TempDir()
+	for _, p := range packs {
+		base := strings.TrimSuffix(filepath.Base(p), ".pack")
+		members, gerr := filepath.Glob(filepath.Join(packDir, base+".*"))
+		must(t, gerr)
+		for _, m := range members {
+			must(t, os.Rename(m, filepath.Join(stash, filepath.Base(m))))
+		}
+	}
+	for _, p := range packs {
+		data, rerr := os.ReadFile(filepath.Join(stash, filepath.Base(p)))
+		must(t, rerr)
+		_, uerr := f.git.RunInput(f.ctx, repo, nil, data, "unpack-objects", "-q")
+		must(t, uerr)
+	}
 	obj := filepath.Join(repo, "objects", tree[:2], tree[2:])
 	if err := os.Remove(obj); err != nil {
-		t.Skipf("object not loose: %v", err)
+		t.Fatalf("object not loose: %v", err)
 	}
 	if ack := f.sync(h1, h2); ack.Result != proto.MemoryOK {
 		t.Fatalf("sync: %+v", ack)
