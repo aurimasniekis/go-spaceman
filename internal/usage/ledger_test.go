@@ -442,6 +442,34 @@ func TestLedgerStaleSessionRead(t *testing.T) {
 	}
 }
 
+// Both keys holding marks with different costs: the higher cost counts as booked, so a run:<id> mark with the lower cost
+// does not make the session's cost count twice.
+func TestLedgerCountedCostIsTheHigherOfBothKeys(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t)
+	if err := f.s.W().TxNamed(f.ctx, "x", func(tx *store.Tx) error {
+		for _, q := range []string{
+			`INSERT INTO usage_ledger_marks (space_id, mark_key, counted_json, counted_cost, updated_at) VALUES ('spc_a', 'sess-1', '[{"model":"m","in":100,"out":0,"cw":0,"cr":0,"req":0}]', 5, 0)`,
+			`INSERT INTO usage_ledger_marks (space_id, mark_key, counted_json, counted_cost, updated_at) VALUES ('spc_a', 'run:` + lrA + `', '[{"model":"m","in":100,"out":0,"cw":0,"cr":0,"req":0}]', 3, 0)`,
+		} {
+			if _, err := tx.SQL.ExecContext(f.ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.report(lrA, false, 6, mu("m", 150, 0, 0, 0, 1))
+	var cost float64
+	for _, b := range f.buckets(t) {
+		cost += b.cost
+	}
+	if cost != 1 {
+		t.Fatalf("booked cost %v, want 1 (6 over the session's 5, not over the run key's 3)", cost)
+	}
+}
+
 // A window that has reset or went stale is skipped even when it is the most used; the next current one answers.
 func TestMostUsedWindowSkipsStaleAndReset(t *testing.T) {
 	t.Parallel()

@@ -41,7 +41,7 @@ CREATE INDEX ix_usage_ledger_marks_updated ON usage_ledger_marks (updated_at);
 -- (usage.markKey and usage.modelCounters), or a run active during the migration would count its total once more: a
 -- session id only when it is 1-100 characters of [A-Za-z0-9._-], otherwise the run's key; a model id only when it matches
 -- the model pattern (first character alphanumeric, then up to 127 of [A-Za-z0-9._:/[]-]), otherwise 'unknown'; models
--- sharing a name keep the highest counters; counters are clamped to 0..2^40.
+-- sharing a name keep the highest counters; counters are clamped to 0..2^40 (a JSON real is truncated to an integer first, so the mark's counters unmarshal into int64).
 INSERT INTO usage_ledger_marks (space_id, mark_key, counted_json, counted_cost, updated_at)
 SELECT space_id, mark_key,
   COALESCE((SELECT json_group_array(json_object('model', g.model, 'in', g.i, 'out', g.o, 'cw', g.cw, 'cr', g.cr, 'req', g.req))
@@ -51,11 +51,11 @@ SELECT space_id, mark_key,
                      AND length(json_extract(m.value, '$.model')) <= 128
                      AND json_extract(m.value, '$.model') NOT GLOB '*[^]A-Za-z0-9._:/[-]*'
                     THEN json_extract(m.value, '$.model') ELSE 'unknown' END AS model,
-          min(max(CASE WHEN json_type(m.value, '$.input_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.input_tokens') ELSE 0 END, 0), 1099511627776) AS i,
-          min(max(CASE WHEN json_type(m.value, '$.output_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.output_tokens') ELSE 0 END, 0), 1099511627776) AS o,
-          min(max(CASE WHEN json_type(m.value, '$.cache_write_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.cache_write_tokens') ELSE 0 END, 0), 1099511627776) AS cw,
-          min(max(CASE WHEN json_type(m.value, '$.cache_read_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.cache_read_tokens') ELSE 0 END, 0), 1099511627776) AS cr,
-          min(max(CASE WHEN json_type(m.value, '$.requests') IN ('integer', 'real') THEN json_extract(m.value, '$.requests') ELSE 0 END, 0), 1099511627776) AS req
+          min(max(CASE WHEN json_type(m.value, '$.input_tokens') IN ('integer', 'real') THEN CAST(json_extract(m.value, '$.input_tokens') AS INTEGER) ELSE 0 END, 0), 1099511627776) AS i,
+          min(max(CASE WHEN json_type(m.value, '$.output_tokens') IN ('integer', 'real') THEN CAST(json_extract(m.value, '$.output_tokens') AS INTEGER) ELSE 0 END, 0), 1099511627776) AS o,
+          min(max(CASE WHEN json_type(m.value, '$.cache_write_tokens') IN ('integer', 'real') THEN CAST(json_extract(m.value, '$.cache_write_tokens') AS INTEGER) ELSE 0 END, 0), 1099511627776) AS cw,
+          min(max(CASE WHEN json_type(m.value, '$.cache_read_tokens') IN ('integer', 'real') THEN CAST(json_extract(m.value, '$.cache_read_tokens') AS INTEGER) ELSE 0 END, 0), 1099511627776) AS cr,
+          min(max(CASE WHEN json_type(m.value, '$.requests') IN ('integer', 'real') THEN CAST(json_extract(m.value, '$.requests') AS INTEGER) ELSE 0 END, 0), 1099511627776) AS req
         FROM json_each(CASE WHEN json_valid(models_json) THEN models_json ELSE '[]' END) m
       ) GROUP BY model ORDER BY model
     ) g), '[]'),
@@ -112,9 +112,9 @@ CREATE TABLE account_window_samples (
 
 CREATE INDEX ix_account_window_samples_time ON account_window_samples (observed_at);
 
--- Retention (usage_ledger.sql) deletes cleared limits and finished waits and switches by age: partial indexes keep each
--- pass off a table scan. (The state indexes are plain: SQLite uses a partial index only for a query that repeats its
--- predicate exactly, and these filter by an IN list.)
+-- Retention (usage_ledger.sql) deletes cleared limits and finished waits and switches by age: an index on the age column
+-- keeps each pass off a table scan. Only the cleared-limits index is partial; the state indexes are plain, because
+-- SQLite uses a partial index only for a query that repeats its predicate exactly, and these filter by an IN list.
 CREATE INDEX ix_usage_limits_cleared ON usage_limits (cleared_at) WHERE cleared_at IS NOT NULL;
 CREATE INDEX ix_limit_waits_finished ON limit_waits (state, updated_at);
 CREATE INDEX ix_account_switches_finished ON account_switches (state, updated_at);
