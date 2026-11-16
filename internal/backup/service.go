@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -64,8 +65,13 @@ type ServiceOptions struct {
 	// its own bounded wait, which spaces' memory is possibly stale (SM-MEM-005). It runs outside any transaction; nil
 	// records that no flush was attempted.
 	PrepareMemory func(ctx context.Context) *MemoryFlush
-	Clock         clock.Clock
-	Log           *slog.Logger
+	// StallTimeout fails a backup or verification whose current stage makes no progress for this long, and
+	// MaxDuration one that runs longer than this in total (ADR-0091; defaults DefaultStallTimeout and
+	// DefaultMaxDuration).
+	StallTimeout time.Duration
+	MaxDuration  time.Duration
+	Clock        clock.Clock
+	Log          *slog.Logger
 }
 
 // Service makes, lists, verifies and prunes backups while central runs, and schedules them with one timer.
@@ -82,6 +88,7 @@ type Service struct {
 	wg        sync.WaitGroup
 	base      context.Context
 	startedAt time.Time
+	cur       *tracker // the running backup or verification, nil when idle
 }
 
 // NewService returns the backup service.
@@ -97,6 +104,12 @@ func NewService(st *store.Store, kek keyring.KeyWrapper, aw *audit.Writer, ch *c
 	}
 	if o.KeepLast <= 0 {
 		o.KeepLast = 7
+	}
+	if o.StallTimeout <= 0 {
+		o.StallTimeout = DefaultStallTimeout
+	}
+	if o.MaxDuration <= 0 {
+		o.MaxDuration = DefaultMaxDuration
 	}
 	return &Service{st: st, kek: kek, audit: aw, changes: ch, o: o, wake: make(chan struct{}, 1), base: context.Background(), startedAt: o.Clock.Now()}
 }
@@ -125,6 +138,8 @@ type Item struct {
 	VerifyError   string     `json:"verify_error,omitempty"`
 	// MemoryFlush is how role memory was flushed before the snapshot (from the manifest; absent in older backups).
 	MemoryFlush *MemoryFlush `json:"memory_flush,omitempty"`
+	// Stage is where this backup is while it runs or is verified (empty otherwise).
+	Stage string `json:"stage,omitempty" enum:",memory_flush,snapshot,files,objects,memory,manifest,upload,record,prune,fetch,verify"`
 }
 
 // Status is the backup overview.
@@ -137,9 +152,11 @@ type Status struct {
 	MaxAge   string     `json:"max_age,omitempty"`
 	NextAt   *time.Time `json:"next_at,omitempty"`
 	Busy     bool       `json:"busy"`
-	Included []string   `json:"included"`
-	Excluded []string   `json:"excluded"`
-	Items    []Item     `json:"items"`
+	// Current is where the running backup or verification is (absent when not busy).
+	Current  *Progress `json:"current,omitempty"`
+	Included []string  `json:"included"`
+	Excluded []string  `json:"excluded"`
+	Items    []Item    `json:"items"`
 	// TargetError is set when the target could not be listed (the history is still shown).
 	TargetError string `json:"target_error,omitempty"`
 }
@@ -168,6 +185,9 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	}
 	s.mu.Lock()
 	out.Busy = s.busy
+	if s.cur != nil {
+		out.Current = s.cur.progress()
+	}
 	s.mu.Unlock()
 	if s.o.Schedule {
 		if next, err := s.nextAt(ctx); err == nil {
@@ -193,6 +213,9 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 			annotate(&it, e)
 		}
 		seen[r.ID] = true
+		if out.Current != nil && out.Current.ID == r.ID {
+			it.Stage = out.Current.Stage
+		}
 		out.Items = append(out.Items, it)
 	}
 	for _, e := range entries {
@@ -286,11 +309,34 @@ func (s *Service) kick() {
 // Wait blocks until background work started so far has finished (tests and shutdown).
 func (s *Service) Wait() { s.wg.Wait() }
 
-// create makes backup id and records the outcome. It runs outside any transaction.
-func (s *Service) create(ctx context.Context, id string, actor audit.Actor) {
+// track makes t the running backup or verification shown in the status.
+func (s *Service) track(id string, log *slog.Logger) *tracker {
+	t := newTracker(id, s.o.Clock, log)
+	s.mu.Lock()
+	s.cur = t
+	s.mu.Unlock()
+	return t
+}
+
+func (s *Service) untrack() {
+	s.mu.Lock()
+	s.cur = nil
+	s.mu.Unlock()
+}
+
+// create makes backup id and records the outcome. It runs outside any transaction. The work runs under a watchdog
+// (ADR-0091): a stage without progress for StallTimeout, or a run longer than MaxDuration, fails the backup with a
+// StalledError naming the stage. The outcome is recorded under its own bounded context, so a stopped backup is still
+// marked failed, and the caller releases busy when create returns.
+func (s *Service) create(base context.Context, id string, actor audit.Actor) {
 	log := s.o.Log.With(slog.String("backup.id", id))
+	tr := s.track(id, log)
+	defer s.untrack()
+	ctx, stop := watch(withTracker(base, tr), tr, s.o.StallTimeout, s.o.MaxDuration)
+	defer stop()
 	var m *Manifest
 	// Role memory first, before the database snapshot: central then holds what the nodes had (SM-MEM-005).
+	tr.enter(StageMemoryFlush)
 	flush := s.prepareMemory(ctx)
 	if n := len(flush.Stale); n > 0 {
 		log.Warn("role memory possibly stale in this backup", slog.Int("spaces", n))
@@ -318,8 +364,14 @@ func (s *Service) create(ctx context.Context, id string, actor audit.Actor) {
 		if s.o.Target.Kind() != "local" {
 			defer func() { _ = os.RemoveAll(dest) }()
 		}
+		tr.enter(StageUpload)
 		return s.o.Target.Store(ctx, dest)
 	}()
+	if se := stalled(ctx); se != nil && err != nil {
+		err = fmt.Errorf("%w: %v", se, err) //nolint:errorlint // the stage error is the cause; the other is detail
+	}
+	stop()
+	tr.enter(StageRecord)
 	state, msg := StateSucceeded, ""
 	if err != nil {
 		state, msg = StateFailed, truncate(err.Error(), maxErrorLen)
@@ -327,33 +379,42 @@ func (s *Service) create(ctx context.Context, id string, actor audit.Actor) {
 	} else {
 		log.Info("backup created", slog.Int("files", len(m.Files)), slog.Int64("bytes", m.SealedBytes))
 	}
-	_ = s.st.W().TxNamed(ctx, "backup.finish", func(tx *store.Tx) error {
+	rctx, cancel := context.WithTimeout(base, recordTimeout)
+	defer cancel()
+	if ferr := s.st.W().TxNamed(rctx, "backup.finish", func(tx *store.Tx) error {
 		p := db.FinishBackupParams{State: state, FinishedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, Error: msg, ID: id}
 		if m != nil {
 			p.Files, p.Bytes, p.StoredBytes = int64(len(m.Files)), m.Bytes, m.SealedBytes
 		}
-		if _, err := tx.Q.FinishBackup(ctx, p); err != nil {
+		if _, err := tx.Q.FinishBackup(rctx, p); err != nil {
 			return err
 		}
-		if err := s.changes.Record(ctx, tx, "", "backup", id, changefeed.Updated, 0); err != nil {
+		if err := s.changes.Record(rctx, tx, "", "backup", id, changefeed.Updated, 0); err != nil {
 			return err
 		}
 		outcome := audit.OutcomeSuccess
 		if state != StateSucceeded {
 			outcome = audit.OutcomeFailure
 		}
-		_, err := s.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "backup.finished", Target: audit.Target{Type: "backup", ID: id}, Outcome: outcome,
+		_, err := s.audit.Append(rctx, tx, audit.Event{Actor: actor, Action: "backup.finished", Target: audit.Target{Type: "backup", ID: id}, Outcome: outcome,
 			Details: map[string]any{"files": p.Files, "bytes": p.Bytes, "stored_bytes": p.StoredBytes, "memory_flush_attempted": flush.Attempted,
 				"memory_flushed_spaces": len(flush.Flushed), "memory_stale_spaces": len(flush.Stale)}})
 		return err
-	})
+	}); ferr != nil {
+		log.Warn("record backup outcome", obs.Err(ferr))
+	}
 	if err == nil {
-		if n, perr := s.Prune(ctx); perr != nil {
+		tr.enter(StagePrune)
+		pctx, pstop := watch(withTracker(base, tr), tr, s.o.StallTimeout, s.o.MaxDuration)
+		n, perr := s.Prune(pctx)
+		pstop()
+		if perr != nil {
 			log.Warn("backup retention", obs.Err(perr))
 		} else if n > 0 {
 			log.Info("backup retention deleted old backups", slog.Int("count", n))
 		}
 	}
+	tr.end()
 }
 
 // prepareMemory runs the PrepareMemory hook, or records that none is configured.
@@ -428,8 +489,15 @@ func (s *Service) StartVerify(ctx context.Context, actor audit.Actor, id string)
 	return &it, nil
 }
 
-func (s *Service) verify(ctx context.Context, id string, actor audit.Actor) {
+// verify runs under the same watchdog as create (ADR-0091) and records the result under its own bounded context.
+func (s *Service) verify(base context.Context, id string, actor audit.Actor) {
+	log := s.o.Log.With(slog.String("backup.id", id))
+	tr := s.track(id, log)
+	defer s.untrack()
+	ctx, stop := watch(withTracker(base, tr), tr, s.o.StallTimeout, s.o.MaxDuration)
+	defer stop()
 	tmpRoot := filepath.Join(s.st.Dir(), store.BackupsDir, ".verify")
+	tr.enter(StageFetch)
 	rep, err := func() (*Report, error) {
 		if err := os.MkdirAll(tmpRoot, 0o700); err != nil {
 			return nil, err
@@ -439,14 +507,22 @@ func (s *Service) verify(ctx context.Context, id string, actor audit.Actor) {
 			return nil, err
 		}
 		defer cleanup()
+		tr.enter(StageVerify)
 		return Verify(ctx, dir, VerifyOptions{KEK: s.kek, TempDir: tmpRoot})
 	}()
+	if se := stalled(ctx); se != nil && err != nil {
+		err = fmt.Errorf("%w: %v", se, err) //nolint:errorlint // the stage error is the cause; the other is detail
+	}
+	stop()
+	tr.enter(StageRecord)
 	state, msg := "ok", ""
 	if err != nil {
 		state, msg = "failed", truncate(err.Error(), maxErrorLen)
-		s.o.Log.Warn("backup verification failed", slog.String("backup.id", id), obs.Err(err))
+		log.Warn("backup verification failed", obs.Err(err))
 	}
-	_ = s.st.W().TxNamed(ctx, "backup.verify_finish", func(tx *store.Tx) error {
+	ctx, cancel := context.WithTimeout(base, recordTimeout)
+	defer cancel()
+	if ferr := s.st.W().TxNamed(ctx, "backup.verify_finish", func(tx *store.Tx) error {
 		if _, err := tx.Q.SetBackupVerify(ctx, db.SetBackupVerifyParams{VerifyState: state, VerifiedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 			VerifyError: msg, ID: id}); err != nil {
 			return err
@@ -465,7 +541,10 @@ func (s *Service) verify(ctx context.Context, id string, actor audit.Actor) {
 		_, err := s.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "backup.verified", Target: audit.Target{Type: "backup", ID: id}, Outcome: outcome,
 			Details: details})
 		return err
-	})
+	}); ferr != nil {
+		log.Warn("record backup verification", obs.Err(ferr))
+	}
+	tr.end()
 }
 
 // Prune applies retention to the complete backups in the target: the newest KeepLast are kept; older ones are deleted,
@@ -497,6 +576,7 @@ func (s *Service) Prune(ctx context.Context) (int, error) {
 			continue
 		}
 		n++
+		trackerFrom(ctx).file()
 		_ = s.st.W().TxNamed(ctx, "backup.pruned", func(tx *store.Tx) error {
 			if _, err := tx.Q.MarkBackupDeleted(ctx, db.MarkBackupDeletedParams{DeletedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: e.ID}); err != nil {
 				return err

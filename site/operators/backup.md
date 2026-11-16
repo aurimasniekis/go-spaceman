@@ -84,6 +84,8 @@ backups:
   interval: 24h          # 15m … 168h
   keep_last: 7           # retention keeps at least the newest 7 complete backups
   max_age: 720h          # and deletes older ones beyond the newest (0: no age limit)
+  stall_timeout: 10m     # fail a backup whose stage makes no progress this long (1m … 24h)
+  max_duration: 1h       # fail a backup that runs longer in total (10m … 72h)
   target: local          # local or s3
   local_dir: /srv/spaceman-backups   # default <data_dir>/backups; use another disk
 ```
@@ -146,6 +148,20 @@ readable by nobody else, and a restore must leave files the service can open.
 the sealed manifest equals `manifest.json`, opens every object and checks its plaintext size and SHA-256, and checks the
 database copy: `PRAGMA integrity_check`, the schema level (a backup from a newer SpaceMan is refused), the KEK that
 wraps the keyring, and the audit chain's hash links and head. A restore always runs the full verification first.
+
+### A backup that stops making progress
+
+A backup runs in stages: `memory_flush`, `snapshot`, `files`, `objects` (an S3 artifact store), `memory`, `manifest`,
+`upload`, `record` and `prune`; a verification runs `fetch`, `verify` and `record`. While one runs,
+`GET /api/v1/system/backups` shows it under `current` (the backup ID, the stage, when the stage started, the files done in
+it and the last progress), and the running item carries its `stage`. Central logs each stage's start and end at Info,
+with the file count and duration, under the `backup.id` field.
+
+A watchdog fails a backup or verification whose stage makes no progress for **10 minutes** (no new stage, no file sealed,
+uploaded or checked, and no bytes moved to or from object storage; `backups.stall_timeout`), or that runs longer than
+**1 hour** in total (`backups.max_duration`; raise it if your backups copy a large S3 artifact store) (ADR-0091). The run is recorded as failed with an error naming the stage, for example `backup stopped in stage upload:
+no progress for 10m0s: …`, and the next backup can start at once. A scheduled backup is retried 15 minutes after a
+failure.
 
 Verify backups regularly and practise a restore on a spare host: a backup you have never restored is a hope, not a plan.
 

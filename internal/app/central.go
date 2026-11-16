@@ -529,7 +529,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	bc := cfg.Backups
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
 		Sources: backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
-		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
+		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(),
+		StallTimeout: bc.StallTimeout.D(), MaxDuration: bc.MaxDuration.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
 		PrepareMemory: c.prepareBackupMemory})
 	c.Fleet.Hub().Usage = usageWithBudgets{Service: c.Usage, limits: c.Limits}
 	c.Schedules = schedule.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, o.Clock, obs.Component(log, "schedule"))
