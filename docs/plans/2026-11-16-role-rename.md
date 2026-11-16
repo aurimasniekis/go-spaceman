@@ -1,13 +1,18 @@
 # Plan: rename a space role safely (API, CLI, admin MCP, Terraform provider)
 
-- **Status:** planning only, with no code changes. The operator still has to answer §8 (Q0–Q5). The ADR text is in §7.
+- **Status:** planning only, with no code changes. Q0–Q5 were decided on 2026-11-16 (§8). The ADR text is in §7
+  (**ADR-0093**).
 - **Goal:** rename a space role (for example `implementor` to `implementor-hard`) without losing its configuration,
   pending work or memory. Today the only way is to delete and recreate the role, and that strands every copy of the
   old name.
 - **Base:** `next/v0.1.9` at 7a68cda6. Every **[code]** fact below was read there. Facts about the provider were read
   on its `main` at 7a2c24c.
 - **Out of scope:** a rename button in the web UI (a follow-up once the API exists), renaming role templates, harness
-  profiles, spaces or instances, and a "delete a role's memory" operation (§8, Q4).
+  profiles, spaces or instances, a "delete a role's memory" operation (§8, Q4) and an "abandon the node move" action
+  (§8, Q3). The last three are follow-ups.
+- **Builds on:** PR #195 (memory conflict folders, ADR-0092, migration 0060), which merges into `next/v0.1.9` first and
+  also changes `internal/memory/memory.go`. `memory_conflicts` is keyed by collection id, so a rename leaves its rows,
+  including the new `folder` column, untouched.
 
 ---
 
@@ -264,11 +269,11 @@ still to report.
 
 ### 3.3 Node memory move: protocol, ordering, failure and retry
 
-**Protocol: new minor (proposed 14, Q0), `MinorRoleRename`.**
+**Protocol: minor 14, `MinorRoleRename`.**
 - Command `memory.rename`: `MemoryRename{RenameID, SpaceID, From, To}`. It is journaled and idempotent like every
   command, and needs a valid lease for the space and generation like every non-stop command.
 - Report `memory.renamed`, node to central: `MemoryRenamed{RenameID, SpaceID, Result: ok|deferred|error, Message}`. The
-  node journals it (agent migration, proposed 0009: `role_renames(rename_id PK, space_id, from, to, state, result,
+  node journals it (agent migration 0009: `role_renames(rename_id PK, space_id, from, to, state, result,
   message, reported_at)`) and resends it on every reconnect until central acknowledges it with `memory.renamed.ack`,
   following the relocation-report pattern. Central handles a duplicate report idempotently.
 - Central creates the command only for a node whose stored `nodes.protocol_minor` is at least the new minor (§3.1 step
@@ -408,17 +413,19 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 ```
 
 ### T-M0: ADR, requirements and docs skeleton (medium, docs only)
-- **Goal:** land §7 in `docs/DECISIONS.md` with the numbers from Q0, and add the requirement IDs (Q0) to
-  `docs/GOAL.md` and `docs/TRACEABILITY.md` (status *planned*).
-- **Files:** `docs/DECISIONS.md`, `docs/GOAL.md`, `docs/TRACEABILITY.md`, `docs/PLAN.md`; this plan (link the ADR).
+- **Goal:** land §7 in `docs/DECISIONS.md` as ADR-0093, and add SM-PROMPT-009 (rename) and SM-MEM-007 (memory move)
+  to `docs/GOAL.md` and `docs/TRACEABILITY.md` (status *planned*). Record the two follow-ups (Q3 abandon the node move,
+  Q5 web UI rename) and the Q4 limitation in `docs/LIMITATIONS.md`.
+- **Files:** `docs/DECISIONS.md`, `docs/GOAL.md`, `docs/TRACEABILITY.md`, `docs/LIMITATIONS.md`, `docs/PLAN.md`; this
+  plan (link the ADR).
 - **Acceptance:** `make site-check` passes; no implementation status is claimed.
-- **Depends on:** the Q0–Q5 answers.
+- **Depends on:** PR #195 merged (it takes ADR-0092).
 
 ### T-H1: transactional rename and name resolution (hard)
 - **Goal:** §3.1 without the node command or the central repository move. Write `node_state` already, but leave
   `central_moved_at` NULL and enqueue nothing.
 - **Files:**
-  - central migration (`space_role_renames`) and `internal/store/queries/catalog.sql` (rewrite queries);
+  - central migration 0061 (`space_role_renames`) and `internal/store/queries/catalog.sql` (rewrite queries);
   - `internal/catalog/config.go` (`RenameSpaceRole`, `CurrentRoleName`);
   - the callers in `internal/control/supervisor.go`, `internal/control/lifecycle.go`, `internal/dream/dream.go` and
     `internal/human/deliver.go`;
@@ -462,7 +469,7 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
   7. A backup taken during a rename succeeds.
   8. Proto round-trip tests pass.
   9. `make check-fast` passes.
-- **Depends on:** T-H1.
+- **Depends on:** T-H1 (and PR #195, which changes `internal/memory/memory.go`).
 - **Risks:**
   - Lock ordering with `Apply`'s per-collection mutex (sort the keys).
   - The backup bundler's path listing.
@@ -590,10 +597,10 @@ Terraform usage.
 
 ## 7. ADR draft
 
-### ADR-00NN — A space role can be renamed in place; live references follow, history stays
+### ADR-0093 — A space role can be renamed in place; live references follow, history stays
 
-- **Status:** Proposed, 2026-11-16. Central migration 00NN (`space_role_renames`), agent migration 00NN (rename results),
-  protocol minor NN (`memory.rename`, `memory.renamed`). New API ops `rename-space-role` and `list-space-role-renames`.
+- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0009 (rename results),
+  protocol minor 14 (`memory.rename`, `memory.renamed`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
 - **Context:** a space role's name is its identity: the primary key of `space_roles`. It is also copied as text into
   grants, pools, KB and dream configuration, schedules, human policies and permissions, open tasks, messages and
   requests, memory collections (including the directory names of the central and node Git repositories) and the history
@@ -638,24 +645,29 @@ Terraform usage.
   - Former names remain in history and in the rename table.
   - An MCP grant on the role is revoked and re-added by Terraform, because grants cannot be edited.
   - A leftover directory under the target name is moved aside to `.retained`, never deleted.
+  - Deleting a role still leaves its memory collection, and that blocks reusing the name as a rename target: pick
+    another name. Deleting or archiving a role's memory is a follow-up.
+  - A node that never comes back keeps the renamed role held. There is no "abandon the node move" action yet; it is a
+    follow-up.
   - A test classifies every role-name column as live or history, so a new column cannot be missed.
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The operation uses the existing role
   write permission, and every rename is audited.
 
 ---
 
-## 8. Questions for control and the operator
+## 8. Decisions (2026-11-16)
 
-- **Q0 (numbers):** confirm the ADR number (next after ADR-0091 is 0092, unless another `next/v0.1.9` plan took it),
-  the central migration (after 0059), the agent migration (after 0008), the protocol minor (after 13), and the
-  requirement IDs (proposed SM-PROMPT-009 for the rename and SM-MEM-007 for the memory move).
-- **Q1:** is refusing a busy role acceptable, rather than "allow, and live runs keep the old name until they end"?
-  (Recommended: refuse.)
-- **Q2:** should `rename-space-role` require step-up (Reauth)? `delete-space-role` does not today. (Recommended: no, to
-  match delete.)
-- **Q3:** a node that never comes back keeps the renamed role held. Should the first version have an operator "abandon
-  the node move" action (the role launches again; memory not yet synced from that node is given up)? (Recommended: not
-  in this version; record it in LIMITATIONS and revisit with node removal.)
-- **Q4:** deleted roles leave their memory collection, which blocks reusing the name as a rename target. Is "pick
-  another name" acceptable for now, with a separate task for deleting or archiving a role's memory? (Recommended: yes.)
-- **Q5:** should the web UI get a rename action in this release, or as a follow-up? (Recommended: follow-up.)
+Control decided every question on 2026-11-16.
+
+- **Q0 (numbers):**
+  - **ADR-0093** and central migration **0061**: PR #195 takes ADR-0092 and migration 0060.
+  - Agent migration **0009**, protocol minor **14**, and requirements **SM-PROMPT-009** and **SM-MEM-007**. All were
+    checked as free on 2026-11-16: no branch has an agent migration 0009 or a `MaxMinor` above 13, and no branch uses
+    either requirement ID. PR #195 adds no protocol minor; it adds only a status field.
+- **Q1:** a busy role is refused, and the error lists the blockers (decision 2).
+- **Q2:** no step-up beyond the existing permission to write a space's configuration (`SpaceConfigWrite`, as for saving
+  and deleting a role). The admin MCP tool stays classified Dangerous.
+- **Q3:** no "abandon the node move" action in this version. It is recorded as a follow-up (T-M0, `LIMITATIONS.md`).
+- **Q4:** accepted for now. A deleted role's leftover memory collection blocks reusing its name as a rename target; the
+  ADR's consequences say so. Deleting or archiving a role's memory is a follow-up.
+- **Q5:** the web UI rename action is a follow-up and is not part of these tasks.
