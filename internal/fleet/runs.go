@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
@@ -134,6 +136,11 @@ type LaunchInput struct {
 	// Dream prepares a dream workspace (set by the dream scheduler, not part of the API).
 	Dream      *proto.DreamSpec `json:"-"`
 	AccountRef string           `json:"account_ref,omitempty"`
+	// RequirePoolMember is set by SpaceMan's own resume, switch and restart launches (not part of the API): the launch
+	// transaction then checks that a named AccountRef is still in the role's pool, so a pool change between the decision
+	// and the launch can't widen the pool (ADR-0090). A ref that left a scoped pool is dropped and the pool picks.
+	// Operator- and API-launched runs that name an account leave it unset and keep the named account.
+	RequirePoolMember bool `json:"-"`
 	// RecordingMaxBytes is the space's recording quota, filled by launch resolution (not part of the API).
 	RecordingMaxBytes int64 `json:"-"`
 	// TerminalSize is the size the run's terminal is held at from the start: the space's terminal_cols and
@@ -285,6 +292,11 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
 			}
 			ref := in.AccountRef
+			if in.RequirePoolMember && ref != "" {
+				if ref, err = poolMemberRef(ctx, tx, spaceID, in.Harness, in.Role, ref, avoid != nil); err != nil {
+					return err
+				}
+			}
 			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, avoid); err != nil {
 				return err
 			}
@@ -1209,4 +1221,28 @@ func (svc *Service) KickSpace(ctx context.Context, spaceID string) {
 	if sp, err := svc.s.R().GetSpace(ctx, spaceID); err == nil {
 		svc.hub.Kick(sp.NodeID)
 	}
+}
+
+// poolMemberRef keeps a named account ref only while it is still in the role's pool. A role with a pool of its own never
+// widens, so a ref that left it is dropped (ADR-0090): with failover on it becomes "" and the pool picks (priority, holds);
+// with failover off, where an unnamed launch would take the space's default, the pool's first account is named. A role
+// without a pool of its own keeps the ref; an empty pool refuses the launch.
+func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref string, failover bool) (string, error) {
+	scoped, err := accounts.RoleScoped(ctx, tx, spaceID, harness, role)
+	if err != nil || !scoped {
+		return ref, err
+	}
+	pool, err := accounts.PoolAccounts(ctx, tx, spaceID, harness, role)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case slices.Contains(pool, ref):
+		return ref, nil
+	case failover:
+		return "", nil
+	case len(pool) > 0:
+		return pool[0], nil
+	}
+	return "", apperr.New(apperr.CodePrecondition, "no enabled %s account of role %q's pool is usable; enable one or change the role's pool", harness, role)
 }

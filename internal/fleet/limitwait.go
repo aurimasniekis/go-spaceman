@@ -1043,7 +1043,7 @@ func waitLaunch(w db.LimitWait, fresh bool) (LaunchInput, error) {
 		return LaunchInput{}, fmt.Errorf("limit wait %s: launch: %w", w.ID, err)
 	}
 	in := LaunchInput{Kind: w.RunKind, Role: w.Role, Harness: w.Harness, InstanceID: w.InstanceID, Model: spec.Model, Settings: spec.Settings,
-		Workspace: spec.Workspace, Worktree: spec.Worktree, AccountRef: spec.AccountRef, Prompt: resumePrompt}
+		Workspace: spec.Workspace, Worktree: spec.Worktree, AccountRef: spec.AccountRef, Prompt: resumePrompt, RequirePoolMember: true}
 	again := freshPrompt
 	if w.SwitchToAccountID != "" {
 		// An account switch (ADR-0090): the launch names the target; the launch transaction still resolves it.
