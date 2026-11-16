@@ -300,3 +300,20 @@ func TestStoreCardThread(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreCursorsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := notify.StoreCursors{S: storetest.Open(t)}
+	if _, _, ok, err := c.Load(ctx); err != nil || ok {
+		t.Fatalf("Load before any save = ok %v, %v", ok, err)
+	}
+	at := time.UnixMicro(1_700_000_000_123_456)
+	for _, seq := range []int64{7, 9} {
+		if err := c.Save(ctx, seq, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if seq, got, ok, err := c.Load(ctx); err != nil || !ok || seq != 9 || !got.Equal(at) {
+		t.Errorf("Load = %d, %v, %v, %v; want 9 at %v", seq, got, ok, err, at)
+	}
+}

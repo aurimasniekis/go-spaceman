@@ -75,6 +75,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Telegram notifications are no longer lost for changes made while central starts or while it is restarting: the
+  notifier reads its start position before the listener starts, and resumes from a saved position (up to 5 minutes
+  old) after a restart (ADR-0089 follow-up).
 - The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
   harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
   late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.

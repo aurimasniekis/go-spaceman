@@ -122,6 +122,25 @@ type Feed interface {
 	After(ctx context.Context, after int64, limit int) ([]changefeed.Change, error)
 }
 
+// Cursors keeps the change-feed position across restarts, so the changes made while central was down are delivered
+// when it starts again (bounded: see Options.MaxReplay).
+type Cursors interface {
+	// Load returns the saved position and when it was saved; ok is false when none was.
+	Load(ctx context.Context) (seq int64, at time.Time, ok bool, err error)
+	Save(ctx context.Context, seq int64, at time.Time) error
+}
+
+const (
+	// DefaultMaxReplay is how old a saved position may be and still be resumed from; an older one starts at the newest
+	// change, so a long outage doesn't flood a chat with history.
+	DefaultMaxReplay = 5 * time.Minute
+	// cursorEvery is the least time between two saves of an unchanged position: the save time is what tells a restart
+	// how long it was down, so an idle central keeps it fresh.
+	cursorEvery = time.Minute
+	// saveGrace bounds the save at shutdown.
+	saveGrace = 5 * time.Second
+)
+
 // Authorizer is the authorization engine's in-memory check.
 type Authorizer interface {
 	AllowedAll(subjects []string, domain string, perm authz.Permission) bool
@@ -176,6 +195,10 @@ type Options struct {
 	// Now is the clock (default time.Now); After waits (default time.After; tests pass one they control).
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
+	// Cursors persists the change-feed position (nil: every start begins at the newest change). MaxReplay is how old a
+	// saved position may be to resume from it (default DefaultMaxReplay).
+	Cursors   Cursors
+	MaxReplay time.Duration
 	// FlushEvery and FlushRows bound the mapping writes (default 1 s and 100 rows).
 	FlushEvery time.Duration
 	FlushRows  int
@@ -193,8 +216,11 @@ type Notifier struct {
 	notices *notices
 	home    *home
 
-	cursor int64 // Prime sets it before Run starts; after that only the Run goroutine touches it
-	primed bool  // Prime read the start position, so Run starts from cursor instead of reading Latest
+	cursor   int64 // Prime sets it before Run starts; after that only the Run goroutine touches it
+	primed   bool  // Prime read the start position, so Run starts from cursor instead of reading Latest
+	started  bool  // the start position is known (Run goroutine, after Prime)
+	savedSeq int64 // the position last written to Cursors, and when
+	savedAt  time.Time
 
 	sweepNow  chan struct{} // the link list was reloaded: sweep (see kickSweep)
 	ready     chan struct{} // closed once Run has subscribed and read its start position
@@ -221,6 +247,9 @@ func New(o Options) *Notifier {
 	if o.HomeAfter == nil {
 		o.HomeAfter = time.After
 	}
+	if o.MaxReplay <= 0 {
+		o.MaxReplay = DefaultMaxReplay
+	}
 	if o.FlushRows <= 0 {
 		o.FlushRows = 100
 	}
@@ -236,12 +265,51 @@ func (n *Notifier) Ready() <-chan struct{} { return n.ready }
 // anything that can change data (the HTTP listener, the recover passes, the deadline loop), and starts Run later. A
 // failed Prime leaves Run to read the start position itself, as before. It must finish before Run starts.
 func (n *Notifier) Prime(ctx context.Context) error {
-	latest, err := n.o.Feed.Latest(ctx)
+	pos, err := n.startPosition(ctx)
 	if err != nil {
 		return err
 	}
-	n.cursor, n.primed = latest, true
+	n.cursor, n.primed = pos, true
 	return nil
+}
+
+// startPosition is where the feed is followed from: the saved position when it is recent enough (changes made while
+// central was down are delivered), the newest change otherwise. A saved position beyond the newest change comes from a
+// restore from backup, and is dropped.
+func (n *Notifier) startPosition(ctx context.Context) (int64, error) {
+	latest, err := n.o.Feed.Latest(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if n.o.Cursors == nil {
+		return latest, nil
+	}
+	seq, at, ok, err := n.o.Cursors.Load(ctx)
+	if err != nil {
+		n.log.Warn("telegram notifier: reading the saved position failed", slog.String("error", err.Error()))
+		return latest, nil
+	}
+	if age := n.o.Now().Sub(at); !ok || seq > latest || age < 0 || age > n.o.MaxReplay {
+		return latest, nil
+	}
+	n.savedSeq, n.savedAt = seq, at
+	return seq, nil
+}
+
+// saveCursor writes the position when it moved, or when the last write is old (force: always).
+func (n *Notifier) saveCursor(ctx context.Context, force bool) {
+	if n.o.Cursors == nil || !n.started {
+		return
+	}
+	now := n.o.Now()
+	if !force && n.cursor == n.savedSeq && now.Sub(n.savedAt) < cursorEvery {
+		return
+	}
+	if err := n.o.Cursors.Save(ctx, n.cursor, now); err != nil {
+		n.log.Warn("telegram notifier: saving the position failed", slog.String("error", err.Error()))
+		return
+	}
+	n.savedSeq, n.savedAt = n.cursor, now
 }
 
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
@@ -256,21 +324,27 @@ func (n *Notifier) Run(ctx context.Context) error {
 	n.o.Links.afterReload = n.kickSweep
 	n.o.Links.Start(ctx)
 	defer n.flush(context.WithoutCancel(ctx)) //nolint:contextcheck // the last mappings are written after shutdown
+	// The position is saved last: what wasn't processed before ctx ended (a window still being collected, queued
+	// sends the sender drops at shutdown) is after it, and the next start delivers it within the replay bound.
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveGrace)
+		defer cancel()
+		n.saveCursor(sctx, true)
+	}()
 
-	var started bool
 	retry := time.NewTicker(10 * time.Second)
 	defer retry.Stop()
 	start := func() {
-		latest, err := n.o.Feed.Latest(ctx)
+		pos, err := n.startPosition(ctx)
 		if err != nil {
 			n.log.Warn("telegram notifier: reading the newest change failed", slog.String("error", err.Error()))
 			return
 		}
-		n.cursor, started = latest, true
+		n.cursor, n.started = pos, true
 		n.readyOnce.Do(func() { close(n.ready) })
 	}
 	if n.primed {
-		started = true
+		n.started = true
 		n.readyOnce.Do(func() { close(n.ready) }) // subscribed above, and the start position is Prime's
 	} else {
 		start()
@@ -299,10 +373,11 @@ func (n *Notifier) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-flush.C:
 			n.flush(ctx)
+			n.saveCursor(ctx, false)
 		case <-n.cards.full:
 			n.flush(ctx)
 		case <-retry.C:
-			if !started {
+			if !n.started {
 				start()
 			}
 			n.loadNotices(ctx)
@@ -330,7 +405,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if !started {
+			if !n.started {
 				start()
 				continue // history before the start position isn't replayed
 			}

@@ -1196,7 +1196,7 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		NeedsLink:   func() string { return c.telegramStartAppLink("needs") },
 		SpaceLink:   func(spaceID string) string { return c.telegramStartAppLink("space-" + spaceID) },
 		BotUsername: func() string { return c.TelegramBot.Username() },
-		Store:       tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
+		Store:       tgnotify.StoreMappings{S: c.Store}, Cursors: tgnotify.StoreCursors{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
 		// A human action's card opens the action in the Mini App (the chat's forms use the same URL); other cards have no
 		// Open in app button.
 		ItemURL: c.cardAppURL})

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -321,4 +322,37 @@ func messageState(st string) string {
 		return "Resolved"
 	}
 	return ""
+}
+
+// StoreCursors keeps the notifier's change-feed position in the settings table, as "<seq>:<saved at, unix µs>".
+type StoreCursors struct{ S *store.Store }
+
+const cursorSetting = "telegram.notifier_cursor"
+
+// Load returns the saved position; an absent or unreadable value is "none saved".
+func (c StoreCursors) Load(ctx context.Context) (int64, time.Time, bool, error) {
+	row, err := c.S.R().GetSetting(ctx, cursorSetting)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, time.Time{}, false, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, false, err
+	}
+	seqS, atS, found := strings.Cut(row.Value, ":")
+	if !found {
+		return 0, time.Time{}, false, nil
+	}
+	seq, err1 := strconv.ParseInt(seqS, 10, 64)
+	at, err2 := strconv.ParseInt(atS, 10, 64)
+	if err1 != nil || err2 != nil || seq < 0 {
+		return 0, time.Time{}, false, nil
+	}
+	return seq, time.UnixMicro(at), true, nil
+}
+
+// Save writes the position.
+func (c StoreCursors) Save(ctx context.Context, seq int64, at time.Time) error {
+	return c.S.W().TxNamed(ctx, "telegram.cursor", func(tx *store.Tx) error {
+		return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: cursorSetting, Value: fmt.Sprintf("%d:%d", seq, at.UnixMicro()), UpdatedAt: at.UnixMicro()})
+	})
 }
