@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   marks a run whose launch is still in flight as lost or failed: it leaves those alone and re-checks the runner for the
   others before judging them. Before, a reconcile that landed between the journal's run and the process start ended the
   run, so its bridge calls answered "run is not active".
+- `Agent.Run` now waits (up to 10 s) for the runner monitor to stop before it returns, so the monitor cannot still be
+  reading agent state, or a package variable a test restores, after shutdown (a data race in `TestStopFailureStartsLimitScan`).
 - A bridge hook's refusal now carries the agent's reason, instead of only "refused the hook data".
 
 ## [0.1.9] - 2026-11-16

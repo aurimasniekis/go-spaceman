@@ -281,7 +281,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	var claudeWG sync.WaitGroup
 	defer claudeWG.Wait()
 	a.startClaude(ctx, &claudeWG)
-	go a.monitor(ctx)
+	// Run returns after the monitor does (bounded): it reacts to runner events with the agent's state, and a Run that
+	// had returned must not leave it still reading what the caller restores or tears down next.
+	monitorDone := make(chan struct{})
+	defer func() {
+		select {
+		case <-monitorDone:
+		case <-time.After(10 * time.Second):
+			a.log.Warn("the runner monitor did not stop")
+		}
+	}()
+	go func() { defer close(monitorDone); a.monitor(ctx) }()
 	go a.enforce(ctx)
 	go a.capsLoop(ctx)
 	go a.pruneLoop(ctx)
