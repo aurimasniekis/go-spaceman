@@ -63,6 +63,32 @@ func (q *Queries) DeleteSpaceRole(ctx context.Context, arg DeleteSpaceRoleParams
 	return result.RowsAffected()
 }
 
+const getMemoryCollectionByRole = `-- name: GetMemoryCollectionByRole :one
+SELECT id, space_id, role, head, head_at, node_status_json, status_at, created_at, updated_at FROM memory_collections WHERE space_id = ? AND role = ?
+`
+
+type GetMemoryCollectionByRoleParams struct {
+	SpaceID string
+	Role    string
+}
+
+func (q *Queries) GetMemoryCollectionByRole(ctx context.Context, arg GetMemoryCollectionByRoleParams) (MemoryCollection, error) {
+	row := q.db.QueryRowContext(ctx, getMemoryCollectionByRole, arg.SpaceID, arg.Role)
+	var i MemoryCollection
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Role,
+		&i.Head,
+		&i.HeadAt,
+		&i.NodeStatusJson,
+		&i.StatusAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getProfile = `-- name: GetProfile :one
 SELECT id, slug, name, harness, model, settings_json, description, revision, created_at, created_by, updated_at, version, claude_settings_json, harness_version FROM harness_profiles WHERE id = ?
 `
@@ -271,6 +297,29 @@ func (q *Queries) GetSpaceRole(ctx context.Context, arg GetSpaceRoleParams) (Spa
 	return i, err
 }
 
+const getSpaceRoleRename = `-- name: GetSpaceRoleRename :one
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames WHERE id = ?
+`
+
+func (q *Queries) GetSpaceRoleRename(ctx context.Context, id string) (SpaceRoleRename, error) {
+	row := q.db.QueryRowContext(ctx, getSpaceRoleRename, id)
+	var i SpaceRoleRename
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.FromName,
+		&i.ToName,
+		&i.RenamedAt,
+		&i.RenamedBy,
+		&i.NodeID,
+		&i.NodeState,
+		&i.NodeMessage,
+		&i.NodeDoneAt,
+		&i.CentralMovedAt,
+	)
+	return i, err
+}
+
 const insertProfile = `-- name: InsertProfile :exec
 INSERT INTO harness_profiles (id, slug, name, harness, model, settings_json, claude_settings_json, harness_version, description, created_at, created_by,
   updated_at)
@@ -414,6 +463,38 @@ func (q *Queries) InsertRoleTemplate(ctx context.Context, arg InsertRoleTemplate
 	return err
 }
 
+const insertSpaceRoleRename = `-- name: InsertSpaceRoleRename :exec
+
+INSERT INTO space_role_renames (id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertSpaceRoleRenameParams struct {
+	ID        string
+	SpaceID   string
+	FromName  string
+	ToName    string
+	RenamedAt int64
+	RenamedBy string
+	NodeID    string
+	NodeState string
+}
+
+// Space role renames (ADR-0093). Every rewrite is scoped to one space and one name; the rename transaction runs them.
+func (q *Queries) InsertSpaceRoleRename(ctx context.Context, arg InsertSpaceRoleRenameParams) error {
+	_, err := q.db.ExecContext(ctx, insertSpaceRoleRename,
+		arg.ID,
+		arg.SpaceID,
+		arg.FromName,
+		arg.ToName,
+		arg.RenamedAt,
+		arg.RenamedBy,
+		arg.NodeID,
+		arg.NodeState,
+	)
+	return err
+}
+
 const latestPromptVersion = `-- name: LatestPromptVersion :one
 SELECT id, prompt_id, number, state, body, extends, notes, created_at, created_by, published_at, published_by, updated_at, version FROM prompt_versions WHERE prompt_id = ? AND state = 'published' ORDER BY number DESC LIMIT 1
 `
@@ -437,6 +518,75 @@ func (q *Queries) LatestPromptVersion(ctx context.Context, promptID string) (Pro
 		&i.Version,
 	)
 	return i, err
+}
+
+const latestSpaceRoleRenameFrom = `-- name: LatestSpaceRoleRenameFrom :one
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames WHERE space_id = ? AND from_name = ? ORDER BY renamed_at DESC, id DESC LIMIT 1
+`
+
+type LatestSpaceRoleRenameFromParams struct {
+	SpaceID  string
+	FromName string
+}
+
+// The latest rename away from a name: where a former name went last (a name can be renamed away, reused and renamed
+// away again).
+func (q *Queries) LatestSpaceRoleRenameFrom(ctx context.Context, arg LatestSpaceRoleRenameFromParams) (SpaceRoleRename, error) {
+	row := q.db.QueryRowContext(ctx, latestSpaceRoleRenameFrom, arg.SpaceID, arg.FromName)
+	var i SpaceRoleRename
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.FromName,
+		&i.ToName,
+		&i.RenamedAt,
+		&i.RenamedBy,
+		&i.NodeID,
+		&i.NodeState,
+		&i.NodeMessage,
+		&i.NodeDoneAt,
+		&i.CentralMovedAt,
+	)
+	return i, err
+}
+
+const listPendingSpaceRoleRenames = `-- name: ListPendingSpaceRoleRenames :many
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames WHERE space_id = ? AND node_state = 'pending' ORDER BY renamed_at, id
+`
+
+func (q *Queries) ListPendingSpaceRoleRenames(ctx context.Context, spaceID string) ([]SpaceRoleRename, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingSpaceRoleRenames, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceRoleRename{}
+	for rows.Next() {
+		var i SpaceRoleRename
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.FromName,
+			&i.ToName,
+			&i.RenamedAt,
+			&i.RenamedBy,
+			&i.NodeID,
+			&i.NodeState,
+			&i.NodeMessage,
+			&i.NodeDoneAt,
+			&i.CentralMovedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProfiles = `-- name: ListProfiles :many
@@ -604,6 +754,89 @@ func (q *Queries) ListRoleTemplates(ctx context.Context) ([]RoleTemplate, error)
 	return items, nil
 }
 
+const listSpaceRoleRenames = `-- name: ListSpaceRoleRenames :many
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames WHERE space_id = ? ORDER BY renamed_at DESC, id DESC
+`
+
+func (q *Queries) ListSpaceRoleRenames(ctx context.Context, spaceID string) ([]SpaceRoleRename, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceRoleRenames, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceRoleRename{}
+	for rows.Next() {
+		var i SpaceRoleRename
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.FromName,
+			&i.ToName,
+			&i.RenamedAt,
+			&i.RenamedBy,
+			&i.NodeID,
+			&i.NodeState,
+			&i.NodeMessage,
+			&i.NodeDoneAt,
+			&i.CentralMovedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpaceRoleRenamesTo = `-- name: ListSpaceRoleRenamesTo :many
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames WHERE space_id = ? AND to_name = ? ORDER BY renamed_at DESC, id DESC
+`
+
+type ListSpaceRoleRenamesToParams struct {
+	SpaceID string
+	ToName  string
+}
+
+func (q *Queries) ListSpaceRoleRenamesTo(ctx context.Context, arg ListSpaceRoleRenamesToParams) ([]SpaceRoleRename, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceRoleRenamesTo, arg.SpaceID, arg.ToName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceRoleRename{}
+	for rows.Next() {
+		var i SpaceRoleRename
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.FromName,
+			&i.ToName,
+			&i.RenamedAt,
+			&i.RenamedBy,
+			&i.NodeID,
+			&i.NodeState,
+			&i.NodeMessage,
+			&i.NodeDoneAt,
+			&i.CentralMovedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSpaceRoles = `-- name: ListSpaceRoles :many
 SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version, skills_json FROM space_roles WHERE space_id = ? ORDER BY name
 `
@@ -647,6 +880,79 @@ func (q *Queries) ListSpaceRoles(ctx context.Context, spaceID string) ([]SpaceRo
 	return items, nil
 }
 
+const nextSpaceRoleRenameFrom = `-- name: NextSpaceRoleRenameFrom :one
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames
+WHERE space_id = ?1 AND from_name = ?2
+  AND (renamed_at > ?3 OR (renamed_at = ?3 AND id > ?4))
+ORDER BY renamed_at, id LIMIT 1
+`
+
+type NextSpaceRoleRenameFromParams struct {
+	SpaceID  string
+	FromName string
+	AfterAt  int64
+	AfterID  string
+}
+
+// The first rename away from a name after a given rename (renamed_at, id): the next step of a chain. A rename before
+// it belongs to an earlier holder of the name.
+func (q *Queries) NextSpaceRoleRenameFrom(ctx context.Context, arg NextSpaceRoleRenameFromParams) (SpaceRoleRename, error) {
+	row := q.db.QueryRowContext(ctx, nextSpaceRoleRenameFrom,
+		arg.SpaceID,
+		arg.FromName,
+		arg.AfterAt,
+		arg.AfterID,
+	)
+	var i SpaceRoleRename
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.FromName,
+		&i.ToName,
+		&i.RenamedAt,
+		&i.RenamedBy,
+		&i.NodeID,
+		&i.NodeState,
+		&i.NodeMessage,
+		&i.NodeDoneAt,
+		&i.CentralMovedAt,
+	)
+	return i, err
+}
+
+const pendingRoleRenameHold = `-- name: PendingRoleRenameHold :one
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames
+WHERE space_id = ?1 AND node_state = 'pending' AND (to_name = ?2 OR from_name = ?2 OR CAST(?3 AS INTEGER) = 1)
+ORDER BY renamed_at, id LIMIT 1
+`
+
+type PendingRoleRenameHoldParams struct {
+	SpaceID string
+	Role    string
+	Dream   int64
+}
+
+// The launch hold (ADR-0093): a pending rename holds launches of its new name, of its old name (the node's directory
+// of that name is the one still to move) and dream launches in the space.
+func (q *Queries) PendingRoleRenameHold(ctx context.Context, arg PendingRoleRenameHoldParams) (SpaceRoleRename, error) {
+	row := q.db.QueryRowContext(ctx, pendingRoleRenameHold, arg.SpaceID, arg.Role, arg.Dream)
+	var i SpaceRoleRename
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.FromName,
+		&i.ToName,
+		&i.RenamedAt,
+		&i.RenamedBy,
+		&i.NodeID,
+		&i.NodeState,
+		&i.NodeMessage,
+		&i.NodeDoneAt,
+		&i.CentralMovedAt,
+	)
+	return i, err
+}
+
 const publishPromptVersion = `-- name: PublishPromptVersion :execrows
 UPDATE prompt_versions SET state = 'published', number = ?1, published_at = ?2, published_by = ?3,
   version = version + 1, updated_at = ?2
@@ -673,6 +979,901 @@ func (q *Queries) PublishPromptVersion(ctx context.Context, arg PublishPromptVer
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const renameRoleAccounts = `-- name: RenameRoleAccounts :execrows
+UPDATE space_role_accounts SET role = ?1 WHERE space_id = ?2 AND role = ?3
+`
+
+type RenameRoleAccountsParams struct {
+	ToName   string
+	SpaceID  string
+	FromName string
+}
+
+func (q *Queries) RenameRoleAccounts(ctx context.Context, arg RenameRoleAccountsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameRoleAccounts, arg.ToName, arg.SpaceID, arg.FromName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const renameRoleDreamConfigs = `-- name: RenameRoleDreamConfigs :many
+UPDATE dream_configs SET space_role = ?1, version = version + 1, updated_at = ?2
+WHERE space_id = ?3 AND space_role = ?4 RETURNING id, version
+`
+
+type RenameRoleDreamConfigsParams struct {
+	ToName   string
+	Now      int64
+	SpaceID  string
+	FromName string
+}
+
+type RenameRoleDreamConfigsRow struct {
+	ID      string
+	Version int64
+}
+
+func (q *Queries) RenameRoleDreamConfigs(ctx context.Context, arg RenameRoleDreamConfigsParams) ([]RenameRoleDreamConfigsRow, error) {
+	rows, err := q.db.QueryContext(ctx, renameRoleDreamConfigs,
+		arg.ToName,
+		arg.Now,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RenameRoleDreamConfigsRow{}
+	for rows.Next() {
+		var i RenameRoleDreamConfigsRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameRoleHumanPolicies = `-- name: RenameRoleHumanPolicies :many
+UPDATE human_policies SET successor_role = ?1, version = version + 1, updated_at = ?2, updated_by = ?3
+WHERE space_id = ?4 AND successor_role = ?5 RETURNING id, version
+`
+
+type RenameRoleHumanPoliciesParams struct {
+	ToName   string
+	Now      int64
+	By       string
+	SpaceID  sql.NullString
+	FromName string
+}
+
+type RenameRoleHumanPoliciesRow struct {
+	ID      string
+	Version int64
+}
+
+func (q *Queries) RenameRoleHumanPolicies(ctx context.Context, arg RenameRoleHumanPoliciesParams) ([]RenameRoleHumanPoliciesRow, error) {
+	rows, err := q.db.QueryContext(ctx, renameRoleHumanPolicies,
+		arg.ToName,
+		arg.Now,
+		arg.By,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RenameRoleHumanPoliciesRow{}
+	for rows.Next() {
+		var i RenameRoleHumanPoliciesRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameRoleKBRepos = `-- name: RenameRoleKBRepos :many
+UPDATE kb_repos SET space_role = ?1, version = version + 1, updated_at = ?2
+WHERE space_id = ?3 AND space_role = ?4 RETURNING id, version
+`
+
+type RenameRoleKBReposParams struct {
+	ToName   string
+	Now      int64
+	SpaceID  string
+	FromName string
+}
+
+type RenameRoleKBReposRow struct {
+	ID      string
+	Version int64
+}
+
+func (q *Queries) RenameRoleKBRepos(ctx context.Context, arg RenameRoleKBReposParams) ([]RenameRoleKBReposRow, error) {
+	rows, err := q.db.QueryContext(ctx, renameRoleKBRepos,
+		arg.ToName,
+		arg.Now,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RenameRoleKBReposRow{}
+	for rows.Next() {
+		var i RenameRoleKBReposRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameRoleMCPGrants = `-- name: RenameRoleMCPGrants :many
+
+UPDATE mcp_grants SET role = ?1 WHERE space_id = ?2 AND role = ?3 RETURNING id, server_id
+`
+
+type RenameRoleMCPGrantsParams struct {
+	ToName   string
+	SpaceID  string
+	FromName string
+}
+
+type RenameRoleMCPGrantsRow struct {
+	ID       string
+	ServerID string
+}
+
+// Live references: plain columns.
+func (q *Queries) RenameRoleMCPGrants(ctx context.Context, arg RenameRoleMCPGrantsParams) ([]RenameRoleMCPGrantsRow, error) {
+	rows, err := q.db.QueryContext(ctx, renameRoleMCPGrants, arg.ToName, arg.SpaceID, arg.FromName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RenameRoleMCPGrantsRow{}
+	for rows.Next() {
+		var i RenameRoleMCPGrantsRow
+		if err := rows.Scan(&i.ID, &i.ServerID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameRoleMemoryCollection = `-- name: RenameRoleMemoryCollection :many
+UPDATE memory_collections SET role = ?1, updated_at = ?2
+WHERE space_id = ?3 AND role = ?4 RETURNING id
+`
+
+type RenameRoleMemoryCollectionParams struct {
+	ToName   string
+	Now      int64
+	SpaceID  string
+	FromName string
+}
+
+func (q *Queries) RenameRoleMemoryCollection(ctx context.Context, arg RenameRoleMemoryCollectionParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, renameRoleMemoryCollection,
+		arg.ToName,
+		arg.Now,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameRoleOpenKBRequests = `-- name: RenameRoleOpenKBRequests :execrows
+UPDATE kb_requests SET requester_role = ?1, updated_at = ?2
+WHERE space_id = ?3 AND requester_role = ?4 AND state IN ('queued', 'dispatched')
+  AND xspace_request_id = ''
+`
+
+type RenameRoleOpenKBRequestsParams struct {
+	ToName   string
+	Now      int64
+	SpaceID  string
+	FromName string
+}
+
+func (q *Queries) RenameRoleOpenKBRequests(ctx context.Context, arg RenameRoleOpenKBRequestsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameRoleOpenKBRequests,
+		arg.ToName,
+		arg.Now,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const renameRoleOpenTasks = `-- name: RenameRoleOpenTasks :many
+UPDATE tasks SET assignee_role = ?1, version = version + 1, updated_at = ?2
+WHERE space_id = ?3 AND assignee_role = ?4 AND status NOT IN ('done', 'failed', 'cancelled')
+RETURNING id, version
+`
+
+type RenameRoleOpenTasksParams struct {
+	ToName   string
+	Now      int64
+	SpaceID  string
+	FromName string
+}
+
+type RenameRoleOpenTasksRow struct {
+	ID      string
+	Version int64
+}
+
+// Open tasks only: a done, failed or cancelled task keeps the name it was worked under.
+func (q *Queries) RenameRoleOpenTasks(ctx context.Context, arg RenameRoleOpenTasksParams) ([]RenameRoleOpenTasksRow, error) {
+	rows, err := q.db.QueryContext(ctx, renameRoleOpenTasks,
+		arg.ToName,
+		arg.Now,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RenameRoleOpenTasksRow{}
+	for rows.Next() {
+		var i RenameRoleOpenTasksRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameRolePendingHumanNotifications = `-- name: RenameRolePendingHumanNotifications :execrows
+UPDATE human_notifications SET target_role = ?1
+WHERE space_id = ?2 AND target_role = ?3 AND state = 'pending'
+`
+
+type RenameRolePendingHumanNotificationsParams struct {
+	ToName   string
+	SpaceID  string
+	FromName string
+}
+
+func (q *Queries) RenameRolePendingHumanNotifications(ctx context.Context, arg RenameRolePendingHumanNotificationsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameRolePendingHumanNotifications, arg.ToName, arg.SpaceID, arg.FromName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const renameRolePendingMessages = `-- name: RenameRolePendingMessages :many
+UPDATE messages SET to_id = ?1, version = version + 1
+WHERE space_id = ?2 AND to_kind = 'role' AND to_id = ?3 AND state IN ('stored', 'available')
+RETURNING id, version
+`
+
+type RenameRolePendingMessagesParams struct {
+	ToName   string
+	SpaceID  string
+	FromName string
+}
+
+type RenameRolePendingMessagesRow struct {
+	ID      string
+	Version int64
+}
+
+// Messages to the role not yet acknowledged (including a future deliver_at).
+func (q *Queries) RenameRolePendingMessages(ctx context.Context, arg RenameRolePendingMessagesParams) ([]RenameRolePendingMessagesRow, error) {
+	rows, err := q.db.QueryContext(ctx, renameRolePendingMessages, arg.ToName, arg.SpaceID, arg.FromName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RenameRolePendingMessagesRow{}
+	for rows.Next() {
+		var i RenameRolePendingMessagesRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameRoleSchedules = `-- name: RenameRoleSchedules :many
+UPDATE space_schedules SET assignee_role = ?1, version = version + 1, updated_at = ?2
+WHERE space_id = ?3 AND assignee_role = ?4 RETURNING id, version
+`
+
+type RenameRoleSchedulesParams struct {
+	ToName   string
+	Now      int64
+	SpaceID  string
+	FromName string
+}
+
+type RenameRoleSchedulesRow struct {
+	ID      string
+	Version int64
+}
+
+func (q *Queries) RenameRoleSchedules(ctx context.Context, arg RenameRoleSchedulesParams) ([]RenameRoleSchedulesRow, error) {
+	rows, err := q.db.QueryContext(ctx, renameRoleSchedules,
+		arg.ToName,
+		arg.Now,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RenameRoleSchedulesRow{}
+	for rows.Next() {
+		var i RenameRoleSchedulesRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameSpaceRoleRow = `-- name: RenameSpaceRoleRow :execrows
+UPDATE space_roles SET name = ?1, revision = revision + 1, version = version + 1, updated_at = ?2
+WHERE space_id = ?3 AND name = ?4
+`
+
+type RenameSpaceRoleRowParams struct {
+	ToName   string
+	Now      int64
+	SpaceID  string
+	FromName string
+}
+
+func (q *Queries) RenameSpaceRoleRow(ctx context.Context, arg RenameSpaceRoleRowParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameSpaceRoleRow,
+		arg.ToName,
+		arg.Now,
+		arg.SpaceID,
+		arg.FromName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const roleListsDreamConfigs = `-- name: RoleListsDreamConfigs :many
+SELECT id, memory_roles_json, transcript_roles_json FROM dream_configs WHERE space_id = ? ORDER BY id
+`
+
+type RoleListsDreamConfigsRow struct {
+	ID                  string
+	MemoryRolesJson     string
+	TranscriptRolesJson string
+}
+
+func (q *Queries) RoleListsDreamConfigs(ctx context.Context, spaceID string) ([]RoleListsDreamConfigsRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleListsDreamConfigs, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleListsDreamConfigsRow{}
+	for rows.Next() {
+		var i RoleListsDreamConfigsRow
+		if err := rows.Scan(&i.ID, &i.MemoryRolesJson, &i.TranscriptRolesJson); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleListsHumanTypePermissions = `-- name: RoleListsHumanTypePermissions :many
+SELECT action_type, agent_roles_json FROM space_human_type_permissions WHERE space_id = ? ORDER BY action_type
+`
+
+type RoleListsHumanTypePermissionsRow struct {
+	ActionType     string
+	AgentRolesJson string
+}
+
+func (q *Queries) RoleListsHumanTypePermissions(ctx context.Context, spaceID string) ([]RoleListsHumanTypePermissionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleListsHumanTypePermissions, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleListsHumanTypePermissionsRow{}
+	for rows.Next() {
+		var i RoleListsHumanTypePermissionsRow
+		if err := rows.Scan(&i.ActionType, &i.AgentRolesJson); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleListsKBRepos = `-- name: RoleListsKBRepos :many
+
+SELECT id, allowed_roles_json FROM kb_repos WHERE space_id = ? ORDER BY id
+`
+
+type RoleListsKBReposRow struct {
+	ID               string
+	AllowedRolesJson string
+}
+
+// Live references: JSON arrays of role names, rewritten in Go (catalog.renameInList) so they stay byte-identical to
+// what a save writes.
+func (q *Queries) RoleListsKBRepos(ctx context.Context, spaceID string) ([]RoleListsKBReposRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleListsKBRepos, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleListsKBReposRow{}
+	for rows.Next() {
+		var i RoleListsKBReposRow
+		if err := rows.Scan(&i.ID, &i.AllowedRolesJson); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenameGrantCollisions = `-- name: RoleRenameGrantCollisions :many
+SELECT a.server_id FROM mcp_grants a JOIN mcp_grants b ON b.server_id = a.server_id AND b.space_id = a.space_id AND b.role = ?1
+WHERE a.space_id = ?2 AND a.role = ?3 ORDER BY a.server_id
+`
+
+type RoleRenameGrantCollisionsParams struct {
+	ToName   string
+	SpaceID  string
+	FromName string
+}
+
+// Collisions with leftovers of a deleted role of the target name (a grant on the same server, a pool entry for the same
+// account): the rename refuses them rather than merging.
+func (q *Queries) RoleRenameGrantCollisions(ctx context.Context, arg RoleRenameGrantCollisionsParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenameGrantCollisions, arg.ToName, arg.SpaceID, arg.FromName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var server_id string
+		if err := rows.Scan(&server_id); err != nil {
+			return nil, err
+		}
+		items = append(items, server_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenameLiveRuns = `-- name: RoleRenameLiveRuns :many
+SELECT id, observed FROM runs
+WHERE space_id = ?1 AND role = ?2 AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+ORDER BY created_at, id
+`
+
+type RoleRenameLiveRunsParams struct {
+	SpaceID string
+	Role    string
+}
+
+type RoleRenameLiveRunsRow struct {
+	ID       string
+	Observed string
+}
+
+// Blockers: what keeps a role busy. A live run is one not observed ended (fleet.Live); desired is not consulted,
+// because a run that ended on its own keeps desired = 'running'.
+func (q *Queries) RoleRenameLiveRuns(ctx context.Context, arg RoleRenameLiveRunsParams) ([]RoleRenameLiveRunsRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenameLiveRuns, arg.SpaceID, arg.Role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleRenameLiveRunsRow{}
+	for rows.Next() {
+		var i RoleRenameLiveRunsRow
+		if err := rows.Scan(&i.ID, &i.Observed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenameOpenAccountSwitches = `-- name: RoleRenameOpenAccountSwitches :many
+SELECT id, state FROM account_switches WHERE space_id = ? AND role = ? AND state IN ('pending', 'parked', 'resumed') ORDER BY created_at, id
+`
+
+type RoleRenameOpenAccountSwitchesParams struct {
+	SpaceID string
+	Role    string
+}
+
+type RoleRenameOpenAccountSwitchesRow struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) RoleRenameOpenAccountSwitches(ctx context.Context, arg RoleRenameOpenAccountSwitchesParams) ([]RoleRenameOpenAccountSwitchesRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenameOpenAccountSwitches, arg.SpaceID, arg.Role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleRenameOpenAccountSwitchesRow{}
+	for rows.Next() {
+		var i RoleRenameOpenAccountSwitchesRow
+		if err := rows.Scan(&i.ID, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenameOpenDreamRuns = `-- name: RoleRenameOpenDreamRuns :many
+SELECT id, state FROM dream_runs WHERE space_id = ? AND state IN ('running', 'reported') ORDER BY started_at, id
+`
+
+type RoleRenameOpenDreamRunsRow struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) RoleRenameOpenDreamRuns(ctx context.Context, spaceID string) ([]RoleRenameOpenDreamRunsRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenameOpenDreamRuns, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleRenameOpenDreamRunsRow{}
+	for rows.Next() {
+		var i RoleRenameOpenDreamRunsRow
+		if err := rows.Scan(&i.ID, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenameOpenLimitWaits = `-- name: RoleRenameOpenLimitWaits :many
+SELECT id, state FROM limit_waits WHERE space_id = ? AND role = ? AND state IN ('waiting', 'resuming') ORDER BY created_at, id
+`
+
+type RoleRenameOpenLimitWaitsParams struct {
+	SpaceID string
+	Role    string
+}
+
+type RoleRenameOpenLimitWaitsRow struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) RoleRenameOpenLimitWaits(ctx context.Context, arg RoleRenameOpenLimitWaitsParams) ([]RoleRenameOpenLimitWaitsRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenameOpenLimitWaits, arg.SpaceID, arg.Role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleRenameOpenLimitWaitsRow{}
+	for rows.Next() {
+		var i RoleRenameOpenLimitWaitsRow
+		if err := rows.Scan(&i.ID, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenamePendingDreamCommits = `-- name: RoleRenamePendingDreamCommits :many
+SELECT id, state FROM node_commands WHERE space_id = ? AND kind = 'dream.commit' AND state IN ('pending', 'sent') ORDER BY created_at, id
+`
+
+type RoleRenamePendingDreamCommitsRow struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) RoleRenamePendingDreamCommits(ctx context.Context, spaceID string) ([]RoleRenamePendingDreamCommitsRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenamePendingDreamCommits, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleRenamePendingDreamCommitsRow{}
+	for rows.Next() {
+		var i RoleRenamePendingDreamCommitsRow
+		if err := rows.Scan(&i.ID, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenamePoolCollisions = `-- name: RoleRenamePoolCollisions :many
+SELECT a.account_id FROM space_role_accounts a
+JOIN space_role_accounts b ON b.space_id = a.space_id AND b.account_id = a.account_id AND b.role = ?1
+WHERE a.space_id = ?2 AND a.role = ?3 ORDER BY a.account_id
+`
+
+type RoleRenamePoolCollisionsParams struct {
+	ToName   string
+	SpaceID  string
+	FromName string
+}
+
+func (q *Queries) RoleRenamePoolCollisions(ctx context.Context, arg RoleRenamePoolCollisionsParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenamePoolCollisions, arg.ToName, arg.SpaceID, arg.FromName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var account_id string
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const roleRenameQueuedLaunches = `-- name: RoleRenameQueuedLaunches :many
+SELECT id, state FROM node_commands
+WHERE space_id = ?1 AND kind = 'run.launch' AND state IN ('pending', 'sent')
+  AND json_extract(payload_json, '$.role') = ?2
+ORDER BY created_at, id
+`
+
+type RoleRenameQueuedLaunchesParams struct {
+	SpaceID string
+	Role    string
+}
+
+type RoleRenameQueuedLaunchesRow struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) RoleRenameQueuedLaunches(ctx context.Context, arg RoleRenameQueuedLaunchesParams) ([]RoleRenameQueuedLaunchesRow, error) {
+	rows, err := q.db.QueryContext(ctx, roleRenameQueuedLaunches, arg.SpaceID, arg.Role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleRenameQueuedLaunchesRow{}
+	for rows.Next() {
+		var i RoleRenameQueuedLaunchesRow
+		if err := rows.Scan(&i.ID, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setDreamConfigRoles = `-- name: SetDreamConfigRoles :one
+UPDATE dream_configs SET memory_roles_json = ?, transcript_roles_json = ?, version = version + 1, updated_at = ? WHERE id = ? RETURNING version
+`
+
+type SetDreamConfigRolesParams struct {
+	MemoryRolesJson     string
+	TranscriptRolesJson string
+	UpdatedAt           int64
+	ID                  string
+}
+
+func (q *Queries) SetDreamConfigRoles(ctx context.Context, arg SetDreamConfigRolesParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, setDreamConfigRoles,
+		arg.MemoryRolesJson,
+		arg.TranscriptRolesJson,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var version int64
+	err := row.Scan(&version)
+	return version, err
+}
+
+const setHumanTypePermissionAgentRoles = `-- name: SetHumanTypePermissionAgentRoles :execrows
+UPDATE space_human_type_permissions SET agent_roles_json = ?, version = version + 1, updated_at = ?, updated_by = ?
+WHERE space_id = ? AND action_type = ?
+`
+
+type SetHumanTypePermissionAgentRolesParams struct {
+	AgentRolesJson string
+	UpdatedAt      int64
+	UpdatedBy      string
+	SpaceID        string
+	ActionType     string
+}
+
+func (q *Queries) SetHumanTypePermissionAgentRoles(ctx context.Context, arg SetHumanTypePermissionAgentRolesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setHumanTypePermissionAgentRoles,
+		arg.AgentRolesJson,
+		arg.UpdatedAt,
+		arg.UpdatedBy,
+		arg.SpaceID,
+		arg.ActionType,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setKBRepoAllowedRoles = `-- name: SetKBRepoAllowedRoles :one
+UPDATE kb_repos SET allowed_roles_json = ?, version = version + 1, updated_at = ? WHERE id = ? RETURNING version
+`
+
+type SetKBRepoAllowedRolesParams struct {
+	AllowedRolesJson string
+	UpdatedAt        int64
+	ID               string
+}
+
+func (q *Queries) SetKBRepoAllowedRoles(ctx context.Context, arg SetKBRepoAllowedRolesParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, setKBRepoAllowedRoles, arg.AllowedRolesJson, arg.UpdatedAt, arg.ID)
+	var version int64
+	err := row.Scan(&version)
+	return version, err
 }
 
 const spaceRolesUsingProfile = `-- name: SpaceRolesUsingProfile :many

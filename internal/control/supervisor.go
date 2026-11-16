@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -275,7 +276,12 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		}
 		return
 	}
-	li := fleet.LaunchInput{Kind: agenttools.KindControl, Role: r.Role, Harness: r.Harness, InstanceID: r.InstanceID, SessionID: resumable(r),
+	role, err := sv.currentRole(ctx, r.SpaceID, r.Role) // the role may have been renamed since it launched (ADR-0093)
+	if err != nil {
+		sv.log.Warn("resolve control role", slog.String(obs.FieldRunID, r.ID), obs.Err(err))
+		return
+	}
+	li := fleet.LaunchInput{Kind: agenttools.KindControl, Role: role, Harness: r.Harness, InstanceID: r.InstanceID, SessionID: resumable(r),
 		Model: r.Launch.Model, Settings: r.Launch.Settings, AccountRef: r.Launch.AccountRef, Workspace: r.Launch.Workspace, RequirePoolMember: true,
 		Prompt: "SpaceMan restarted you after your previous session ended unexpectedly. Check spaceman_messages, the inbox and the queue, then continue."}
 	if li.SessionID == "" {
@@ -288,6 +294,13 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 			sv.deferStart(r.SpaceID, h)
 			sv.startMu.Unlock()
 			sv.log.Info("control restart deferred: its account is held at a usage limit", slog.String(obs.FieldRunID, r.ID), slog.Time("until", h.Until))
+			return
+		}
+		var rp *fleet.RenamePendingError
+		if errors.As(err, &rp) {
+			// Control's role was renamed and the node has not moved its memory yet (ADR-0093): auto-start brings
+			// control back for waiting work once the node has reported.
+			sv.log.Info("control restart held: its role's rename waits for the node", slog.String(obs.FieldRunID, r.ID), slog.String("node.id", rp.NodeID))
 			return
 		}
 		sv.log.Warn("restart control", slog.String(obs.FieldRunID, r.ID), obs.Err(err))

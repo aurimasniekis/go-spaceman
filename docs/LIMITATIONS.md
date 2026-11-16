@@ -330,7 +330,8 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Planned: renaming a role (ADR-0093, not implemented).** When it lands: a busy role cannot be renamed, and a node
   that never comes back keeps the renamed role held. There will be no "abandon the node move" action at first, and a
   deleted role's leftover memory collection will block reusing its name as a rename target. Deleting or archiving a
-  role's memory, an abandon action and a web UI rename are follow-ups.
+  role's memory, an abandon action and a web UI rename are follow-ups. A rename changes only its own space: the
+  installation-wide default human policy keeps a successor role of the old name.
 
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.

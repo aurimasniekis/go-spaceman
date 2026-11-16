@@ -34,6 +34,9 @@ type lifecycle struct {
 	Limit func(ctx context.Context, spaceID, key string) int64
 	// ControlRole names the space role of kind control to launch when the space never had a control run ("": none).
 	ControlRole func(ctx context.Context, spaceID string) (string, error)
+	// RoleName resolves a role name read from a past run to the role's current name, following its renames
+	// (catalog.CurrentRoleName, ADR-0093). Nil: names are used as recorded.
+	RoleName func(ctx context.Context, spaceID, name string) (string, error)
 	// MaxAutostarts bounds the control launches for waiting work per space per Window (then people are asked to look).
 	MaxAutostarts int64
 	// IdleUnit is one minute of the idle limit (tests shorten it).
@@ -91,6 +94,10 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 	switch {
 	case err == nil:
 		li.Role, li.Harness, li.InstanceID, li.Model, li.Settings = last.Role, last.Harness, last.InstanceID, last.Launch.Model, last.Launch.Settings
+		if li.Role, err = sv.currentRole(ctx, spaceID, li.Role); err != nil {
+			sv.log.Warn("resolve control role", obs.Err(err))
+			return
+		}
 		li.AccountRef, li.Workspace = last.Launch.AccountRef, last.Launch.Workspace
 		li.SessionID = resumable(last)
 	case sv.ControlRole != nil:
@@ -115,11 +122,26 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 		if errors.As(err, &ae) && ae.Code == apperr.CodeConflict {
 			return // another control became authoritative meanwhile
 		}
+		var rp *fleet.RenamePendingError
+		if errors.As(err, &rp) {
+			// Control's role was renamed and the node has not moved its memory yet (ADR-0093): not a fault, and it
+			// clears on its own. The next sweep for the waiting work starts control once the node has reported.
+			sv.log.Info("control start held: its role's rename waits for the node", slog.String("space.id", spaceID), slog.String("node.id", rp.NodeID))
+			return
+		}
 		sv.log.Warn("start control", slog.String("space.id", spaceID), obs.Err(err))
 		sv.attention(ctx, spaceID, sp.Name, "control-autostart-refused", "Work is waiting for control, but SpaceMan could not start it: "+err.Error()+". Fix the cause (control role, account, budget), then launch control or wait for the next event.")
 		return
 	}
 	sv.log.Info("control started for waiting work", slog.String("space.id", spaceID), slog.String(obs.FieldRunID, r.ID))
+}
+
+// currentRole is the current name of a role read from a past run: the role may have been renamed since (ADR-0093).
+func (sv *Supervisor) currentRole(ctx context.Context, spaceID, name string) (string, error) {
+	if sv.RoleName == nil {
+		return name, nil
+	}
+	return sv.RoleName(ctx, spaceID, name)
 }
 
 // deferStart holds control's start back until the hold that refused it can let a launch through. Callers hold startMu.
