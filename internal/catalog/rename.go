@@ -81,6 +81,60 @@ func renameOut(r db.SpaceRoleRename) *RoleRename {
 		NodeID: r.NodeID, NodeState: r.NodeState, NodeMessage: r.NodeMessage, NodeDoneAt: microsPtr(r.NodeDoneAt), CentralMovedAt: microsPtr(r.CentralMovedAt)}
 }
 
+// roleNameClass says what a column that names a space role means for a rename (ADR-0093 §1.2).
+type roleNameClass string
+
+const (
+	// roleNameLive: the value is read later to route, launch, authorise or deliver. A rename rewrites it.
+	roleNameLive roleNameClass = "live"
+	// roleNameHistory: the value records what happened. A rename leaves it as written.
+	roleNameHistory roleNameClass = "history"
+	// roleNameNotASpaceRole: the column is named role but holds something other than a space role name.
+	roleNameNotASpaceRole roleNameClass = "not-a-space-role"
+)
+
+// roleNameEntry is the reviewed class of one role-name column and why.
+type roleNameEntry struct {
+	class  roleNameClass
+	reason string
+}
+
+// roleNameColumns classifies every column that names a space role (the names the schema guard matches, see
+// isRoleNameColumn), keyed "table.column". A column added by a migration fails TestRoleNameColumnsAreClassified until it
+// is listed here with its class and a reason. Keep this next to RenameSpaceRole, which must honour the classes.
+var roleNameColumns = map[string]roleNameEntry{
+	"account_switches.role":                         {roleNameLive, "open switches block the rename (role_busy); closed ones are history"},
+	"approvals.requester_role":                      {roleNameHistory, "who asked, as recorded"},
+	"dream_configs.memory_roles_json":               {roleNameLive, "JSON array that may hold *; rewritten in place by rewriteLists"},
+	"dream_configs.space_role":                      {roleNameLive, "the dream's role, must name an existing role"},
+	"dream_configs.transcript_roles_json":           {roleNameLive, "JSON array that may hold *; rewritten in place by rewriteLists"},
+	"human_actions.requester_role":                  {roleNameHistory, "who asked, as recorded"},
+	"human_notifications.target_role":               {roleNameLive, "label of a pending notification; rewritten while pending"},
+	"human_policies.successor_role":                 {roleNameLive, "LiveRunOfRole fallback routing"},
+	"kb_repos.allowed_roles_json":                   {roleNameLive, "JSON array that may hold *; rewritten in place by rewriteLists"},
+	"kb_repos.space_role":                           {roleNameLive, "must name an existing role"},
+	"kb_requests.requester_role":                    {roleNameLive, "an answer to an open request goes to role:<requester_role>"},
+	"kb_sessions.requester_role":                    {roleNameHistory, "who asked, as recorded"},
+	"limit_waits.role":                              {roleNameLive, "a resume relaunches with this role; open waits block the rename (role_busy)"},
+	"mcp_grants.role":                               {roleNameLive, "read on every gateway call"},
+	"memory_collections.role":                       {roleNameLive, "names the central repository on disk"},
+	"oidc_group_mappings.role":                      {roleNameNotASpaceRole, "an SSO group's role grant, not a space role"},
+	"role_grants.role":                              {roleNameNotASpaceRole, "a Casbin role, not a space role"},
+	"run_usage.role":                                {roleNameHistory, "usage as recorded; the ledger keeps the name it ran under"},
+	"runs.role":                                     {roleNameHistory, "read live while the run runs (AuthenticateRun); a run is refused while its role is busy"},
+	"space_human_type_permissions.agent_roles_json": {roleNameLive, "JSON array; rewritten in place by rewriteLists"},
+	"space_repositories.role":                       {roleNameNotASpaceRole, "a repository's role, not a space role name"},
+	"space_human_type_permissions.view_role":        {roleNameNotASpaceRole, "the view level a type needs, one of viewer, operator, admin"},
+	"space_human_type_permissions.create_role":      {roleNameNotASpaceRole, "the create level a type needs, one of operator, admin"},
+	"space_human_type_permissions.respond_role":     {roleNameNotASpaceRole, "the respond level a type needs, one of operator, admin"},
+	"telegram_links.max_role":                       {roleNameNotASpaceRole, "the highest Casbin role a Telegram link may use"},
+	"space_role_accounts.role":                      {roleNameLive, "the role's account pool"},
+	"space_schedules.assignee_role":                 {roleNameLive, "copied into each task the schedule creates"},
+	"tasks.assignee_role":                           {roleNameLive, "open tasks follow the role; closed ones are history"},
+	"usage_buckets.role":                            {roleNameHistory, "part of the primary key; rewriting could collide"},
+	"xspace_requests.requester_role":                {roleNameHistory, "who asked, as recorded"},
+}
+
 // RenameSpaceRole renames a space role in place (ADR-0093, SM-PROMPT-009). In one transaction it renames the role row
 // and every live reference in the space: MCP grants, KB and dream configuration, schedules, the human policy successor,
 // human type permissions, the role's account pool, its memory collection, open tasks, unacknowledged messages to the
