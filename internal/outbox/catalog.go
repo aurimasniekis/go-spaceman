@@ -57,6 +57,8 @@ var (
 	RunEndedName           = Name{"fleet", "run", "ended", 1}
 	UsageLimitReachedName  = Name{"fleet", "usage_limit", "reached", 1}
 	UsageLimitClearedName  = Name{"fleet", "usage_limit", "cleared", 1}
+	SwitchStartedName      = Name{"fleet", "account_switch", "started", 1}
+	SwitchCompletedName    = Name{"fleet", "account_switch", "completed", 1}
 	TaskCreatedName        = Name{"queue", "task", "created", 1}
 	TaskStatusChangedName  = Name{"queue", "task", "status_changed", 1}
 	InboxItemCreatedName   = Name{"inbox", "item", "created", 1}
@@ -132,6 +134,27 @@ type UsageLimitCleared struct {
 	UsageLimit
 	ClearedBy string `json:"cleared_by"` // run:<id> (a run of this space), evidence (a run of another space), or who cleared it
 }
+
+// AccountSwitch describes a run's move to another account of its pool at a usage limit (ADR-0090). It carries IDs,
+// the limit's kind and the switch's state and fixed reason only.
+type AccountSwitch struct {
+	SpaceID       string `json:"space_id"`
+	SwitchID      string `json:"switch_id"`
+	InstanceID    string `json:"instance_id"`
+	FromRunID     string `json:"from_run_id"`
+	NewRunID      string `json:"new_run_id,omitempty"`
+	FromAccountID string `json:"from_account_id"`
+	ToAccountID   string `json:"to_account_id,omitempty"`
+	LimitKind     string `json:"limit_kind"`
+	State         string `json:"state"`
+	Reason        string `json:"reason,omitempty"`
+}
+
+// AccountSwitchStarted: central armed a switch: the run is parked at its next idle point and resumed on the target.
+type AccountSwitchStarted struct{ AccountSwitch }
+
+// AccountSwitchCompleted: a switch ended: succeeded, failed, fell_back (the run waits for its reset) or cancelled.
+type AccountSwitchCompleted struct{ AccountSwitch }
 
 // Task describes a queue task (never its title, objective, acceptance criteria, reason or result).
 type Task struct {
@@ -284,26 +307,28 @@ type XSpaceRequestStateChanged struct {
 	From string `json:"from"`
 }
 
-func (RunLaunched) eventName() Name          { return RunLaunchedName }
-func (RunStarted) eventName() Name           { return RunStartedName }
-func (RunEnded) eventName() Name             { return RunEndedName }
-func (UsageLimitReached) eventName() Name    { return UsageLimitReachedName }
-func (UsageLimitCleared) eventName() Name    { return UsageLimitClearedName }
-func (TaskCreated) eventName() Name          { return TaskCreatedName }
-func (TaskStatusChanged) eventName() Name    { return TaskStatusChangedName }
-func (InboxItemCreated) eventName() Name     { return InboxItemCreatedName }
-func (HumanActionCreated) eventName() Name   { return HumanCreatedName }
-func (HumanActionResolved) eventName() Name  { return HumanResolvedName }
-func (HumanActionCancelled) eventName() Name { return HumanCancelledName }
-func (HumanActionExpired) eventName() Name   { return HumanExpiredName }
-func (HumanActionReminded) eventName() Name  { return HumanRemindedName }
-func (HumanActionEscalated) eventName() Name { return HumanEscalatedName }
-func (HumanActionRerouted) eventName() Name  { return HumanReroutedName }
-func (ApprovalDecided) eventName() Name      { return ApprovalDecidedName }
-func (ApprovalExecuted) eventName() Name     { return ApprovalExecutedName }
-func (MemorySynced) eventName() Name         { return MemorySyncedName }
-func (KBProposalAccepted) eventName() Name   { return KBProposalAcceptedName }
-func (XSpaceRequestCreated) eventName() Name { return XSpaceCreatedName }
+func (RunLaunched) eventName() Name            { return RunLaunchedName }
+func (RunStarted) eventName() Name             { return RunStartedName }
+func (RunEnded) eventName() Name               { return RunEndedName }
+func (UsageLimitReached) eventName() Name      { return UsageLimitReachedName }
+func (UsageLimitCleared) eventName() Name      { return UsageLimitClearedName }
+func (AccountSwitchStarted) eventName() Name   { return SwitchStartedName }
+func (AccountSwitchCompleted) eventName() Name { return SwitchCompletedName }
+func (TaskCreated) eventName() Name            { return TaskCreatedName }
+func (TaskStatusChanged) eventName() Name      { return TaskStatusChangedName }
+func (InboxItemCreated) eventName() Name       { return InboxItemCreatedName }
+func (HumanActionCreated) eventName() Name     { return HumanCreatedName }
+func (HumanActionResolved) eventName() Name    { return HumanResolvedName }
+func (HumanActionCancelled) eventName() Name   { return HumanCancelledName }
+func (HumanActionExpired) eventName() Name     { return HumanExpiredName }
+func (HumanActionReminded) eventName() Name    { return HumanRemindedName }
+func (HumanActionEscalated) eventName() Name   { return HumanEscalatedName }
+func (HumanActionRerouted) eventName() Name    { return HumanReroutedName }
+func (ApprovalDecided) eventName() Name        { return ApprovalDecidedName }
+func (ApprovalExecuted) eventName() Name       { return ApprovalExecutedName }
+func (MemorySynced) eventName() Name           { return MemorySyncedName }
+func (KBProposalAccepted) eventName() Name     { return KBProposalAcceptedName }
+func (XSpaceRequestCreated) eventName() Name   { return XSpaceCreatedName }
 func (XSpaceRequestStateChanged) eventName() Name {
 	return XSpaceStateName
 }
@@ -311,6 +336,7 @@ func (XSpaceRequestStateChanged) eventName() Name {
 func (r Run) spaceID() string                { return r.SpaceID }
 func (t Task) spaceID() string               { return t.SpaceID }
 func (u UsageLimit) spaceID() string         { return u.SpaceID }
+func (a AccountSwitch) spaceID() string      { return a.SpaceID }
 func (p InboxItemCreated) spaceID() string   { return p.SpaceID }
 func (h HumanAction) spaceID() string        { return h.SpaceID }
 func (p ApprovalDecided) spaceID() string    { return p.SpaceID }
@@ -364,6 +390,12 @@ func Catalog() []CatalogEntry {
 		{RunEndedName, RunEnded{Run: run, State: "exited", EndReason: "exited", ExitCode: &code}, "The run exited, failed or was lost."},
 		{UsageLimitReachedName, UsageLimitReached{ul}, "A run's report opened a hold on its account in its space (once per hold)."},
 		{UsageLimitClearedName, UsageLimitCleared{UsageLimit: ul, ClearedBy: "run:run_…"}, "A hold on an account was cleared."},
+		{SwitchStartedName, AccountSwitchStarted{AccountSwitch{SpaceID: "spc_…", SwitchID: "asw_…", InstanceID: "ins_…", FromRunID: "run_…",
+			FromAccountID: "acc_…", ToAccountID: "acc_…", LimitKind: "five_hour", State: "pending"}},
+			"A run at its usage limit is moved to another account of its pool at its next idle point."},
+		{SwitchCompletedName, AccountSwitchCompleted{AccountSwitch{SpaceID: "spc_…", SwitchID: "asw_…", InstanceID: "ins_…", FromRunID: "run_…",
+			NewRunID: "run_…", FromAccountID: "acc_…", ToAccountID: "acc_…", LimitKind: "five_hour", State: "succeeded"}},
+			"An account switch ended: succeeded, failed, fell back to waiting for the reset, or cancelled."},
 		{TaskCreatedName, TaskCreated{Task: task, Status: "ready"}, "A task was added to a queue."},
 		{TaskStatusChangedName, TaskStatusChanged{Task: task, From: "ready", To: "running"}, "A task changed state."},
 		{InboxItemCreatedName, InboxItemCreated{SpaceID: "spc_…", ItemID: "inb_…", SourceKind: "event", SourceID: "sub_…", SubscriptionID: "sub_…", Urgency: "normal"},

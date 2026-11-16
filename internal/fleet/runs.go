@@ -846,6 +846,16 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 			version += n
+			// An account switch is decided before control hears of the limit (ADR-0090): control isn't told to leave a run
+			// alive that is about to move.
+			sr := r
+			if rep.SessionID != "" {
+				sr.SessionID = rep.SessionID
+			}
+			sr.Turn = max(sr.Turn, int64(min(rep.Turn, math.MaxInt64))) //nolint:gosec // saturated
+			if err := svc.switchOnLimitTx(ctx, tx, sr, curLimit, nextLimit, !ended(rep.State)); err != nil {
+				return err
+			}
 			if err := svc.limitWindowTx(ctx, tx, r.ID, curLimit, nextLimit); err != nil {
 				return err
 			}
@@ -882,6 +892,10 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 		}
+		// The first finished turn of a run an account switch started verifies the switch (ADR-0090 §3.4 step 5).
+		if err := svc.switchTurnTx(ctx, tx, r, int64(min(rep.Turn, math.MaxInt64)), nextLimit); err != nil { //nolint:gosec // saturated
+			return err
+		}
 		// A limit that clears while the program is idle counts as turning idle: the notices held for it go out and
 		// control's idle stop is armed again (ADR-0079 decision 3).
 		limitCleared := limitChanged && curLimit.kind != "" && nextLimit.kind == ""
@@ -908,7 +922,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				if sweep != nil {
 					why = sweep.Reason
 				}
-				if _, err := svc.parkTx(ctx, tx, pr, nextLimit, why); err != nil {
+				if err := svc.parkEndedTx(ctx, tx, pr, nextLimit, why); err != nil {
 					return err
 				}
 			} else if sweep == nil && r.Desired != "stopped" && r.Turn == 0 && rep.Turn == 0 && (rep.State == proto.RunFailed || rep.State == proto.RunExited) {
@@ -916,6 +930,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				if err := svc.resumeFailedTx(ctx, tx, r); err != nil {
 					return err
 				}
+			}
+			if err := svc.switchEndedTx(ctx, tx, r, max(r.Turn, int64(min(rep.Turn, math.MaxInt64)))); err != nil { //nolint:gosec // saturated
+				return err
 			}
 			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
 			if nodeReason != rep.Reason {
@@ -934,7 +951,14 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				}
 			}
 		}
-		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", version)
+		if err := svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", version); err != nil {
+			return err
+		}
+		// An armed account switch parks the run at its idle point (ADR-0090 §3.4 step 2).
+		if sweep == nil && !ended(rep.State) {
+			return svc.switchAtIdleTx(ctx, tx, r.ID, rep.Status)
+		}
+		return nil
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
 		svc.opts.OnRunIdle(rep.RunID)

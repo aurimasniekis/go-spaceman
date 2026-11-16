@@ -4802,6 +4802,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "account_switch_id": {
+            "description": "The account switch this wait belongs to",
+            "type": "string"
+          },
           "attempts": {
             "format": "int64",
             "type": "integer"
@@ -4869,6 +4873,10 @@
               "cancelled",
               "failed"
             ],
+            "type": "string"
+          },
+          "switch_to_account_id": {
+            "description": "The account the resume uses instead of the parked run's (an account switch)",
             "type": "string"
           },
           "task_id": {
