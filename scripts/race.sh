@@ -95,10 +95,42 @@ else
 fi
 pids=()
 monitor_pid=
+peak_pid=
+outs=()
+interrupted=
+# stop_samplers stops the memory samplers; a sampler's sleep is a child of its subshell, so it is stopped too, or it
+# outlives this script for up to 20 s.
+stop_samplers() {
+  local p
+  for p in "$monitor_pid" "$peak_pid"; do
+    [[ -z "$p" ]] || { pkill -TERM -P "$p" 2>/dev/null || true; kill -TERM "$p" 2>/dev/null || true; }
+  done
+  monitor_pid=''
+  peak_pid=''
+}
+# app_peak prints internal/app's peak resident memory so far (see the sampler below), or nothing before the first sample.
+app_peak() {
+  [[ -s "$tmp/app-peak-kb" ]] && echo "internal/app peak RSS $(( $(<"$tmp/app-peak-kb") / 1024 )) MB"
+}
 # shellcheck disable=SC2329 # invoked by the EXIT trap
 cleanup() {
+  # Interrupted (a runner that is going down sends TERM, and then may skip every later step, the artifact upload too):
+  # put what the artifact would have shown into the log itself, the last memory sample and the end of internal/app's
+  # held-back output, so the log alone says how far the run got and what it held.
+  if [[ -n "$interrupted" ]]; then
+    echo "race: interrupted (SIG$interrupted) after $(( SECONDS - ${start:-0} )) s${tmp:+$(app_peak | sed 's/^/, /')}"
+    if [[ -s "$tmp/mem.log" ]]; then
+      echo "== last memory sample (mem.log)"
+      awk 'BEGIN { RS = ""; } { last = $0 } END { print last }' "$tmp/mem.log"
+    fi
+    for o in "${outs[@]}"; do
+      [[ -s "$o" ]] || continue
+      echo "== last lines of $(basename "$o")"
+      tail -n 40 "$o"
+    done
+  fi
   # Interrupted: stop the internal/app runs too, and the test binaries go test started for them.
-  [[ -z "$monitor_pid" ]] || { pkill -TERM -P "$monitor_pid" 2>/dev/null || true; kill -TERM "$monitor_pid" 2>/dev/null || true; }
+  stop_samplers
   for pid in "${pids[@]}"; do
     pkill -TERM -P "$pid" 2>/dev/null || true
     kill -TERM "$pid" 2>/dev/null || true
@@ -106,8 +138,8 @@ cleanup() {
   (( keep )) || rm -rf "$tmp"
 }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'interrupted=INT; exit 130' INT
+trap 'interrupted=TERM; exit 143' TERM
 
 # With RACE_OUT_DIR set (CI), sample memory and the biggest processes every 20 s into mem.log next to the test output:
 # if a runner is lost again, the artifact shows whether memory ran out and which test binary held it.
@@ -138,6 +170,25 @@ else
   outs=("$tmp/app.out")
 fi
 
+# internal/app's peak resident memory: the sum over its test binaries (app.test, run by the go test invocations above),
+# sampled every 5 s and printed with the summary, so growth shows up in every run's last line before it runs a 16 GB
+# runner out of memory again. With the release of each test's central after its cleanup (cleanupReleased in
+# internal/app/helpers_test.go) it stays under 2 GB at CI's -parallel 2; before that, 13-15 GB. A sample can miss a short
+# spike between two samples.
+app_ppids=" ${pids[*]} "
+(
+  peak=0
+  while :; do
+    cur=$(ps -eo rss=,ppid=,comm= 2>/dev/null | awk -v pp="$app_ppids" '$3 == "app.test" && index(pp, " " $2 " ") { s += $1 } END { print s + 0 }')
+    if (( cur > peak )); then
+      peak=$cur
+      echo "$peak" >"$tmp/app-peak-kb"
+    fi
+    sleep 5
+  done
+) >/dev/null 2>&1 &
+peak_pid=$!
+
 # The other packages stream their output as they go, but run in the background like the rest: bash runs a trap only
 # between commands, and `wait` returns at once on a trapped signal, so a TERM stops every invocation right away. (A
 # kill -9 of this script can't run the trap: its go test children go on running; stop the process group instead.)
@@ -160,7 +211,7 @@ for (( i = 0; i < ${#names[@]}; i++ )); do
   (( prc == 0 )) || rc=$prc
 done
 pids=()
-# The sampler's sleep is a child of the subshell: stop it too, or it outlives this script for up to 20 s.
-[[ -z "$monitor_pid" ]] || { pkill -TERM -P "$monitor_pid" 2>/dev/null || true; kill -TERM "$monitor_pid" 2>/dev/null || true; }
-echo "race: $summary, total $(( SECONDS - start )) s"
+stop_samplers
+peak=$(app_peak) || true
+echo "race: $summary, total $(( SECONDS - start )) s${peak:+, $peak}"
 exit "$rc"

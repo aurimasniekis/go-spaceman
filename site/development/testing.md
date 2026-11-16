@@ -80,6 +80,16 @@ healthy CI run takes about 14 minutes at the lower cap, measured on a hosted run
 (memory and the largest processes every 20 s); both workflows upload the directory as the `race-output` artifact when the
 job fails or is cancelled. `RACE_P` caps how many packages run at once (`go test -p`).
 
+The summary line of `make race` ends with `internal/app peak RSS N MB`, the peak of internal/app's test binaries
+(sampled every 5 s). It stays under 2 GB at CI's `-parallel 2`. Each `internal/app` test opens a whole central (store,
+services, the API with its OpenAPI schemas), and the `testing` package keeps a finished parallel test, and the
+cleanups it already ran, reachable until every parallel test is done. A cleanup that holds a central therefore keeps it
+in memory for the rest of the run: that grew the binary to 13-15 GB and ran 16 GB runners out of memory (exit 143 about
+15 minutes in). Register such cleanups with `cleanupReleased` (internal/app/helpers_test.go), which lets go of the
+closure once it has run, and clear the env's references to central in its last cleanup. If the run is interrupted,
+`scripts/race.sh` prints the last memory sample and the end of internal/app's output into the log, because a runner that
+goes down skips the artifact upload.
+
 ### When a release gate fails
 
 - **`write transaction "…" held the write lock for … (> 1s, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
