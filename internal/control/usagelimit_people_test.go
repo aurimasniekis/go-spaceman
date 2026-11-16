@@ -28,6 +28,8 @@ type peopleEnv struct {
 	s        *store.Store
 	human    *human.Service
 	sv       *Supervisor
+	aw       *audit.Writer
+	ch       *changefeed.Recorder
 	perSpace atomic.Int64 // the human service's pending-actions limit per space
 }
 
@@ -37,6 +39,7 @@ func newPeopleEnv(t *testing.T) *peopleEnv {
 	e.s = storetest.Open(t, storetest.WithClock(e.clk))
 	kr := keyringtest.Load(t, e.s)
 	aw, ch := audit.NewWriter(kr), changefeed.New(nil)
+	e.aw, e.ch = aw, ch
 	fl := fleet.New(e.s, kr, aw, eventbus.New(), ch, fleet.Options{Clock: e.clk})
 	e.human = human.New(e.s, aw, ch, e.clk)
 	e.human.PendingLimits = func(context.Context, *db.Queries, string) (int64, int64) { return e.perSpace.Load(), 0 }
