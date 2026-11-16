@@ -544,8 +544,8 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	}
 	prev, _ := a.j.getRun(ctx, row.RunID)
 	_ = a.j.updateRun(ctx, row)
-	if row.Status == "working" && prev.Status != "working" {
-		a.failureEnded(row.RunID)
+	if row.Status == "working" {
+		a.failureEnded(row.RunID, prev.Status != "working")
 	}
 	a.report(ctx, row)
 	if p.State == runner.StateLive {
