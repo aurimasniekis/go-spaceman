@@ -195,7 +195,7 @@ type Notifier struct {
 
 	cursor int64 // only the Run goroutine touches it
 
-	sweepNow chan struct{} // the link list was reloaded: sweep (see kickSweep)
+	sweepNow  chan struct{} // the link list was reloaded: sweep (see kickSweep)
 	ready     chan struct{} // closed once Run has subscribed and read its start position
 	readyOnce sync.Once
 }

@@ -209,6 +209,11 @@ func runNotifier(t *testing.T, e *miniAppEnv) {
 	done := make(chan struct{})
 	go func() { _ = e.h.c.TelegramNotify.Run(ctx); close(done) }()
 	t.Cleanup(func() { stop(); <-done })
+	select {
+	case <-e.h.c.TelegramNotify.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the notifier never became ready")
+	}
 }
 
 // TestTelegramTopicsRelinkUnderAnotherBotDoesNotReuseTopics: the revoked link belonged to a bot that has since been

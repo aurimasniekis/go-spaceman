@@ -48,8 +48,8 @@ func TestTelegramThreadMigrationFrom0058(t *testing.T) {
 	}
 	defer s.Close()
 	cur, latest, err := SchemaVersions(ctx, s.rdb, EmbeddedMigrations())
-	if err != nil || cur != 59 || latest != 59 {
-		t.Fatalf("after the upgrade: version %d of %d, %v; want 59 of 59", cur, latest, err)
+	if err != nil || cur != latest || latest < 59 {
+		t.Fatalf("after the upgrade: version %d of %d, %v; want all migrations applied, at least 0059", cur, latest, err)
 	}
 	var thread any
 	if err := s.rdb.QueryRowContext(ctx, `SELECT message_thread_id FROM telegram_messages WHERE chat_id = 42 AND message_id = 1`).Scan(&thread); err != nil {

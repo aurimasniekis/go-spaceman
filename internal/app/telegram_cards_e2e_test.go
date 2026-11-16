@@ -20,6 +20,18 @@ func (c *threadsChat) cardNow(t *testing.T, id int) botapi.Message {
 	return botapi.Message{}
 }
 
+// chatMessages counts the chat's messages other than the pinned home summary ("Needs you — …"), which the notifier
+// sends and edits on its own schedule and so may appear at any moment.
+func chatMessages(ms []botapi.Message) int {
+	n := 0
+	for _, m := range ms {
+		if !strings.HasPrefix(m.Text, "Needs you") {
+			n++
+		}
+	}
+	return n
+}
+
 func noKeyboard(m botapi.Message) bool {
 	return m.ReplyMarkup == nil || len(m.ReplyMarkup.InlineKeyboard) == 0
 }
@@ -50,7 +62,7 @@ func TestTelegramCardAnsweredFromItsButton(t *testing.T) {
 	t.Parallel()
 	c, space := newThreadsChat(t)
 	id, card := c.question(t, space, "Pick a colour")
-	before := len(c.e.tg.Messages(42))
+	before := chatMessages(c.e.tg.Messages(42))
 	c.tap(qrFind(card, "no"), card)
 	eventuallyFor(t, "the card collapsed", 10*time.Second, func() bool {
 		m := c.cardNow(t, card.MessageID)
@@ -70,7 +82,7 @@ func TestTelegramCardAnsweredFromItsButton(t *testing.T) {
 	if got := c.answer(); got != "That request was already answered or closed." {
 		t.Fatalf("second tap answered %q", got)
 	}
-	if got := len(c.e.tg.Messages(42)); got != before {
+	if got := chatMessages(c.e.tg.Messages(42)); got != before {
 		t.Fatalf("%d new messages, want none", got-before)
 	}
 }
@@ -80,7 +92,7 @@ func TestTelegramCardMoreShowsTheFormInPlace(t *testing.T) {
 	t.Parallel()
 	c, space := newThreadsChat(t)
 	_, card := c.question(t, space, "Which region?")
-	before := len(c.e.tg.Messages(42))
+	before := chatMessages(c.e.tg.Messages(42))
 	c.tap(qrFind(card, "More…"), card)
 	var form botapi.Message
 	eventuallyFor(t, "the form on the card", 10*time.Second, func() bool {
@@ -92,7 +104,7 @@ func TestTelegramCardMoreShowsTheFormInPlace(t *testing.T) {
 		m := c.cardNow(t, card.MessageID)
 		return qrFind(m, "More…") != "" && qrFind(m, "Claim") == ""
 	})
-	if got := len(c.e.tg.Messages(42)); got != before {
+	if got := chatMessages(c.e.tg.Messages(42)); got != before {
 		t.Fatalf("%d new messages, want none", got-before)
 	}
 }

@@ -53,8 +53,9 @@ const LegacyNote = "Needs-you items now arrive in each space's own topic. You ca
 const RefusedFor = 10 * time.Minute
 
 // DefaultCreatesPerSecond bounds topic creation (and the legacy notes) over every chat. Creating a topic is a Bot API
-// call the sender's global bucket doesn't count (it runs inside one queued send), so when many links switch at once the
-// calls stay near Telegram's limit: the sender's 25/s plus these.
+// call that runs inside one queued send, and it takes its token from the sender's global bucket too (through Take), so
+// when many links switch at once the calls stay within Telegram's limit; this bound only keeps topic creation from
+// taking the whole bucket.
 const DefaultCreatesPerSecond = 5
 
 // Store keeps a link's thread IDs (key → message_thread_id).

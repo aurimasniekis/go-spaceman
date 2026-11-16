@@ -31,31 +31,12 @@ func newThreadsChat(t *testing.T) (*threadsChat, string) {
 	c.e.exec(t, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by, updated_at, observed_at)
 		VALUES (?, ?, 'nod_oidc', 1, 'control', 'control', 'claude-code', 'ins_c', 'running', 'running', '{}', 0, 't', 0, 0)`, run, space)
 	tc := &threadsChat{qrChat: c, run: run}
-	tc.waitNotifier(t, space)
-	return tc, space
-}
-
-// waitNotifier sends probe messages until one arrives: the notifier starts at the newest change and never replays
-// history, so a change made before its start would never be notified.
-func (c *threadsChat) waitNotifier(t *testing.T, space string) {
-	t.Helper()
-	ctx := context.Background()
-	for i := 0; ; i++ {
-		body := "probe " + strconv.Itoa(i)
-		if _, _, err := c.e.h.c.Messages.Send(ctx, audit.System, space, messages.From{Kind: "run", ID: c.run, Label: "control"},
-			messages.SendInput{To: "operators", Kind: "request", Subject: "Probe", Body: body}); err != nil {
-			t.Fatal(err)
-		}
-		for range 50 {
-			if c.count(body) > 0 {
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		if i == 30 {
-			t.Fatal("the notifier never delivered a probe")
-		}
+	select {
+	case <-c.e.h.c.TelegramNotify.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the notifier never became ready")
 	}
+	return tc, space
 }
 
 // setThreads stores notification_defaults (the inbound limits newQRChat set are kept) and waits until the settings
