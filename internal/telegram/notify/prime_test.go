@@ -12,7 +12,6 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 )
 
 // A change committed between Prime and Run (central's listener and recover passes run in between) is delivered when
@@ -126,14 +125,13 @@ func restartAfter(t *testing.T, down time.Duration, wantSend bool) (sent int, te
 	go func() { _ = e.n.Run(ctx2); close(done2) }()
 	defer func() { cancel2(); <-done2 }()
 	<-e.n.Ready()
-	var calls []tgtest.Call
 	if wantSend {
-		calls = e.waitCalls("sendMessage", 1)
+		e.waitCalls("sendMessage", 1)
 		time.Sleep(100 * time.Millisecond) // and no more than one
 	} else {
 		time.Sleep(300 * time.Millisecond)
 	}
-	calls = e.fake.Calls("sendMessage")
+	calls := e.fake.Calls("sendMessage")
 	if len(calls) > 0 {
 		text = calls[0].Params["text"]
 	}
