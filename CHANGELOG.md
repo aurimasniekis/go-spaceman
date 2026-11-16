@@ -6,22 +6,40 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-16
+
+Release on top of v0.1.7. **Central and the node agents both need it**, central first. The main changes are account
+switching on usage limits (ADR-0090: a run that reaches its limit moves to another account of its pool, off unless
+`usage_limit_failover` is on), Telegram chat threads per space with actionable cards (ADR-0089), the backup hang fix
+(ADR-0091: a backup or verification that stops making progress now fails instead of holding `busy` until a restart),
+the notifier no longer losing notifications around restarts, text replies to cards, and mobile dialogs (pinch-zoom,
+wide tables, 16 px inputs). It brings node protocol minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to
+0059 and the configuration keys listed below.
+
 ### Upgrade notes
 
-- **Schema migrations `0054_account_pools` to `0058_pool_exhausted_notices`** (account switching, ADR-0090): account
-  pools, account switches, a run's failure class, the usage ledger and the pool-exhausted notices. They are applied on
-  start, need no action and are forward-only: **take a backup first**.
-- **Node protocol minor 13.** Upgrade central first, then the node agents. An older agent keeps working, and its runs
-  still switch on a limit it reports, but only an agent of this release reports the status line's usage windows, the
-  cost estimate and the `StopFailure` failure class, so the usage windows, the headroom gate's figures and a wrap-up
-  limit's missing reset need the agent upgrade.
-- **New limits** (per space or as installation defaults): `usage_limit_wait_if_reset_within` (minutes, default 15),
-  `usage_limit_switch_max_per_day` (default 6; 0 never switches) and `usage_limit_min_headroom_percent` (default 0: off).
-  Live switching is off unless the existing `usage_limit_failover` is on, so an installation that leaves it off keeps
-  ADR-0079's wait.
-- **Schema migration `0059_telegram_message_thread`**: adds the nullable
-  `telegram_messages.message_thread_id`, the topic a card was sent in. It is applied on start and needs no action. A card
-  row from before it has no topic recorded and is edited in place as before.
+- **Schema migrations 0054 to 0059 are forward-only: take a backup first.** `0054_account_pools` to
+  `0058_pool_exhausted_notices` (ADR-0090) add account pools, account switches, a run's failure class, the usage ledger
+  and the pool-exhausted notices. `0059_telegram_message_thread` adds the nullable `telegram_messages.message_thread_id`,
+  the topic a card was sent in; a card row from before it has no topic recorded and is edited in place as before. They
+  are applied on start and need no other action.
+- **Node protocol minor 13 (v0.1.7 speaks up to minor 12).** Upgrade central first, then the node agents. An older agent
+  keeps working, and its runs still switch on a limit it reports, but only an agent of this release reports the status
+  line's usage windows, the cost estimate and the `StopFailure` failure class, so the usage windows, the headroom gate's
+  figures and a wrap-up limit's missing reset need the agent upgrade.
+- **New configuration keys**, with their defaults (the usage-limit keys are also space limits, set with
+  `spaceman limits set --space <space> --set <key>=<value>`, without the `limits.` prefix):
+  - `backups.stall_timeout`: `10m`. A backup or verification with no progress for this long fails (1 m to 24 h, ADR-0091).
+  - `backups.max_duration`: `1h`. A backup or verification running longer than this in total fails (10 m to 72 h, ADR-0091).
+  - `limits.usage_limit_wait_if_reset_within`: `15` (minutes). A run whose account resets this soon waits for the reset
+    instead of switching (0 to 1440, ADR-0090).
+  - `limits.usage_limit_switch_max_per_day`: `6`. How many times one instance may switch account in 24 hours before it
+    waits as ADR-0079 does; `0` never switches (0 to 50).
+  - `limits.usage_limit_min_headroom_percent`: `0` (off). A new run does not start on an account whose known window usage
+    leaves less than this percentage free (0 to 100). Running agents are never moved because of it.
+  - `notification_defaults.threads` (Telegram administrator setting, not the config file): `auto`. See **Chat layout**.
+- **Live account switching stays off unless `usage_limit_failover` is on.** That is the existing switch (default off).
+  An installation that leaves it off keeps ADR-0079's wait, whatever the keys above say.
 - **Chat layout.** Links start on `notification_defaults.threads = auto`, so a bot with topics enabled in BotFather moves each
   chat to a topic per space at its next space message, with one announcement in the chat without a topic. To keep one chat,
   set `threads` to `off`, per link or in the administrator defaults. **Topics the bot creates stay in users' chats**
@@ -2004,7 +2022,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5
