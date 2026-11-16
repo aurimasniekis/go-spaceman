@@ -3,15 +3,21 @@ package memory
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 )
 
 // Tools registers the agents' memory tool. Agents read and write their memory as files in $SPACEMAN_MEMORY_DIR; the
 // tool reports what central has preserved and what is still pending.
-func Tools(svc *Service) func(r *agenttools.Registry) {
+//
+// Control and the dreamer also get spaceman_memory_conflict_list and spaceman_memory_conflict_resolve. Control reaches
+// every role of its space; a dreamer only the roles its dream configuration covers (dreamRoles answers that for a run;
+// nil allows none). Other runs never see them.
+func Tools(svc *Service, dreamRoles DreamRoles) func(r *agenttools.Registry) {
 	all := []string{agenttools.KindControl, agenttools.KindWorker, agenttools.KindKB, agenttools.KindDreamer, agenttools.KindDiagnostic}
 	return func(r *agenttools.Registry) {
 		agenttools.Add(r, "spaceman_memory_status", "Your role memory's sync state: the history central has preserved, what the node has not synced "+
@@ -34,5 +40,110 @@ func Tools(svc *Service) func(r *agenttools.Registry) {
 				}
 				return map[string]any{"collection": c, "open_conflicts": open}, nil
 			})
+
+		agenttools.Add(r, "spaceman_memory_conflict_list", "List the open memory conflicts of the roles you may reconcile in this space (control: every role; "+
+			"a dreamer: the roles its dream covers), or of one role. Close one you reconciled with spaceman_memory_conflict_resolve.", reconcilers, true,
+			func(ctx context.Context, p *fleet.RunPrincipal, in conflictListIn) (any, error) {
+				roles, err := reachable(ctx, svc, p, dreamRoles, in.Role)
+				if err != nil {
+					return nil, err
+				}
+				out := []conflictRow{}
+				for _, role := range roles {
+					cs, err := svc.Conflicts(ctx, p.SpaceID, role)
+					if err != nil {
+						continue // no memory for the role yet
+					}
+					for _, c := range cs {
+						if c.ResolvedAt == nil {
+							out = append(out, conflictRow{Role: role, Conflict: c})
+						}
+					}
+				}
+				return map[string]any{"open_conflicts": out}, nil
+			})
+		agenttools.Add(r, "spaceman_memory_conflict_resolve", "Mark one memory conflict reconciled once you merged what still matters into the shared "+
+			"files and deleted its conflicts/ folder. The preserved history stays; this only closes the record, and it is audited as you. Control may "+
+			"close any role's conflict in this space; a dreamer only the roles its dream covers.", reconcilers, false,
+			func(ctx context.Context, p *fleet.RunPrincipal, in conflictResolveIn) (any, error) {
+				if in.Role == "" || in.ConflictID == "" {
+					return nil, apperr.New(apperr.CodeInvalid, "role and conflict_id are required")
+				}
+				if _, err := reachable(ctx, svc, p, dreamRoles, in.Role); err != nil {
+					return nil, err
+				}
+				if err := svc.ResolveConflict(ctx, audit.Actor{Type: audit.ActorAgent, ID: p.RunID}, p.SpaceID, in.Role, in.ConflictID); err != nil {
+					return nil, err
+				}
+				return map[string]any{"role": in.Role, "conflict": in.ConflictID, "resolved": true}, nil
+			})
 	}
+}
+
+// DreamRoles answers, for a dreamer run, the memory roles its dream covers ("*": every role) and the roles it excludes.
+type DreamRoles func(ctx context.Context, runID string) (roles, exclude []string, err error)
+
+var reconcilers = []string{agenttools.KindControl, agenttools.KindDreamer}
+
+type conflictListIn struct {
+	Role string `json:"role,omitempty" jsonschema:"only this role's conflicts"`
+}
+
+type conflictResolveIn struct {
+	Role       string `json:"role" jsonschema:"the role whose memory the conflict belongs to"`
+	ConflictID string `json:"conflict_id" jsonschema:"the conflict's id from spaceman_memory_conflict_list"`
+}
+
+type conflictRow struct {
+	Role string `json:"role"`
+	Conflict
+}
+
+// reachable returns the roles the run may reconcile (just role when one is named and allowed).
+func reachable(ctx context.Context, svc *Service, p *fleet.RunPrincipal, dreamRoles DreamRoles, role string) ([]string, error) {
+	var covered []string // nil: every role of the space
+	var excluded []string
+	switch p.Kind {
+	case agenttools.KindControl:
+	case agenttools.KindDreamer:
+		if dreamRoles == nil {
+			return nil, apperr.New(apperr.CodeForbidden, "this run has no dream configuration")
+		}
+		rs, exclude, err := dreamRoles(ctx, p.RunID)
+		if err != nil {
+			return nil, err
+		}
+		excluded = exclude
+		if role != "" && slices.Contains(excluded, role) {
+			return nil, apperr.New(apperr.CodeForbidden, "the dream excludes the memory of role %q", role)
+		}
+		if !slices.Contains(rs, "*") {
+			covered = rs
+			if covered == nil {
+				covered = []string{}
+			}
+		}
+	default:
+		return nil, apperr.New(apperr.CodeForbidden, "%s runs may not reconcile memory conflicts", p.Kind)
+	}
+	if role != "" {
+		if covered != nil && !slices.Contains(covered, role) {
+			return nil, apperr.New(apperr.CodeForbidden, "the dream does not cover the memory of role %q", role)
+		}
+		return []string{role}, nil
+	}
+	if covered != nil {
+		return slices.DeleteFunc(slices.Clone(covered), func(r string) bool { return slices.Contains(excluded, r) }), nil
+	}
+	cols, err := svc.List(ctx, p.SpaceID)
+	if err != nil {
+		return nil, err
+	}
+	roles := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if !slices.Contains(excluded, c.Role) {
+			roles = append(roles, c.Role)
+		}
+	}
+	return roles, nil
 }

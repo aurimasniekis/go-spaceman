@@ -189,3 +189,23 @@ var reHex = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 
 // ValidCommit reports whether s looks like a full commit ID.
 func ValidCommit(s string) bool { return reHex.MatchString(s) }
+
+// ConflictFolders lists the folders directly under conflicts/ at a commit (the places preserved conflicting memory
+// is kept for reconciling); "" lists none. A commit that cannot be read is an error, not an empty list, so a caller
+// never mistakes a failed read for "every folder is gone".
+func (g *Git) ConflictFolders(ctx context.Context, dir, commit string) ([]string, error) {
+	if commit == "" {
+		return nil, nil
+	}
+	out, err := g.Run(ctx, dir, nil, "ls-tree", "-d", "--name-only", "-z", commit, "conflicts/")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, f := range strings.Split(out, "\x00") {
+		if n := strings.TrimPrefix(f, "conflicts/"); n != "" && n != f && !strings.Contains(n, "/") {
+			names = append(names, n)
+		}
+	}
+	return names, nil
+}

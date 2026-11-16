@@ -5781,6 +5781,71 @@
   fails naming `upload`, the row is `failed`, `busy` clears, the next backup succeeds; the status shows the stage while
   stuck), `TestServiceMaxDurationFailsBackup`, `TestWatchProgressAndStall`, `TestWatchStopIsNotAStall`.
 
+### ADR-0092 — Memory conflicts close when reconciled: a tool for control and the dreamer, and automatically when the folder is removed
+- **Status:** Accepted, 2026-11-16. Migration `0060_memory_conflict_folder` (one column; the node's own journal gets
+  `0009_memory_conflict_folders`). The node's memory status gains an optional `preserved_folders` list (additive, no
+  protocol minor bump: an older agent omits it and its conflicts are recorded without a folder, as before). No HTTP API
+  change.
+- **Context:** a memory conflict closed only through `resolve-memory-conflict` (API, `spaceman memory resolve`, the web UI),
+  "a person reconciled it". The conflict's README tells the role to merge what matters and delete the `conflicts/<name>/`
+  folder, but the record stayed open. Control and the dreamer had no tool to close it, so a space showed conflicts that
+  had long been reconciled (2 for control, 18 for the implementor and 6 for the reviewer on one installation).
+- **Decision:**
+  - **Tools.** `spaceman_memory_conflict_list` and `spaceman_memory_conflict_resolve`, for runs of kind control and dreamer
+    only (other kinds neither see nor may call them). Both are scoped to the caller's own space. Control reaches every
+    role's memory of the space; a dreamer only the roles of its dream configuration (`*` covers all) minus the dream's
+    own exclusion (the dreamer's own space role, unless `include_own`), found through the dream run, so a dreamer that
+    is not running a dream reaches nothing. Resolving goes through the existing
+    `ResolveConflict` service path, so the audit event `memory.conflict_resolved` carries the run as the actor, and a
+    conflict that is already resolved, or belongs to another role or space, is refused as before. The preserved history
+    stays.
+  - **Which folder a conflict holds.** The node says so itself and central never infers it. When the node preserves a
+    conflict it creates `conflicts/<instance>-<stamp>/` and journals that name next to its conflict counter; its status
+    reports `preserved_folders`: the names of its most recent preserved conflicts (at most 50), oldest first, one per
+    increment of the counter. When a report announces n new conflicts, the last n entries are those conflicts' folders,
+    in order, and each is stored on its row (`folder`, and `ref` `refs/conflicts/<name>`). A conflict the list has no
+    entry for (an older agent, a list shorter than n), a name that is not a valid folder name, a name already tied to
+    another conflict, central's own non-fast-forward conflicts and rows from before the migration have no folder.
+    An earlier draft tied the folders of the node's whole `conflicts/` listing to new rows by name order; that order is
+    by instance ID, not time, so a new conflict could take a legacy folder and removing that folder closed the wrong
+    conflict.
+  - **Auto-resolve.** When central accepts a checkpoint, it compares the folders under `conflicts/` of the previous head and
+    the new head. A conflict tied to a folder the previous head had and the new head no longer has is marked resolved in
+    the same transaction as the head update, by the system actor `memory-reconcile`, with its own audit event
+    (`memory.conflict_resolved`, details name the folder and the head). The ref is kept. It is idempotent (only open
+    rows of that collection are touched; an already accepted head changes nothing), and a folder that was never in an
+    accepted head (a conflict still unsynced, or one created and removed between two checkpoints) resolves nothing. If
+    central cannot read the `conflicts/` tree of either head (a git error), nothing is resolved, the checkpoint is still
+    accepted and the failure is logged: an unreadable head is never taken as "every folder is gone".
+  - Both ways produce the same `memory.conflict_resolved` event; the actor tells them apart.
+- **Proposal, not implemented (item 3): fast-forward idle instance folders to the collection head.** An instance folder
+  only pulls the shared history when it checkpoints, so a later edit in a folder that is behind a newer head (a dream's
+  checkpoint, another instance's) can become a conflict even when the content is identical. A node could fast-forward an
+  instance folder before it is written again, but a wrong step loses memory, so it needs its own task. The safe form:
+  - only when the instance has no run (so nothing is writing), the folder has no uncheckpointed changes and no merge or
+    rebase state, its `HEAD` is an ancestor of the shared `refs/heads/main` (a plain fast-forward, `merge --ff-only`),
+    and the shared head has been published by the node's own checkpoint (not a half-written state);
+  - never `reset --hard`, never when the folder has local commits the shared history lacks (those go through the existing
+    merge or preserve path), and every skipped case is logged with its reason;
+  - at idle points and before a run starts, under the same per-collection lock the checkpoint uses, so it cannot
+    interleave with a checkpoint or a sync. It does not touch what is offered to central: the fast-forward only moves
+    the instance onto history the shared repository already has, so the node's sync and acknowledged head are unaffected.
+- **Alternatives:** matching conflicts to folders by name inside the README text (fragile, content is untrusted); resolving
+  every open conflict of a role whenever its `conflicts/` is empty (would also close conflicts whose folder never reached
+  central, and legacy ones nobody reviewed); letting any worker close conflicts (a role could hide its own).
+- **Consequences:** open conflicts recorded before this change have no folder: they close through the tool, the CLI or the
+  web UI, and only conflicts from agents of this release close by themselves. The dreamer can close only what its
+  dream covers, so a dream that consolidates a role's memory can also close that role's reconciled conflicts.
+- **Evidence:** `internal/memory` `TestRemovingConflictFolderResolves` (adding does not resolve, removing resolves with the
+  system actor and keeps the ref, a repeat and a later checkpoint change nothing, a folder that never existed and a
+  folderless conflict stay open), `TestConflictTools` (control, dreamer scope, `*`, an excluded role, other kinds refused and not in
+  their catalog, other space, other role's id, actor recorded, twice refused), `TestConflictFolderTieIsExact` (a legacy
+  folder and a new conflict from a lower-sorting instance ID), `TestNodeConflictsTieOrderAndCap`, `TestReFolder`,
+  `TestRemovedFolderResolvesOnlyItsCollection`, `TestRepeatResolveChangesNothing`, `TestUnreadableHeadResolvesNothing`;
+  `internal/agent` `TestMemoryInstancesShareAndPreserve` (the status reports the folder the node created); `internal/app`
+  `TestDreamConsolidates` (the real `MemoryRolesOfRun`, with and without `include_own`); `internal/store`
+  `TestMemoryConflictFolderMigrationFrom0059`.
+
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
   on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code

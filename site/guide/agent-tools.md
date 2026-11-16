@@ -40,6 +40,8 @@ Code's own question picker (`AskUserQuestion`) or plan mode (`EnterPlanMode`); s
 | `spaceman_kb_propose` | (KB sessions) Offer a commit for acceptance | | | ✓ | |
 | `spaceman_dream_report` | (Dreamers) Finish a dream: summary, changes, findings, or no change | | | dreamer | |
 | `spaceman_memory_status` | The role memory's sync state: preserved history, pending changes, conflicts | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_memory_conflict_list` | Open memory conflicts of the roles you may reconcile in your space (control: all; dreamer: its dream's roles, not its own unless include_own) | ✓ | | dreamer | |
+| `spaceman_memory_conflict_resolve` | Mark one memory conflict reconciled (audited as the run; the preserved history stays) | ✓ | | dreamer | |
 | `spaceman_human_get` | Read a human action, and its response when you asked it or it was routed to you | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_list` | List human actions (by default your own) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_reply` | Answer a clarification request on an action you asked (not a response; the action stays pending) | ✓ | ✓ | ✓ | ✓ |

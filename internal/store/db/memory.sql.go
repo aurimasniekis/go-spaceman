@@ -69,7 +69,7 @@ func (q *Queries) GetMemoryCollectionByID(ctx context.Context, id string) (Memor
 }
 
 const getMemoryConflict = `-- name: GetMemoryConflict :one
-SELECT id, collection_id, source, ref, commit_id, detail, created_at, resolved_at, resolved_by FROM memory_conflicts WHERE id = ?
+SELECT id, collection_id, source, ref, commit_id, detail, created_at, resolved_at, resolved_by, folder FROM memory_conflicts WHERE id = ?
 `
 
 func (q *Queries) GetMemoryConflict(ctx context.Context, id string) (MemoryConflict, error) {
@@ -85,6 +85,7 @@ func (q *Queries) GetMemoryConflict(ctx context.Context, id string) (MemoryConfl
 		&i.CreatedAt,
 		&i.ResolvedAt,
 		&i.ResolvedBy,
+		&i.Folder,
 	)
 	return i, err
 }
@@ -113,7 +114,7 @@ func (q *Queries) InsertMemoryCollection(ctx context.Context, arg InsertMemoryCo
 }
 
 const insertMemoryConflict = `-- name: InsertMemoryConflict :exec
-INSERT INTO memory_conflicts (id, collection_id, source, ref, commit_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO memory_conflicts (id, collection_id, source, ref, commit_id, detail, created_at, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertMemoryConflictParams struct {
@@ -124,6 +125,7 @@ type InsertMemoryConflictParams struct {
 	CommitID     string
 	Detail       string
 	CreatedAt    int64
+	Folder       string
 }
 
 func (q *Queries) InsertMemoryConflict(ctx context.Context, arg InsertMemoryConflictParams) error {
@@ -135,6 +137,7 @@ func (q *Queries) InsertMemoryConflict(ctx context.Context, arg InsertMemoryConf
 		arg.CommitID,
 		arg.Detail,
 		arg.CreatedAt,
+		arg.Folder,
 	)
 	return err
 }
@@ -176,8 +179,35 @@ func (q *Queries) ListMemoryCollections(ctx context.Context, spaceID string) ([]
 	return items, nil
 }
 
+const listMemoryConflictFolders = `-- name: ListMemoryConflictFolders :many
+SELECT folder FROM memory_conflicts WHERE collection_id = ? AND folder != ''
+`
+
+func (q *Queries) ListMemoryConflictFolders(ctx context.Context, collectionID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listMemoryConflictFolders, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var folder string
+		if err := rows.Scan(&folder); err != nil {
+			return nil, err
+		}
+		items = append(items, folder)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMemoryConflicts = `-- name: ListMemoryConflicts :many
-SELECT id, collection_id, source, ref, commit_id, detail, created_at, resolved_at, resolved_by FROM memory_conflicts WHERE collection_id = ? ORDER BY created_at DESC LIMIT 50
+SELECT id, collection_id, source, ref, commit_id, detail, created_at, resolved_at, resolved_by, folder FROM memory_conflicts WHERE collection_id = ? ORDER BY created_at DESC LIMIT 50
 `
 
 func (q *Queries) ListMemoryConflicts(ctx context.Context, collectionID string) ([]MemoryConflict, error) {
@@ -199,6 +229,7 @@ func (q *Queries) ListMemoryConflicts(ctx context.Context, collectionID string) 
 			&i.CreatedAt,
 			&i.ResolvedAt,
 			&i.ResolvedBy,
+			&i.Folder,
 		); err != nil {
 			return nil, err
 		}
@@ -229,6 +260,45 @@ func (q *Queries) ResolveMemoryConflict(ctx context.Context, arg ResolveMemoryCo
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const resolveMemoryConflictsByFolder = `-- name: ResolveMemoryConflictsByFolder :many
+UPDATE memory_conflicts SET resolved_at = ?, resolved_by = ? WHERE collection_id = ? AND folder = ? AND resolved_at IS NULL RETURNING id
+`
+
+type ResolveMemoryConflictsByFolderParams struct {
+	ResolvedAt   sql.NullInt64
+	ResolvedBy   string
+	CollectionID string
+	Folder       string
+}
+
+func (q *Queries) ResolveMemoryConflictsByFolder(ctx context.Context, arg ResolveMemoryConflictsByFolderParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, resolveMemoryConflictsByFolder,
+		arg.ResolvedAt,
+		arg.ResolvedBy,
+		arg.CollectionID,
+		arg.Folder,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setMemoryHead = `-- name: SetMemoryHead :execrows
