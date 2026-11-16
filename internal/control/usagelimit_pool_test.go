@@ -52,6 +52,9 @@ func (e *peopleEnv) controlMessages(spaceID string) []string {
 		}
 		out = append(out, s)
 	}
+	if err := rows.Err(); err != nil {
+		e.t.Fatal(err)
+	}
 	return out
 }
 
