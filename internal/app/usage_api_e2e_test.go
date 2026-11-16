@@ -188,4 +188,20 @@ func TestUsageAPIAuthorization(t *testing.T) {
 	if st, _ := get(adminAll, "/accounts/acc_missing/windows", nil); st != http.StatusNotFound {
 		t.Errorf("missing account windows: %d", st)
 	}
+
+	// An existing account bound to no space is not found even for the global administrator (the rule is binding to a
+	// readable space, not account:read); once it is bound to a space the administrator can read, it is served.
+	loose, err := e.c.Accounts.Create(ctx, admin, accounts.Input{Name: "usage-loose", Kind: "claude_oauth_token", Secret: secret + "-2", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := get(adminAll, "/accounts/"+loose.ID+"/windows", nil); st != http.StatusNotFound {
+		t.Errorf("unbound account windows: %d, want 404", st)
+	}
+	if _, err := e.c.Accounts.SetBindings(ctx, admin, spC.ID, []accounts.Binding{{AccountID: loose.ID, Default: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if st, body := get(adminAll, "/accounts/"+loose.ID+"/windows", nil); st != http.StatusOK {
+		t.Errorf("bound account windows: %d %s, want 200", st, body)
+	}
 }

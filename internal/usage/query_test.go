@@ -123,4 +123,11 @@ func TestDaySeriesUsesWholeDays(t *testing.T) {
 	if err != nil || s.Totals.InputTokens != 150 || !s.From.Equal(from.Truncate(24*time.Hour)) {
 		t.Fatalf("%+v %v", s, err)
 	}
+	// A to in the middle of a day still counts that day's later hours, and the series ends at the next UTC midnight.
+	f.clk.Advance(2 * time.Hour) // later the same day than to
+	f.report(lrA, false, 0.3, mu("m", 220, 0, 0, 0, 3))
+	s, err = f.svc.SpaceSeries(f.ctx, "spc_a", SeriesQuery{Bucket: GranDay, GroupBy: "role", From: from, To: from.Add(time.Hour)})
+	if err != nil || s.Totals.InputTokens != 220 || !s.To.Equal(from.Truncate(24*time.Hour).Add(24*time.Hour)) {
+		t.Fatalf("later report: %+v %v", s, err)
+	}
 }
