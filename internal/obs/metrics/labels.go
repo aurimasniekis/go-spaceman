@@ -141,6 +141,18 @@ const (
 	StaleLeaseLost StaleReason = "stale_lease_lost"  // the disconnected node's lease and grace passed
 )
 
+// SwitchResult is a step of an account switch (ADR-0090): armed, or how it ended.
+type SwitchResult string
+
+// Account-switch results.
+const (
+	SwitchStarted   SwitchResult = "started"   // a switch was armed
+	SwitchSucceeded SwitchResult = "succeeded" // the run continued on the new account (a turn finished)
+	SwitchFailed    SwitchResult = "failed"    // the resumed run ended before a turn or was limited at once
+	SwitchFellBack  SwitchResult = "fell_back" // no switch: the run waits for the reset (ADR-0079)
+	SwitchCancelled SwitchResult = "cancelled" // the limit cleared, or the run was stopped or replaced
+)
+
 // Volume names a filesystem whose capacity is exported.
 type Volume string
 
@@ -183,6 +195,7 @@ var (
 	enumRunStart      = newEnum(RunLaunched, RunAdopted, RunFailed)
 	enumRunEnd        = newEnum(RunExited, RunStopped, RunKilled, RunLeaseExpired, RunLost, RunLaunchFailed, RunUsageLimit)
 	enumStaleReason   = newEnum(StaleNotOnNode, StaleLeaseLost)
+	enumSwitchResult  = newEnum(SwitchStarted, SwitchSucceeded, SwitchFailed, SwitchFellBack, SwitchCancelled)
 )
 
 // bounded admits label values that match a pattern, up to a fixed number of distinct values; the rest map to

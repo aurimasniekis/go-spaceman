@@ -51,7 +51,11 @@ type Options struct {
 	// account ID stored with the run. Nil: launches carry no account. avoid, when set, names accounts to pass over for
 	// another usable one (usage-limit failover, ADR-0079 decision 8); when every account is to be avoided, the usual
 	// choice stands.
-	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string, avoid func(accountID string) (bool, error)) (string, error)
+	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref string, avoid func(accountID string) (bool, error)) (string, error)
+	// AccountHeadroom reports an account's most-used window from the usage ledger: its used percentage, when it resets
+	// (the zero time when unknown) and whether any usage is known. Only the launch-time headroom gate reads it; nil, or
+	// an account with no known usage, is never refused by the gate.
+	AccountHeadroom func(ctx context.Context, q *db.Queries, accountID string) (usedPct float64, resetsAt time.Time, known bool, err error)
 	// UsageLimitSettings returns a space's usage-limit settings inside the launch transaction (failover and the probe
 	// backoff cap, ADR-0079). Nil: failover off, the default cap.
 	UsageLimitSettings func(ctx context.Context, q *db.Queries, spaceID string) UsageLimitSettings

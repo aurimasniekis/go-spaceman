@@ -24,6 +24,51 @@ type Account struct {
 	Version         int64
 }
 
+type AccountSwitch struct {
+	ID            string
+	SpaceID       string
+	InstanceID    string
+	Role          string
+	RunKind       string
+	Harness       string
+	FromRunID     string
+	NewRunID      string
+	FromAccountID string
+	ToAccountID   string
+	Cause         string
+	LimitKind     string
+	LimitResetsAt sql.NullInt64
+	LimitSince    sql.NullInt64
+	UsageLimitID  string
+	LimitWaitID   string
+	State         string
+	Reason        string
+	ArmedUntil    sql.NullInt64
+	Version       int64
+	CreatedAt     int64
+	UpdatedAt     int64
+}
+
+type AccountWindow struct {
+	AccountID  string
+	Kind       string
+	UsedPct    float64
+	ResetsAt   sql.NullInt64
+	ObservedAt int64
+	RunID      string
+	UpdatedAt  int64
+}
+
+type AccountWindowSample struct {
+	AccountID  string
+	Kind       string
+	Slot       int64
+	UsedPct    float64
+	ResetsAt   sql.NullInt64
+	ObservedAt int64
+	RunID      string
+}
+
 type ApiToken struct {
 	ID            string
 	Name          string
@@ -692,27 +737,29 @@ type KeyringKey struct {
 }
 
 type LimitWait struct {
-	ID           string
-	SpaceID      string
-	RunID        string
-	TaskID       string
-	RunKind      string
-	Role         string
-	NodeID       string
-	InstanceID   string
-	Harness      string
-	SessionID    string
-	LaunchJson   string
-	UsageLimitID string
-	ResumeAt     int64
-	ReleaseAt    sql.NullInt64
-	State        string
-	NewRunID     string
-	Attempts     int64
-	LastError    string
-	Version      int64
-	CreatedAt    int64
-	UpdatedAt    int64
+	ID                string
+	SpaceID           string
+	RunID             string
+	TaskID            string
+	RunKind           string
+	Role              string
+	NodeID            string
+	InstanceID        string
+	Harness           string
+	SessionID         string
+	LaunchJson        string
+	UsageLimitID      string
+	ResumeAt          int64
+	ReleaseAt         sql.NullInt64
+	State             string
+	NewRunID          string
+	Attempts          int64
+	LastError         string
+	Version           int64
+	CreatedAt         int64
+	UpdatedAt         int64
+	SwitchToAccountID string
+	AccountSwitchID   string
 }
 
 type LoginThrottle struct {
@@ -949,6 +996,16 @@ type OneTimeToken struct {
 	CreatedBy string
 }
 
+type PoolExhaustedNotice struct {
+	SpaceID   string
+	DedupKey  string
+	WaitID    string
+	Title     string
+	Body      string
+	CreatedAt int64
+	ExpiresAt int64
+}
+
 type Prompt struct {
 	ID          string
 	Slug        string
@@ -1137,6 +1194,7 @@ type Run struct {
 	LimitKind          string
 	LimitResetsAt      sql.NullInt64
 	LimitSince         sql.NullInt64
+	Failure            string
 }
 
 type RunCredential struct {
@@ -1218,6 +1276,9 @@ type RunUsage struct {
 	Final           int64
 	Note            string
 	UpdatedAt       int64
+	AccountID       string
+	Role            string
+	Harness         string
 }
 
 type ScheduleOccurrence struct {
@@ -1285,6 +1346,7 @@ type Space struct {
 	CreatedBy            string
 	UpdatedAt            int64
 	ArchivedAt           sql.NullInt64
+	AccountsVersion      int64
 }
 
 type SpaceAccount struct {
@@ -1294,6 +1356,7 @@ type SpaceAccount struct {
 	IsDefault int64
 	CreatedAt int64
 	CreatedBy string
+	Priority  int64
 }
 
 type SpaceHarborPilot struct {
@@ -1395,6 +1458,15 @@ type SpaceRole struct {
 	UpdatedAt    int64
 	Version      int64
 	SkillsJson   string
+}
+
+type SpaceRoleAccount struct {
+	SpaceID   string
+	Role      string
+	AccountID string
+	Priority  int64
+	CreatedAt int64
+	CreatedBy string
 }
 
 type SpaceSchedule struct {
@@ -1611,6 +1683,31 @@ type TelegramSetting struct {
 	UpdatedAt    int64
 	UpdatedBy    string
 	Version      int64
+}
+
+type UsageBucket struct {
+	SpaceID          string
+	AccountID        string
+	Role             string
+	Harness          string
+	Model            string
+	Granularity      string
+	BucketStart      int64
+	InputTokens      int64
+	OutputTokens     int64
+	CacheWriteTokens int64
+	CacheReadTokens  int64
+	ReasoningTokens  int64
+	Requests         int64
+	CostUsd          float64
+}
+
+type UsageLedgerMark struct {
+	SpaceID     string
+	MarkKey     string
+	CountedJson string
+	CountedCost float64
+	UpdatedAt   int64
 }
 
 type UsageLimit struct {

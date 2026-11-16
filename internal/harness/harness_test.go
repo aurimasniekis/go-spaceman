@@ -144,7 +144,7 @@ func TestClaudeBuild(t *testing.T) {
 	// sets none, so the terminal keeps a scrollback a watch-only viewer can scroll (ADR-0064), and the deny of the
 	// terminal question picker (ADR-0066), the no-dialog hook and the run's own space folder (ADR-0068).
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
-	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 3 || keys["tui"] != "default" || !reflect.DeepEqual(keys["hooks"], spacemanHooks()) ||
+	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 4 || keys["tui"] != "default" || !reflect.DeepEqual(keys["hooks"], spacemanHooks()) ||
 		!reflect.DeepEqual(keys["permissions"], map[string]any{"deny": withCreds("AskUserQuestion", "EnterPlanMode"), "additionalDirectories": []string{"/data/spaces/spc_a"}}) {
 		t.Fatalf("settings keys without settings %v", l.OwnJSON)
 	}
@@ -153,7 +153,7 @@ func TestClaudeBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if keys := l.OwnJSON[cfgSettings]; len(keys) != 3 || keys["hooks"] == nil || keys["permissions"] == nil || keys["tui"] != "default" {
+	if keys := l.OwnJSON[cfgSettings]; len(keys) != 4 || keys["hooks"] == nil || keys["permissions"] == nil || keys["tui"] != "default" {
 		t.Fatalf("settings keys %v", l.OwnJSON)
 	}
 	// Every profile key is written unchanged, except that the deny is added to the profile's own rules, and the
@@ -178,7 +178,7 @@ func TestClaudeBuild(t *testing.T) {
 	for _, tui := range []any{"fullscreen", "default"} {
 		prof := proto.ClaudeSettings{"tui": tui, "model": "opus"}
 		l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: prof}))
-		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus", "hooks": spacemanHooks(),
+		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus", "hooks": spacemanHooks(), "statusLine": spacemanStatusLine(""),
 			"permissions": map[string]any{"deny": withCreds("AskUserQuestion", "EnterPlanMode"), "additionalDirectories": []string{"/data/spaces/spc_a"}}}) {
 			t.Fatalf("profile renderer %v: %v %v", tui, l.OwnJSON, err)
 		}

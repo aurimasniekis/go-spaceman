@@ -28,16 +28,22 @@ type peopleEnv struct {
 	s        *store.Store
 	human    *human.Service
 	sv       *Supervisor
+	aw       *audit.Writer
+	ch       *changefeed.Recorder
 	perSpace atomic.Int64 // the human service's pending-actions limit per space
 }
 
-func newPeopleEnv(t *testing.T) *peopleEnv {
+func newPeopleEnv(t *testing.T) *peopleEnv { return newPeopleEnvOpts(t, fleet.Options{}) }
+
+// newPeopleEnvOpts is newPeopleEnv with fleet options (the clock is set here).
+func newPeopleEnvOpts(t *testing.T, opts fleet.Options) *peopleEnv {
 	t.Helper()
 	e := &peopleEnv{t: t, ctx: context.Background(), clk: clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))}
 	e.s = storetest.Open(t, storetest.WithClock(e.clk))
 	kr := keyringtest.Load(t, e.s)
 	aw, ch := audit.NewWriter(kr), changefeed.New(nil)
-	fl := fleet.New(e.s, kr, aw, eventbus.New(), ch, fleet.Options{Clock: e.clk})
+	e.aw, e.ch = aw, ch
+	fl := fleet.New(e.s, kr, aw, eventbus.New(), ch, withClock(opts, e.clk))
 	e.human = human.New(e.s, aw, ch, e.clk)
 	e.human.PendingLimits = func(context.Context, *db.Queries, string) (int64, int64) { return e.perSpace.Load(), 0 }
 	e.sv = NewSupervisor(fl, nil, nil, e.human, nil, e.clk)
@@ -193,3 +199,5 @@ func TestLongHoldText(t *testing.T) {
 		t.Errorf("gateway body names account clear-holds:\n%s", body)
 	}
 }
+
+func withClock(o fleet.Options, c clock.Clock) fleet.Options { o.Clock = c; return o }

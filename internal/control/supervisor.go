@@ -276,7 +276,7 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		return
 	}
 	li := fleet.LaunchInput{Kind: agenttools.KindControl, Role: r.Role, Harness: r.Harness, InstanceID: r.InstanceID, SessionID: resumable(r),
-		Model: r.Launch.Model, Settings: r.Launch.Settings, AccountRef: r.Launch.AccountRef, Workspace: r.Launch.Workspace,
+		Model: r.Launch.Model, Settings: r.Launch.Settings, AccountRef: r.Launch.AccountRef, Workspace: r.Launch.Workspace, RequirePoolMember: true,
 		Prompt: "SpaceMan restarted you after your previous session ended unexpectedly. Check spaceman_messages, the inbox and the queue, then continue."}
 	if li.SessionID == "" {
 		li.Prompt = r.Launch.Prompt + "\n\n" + li.Prompt

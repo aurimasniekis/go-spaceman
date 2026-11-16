@@ -44,6 +44,7 @@ import { Route as SpacesIndexRouteImport } from './routes/spaces.index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces.$spaceId'
 import { Route as EventsTemplatesTemplateIdRouteImport } from './routes/events.templates.$templateId'
 import { Route as SpacesSpaceIdIndexRouteImport } from './routes/spaces.$spaceId.index'
+import { Route as SpacesSpaceIdAccountsRouteImport } from './routes/spaces.$spaceId.accounts'
 import { Route as SpacesSpaceIdCrossSpaceRouteImport } from './routes/spaces.$spaceId.cross-space'
 import { Route as SpacesSpaceIdEventsRouteImport } from './routes/spaces.$spaceId.events'
 import { Route as SpacesSpaceIdHumanRouteImport } from './routes/spaces.$spaceId.human'
@@ -56,6 +57,7 @@ import { Route as SpacesSpaceIdQueueRouteImport } from './routes/spaces.$spaceId
 import { Route as SpacesSpaceIdRepositoriesRouteImport } from './routes/spaces.$spaceId.repositories'
 import { Route as SpacesSpaceIdSchedulesRouteImport } from './routes/spaces.$spaceId.schedules'
 import { Route as SpacesSpaceIdTerminalsRouteImport } from './routes/spaces.$spaceId.terminals'
+import { Route as SpacesSpaceIdUsageRouteImport } from './routes/spaces.$spaceId.usage'
 import { Route as SpacesSpaceIdEventsIndexRouteImport } from './routes/spaces.$spaceId.events.index'
 import { Route as SpacesSpaceIdEventsSubscriptionIdRouteImport } from './routes/spaces.$spaceId.events.$subscriptionId'
 import { Route as SpacesSpaceIdInboxIndexRouteImport } from './routes/spaces.$spaceId.inbox.index'
@@ -240,6 +242,11 @@ const SpacesSpaceIdIndexRoute = SpacesSpaceIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdAccountsRoute = SpacesSpaceIdAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdCrossSpaceRoute = SpacesSpaceIdCrossSpaceRouteImport.update({
   id: '/cross-space',
   path: '/cross-space',
@@ -299,6 +306,11 @@ const SpacesSpaceIdSchedulesRoute = SpacesSpaceIdSchedulesRouteImport.update({
 const SpacesSpaceIdTerminalsRoute = SpacesSpaceIdTerminalsRouteImport.update({
   id: '/terminals',
   path: '/terminals',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
+const SpacesSpaceIdUsageRoute = SpacesSpaceIdUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
 const SpacesSpaceIdEventsIndexRoute =
@@ -376,6 +388,7 @@ export interface FileRoutesByFullPath {
   '/prompts/': typeof PromptsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/accounts': typeof SpacesSpaceIdAccountsRoute
   '/spaces/$spaceId/cross-space': typeof SpacesSpaceIdCrossSpaceRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
@@ -388,6 +401,7 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId/terminals': typeof SpacesSpaceIdTerminalsRoute
+  '/spaces/$spaceId/usage': typeof SpacesSpaceIdUsageRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -429,6 +443,7 @@ export interface FileRoutesByTo {
   '/prompts': typeof PromptsIndexRoute
   '/spaces': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/accounts': typeof SpacesSpaceIdAccountsRoute
   '/spaces/$spaceId/cross-space': typeof SpacesSpaceIdCrossSpaceRoute
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
@@ -439,6 +454,7 @@ export interface FileRoutesByTo {
   '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId/terminals': typeof SpacesSpaceIdTerminalsRoute
+  '/spaces/$spaceId/usage': typeof SpacesSpaceIdUsageRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -484,6 +500,7 @@ export interface FileRoutesById {
   '/prompts/': typeof PromptsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/accounts': typeof SpacesSpaceIdAccountsRoute
   '/spaces/$spaceId/cross-space': typeof SpacesSpaceIdCrossSpaceRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
@@ -496,6 +513,7 @@ export interface FileRoutesById {
   '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId/terminals': typeof SpacesSpaceIdTerminalsRoute
+  '/spaces/$spaceId/usage': typeof SpacesSpaceIdUsageRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -542,6 +560,7 @@ export interface FileRouteTypes {
     | '/prompts/'
     | '/spaces/'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/accounts'
     | '/spaces/$spaceId/cross-space'
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/human'
@@ -554,6 +573,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId/terminals'
+    | '/spaces/$spaceId/usage'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -595,6 +615,7 @@ export interface FileRouteTypes {
     | '/prompts'
     | '/spaces'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/accounts'
     | '/spaces/$spaceId/cross-space'
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/knowledge'
@@ -605,6 +626,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId/terminals'
+    | '/spaces/$spaceId/usage'
     | '/spaces/$spaceId'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -649,6 +671,7 @@ export interface FileRouteTypes {
     | '/prompts/'
     | '/spaces/'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/accounts'
     | '/spaces/$spaceId/cross-space'
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/human'
@@ -661,6 +684,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId/terminals'
+    | '/spaces/$spaceId/usage'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -951,6 +975,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdIndexRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/accounts': {
+      id: '/spaces/$spaceId/accounts'
+      path: '/accounts'
+      fullPath: '/spaces/$spaceId/accounts'
+      preLoaderRoute: typeof SpacesSpaceIdAccountsRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/cross-space': {
       id: '/spaces/$spaceId/cross-space'
       path: '/cross-space'
@@ -1033,6 +1064,13 @@ declare module '@tanstack/react-router' {
       path: '/terminals'
       fullPath: '/spaces/$spaceId/terminals'
       preLoaderRoute: typeof SpacesSpaceIdTerminalsRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
+    '/spaces/$spaceId/usage': {
+      id: '/spaces/$spaceId/usage'
+      path: '/usage'
+      fullPath: '/spaces/$spaceId/usage'
+      preLoaderRoute: typeof SpacesSpaceIdUsageRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
     '/spaces/$spaceId/events/': {
@@ -1128,6 +1166,7 @@ const SpacesSpaceIdInboxRouteWithChildren =
   SpacesSpaceIdInboxRoute._addFileChildren(SpacesSpaceIdInboxRouteChildren)
 
 interface SpacesSpaceIdRouteChildren {
+  SpacesSpaceIdAccountsRoute: typeof SpacesSpaceIdAccountsRoute
   SpacesSpaceIdCrossSpaceRoute: typeof SpacesSpaceIdCrossSpaceRoute
   SpacesSpaceIdEventsRoute: typeof SpacesSpaceIdEventsRouteWithChildren
   SpacesSpaceIdHumanRoute: typeof SpacesSpaceIdHumanRoute
@@ -1140,6 +1179,7 @@ interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdRepositoriesRoute: typeof SpacesSpaceIdRepositoriesRoute
   SpacesSpaceIdSchedulesRoute: typeof SpacesSpaceIdSchedulesRoute
   SpacesSpaceIdTerminalsRoute: typeof SpacesSpaceIdTerminalsRoute
+  SpacesSpaceIdUsageRoute: typeof SpacesSpaceIdUsageRoute
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
   SpacesSpaceIdRunsIndexRoute: typeof SpacesSpaceIdRunsIndexRoute
@@ -1147,6 +1187,7 @@ interface SpacesSpaceIdRouteChildren {
 }
 
 const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
+  SpacesSpaceIdAccountsRoute: SpacesSpaceIdAccountsRoute,
   SpacesSpaceIdCrossSpaceRoute: SpacesSpaceIdCrossSpaceRoute,
   SpacesSpaceIdEventsRoute: SpacesSpaceIdEventsRouteWithChildren,
   SpacesSpaceIdHumanRoute: SpacesSpaceIdHumanRoute,
@@ -1159,6 +1200,7 @@ const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdRepositoriesRoute: SpacesSpaceIdRepositoriesRoute,
   SpacesSpaceIdSchedulesRoute: SpacesSpaceIdSchedulesRoute,
   SpacesSpaceIdTerminalsRoute: SpacesSpaceIdTerminalsRoute,
+  SpacesSpaceIdUsageRoute: SpacesSpaceIdUsageRoute,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,
   SpacesSpaceIdRunsIndexRoute: SpacesSpaceIdRunsIndexRoute,

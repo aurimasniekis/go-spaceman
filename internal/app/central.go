@@ -281,7 +281,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock, WakeDeadlines: wakeDeadlines, StaleRunGrace: o.StaleRunGrace,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve, AccountHeadroom: usage.AccountHeadroomFunc(o.Clock.Now),
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
 			if err != nil {
@@ -412,7 +412,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines,
 		// ADR-0079: failover and the probe backoff cap are space limits.
 		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
-			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter}
+			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter,
+				WaitIfResetWithin: fleet.DefaultSwitchWaitIfResetWithin, SwitchMaxPerDay: fleet.DefaultSwitchMaxPerDay}
 			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
 				out.Failover = v.Get(limits.UsageLimitFailover) != 0
 				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
@@ -422,6 +423,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 					out.MaxWait = time.Duration(h) * time.Hour
 				}
 				out.NotifyAfter = time.Duration(v.Get(limits.UsageLimitNotifyAfter)) * time.Hour // 0: never
+				out.WaitIfResetWithin = time.Duration(v.Get(limits.UsageLimitWaitIfResetWithin)) * time.Minute
+				out.SwitchMaxPerDay = int(v.Get(limits.UsageLimitSwitchMaxPerDay))
+				out.MinHeadroomPercent = int(v.Get(limits.UsageLimitMinHeadroomPercent))
 			}
 			return out
 		},
@@ -907,7 +911,12 @@ func (c *Central) Serve(ctx context.Context) error {
 		// Gateway usage-limit holds: their reset estimated from Harbor Pilot, re-read every 15 minutes (ADR-0079 decision 9).
 		human.Deadline{Name: "gateway_waits", Next: c.HarborPilotWaits.Next, Due: c.HarborPilotWaits.Due},
 		// Holds whose reset is far away: the space's people get one human action each (ADR-0079 Q5). A limit report wakes it.
-		human.Deadline{Name: "usage_limit_people", Due: c.Supervisor.TellLongHolds},
+		human.Deadline{Name: "usage_limit_people", Due: func(ctx context.Context) (int, error) {
+			// Pool-exhausted notices whose action wasn't created yet (a crash, the space's open-action cap) are raised again here.
+			n, err := c.Supervisor.TellPoolExhausted(ctx)
+			m, err2 := c.Supervisor.TellLongHolds(ctx)
+			return n + m, errors.Join(err, err2)
+		}},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.

@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Upgrade notes
 
+- **Schema migrations `0054_account_pools` to `0058_pool_exhausted_notices`** (account switching, ADR-0090): account
+  pools, account switches, a run's failure class, the usage ledger and the pool-exhausted notices. They are applied on
+  start, need no action and are forward-only: **take a backup first**.
+- **Node protocol minor 13.** Upgrade central first, then the node agents. An older agent keeps working, and its runs
+  still switch on a limit it reports, but only an agent of this release reports the status line's usage windows, the
+  cost estimate and the `StopFailure` failure class, so the usage windows, the headroom gate's figures and a wrap-up
+  limit's missing reset need the agent upgrade.
+- **New limits** (per space or as installation defaults): `usage_limit_wait_if_reset_within` (minutes, default 15),
+  `usage_limit_switch_max_per_day` (default 6; 0 never switches) and `usage_limit_min_headroom_percent` (default 0: off).
+  Live switching is off unless the existing `usage_limit_failover` is on, so an installation that leaves it off keeps
+  ADR-0079's wait.
 - **Schema migration `0059_telegram_message_thread`**: adds the nullable
   `telegram_messages.message_thread_id`, the topic a card was sent in. It is applied on start and needs no action. A card
   row from before it has no topic recorded and is edited in place as before.
@@ -18,6 +29,31 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Account switching** (ADR-0090, security-relevant). With `usage_limit_failover` on, a Claude Code run that reaches
+  its usage limit moves to another account of its pool: at its next idle point it is parked and resumed at once with its
+  session (`--resume`) under the next eligible account. Nothing is sent to the running process and no credential is
+  written to the instance folder. Control gets one message per switch. A switch's resume re-checks the target and takes
+  the pool's next account, or falls back to ADR-0079's wait, when it is no longer usable.
+- **Pools:** a space's accounts for a harness form its pool, ordered by priority; an optional role pool replaces it for
+  one role. Accounts are chosen by priority, then the lowest known use of the window that limited the run, then the
+  fewest live runs.
+- **Wait if the reset is near:** a run whose account resets within `usage_limit_wait_if_reset_within` waits for it
+  instead of switching; beyond `usage_limit_switch_max_per_day` switches an instance waits too.
+- **Launch headroom gate:** with `usage_limit_min_headroom_percent` above 0, a launch or resume does not start on an
+  account whose known window usage leaves less than that percentage free. Running agents are never moved because of it.
+- **Pool exhausted:** when every account of a pool is at its limit, the parked run resumes at the pool's earliest reset,
+  and the people get one informational human action per space, harness, role and window (and so a Telegram card). The
+  notice is stored with the park, so a crash or a space at its open-action cap delays it but does not lose it.
+- **Usage ledger:** tokens and the list-price cost estimate per space, account, role, harness and model, hourly (90 days)
+  and daily (730 days), and each account's latest 5-hour and weekly windows. API: `GET /spaces/{id}/usage/series`,
+  `GET /accounts/{id}/usage`, `GET /accounts/{id}/windows`, `GET /spaces/{id}/account-windows`, the account pools
+  (`GET /spaces/{id}/account-pools`, `PUT /spaces/{id}/account-pools/{role}`) and `GET /spaces/{id}/account-switches`.
+  CLI: `spaceman usage space|account`, `spaceman account windows|space-windows|pool`, `spaceman limits switches`.
+- **Web:** per-space **Accounts** (pool order, role pools, failover and switch settings) and **Usage** (tokens first, the
+  cost only as an estimate, a chart with a table of the same numbers) pages; a run links to the switch away from it and
+  the one into it.
+- **Evidence:** account switching is tested with simulated harnesses only. It has not yet been verified with two real
+  claude.ai accounts (open item K-17).
 - Telegram cards are actionable and edited in place (ADR-0089): a question's options, Approve and Deny, Mark completed,
   Acknowledge and Dismiss sit on the card, **More…** turns it into the full form and **Back** returns, and a resolved card
   becomes one line with no buttons. Reminders, escalations and assignments are replies to the card. A card of a space you can

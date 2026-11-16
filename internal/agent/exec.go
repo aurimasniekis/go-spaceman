@@ -544,6 +544,9 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	}
 	prev, _ := a.j.getRun(ctx, row.RunID)
 	_ = a.j.updateRun(ctx, row)
+	if row.Status == "working" {
+		a.failureEnded(row.RunID, prev.Status != "working")
+	}
 	a.report(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
@@ -555,6 +558,7 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	switch {
 	case ended(row.State) && !ended(prev.State):
 		bctx := context.WithoutCancel(ctx)
+		a.forgetHookData(row.RunID)
 		if row.Harness == harness.KindClaude {
 			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
 		}

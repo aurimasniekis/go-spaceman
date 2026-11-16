@@ -64,6 +64,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An account's usage over time, in the spaces you can read
+         * @description Like a space's series, per space, role or model. Accounts are shared by spaces, so only the spaces the caller can read (run:read) are counted: the rows and the totals never include another space.
+         */
+        get: operations["get-account-usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{account_id}/usage-limits": {
         parameters: {
             query?: never;
@@ -95,6 +115,26 @@ export interface paths {
          * @description Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose hold was cleared has its control told once.
          */
         post: operations["clear-account-usage-limits"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An account's latest rate-limit windows
+         * @description The 5-hour and 7-day windows as the last run on the account reported them. Not found unless the account is bound to a space the caller can read (run:read).
+         */
+        get: operations["get-account-windows"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1927,6 +1967,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/account-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's role pools
+         * @description A role with a pool uses those accounts only (each must also be bound to the space), ordered by priority; a role without one uses the space's bindings. Pools apply when the space's usage_limit_failover is on.
+         */
+        get: operations["list-space-role-pools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/account-pools/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a role's pool
+         * @description Replaces the role's pool; an empty list removes it, so the role uses the space's bindings again. If-Match is the version of the space's account configuration.
+         */
+        put: operations["put-space-role-pool"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/account-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's account switches
+         * @description The runs moved to another account of their pool at a usage limit (ADR-0090), newest first, with their state and the fixed reason of one that fell back or failed. Identifiers, kinds and times only.
+         */
+        get: operations["list-space-account-switches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The latest rate-limit windows of the accounts bound to a space */
+        get: operations["list-space-account-windows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/accounts": {
         parameters: {
             query?: never;
@@ -1938,7 +2055,7 @@ export interface paths {
         get: operations["list-space-accounts"];
         /**
          * Set the accounts the space's runs may use
-         * @description At most one default per harness. Launches use the named account, else the default, else the only bound account; otherwise they are refused.
+         * @description At most one default per harness. Launches use the named account, else the default, else the only bound account; otherwise they are refused. The order of the items is the binding order; a priority (lower first, default 100) orders the pool for usage-limit failover. With If-Match, a change made since that version is refused.
          */
         put: operations["set-space-accounts"];
         post?: never;
@@ -4064,6 +4181,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/usage/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's usage over time
+         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.
+         */
+        get: operations["get-space-usage-series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/xspace/peers": {
         parameters: {
             query?: never;
@@ -4911,6 +5048,11 @@ export interface components {
              */
             harness?: "claude-code" | "codex";
             name?: string;
+            /**
+             * Format: int64
+             * @description Pool order for usage-limit failover, lower first; 0 or omitted is 100
+             */
+            priority?: number;
         };
         AccountsKind: {
             /** @enum {string} */
@@ -4920,6 +5062,19 @@ export interface components {
             harness: "claude-code" | "codex";
             label: string;
             name: string;
+        };
+        AccountsPoolEntry: {
+            account_id: string;
+            name?: string;
+            /**
+             * Format: int64
+             * @description Lower first; 0 or omitted is 100
+             */
+            priority?: number;
+        };
+        AccountsRolePool: {
+            items: components["schemas"]["AccountsPoolEntry"][];
+            role: string;
         };
         "Add-task-blockerRequest": {
             /**
@@ -5597,6 +5752,11 @@ export interface components {
             account_id: string;
             /** @description The account the space's runs of its harness use unless a launch names another */
             default?: boolean;
+            /**
+             * Format: int64
+             * @description Pool order for usage-limit failover, lower first; 0 or omitted is 100
+             */
+            priority?: number;
         };
         BreakGlassStatus: {
             /**
@@ -6517,6 +6677,38 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        FleetAccountSwitch: {
+            /** Format: date-time */
+            armed_until?: string;
+            /** @enum {string} */
+            cause: "usage_limit" | "operator";
+            /** Format: date-time */
+            created_at: string;
+            from_account_id: string;
+            from_run_id: string;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            id: string;
+            instance_id: string;
+            limit_kind: string;
+            /** Format: date-time */
+            limit_resets_at?: string;
+            limit_wait_id?: string;
+            new_run_id?: string;
+            reason?: string;
+            role: string;
+            /** @enum {string} */
+            run_kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            space_id: string;
+            /** @enum {string} */
+            state: "pending" | "parked" | "resumed" | "succeeded" | "failed" | "fell_back" | "cancelled";
+            to_account_id?: string;
+            /** Format: date-time */
+            updated_at: string;
+            usage_limit_id?: string;
+            /** Format: int64 */
+            version: number;
+        };
         FleetContinuity: {
             detail: string;
             label: string;
@@ -6640,6 +6832,8 @@ export interface components {
              * @example /api/v1/schemas/FleetLimitWait.json
              */
             readonly $schema?: string;
+            /** @description The account switch this wait belongs to */
+            account_switch_id?: string;
             /** Format: int64 */
             attempts: number;
             /** Format: date-time */
@@ -6665,6 +6859,8 @@ export interface components {
             space_id: string;
             /** @enum {string} */
             state: "waiting" | "resuming" | "resumed" | "released" | "cancelled" | "failed";
+            /** @description The account the resume uses instead of the parked run's (an account switch) */
+            switch_to_account_id?: string;
             task_id?: string;
             /** Format: date-time */
             updated_at: string;
@@ -6864,6 +7060,11 @@ export interface components {
             error?: string;
             /** Format: int64 */
             exit_code?: number;
+            /**
+             * @description The latest failure class Claude Code reported for the run (not a usage limit); a run health signal (node protocol 1.13 or later)
+             * @enum {string}
+             */
+            failure?: "authentication_failed" | "oauth_org_not_allowed" | "account_on_hold" | "verification_required" | "billing_error" | "overloaded" | "invalid_request" | "model_not_found" | "server_error" | "unknown" | "max_output_tokens" | "cloud_credential_error";
             /**
              * Format: int64
              * @description Lease generation the run belongs to
@@ -9113,6 +9314,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["CatalogSkill"][];
         };
+        "List-space-account-switchesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-account-switchesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetAccountSwitch"][];
+        };
         "List-space-git-ssh-keysResponse": {
             /**
              * Format: uri
@@ -10186,6 +10396,15 @@ export interface components {
             readonly $schema?: string;
             held_subscriptions: string[];
             version: components["schemas"]["EventsTemplateVersion"];
+        };
+        "Put-space-role-poolRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Put-space-role-poolRequest.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["AccountsPoolEntry"][];
         };
         "Queue-decisionsResponse": {
             /**
@@ -11751,6 +11970,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["OidcPublicProvider"][];
         };
+        SpaceAccountWindows: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceAccountWindows.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["UsageAccountWindows"][];
+        };
         SpaceAccounts: {
             /**
              * Format: uri
@@ -11758,6 +11986,11 @@ export interface components {
              * @example /api/v1/schemas/SpaceAccounts.json
              */
             readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The version of the space's account configuration; the ETag header carries it too
+             */
+            accounts_version: number;
             items: components["schemas"]["AccountsBinding"][];
         };
         SpaceRoleInput: {
@@ -11778,6 +12011,20 @@ export interface components {
             /** @description Added to the template's skills; a pin here wins */
             skills?: components["schemas"]["CatalogSkillRef"][];
             template_id: string;
+        };
+        SpaceRolePools: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceRolePools.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The version of the space's account configuration; the ETag header carries it too
+             */
+            accounts_version: number;
+            items: components["schemas"]["AccountsRolePool"][];
         };
         SpaceTelegramList: {
             /**
@@ -12375,6 +12622,18 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        UsageAccountWindows: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/UsageAccountWindows.json
+             */
+            readonly $schema?: string;
+            account_id: string;
+            harness?: string;
+            name: string;
+            windows: components["schemas"]["UsageWindow"][];
+        };
         UsageGatewayCost: {
             /** @description Decimal amount */
             amount: string;
@@ -12405,6 +12664,59 @@ export interface components {
              * @description Attempts whose token usage the provider did not report (not counted as zero)
              */
             unknown_usage_requests: number;
+        };
+        UsageRow: {
+            /**
+             * Format: date-time
+             * @description Start of the bucket, UTC
+             */
+            bucket_start?: string;
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** @description The value of the group_by field (an ID or name; empty when the usage had none, such as a run without an account) */
+            group: string;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: int64 */
+            reasoning_tokens: number;
+            /** Format: int64 */
+            requests: number;
+            /**
+             * Format: double
+             * @description The harness's own list-price estimate in USD, not a bill; tokens are the primary unit
+             */
+            total_cost_usd: number;
+            /**
+             * Format: int64
+             * @description Input, output, cache write and cache read tokens (reasoning tokens are reported separately)
+             */
+            total_tokens: number;
+        };
+        UsageSeriesPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/UsageSeriesPage.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            bucket: "hour" | "day";
+            /** @description What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit */
+            cost_note: string;
+            /** Format: date-time */
+            from: string;
+            group_by: string;
+            /** @description One row per bucket and group, oldest first */
+            items: components["schemas"]["UsageRow"][];
+            next_cursor?: string;
+            /** Format: date-time */
+            to: string;
+            /** @description Over the whole range, not only this page */
+            totals: components["schemas"]["UsageRow"];
         };
         UsageSummary: {
             /**
@@ -12451,6 +12763,22 @@ export interface components {
             state: "receiving" | "stored" | "failed" | "deleted";
             /** @description Only the start of a longer transcript was kept */
             truncated: boolean;
+        };
+        UsageWindow: {
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day";
+            /**
+             * Format: date-time
+             * @description When a run last reported it; an old observation may be out of date
+             */
+            observed_at: string;
+            /** Format: date-time */
+            resets_at?: string;
+            /**
+             * Format: double
+             * @description Percent of the window used when it was observed
+             */
+            used_pct: number;
         };
         XspaceInbound: {
             /** @description The peer may ask this space's control to do work (this space decides and runs it) */
@@ -12852,6 +13180,48 @@ export interface operations {
             };
         };
     };
+    "get-account-usage": {
+        parameters: {
+            query?: {
+                /** @description Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to */
+                from?: string;
+                /** @description End of the range, exclusive (RFC 3339). Default: now */
+                to?: string;
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days */
+                bucket?: "hour" | "day";
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                group_by?: "space" | "role" | "model";
+            };
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSeriesPage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-account-usage-limits": {
         parameters: {
             query?: never;
@@ -12905,6 +13275,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetUsageLimitClear"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageAccountWindows"];
                 };
             };
             /** @description Error */
@@ -17199,6 +17600,140 @@ export interface operations {
             };
         };
     };
+    "list-space-role-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceRolePools"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-space-role-pool": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Put-space-role-poolRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceRolePools"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-account-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-account-switchesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceAccountWindows"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-space-accounts": {
         parameters: {
             query?: never;
@@ -17213,6 +17748,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -17233,7 +17769,10 @@ export interface operations {
     "set-space-accounts": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
+                "If-Match"?: string;
+            };
             path: {
                 space_id: string;
             };
@@ -17248,6 +17787,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -22173,6 +22713,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetUsageLimitClear"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-usage-series": {
+        parameters: {
+            query?: {
+                /** @description Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to */
+                from?: string;
+                /** @description End of the range, exclusive (RFC 3339). Default: now */
+                to?: string;
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days */
+                bucket?: "hour" | "day";
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                group_by?: "role" | "account" | "model" | "harness";
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSeriesPage"];
                 };
             };
             /** @description Error */

@@ -135,3 +135,36 @@ func (svc *Service) MarkHoldTold(ctx context.Context, limitID string) error {
 		return svc.record(ctx, tx, u.SpaceID, "usage_limit", u.ID, "updated", u.Version)
 	})
 }
+
+// PoolExhaustedNotice is a recorded people notice of an exhausted account pool whose human action isn't known to exist yet.
+type PoolExhaustedNotice struct {
+	SpaceID, DedupKey, WaitID, Title, Body string
+}
+
+// PoolExhaustedNotices returns up to limit recorded pool-exhausted notices, oldest first (migration 0058).
+func (svc *Service) PoolExhaustedNotices(ctx context.Context, limit int) ([]PoolExhaustedNotice, error) {
+	rows, err := svc.s.R().ListPoolExhaustedNotices(ctx, int64(limit))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PoolExhaustedNotice, len(rows))
+	for i, r := range rows {
+		out[i] = PoolExhaustedNotice{SpaceID: r.SpaceID, DedupKey: r.DedupKey, WaitID: r.WaitID, Title: r.Title, Body: r.Body}
+	}
+	return out, nil
+}
+
+// DeletePoolExhaustedNotice drops a recorded notice once its human action exists.
+func (svc *Service) DeletePoolExhaustedNotice(ctx context.Context, spaceID, dedupKey string) error {
+	return svc.s.W().TxNamed(ctx, "fleet.pool_notice_done", func(tx *store.Tx) error {
+		return tx.Q.DeletePoolExhaustedNotice(ctx, db.DeletePoolExhaustedNoticeParams{SpaceID: spaceID, DedupKey: dedupKey})
+	})
+}
+
+// DropExpiredPoolExhaustedNotices deletes the recorded notices whose window is over, undelivered.
+func (svc *Service) DropExpiredPoolExhaustedNotices(ctx context.Context) error {
+	return svc.s.W().TxNamed(ctx, "fleet.pool_notice_expire", func(tx *store.Tx) error {
+		_, err := tx.Q.DeleteExpiredPoolExhaustedNotices(ctx, tx.NowMicros())
+		return err
+	})
+}

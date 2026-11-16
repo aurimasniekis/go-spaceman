@@ -51,6 +51,7 @@ type lifecycle struct {
 type deferral struct {
 	target fleet.HoldTarget
 	until  time.Time
+	gate   bool // refused by the headroom gate: no hold row backs it, so only the reset ends it
 }
 
 // ControlWanted starts the space's control for work waiting for it (the notifier's sweep calls it for active spaces
@@ -85,7 +86,7 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 		sv.attention(ctx, spaceID, sp.Name, "control-autostart-limit", fmt.Sprintf("SpaceMan started control %d times in the last %s for waiting work and stopped starting it. Check the last control run's terminal, then launch control again.", n, sv.Window))
 		return
 	}
-	li := fleet.LaunchInput{Kind: agenttools.KindControl, Prompt: autostartPrompt}
+	li := fleet.LaunchInput{Kind: agenttools.KindControl, Prompt: autostartPrompt, RequirePoolMember: true}
 	last, err := sv.fl.LatestControlRun(ctx, spaceID)
 	switch {
 	case err == nil:
@@ -130,7 +131,7 @@ func (sv *Supervisor) deferStart(spaceID string, h *fleet.HoldError) {
 	if sv.deferred == nil {
 		sv.deferred = map[string]deferral{}
 	}
-	sv.deferred[spaceID] = deferral{target: h.Target, until: until}
+	sv.deferred[spaceID] = deferral{target: h.Target, until: until, gate: h.Gate}
 }
 
 // stillDeferred reports whether control's start in a space is still held back by a usage-limit hold. Until the reset
@@ -145,6 +146,9 @@ func (sv *Supervisor) stillDeferred(ctx context.Context, spaceID string) bool {
 	if !sv.clock.Now().Before(d.until) {
 		delete(sv.deferred, spaceID)
 		return false
+	}
+	if d.gate {
+		return true // the headroom gate writes no hold row: stay deferred until the reset (or the hour's end)
 	}
 	h, err := sv.fl.HoldOpen(ctx, d.target)
 	switch {

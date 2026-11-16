@@ -108,6 +108,8 @@ var Table = map[string]Entry{
 	// Clearing an account's holds in every space lets every space launch on it again (account:write).
 	"clear-account-usage-limits": {Dangerous, "lets every space using the account launch on it again"},
 	"list-space-accounts":        {Read, rRead},
+	"list-space-role-pools":      {Read, rRead},
+	"put-space-role-pool":        {Dangerous, "chooses which credentials a role's runs receive"},
 	"set-space-accounts":         {Dangerous, "chooses which credentials a space's runs receive"},
 
 	// Admin.
@@ -383,8 +385,9 @@ var Table = map[string]Entry{
 	"launch-run": {Write, rLaunch},
 	"list-runs":  {Read, rRead},
 	// Usage-limit holds and parked runs' waits (ADR-0079): identifiers, kinds and times only.
-	"list-space-usage-limits": {Read, rRead},
-	"list-space-limit-waits":  {Read, rRead},
+	"list-space-usage-limits":     {Read, rRead},
+	"list-space-limit-waits":      {Read, rRead},
+	"list-space-account-switches": {Read, rRead},
 	// Clearing a space's own hold lets its launches through; a wrong clear only costs a refused launch at the limit.
 	"clear-space-usage-limit": {Write, rSpaceWrite},
 	"resume-limit-wait":       {Write, rSpaceWrite},
@@ -461,6 +464,11 @@ var Table = map[string]Entry{
 	// Usage.
 	"get-run-usage":   {Read, rRead},
 	"get-space-usage": {Read, rRead},
+	// The usage ledger (ADR-0090): numbers and IDs only.
+	"get-space-usage-series":     {Read, rRead},
+	"get-account-usage":          {Read, rRead},
+	"get-account-windows":        {Read, rRead},
+	"list-space-account-windows": {Read, rRead},
 
 	// Users. The step-up writes are excluded by their rule; these entries are what they fall back to.
 	"get-user":             {Excluded, rUsers},
