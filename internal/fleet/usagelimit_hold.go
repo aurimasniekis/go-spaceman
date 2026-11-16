@@ -45,7 +45,7 @@ type UsageLimitSettings struct {
 	WaitIfResetWithin time.Duration
 	// SwitchMaxPerDay bounds an instance's account switches in 24 hours (ADR-0090 decision 5); 0: never switch.
 	SwitchMaxPerDay int
-	// MinHeadroomPercent is the launch-time headroom gate (ADR-0090 decision 6): a new run is not started on an
+	// MinHeadroomPercent is the launch-time headroom gate (ADR-0090 decision 4): a new run is not started on an
 	// account when a window with known usage leaves less than this percentage free. 0: off.
 	MinHeadroomPercent int
 }
@@ -76,7 +76,9 @@ type HoldError struct {
 	Target HoldTarget
 	Until  time.Time
 	Known  bool
-	err    *apperr.Error
+	// Gate marks a refusal by the launch headroom gate: no usage-limit hold row backs it, so Until alone ends it.
+	Gate bool
+	err  *apperr.Error
 }
 
 func (e *HoldError) Error() string { return e.err.Error() }

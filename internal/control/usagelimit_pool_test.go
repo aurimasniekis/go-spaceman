@@ -128,3 +128,41 @@ func TestPoolExhaustedDedupReserved(t *testing.T) {
 		t.Fatalf("unknown-reset key %q (known %q)", u, k)
 	}
 }
+
+// A launch refused by the headroom gate writes no usage-limit hold row, so its deferral must not be dropped for the lack
+// of one: it holds across sweeps until the reset, while an ordinary hold's deferral ends once its row is gone.
+func TestDeferStartGateRefusalHoldsUntilReset(t *testing.T) {
+	e := newPeopleEnv(t)
+	reset := e.clk.Now().Add(2 * time.Hour)
+	e.sv.startMu.Lock()
+	defer e.sv.startMu.Unlock()
+
+	e.sv.deferStart("spc_a", &fleet.HoldError{Gate: true, Target: fleet.HoldTarget{AccountID: "acc_none"}, Until: reset, Known: true})
+	for range 3 {
+		if !e.sv.stillDeferred(e.ctx, "spc_a") {
+			t.Fatal("a gate refusal's deferral was dropped with no hold row behind it")
+		}
+		e.clk.Advance(30 * time.Minute)
+	}
+	e.clk.Advance(time.Hour) // past the reset
+	if e.sv.stillDeferred(e.ctx, "spc_a") {
+		t.Fatal("still deferred after the reset")
+	}
+
+	// An unknown reset waits an hour.
+	e.sv.deferStart("spc_a", &fleet.HoldError{Gate: true, Target: fleet.HoldTarget{AccountID: "acc_none"}})
+	e.clk.Advance(59 * time.Minute)
+	if !e.sv.stillDeferred(e.ctx, "spc_a") {
+		t.Fatal("deferral with an unknown reset dropped early")
+	}
+	e.clk.Advance(2 * time.Minute)
+	if e.sv.stillDeferred(e.ctx, "spc_a") {
+		t.Fatal("deferral with an unknown reset outlived the hour")
+	}
+
+	// Without the gate flag, no open hold row ends the deferral at once.
+	e.sv.deferStart("spc_a", &fleet.HoldError{Target: fleet.HoldTarget{AccountID: "acc_none"}, Until: e.clk.Now().Add(time.Hour), Known: true})
+	if e.sv.stillDeferred(e.ctx, "spc_a") {
+		t.Fatal("a hold's deferral outlived its row")
+	}
+}

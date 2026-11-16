@@ -162,8 +162,13 @@ func TestHeadroomGateLeavesRunningRunsAlone(t *testing.T) {
 		t.Fatalf("run %v %+v", err, got)
 	}
 	// A new launch does move.
-	if r2, err := e.launch("spc_a", ""); err != nil || r2.Launch.AccountRef != "acc_2" {
+	r2, err := e.launch("spc_a", "")
+	if err != nil || r2.Launch.AccountRef != "acc_2" {
 		t.Fatalf("new launch: %v %+v", err, r2)
+	}
+	// The move is recorded as the gate's, not a usage limit's.
+	if fo, _ := manifestOf(t, r2)["account_failover"].(map[string]any); fo["from"] != "acc_1" || fo["to"] != "acc_2" || fo["reason"] != "headroom" {
+		t.Fatalf("account_failover %v", fo)
 	}
 }
 

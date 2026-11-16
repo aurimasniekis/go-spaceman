@@ -3,15 +3,17 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
-// The launch-time headroom gate (ADR-0090 decision 6, usage_limit_min_headroom_percent). It only removes accounts from
+// The launch-time headroom gate (ADR-0090 decision 4, usage_limit_min_headroom_percent). It only removes accounts from
 // the set a launch may use: the pool never widens, and a running agent is never moved because of it.
 
 // headroomOn reports whether the gate is active for a launch.
@@ -27,9 +29,13 @@ func (svc *Service) belowHeadroom(ctx context.Context, q *db.Queries, ul UsageLi
 		return false, time.Time{}, nil
 	}
 	used, resets, known, err := svc.opts.AccountHeadroom(ctx, q, accountID)
-	// Fail open: a ledger that can't be read, or has no usage, leaves the account eligible. A window whose reset has
-	// passed is stale and no longer counts.
-	if err != nil || !known || (!resets.IsZero() && !resets.After(svc.now())) {
+	if err != nil {
+		// Fail open: a ledger that can't be read leaves the account eligible.
+		svc.opts.Log.Debug("headroom gate: read account usage", slog.String("account.id", accountID), obs.Err(err))
+		return false, time.Time{}, nil //nolint:nilerr // fail open: an unreadable usage ledger never blocks a launch
+	}
+	// No usage known leaves the account eligible, and a window whose reset has passed is stale and no longer counts.
+	if !known || (!resets.IsZero() && !resets.After(svc.now())) {
 		return false, time.Time{}, nil
 	}
 	return 100-used < float64(ul.MinHeadroomPercent), resets, nil
@@ -59,7 +65,7 @@ func (svc *Service) checkHeadroom(ctx context.Context, tx *store.Tx, ul UsageLim
 	if err != nil || !below {
 		return err
 	}
-	pool, err := accounts.PoolIDs(ctx, tx, spaceID, harness, role)
+	pool, err := accounts.PoolAccounts(ctx, tx, spaceID, harness, role)
 	if err != nil {
 		return err
 	}
@@ -74,5 +80,5 @@ func (svc *Service) checkHeadroom(ctx context.Context, tx *store.Tx, ul UsageLim
 		msg = fmt.Sprintf("every %s account usable here has less than %d%% of a usage window left (the launch headroom gate); the earliest reset is %s",
 			harness, ul.MinHeadroomPercent, earliest.UTC().Format(holdTimeLayout))
 	}
-	return &HoldError{Target: HoldTarget{AccountID: chosen}, Until: earliest, Known: !earliest.IsZero(), err: apperr.New(apperr.CodeRateLimited, "%s", msg)}
+	return &HoldError{Gate: true, Target: HoldTarget{AccountID: chosen}, Until: earliest, Known: !earliest.IsZero(), err: apperr.New(apperr.CodeRateLimited, "%s", msg)}
 }

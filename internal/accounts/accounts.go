@@ -693,30 +693,6 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 	return chosen, nil
 }
 
-// PoolIDs returns the accounts a launch of role may use for harness, in no particular order: the role's pool when it
-// has one (usable accounts only, and it never widens), otherwise the space's usable bindings for the harness.
-func PoolIDs(ctx context.Context, tx *store.Tx, spaceID, harness, role string) ([]string, error) {
-	bs, err := bindings(ctx, tx.Q, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	var usable []Binding
-	for _, b := range bs {
-		if b.Harness == harness && b.Enabled {
-			usable = append(usable, b)
-		}
-	}
-	cands, _, err := candidates(ctx, tx.Q, spaceID, harness, role, bs, usable)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]string, 0, len(cands))
-	for _, c := range cands {
-		ids = append(ids, c.AccountID)
-	}
-	return ids, nil
-}
-
 // RoleScoped reports whether role has a pool of its own for harness in the space: one of its accounts is bound for the
 // harness (usable or not), so the role's pool governs and never widens to the space's accounts.
 func RoleScoped(ctx context.Context, tx *store.Tx, spaceID, harness, role string) (bool, error) {
