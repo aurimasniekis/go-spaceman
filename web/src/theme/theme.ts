@@ -27,6 +27,14 @@ const filledText: VariantColorsResolver = (input) => {
     : { ...r, color: 'var(--sm-on-filled)' }
 }
 
+/**
+ * Mantine locks the page's scroll while a dialog is open through react-remove-scroll, which cancels every touchmove that
+ * is not a scroll of a scrollable box. A pinch is a touchmove too, so on a phone the page could not be zoomed (iOS Safari
+ * honours the cancellation) while a dialog was open, and a page zoomed in by the browser could not be zoomed out again.
+ * `allowPinchZoom` lets two-finger gestures through; one-finger scrolling stays locked.
+ */
+const PINCH_ZOOM = { allowPinchZoom: true }
+
 export const theme = createTheme({
   primaryColor: 'owlBlue',
   // Light Owl: shade 7 keeps white on filled controls and light-variant text above 4.5:1 (shade 6 is 4.3:1).
@@ -68,11 +76,11 @@ export const theme = createTheme({
     // wide content (tables, code) scrolls in its own box; e2e/ui-overflow.spec.ts fails when a dialog's content is wider
     // than the dialog.
     Modal: {
-      defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } },
+      defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' }, removeScrollProps: PINCH_ZOOM },
       styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, content: { overflowX: 'hidden' }, body: { overflowWrap: 'break-word' } },
     },
     Drawer: {
-      defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' } },
+      defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' }, removeScrollProps: PINCH_ZOOM },
       styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, content: { overflowX: 'hidden' }, body: { overflowWrap: 'break-word' } },
     },
   },
