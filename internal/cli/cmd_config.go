@@ -235,6 +235,7 @@ func (a *App) roleCmd() *cobra.Command {
 			args: pos("name")}),
 		a.cmd(opts{use: "delete", short: "Remove a role from a space", op: "delete-space-role", scoped: true, args: pos("name"), done: "Role removed."}),
 		a.cmd(opts{use: "rename", short: "Rename a role in place: its configuration, pending work and memory follow", op: "rename-space-role", scoped: true,
+			get: "get-space-role", optionalIfMatch: true, version: roleRevision,
 			args: pos("name"), form: func(f *form) { f.str("to", "new_name", "the new name (required)") }, note: renameNote,
 			example: "spaceman role rename implementor --to implementor-hard --space payments"}),
 		a.cmd(opts{use: "renames", short: "A space's role renames, newest first, and the state of each memory move", op: "list-space-role-renames", scoped: true,
@@ -446,6 +447,10 @@ func (a *App) approvalPolicyCmd() *cobra.Command {
 			args: pos("policy"), done: "Approval policy removed."}),
 	)
 }
+
+// roleRevision is the version a role rename checks with If-Match: the role's revision, which the API compares, not the
+// row's version.
+func roleRevision(m map[string]any) string { return numberString(m["revision"]) }
 
 // renameNote tells the operator what a rename left to do: "Role renamed.", and when the node still has to move the
 // role's memory, that launches of the role wait for it.
