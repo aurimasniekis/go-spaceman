@@ -75,6 +75,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- A Telegram text reply to a notifier card is now about that card. Replying to a question's card answers it (an option's
+  letter, number or label, or free text; the same API call, version check and authorisation as its buttons, and a
+  closed action says so); an approval is never decided from text; a reply that is not an answer goes to the card's own
+  space instead of the chat's current one. A lone letter or number is matched against both an option's position and the
+  start of every label ("C" with `Continue`, `Deploy`; "1" with `30 minutes`, `1 hour`): when they name different
+  options the bot asks "Which option?" and answers nothing. Any reply to a free-text question is taken as its answer.
 - Telegram notifications are no longer lost for changes made while central starts or while it is restarting: the
   notifier reads its start position before the listener starts, and resumes from a saved position (up to 5 minutes
   old) after a restart (ADR-0089 follow-up).
