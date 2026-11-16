@@ -75,14 +75,30 @@ test('a long terminal shows its latest output first and loads earlier output on 
     await expect(seek).toBeVisible({ timeout: 60_000 })
     await expect(page.getByTestId('terminal-loading')).toBeHidden({ timeout: 60_000 })
     const lastTick = Math.max(...[...(await screen(page)).matchAll(/^tick (\d+)$/gm)].map((m) => Number(m[1])))
+    // The seek bar is time, not output: the redraws end at a different fraction of the recording each run, so the middle of
+    // the bar is sometimes inside them. Seek to a moment just after the last redraw instead: the stub ticks once a second
+    // from then on.
+    const rec: { t: number; k: string; d?: string }[] = []
+    for (let after = 0; ; ) {
+      const p = await api.call<{ records: typeof rec; more: boolean; next_after: number }>('GET', `${runPath}/recording?after=${after}&limit=5000`)
+      rec.push(...p.records)
+      if (!p.more) break
+      after = p.next_after
+    }
+    const lastStatic = rec.findLast((r) => r.k === 'o' && Buffer.from(r.d ?? '', 'base64').toString('latin1').includes('static line 140 of 140'))
+    if (!lastStatic) throw new Error('the recording has no output record with "static line 140 of 140"')
+    const wanted = (lastStatic.t - rec[0].t + 1_500_000) / (rec.at(-1)!.t - rec[0].t)
+    expect(wanted, 'the run outlives the redraws by seconds').toBeLessThan(0.9)
     const b = (await seek.boundingBox())!
-    await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)
+    await page.mouse.click(b.x + b.width * wanted, b.y + b.height / 2)
+    // The window is drawn a slice at a time after the click, and the badge is not up yet when the click returns: wait for
+    // a tick (the window's last output) older than the run's last one, which also rules out the half-drawn screen that has
+    // no tick yet (Math.max of none is -Infinity, below anything).
+    const lastShown = async () => Math.max(...[...(await screen(page)).matchAll(/^tick (\d+)$/gm)].map((m) => Number(m[1])))
+    await expect.poll(async () => (await lastShown()) < lastTick && (await lastShown()) >= 0, { timeout: 30_000 }).toBe(true)
     await expect(page.getByTestId('terminal-loading')).toBeHidden({ timeout: 60_000 })
-    await expect
-      .poll(async () => Math.max(...[...(await screen(page)).matchAll(/^tick (\d+)$/gm)].map((m) => Number(m[1]))), { timeout: 30_000 })
-      .toBeLessThan(lastTick)
     all = await text(page)
-    // Halfway through, the redraws have ended: the window before it holds their end, not their start.
+    // Just after the redraws ended: the window before that holds their end, not their start.
     expect(all).toContain('static line 140 of 140')
     expect(all).not.toMatch(/^static line 1 of 140 *$/m)
   } finally {

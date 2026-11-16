@@ -926,3 +926,52 @@ func TestTakeKeepsMultiCallSendsInsideTheBuckets(t *testing.T) {
 		}
 	})
 }
+
+// Long multi-call sends hold their worker slots while they wait in Take. They can't take the last quarter of the
+// workers, so an Interactive callback answer still goes out at once with every other worker busy.
+func TestInteractiveStillSendsWhileOtherWorkersWaitInTake(t *testing.T) {
+	e := newEnv(t, func(o *sender.Options) { o.Workers = 4 })
+	release := make(chan struct{})
+	var started atomic.Int64
+	hold := func(ctx context.Context, _ *botapi.Client) error {
+		started.Add(1)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	defer close(release)
+	for i := range 6 {
+		e.enqueue(sender.Message{ChatID: int64(7000 + i), Priority: sender.NeedsYou, Send: hold})
+	}
+	e.start()
+	waitFor(t, func() bool { return started.Load() == 3 })
+
+	answered := make(chan error, 1)
+	e.enqueue(sender.Message{Priority: sender.Interactive, Done: func(err error) { answered <- err },
+		Send: func(context.Context, *botapi.Client) error { return nil }})
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("callback answer: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the callback answer was not sent while the other workers were busy")
+	}
+	if n := started.Load(); n != 3 {
+		t.Fatalf("%d long sends running, want 3: the reserved worker was used", n)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
