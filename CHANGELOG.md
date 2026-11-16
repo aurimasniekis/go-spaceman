@@ -29,6 +29,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Queue policy changes reach control.** When a queue policy write changes `max_active` or an incident setting, control
+  gets one system message with each changed field's old and new value (`max_active 2 → 4`) and the audit event; a write
+  that changes nothing sends none.
 - **Account switching** (ADR-0090, security-relevant). With `usage_limit_failover` on, a Claude Code run that reaches
   its usage limit moves to another account of its pool: at its next idle point it is parked and resumed at once with its
   session (`--resume`) under the next eligible account. Nothing is sent to the running process and no credential is
@@ -75,6 +78,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Agent journal pruning.** A pruned run's recording directory is now removed with it, once its recording is fully
+  acknowledged, and the journal is pruned every hour instead of only after a reconnect, so a long-lived connection no
+  longer keeps ended runs and their recordings forever. The same pass removes recording directories that earlier
+  releases left behind, but only those with no segments, a well-formed run ID, no journal row and nothing modified for
+  24 hours. A recording that has segments and no journal row is kept (a lost journal makes every run look orphaned);
+  reclaiming those needs central's confirmation and is not done.
 - The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
   harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
   late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.
