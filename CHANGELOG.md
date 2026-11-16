@@ -6,16 +6,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
-### Fixed
-
-- The node agent's runner reconcile (the monitor's first "snapshot" event, a restarted or missed-events notice) no longer
-  marks a run whose launch is still in flight as lost or failed: it leaves those alone and re-checks the runner for the
-  others before judging them. Before, a reconcile that landed between the journal's run and the process start ended the
-  run, so its bridge calls answered "run is not active".
-- `Agent.Run` now waits (up to 10 s) for the runner monitor to stop before it returns, so the monitor cannot still be
-  reading agent state, or a package variable a test restores, after shutdown (a data race in `TestStopFailureStartsLimitScan`).
-- A bridge hook's refusal now carries the agent's reason, instead of only "refused the hook data".
-
 ## [0.1.9] - 2026-11-16
 
 **v0.1.8 was tagged but never released** (its release build produced no images), so its changes ship in v0.1.9.
@@ -165,6 +155,12 @@ minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to 0060, agent m
   for progress instead of a fixed 20 s, the StopFailure scan test waits 30 s instead of 5 s for an event-driven report,
   the notifier budget test allows one more timed mapping write per elapsed second, the hello-reapply test applies 120
   journal runs instead of 400, and the fleet e2e cleanup retries emptying the agent directory.
+- The node agent's runner reconcile (the monitor's first "snapshot" event, a restarted or missed-events notice) no longer
+  marks a run whose launch is still in flight as lost or failed: it leaves those alone and re-checks the runner for the
+  others before judging them. Before, a reconcile that landed between the journal's run and the process start ended the
+  run, so its bridge calls answered "run is not active".
+- The node agent now waits (up to 10 s) for its runner monitor to stop when it shuts down, so the monitor cannot still
+  be reading agent state after shutdown returns.
 
 ## [0.1.7] - 2026-11-16
 
