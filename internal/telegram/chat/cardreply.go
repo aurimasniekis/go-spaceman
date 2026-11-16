@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
@@ -129,21 +130,26 @@ func (h *Handler) questionReply(ctx context.Context, m *botapi.Message, l update
 	return true
 }
 
-// matchOption finds the option a reply names: by letter (A is the first), by number (1 is the first) or by its label,
-// ignoring case and surrounding space, a trailing "." or ")" on a letter or number. idx is -1 when none matches;
-// ambiguous when the reply names more than one option (a label "2" next to the option that number 2 means).
+// matchOption finds the option a reply names. Cards show labels only, so a lone letter or number is read two ways: as
+// a position (A, 1 are the first option) and as the start of a label ("A — import", "1 hour", "A)", "Continue"). A full label (ignoring case and space) is a hit too. idx is -1 when
+// nothing matches; ambiguous when the hits are different options.
 func matchOption(options []string, text string) (idx int, ambiguous bool) {
 	t := strings.TrimSpace(text)
 	hits := map[int]bool{}
 	for i, o := range options {
-		if strings.EqualFold(strings.TrimSpace(o), t) {
+		if t != "" && strings.EqualFold(strings.TrimSpace(o), t) {
 			hits[i] = true
 		}
 	}
-	short := strings.TrimRight(t, ".):")
-	if len([]rune(short)) == 1 {
+	short := strings.TrimSpace(strings.TrimRight(t, ".):"))
+	if tok := []rune(short); len(tok) == 1 {
 		if r := []rune(strings.ToUpper(short))[0]; r >= 'A' && r <= 'Z' && int(r-'A') < len(options) {
 			hits[int(r-'A')] = true
+		}
+		for i, o := range options {
+			if labelStartsWith(o, tok[0]) {
+				hits[i] = true
+			}
 		}
 	}
 	if n, err := strconv.Atoi(short); err == nil && n >= 1 && n <= len(options) {
@@ -158,6 +164,17 @@ func matchOption(options []string, text string) (idx int, ambiguous bool) {
 		}
 	}
 	return -1, true
+}
+
+// labelStartsWith reports whether the label starts with the single character r (any case). A digit must be the whole
+// first word ("1 hour", not "10 minutes"); a letter may start a longer word ("Continue" for C), which keeps a reply
+// that could mean it from silently choosing the option at that position.
+func labelStartsWith(label string, r rune) bool {
+	rs := []rune(strings.TrimSpace(label))
+	if len(rs) == 0 || !strings.EqualFold(string(rs[0]), string(r)) {
+		return false
+	}
+	return !unicode.IsDigit(r) || len(rs) == 1 || !unicode.IsDigit(rs[1])
 }
 
 // optionsHint lists the options with the letters a reply may use.

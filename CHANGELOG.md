@@ -78,7 +78,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - A Telegram text reply to a notifier card is now about that card. Replying to a question's card answers it (an option's
   letter, number or label, or free text; the same API call, version check and authorisation as its buttons, and a
   closed action says so); an approval is never decided from text; a reply that is not an answer goes to the card's own
-  space instead of the chat's current one.
+  space instead of the chat's current one. A lone letter or number is matched against both an option's position and the
+  start of every label ("C" with `Continue`, `Deploy`; "1" with `30 minutes`, `1 hour`): when they name different
+  options the bot asks "Which option?" and answers nothing. Any reply to a free-text question is taken as its answer.
 - The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
   harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
   late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.

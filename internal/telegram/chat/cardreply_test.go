@@ -32,7 +32,38 @@ func TestMatchOption(t *testing.T) {
 	if _, amb := matchOption([]string{"3", "y", "z"}, "3"); !amb {
 		t.Error("label 3 vs number 3 should be ambiguous")
 	}
+}
 
+// Cards show labels only, so a lone letter or number is both a position and the start of a label.
+func TestMatchOptionLabelPrefix(t *testing.T) {
+	infra := []string{"A — import the data", "B — rename the table", "C — leave it"}
+	plain := []string{"A", "B", "C"}
+	for _, c := range []struct {
+		name string
+		opts []string
+		in   string
+		idx  int
+		ambi bool
+	}{
+		{"infra A", infra, "A", 0, false}, {"infra b", infra, " b ", 1, false}, {"infra C.", infra, "C.", 2, false}, {"infra 2", infra, "2", 1, false},
+		{"plain A", plain, "A", 0, false}, {"plain c", plain, "c", 2, false}, {"plain B)", plain, " B) ", 1, false}, {"plain 3", plain, "3", 2, false},
+		{"C is Continue and Deploy", []string{"Abort", "Continue", "Deploy"}, "C", -1, true},
+		{"c lower", []string{"Abort", "Continue", "Deploy"}, " c ", -1, true},
+		{"A is Abort and position", []string{"Abort", "Continue", "Deploy"}, "A", 0, false},
+		{"1 is 30 minutes and 1 hour", []string{"30 minutes", "1 hour", "2 hours"}, "1", -1, true},
+		{"1. same", []string{"30 minutes", "1 hour", "2 hours"}, " 1. ", -1, true},
+		{"2 is position and 2 hours", []string{"30 minutes", "1 hour", "2 hours"}, "2", -1, true},
+		{"3 is nothing but position", []string{"30 minutes", "1 hour", "2 hours"}, "3", 2, false},
+		{"10 minutes is not 1", []string{"10 minutes", "x"}, "1", 0, false},
+		{"Apple vs position A", []string{"x", "Apple"}, "A", -1, true},
+		{"A: label", []string{"A: yes", "B: no"}, "a", 0, false},
+		{"A) label", []string{"A) yes", "B) no"}, "B", 1, false},
+		{"full label", []string{"Abort", "Continue", "Deploy"}, "deploy", 2, false},
+	} {
+		if i, amb := matchOption(c.opts, c.in); i != c.idx || amb != c.ambi {
+			t.Errorf("%s (%q): got %d %v, want %d %v", c.name, c.in, i, amb, c.idx, c.ambi)
+		}
+	}
 }
 
 func (e *env) itemsInSpace(space string) int {
@@ -209,6 +240,50 @@ func TestCardReplyToContinuationGoesToSpace(t *testing.T) {
 	e.reply("A", 888, chatID, e.l)
 	if e.responded() != 0 || e.itemsInSpace(spS) != s0+1 || e.itemsInSpace(spA) != a0 {
 		t.Fatalf("%d responds, items S %d A %d", e.responded(), e.itemsInSpace(spS), e.itemsInSpace(spA))
+	}
+}
+
+// A card mapped to another link is not this link's to capture into the card's space.
+func TestCardSpaceReplyOtherLink(t *testing.T) {
+	e := newEnv(t)
+	e.pickAlpha()
+	e.h.o.CardSpace = func(_ context.Context, _ int64, msg int) (string, string, bool) {
+		return spS, "tgl_other", msg == 777
+	}
+	s0 := e.itemsInSpace(spS)
+	e.reply("a note", 777, chatID, e.l)
+	if e.itemsInSpace(spS) != s0 {
+		t.Fatal("captured into another link's card space")
+	}
+}
+
+// The continuation path likewise ignores another link's message.
+func TestCardReplyContinuationOtherLink(t *testing.T) {
+	e := newEnv(t)
+	e.withCards()
+	e.pickAlpha()
+	e.h.o.Resolve = func(_ context.Context, _ int64, msg int) (string, string, string, bool) {
+		return spS, hid('1'), "tgl_other", msg == 888
+	}
+	s0 := e.itemsInSpace(spS)
+	e.reply("A", 888, chatID, e.l)
+	if e.responded() != 0 || e.itemsInSpace(spS) != s0 {
+		t.Fatalf("%d responds, items S %d", e.responded(), e.itemsInSpace(spS))
+	}
+}
+
+// A question card of a space hidden from Telegram answers nothing, creates nothing and doesn't name the space.
+func TestCardReplyHiddenSpace(t *testing.T) {
+	e := newEnv(t)
+	reg := e.withCards()
+	e.pickAlpha()
+	a := e.addHuman(spB, hid('1'), "question", "Which one?", `{"options":["red","blue"]}`)
+	c := e.postCard(reg, a, "tgl_1")
+	n, b0 := e.createdN(), e.itemsInSpace(spB)
+	e.reply("A", c.MessageID, chatID, e.l)
+	got := e.last().Text
+	if e.responded() != 0 || e.createdN() != n || e.itemsInSpace(spB) != b0 || strings.Contains(got, "Beta") || strings.Contains(strings.ToLower(got), "beta") {
+		t.Fatalf("%d responds, created %d, %q", e.responded(), e.createdN(), got)
 	}
 }
 
