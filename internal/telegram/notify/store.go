@@ -120,23 +120,34 @@ func (m StoreMappings) HomeMessages(ctx context.Context) ([]HomeRow, error) {
 	return out, nil
 }
 
-// StorePending counts the pending human actions per space, with the space's name, in two small reads.
+// StorePending counts the pending human actions per space and type, with the space's name: two small reads.
 func StorePending(s *store.Store) func(ctx context.Context) ([]SpaceCount, error) {
 	return func(ctx context.Context) ([]SpaceCount, error) {
-		rows, err := s.R().CountPendingHuman(ctx)
+		rows, err := s.R().CountPendingHumanByType(ctx)
 		if err != nil {
 			return nil, err
 		}
+		names := map[string]string{}
+		if len(rows) > 0 {
+			spaces, err := s.R().ListSpaces(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, sp := range spaces {
+				names[sp.ID] = sp.Name
+			}
+		}
 		out := make([]SpaceCount, 0, len(rows))
 		for _, r := range rows {
-			c := SpaceCount{SpaceID: r.SpaceID, N: r.N}
-			if sp, err := s.R().GetSpace(ctx, r.SpaceID); err == nil {
-				c.Name = sp.Name
-			}
-			out = append(out, c)
+			out = append(out, SpaceCount{SpaceID: r.SpaceID, Name: names[r.SpaceID], Type: r.Type, TypeSlug: r.TypeSlug, N: r.N})
 		}
 		return out, nil
 	}
+}
+
+// StorePerms loads a space's type permissions, the set the API consults.
+func StorePerms(h *human.Service) func(ctx context.Context, spaceID string) (human.PermissionSet, error) {
+	return h.Permissions
 }
 
 // StoreReader reads resources with one lean row read each, as the system (no principal: recipients are checked

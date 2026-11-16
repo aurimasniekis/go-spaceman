@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
@@ -269,9 +270,10 @@ type env struct {
 	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
 	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
 	authz      notify.Authorizer
-	tp         *topics.Manager                                    // chat threads (nil: off)
-	pending    func(context.Context) ([]notify.SpaceCount, error) // the home summaries' counts (nil: no summaries)
-	homeWake   chan time.Time                                     // the home summary's debounce wait ends when the test sends here
+	tp         *topics.Manager                                            // chat threads (nil: off)
+	pending    func(context.Context) ([]notify.SpaceCount, error)         // the home summaries' counts (nil: no summaries)
+	perms      func(context.Context, string) (human.PermissionSet, error) // the type permissions of a space (nil: defaults)
+	homeWake   chan time.Time                                             // the home summary's debounce wait ends when the test sends here
 	needsURL   string
 }
 
@@ -344,6 +346,7 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 		opts.Pending, opts.HomeEvery = e.pending, 30*time.Second
 		opts.HomeAfter = func(time.Duration) <-chan time.Time { return e.homeWake }
 		opts.NeedsURL = func() string { return e.needsURL }
+		opts.Perms = e.perms
 	}
 	if m != nil {
 		opts.Store = m

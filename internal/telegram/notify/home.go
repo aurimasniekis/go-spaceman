@@ -11,6 +11,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 )
@@ -37,11 +38,14 @@ const (
 	homeMaxName  = 40
 )
 
-// SpaceCount is the number of pending human actions of a space.
+// SpaceCount is the number of pending human actions of one type in a space. The type is what the view role of the
+// space's type permissions is looked up with, so a link counts only the types it may see.
 type SpaceCount struct {
-	SpaceID string
-	Name    string
-	N       int64
+	SpaceID  string
+	Name     string
+	Type     string
+	TypeSlug string
+	N        int64
 }
 
 // HomeRow is a stored home summary.
@@ -68,6 +72,7 @@ type home struct {
 	links  map[string]*homeLink
 	dirty  bool // a human action changed since the counts were last read
 	counts []SpaceCount
+	perms  map[string]human.PermissionSet // per space, loaded once per rebuild; a space missing from it is not shown
 }
 
 func newHome() *home { return &home{links: map[string]*homeLink{}} }
@@ -124,6 +129,11 @@ func (n *Notifier) homeTick(ctx context.Context) time.Duration {
 	if snd == nil {
 		return n.homeEvery() // the bot is off: look again later
 	}
+	every, now := n.homeEvery(), n.o.Now()
+	links := n.o.Links.Snapshot()
+	if wait, due := n.homeDue(links, every, now); !due {
+		return wait // nothing is due: the counts are not read until a link is
+	}
 	// The flag is cleared before the read, so a change that lands during it marks the summaries dirty again.
 	h.mu.Lock()
 	h.dirty = false
@@ -136,11 +146,10 @@ func (n *Notifier) homeTick(ctx context.Context) time.Duration {
 		h.mu.Unlock()
 		return n.homeEvery() // try again
 	}
-	every, now := n.homeEvery(), n.o.Now()
+	perms := n.homePerms(ctx, counts)
 	var wait time.Duration
-	links := n.o.Links.Snapshot()
 	h.mu.Lock()
-	h.counts = counts
+	h.counts, h.perms = counts, perms
 	h.mu.Unlock()
 	for i := range links {
 		l := &links[i]
@@ -184,6 +193,52 @@ func (n *Notifier) homeTick(ctx context.Context) time.Duration {
 	return wait
 }
 
+// homeDue reports whether any usable link's summary is due now (a first send, or its last edit is HomeEvery old), and
+// otherwise how long until one is (0: none will be). A queued send counts as due: it is re-run after it.
+func (n *Notifier) homeDue(links []Link, every time.Duration, now time.Time) (wait time.Duration, due bool) {
+	h := n.home
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range links {
+		l := &links[i]
+		if l.ChatID <= 0 || !l.Usable(now) {
+			continue
+		}
+		hl := h.links[l.ID]
+		if hl == nil || hl.chat != l.ChatID || hl.msg == 0 || hl.last.IsZero() || hl.queued {
+			return 0, true
+		}
+		if d := every - now.Sub(hl.last); d <= 0 {
+			return 0, true
+		} else if wait == 0 || d < wait {
+			wait = d
+		}
+	}
+	return wait, false
+}
+
+// homePerms loads the type permissions of every space in counts, once per rebuild. A space whose set can't be read is
+// left out and so not shown (errors deny, as in the API).
+func (n *Notifier) homePerms(ctx context.Context, counts []SpaceCount) map[string]human.PermissionSet {
+	out := map[string]human.PermissionSet{}
+	for _, c := range counts {
+		if _, ok := out[c.SpaceID]; ok {
+			continue
+		}
+		if n.o.Perms == nil {
+			out[c.SpaceID] = nil // the defaults: every type is visible to a viewer
+			continue
+		}
+		ps, err := n.o.Perms(ctx, c.SpaceID)
+		if err != nil {
+			n.log.Warn("telegram notifier: reading a space's type permissions failed", slog.String("error", err.Error()))
+			continue
+		}
+		out[c.SpaceID] = ps
+	}
+	return out
+}
+
 func (n *Notifier) homeEvery() time.Duration {
 	if n.o.HomeEvery > 0 {
 		return n.o.HomeEvery
@@ -192,17 +247,38 @@ func (n *Notifier) homeEvery() time.Duration {
 }
 
 // homeView is what a link's summary shows now: the text, its entities, its buttons and how many actions wait.
-func (n *Notifier) homeView(ctx context.Context, l *Link, counts []SpaceCount) (text string, ents []botapi.MessageEntity, mk *botapi.InlineKeyboardMarkup, total int64) {
+func (n *Notifier) homeView(ctx context.Context, l *Link, counts []SpaceCount, perms map[string]human.PermissionSet) (text string, ents []botapi.MessageEntity, mk *botapi.InlineKeyboardMarkup, total int64) {
 	set := n.o.Policy.Current()
 	now := n.o.Now()
 	subj := l.Subjects(set.LinkSSOGrants, now)
 	var vis []SpaceCount
+	at := map[string]int{} // a space's place in vis
+	ok := map[string]bool{}
 	for _, c := range counts {
-		if c.N <= 0 || !n.o.Policy.Space(c.SpaceID).Visible() || l.Prefs.IsMuted(c.SpaceID) ||
-			!n.o.Authz.AllowedAll(subj, c.SpaceID, authz.SpaceRead) || !n.o.Authz.AllowedAll(subj, c.SpaceID, authz.HumanRead) {
+		if c.N <= 0 {
 			continue
 		}
-		vis = append(vis, c)
+		pass, seen := ok[c.SpaceID]
+		if !seen {
+			_, loaded := perms[c.SpaceID]
+			pass = loaded && n.o.Policy.Space(c.SpaceID).Visible() && !l.Prefs.IsMuted(c.SpaceID) &&
+				n.o.Authz.AllowedAll(subj, c.SpaceID, authz.SpaceRead) && n.o.Authz.AllowedAll(subj, c.SpaceID, authz.HumanRead)
+			ok[c.SpaceID] = pass
+		}
+		if !pass {
+			continue
+		}
+		// Only the types whose view role the link holds count, as for a card and the API's counts.
+		role := perms[c.SpaceID].For(&human.Action{SpaceID: c.SpaceID, Type: c.Type, TypeSlug: c.TypeSlug}).ViewRole
+		if role != "" && role != human.RoleViewer && !n.o.Authz.HoldsRole(subj, c.SpaceID, authz.Role(role)) {
+			continue
+		}
+		if i, ok := at[c.SpaceID]; ok {
+			vis[i].N += c.N
+		} else {
+			at[c.SpaceID] = len(vis)
+			vis = append(vis, SpaceCount{SpaceID: c.SpaceID, Name: c.Name, N: c.N})
+		}
 		total += c.N
 	}
 	sort.SliceStable(vis, func(i, j int) bool {
@@ -318,7 +394,7 @@ func (n *Notifier) sendHome(ctx context.Context, c *botapi.Client, linkID string
 		return nil
 	}
 	h.mu.Lock()
-	counts := h.counts
+	counts, perms := h.counts, h.perms
 	hl := h.links[linkID]
 	if hl == nil || hl.chat != chat {
 		h.mu.Unlock()
@@ -327,7 +403,7 @@ func (n *Notifier) sendHome(ctx context.Context, c *botapi.Client, linkID string
 	msg, pinned, sig := hl.msg, hl.pinned, hl.sig
 	h.mu.Unlock()
 
-	text, ents, mk, total := n.homeView(ctx, cur, counts)
+	text, ents, mk, total := n.homeView(ctx, cur, counts, perms)
 	nsig := homeSig(text, ents, mk)
 	if msg == 0 && total == 0 {
 		return nil // nothing to say yet
@@ -359,14 +435,22 @@ func (n *Notifier) sendHome(ctx context.Context, c *botapi.Client, linkID string
 			return err
 		}
 		msg, pinned = m.MessageID, false
-		n.homeRow(linkID, chat, msg, false)
 	}
+	// The link may have moved to another chat while this was sent: that chat's state is not this message's. It is
+	// rechecked before anything is recorded, so no row is left for a message the link's state doesn't know; the
+	// message in the chat it left is deleted.
 	h.mu.Lock()
-	if hl.chat != chat { // the link moved while this was sent: that chat's state is not this message's
+	if hl.chat != chat {
 		h.mu.Unlock()
+		if msg != 0 {
+			n.cards.pend(Mapping{ChatID: chat, MessageID: msg, Kind: MappingHome, Delete: true})
+		}
 		return nil
 	}
 	hl.msg, hl.sig, hl.last = msg, nsig, n.o.Now()
+	if !pinned {
+		n.homeRow(linkID, chat, msg, false) // recorded under the same lock as the recheck, before the pin
+	}
 	h.mu.Unlock()
 	if !pinned {
 		if err := c.PinChatMessage(ctx, botapi.PinChatMessageParams{ChatID: chat, MessageID: msg, DisableNotification: true}); err != nil {

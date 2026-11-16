@@ -5516,9 +5516,13 @@
   and stored as a `telegram_messages` row of kind `home` (resource version 1 once the pin worked) that retention keeps
   like a notice, so a restart edits the message instead of sending and pinning another. Per-space lines link to the
   topic, or to `startapp=space-<id>` with the layout off; without the Mini App host the button is the `startapp=needs`
-  link. Known limits: the counts are per space, so an action whose type the link may not view (type permissions)
-  still counts in a space it may read; a mute or grant change shows on the next human-action window, not at once.
-  Simulated only.
+  link. The counts are read per space and action type, and a link's view counts only the types whose view role (the
+  space's type permissions, loaded once per space per rebuild) the link holds, as a card and the API's counts do; a
+  space left with nothing to show for it isn't listed, and one whose permissions can't be read is left out. `/needs`
+  at home takes its items and counts from `GET /human-actions`, which applies the same type permissions. A rebuild reads
+  the counts only when a link's summary is due; a link that moves chats mid-send leaves no row and the message it sent
+  in the old chat is dropped from the record. Known limit: a mute or grant change shows on the next human-action
+  window, not at once. Simulated only.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9

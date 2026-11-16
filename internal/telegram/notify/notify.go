@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
@@ -154,6 +155,9 @@ type Options struct {
 	// Pending reads the number of pending human actions per space, once per rebuild of the home summaries (nil: no
 	// summaries). Each link's summary keeps only the spaces it may read.
 	Pending func(ctx context.Context) ([]SpaceCount, error)
+	// Perms loads a space's human-action type permissions, once per space per rebuild of the summaries (nil: the
+	// defaults, every type visible to a viewer). A space it fails for is left out of the summaries.
+	Perms func(ctx context.Context, spaceID string) (human.PermissionSet, error)
 	// NeedsURL is the Mini App's cross-space Needs-you page, the summary's web_app button; without it NeedsLink (the
 	// t.me/<bot>?startapp=needs link) is a plain URL button; with neither there is no button. Both are read when a summary
 	// is sent (the Mini App host can change while running).

@@ -1173,6 +1173,7 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		Links: links, Sender: c.TelegramBot.Sender,
 		// The pinned Needs-you summary (ADR-0089): the Mini App's cross-space page, or its direct link without the host.
 		Pending:     tgnotify.StorePending(c.Store),
+		Perms:       tgnotify.StorePerms(c.Human),
 		NeedsURL:    func() string { return c.telegramPageURL("/human") },
 		NeedsLink:   func() string { return c.telegramStartAppLink("needs") },
 		SpaceLink:   func(spaceID string) string { return c.telegramStartAppLink("space-" + spaceID) },
