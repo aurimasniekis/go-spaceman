@@ -268,3 +268,34 @@ func TestUsageLimitWrapUpAndOldCentral(t *testing.T) {
 		}
 	}
 }
+
+// A run report that comes between the hello and the welcome (the restarted agent's adopt/reconcile) must not go out
+// before the minor is negotiated: it would be stripped of its limit, and central would see the limit unset. It is
+// held and re-sent, with the limit, after the welcome.
+func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	at := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+	reset := at.Add(5 * time.Hour)
+	hold := make(chan struct{})
+	fc := newHeldWSCentral(t, proto.MinorUsageLimit, hold)
+	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
+	fc.next(t, proto.TypeHello) // sent: the connection is set, the welcome is held
+	ccLaunch(a, "run_held")
+	fc.collect(t, "run_held", 100*time.Millisecond)
+	if err := a.j.setRunLimit(context.Background(), "run_held", runLimit{Kind: proto.LimitFiveHour, ResetsAt: &reset, Since: &at, Offset: 1}); err != nil {
+		t.Fatal(err)
+	}
+	a.report(context.Background(), getRun(t, a, "run_held"))
+	if rs := fc.collect(t, "run_held", 200*time.Millisecond); len(rs) != 0 {
+		t.Fatalf("%d reports before the welcome: %+v", len(rs), rs[0].Limit)
+	}
+	close(hold)
+	rs := fc.collect(t, "run_held", 500*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the welcome")
+	}
+	for _, r := range rs {
+		wantOpen(t, "after welcome", r, proto.LimitFiveHour, reset, at)
+	}
+}

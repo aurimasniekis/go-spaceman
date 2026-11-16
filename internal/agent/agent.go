@@ -164,6 +164,9 @@ type Agent struct {
 	// transcript each run was last scanned in (a replaced file is scanned from the start), by run ID.
 	limitMu     sync.Mutex
 	limitSend   sync.Mutex
+	// heldReports are the runs whose report came between the hello and the welcome (guarded by mu): the minor is not
+	// negotiated yet, so the report would go out stripped of what the central's minor decides. They are re-sent after the welcome.
+	heldReports map[string]struct{}
 	limitTimers map[string]*time.Timer
 	limitFiles  map[string]os.FileInfo
 	// statusSnaps are the latest status-line snapshots and failureClasses the latest non-limit StopFailure class of
@@ -432,7 +435,7 @@ func (a *Agent) session(ctx context.Context) error {
 	a.noteSent(runs)
 	defer func() {
 		a.mu.Lock()
-		a.conn, a.connected, a.lostAt = nil, false, a.now()
+		a.conn, a.connected, a.lostAt, a.heldReports = nil, false, a.now(), nil
 		a.mu.Unlock()
 		a.poke()
 	}()
@@ -465,7 +468,12 @@ func (a *Agent) session(ctx context.Context) error {
 			}
 			a.connCtx = hbCtx
 			startPass := a.startCatchUpLocked()
+			held := a.heldReports
+			a.heldReports = nil
 			a.mu.Unlock()
+			if len(held) > 0 {
+				go a.resendHeldReports(hbCtx, held)
+			}
 			if startPass {
 				go a.catchUpRecordings()
 			}
@@ -637,9 +645,26 @@ func (a *Agent) report(ctx context.Context, r runRow) {
 	a.sendReport(ctx, r)
 }
 
+// resendHeldReports sends, from the journal, the reports held back before the welcome.
+func (a *Agent) resendHeldReports(ctx context.Context, held map[string]struct{}) {
+	for id := range held {
+		if r, err := a.j.getRun(ctx, id); err == nil {
+			a.report(ctx, r)
+		}
+	}
+}
+
 // sendReport sends a run's report as it is (limitSend held).
 func (a *Agent) sendReport(ctx context.Context, r runRow) {
 	a.mu.Lock()
+	if a.conn != nil && !a.connected {
+		if a.heldReports == nil {
+			a.heldReports = map[string]struct{}{}
+		}
+		a.heldReports[r.RunID] = struct{}{}
+		a.mu.Unlock()
+		return
+	}
 	minor := a.minor
 	a.mu.Unlock()
 	if err := a.send(ctx, proto.TypeRunReport, a.withHookData(r.report(a.now())).ForMinor(minor)); err != nil {

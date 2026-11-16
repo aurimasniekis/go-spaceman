@@ -46,7 +46,7 @@ func wsSink(t *testing.T, a *Agent) (conn *websocket.Conn, reports chan string) 
 	}
 	t.Cleanup(func() { _ = conn.CloseNow() })
 	a.mu.Lock()
-	a.conn = conn
+	a.conn, a.connected, a.minor = conn, true, proto.MaxMinor // a welcomed session
 	a.mu.Unlock()
 	return conn, reports
 }
