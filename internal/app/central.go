@@ -691,6 +691,13 @@ func (c *Central) Close() error {
 	if c.Gateway != nil {
 		c.Gateway.Close()
 	}
+	// The Telegram notifier writes its last mappings and position after its context ends: the store stays open for it.
+	if c.TelegramNotify != nil && c.TelegramNotify.Started() {
+		select {
+		case <-c.TelegramNotify.Done():
+		case <-time.After(shutdownGrace):
+		}
+	}
 	return c.Store.Close()
 }
 

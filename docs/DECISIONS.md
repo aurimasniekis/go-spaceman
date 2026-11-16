@@ -5549,6 +5549,15 @@
     those sends would be lost with the position already advanced. The position is saved behind that window and the next
     start delivers it, within the bound. Delivery stays at most once per change for what was already queued: a card
     queued but not sent at a crash is lost, as before.
+  - The window waits for the bot's sender. `Serve` starts the bot and the notifier side by side, and the sender is
+    nil until the bot's start has run (or for good after a failed start). While it is nil the notifier neither reads
+    nor advances the position and looks again every `RetryAfter`; after the replay bound it gives the window up and
+    follows the newest change. The position is not saved meanwhile, so a restart can't take a stale position for a
+    fresh one.
+  - A replayed window loads the stored card mappings even for items it saw created, so a crash can't send a second
+    card for one that was sent in the last seconds before it.
+  - `Central.Close` waits (at most 5 s) for the notifier's shutdown writes (mappings first, position second) before it
+    closes the store.
 
 ### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
 - **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the

@@ -21,6 +21,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 
@@ -216,14 +217,18 @@ type Notifier struct {
 	notices *notices
 	home    *home
 
-	cursor   int64 // Prime sets it before Run starts; after that only the Run goroutine touches it
-	primed   bool  // Prime read the start position, so Run starts from cursor instead of reading Latest
-	started  bool  // the start position is known (Run goroutine, after Prime)
-	savedSeq int64 // the position last written to Cursors, and when
+	cursor   int64     // Prime sets it before Run starts; after that only the Run goroutine touches it
+	primed   bool      // Prime read the start position, so Run starts from cursor instead of reading Latest
+	started  bool      // the start position is known (Run goroutine, after Prime)
+	resumed  bool      // the start position is a saved one: its window may hold cards created before a crash, so mappings are loaded
+	waitFrom time.Time // since when the window waits for a sender (zero: it doesn't); the position isn't saved meanwhile
+	savedSeq int64     // the position last written to Cursors, and when
 	savedAt  time.Time
 
 	sweepNow  chan struct{} // the link list was reloaded: sweep (see kickSweep)
 	ready     chan struct{} // closed once Run has subscribed and read its start position
+	done      chan struct{} // closed when Run has returned, its shutdown save included
+	running   atomic.Bool
 	readyOnce sync.Once
 }
 
@@ -254,12 +259,19 @@ func New(o Options) *Notifier {
 		o.FlushRows = 100
 	}
 	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf(),
-		notices: &notices{sent: map[string]bool{}}, home: newHome(), sweepNow: make(chan struct{}, 1), ready: make(chan struct{})}
+		notices: &notices{sent: map[string]bool{}}, home: newHome(), sweepNow: make(chan struct{}, 1), ready: make(chan struct{}), done: make(chan struct{})}
 }
 
 // Ready is closed once Run is subscribed and has its start position. A change made before that is history that Run
 // doesn't replay, so a caller that produces a change and expects a card (a test, say) waits for it first.
 func (n *Notifier) Ready() <-chan struct{} { return n.ready }
+
+// Done is closed once Run has returned, after it wrote the last mappings and the position. It is never closed when Run
+// was never started: check Started.
+func (n *Notifier) Done() <-chan struct{} { return n.done }
+
+// Started reports whether Run was called.
+func (n *Notifier) Started() bool { return n.running.Load() }
 
 // Prime reads the start position, so a change made after it is delivered once Run starts. Central calls it before
 // anything that can change data (the HTTP listener, the recover passes, the deadline loop), and starts Run later. A
@@ -293,13 +305,14 @@ func (n *Notifier) startPosition(ctx context.Context) (int64, error) {
 		return latest, nil
 	}
 	n.savedSeq, n.savedAt = seq, at
+	n.resumed = seq < latest
 	return seq, nil
 }
 
 // saveCursor writes the position when it moved, or when the last write is old (force: always).
 func (n *Notifier) saveCursor(ctx context.Context, force bool) {
-	if n.o.Cursors == nil || !n.started {
-		return
+	if n.o.Cursors == nil || !n.started || !n.waitFrom.IsZero() {
+		return // while a window waits for a sender the old save time stays, so a restart can't resume from a stale position as if it were fresh
 	}
 	now := n.o.Now()
 	if !force && n.cursor == n.savedSeq && now.Sub(n.savedAt) < cursorEvery {
@@ -315,6 +328,8 @@ func (n *Notifier) saveCursor(ctx context.Context, force bool) {
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
 // between is seen; a failed start read is retried by the next wake-up of the loop's safety timer.
 func (n *Notifier) Run(ctx context.Context) error {
+	n.running.Store(true)
+	defer close(n.done)
 	sub := n.o.Bus.Subscribe(16, eventbus.TopicChange)
 	defer sub.Close()
 	// What decides who may see a card changes without a change-feed entry: grants, links and their mutes, the spaces'
@@ -323,31 +338,35 @@ func (n *Notifier) Run(ctx context.Context) error {
 	defer access.Close()
 	n.o.Links.afterReload = n.kickSweep
 	n.o.Links.Start(ctx)
-	defer n.flush(context.WithoutCancel(ctx)) //nolint:contextcheck // the last mappings are written after shutdown
-	// The position is saved last: what wasn't processed before ctx ended (a window still being collected, queued
-	// sends the sender drops at shutdown) is after it, and the next start delivers it within the replay bound.
+	// Deferred calls run last-in first-out: the mappings are written first and the position second, as the flush tick
+	// does. A send the sender drops at shutdown is behind the position, not lost: the next start replays it within the
+	// replay bound.
 	defer func() {
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveGrace)
 		defer cancel()
 		n.saveCursor(sctx, true)
 	}()
+	defer n.flush(context.WithoutCancel(ctx)) //nolint:contextcheck // the last mappings are written after shutdown
 
 	retry := time.NewTicker(10 * time.Second)
 	defer retry.Stop()
-	start := func() {
+	start := func() bool {
 		pos, err := n.startPosition(ctx)
 		if err != nil {
 			n.log.Warn("telegram notifier: reading the newest change failed", slog.String("error", err.Error()))
-			return
+			return false
 		}
 		n.cursor, n.started = pos, true
 		n.readyOnce.Do(func() { close(n.ready) })
+		return true
 	}
+	var late <-chan time.Time  // armed after an access event: the caches it refreshes may be read a moment later than it
+	var again <-chan time.Time // armed after a failed feed read or while no sender exists: the window is processed without a new change
 	if n.primed {
 		n.started = true
 		n.readyOnce.Do(func() { close(n.ready) }) // subscribed above, and the start position is Prime's
-	} else {
-		start()
+	} else if start() && n.process(ctx) {
+		again = time.After(n.o.RetryAfter) // a resumed position has a window to deliver already
 	}
 	n.loadNotices(ctx)
 	n.loadHome(ctx)
@@ -359,9 +378,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 			homeWake = n.o.HomeAfter(d)
 		}
 	}
-	var late <-chan time.Time  // armed after an access event: the caches it refreshes may be read a moment later than it
-	var again <-chan time.Time // armed once after a failed feed read: the unread rest is processed without a new change
-	if n.primed {              // what changed between Prime and the subscription has no wake-up of its own
+	if n.primed { // what changed between Prime and the subscription has no wake-up of its own
 		if n.process(ctx) {
 			again = time.After(n.o.RetryAfter)
 		}
@@ -377,8 +394,8 @@ func (n *Notifier) Run(ctx context.Context) error {
 		case <-n.cards.full:
 			n.flush(ctx)
 		case <-retry.C:
-			if !n.started {
-				start()
+			if !n.started && start() && n.process(ctx) {
+				again = time.After(n.o.RetryAfter)
 			}
 			n.loadNotices(ctx)
 			n.loadHome(ctx)
@@ -406,8 +423,10 @@ func (n *Notifier) Run(ctx context.Context) error {
 				return nil
 			}
 			if !n.started {
-				start()
-				continue // history before the start position isn't replayed
+				if start() && n.process(ctx) { // history before the start position isn't replayed, a resumed window is
+					again = time.After(n.o.RetryAfter)
+				}
+				continue
 			}
 			select { // collect for one window; wake-ups during it are the same window
 			case <-ctx.Done():
@@ -488,13 +507,37 @@ func (n *Notifier) collect(ctx context.Context) (*window, error) {
 
 // process handles one window. It reports whether reading the feed failed part-way (the rest is still unread).
 func (n *Notifier) process(ctx context.Context) (retry bool) {
+	if n.o.Sender() == nil {
+		return n.waitForSender(ctx)
+	}
+	n.waitFrom = time.Time{}
 	w, err := n.collect(ctx)
 	if err != nil {
 		n.log.Warn("telegram notifier: reading changes failed", slog.String("error", err.Error()))
 		retry = true
 	}
 	n.handle(ctx, w)
+	n.resumed = false
 	return retry
+}
+
+// waitForSender keeps the window unread while the bot has no sender (it is still starting, or its start failed): the
+// position stays, and the window is read when a sender exists. A wait longer than the replay bound gives the window up
+// and follows the newest change, so a long outage doesn't flood a chat. It reports whether to look again.
+func (n *Notifier) waitForSender(ctx context.Context) bool {
+	now := n.o.Now()
+	if n.waitFrom.IsZero() {
+		n.waitFrom = now
+	}
+	if now.Sub(n.waitFrom) <= n.o.MaxReplay {
+		return true
+	}
+	latest, err := n.o.Feed.Latest(ctx)
+	if err != nil {
+		return true
+	}
+	n.cursor, n.waitFrom, n.resumed = latest, time.Time{}, false
+	return false
 }
 
 func (n *Notifier) handle(ctx context.Context, w *window) {
@@ -503,7 +546,7 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 	}
 	snd := n.o.Sender()
 	if snd == nil {
-		return // the bot is off: nothing is sent, and nothing is replayed when it comes up
+		return // the sender went away during the window: process checks first, so this is a narrow race
 	}
 	links := n.o.Links.Snapshot()
 	if len(links) == 0 {
@@ -529,7 +572,7 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 		if r == nil {
 			continue
 		}
-		n.deliver(ctx, snd, links, r, now, w.seen[k].Action == changefeed.Created)
+		n.deliver(ctx, snd, links, r, now, w.seen[k].Action == changefeed.Created && !n.resumed)
 	}
 }
 

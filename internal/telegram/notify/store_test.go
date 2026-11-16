@@ -317,3 +317,21 @@ func TestStoreCursorsRoundTrip(t *testing.T) {
 		t.Errorf("Load = %d, %v, %v, %v; want 9 at %v", seq, got, ok, err, at)
 	}
 }
+
+// A value that doesn't parse reads as "none saved", never as an error or a position.
+func TestStoreCursorsMalformedValueIsNoneSaved(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	c := notify.StoreCursors{S: st}
+	for _, v := range []string{"", "12", "x:1", "1:y", "-3:5", "1:2:3"} {
+		err := st.W().TxNamed(ctx, "test.cursor", func(tx *store.Tx) error {
+			return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: "telegram.notifier_cursor", Value: v, UpdatedAt: 1})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seq, _, ok, err := c.Load(ctx); err != nil || ok {
+			t.Errorf("Load of %q = %d, ok %v, %v; want none saved", v, seq, ok, err)
+		}
+	}
+}
