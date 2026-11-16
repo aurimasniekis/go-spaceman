@@ -10230,6 +10230,7 @@ export interface components {
             local_commits: number;
             /** @description A sync is due or in flight */
             pending: boolean;
+            preserved_folders?: string[];
             /** Format: int64 */
             retries: number;
             role: string;
