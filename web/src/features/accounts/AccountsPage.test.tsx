@@ -13,6 +13,7 @@ import { AccountSwitchesCard } from './AccountSwitchesCard'
 import { AccountWindowsPanel } from './AccountWindowsPanel'
 import { FailoverSettingsCard, overridesWith } from './FailoverSettingsCard'
 import { RunSwitchNotice } from './RunSwitchNotice'
+import { SpaceAccountsCard } from './SpaceAccountsCard'
 
 const SPACE = 'spc_1'
 const admin = { root: false, method: 'password', user: { display_name: 'Admin', grants: [{ role: 'admin', domain: '*' }] } } as unknown as Me
@@ -86,6 +87,22 @@ describe('pool order and role pools', () => {
   })
 })
 
+describe('bind modal', () => {
+  it('saves the bindings with the configuration version', async () => {
+    const put = vi.spyOn(api, 'PUT').mockResolvedValue({ data: { items: [] }, response: new Response() } as never)
+    mount(admin, <SpaceAccountsCard spaceId={SPACE} />, (qc) => {
+      qc.setQueryData(keys.accounts, [{ id: 'acc_a', name: 'team-max', harness: 'claude-code', enabled: true }, { id: 'acc_b', name: 'spare-pro', harness: 'claude-code', enabled: true }])
+      qc.setQueryData(keys.rolePools(SPACE), { accounts_version: 9, items: [] })
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /Choose accounts/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const [path, init] = put.mock.calls[0] as unknown as [string, { params: { header: Record<string, string> } }]
+    expect(path).toBe('/spaces/{space_id}/accounts')
+    expect(init.params.header['If-Match']).toBe('"9"')
+  })
+})
+
 describe('failover settings', () => {
   it('keeps the space overrides it does not edit and clears a field left empty', () => {
     expect(overridesWith(limits.limits, { usage_limit_wait_if_reset_within: 30 })).toEqual({ usage_limit_switch_max_per_day: 4, usage_limit_wait_if_reset_within: 30 })
@@ -151,6 +168,10 @@ describe('account switches', () => {
     expect(n).toHaveTextContent('Moved to account team-max')
     expect(n).toHaveTextContent('Continued from the run on account team-max')
     expect(within(n).getAllByRole('link')).toHaveLength(2)
+  })
+  it('names an unbound account "another account"', async () => {
+    mount(viewer, <RunSwitchNotice spaceId={SPACE} runId="run_a" />, (qc) => qc.setQueryData(keys.accountSwitches(SPACE), [sw({ to_account_id: 'acc_gone' })]))
+    expect(await screen.findByTestId('run-switch')).toHaveTextContent('Moved to account another account')
   })
   it('renders nothing for an untouched run', async () => {
     mount(viewer, <RunSwitchNotice spaceId={SPACE} runId="run_z" />, (qc) => qc.setQueryData(keys.accountSwitches(SPACE), [sw({})]))

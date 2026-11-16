@@ -827,3 +827,33 @@ func TestAccountSwitchResumeFailedAllDisabledPool(t *testing.T) {
 		t.Fatalf("wait target %q, want none", w.SwitchToAccountID)
 	}
 }
+
+// The list of a space holds that space's switches only, newest first, however many other spaces have switches.
+func TestAccountSwitchesListIsPerSpace(t *testing.T) {
+	e := newSwitchEnv(t)
+	ins := func(id, space string, at int) {
+		e.exec(`INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, cause, limit_kind, state,
+			created_at, updated_at) VALUES (?, ?, ?, 'implementor', 'worker', 'claude-code', ?, 'acc_1', 'usage_limit', '5h', 'succeeded', ?, ?)`,
+			id, space, "ins_"+id, "run_"+id, at, at)
+	}
+	ins("asw_a1", "spc_a", 1)
+	ins("asw_b1", "spc_b", 2)
+	ins("asw_a2", "spc_a", 3)
+	ids := func(space string) []string {
+		list, err := e.svc.AccountSwitches(e.ctx, space)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, s := range list {
+			out = append(out, s.ID)
+		}
+		return out
+	}
+	if got := ids("spc_a"); len(got) != 2 || got[0] != "asw_a2" || got[1] != "asw_a1" {
+		t.Errorf("space a lists %v", got)
+	}
+	if got := ids("spc_b"); len(got) != 1 || got[0] != "asw_b1" {
+		t.Errorf("space b lists %v", got)
+	}
+}
