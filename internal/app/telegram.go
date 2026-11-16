@@ -265,12 +265,30 @@ func (c *Central) telegramStartAppLink(param string) string {
 	return "https://t.me/" + c.TelegramBot.Username() + "?startapp=" + url.QueryEscape(param)
 }
 
-// telegramActionURL is the Mini App URL of one human action ("" without the Mini App host): the shell's route for an
-// action (the web's /spaces/$spaceId/human?action=).
+// telegramActionURL is the Mini App URL of one human action ("" without the Mini App host).
 func (c *Central) telegramActionURL(spaceID, actionID string) string {
-	o := c.miniAppOrigin()
-	if o == "" {
+	return miniAppActionLink(c.miniAppOrigin(), spaceID, actionID)
+}
+
+// miniAppActionLink is the Mini App page of one human action on the Mini App origin: the shell's route (the web's
+// /spaces/$spaceId/human?action=, which the deep link human-<space>-<action> opens too). It is "" without an origin.
+func miniAppActionLink(origin, spaceID, actionID string) string {
+	if origin == "" {
 		return ""
 	}
-	return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
+	return origin + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
+}
+
+// cardAppURL is the Mini App link of a notifier card (notify.Options.ItemURL), for its Open in app button and its cut
+// body. Only a human action has a page of its own here, so the other cards offer no button.
+func (c *Central) cardAppURL(spaceID string, k notify.Key) string {
+	return cardAppLink(c.miniAppOrigin(), spaceID, k)
+}
+
+// cardAppLink is cardAppURL on a given Mini App origin: a human action's page, and nothing for any other card.
+func cardAppLink(origin, spaceID string, k notify.Key) string {
+	if k.Type != notify.TypeHumanAction {
+		return ""
+	}
+	return miniAppActionLink(origin, spaceID, k.ID)
 }

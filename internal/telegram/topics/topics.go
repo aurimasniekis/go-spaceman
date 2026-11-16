@@ -206,18 +206,24 @@ func clip(s string, n int) string {
 }
 
 // Send sends p to the topic key of the link's chat (key "": the main chat), creating the topic if there is none and
-// recovering from a deleted or closed one (see the package comment). p.MessageThreadID is set here.
+// recovering from a deleted or closed one (see the package comment). p.MessageThreadID is set here. The caller's pay()
+// (the sender's dispatch) pays for the first Bot API call; every further one (a topic creation, a resend) is charged with
+// sender.Take.
 func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, chatID int64, key string, p botapi.SendMessageParams) (botapi.Message, error) {
 	p.ChatID = chatID
 	thread := 0
+	pay := &payer{}
 	if key != "" && m != nil {
 		var err error
-		if thread, err = m.thread(ctx, c, linkID, chatID, key); err != nil {
+		if thread, err = m.thread(ctx, c, pay, linkID, chatID, key); err != nil {
 			return botapi.Message{}, err
 		}
 	}
 	for try := 0; ; try++ {
 		p.MessageThreadID = thread
+		if err := pay.next(ctx); err != nil {
+			return botapi.Message{}, err
+		}
 		msg, err := c.SendMessage(ctx, p)
 		if err == nil || thread == 0 || !botapi.IsTopicGone(err) {
 			return msg, err
@@ -225,7 +231,7 @@ func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, cha
 		m.forget(ctx, linkID, key, thread)
 		if try == 0 {
 			var terr error
-			if thread, terr = m.thread(ctx, c, linkID, chatID, key); terr != nil {
+			if thread, terr = m.thread(ctx, c, pay, linkID, chatID, key); terr != nil {
 				return botapi.Message{}, terr
 			}
 		} else {
@@ -234,9 +240,20 @@ func (m *Manager) Send(ctx context.Context, c *botapi.Client, linkID string, cha
 	}
 }
 
+// payer charges the Bot API calls of one Send: the first is paid for by the sender's dispatch, each later one by Take.
+type payer struct{ calls int }
+
+func (p *payer) next(ctx context.Context) error {
+	p.calls++
+	if p.calls == 1 {
+		return nil
+	}
+	return sender.Take(ctx)
+}
+
 // thread returns the thread of a key, creating its topic; 0 when there is none to use. A rate limit (429) is returned
 // so the sender repeats the whole send after the wait, and nothing is remembered about it.
-func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, chatID int64, key string) (int, error) {
+func (m *Manager) thread(ctx context.Context, c *botapi.Client, pay *payer, linkID string, chatID int64, key string) (int, error) {
 	if chatID <= 0 || m.isRefused(chatID) {
 		return 0, nil
 	}
@@ -248,10 +265,12 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 	if t != 0 && !legacy {
 		return t, nil
 	}
+	// ls.create is taken only by a send that needs a topic made: SpaceOf, ThreadOf and the sends to an existing topic
+	// take ls.mu alone (lookup), which is never held across a Telegram call or a wait for the buckets.
 	ls.create.Lock()
 	defer ls.create.Unlock()
 	if legacy {
-		m.retireLegacy(ctx, c, ls, linkID, chatID)
+		m.retireLegacy(ctx, c, pay, ls, linkID, chatID)
 	}
 	if t, ok, _ = m.lookup(ctx, ls, linkID, key); !ok || t != 0 { // another send of the link made it meanwhile
 		return t, nil
@@ -262,6 +281,10 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 	// The 5/s create limiter is waited on here, inside a sender worker: in a storm of links switching to threads at once,
 	// every queued send waits its turn behind it, so all sends can slow to about 5/s until the topics exist.
 	if err := m.creates.Wait(ctx); err != nil {
+		return 0, err
+	}
+	// The create is a Bot API call like any other, so it is charged to the sender's rate limits too.
+	if err := pay.next(ctx); err != nil {
 		return 0, err
 	}
 	title := m.name(ctx, key)
@@ -287,7 +310,11 @@ func (m *Manager) thread(ctx context.Context, c *botapi.Client, linkID string, c
 	// now, so the title is read again: a rename committed before this read is seen here, one committed after finds the
 	// saved thread in Renamed.
 	if m.name(ctx, key) != title {
-		if err := m.rename(ctx, c, LinkThread{LinkID: linkID, ChatID: chatID, ID: topic.MessageThreadID}, key); err != nil {
+		err := pay.next(ctx) // the edit is one more Bot API call of this send
+		if err == nil {
+			err = m.rename(ctx, c, LinkThread{LinkID: linkID, ChatID: chatID, ID: topic.MessageThreadID}, key)
+		}
+		if err != nil {
 			m.o.Log.Debug("telegram topics: the title of a new topic was not brought up to date", slog.String("error", err.Error()))
 		}
 	}
@@ -311,7 +338,7 @@ func (m *Manager) lookup(ctx context.Context, ls *linkState, linkID, key string)
 // again for the link (idempotent across restarts too, unless the save failed). A rate limit or a server error leaves the
 // key for a later send to try again; any other failure (the topic is gone, the chat refuses) drops the key without a
 // note, since there is nothing left to tell.
-func (m *Manager) retireLegacy(ctx context.Context, c *botapi.Client, ls *linkState, linkID string, chatID int64) {
+func (m *Manager) retireLegacy(ctx context.Context, c *botapi.Client, pay *payer, ls *linkState, linkID string, chatID int64) {
 	ls.mu.Lock()
 	thread, ok := ls.threads[LegacyNeeds]
 	ls.mu.Unlock()
@@ -320,6 +347,9 @@ func (m *Manager) retireLegacy(ctx context.Context, c *botapi.Client, ls *linkSt
 	}
 	if thread != 0 {
 		if err := m.creates.Wait(ctx); err != nil {
+			return
+		}
+		if err := pay.next(ctx); err != nil { // charged like the create
 			return
 		}
 		_, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chatID, MessageThreadID: thread, Text: LegacyNote, DisableNotification: true})

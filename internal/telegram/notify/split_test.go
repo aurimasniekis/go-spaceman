@@ -222,6 +222,41 @@ func TestDeletedContinuationsAreNotReloaded(t *testing.T) {
 	}
 }
 
+// TestContinuationOffersTheAppButtonInAPrivateChat: a cut body in a private chat at full level ends in the Mini App
+// button, which is the link ItemURL gives for that card.
+func TestContinuationOffersTheAppButtonInAPrivateChat(t *testing.T) {
+	const link = "https://mini.example/spaces/spc_1/human?action=hum_1"
+	e := newEnv(t, 1)
+	e.itemURL = func(spaceID string, k notify.Key) string {
+		if k.Type == notify.TypeHumanAction && k.ID == "hum_1" && spaceID == "spc_1" {
+			return link
+		}
+		return ""
+	}
+	defer e.run(nil)()
+	r := action("hum_1", 1, false)
+	r.Detail = longBody(60) // longer than the four parts: the body is cut, so the last part gets the button
+	e.change("hum_1", r, 1, changefeed.Created)
+	e.waitCalls("sendMessage", 4)
+	time.Sleep(100 * time.Millisecond)
+	found := false
+	for _, m := range e.fake.Messages(1001) {
+		if m.ReplyMarkup == nil {
+			continue
+		}
+		for _, row := range m.ReplyMarkup.InlineKeyboard {
+			for _, b := range row {
+				if b.WebApp != nil && b.WebApp.URL == link && b.Text == "Open in app" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no message carries the Open in app button for %s", link)
+	}
+}
+
 // TestNoContinuationsInGroupsOrAtSummary: a long body goes out as continuations only to a private chat at content
 // level full; a group chat and a summary-level space get the card alone, without the body.
 func TestNoContinuationsInGroupsOrAtSummary(t *testing.T) {

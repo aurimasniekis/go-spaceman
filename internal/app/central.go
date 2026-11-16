@@ -535,7 +535,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	bc := cfg.Backups
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
 		Sources: backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
-		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
+		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(),
+		StallTimeout: bc.StallTimeout.D(), MaxDuration: bc.MaxDuration.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
 		PrepareMemory: c.prepareBackupMemory})
 	c.Fleet.Hub().Usage = usageWithBudgets{Service: c.Usage, limits: c.Limits}
 	c.Schedules = schedule.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, o.Clock, obs.Component(log, "schedule"))
@@ -1179,13 +1180,9 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		SpaceLink:   func(spaceID string) string { return c.telegramStartAppLink("space-" + spaceID) },
 		BotUsername: func() string { return c.TelegramBot.Username() },
 		Store:       tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
-		// A human action's card opens the action in the Mini App (the chat's forms use the same URL).
-		ItemURL: func(spaceID string, k tgnotify.Key) string {
-			if k.Type != tgnotify.TypeHumanAction {
-				return ""
-			}
-			return c.telegramActionURL(spaceID, k.ID)
-		}})
+		// A human action's card opens the action in the Mini App (the chat's forms use the same URL); other cards have no
+		// Open in app button.
+		ItemURL: c.cardAppURL})
 	return notifier
 }
 

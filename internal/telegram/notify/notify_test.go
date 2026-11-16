@@ -276,6 +276,7 @@ type env struct {
 	perms      func(context.Context, string) (human.PermissionSet, error) // the type permissions of a space (nil: defaults)
 	homeWake   chan time.Time                                             // the home summary's debounce wait ends when the test sends here
 	needsURL   string
+	itemURL    func(string, notify.Key) string // the notifier's Options.ItemURL (nil: no Open in app button)
 }
 
 func linkFor(i int) notify.Link {
@@ -349,6 +350,7 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 		opts.NeedsURL = func() string { return e.needsURL }
 		opts.Perms = e.perms
 	}
+	opts.ItemURL = e.itemURL
 	if m != nil {
 		opts.Store = m
 	}

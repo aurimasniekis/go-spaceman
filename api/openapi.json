@@ -1665,6 +1665,23 @@
             "format": "int64",
             "type": "integer"
           },
+          "stage": {
+            "enum": [
+              "",
+              "memory_flush",
+              "snapshot",
+              "files",
+              "objects",
+              "memory",
+              "manifest",
+              "upload",
+              "record",
+              "prune",
+              "fetch",
+              "verify"
+            ],
+            "type": "string"
+          },
           "started_at": {
             "format": "date-time",
             "type": "string"
@@ -1769,6 +1786,51 @@
           "attempted",
           "flushed_spaces",
           "stale"
+        ],
+        "type": "object"
+      },
+      "BackupProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The backup being made or verified",
+            "type": "string"
+          },
+          "last_progress_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "memory_flush",
+              "snapshot",
+              "files",
+              "objects",
+              "memory",
+              "manifest",
+              "upload",
+              "record",
+              "prune",
+              "fetch",
+              "verify"
+            ],
+            "type": "string"
+          },
+          "stage_files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "stage_started_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "stage",
+          "stage_started_at",
+          "stage_files",
+          "last_progress_at"
         ],
         "type": "object"
       },
@@ -1913,6 +1975,9 @@
           },
           "busy": {
             "type": "boolean"
+          },
+          "current": {
+            "$ref": "#/components/schemas/BackupProgress"
           },
           "excluded": {
             "items": {

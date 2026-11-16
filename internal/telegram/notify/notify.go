@@ -147,7 +147,7 @@ type Options struct {
 	// AppURL is the Mini App link offered on a card whose body was cut at the message cap (empty: no button).
 	AppURL string
 	// ItemURL returns the Mini App URL of one resource, for a card's "Open in app" button and its cut body ("" or nil:
-	// AppURL).
+	// AppURL). It is per card because the link names the card's own item.
 	ItemURL func(spaceID string, k Key) string
 	// Topics routes messages to each link's space topics when its chat layout is on (nil: everything goes to the main
 	// chat).

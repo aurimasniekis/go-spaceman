@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Upgrade notes
 
-- **Schema migration `0054_telegram_message_thread`** (the number may change before release): adds the nullable
+- **Schema migration `0059_telegram_message_thread`**: adds the nullable
   `telegram_messages.message_thread_id`, the topic a card was sent in. It is applied on start and needs no action. A card
   row from before it has no topic recorded and is edited in place as before.
 - **Chat layout.** Links start on `notification_defaults.threads = auto`, so a bot with topics enabled in BotFather moves each
@@ -26,6 +26,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   topic and edited in place (at most once every 30 seconds). It counts only the spaces and action types the link may view.
   **Known limit:** a `/needs` row opens a form; it doesn't link to the item's card yet.
 - A relink of the same chat by the same user reuses the topics of the revoked link, and a space's rename renames its topic.
+- The backup status shows where a running backup or verification is (`current`: stage, stage start, files done, last
+  progress; `stage` on the running item), and central logs every stage's start and end at Info.
 
 ### Changed
 
@@ -33,6 +35,45 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   says a bound group gets notifier cards (it gets none: its replies and taps only), describes `/needs` as cross-space,
   and the setup page has the BotFather steps for topics.
 - Telegram: the chat layout is chosen per link (ADR-0089). The new `notification_defaults.threads` setting (`auto`, `on`, `off`; default `auto`, which is on when the bot has topics enabled in BotFather) and a link's own override put every message about a space, needs-you cards included, in that space's topic; the digest and the "many changes" notice stay in the chat without a topic. The shared "Needs you" topic is no longer used: the bot posts a note in it once. The per-space `topics` flag and `topics_mode_default` are deprecated and have no effect. **Topics the bot creates stay in users' chats** when the layout is turned off again: Telegram can only delete a topic together with its messages.
+
+### Fixed
+
+- A backup or verification that stops making progress no longer hangs with `busy` set until central restarts. A watchdog
+  fails it after 10 minutes without progress or 1 hour in total (new keys `backups.stall_timeout` and
+  `backups.max_duration`), records it as failed with an error naming the stage,
+  and the next backup can start. HTTP/2 connections to object storage now send health pings, so a silently dead
+  connection no longer blocks a transfer forever.
+
+## [0.1.7] - 2026-11-16
+
+Release on top of v0.1.6. It is a central-only release: the node agent is unchanged, so agents can stay on v0.1.6. It has
+no migrations, no node protocol change and no configuration change. It fixes the web terminal's reset and "load earlier"
+behavior and the Telegram sender and topics, and it polishes the Mini App home and the links on Telegram cards.
+
+### Added
+
+- A Telegram card for a human action whose body is cut at the message cap now has an **Open in app** button, which opens that
+  action's page in the Mini App. Cards of other kinds still have no button.
+
+### Changed
+
+- The Mini App home's **Needs you** list is compact: its rows only open, so it shows no selection boxes and no bulk bar.
+  The full human-action list keeps its bulk actions.
+
+### Fixed
+
+- After a terminal reset (a seek, or **load earlier**), the web terminal no longer shows the old screen in rows the new output
+  has not drawn yet. The new terminal is erased out to the largest size the old one had, so a later resize shows nothing old.
+- **Load earlier** puts the viewer's lines back only once the catch-up has reached the record the screen ended on, so they no
+  longer end up at the bottom of the scrollback.
+- A live terminal whose stream ends or is refused while **load earlier** waits for its records no longer stays "reloading":
+  the button comes back.
+- Telegram's urgent sends (callback answers) are no longer starved by long cards. A quarter of the sender's worker slots (two
+  by default) are kept for Interactive messages, so a multi-message send waiting in the rate limits cannot hold every slot.
+- Creating a Telegram topic is now charged to the sender's rate limits like any other Bot API call. The wait for that budget
+  no longer holds the link's topics lock, so the link's other topic messages do not queue behind it.
+- A human action with a priority the Mini App does not know yet sorts as normal in the **Needs you** list. Before, it had no
+  rank in the sort.
 
 ## [0.1.6] - 2026-11-15
 
@@ -1903,7 +1944,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...v0.1.4
