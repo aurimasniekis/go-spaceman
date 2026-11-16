@@ -250,10 +250,11 @@ func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w f
 		"is needed if the work can wait. To keep it going sooner, bind or enable another account for the pool. You get one such notice per space, "+
 		"role and limit window.", space, p.Role, names, reset)
 	key := PoolExhaustedDedup(w.SpaceID, p, now)
-	// The window ends at the pool's reset, or with the UTC day when none is known (the key's own window).
+	// The window ends with the key's reset bucket, or with the UTC day when none is known (the key's own window).
 	expires := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
 	if p.ResetsAt != nil {
-		expires = *p.ResetsAt
+		// The key's own bucket: a reset that moves later within it is the same window, so the row must outlive it.
+		expires = p.ResetsAt.Truncate(poolWindow).Add(poolWindow)
 	}
 	if err := tx.Q.InsertPoolExhaustedNotice(ctx, db.InsertPoolExhaustedNoticeParams{SpaceID: w.SpaceID, DedupKey: key, WaitID: w.ID, Title: title,
 		Body: body, CreatedAt: tx.NowMicros(), ExpiresAt: expires.UnixMicro()}); err != nil {

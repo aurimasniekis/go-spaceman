@@ -270,3 +270,51 @@ func TestPoolExhaustedNoticeBadRowDoesNotBlock(t *testing.T) {
 		t.Fatalf("%d notices, %d recorded, want the good row raised and the bad one kept", len(e.poolNotices("spc_a")), e.pendingPoolRows())
 	}
 }
+
+// A pool with no known reset is keyed and expires by the UTC day: a row left past midnight is dropped undelivered, and a
+// park the next day is a new window that raises a new notice.
+func TestPoolExhaustedNoticeDayExpiry(t *testing.T) {
+	e := newPeopleEnv(t)
+	e.sv.msgs = messages.New(e.s, e.aw, e.ch)
+	pool := &fleet.PoolExhausted{Harness: "claude-code", Role: "implementor", Accounts: []string{"acc_1"}}
+	e.perSpace.Store(1)
+	if _, _, err := e.human.Create(e.ctx, audit.System, "spc_a", human.CreateInput{Type: human.TypeMessage, Title: "other", Body: "b",
+		Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.park("spc_a", "wt_1", "worker", pool, false)
+	if e.pendingPoolRows() != 1 {
+		t.Fatalf("%d recorded, want 1", e.pendingPoolRows())
+	}
+	e.perSpace.Store(100)
+	// Just past the next 00:00 UTC, but well inside 48 hours of the park.
+	now := e.clk.Now().UTC()
+	e.clk.Advance(now.Truncate(24 * time.Hour).Add(24*time.Hour + time.Minute).Sub(now))
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 0 || len(e.poolNotices("spc_a")) != 0 {
+		t.Fatalf("after midnight: raised %d (%v), %d recorded, %d notices, want the row dropped undelivered", n, err, e.pendingPoolRows(), len(e.poolNotices("spc_a")))
+	}
+	e.park("spc_a", "wt_2", "worker", pool, false)
+	if n := len(e.poolNotices("spc_a")); n != 1 || e.pendingPoolRows() != 0 {
+		t.Fatalf("next day: %d notices, %d recorded, want a new notice", n, e.pendingPoolRows())
+	}
+}
+
+// The expiry of a known reset is the end of the key's bucket, so a reset that moves later within it is not dropped early.
+func TestPoolExhaustedNoticeExpiryBucket(t *testing.T) {
+	e := newPeopleEnv(t)
+	e.sv.msgs = messages.New(e.s, e.aw, e.ch)
+	reset := e.clk.Now().Add(2 * time.Hour)
+	e.perSpace.Store(1)
+	if _, _, err := e.human.Create(e.ctx, audit.System, "spc_a", human.CreateInput{Type: human.TypeMessage, Title: "other", Body: "b",
+		Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.park("spc_a", "wt_1", "worker", &fleet.PoolExhausted{Harness: "claude-code", Role: "implementor", Accounts: []string{"acc_1"}, ResetsAt: &reset}, false)
+	var exp int64
+	if err := e.s.ReadDB().QueryRowContext(e.ctx, `SELECT expires_at FROM pool_exhausted_notices`).Scan(&exp); err != nil {
+		t.Fatal(err)
+	}
+	if want := reset.Truncate(poolWindow).Add(poolWindow).UnixMicro(); exp != want {
+		t.Fatalf("expires_at %d, want %d (end of the reset's bucket)", exp, want)
+	}
+}
