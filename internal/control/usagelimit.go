@@ -231,7 +231,7 @@ func PoolExhaustedDedup(spaceID string, p *fleet.PoolExhausted, now time.Time) s
 // this one). It is one informational action per space, role and window, deduplicated on its reserved key, so a second
 // park in the same window only finds it. People, and so Telegram, hear about the pool only here: a switch or a single
 // limited account never raises one. The row stays until the action exists: a crash after the commit, a space at its
-// open-action cap (RateLimited) or an archived one (Precondition) leaves it for TellPoolExhausted, which the deadline
+// open-action cap (RateLimited) leaves it for TellPoolExhausted, which the deadline
 // loop runs again later, so the notice is late in those cases, never lost.
 func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w fleet.LimitWait, p *fleet.PoolExhausted) error {
 	space := w.SpaceID
@@ -250,8 +250,13 @@ func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w f
 		"is needed if the work can wait. To keep it going sooner, bind or enable another account for the pool. You get one such notice per space, "+
 		"role and limit window.", space, p.Role, names, reset)
 	key := PoolExhaustedDedup(w.SpaceID, p, now)
+	// The window ends at the pool's reset, or with the UTC day when none is known (the key's own window).
+	expires := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	if p.ResetsAt != nil {
+		expires = *p.ResetsAt
+	}
 	if err := tx.Q.InsertPoolExhaustedNotice(ctx, db.InsertPoolExhaustedNoticeParams{SpaceID: w.SpaceID, DedupKey: key, WaitID: w.ID, Title: title,
-		Body: body, CreatedAt: tx.NowMicros()}); err != nil {
+		Body: body, CreatedAt: tx.NowMicros(), ExpiresAt: expires.UnixMicro()}); err != nil {
 		return err
 	}
 	tx.AfterCommit(func() {
@@ -266,33 +271,45 @@ func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w f
 const poolNoticePage = 200
 
 // TellPoolExhausted raises the recorded pool-exhausted notices that have no human action yet and deletes each row once
-// its action exists (created now, or found by its dedup key). A space at its open-action cap or archived since is
-// skipped and tried again on a later round, as TellLongHolds does: the cap frees up when a person answers an action.
-// It returns the number of actions created.
+// its action exists (created now, or found by its dedup key). Rows whose window is over (the reset has passed, or the
+// day ended) are dropped first, undelivered, so stale rows never crowd out newer ones or announce a reset in the past.
+// A space at its open-action cap is skipped and tried again on a later round, as TellLongHolds does: the cap frees up when
+// a person answers an action. An archived space can never take the action, so its row is dropped. A row that keeps
+// failing is logged and skipped so the rows after it are still raised; the errors are joined. It returns the number of
+// actions created.
 func (sv *Supervisor) TellPoolExhausted(ctx context.Context) (int, error) {
+	if err := sv.fl.DropExpiredPoolExhaustedNotices(ctx); err != nil {
+		return 0, err
+	}
 	rows, err := sv.fl.PoolExhaustedNotices(ctx, poolNoticePage)
 	if err != nil {
 		return 0, err
 	}
 	n := 0
+	var errs []error
 	for _, r := range rows {
 		_, created, err := sv.human.Create(ctx, audit.System, r.SpaceID, human.CreateInput{Type: human.TypeMessage, Priority: "normal", Title: r.Title,
 			Body: r.Body, Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "Usage limits"},
 			CorrelationID: r.WaitID, DedupKey: r.DedupKey, Internal: true})
 		switch apperr.CodeOf(err) {
 		case "":
-		case apperr.CodeRateLimited, apperr.CodePrecondition:
+		case apperr.CodeRateLimited:
 			sv.log.Info("pool exhausted people notice postponed", slog.String("limit_wait.id", r.WaitID), obs.Err(err))
 			continue
+		case apperr.CodePrecondition:
+			sv.log.Info("pool exhausted people notice dropped, the space takes no actions", slog.String("limit_wait.id", r.WaitID), obs.Err(err))
 		default:
-			return n, err
+			sv.log.Warn("pool exhausted people notice failed", slog.String("limit_wait.id", r.WaitID), obs.Err(err))
+			errs = append(errs, err)
+			continue
 		}
 		if err := sv.fl.DeletePoolExhaustedNotice(ctx, r.SpaceID, r.DedupKey); err != nil {
-			return n, err
+			errs = append(errs, err)
+			continue
 		}
 		if created {
 			n++
 		}
 	}
-	return n, nil
+	return n, errors.Join(errs...)
 }

@@ -5473,9 +5473,11 @@
     dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
     or a pool with a free account, raises none. The park's transaction records the notice (table
     `pool_exhausted_notices`) and the action is created after it commits; the row is deleted once the action exists. A
-    crash in between, a space at its open-action cap (rate limited) or an archived one leaves the row, and the deadline
+    crash in between or a space at its open-action cap (rate limited) leaves the row, and the deadline
     loop raises it on a later round (at the latest within the hour, or at the next limit report), so the notice is late,
-    never lost. While a space is at its cap the notice waits until a person answers an action.
+    never lost, until its window is over: the row's `expires_at` (the pool's reset, or the end of the UTC day when none
+    is known) drops it undelivered, so stale rows never pile up or announce a reset in the past. A row of an archived
+    space is dropped, and a row that keeps failing is logged and skipped so the rows after it are still raised. never lost. While a space is at its cap the notice waits until a person answers an action.
 - **Launch-time pool check (2026-11-16):**
   - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
     account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for

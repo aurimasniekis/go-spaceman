@@ -9,6 +9,19 @@ import (
 	"context"
 )
 
+const deleteExpiredPoolExhaustedNotices = `-- name: DeleteExpiredPoolExhaustedNotices :execrows
+DELETE FROM pool_exhausted_notices WHERE expires_at <= ?
+`
+
+// A notice whose window is over is dropped undelivered: the reset has passed, or the day has ended.
+func (q *Queries) DeleteExpiredPoolExhaustedNotices(ctx context.Context, expiresAt int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteExpiredPoolExhaustedNotices, expiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deletePoolExhaustedNotice = `-- name: DeletePoolExhaustedNotice :exec
 DELETE FROM pool_exhausted_notices WHERE space_id = ? AND dedup_key = ?
 `
@@ -24,7 +37,7 @@ func (q *Queries) DeletePoolExhaustedNotice(ctx context.Context, arg DeletePoolE
 }
 
 const insertPoolExhaustedNotice = `-- name: InsertPoolExhaustedNotice :exec
-INSERT INTO pool_exhausted_notices (space_id, dedup_key, wait_id, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO pool_exhausted_notices (space_id, dedup_key, wait_id, title, body, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (space_id, dedup_key) DO NOTHING
 `
 
@@ -35,9 +48,10 @@ type InsertPoolExhaustedNoticeParams struct {
 	Title     string
 	Body      string
 	CreatedAt int64
+	ExpiresAt int64
 }
 
-// The people notice of an exhausted pool, kept until its human action exists (migration 0060). A second park in the
+// The people notice of an exhausted pool, kept until its human action exists (migration 0058). A second park in the
 // same window keeps the first row.
 func (q *Queries) InsertPoolExhaustedNotice(ctx context.Context, arg InsertPoolExhaustedNoticeParams) error {
 	_, err := q.db.ExecContext(ctx, insertPoolExhaustedNotice,
@@ -47,12 +61,13 @@ func (q *Queries) InsertPoolExhaustedNotice(ctx context.Context, arg InsertPoolE
 		arg.Title,
 		arg.Body,
 		arg.CreatedAt,
+		arg.ExpiresAt,
 	)
 	return err
 }
 
 const listPoolExhaustedNotices = `-- name: ListPoolExhaustedNotices :many
-SELECT space_id, dedup_key, wait_id, title, body, created_at FROM pool_exhausted_notices ORDER BY created_at, space_id, dedup_key LIMIT ?
+SELECT space_id, dedup_key, wait_id, title, body, created_at, expires_at FROM pool_exhausted_notices ORDER BY created_at, space_id, dedup_key LIMIT ?
 `
 
 func (q *Queries) ListPoolExhaustedNotices(ctx context.Context, limit int64) ([]PoolExhaustedNotice, error) {
@@ -71,6 +86,7 @@ func (q *Queries) ListPoolExhaustedNotices(ctx context.Context, limit int64) ([]
 			&i.Title,
 			&i.Body,
 			&i.CreatedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}

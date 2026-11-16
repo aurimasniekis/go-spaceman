@@ -1003,6 +1003,7 @@ type PoolExhaustedNotice struct {
 	Title     string
 	Body      string
 	CreatedAt int64
+	ExpiresAt int64
 }
 
 type Prompt struct {

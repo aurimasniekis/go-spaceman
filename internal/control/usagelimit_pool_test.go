@@ -139,7 +139,7 @@ func (e *peopleEnv) pendingPoolRows() int {
 	return n
 }
 
-// A notice whose create is refused (the space's open-action cap, an archived space) stays recorded and is raised by a
+// A notice whose create is refused (the space's open-action cap) stays recorded and is raised by a
 // later sweep, exactly once; a sweep that finds the action already there (a crash between the create and the delete)
 // only deletes the row.
 func TestPoolExhaustedNoticeRetried(t *testing.T) {
@@ -160,13 +160,7 @@ func TestPoolExhaustedNoticeRetried(t *testing.T) {
 	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 1 {
 		t.Fatalf("still full: raised %d (%v), %d recorded", n, err, e.pendingPoolRows())
 	}
-	// Archived: refused too, and kept.
-	e.exec(`UPDATE spaces SET state = 'archived' WHERE id = 'spc_a'`)
 	e.perSpace.Store(100)
-	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 1 {
-		t.Fatalf("archived: raised %d (%v), %d recorded", n, err, e.pendingPoolRows())
-	}
-	e.exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_a'`)
 	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 1 || e.pendingPoolRows() != 0 || len(e.poolNotices("spc_a")) != 1 {
 		t.Fatalf("with room: raised %d (%v), %d recorded, %d notices", n, err, e.pendingPoolRows(), len(e.poolNotices("spc_a")))
 	}
@@ -179,8 +173,8 @@ func TestPoolExhaustedNoticeRetried(t *testing.T) {
 	if len(e.poolNotices("spc_a")) != 1 || e.pendingPoolRows() != 0 {
 		t.Fatalf("same window: %d notices, %d recorded", len(e.poolNotices("spc_a")), e.pendingPoolRows())
 	}
-	e.exec(`INSERT INTO pool_exhausted_notices (space_id, dedup_key, wait_id, title, body, created_at) VALUES ('spc_a', '` +
-		PoolExhaustedDedup("spc_a", pool, e.clk.Now()) + `', 'wt_2', 't', 'b', 0)`)
+	e.exec(`INSERT INTO pool_exhausted_notices (space_id, dedup_key, wait_id, title, body, created_at, expires_at) VALUES ('spc_a', '`+
+		PoolExhaustedDedup("spc_a", pool, e.clk.Now())+`', 'wt_2', 't', 'b', 0, ?)`, reset.UnixMicro())
 	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 0 || len(e.poolNotices("spc_a")) != 1 {
 		t.Fatalf("after a crash: raised %d (%v), %d recorded, %d notices", n, err, e.pendingPoolRows(), len(e.poolNotices("spc_a")))
 	}
@@ -213,5 +207,66 @@ func TestPoolExhaustedNoticePerRole(t *testing.T) {
 	e.park("spc_a", "wt_3", "worker", pool("implementor", reset.Add(3*time.Second)), false)
 	if n := len(e.poolNotices("spc_a")); n != 2 {
 		t.Fatalf("a reset 3 s later raised another notice (%d)", n)
+	}
+}
+
+// A row for an archived space can never take its action: the sweep drops it instead of retrying it forever.
+func TestPoolExhaustedNoticeArchivedDropped(t *testing.T) {
+	e := newPeopleEnv(t)
+	e.sv.msgs = messages.New(e.s, e.aw, e.ch)
+	reset := e.clk.Now().Add(2 * time.Hour)
+	e.park("spc_a", "wt_1", "worker", &fleet.PoolExhausted{Harness: "claude-code", Role: "implementor", Accounts: []string{"acc_1"}, ResetsAt: &reset}, false)
+	e.exec(`DELETE FROM human_actions WHERE space_id = 'spc_a'`)
+	e.exec(`INSERT INTO pool_exhausted_notices (space_id, dedup_key, wait_id, title, body, created_at, expires_at) VALUES ('spc_a', 'account-pool-exhausted:x', 'wt_9', 't', 'b', 0, ?)`, reset.UnixMicro())
+	e.exec(`UPDATE spaces SET state = 'archived' WHERE id = 'spc_a'`)
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 0 || e.pendingPoolRows() != 0 {
+		t.Fatalf("archived: raised %d (%v), %d recorded, want the rows dropped", n, err, e.pendingPoolRows())
+	}
+	if n := len(e.poolNotices("spc_a")); n != 0 {
+		t.Fatalf("archived space got %d notices", n)
+	}
+}
+
+// A row whose window is over (the reset has passed, or the day ended) is dropped undelivered, even when the space has
+// room; a row still in its window is raised.
+func TestPoolExhaustedNoticeExpiredDropped(t *testing.T) {
+	e := newPeopleEnv(t)
+	e.sv.msgs = messages.New(e.s, e.aw, e.ch)
+	reset := e.clk.Now().Add(2 * time.Hour)
+	e.perSpace.Store(1)
+	if _, _, err := e.human.Create(e.ctx, audit.System, "spc_a", human.CreateInput{Type: human.TypeMessage, Title: "other", Body: "b",
+		Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.park("spc_a", "wt_1", "worker", &fleet.PoolExhausted{Harness: "claude-code", Role: "implementor", Accounts: []string{"acc_1"}, ResetsAt: &reset}, false)
+	e.park("spc_a", "wt_2", "worker", &fleet.PoolExhausted{Harness: "claude-code", Role: "reviewer", Accounts: []string{"acc_1"}}, false)
+	if e.pendingPoolRows() != 2 {
+		t.Fatalf("%d recorded, want 2", e.pendingPoolRows())
+	}
+	e.perSpace.Store(100)
+	e.clk.Advance(3 * time.Hour) // past the first row's reset
+	if n, err := e.sv.TellPoolExhausted(e.ctx); err != nil || n != 1 || e.pendingPoolRows() != 0 {
+		t.Fatalf("after the reset: raised %d (%v), %d recorded, want 1 (the day row) and 0", n, err, e.pendingPoolRows())
+	}
+	for _, a := range e.poolNotices("spc_a") {
+		if strings.Contains(a.DedupKey, "implementor") {
+			t.Fatalf("the expired notice was delivered: %s", a.DedupKey)
+		}
+	}
+}
+
+// A row that keeps failing is logged and skipped: the rows after it are still raised, and the error is returned.
+func TestPoolExhaustedNoticeBadRowDoesNotBlock(t *testing.T) {
+	e := newPeopleEnv(t)
+	e.sv.msgs = messages.New(e.s, e.aw, e.ch)
+	reset := e.clk.Now().Add(2 * time.Hour)
+	e.exec(`INSERT INTO pool_exhausted_notices (space_id, dedup_key, wait_id, title, body, created_at, expires_at) VALUES ('spc_a', 'account-pool-exhausted:bad', 'wt_bad', '', 'b', 1, ?)`, reset.UnixMicro())
+	e.park("spc_a", "wt_1", "worker", &fleet.PoolExhausted{Harness: "claude-code", Role: "implementor", Accounts: []string{"acc_1"}, ResetsAt: &reset}, false)
+	_, err := e.sv.TellPoolExhausted(e.ctx)
+	if err == nil {
+		t.Fatal("want the bad row's error")
+	}
+	if len(e.poolNotices("spc_a")) != 1 || e.pendingPoolRows() != 1 {
+		t.Fatalf("%d notices, %d recorded, want the good row raised and the bad one kept", len(e.poolNotices("spc_a")), e.pendingPoolRows())
 	}
 }
