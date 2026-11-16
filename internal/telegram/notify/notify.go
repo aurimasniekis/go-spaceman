@@ -429,8 +429,11 @@ func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link
 		} else if r.Kind == KindAction && !r.Final {
 			n.announce(snd, l, r, p)
 		}
-		if card != nil && !card.gone && card.version >= r.Version && r.Version != 0 {
-			continue // the card already shows this state
+		if card != nil && !card.gone && card.version >= r.Version && r.Version != 0 &&
+			(!r.Final || len(card.conts) == 0 && card.alert == 0) {
+			// The card already shows this state. Not a settled one that still has continuations or an alert: the chat
+			// handler's own edit settled the message (EditCard), but the rest of the card is the upsert's to clean up.
+			continue
 		}
 		n.enqueue(snd, l, r, card != nil)
 	}

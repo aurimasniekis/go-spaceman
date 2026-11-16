@@ -417,3 +417,64 @@ func TestRetractionRetriesLeftoverContinuations(t *testing.T) {
 		t.Fatalf("card %q", m.Text)
 	}
 }
+
+// A card the chat settled itself (the answer given on the card) still loses its continuations and its reminder when the
+// notifier then gets the settled change: the chat's edit already shows that version, but the rest is the upsert's.
+func TestChatSettledCardDropsContinuationsAndAlert(t *testing.T) {
+	e := newEnv(t, 1)
+	defer e.run(nil)()
+	r := question("hum_1", 1)
+	r.Detail = longBody(12)
+	e.change("hum_1", r, 1, changefeed.Created)
+	e.waitExactly(3)
+	id := e.fake.Messages(1001)[0].MessageID
+	a := question("hum_1", 1)
+	a.Detail = longBody(12)
+	a.RemindedAt = e.clk.Now().Add(time.Hour).UnixMicro()
+	e.update(a, 1)
+	e.waitExactly(4)
+	k := notify.Key{Type: notify.TypeHumanAction, ID: "hum_1"}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := e.n.Card(context.Background(), 1001, id); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no card")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !e.n.EditCard(1001, id, k, notify.ChatEdit{Version: 2, Final: true}, func() bool { return true }) {
+		t.Fatal("the chat's settled edit was refused")
+	}
+	fin := question("hum_1", 2)
+	fin.Detail = longBody(12)
+	fin.Final, fin.Action.Status, fin.Action.Outcome = true, "resolved", "answered"
+	e.change("hum_1", fin, 2, changefeed.Updated)
+	e.waitExactly(1)
+}
+
+// The chat handler's edit never runs over a card that was retracted, even at the same version.
+func TestEditCardRefusedOnRetractedCard(t *testing.T) {
+	e := newEnv(t, 1)
+	defer e.run(nil)()
+	e.change("hum_1", question("hum_1", 1), 1, changefeed.Created)
+	id := e.waitExactlyMsgs(1)[0].MessageID
+	muted := []string{"spc_1"}
+	e.editLink(func(l *notify.Link) { l.Prefs.MutedSpaces = &muted })
+	e.change("hum_1", question("hum_1", 2), 2, changefeed.Updated)
+	deadline := time.Now().Add(5 * time.Second)
+	for e.fake.Messages(1001)[0].Text != card.Gone {
+		if time.Now().After(deadline) {
+			t.Fatal("card not retracted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	k := notify.Key{Type: notify.TypeHumanAction, ID: "hum_1"}
+	ran := 0
+	for _, v := range []int64{2, 3} {
+		if e.n.EditCard(1001, id, k, notify.ChatEdit{Version: v}, func() bool { ran++; return true }) || ran != 0 {
+			t.Fatalf("EditCard at version %d redrew a retracted card", v)
+		}
+	}
+}

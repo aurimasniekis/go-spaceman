@@ -96,3 +96,23 @@ func TestTelegramCardMoreShowsTheFormInPlace(t *testing.T) {
 		t.Fatalf("%d new messages, want none", got-before)
 	}
 }
+
+// ADR-0089 T4: a card with a long body answered from its own button collapses to the compact line and its continuation
+// messages go away: the chat's edit already shows the settled state, the notifier still cleans up the rest.
+func TestTelegramLongCardAnsweredFromItsButtonLosesContinuations(t *testing.T) {
+	t.Parallel()
+	c, space := newThreadsChat(t)
+	body := strings.Repeat("A long paragraph of detail that goes on and on.\n\n", 200)
+	r := c.e.root.do("POST", "/spaces/"+space+"/human-actions", map[string]any{"type": "question", "title": "Long one?", "body": body,
+		"request": map[string]any{"options": []string{"yes", "no"}}})
+	expect(t, r, 201)
+	card := c.card(t, "Long one?")
+	eventuallyFor(t, "the continuations are sent", 10*time.Second, func() bool { return len(c.e.tg.Messages(42)) >= 3 })
+	c.tap(qrFind(card, "yes"), card)
+	eventuallyFor(t, "only the compact card is left", 10*time.Second, func() bool {
+		if m := c.cardNow(t, card.MessageID); !strings.HasPrefix(m.Text, "✅ Answered · Long one?") || !noKeyboard(m) {
+			return false
+		}
+		return c.count("A long paragraph") == 0
+	})
+}

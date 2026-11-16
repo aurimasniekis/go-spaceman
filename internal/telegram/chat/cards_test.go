@@ -118,6 +118,11 @@ func TestCardTapIsTheTappingLinksOwn(t *testing.T) {
 	if e.responded() != 0 || e.lastAnswer() != TextUnavailable {
 		t.Fatalf("no card: %d responds, %q", e.responded(), e.lastAnswer())
 	}
+	// The data names another space than the card's: refused on the chat side, whatever the API would say.
+	e.tapData(humanData('m', spS, a.ID, -1), mine)
+	if e.responded() != 0 || e.lastAnswer() != TextUnavailable || e.touched("/spaces/"+spS+"/human-actions") {
+		t.Fatalf("another space: %d responds, %q", e.responded(), e.lastAnswer())
+	}
 	// Without the notifier's lookup a card button does nothing.
 	e.h.o.Card = nil
 	e.tapData(find(mine, "Acknowledge"), mine)
@@ -231,7 +236,7 @@ func TestCardEnforcedApprovalStaysWebOnly(t *testing.T) {
 	a := e.addHuman(spA, hid('1'), "approval", "Merge?", `{"action":"merge"}`)
 	e.api.enforced[a.ID] = true
 	c := e.postCard(reg, a, "tgl_1")
-	for _, v := range []byte{'a', 'd'} {
+	for _, v := range []byte{'a', 'y', 'd'} {
 		e.tapData(humanData(v, spA, a.ID, -1), c)
 		if e.responded() != 0 || len(e.arms) != 0 || e.lastAnswer() != TextUnavailable {
 			t.Fatalf("forged %c: %d responds, %d arms, %q", v, e.responded(), len(e.arms), e.lastAnswer())
