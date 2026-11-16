@@ -5552,6 +5552,30 @@
   - v0.1.7's Open-in-app link on long cards (#162) is this ADR's per-item `ItemURL`: a human action's Mini App page, and
     no button on other cards. The notifier keeps one link option (`ItemURL`, central's `cardAppURL`) instead of v0.1.7's
     `AppURL func(Resource)`.
+- **Follow-up (2026-11-16): the notifier's start position (not security-relevant).** The notifier used to start at the
+  newest change when `Run` began, with the position in memory only. A change made while central was starting (agents
+  reconnecting, the recover passes, the deadline loop) or around a restart never got a card or alert; the web UI still
+  showed it.
+  - `Serve` calls `Notifier.Prime` before the listener and the recover passes. It reads the start position there, and
+    `Run` follows from it and processes what changed in between. A failed `Prime` keeps the old lazy start.
+  - The position is saved in the `settings` table (`telegram.notifier_cursor`, value `<seq>:<saved at>`; no migration),
+    on the mapping flush when it moved, once a minute when it did not (the save time is what measures an outage), and
+    at shutdown. A start resumes from it when it is not beyond the newest change (a restore from backup) and was
+    saved at most **5 minutes** ago (`DefaultMaxReplay`); otherwise it starts at the newest change, so a long outage does
+    not flood a chat. A burst above `MaxKeys` is still one "many changes" notice per chat.
+  - Shutdown does not process the window being collected: the sender drops its queue when the same context ends, so
+    those sends would be lost with the position already advanced. The position is saved behind that window and the next
+    start delivers it, within the bound. Delivery stays at most once per change for what was already queued: a card
+    queued but not sent at a crash is lost, as before.
+  - The window waits for the bot's sender. `Serve` starts the bot and the notifier side by side, and the sender is
+    nil until the bot's start has run (or for good after a failed start). While it is nil the notifier neither reads
+    nor advances the position and looks again every `RetryAfter`; after the replay bound it gives the window up and
+    follows the newest change. The position is not saved meanwhile, so a restart can't take a stale position for a
+    fresh one.
+  - A replayed window loads the stored card mappings even for items it saw created, so a crash can't send a second
+    card for one that was sent in the last seconds before it.
+  - `Central.Close` waits (at most 5 s) for the notifier's shutdown writes (mappings first, position second) before it
+    closes the store.
 
 ### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
 - **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the

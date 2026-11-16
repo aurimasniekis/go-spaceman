@@ -101,3 +101,9 @@
 .sm-markdown a {
   color: var(--mantine-primary-color-filled);
 }
+
+/* A table wider than the editor scrolls in its own box (the dialog around it never scrolls sideways). */
+.sm-composer-content .tableWrapper {
+  overflow-x: auto;
+  max-width: 100%;
+}
