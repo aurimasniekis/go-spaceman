@@ -5479,6 +5479,18 @@
     the UTC day when none is known) drops it undelivered, so stale rows never pile up or announce a reset in the past. A
     row of an archived space is dropped, and a row that keeps failing is logged and skipped so the rows after it are
     still raised. While a space is at its cap the notice waits until a person answers an action.
+- **T8 implementation notes (2026-11-16):**
+  - The web gets an **Accounts** and a **Usage** section per space. The pool order (priorities 10, 20, ... written from the
+    shown order; a space's accounts keep their priority when the accounts are chosen again), the role pools and the
+    failover, wait-if-reset-within, switches-per-day and headroom settings are the existing APIs and the space's limit
+    overrides; nothing new is stored. Windows are shown as observations with their age: older than an hour, or past
+    their reset, they say they may be out of date.
+  - The plan's `GET /spaces/{id}/account-switches` did not exist after T3 and T7, so T8 adds it (read-only, run:read, the
+    fleet service method T3 wrote), with `spaceman limits switches`. A run's page links to the switch away from it and
+    the one into it from that list; `GET /runs/{id}` gains no switch fields.
+  - The Usage page puts tokens first and shows cost only as "≈ $" with the API's list-price note, never as a bill; unknown
+    usage is missing, not zero. The chart is inline SVG in the validated categorical palette (a fixed slot order by group
+    name, at most seven groups and Other), with a legend, a hover and focus tooltip and a table of the same numbers.
 - **Launch-time pool check (2026-11-16):**
   - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
     account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for

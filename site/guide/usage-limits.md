@@ -151,6 +151,30 @@ Set the limit to 0 to turn the notice off for a space.
 **Subscribers** of SpaceMan's own events get `fleet.usage_limit.reached` and `fleet.usage_limit.cleared` once per hold
 ([Publishing SpaceMan events](./publishing-events)).
 
+## Accounts and usage in the web UI
+
+A space's **Accounts** page holds everything about its pool:
+
+- **Pool order**: the space's accounts per harness in failover order, and a **role pool** per role (add, remove, move;
+  a role with a pool uses those accounts only). Saving needs the space's admin; `spaceman pool` and the API
+  (`put-space-role-pool`) do the same.
+- **Account switching** settings: usage-limit failover, how close a reset must be for a run to wait instead of
+  moving, moves per day, and the launch headroom gate. They are the space limits listed under Settings, edited in
+  place.
+- **Account windows**: the 5-hour and 7-day windows of each bound account as the last run on it reported them, with
+  the reset and how old the figure is. A percentage is an observation, not a live reading: one older than an hour, or
+  past its reset, says it may be out of date, and an account no run has reported for shows no bar.
+- **Account switches**: where runs moved (or waited instead, and why), with links to both runs. A run's own page says
+  "Moved to account ..." or "Continued from the run on account ...".
+
+<Shot name="space-account-pools" alt="A space's Accounts page: account windows with usage bars, the pool order per harness, a role pool, the account switching settings and the recent account switches" caption="A space's Accounts page" />
+
+The **Usage** page charts the tokens the space's runs used per hour or day, stacked by role, account, model or harness,
+with a table of the same numbers. Tokens come first; the cost is the harness's own list-price estimate, labelled as
+one, and never a bill. Only usage that runs reported is counted, and buckets are UTC.
+
+<Shot name="space-usage-page" alt="A space's Usage page: tokens per day stacked by role over the last seven days, the totals with an estimated cost, and a table per role" caption="A space's token usage" />
+
 ## What you can do
 
 Usually nothing: if the work can wait, the waits bring it back. Otherwise:
@@ -168,7 +192,7 @@ Usually nothing: if the work can wait, the waits bring it back. Otherwise:
 - **Add capacity:** bind another account of the same harness to the space and turn on usage-limit failover.
 
 Resuming, releasing and clearing in a space need the permission that launches runs there (operators and admins), and
-each is audited. `spaceman limits holds` and `spaceman limits waits` list a space's holds and waits.
+each is audited. `spaceman limits holds`, `spaceman limits waits` and `spaceman limits switches` list a space's holds, waits and account switches.
 
 ## Settings
 
