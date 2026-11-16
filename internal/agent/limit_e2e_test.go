@@ -307,13 +307,22 @@ func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
 	limitSettle = 10 * time.Millisecond
 	t.Cleanup(func() { limitSettle = old })
 	dir := t.TempDir()
-	a, f := ccAgent(t, dir, nil, nil)
+	a, _ := ccAgent(t, dir, nil, nil)
 	hold := make(chan struct{})
 	fc := newHeldWSCentral(t, proto.MinorUsageLimit, hold)
 	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
 	startAgent(t, a, fc, clk)
 	fc.next(t, proto.TypeHello)
 	ccLaunch(a, "run_scan")
+	// The launch's own report is held too, and its re-send would read the limit from the journal: forget it, so only
+	// the scan can send the limit.
+	a.mu.Lock()
+	if _, ok := a.heldReports["run_scan"]; !ok {
+		a.mu.Unlock()
+		t.Fatal("the launch report was not held")
+	}
+	delete(a.heldReports, "run_scan")
+	a.mu.Unlock()
 	row := getRun(t, a, "run_scan")
 	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
@@ -324,7 +333,8 @@ func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
+	// The limit record alone, with no status change: a status report would hold the run too.
+	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at), rt.LimitRecord(proto.LimitFiveHour, reset, at), rt.NoticeRecord(at)); err != nil {
 		t.Fatal(err)
 	}
 	a.limitScan(context.Background(), "run_scan", false)
