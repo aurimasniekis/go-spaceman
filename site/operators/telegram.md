@@ -40,6 +40,25 @@ repository): until they ship, use the API or CLI.
 
 Changing the bot's host is a step-up, audited change.
 
+## BotFather settings
+
+The chat layout ([Chat layout](/guide/telegram#chat-layout)) needs the bot's **topics in private chats**, a setting in
+BotFather that no API call can change. Do this once per bot:
+
+1. In BotFather, open the bot's settings and **turn on topics for private chats**. Telegram's documentation doesn't name
+   the setting, so look for the topics (threaded mode) switch in BotFather's Mini App.
+2. Turn **off** users creating and deleting topics (the bot's other BotFather setting for topics). A topic a user creates is
+   not known to SpaceMan, and a message written in it acts on the user's current space.
+3. Check it: `spaceman telegram bot get` shows `has_topics_enabled` and `allows_users_to_create_topics` as Telegram last
+   reported them. The Mini App's **Chat layout** setting says when topics are unavailable.
+
+With topics off, nothing breaks: every message goes to one chat and each card names its space. Topics the bot has created in
+users' chats stay when you turn the setting off, and `notification_defaults.threads = off` doesn't remove them: Telegram
+can delete a topic only together with its messages.
+
+For forms to open the Mini App from the chat and from a group, also set the bot's Main Mini App
+([Binding a group](#binding-a-group)).
+
 ## Webhook or polling
 
 `mode` is `webhook` (the default) or `polling`.

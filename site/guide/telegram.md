@@ -54,7 +54,7 @@ menu. Most act on a **current space**: the one named in the command (`/queue pay
 | Command | What it does |
 |---|---|
 | `/spaces`, `/space [name]` | List the spaces Telegram may show you with their counts, or switch the current space. |
-| `/needs` (also `/needsyou`) | What waits for you: [questions, to-dos, messages, approvals and custom forms](#answer-needs-you-forms-and-approvals). |
+| `/needs` (also `/needsyou`) | What waits for you, across **every space you may read** when no space is picked (grouped by space, with the total), or in the current space when you are in a space's topic or picked one with `/space`: [questions, to-dos, messages, approvals and custom forms](#answer-needs-you-forms-and-approvals). |
 | `/inbox` | The current space's inbox with status filters. Open an item to read it, with its first attachments. |
 | `/queue` | What runs, what is ready and what waits. |
 | `/runs` | Live runs, and **Stop** a run. |
@@ -95,9 +95,23 @@ Terminal input, takeover, run launches, secrets, accounts, users and every admin
 
 ## Answer needs-you forms and approvals
 
-`/needsyou` lists pending [human actions](/guide/human-actions) across your spaces, and the bot sends a card for each new
+`/needs` lists pending [human actions](/guide/human-actions) across your spaces, and the bot sends a card for each new
 one that you are allowed to see (see [Notifications](#notifications-quiet-hours-and-digest)). You answer **as you**, with
-the same checks as the web:
+the same checks as the web.
+
+**A card is the item.** It names its space (outside the space's own topic) and shows the item's quick actions: a question's
+options and **✏ Answer**, **Mark completed** for a to-do, **Acknowledge** and **Dismiss** for a message, **Approve** and
+**Deny** for an approval (only if you may decide it; an enforced approval shows **Decide in app** unless the space allows
+deciding in chat). **More…** turns the same message into the full form, and **Back** returns to the card, so opening a
+form sends no new message. When the item is resolved, by you or anywhere else, the card is edited to one line such as
+`✅ Approved by Alice · Deploy the release candidate?` with no buttons, and its reminders are removed. If you lose access
+to the space, mute it or it stops being visible to Telegram, the card is edited to "No longer available here". Reminders,
+escalations and assignments are sent as **replies to the card**.
+
+In `/needs`, a row opens a form for that item. It doesn't link to the item's card yet, so you may see the same item as a card
+and as a form.
+
+What you can do on an item:
 
 - **Questions** (options and free text), **to-dos** (steps), **messages** and **custom types** with a simple response
   schema (a step-by-step form).
@@ -149,7 +163,7 @@ web page for these settings):
 | `enabled` | off (default), on | Whether the space is visible through Telegram at all. |
 | `content_level` | `full` (default once enabled), `summary`, `off` | `full` shows bodies in chat; `summary` keeps bodies in the Mini App; `off` hides the space. |
 | `enforced_approvals` | `web_only` (default), `confirm` | Whether an enforced approval may be decided in chat. |
-| `topics` | off (default) | Deprecated, no effect: the chat layout is chosen per link ([Topics mode](#topics-mode)). |
+| `topics` | off (default) | Deprecated, no effect: the chat layout is chosen per link ([Chat layout](#chat-layout)). |
 | `terminal_watch` | off (default) | Shows the run's live terminal, read-only, in the Mini App ([below](#the-watch-only-terminal)). |
 | `group_chat_id` | none (default) | The forum group bound to the space ([Group mode](#group-mode)); changing it needs the admin-only `telegram_group:write`. |
 
@@ -167,7 +181,7 @@ images or documents SpaceMan allows (a link only), and secrets. Messages with a 
 turned off (a deterrent, not protection from screenshots). Chat messages are stored on Telegram's servers and aren't
 end-to-end encrypted: choose `summary` or `off` for spaces whose content must not go there.
 
-## Topics mode
+## Chat layout
 
 The chat layout is chosen **per link**, by the `threads` notification preference: `auto` (the default), `on` or `off`.
 `auto` is on when the bot has topics enabled in BotFather (the bot status shows `has_topics_enabled`). An administrator sets
@@ -186,6 +200,12 @@ chat, so a notification isn't lost. If Telegram refuses topics in your chat, the
 after 10 minutes. With the layout off, everything goes to the main chat. Topics only choose where a message appears, never
 whether you may see it.
 
+**Home** is the chat without a topic. The bot keeps one **Needs you** summary message pinned there: the total, and a line
+for each space with its count and a link to the space's topic (or to the Mini App when the layout is off), plus an
+**Open Needs you** button. It is edited in place, at most once every 30 seconds, and counts only what you may see through
+Telegram: spaces that are visible to it, not muted, and action types whose view role you hold. Delete it and the bot
+sends and pins a new one.
+
 Older versions put what needs you in one shared **Needs you** topic. It is no longer used: the bot posts a note in it and
 leaves it, because deleting a topic deletes its messages. You can delete it yourself. Cards already in it still update.
 Topics the bot created stay in your chat when the layout is turned off.
@@ -193,10 +213,15 @@ Topics the bot created stay in your chat when the layout is turned off.
 The per-space `topics` setting and the global `topics_mode_default` are deprecated: they are stored and returned, and have
 no effect.
 
+**BotFather.** Topics in a private chat are a setting of the bot in BotFather (there is no API call for it): enable them
+([Telegram setup](/operators/telegram#botfather-settings)). The bot's status shows whether Telegram reports them on.
+Until they are on, `auto` keeps everything in one chat, and cards still name their space.
+
 ## Group mode
 
-A **forum group** (a supergroup with topics turned on) can be bound to **one space**. In a bound group the bot posts that
-space's needs-you cards and answers a few commands, always at the **summary** level.
+A **forum group** (a supergroup with topics turned on) can be bound to **one space**. In a bound group the bot answers a few
+commands and the taps on their buttons, always at the **summary** level. A group gets no automatic cards: the notifications
+described below go to your private chat only.
 
 **Binding.** Add the bot to the group, then, as someone with `space_config:write` (operators and up), bind it with the
 space's `group_chat_id` (`spaceman telegram set-space --group-chat-id <negative chat ID>`; `0` unbinds). Binding, rebinding
@@ -235,12 +260,12 @@ and then leaves, and it leaves a group **whose binding is lost**: unbound, bound
 disabled, hidden, archived or deleted. While it waits it reads and answers nothing. After a central restart the bot forgets
 which groups it was waiting in, so the first message or tap in an unbound group makes it leave at once: bind a group soon
 after adding the bot, and add the bot again if it left. Group mode works together with
-[topics mode](#topics-mode): a group's space comes from its binding only, and replies stay in the forum topic they answer.
+[the chat layout](#chat-layout): a group's space comes from its binding only, and replies stay in the forum topic they answer.
 
 ## Notifications, quiet hours and digest
 
-The bot sends **cards** for new needs-you actions (edited as they change, so you don't get repeats), and separate
-messages for reminders and escalations. What you get is a mix of per-category choices (push, digest or off), starting from
+The bot sends **cards** for new needs-you actions (edited in place as they change, so you don't get repeats), and
+reminders, escalations and assignments as replies to the card. In your private chat only: a bound group gets none. What you get is a mix of per-category choices (push, digest or off), starting from
 the administrator's defaults:
 
 | Category | Default |
@@ -267,4 +292,5 @@ form reloads with a conflict notice.
 Administrators set the bot, the policy and the per-space settings through the API or the CLI (Terraform resources are planned; the web app
 shows the bot's health on the System page only). They are
 all described in [Telegram setup](/operators/telegram#administration-settings): the **bot** (token, mode, Mini App host),
-**space** settings (above) and **limits**.
+**space** settings (above) and **limits**. Turn on topics for the bot in BotFather once, for the
+[chat layout](#chat-layout) (steps: [BotFather settings](/operators/telegram#botfather-settings)).

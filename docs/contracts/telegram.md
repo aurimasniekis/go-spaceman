@@ -122,6 +122,34 @@ count toward rate limits (SpaceMan counts them as sends).
 - whether an edit without `reply_markup` drops the inline keyboard (the fake drops it). Card edits never rely on it:
   every edit states the keyboard, and a card with none is edited with an empty `inline_keyboard` (ADR-0089 T4).
 
+### Real-bot checklist (TG-14, opt-in; ADR-0089)
+
+Every fact below is **tested (simulated)** only: the fake Bot API answers as the documentation says or as its comments
+state. Run these against a real bot with topics enabled in BotFather, in a private chat with a test account, and record
+the result and the date beside each line. Until then none of them is externally verified.
+
+| # | Fact to establish | How to observe it | The design's fallback if it differs |
+|---|---|---|---|
+| 1 | Where a message sent **without** `message_thread_id` appears in a chat whose topics are on (the "home" messages). | `sendMessage` with no thread; look at the chat in the app (mobile and desktop): is it in a General area, hidden or in a list? | Home becomes a bot-created "🏠 Home" topic (key `home`; ADR-0089 decision 2). |
+| 2 | Whether a private chat has a "General" topic. | Open the topic list of a fresh chat in the client, and call `editGeneralForumTopic` (documented for supergroups) and note the answer. | None needed; home is not tied to it. |
+| 3 | An `editMessageText` **without** `reply_markup` drops the inline keyboard. | Send a message with a keyboard, edit only its text, look at the message, and tap the old button. | Already relied on: every edit states the keyboard (empty `inline_keyboard` for none). |
+| 4 | An edit with an empty `inline_keyboard` removes the buttons. | Edit a card that has buttons with `{"inline_keyboard": []}`. | Resolved cards would keep dead buttons: delete the keyboard with `editMessageReplyMarkup`. |
+| 5 | Whether users can rename the bot's topics, and whether `editForumTopic` still works after they did. | Rename a topic in the client; rename a space; compare names. | A rename overwrites the user's name; accept it. |
+| 6 | The error text of `createForumTopic` when topics are off for the bot. | Turn topics off in BotFather, send to a new chat. | The notifier matches the "refused" class loosely and falls back to the main chat for 10 minutes. |
+| 7 | Whether `forum_topic_created`/`edited`/`closed` service messages arrive as updates. | Create, rename and close a topic; log the updates. | Nothing depends on them. |
+| 8 | The BotFather setting's name and the **users may create and delete topics** setting; its effect on `allows_users_to_create_topics` in `getMe`. | Toggle both in BotFather; call `getMe` after each; use the names in the setup page. | The setup page says the name isn't documented. |
+| 9 | `pinChatMessage` in a private chat pins a message in a topic (no thread parameter) and where it shows. | Pin the home summary; look at the chat and at the topic. Pin a second one and check the order. | The summary is also reachable by `/needs`. |
+| 10 | Editing a pinned message keeps it pinned; deleting it unpins it. | Edit the summary text; delete it; check the pins. | The notifier sends and pins a new summary when the old one is gone. |
+| 11 | `unpinChatMessage` without `message_id` unpins the latest by date; with nothing pinned it answers (success or error). | Unpin in an empty chat. | Errors on unpin are ignored. |
+| 12 | Topic links `https://t.me/<bot>/<thread_id>` open that topic for that user, and not for others. | Tap a "▸" link in the home summary on a phone and on desktop. | A space with no working topic link falls back to the Mini App `space-<id>` link. |
+| 13 | `deleteMessage` and `deleteMessages` limits: the 48 hour limit, and the answer for a batch containing a too-old message. | Delete an old and a new alert in one call. | Alerts are best effort; a failure is logged and ignored. |
+| 14 | `deleteForumTopic` deletes the topic's messages (why the legacy topic is left alone). | Delete a throwaway topic and look. | Unchanged: the bot never deletes topics. |
+| 15 | A reply (`reply_parameters`) to a card in a topic notifies with sound and stays in the topic. | Send an alert as a reply; check the notification and the thread. | Alerts would be plain messages in the topic. |
+| 16 | `editForumTopic` on a **closed** topic, and a message to a closed or deleted topic: the error text, so the "gone" and "closed" cases are told apart. | Close, then delete, a topic in the client; send to each. | A failed send recreates the topic once, then uses the main chat. |
+| 17 | Commands and the menu button are per chat, not per topic: `/needs` typed in a topic answers in that topic. | Type a command in two topics. | None needed. |
+
+Mark a line only from an observation made on a real bot. The statuses in `docs/TRACEABILITY.md` stay "simulated" until this run.
+
 ## Files
 
 | Fact | Source |
