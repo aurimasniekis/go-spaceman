@@ -162,8 +162,8 @@ type Agent struct {
 	// limitMu serializes transcript limit scans, limitSend a limit's journal write and report with every other run
 	// report; limitTimers are the pending (debounced) scans and limitFiles the
 	// transcript each run was last scanned in (a replaced file is scanned from the start), by run ID.
-	limitMu     sync.Mutex
-	limitSend   sync.Mutex
+	limitMu   sync.Mutex
+	limitSend sync.Mutex
 	// heldReports are the runs whose report came between the hello and the welcome (guarded by mu): the minor is not
 	// negotiated yet, so the report would go out stripped of what the central's minor decides. They are re-sent after the welcome.
 	heldReports map[string]struct{}
