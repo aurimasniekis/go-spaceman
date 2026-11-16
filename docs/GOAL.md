@@ -368,6 +368,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-MEM-004 Checkpoints are debounced, with bounded sync delay. Visible state: uncheckpointed changes, local commits, pending sync, last ack, conflicts and retries.
 - SM-MEM-005 Flush at boundaries, stops, relocation and backup prep where possible. Central guarantees acknowledged history only.
 - SM-MEM-006 Instances refresh at safe boundaries. Central edits follow active ownership, never as an independent competing writer.
+- SM-MEM-007 Renaming a space role moves its memory with it, on central and on the space's node, without copying or rewriting history. Until the node has reported the move, the role's launches and the space's dream runs are held (ADR-0093).
 
 ### SM-KB — KB repositories and support sessions
 - SM-KB-001 Optional arbitrary KB repos, configured with repository, entry instructions, optional validators, write/approval policy,
@@ -405,6 +406,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   auto mode rules, environment, hooks, …). The UI edits permissions, auto mode and environment variables in
   dedicated fields and other keys as JSON, Terraform manages them, and the permission mode ceiling still applies
   (operator request 2026-11-06, §9).
+- SM-PROMPT-009 A space role can be renamed in place. Its live references follow the new name and the history of what happened keeps the name it was written with. A busy role is refused, and the operation is audited and uses the role write permission (ADR-0093).
 
 ### SM-XSPACE — Cross-space collaboration
 - SM-XSPACE-001 Discovery, questions, delegation, disclosure and knowledge permissions are separate.

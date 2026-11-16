@@ -1,6 +1,6 @@
 # Plan: rename a space role safely (API, CLI, admin MCP, Terraform provider)
 
-- **Status:** planning only, with no code changes. Q0–Q5 were decided on 2026-11-16 (§8). The ADR text is in §7
+- **Status:** planning only, with no code changes. ADR-0093 is recorded in `docs/DECISIONS.md` (Proposed). Q0–Q5 were decided on 2026-11-16 (§8). The ADR text is in §7
   (**ADR-0093**).
 - **Goal:** rename a space role (for example `implementor` to `implementor-hard`) without losing its configuration,
   pending work or memory. Today the only way is to delete and recreate the role, and that strands every copy of the
@@ -273,7 +273,7 @@ still to report.
 - Command `memory.rename`: `MemoryRename{RenameID, SpaceID, From, To}`. It is journaled and idempotent like every
   command, and needs a valid lease for the space and generation like every non-stop command.
 - Report `memory.renamed`, node to central: `MemoryRenamed{RenameID, SpaceID, Result: ok|deferred|error, Message}`. The
-  node journals it (agent migration 0009: `role_renames(rename_id PK, space_id, from, to, state, result,
+  node journals it (agent migration 0010: `role_renames(rename_id PK, space_id, from, to, state, result,
   message, reported_at)`) and resends it on every reconnect until central acknowledges it with `memory.renamed.ack`,
   following the relocation-report pattern. Central handles a duplicate report idempotently.
 - Central creates the command only for a node whose stored `nodes.protocol_minor` is at least the new minor (§3.1 step
@@ -599,7 +599,7 @@ Terraform usage.
 
 ### ADR-0093 — A space role can be renamed in place; live references follow, history stays
 
-- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0009 (rename results),
+- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0010 (rename results),
   protocol minor 14 (`memory.rename`, `memory.renamed`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
 - **Context:** a space role's name is its identity: the primary key of `space_roles`. It is also copied as text into
   grants, pools, KB and dream configuration, schedules, human policies and permissions, open tasks, messages and
@@ -661,9 +661,12 @@ Control decided every question on 2026-11-16.
 
 - **Q0 (numbers):**
   - **ADR-0093** and central migration **0061**: PR #195 takes ADR-0092 and migration 0060.
-  - Agent migration **0009**, protocol minor **14**, and requirements **SM-PROMPT-009** and **SM-MEM-007**. All were
-    checked as free on 2026-11-16: no branch has an agent migration 0009 or a `MaxMinor` above 13, and no branch uses
-    either requirement ID. PR #195 adds no protocol minor; it adds only a status field.
+  - Agent migration **0010**, protocol minor **14**, and requirements **SM-PROMPT-009** and **SM-MEM-007**. Protocol
+    minor 14 and both requirement IDs were checked as free on 2026-11-16: no branch has a `MaxMinor` above 13 and no
+    branch uses either requirement ID. PR #195 adds no protocol minor; it adds only a status field.
+  - **Agent migration number changed from 0009 to 0010.** PR #195 merged first and took agent migration 0009
+    (`0009_memory_conflict_folders`), so the rename's journal is 0010. Central migration 0061, ADR-0093 and minor 14
+    were re-checked as free on `next/v0.1.9` at 9598b1af.
 - **Q1:** a busy role is refused, and the error lists the blockers (decision 2).
 - **Q2:** no step-up beyond the existing permission to write a space's configuration (`SpaceConfigWrite`, as for saving
   and deleting a role). The admin MCP tool stays classified Dangerous.
