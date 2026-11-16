@@ -75,6 +75,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
+  harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
+  late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.
 - A backup or verification that stops making progress no longer hangs with `busy` set until central restarts. A watchdog
   fails it after 10 minutes without progress or 1 hour in total (new keys `backups.stall_timeout` and
   `backups.max_duration`), records it as failed with an error naming the stage,

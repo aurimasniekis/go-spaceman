@@ -336,6 +336,25 @@ func (e *env) allow(l notify.Link, space string) {
 // run starts the notifier; its windows end when the test calls endWindow.
 func (e *env) run(m notify.Mappings) (stop func()) {
 	e.t.Helper()
+	n := notify.New(e.options(m))
+	e.n = n
+	started := e.feed.latests.Load()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = n.Run(ctx); close(done) }()
+	// Run reads its start position first; wait for it.
+	deadline := time.Now().Add(10 * time.Second)
+	for e.feed.latests.Load() == started {
+		if time.Now().After(deadline) {
+			e.t.Fatal("notifier did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return func() { cancel(); <-done }
+}
+
+// options is the notifier's wiring over the env's fakes.
+func (e *env) options(m notify.Mappings) notify.Options {
 	opts := notify.Options{Feed: e.feed, Reader: e.rd, Authz: e.az, Policy: e.pol, Links: e.links, Sender: func() *sender.Sender { return e.snd },
 		Bus: e.bus, Now: e.clk.Now, FlushEvery: e.flushEvery, RetryAfter: e.retry,
 		After: func(time.Duration) <-chan time.Time {
@@ -357,21 +376,7 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 	if e.authz != nil {
 		opts.Authz = e.authz
 	}
-	n := notify.New(opts)
-	e.n = n
-	started := e.feed.latests.Load()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { _ = n.Run(ctx); close(done) }()
-	// Run reads its start position first; wait for it.
-	deadline := time.Now().Add(10 * time.Second)
-	for e.feed.latests.Load() == started {
-		if time.Now().After(deadline) {
-			e.t.Fatal("notifier did not start")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	return func() { cancel(); <-done }
+	return opts
 }
 
 func (e *env) ring() { e.bus.Publish(eventbus.Event{Topic: eventbus.TopicChange}) }
@@ -507,6 +512,87 @@ func TestStartsAtTheNewestChange(t *testing.T) {
 	if n := len(e.fake.Calls("sendMessage")); n != 1 || !strings.Contains(calls[0].Params["text"], "hum_new") {
 		t.Errorf("sends = %d, first %q: history must not be replayed", n, calls[0].Params["text"])
 	}
+}
+
+// latestFeed is a feed whose Latest is decided by the test: it blocks on gate, then answers with err, if any.
+type latestFeed struct {
+	*feed
+	entered chan struct{} // receives one value per Latest call
+	gate    chan struct{} // Latest returns once this is closed
+	err     atomic.Pointer[error]
+}
+
+func (f *latestFeed) Latest(ctx context.Context) (int64, error) {
+	select {
+	case f.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-f.gate:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	if p := f.err.Load(); p != nil {
+		return 0, *p
+	}
+	return f.feed.Latest(ctx)
+}
+
+func (e *env) runWith(f notify.Feed) (stop func()) {
+	e.t.Helper()
+	opts := e.options(nil)
+	opts.Feed = f
+	e.n = notify.New(opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = e.n.Run(ctx); close(done) }()
+	return func() { cancel(); <-done }
+}
+
+func notReady(t *testing.T, n *notify.Notifier, why string) {
+	t.Helper()
+	select {
+	case <-n.Ready():
+		t.Fatalf("Ready closed %s", why)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A change made before Run has its start position is history, so callers wait for Ready before producing one: Ready
+// stays open while the start position is unread, and closes once it is.
+func TestReadyMeansTheStartPositionIsRead(t *testing.T) {
+	e := newEnv(t, 1)
+	f := &latestFeed{feed: e.feed, entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	stop := e.runWith(f)
+	defer stop()
+	select {
+	case <-f.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run never read the start position")
+	}
+	notReady(t, e.n, "while the start position was still being read")
+	close(f.gate)
+	select {
+	case <-e.n.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("Ready was not closed after the start position was read")
+	}
+}
+
+func TestReadyStaysOpenWhileTheStartReadFails(t *testing.T) {
+	e := newEnv(t, 1)
+	f := &latestFeed{feed: e.feed, entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	boom := errors.New("feed down")
+	f.err.Store(&boom)
+	close(f.gate)
+	stop := e.runWith(f)
+	defer stop()
+	select {
+	case <-f.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run never read the start position")
+	}
+	notReady(t, e.n, "although the start read failed")
 }
 
 func TestWindowIsBounded(t *testing.T) {

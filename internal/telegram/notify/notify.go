@@ -20,6 +20,7 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 	"unicode/utf16"
 
@@ -195,6 +196,8 @@ type Notifier struct {
 	cursor int64 // only the Run goroutine touches it
 
 	sweepNow chan struct{} // the link list was reloaded: sweep (see kickSweep)
+	ready     chan struct{} // closed once Run has subscribed and read its start position
+	readyOnce sync.Once
 }
 
 // New returns a Notifier; Run starts it.
@@ -221,8 +224,12 @@ func New(o Options) *Notifier {
 		o.FlushRows = 100
 	}
 	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf(),
-		notices: &notices{sent: map[string]bool{}}, home: newHome(), sweepNow: make(chan struct{}, 1)}
+		notices: &notices{sent: map[string]bool{}}, home: newHome(), sweepNow: make(chan struct{}, 1), ready: make(chan struct{})}
 }
+
+// Ready is closed once Run is subscribed and has its start position. A change made before that is history that Run
+// doesn't replay, so a caller that produces a change and expects a card (a test, say) waits for it first.
+func (n *Notifier) Ready() <-chan struct{} { return n.ready }
 
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
 // between is seen; a failed start read is retried by the next wake-up of the loop's safety timer.
@@ -247,6 +254,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 			return
 		}
 		n.cursor, started = latest, true
+		n.readyOnce.Do(func() { close(n.ready) })
 	}
 	start()
 	n.loadNotices(ctx)
