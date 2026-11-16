@@ -2864,6 +2864,22 @@
   `storetest`) and stays 100 ms without it; `SM_TEST_TX_MAX` still wins unscaled. The non-race runs (local
   `make check-fast`, coverage) keep enforcing HP-DB-004 at its original value, and `make race`, CI and release already
   set 500 ms to 1 s, so no run that was strict becomes looser.
+- **Update, 2026-11-16, load-scaled bound (not security-relevant; supersedes "`SM_TEST_TX_MAX` still wins unscaled" in the 2026-11-15 update):** with `-cover` and no race detector, at a load of
+  about 40 on 32 CPUs, ordinary transactions (`human.create`, `human.respond`, `human.policy_set`, about 20 ms of CPU)
+  held the lock 100-136 ms and tripped the guard in `internal/human` and `internal/auth`. A hold is wall-clock time, so
+  CPU starvation lengthens it without any slow work in the transaction. When a hold exceeds `MaxTxDuration` (whatever `SM_TEST_TX_MAX` sets it to, not only the 100 ms default), the
+  guard now reads `/proc/loadavg` and compares the hold with the bound times `1 + r` (capped at 8), where `r` is the
+  one-minute load average over the CPU count, and only when `r > 1`. The instantaneous run queue is not used: it counts
+  the test binary's own parallel goroutines, so a heavy-parallel run would loosen its own guard. Rationale: a
+  thread gets about `1/r` of a CPU, and SMT and cache sharing cost about as much again. The 100 ms bound applies when
+  `SM_TEST_TX_MAX` isn't set (without the race detector). The bound stays as it is on an idle machine, on a machine with
+  `r <= 1`, wherever `/proc/loadavg` is missing, and when `SM_TEST_TX_STRICT=1` is set. CI runs strict
+  (`SM_TEST_TX_STRICT=1`) in every job that runs the guard, so the scaling is for the shared node only. It applies to an explicit `SM_TEST_TX_MAX` as well, because `make check` and CI
+  set one (a first version that skipped explicit values did not help the gate: `fleet.limit_wait_claim` held 580 ms
+  against the Makefile's 500 ms at that load). The guard's own tests use `storetest.OpenStrict`.
+  A transaction that really is slow still fails on an idle or moderately loaded machine, and everywhere CI
+  runs (strict); only a shared machine whose one-minute load is over its CPU count gets the margin. The alternative,
+  raising the number, was rejected because it loosens the idle case too. `TestBudget` could not be reproduced; only its mapping-write bound, which depends on elapsed time, now says so.
 - **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
   the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
   tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock
@@ -5270,8 +5286,10 @@
   act on it (the fake runner queues typed input; real Claude Code and Codex are unverified). Safe input stays the rule for automated input (notices). Takeover
   still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
 - **Consequences:** The text may sit in the harness's own queue while it works. A harness that reports `blocked` refuses
-  the text (hc refuses a blocked program without its own force) and the text is dropped, and the operator is not told yet;
-  central answers 202 when it queues the command, so the box says "Queued for the agent". The risk that a modal takes
+  the text (hc refuses a blocked program without its own force) and the text is dropped. Central answers 202 when it queues the command, so the box says "Queued for the agent"; when
+  the node later rejects the command (blocked program, takeover, ending run), central audits `run.input_rejected` with the
+  reason and records a change the run page shows as a "Message not delivered" toast (rejected notices are not reported).
+  Operator input with control characters (C0, DEL, C1 except tab and newline) is refused with a 400. The risk that a modal takes
   the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
   `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
 - **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.
@@ -5787,6 +5805,71 @@
   fails naming `upload`, the row is `failed`, `busy` clears, the next backup succeeds; the status shows the stage while
   stuck), `TestServiceMaxDurationFailsBackup`, `TestWatchProgressAndStall`, `TestWatchStopIsNotAStall`.
 
+### ADR-0092 — Memory conflicts close when reconciled: a tool for control and the dreamer, and automatically when the folder is removed
+- **Status:** Accepted, 2026-11-16. Migration `0060_memory_conflict_folder` (one column; the node's own journal gets
+  `0009_memory_conflict_folders`). The node's memory status gains an optional `preserved_folders` list (additive, no
+  protocol minor bump: an older agent omits it and its conflicts are recorded without a folder, as before). No HTTP API
+  change.
+- **Context:** a memory conflict closed only through `resolve-memory-conflict` (API, `spaceman memory resolve`, the web UI),
+  "a person reconciled it". The conflict's README tells the role to merge what matters and delete the `conflicts/<name>/`
+  folder, but the record stayed open. Control and the dreamer had no tool to close it, so a space showed conflicts that
+  had long been reconciled (2 for control, 18 for the implementor and 6 for the reviewer on one installation).
+- **Decision:**
+  - **Tools.** `spaceman_memory_conflict_list` and `spaceman_memory_conflict_resolve`, for runs of kind control and dreamer
+    only (other kinds neither see nor may call them). Both are scoped to the caller's own space. Control reaches every
+    role's memory of the space; a dreamer only the roles of its dream configuration (`*` covers all) minus the dream's
+    own exclusion (the dreamer's own space role, unless `include_own`), found through the dream run, so a dreamer that
+    is not running a dream reaches nothing. Resolving goes through the existing
+    `ResolveConflict` service path, so the audit event `memory.conflict_resolved` carries the run as the actor, and a
+    conflict that is already resolved, or belongs to another role or space, is refused as before. The preserved history
+    stays.
+  - **Which folder a conflict holds.** The node says so itself and central never infers it. When the node preserves a
+    conflict it creates `conflicts/<instance>-<stamp>/` and journals that name next to its conflict counter; its status
+    reports `preserved_folders`: the names of its most recent preserved conflicts (at most 50), oldest first, one per
+    increment of the counter. When a report announces n new conflicts, the last n entries are those conflicts' folders,
+    in order, and each is stored on its row (`folder`, and `ref` `refs/conflicts/<name>`). A conflict the list has no
+    entry for (an older agent, a list shorter than n), a name that is not a valid folder name, a name already tied to
+    another conflict, central's own non-fast-forward conflicts and rows from before the migration have no folder.
+    An earlier draft tied the folders of the node's whole `conflicts/` listing to new rows by name order; that order is
+    by instance ID, not time, so a new conflict could take a legacy folder and removing that folder closed the wrong
+    conflict.
+  - **Auto-resolve.** When central accepts a checkpoint, it compares the folders under `conflicts/` of the previous head and
+    the new head. A conflict tied to a folder the previous head had and the new head no longer has is marked resolved in
+    the same transaction as the head update, by the system actor `memory-reconcile`, with its own audit event
+    (`memory.conflict_resolved`, details name the folder and the head). The ref is kept. It is idempotent (only open
+    rows of that collection are touched; an already accepted head changes nothing), and a folder that was never in an
+    accepted head (a conflict still unsynced, or one created and removed between two checkpoints) resolves nothing. If
+    central cannot read the `conflicts/` tree of either head (a git error), nothing is resolved, the checkpoint is still
+    accepted and the failure is logged: an unreadable head is never taken as "every folder is gone".
+  - Both ways produce the same `memory.conflict_resolved` event; the actor tells them apart.
+- **Proposal, not implemented (item 3): fast-forward idle instance folders to the collection head.** An instance folder
+  only pulls the shared history when it checkpoints, so a later edit in a folder that is behind a newer head (a dream's
+  checkpoint, another instance's) can become a conflict even when the content is identical. A node could fast-forward an
+  instance folder before it is written again, but a wrong step loses memory, so it needs its own task. The safe form:
+  - only when the instance has no run (so nothing is writing), the folder has no uncheckpointed changes and no merge or
+    rebase state, its `HEAD` is an ancestor of the shared `refs/heads/main` (a plain fast-forward, `merge --ff-only`),
+    and the shared head has been published by the node's own checkpoint (not a half-written state);
+  - never `reset --hard`, never when the folder has local commits the shared history lacks (those go through the existing
+    merge or preserve path), and every skipped case is logged with its reason;
+  - at idle points and before a run starts, under the same per-collection lock the checkpoint uses, so it cannot
+    interleave with a checkpoint or a sync. It does not touch what is offered to central: the fast-forward only moves
+    the instance onto history the shared repository already has, so the node's sync and acknowledged head are unaffected.
+- **Alternatives:** matching conflicts to folders by name inside the README text (fragile, content is untrusted); resolving
+  every open conflict of a role whenever its `conflicts/` is empty (would also close conflicts whose folder never reached
+  central, and legacy ones nobody reviewed); letting any worker close conflicts (a role could hide its own).
+- **Consequences:** open conflicts recorded before this change have no folder: they close through the tool, the CLI or the
+  web UI, and only conflicts from agents of this release close by themselves. The dreamer can close only what its
+  dream covers, so a dream that consolidates a role's memory can also close that role's reconciled conflicts.
+- **Evidence:** `internal/memory` `TestRemovingConflictFolderResolves` (adding does not resolve, removing resolves with the
+  system actor and keeps the ref, a repeat and a later checkpoint change nothing, a folder that never existed and a
+  folderless conflict stay open), `TestConflictTools` (control, dreamer scope, `*`, an excluded role, other kinds refused and not in
+  their catalog, other space, other role's id, actor recorded, twice refused), `TestConflictFolderTieIsExact` (a legacy
+  folder and a new conflict from a lower-sorting instance ID), `TestNodeConflictsTieOrderAndCap`, `TestReFolder`,
+  `TestRemovedFolderResolvesOnlyItsCollection`, `TestRepeatResolveChangesNothing`, `TestUnreadableHeadResolvesNothing`;
+  `internal/agent` `TestMemoryInstancesShareAndPreserve` (the status reports the folder the node created); `internal/app`
+  `TestDreamConsolidates` (the real `MemoryRolesOfRun`, with and without `include_own`); `internal/store`
+  `TestMemoryConflictFolderMigrationFrom0059`.
+
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
   on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code
@@ -6141,6 +6224,62 @@
   - A gateway reset is an estimate and may resume early (re-detected, re-parked, no new notice) or up to 15 min late.
   - A real subscription limit can't be forced in tests; until one is observed on a SpaceMan run, real evidence stays
     empty (K-16).
+
+### ADR-0093 — A space role can be renamed in place; live references follow, history stays
+
+- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0010 (rename results),
+  protocol minor 14 (`memory.rename`, `memory.renamed`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
+- **Context:** a space role's name is its identity: the primary key of `space_roles`. It is also copied as text into
+  grants, pools, KB and dream configuration, schedules, human policies and permissions, open tasks, messages and
+  requests, memory collections (including the directory names of the central and node Git repositories) and the history
+  of every run. No foreign key ties these copies to the role. Deleting and recreating a role under a new name keeps the
+  stale copies: grants, pools and routes silently stop matching, and the role's memory stays under the old name. The
+  Terraform provider replaces the role on a name change, which does exactly that.
+- **Decision:**
+  1. A rename is one write transaction. It changes the role row and every **live** reference: configuration, plus open
+     tasks, pending messages, open KB requests and pending notifications. It records a `space_role_renames` row. Records
+     of what happened keep the name they were written with: runs and their manifests, usage, approvals, cross-space and
+     KB requester history, human actions, inbox items, audit and outbox.
+  2. The rename is refused while the role is busy: an unfinished run, an open limit wait or account switch, a queued
+     launch, an unfinished dream run in the space, or a relocation. A live run carries the name in its token,
+     environment, prompt and memory path, so renaming under it would split its routes and memory. The error lists what
+     to stop.
+  3. The target name must be unused by a role and by a memory collection. Existing memory is never merged.
+  4. Memory moves on both sides without copying or rewriting history:
+     - central renames its repository after commit, and finishes an interrupted move on the next access or at start;
+     - the space's node renames its role directory on a durable, idempotent `memory.rename` command and reports
+       `memory.renamed`;
+     - until the node has reported, launches of the role and dream runs in the space are held;
+     - central never creates a collection under a name that was renamed away and has not been reused;
+     - a node below the new protocol minor makes the rename fail rather than risk unsynced memory.
+  5. Old names resolve to the current name only where SpaceMan relaunches from a history row (control restart and
+     autostart) and for the dream transcript filter. A name that is a live role is never redirected.
+  6. The rename is exposed as `POST /spaces/{space_id}/roles/{name}/rename` with the same permission as saving a role.
+     It is also in the CLI (`spaceman role rename`) and the admin MCP (classified dangerous). The Terraform provider
+     treats a name change as an in-place update that calls it, never as a replace.
+- **Alternatives:**
+  - *Allow renaming a live role and update the runs:* every live run's token, environment, system prompt, memory path
+    and node timers would have to change under a running agent. Rejected.
+  - *Key memory repositories by collection id instead of role name:* this removes the directory moves but needs a disk
+    layout migration on central, every node and in backups. Rejected as larger and riskier than one atomic rename per
+    side.
+  - *`ON UPDATE CASCADE` foreign keys:* half the references are JSON arrays or conditional (open rows only), and SQLite
+    would need table rebuilds. Rejected.
+  - *Terraform `MoveState`:* only needed across resource types. A name change is an update, and renaming the address is
+    covered by core `moved`.
+- **Consequences:**
+  - Renaming needs a quiet role.
+  - With the node offline, the role cannot launch until the node reconnects.
+  - Former names remain in history and in the rename table.
+  - An MCP grant on the role is revoked and re-added by Terraform, because grants cannot be edited.
+  - A leftover directory under the target name is moved aside to `.retained`, never deleted.
+  - Deleting a role still leaves its memory collection, and that blocks reusing the name as a rename target: pick
+    another name. Deleting or archiving a role's memory is a follow-up.
+  - A node that never comes back keeps the renamed role held. There is no "abandon the node move" action yet; it is a
+    follow-up.
+  - A test classifies every role-name column as live or history, so a new column cannot be missed.
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. The operation uses the existing role
+  write permission, and every rename is audited.
 
 ## 2. Open items and unresolved contracts
 

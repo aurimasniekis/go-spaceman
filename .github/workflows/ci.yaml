@@ -117,6 +117,7 @@ jobs:
         # lower cap, measured on a hosted runner. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
           SM_TEST_TX_MAX: 1s
+          SM_TEST_TX_STRICT: "1"
           RACE_APP_PARALLEL: "2"
           RACE_APP_TIMEOUT: 35m # slower at the lower cap; the job limit below stays above it
           RACE_OUT_DIR: ${{ runner.temp }}/race-out
@@ -158,6 +159,7 @@ jobs:
         # 1 s, as the race job does (ADR-0062, update 2026-11-13, coverage at 1 s).
         env:
           SM_TEST_TX_MAX: 1s
+          SM_TEST_TX_STRICT: "1"
           # One package at a time, as before ADR-0069: more at once on a 4-core runner adds lock-hold noise.
           COVERAGE_PARALLEL: "1"
         run: make coverage
@@ -187,6 +189,7 @@ jobs:
         # meet the same write-transaction guard as the coverage job: 250 ms on hosted runners (ADR-0062).
         env:
           SM_TEST_TX_MAX: 250ms
+          SM_TEST_TX_STRICT: "1"
         run: make test-login-timing
 
   # Fuzzing runs nightly (10 minutes per target) and in the release workflow (10 s smoke), not on pull requests or
@@ -216,6 +219,7 @@ jobs:
         # as in the coverage job (ADR-0062).
         env:
           SM_TEST_TX_MAX: 250ms
+          SM_TEST_TX_STRICT: "1"
         run: make fuzz-smoke FUZZTIME=10m
 
   web:

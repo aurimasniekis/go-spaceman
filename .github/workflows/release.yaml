@@ -94,6 +94,7 @@ jobs:
       - name: vet and race tests
         env:
           SM_TEST_TX_MAX: 1s # race detector overhead on shared runners; see ci.yaml
+          SM_TEST_TX_STRICT: "1"
           RACE_APP_PARALLEL: "2" # race-detector memory on 16 GB runners; see ci.yaml
           RACE_APP_TIMEOUT: 35m # see ci.yaml
           RACE_OUT_DIR: ${{ runner.temp }}/race-out # kept as an artifact on failure; see ci.yaml
@@ -113,6 +114,7 @@ jobs:
         # (ADR-0062, update 2026-11-13, coverage at 1 s).
         env:
           SM_TEST_TX_MAX: 1s
+          SM_TEST_TX_STRICT: "1"
           # One package at a time, as before ADR-0069: more at once on a 4-core runner adds lock-hold noise.
           COVERAGE_PARALLEL: "1"
         run: make coverage
@@ -132,6 +134,7 @@ jobs:
         # as in ci.yaml (ADR-0071). 250 ms write-transaction guard on hosted runners, as in ci.yaml (ADR-0062).
         env:
           SM_TEST_TX_MAX: 250ms
+          SM_TEST_TX_STRICT: "1"
         run: make test-login-timing
 
   fuzz:
@@ -147,6 +150,7 @@ jobs:
       - name: every Fuzz target for 10 s
         env:
           SM_TEST_TX_MAX: 250ms # write-transaction guard on hosted runners, as in ci.yaml (ADR-0062)
+          SM_TEST_TX_STRICT: "1"
         run: make fuzz-smoke FUZZTIME=10s
 
   site:

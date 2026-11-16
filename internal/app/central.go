@@ -356,6 +356,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.TelegramTopics.Renamed(ctx, spaceID, name) // the topics take the new name (ADR-0089); one read and queued calls
 			}
 		},
+		OnLeaseGranted: func(string) {
+			if c.Notifier != nil {
+				c.Notifier.Kick() // control waited for the lease (a restored space), so it starts now
+			}
+		},
 		OnSpaceState: func(spaceID, state string) {
 			if c.Events != nil {
 				c.Events.SpaceStateChanged() // subscriptions with while_paused stop stop or start (SM-EVT-014)
@@ -574,7 +579,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory, c.Dreams.MemoryRolesOfRun), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
 	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)
 	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), OnAccepted: c.gatewayQuotaKick, RateFor: func(ctx context.Context, spaceID string) int64 {

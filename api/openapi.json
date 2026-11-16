@@ -13768,6 +13768,12 @@
             "description": "A sync is due or in flight",
             "type": "boolean"
           },
+          "preserved_folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "retries": {
             "format": "int64",
             "type": "integer"

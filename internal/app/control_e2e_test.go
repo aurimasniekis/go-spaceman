@@ -392,4 +392,84 @@ func TestControlAutostartOnUnpause(t *testing.T) {
 	if n := controls(); n != 1 {
 		t.Fatalf("control started %d times", n)
 	}
+
+	// Auto-start off: stop control, queue work while paused, and the resume starts nothing.
+	runs, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 50)
+	for _, r := range runs {
+		if r.Kind == "control" && r.Desired == "running" {
+			if _, err := e.c.Fleet.StopRun(ctx, admin, r.ID, "kill", "auto-start off case"); err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, "control stopped", func() bool { return e.run1(r.ID).Observed == "exited" })
+		}
+	}
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlAutostart: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	setState("paused", fleet.PauseHold)
+	if _, _, err := e.c.Inbox.Create(ctx, admin, sp.ID, inbox.CreateInput{SourceKind: "operator", SourceID: "usr_admin", Body: "Waiting, auto-start off"}); err != nil {
+		t.Fatal(err)
+	}
+	setState("active", "")
+	time.Sleep(time.Second)
+	if n := controls(); n != 1 {
+		t.Fatalf("control started on resume with auto-start off: %d control runs", n)
+	}
+}
+
+// A restored space waits for its lease before control can start; the grant kicks the notifier, so control starts at
+// once and not at the next slow sweep (sweepEvery is a minute).
+func TestControlStartsOnLeaseGrant(t *testing.T) {
+	e := newFleetEnv(t, func(c *config.Config) { c.Limits.ControlAutostart, c.Limits.ControlIdleStopMinutes = 1, 60 })
+	e.enroll()
+	e.startAgent()
+	ctx := context.Background()
+	admin := audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
+	nctx, stop := context.WithCancel(ctx)
+	t.Cleanup(stop)
+	go e.c.Notifier.Run(nctx)
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "leasekick", Name: "Lease kick", NodeID: nodes[0].ID, StarterRoles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	setState := func(state, mode string) {
+		s, err := e.c.Fleet.GetSpace(ctx, sp.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.c.Fleet.SetSpaceState(ctx, admin, sp.ID, s.Version, state, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setState("paused", fleet.PauseHold)
+	if _, _, err := e.c.Inbox.Create(ctx, admin, sp.ID, inbox.CreateInput{SourceKind: "operator", SourceID: "usr_admin", Body: "Waiting for the restore"}); err != nil {
+		t.Fatal(err)
+	}
+	setState("archived", "")
+	// The node's lease sync (on connect) revokes the archived space's lease. Restoring while the node is away leaves the
+	// space without a lease, so the restore's own kick finds nothing to start; only the grant can start control.
+	e.stopAgent()
+	e.startAgent()
+	eventually(t, "lease revoked", func() bool { l, err := e.c.Store.R().GetLease(ctx, sp.ID); return err == nil && l.State == "revoked" })
+	e.stopAgent()
+	setState("active", "")
+	time.Sleep(500 * time.Millisecond) // the restore's kick and any sweep run without a lease
+	e.startAgent()
+	start := time.Now()
+	eventually(t, "control started", func() bool {
+		runs, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 50)
+		for _, r := range runs {
+			if r.Kind == "control" {
+				return true
+			}
+		}
+		return false
+	})
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("control took %s to start after the restore; it waited for the slow sweep", d)
+	}
 }

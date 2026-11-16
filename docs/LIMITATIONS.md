@@ -327,6 +327,10 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   protocol minor 5, does not answer in time or has history central did not acknowledge is backed up with the history
   central acknowledged, and the manifest and the Backups page name it as possibly stale. Offline backups
   (`spaceman backup create` with central stopped) cannot flush (SM-MEM-005).
+- **Planned: renaming a role (ADR-0093, not implemented).** When it lands: a busy role cannot be renamed, and a node
+  that never comes back keeps the renamed role held. There will be no "abandon the node move" action at first, and a
+  deleted role's leftover memory collection will block reusing its name as a rename target. Deleting or archiving a
+  role's memory, an abandon action and a web UI rename are follow-ups.
 
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.
@@ -627,7 +631,11 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 ## Messaging
 - **A forced "Message the agent" can still be dropped.** The run page's box types the text at once (`force`), but a
   program reported as `blocked` (a permission prompt, for example) refuses it, as does a takeover that starts in
-  between or a run that is ending. Central has already answered 202 and the operator is not told yet (ADR-0084).
+  between or a run that is ending. Central has already answered 202, so the operator learns of it afterwards: the run
+  page shows a "Message not delivered" toast (not for changes older than a minute, such as a replay after a
+  reconnect) and the audit log records a `run.input_rejected` event with the node's reason. The text is not retried;
+  send it again. Operator input containing control characters (C0, DEL or C1, except tab and newline) is refused up
+  front with a 400, so an escape sequence cannot act on the program (ADR-0084).
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself. herdr-core's
   own gate accepts only idle, so a `done` program gets the notice ungated after a fresh status check (ADR-0052).

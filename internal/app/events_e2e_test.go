@@ -201,7 +201,7 @@ func TestCoreSubscriptionEndToEnd(t *testing.T) {
 
 	// The management listener's /metrics: bounded labels, never the subscription or the subject.
 	mgmt := httptest.NewServer(h.c.ManagementHandler())
-	t.Cleanup(mgmt.Close)
+	cleanupReleased(t, func() { mgmt.Close(); mgmt.Config.Handler = nil }) // central's handler: release it (helpers_test.go)
 	scrape := func() string {
 		res, err := http.Get(mgmt.URL + "/metrics")
 		if err != nil {

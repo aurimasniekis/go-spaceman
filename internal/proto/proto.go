@@ -674,6 +674,10 @@ type MemoryCollectionStatus struct {
 	Conflicts      int        `json:"conflicts" doc:"Conflicts preserved on the node and not yet reconciled"`
 	Retries        int        `json:"retries"`
 	LastError      string     `json:"last_error,omitempty"`
+	// PreservedFolders are the conflicts/ folders of the most recent conflicts the node preserved, oldest first, one per
+	// increment of Conflicts, so central ties each conflict it records to its folder exactly. A node that predates the
+	// field sends none.
+	PreservedFolders []string `json:"preserved_folders,omitempty"`
 }
 
 // KBAcceptPayload asks the node to merge a KB proposal (ADR-0026): Commit must be on Branch (the session's branch); it

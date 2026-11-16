@@ -431,6 +431,7 @@ func TestBudget(t *testing.T) {
 	e := newEnv(t, 5)
 	stop := e.run(e.maps)
 	defer stop()
+	began := time.Now()
 
 	for i := range 1000 {
 		id := fmt.Sprintf("hum_%d", i%50)
@@ -456,8 +457,10 @@ func TestBudget(t *testing.T) {
 	for {
 		saves, rows := e.maps.counts()
 		if rows == 250 {
-			if saves > 250/100+2 {
-				t.Errorf("%d mapping writes for 250 rows, want batches of 100 or one a second", saves)
+			// Batches of 100 rows, or one write per FlushEvery tick (1 s): on a loaded machine the 250 sends take
+			// longer, and every second that passes allows one more timed write.
+			if limit := 250/100 + 2 + int(time.Since(began)/time.Second); saves > limit {
+				t.Errorf("%d mapping writes for 250 rows in %s, want at most %d (batches of 100 or one a second)", saves, time.Since(began).Round(time.Millisecond), limit)
 			}
 			break
 		}

@@ -677,8 +677,14 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		return svc.s.W().TxNamed(ctx, "fleet.ack", func(tx *store.Tx) error {
 			n, err := tx.Q.AckCommand(ctx, db.AckCommandParams{State: a.Result, Reason: truncate(a.Reason, 500), AckedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 				ID: a.CommandID, NodeID: s.nodeID})
-			if err != nil || n == 0 || svc.opts.OnCommandAck == nil {
+			if err != nil || n == 0 {
 				return err
+			}
+			if err := svc.inputRejected(ctx, tx, cmd, a); err != nil {
+				return err
+			}
+			if svc.opts.OnCommandAck == nil {
+				return nil
 			}
 			return svc.opts.OnCommandAck(ctx, tx, a.CommandID, cmd.Kind, a.Result, a.Reason)
 		})

@@ -131,10 +131,11 @@ func TestS3TargetSlowTrickleTransferSucceeds(t *testing.T) {
 		CABundlePEM: srv.CAPEM(), AllowPrivateNetwork: true})
 	must(t, err)
 	res := f.create(filepath.Join(t.TempDir(), "src"))
-	// The first object each way takes 5 pauses (300 ms), longer than the stall timeout, with no gap near it.
-	tgt := backup.S3Target{Objects: trickleStore{ObjectStore: cl, pause: 60 * time.Millisecond, put: &atomic.Bool{}, get: &atomic.Bool{}},
+	// The first object each way takes 5 pauses (1 s), longer than the stall timeout, with no gap near it. The pause is
+	// 200 ms and the stall 600 ms: at 60 ms and 200 ms a loaded machine's scheduling delays alone were a stall.
+	tgt := backup.S3Target{Objects: trickleStore{ObjectStore: cl, pause: 200 * time.Millisecond, put: &atomic.Bool{}, get: &atomic.Bool{}},
 		Bucket: "sm-backups", Staging: t.TempDir()}
-	const stall = 200 * time.Millisecond
+	const stall = 600 * time.Millisecond
 	must(t, backup.RunWatched(f.ctx, stall, time.Minute, func(ctx context.Context) error { return tgt.Store(ctx, res.Dir) }))
 	var dir string
 	var cleanup func()

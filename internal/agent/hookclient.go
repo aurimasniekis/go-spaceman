@@ -61,6 +61,9 @@ func sendHook(ctx context.Context, socket, run, tool string, payload any) error 
 		return err
 	}
 	if !res.OK {
+		if res.Error != "" {
+			return hookError(string(errHookRefused) + ": " + res.Error)
+		}
 		return errHookRefused
 	}
 	return nil

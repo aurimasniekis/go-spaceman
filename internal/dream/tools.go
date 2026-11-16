@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 )
 
@@ -17,4 +18,22 @@ func Tools(svc *Service) func(r *agenttools.Registry) {
 				return svc.Report(ctx, p, in)
 			})
 	}
+}
+
+// MemoryRolesOfRun returns the memory roles of the dream configuration a dreamer run belongs to ("*": every role) and
+// the roles the dream excludes: its own space role, unless the configuration sets include_own (the same exclusion the
+// dream's own reading applies).
+func (svc *Service) MemoryRolesOfRun(ctx context.Context, runID string) (roles, exclude []string, err error) {
+	dr, err := svc.s.R().GetDreamRunByRun(ctx, runID)
+	if err != nil {
+		return nil, nil, apperr.New(apperr.CodeForbidden, "this run is not a dream")
+	}
+	c, err := svc.s.R().GetDreamConfig(ctx, dr.ConfigID)
+	if err != nil {
+		return nil, nil, errNotFound
+	}
+	if c.IncludeOwn != 1 {
+		exclude = []string{c.SpaceRole}
+	}
+	return parseList(c.MemoryRolesJson), exclude, nil
 }

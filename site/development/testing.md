@@ -33,6 +33,11 @@ sets, because the detector slows SQLite several-fold. Without the race detector,
 `make test`, `make coverage` and a bare `go test`; `make check-fast` sets `SM_TEST_TX_MAX=500ms`. GitHub's hosted
 runners are slower, so the coverage and race steps in `ci` and `release` use 1 s, and the login-timing and fuzz
 jobs 250 ms (ADR-0062).
+On a machine whose one-minute load average is over its CPU count (read from `/proc/loadavg`), a hold that exceeds the
+bound is compared with the bound times 1 plus that ratio, up to 8 times, whether the bound is the default or an
+`SM_TEST_TX_MAX` value. An idle machine, a system without `/proc/loadavg` and `SM_TEST_TX_STRICT=1` keep the bound as it
+is. CI sets `SM_TEST_TX_STRICT=1` in every job that runs the guard, so the scaling applies to the shared node only
+(ADR-0062, update 2026-11-16).
 
 A store opened by `storetest.Open` is set up so that setup work doesn't land inside a test's transactions (ADR-0062,
 update 2026-11-13, hold analysis). `storetest.Seed` flushes its copy of the database to disk before the store opens, because
@@ -74,6 +79,16 @@ healthy CI run takes about 14 minutes at the lower cap, measured on a hosted run
 `RACE_OUT_DIR` set (CI and the release gate), `scripts/race.sh` keeps each invocation's output there, plus `mem.log`
 (memory and the largest processes every 20 s); both workflows upload the directory as the `race-output` artifact when the
 job fails or is cancelled. `RACE_P` caps how many packages run at once (`go test -p`).
+
+The summary line of `make race` ends with `internal/app peak RSS N MB`, the peak of internal/app's test binaries
+(sampled every 5 s). It stays under 2 GB at CI's `-parallel 2`. Each `internal/app` test opens a whole central (store,
+services, the API with its OpenAPI schemas), and the `testing` package keeps a finished parallel test, and the
+cleanups it already ran, reachable until every parallel test is done. A cleanup that holds a central therefore keeps it
+in memory for the rest of the run: that grew the binary to 13-15 GB and ran 16 GB runners out of memory (exit 143 about
+15 minutes in). Register such cleanups with `cleanupReleased` (internal/app/helpers_test.go), which lets go of the
+closure once it has run, and clear the env's references to central in its last cleanup. If the run is interrupted,
+`scripts/race.sh` prints the last memory sample and the end of internal/app's output into the log, because a runner that
+goes down skips the artifact upload.
 
 ### When a release gate fails
 

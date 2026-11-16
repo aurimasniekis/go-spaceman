@@ -6,23 +6,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
-## [0.1.8] - 2026-11-16
+## [0.1.9] - 2026-11-16
+
+**v0.1.8 was tagged but never released** (its release build produced no images), so its changes ship in v0.1.9.
 
 Release on top of v0.1.7. **Central and the node agents both need it**, central first. The main changes are account
 switching on usage limits (ADR-0090: a run that reaches its limit moves to another account of its pool, off unless
 `usage_limit_failover` is on), Telegram chat threads per space with actionable cards (ADR-0089), the backup hang fix
 (ADR-0091: a backup or verification that stops making progress now fails instead of holding `busy` until a restart),
 the notifier no longer losing notifications around restarts, text replies to cards, and mobile dialogs (pinch-zoom,
-wide tables, 16 px inputs). It brings node protocol minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to
-0059 and the configuration keys listed below.
+wide tables, 16 px inputs). Memory conflicts now close when reconciled (ADR-0092), and queue policy changes reach control. It brings node protocol
+minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to 0060, agent migration 0009 and the configuration keys listed below.
 
 ### Upgrade notes
 
-- **Schema migrations 0054 to 0059 are forward-only: take a backup first.** `0054_account_pools` to
+- **Schema migrations 0054 to 0060 are forward-only: take a backup first.** `0054_account_pools` to
   `0058_pool_exhausted_notices` (ADR-0090) add account pools, account switches, a run's failure class, the usage ledger
   and the pool-exhausted notices. `0059_telegram_message_thread` adds the nullable `telegram_messages.message_thread_id`,
-  the topic a card was sent in; a card row from before it has no topic recorded and is edited in place as before. They
-  are applied on start and need no other action.
+  the topic a card was sent in; a card row from before it has no topic recorded and is edited in place as before.
+  `0060_memory_conflict_folder` adds `memory_conflicts.folder` (ADR-0092), and the node agent's journal gets its own
+  migration `0009`. They are applied on start and need no other action.
 - **Node protocol minor 13 (v0.1.7 speaks up to minor 12).** Upgrade central first, then the node agents. An older agent
   keeps working, and its runs still switch on a limit it reports, but only an agent of this release reports the status
   line's usage windows, the cost estimate and the `StopFailure` failure class, so the usage windows, the headroom gate's
@@ -47,6 +50,15 @@ wide tables, 16 px inputs). It brings node protocol minor 13 (v0.1.7 speaks up t
 
 ### Added
 
+- **Memory conflicts close when reconciled** (ADR-0092). Control and the dreamer get `spaceman_memory_conflict_list` and
+  `spaceman_memory_conflict_resolve` (control: any role of its space; a dreamer: the roles of its dream), audited as the
+  run. A conflict also resolves by itself, as the system actor `memory-reconcile`, when an accepted checkpoint removes
+  its `conflicts/<name>/` folder; the preserved ref stays. Schema migration `0060_memory_conflict_folder` (applied on
+  start, forward-only; the node journal gets `0009`); the node reports each preserved conflict's folder, so the tie is exact; a
+  git read error resolves nothing; conflicts recorded before it close through the tool, the CLI or the web UI.
+- **Queue policy changes reach control.** When a queue policy write changes `max_active` or an incident setting, control
+  gets one system message with each changed field's old and new value (`max_active 2 → 4`) and the audit event; a write
+  that changes nothing sends none.
 - **Account switching** (ADR-0090, security-relevant). With `usage_limit_failover` on, a Claude Code run that reaches
   its usage limit moves to another account of its pool: at its next idle point it is parked and resumed at once with its
   session (`--resume`) under the next eligible account. Nothing is sent to the running process and no credential is
@@ -93,6 +105,28 @@ wide tables, 16 px inputs). It brings node protocol minor 13 (v0.1.7 speaks up t
 
 ### Fixed
 
+- **The race gate running its runner out of memory.** CI's and the release workflow's `go race tests` died about 15
+  minutes in with exit 143 (on v0.1.8 too): `internal/app`'s race test binary peaked at 13-15 GB on a 16 GB runner. The
+  `testing` package keeps a finished parallel test, and the cleanup closures it already ran, reachable until every
+  parallel test is done, so each test's whole central stayed in memory. The test harnesses now release what their cleanups
+  hold (`cleanupReleased`): the binary peaks under 2 GB (live heap about 200 MB instead of 5.3 GB at the end).
+  `scripts/race.sh` prints internal/app's peak RSS in its summary, and when it is interrupted it prints the last memory
+  sample and the end of internal/app's output into the log, since a runner that goes down skips the artifact upload.
+- **Run reports around a node agent's reconnect.** A run report issued between the agent's hello and its welcome went out
+  before the protocol minor was negotiated, so a usage limit it carried was stripped; a run report issued between the hello
+  snapshot and the connection being set went nowhere, and a run end that had only gone out live was never re-sent. Such
+  reports are now held and re-sent after the welcome, and a limit change scanned in that window is held too. A hello that
+  fails clears the hold.
+- Input the node refuses (a busy or blocked program, a takeover, a run that ended) is no longer lost silently: the run
+  page shows a "Message not delivered" toast and the audit log records the reason. Operator input containing control
+  characters (C0, DEL and C1, other than tab and newline: escape sequences, carriage returns) is refused with a 400; `\r\n` is read as
+  `\n`. A restored space starts control as soon as its lease is granted instead of at the next sweep.
+- **Agent journal pruning.** A pruned run's recording directory is now removed with it, once its recording is fully
+  acknowledged, and the journal is pruned every hour instead of only after a reconnect, so a long-lived connection no
+  longer keeps ended runs and their recordings forever. The same pass removes recording directories that earlier
+  releases left behind, but only those with no segments, a well-formed run ID, no journal row and nothing modified for
+  24 hours. A recording that has segments and no journal row is kept (a lost journal makes every run look orphaned);
+  reclaiming those needs central's confirmation and is not done.
 - A Telegram text reply to a notifier card is now about that card. Replying to a question's card answers it (an option's
   letter, number or label, or free text; the same API call, version check and authorisation as its buttons, and a
   closed action says so); an approval is never decided from text; a reply that is not an answer goes to the card's own
@@ -121,6 +155,19 @@ wide tables, 16 px inputs). It brings node protocol minor 13 (v0.1.7 speaks up t
   test output and a memory log are uploaded as the `race-output` artifact (CI) or `race-output-release` (release) when
   it fails. `internal/app`'s race cap in CI is now 2 (was 4), because its test binary reached 10-12 GB resident and
   exhausted 16 GB runners; the job takes about 14 minutes at the lower cap, measured on a hosted runner.
+- Test flakes under heavy node load (test-only; no behavior change). The 100 ms write-lock guard (HP-DB-004) now stretches
+  by `1 + load/CPUs` (at most 8x) when more threads are runnable than CPUs, for the default and for
+  `SM_TEST_TX_MAX`; an idle machine and `SM_TEST_TX_STRICT=1` are unchanged, and every CI and release job that runs the guard sets `SM_TEST_TX_STRICT=1` (ADR-0062, update 2026-11-16). The S3 trickle test
+  uses a 600 ms stall window. The large-recording catch-up test waits
+  for progress instead of a fixed 20 s, the StopFailure scan test waits 30 s instead of 5 s for an event-driven report,
+  the notifier budget test allows one more timed mapping write per elapsed second, the hello-reapply test applies 120
+  journal runs instead of 400, and the fleet e2e cleanup retries emptying the agent directory.
+- The node agent's runner reconcile (the monitor's first "snapshot" event, a restarted or missed-events notice) no longer
+  marks a run whose launch is still in flight as lost or failed: it leaves those alone and re-checks the runner for the
+  others before judging them. Before, a reconcile that landed between the journal's run and the process start ended the
+  run, so its bridge calls answered "run is not active".
+- The node agent now waits (up to 10 s) for its runner monitor to stop when it shuts down, so the monitor cannot still
+  be reading agent state after shutdown returns.
 
 ## [0.1.7] - 2026-11-16
 
@@ -2022,8 +2069,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.8...HEAD
-[0.1.8]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.8
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5
