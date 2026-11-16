@@ -115,6 +115,12 @@ type Options struct {
 	// from thread IDs the bot stored). A message written in a space's topic acts on that space, re-authorized like any
 	// named space; the Needs-you topic and unknown threads answer false and keep the current-space behaviour. Nil: none.
 	SpaceOfThread func(ctx context.Context, linkID string, thread int) (spaceID string, ok bool)
+	// Muted reports whether the link muted a space (the notifier's in-memory check); the cross-space /needs leaves a
+	// muted space out. Nil: nothing is muted.
+	Muted func(linkID, spaceID string) bool
+	// ThreadOf is the topic the link has for a space (topics.Manager.ThreadOf), for /spaces' "Go to topic" button. Nil or
+	// false: no button.
+	ThreadOf func(ctx context.Context, linkID, spaceID string) (thread int, ok bool)
 	// AlbumQuiet is how long an album waits for its next part before it becomes one item (default 1.5 s).
 	AlbumQuiet time.Duration
 

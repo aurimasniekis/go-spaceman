@@ -109,6 +109,17 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		out(200, map[string]any{"items": append(append([]spaceRef{}, f.listFirst...), []spaceRef{
 			{ID: spA, Slug: "alpha", Name: "Alpha", State: "active"}, {ID: spB, Slug: "beta", Name: "Beta", State: "active"},
 			{ID: spC, Slug: "gamma", Name: "Gamma", State: "active"}, {ID: spS, Slug: "sum", Name: "Summary", State: "active"}}...)})
+	case path == "/human-actions":
+		// The cross-space view: pending actions of every space (this fake reads every space; Telegram's hidden spaces are
+		// the chat's to leave out).
+		var items []humanAction
+		for _, a := range f.human {
+			if a.Status == "open" || a.Status == "in_progress" {
+				items = append(items, *a)
+			}
+		}
+		slices.SortFunc(items, func(a, b humanAction) int { return strings.Compare(a.ID, b.ID) })
+		out(200, map[string]any{"items": items})
 	case path == "/attention":
 		out(200, map[string]any{"spaces": []map[string]any{{"space_id": spA, "human_pending": 2, "tasks_failed": 1}}})
 	case len(seg) == 2 && seg[0] == "spaces":

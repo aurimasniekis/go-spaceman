@@ -43,6 +43,12 @@ type StoreMappings struct{ S *store.Store }
 func (m StoreMappings) Save(ctx context.Context, rows []Mapping) error {
 	return m.S.W().TxNamed(ctx, "telegram.messages", func(tx *store.Tx) error {
 		for _, r := range rows {
+			if r.Delete && r.Kind == MappingHome {
+				if err := tx.Q.DeleteTelegramHomeMessage(ctx, db.DeleteTelegramHomeMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID)}); err != nil {
+					return err
+				}
+				continue
+			}
 			if r.Delete {
 				if err := tx.Q.DeleteTelegramMessage(ctx, db.DeleteTelegramMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID)}); err != nil {
 					return err
@@ -97,6 +103,51 @@ func (m StoreMappings) NoticeLinks(ctx context.Context, typ string) ([]string, e
 		}
 	}
 	return out, nil
+}
+
+// HomeMessages returns the home summaries and whether each was pinned.
+func (m StoreMappings) HomeMessages(ctx context.Context) ([]HomeRow, error) {
+	rows, err := m.S.R().ListTelegramHomeMessages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HomeRow, 0, len(rows))
+	for _, r := range rows {
+		if r.LinkID.Valid {
+			out = append(out, HomeRow{LinkID: r.LinkID.String, ChatID: r.ChatID, MessageID: int(r.MessageID), Pinned: r.ResourceVersion == 1})
+		}
+	}
+	return out, nil
+}
+
+// StorePending counts the pending human actions per space and type, with the space's name: two small reads.
+func StorePending(s *store.Store) func(ctx context.Context) ([]SpaceCount, error) {
+	return func(ctx context.Context) ([]SpaceCount, error) {
+		rows, err := s.R().CountPendingHumanByType(ctx)
+		if err != nil {
+			return nil, err
+		}
+		names := map[string]string{}
+		if len(rows) > 0 {
+			spaces, err := s.R().ListSpaces(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, sp := range spaces {
+				names[sp.ID] = sp.Name
+			}
+		}
+		out := make([]SpaceCount, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, SpaceCount{SpaceID: r.SpaceID, Name: names[r.SpaceID], Type: r.Type, TypeSlug: r.TypeSlug, N: r.N})
+		}
+		return out, nil
+	}
+}
+
+// StorePerms loads a space's type permissions, the set the API consults.
+func StorePerms(h *human.Service) func(ctx context.Context, spaceID string) (human.PermissionSet, error) {
+	return h.Permissions
 }
 
 // StoreReader reads resources with one lean row read each, as the system (no principal: recipients are checked

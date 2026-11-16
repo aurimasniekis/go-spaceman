@@ -1171,7 +1171,14 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		Topics: c.TelegramTopics,
 		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
-		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
+		// The pinned Needs-you summary (ADR-0089): the Mini App's cross-space page, or its direct link without the host.
+		Pending:     tgnotify.StorePending(c.Store),
+		Perms:       tgnotify.StorePerms(c.Human),
+		NeedsURL:    func() string { return c.telegramPageURL("/human") },
+		NeedsLink:   func() string { return c.telegramStartAppLink("needs") },
+		SpaceLink:   func(spaceID string) string { return c.telegramStartAppLink("space-" + spaceID) },
+		BotUsername: func() string { return c.TelegramBot.Username() },
+		Store:       tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
 		// A human action's card opens the action in the Mini App (the chat's forms use the same URL).
 		ItemURL: func(spaceID string, k tgnotify.Key) string {
 			if k.Type != tgnotify.TypeHumanAction {

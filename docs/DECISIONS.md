@@ -5505,6 +5505,24 @@
   names no responder (the only responder stored is the actor's ID, which the API exposes to readers but which is not a
   name; showing a name would need a user read and would expose a display name that a reader of the action does not get
   today). Tests: TRACEABILITY SM-TG-006. Simulated only.
+  T5 (home): `/needs` with no pinned space and no argument lists the pending actions of every space from
+  `GET /human-actions`, grouped by space, with a "See all" web_app button for the Mini App's `/human`; the API leaves out
+  spaces the link's principal can't read, and the chat drops spaces Telegram may not show and spaces the link muted
+  before it counts or lists anything. In a space's topic, or with a space named, it lists that space only, as before.
+  `/spaces` rows get a "Go to topic" URL button (`t.me/<bot>/<thread>`) when the link has that topic. The notifier keeps
+  one pinned "Needs you" summary per link in home: one read of the pending counts per rebuild (not per recipient), each
+  link's view filtered in memory by the card rule (link usable, space read and human-action read held, visible to
+  Telegram, not muted) and checked again when it is sent, edited at most once per 30 s per chat, sent and pinned once,
+  and stored as a `telegram_messages` row of kind `home` (resource version 1 once the pin worked) that retention keeps
+  like a notice, so a restart edits the message instead of sending and pinning another. Per-space lines link to the
+  topic, or to `startapp=space-<id>` with the layout off; without the Mini App host the button is the `startapp=needs`
+  link. The counts are read per space and action type, and a link's view counts only the types whose view role (the
+  space's type permissions, loaded once per space per rebuild) the link holds, as a card and the API's counts do; a
+  space left with nothing to show for it isn't listed, and one whose permissions can't be read is left out. `/needs`
+  at home takes its items and counts from `GET /human-actions`, which applies the same type permissions. A rebuild reads
+  the counts only when a link's summary is due; a link that moves chats mid-send leaves no row and the message it sent
+  in the old chat is dropped from the record. Known limit: a mute or grant change shows on the next human-action
+  window, not at once. Simulated only.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9

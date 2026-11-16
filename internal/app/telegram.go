@@ -156,6 +156,12 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 		},
 		Space: c.TelegramSettings.Space,
 		// A message written in a space's topic acts on that space (the topics the bot made, never user input).
+		Muted: func(linkID, spaceID string) bool {
+			return c.TelegramNotify != nil && c.TelegramNotify.Muted(linkID, spaceID)
+		},
+		ThreadOf: func(ctx context.Context, linkID, spaceID string) (int, bool) {
+			return c.TelegramTopics.ThreadOf(ctx, linkID, spaceID)
+		},
 		SpaceOfThread: func(ctx context.Context, linkID string, thread int) (string, bool) {
 			return c.TelegramTopics.SpaceOf(ctx, linkID, thread)
 		},
@@ -240,6 +246,23 @@ func (c *Central) telegramCard(ctx context.Context, chatID int64, messageID int)
 	}
 	m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)
 	return m, err == nil
+}
+
+// telegramPageURL is a page of the Mini App ("" without its host).
+func (c *Central) telegramPageURL(path string) string {
+	if o := c.miniAppOrigin(); o != "" {
+		return o + path
+	}
+	return ""
+}
+
+// telegramStartAppLink is the bot's direct Mini App link t.me/<bot>?startapp=<param> ("" without the Mini App host or
+// the bot's username).
+func (c *Central) telegramStartAppLink(param string) string {
+	if c.miniAppOrigin() == "" || c.TelegramBot == nil || c.TelegramBot.Username() == "" {
+		return ""
+	}
+	return "https://t.me/" + c.TelegramBot.Username() + "?startapp=" + url.QueryEscape(param)
 }
 
 // telegramActionURL is the Mini App URL of one human action ("" without the Mini App host): the shell's route for an

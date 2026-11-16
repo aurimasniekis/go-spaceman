@@ -9,6 +9,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 )
@@ -215,6 +216,48 @@ func TestStoreNoticeRows(t *testing.T) {
 	}
 	if _, err := m.Card(ctx, 11, 3); !errors.Is(err, notify.ErrNoCard) {
 		t.Errorf("a notice is not a card: Card error %v", err)
+	}
+}
+
+// A home summary row is stored with its kind and pin flag, is listed by HomeMessages, is no card, and survives the
+// retention prune like a notice.
+func TestStoreHomeRows(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	if err := st.W().Exec(ctx, `INSERT INTO users (id, display_name, enabled, provisioned_via, created_at, created_by, updated_at) VALUES ('usr_a', 'a', 1, 'admin', 0, 't', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.W().Exec(ctx, `INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, prefs_json, created_at, updated_at)
+		VALUES ('tgl_a', 'usr_a', 7, 1, 11, 'active', '{}', 0, 0)`); err != nil {
+		t.Fatal(err)
+	}
+	m := notify.StoreMappings{S: st}
+	k := notify.Key{Type: notify.HomeResource, ID: "tgl_a"}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, LinkID: "tgl_a", Kind: notify.MappingHome, Key: k, Version: 1, CreatedAt: time.Unix(1, 0)}}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := m.HomeMessages(ctx)
+	if err != nil || len(rows) != 1 || rows[0] != (notify.HomeRow{LinkID: "tgl_a", ChatID: 11, MessageID: 5, Pinned: true}) {
+		t.Fatalf("HomeMessages = %+v, %v", rows, err)
+	}
+	if got, _ := m.Lookup(ctx, k); len(got) != 0 {
+		t.Errorf("a home summary is not a card: Lookup = %+v", got)
+	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, Kind: notify.MappingHome, Delete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := m.HomeMessages(ctx); len(rows) != 0 {
+		t.Fatalf("a deleted home row is still listed: %+v", rows)
+	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, LinkID: "tgl_a", Kind: notify.MappingHome, Key: k, Version: 1, CreatedAt: time.Unix(1, 0)}}); err != nil {
+		t.Fatal(err)
+	}
+	var pruned int64
+	if err := st.W().Tx(ctx, func(tx *store.Tx) (err error) {
+		pruned, err = tx.Q.PruneTelegramMessages(ctx, db.PruneTelegramMessagesParams{Cutoff: time.Now().UnixMicro(), Lim: 100})
+		return err
+	}); err != nil || pruned != 0 {
+		t.Errorf("prune removed %d home rows (%v), want 0", pruned, err)
 	}
 }
 
