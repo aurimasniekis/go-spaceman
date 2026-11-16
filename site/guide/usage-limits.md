@@ -262,6 +262,7 @@ each is audited. `spaceman limits holds` and `spaceman limits waits` list a spac
 | `usage_limit_failover` | off (0) | 0 off, 1 on | use another unheld account of the same harness, and move a limited run to one |
 | `usage_limit_wait_if_reset_within` | 15 | 0–1,440 minutes | a reset this near is waited for instead of moving the run |
 | `usage_limit_switch_max_per_day` | 6 | 0–50 (0: never move) | moves per agent instance in 24 hours |
+| `usage_limit_min_headroom_percent` | 0 (off) | 0–100 | a new agent does not start on an account when a window with known usage has less than this percentage free: it takes the next eligible account of its pool, or the launch is refused until the earliest reset. An account with no known usage is not refused, and running agents are never moved for it |
 
 They are space limits like any other: installation defaults in the `limits:` section of the configuration file,
 overrides per space ([Limits and budgets](./limits)).

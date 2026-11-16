@@ -168,12 +168,17 @@ func (svc *Service) decideSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 // space, probe-due ones included), and not from.
 func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, harness, role, from, prefer string) (string, error) {
 	now := tx.NowMicros()
-	avoid := func(id string) (bool, error) {
+	ul := UsageLimitSettings{}
+	if svc.opts.UsageLimitSettings != nil {
+		ul = svc.opts.UsageLimitSettings(ctx, tx.Q, spaceID)
+	}
+	// A switch's resume is a new start: the headroom gate removes accounts here too.
+	avoid := svc.withHeadroom(ctx, tx.Q, ul, func(id string) (bool, error) {
 		if id == from {
 			return true, nil
 		}
 		return accountHeld(ctx, tx.Q, id, now)
-	}
+	})
 	// Resolve from the limited account: it is bound (so a space without a default still resolves) and avoided, so the
 	// pool's order decides. A fresh retry's wait doesn't know it (from is empty): the role's pool decides first, and
 	// only a role without a pool of its own (the space pool is every bound account, so it can't widen) falls back to

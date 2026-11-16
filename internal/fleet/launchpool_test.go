@@ -1,11 +1,13 @@
 package fleet
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // ADR-0090: the launch transaction itself keeps a role's pool from widening. A resume decides on its account in a claim
@@ -124,5 +126,40 @@ func TestLaunchPoolMemberKeptOverHigherPriority(t *testing.T) {
 	e.exec(`UPDATE usage_limits SET cleared_at = 1`)
 	if got := e.relaunch("run_m", func(in *LaunchInput) { in.AccountRef = "acc_3" }); got != "acc_3" {
 		t.Fatalf("launched on %q, want the member acc_3 kept", got)
+	}
+}
+
+// With the headroom gate on and failover off the pool still governs (ADR-0090 decisions 3 and 4): a resume whose account
+// left the role's pool goes to a pool member, or is refused when none passes the gate, never to acc_2 outside the pool.
+func TestLaunchPoolGateOnFailoverOffResumeAccountRemoved(t *testing.T) {
+	e := newPoolEnv(t)
+	e.running("run_g", "worker", 2)
+	e.armAndPark("run_g")
+	e.movePool()
+	e.exec(`DELETE FROM space_role_accounts WHERE account_id = 'acc_1'`) // the pool is acc_3 alone
+	e.failoverOn = false
+	used := map[string]float64{"acc_2": 0}
+	e.svc.opts.UsageLimitSettings = func(context.Context, *db.Queries, string) UsageLimitSettings {
+		return UsageLimitSettings{Failover: false, KeepAliveMax: e.keepMax, WaitIfResetWithin: e.within, SwitchMaxPerDay: e.budget, MinHeadroomPercent: 20}
+	}
+	e.svc.opts.AccountHeadroom = func(_ context.Context, _ *db.Queries, id string) (float64, time.Time, bool, error) {
+		u, ok := used[id]
+		return u, time.Time{}, ok, nil
+	}
+	if got := e.relaunch("run_g", func(in *LaunchInput) { in.AccountRef = "acc_1" }); got != "acc_3" {
+		t.Fatalf("launched on %q, want acc_3 of the pool", got)
+	}
+
+	// The only pool member is below the gate: the resume is refused, not moved onto acc_2 (outside the pool, with room).
+	used["acc_3"] = 95
+	in, err := waitLaunch(e.waitOf("run_g"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.AccountRef = "acc_1"
+	if _, err := e.svc.LaunchRun(e.ctx, holdActor, "spc_a", in); err == nil {
+		t.Fatal("launch with no pool member passing the gate succeeded")
+	} else if _, ok := AsHold(err); !ok {
+		t.Fatalf("want a hold refusal, got %v", err)
 	}
 }
