@@ -7,6 +7,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/usage"
 )
 
 // usageStub is the usage ledger of a test: used percentage and reset (offset from t0) per account.
@@ -208,5 +209,24 @@ func TestHeadroomGateStaleWindowAndLedgerError(t *testing.T) {
 	}
 	if r, err := e.launch("spc_a", ""); err != nil || r.Launch.AccountRef != "acc_1" {
 		t.Fatalf("ledger error: %v %+v", err, r)
+	}
+}
+
+// With the real usage ledger wired (usage.AccountHeadroomFunc, as central does), an account whose most-used window leaves
+// less than the gate's headroom is skipped, and a window nobody has refreshed for longer than usage.WindowMaxAge is not
+// counted.
+func TestHeadroomGateWithLedger(t *testing.T) {
+	e := headroomEnv(t, 20, &usageStub{})
+	e.svc.opts.AccountHeadroom = usage.AccountHeadroomFunc(e.svc.now)
+	now := e.svc.now()
+	e.exec(`INSERT INTO account_windows (account_id, kind, used_pct, resets_at, observed_at, run_id, updated_at) VALUES ('acc_1', 'five_hour', 95, ?, ?, '', ?)`,
+		now.Add(2*time.Hour).UnixMicro(), now.UnixMicro(), now.UnixMicro())
+	if r, err := e.launch("spc_a", ""); err != nil || r.Launch.AccountRef != "acc_2" {
+		t.Fatalf("an account at 95%% was not skipped: %v %+v", err, r)
+	}
+	// Nobody has refreshed the window for too long: it no longer counts.
+	e.exec(`UPDATE account_windows SET observed_at = ? WHERE account_id = 'acc_1'`, now.Add(-2*usage.WindowMaxAge).UnixMicro())
+	if r, err := e.launch("spc_a", ""); err != nil || r.Launch.AccountRef != "acc_1" {
+		t.Fatalf("a stale window counted: %v %+v", err, r)
 	}
 }
