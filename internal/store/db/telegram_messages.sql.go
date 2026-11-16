@@ -10,22 +10,6 @@ import (
 	"database/sql"
 )
 
-const deleteTelegramMessage = `-- name: DeleteTelegramMessage :exec
-DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind IN ('cont', 'alert')
-`
-
-type DeleteTelegramMessageParams struct {
-	ChatID    int64
-	MessageID int64
-}
-
-// A continuation or an alert the notifier deleted (the body shrank, a newer alert, the card settled): its row must not
-// come back after a restart.
-func (q *Queries) DeleteTelegramMessage(ctx context.Context, arg DeleteTelegramMessageParams) error {
-	_, err := q.db.ExecContext(ctx, deleteTelegramMessage, arg.ChatID, arg.MessageID)
-	return err
-}
-
 const deleteTelegramHomeMessage = `-- name: DeleteTelegramHomeMessage :exec
 DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'home'
 `
@@ -39,6 +23,22 @@ type DeleteTelegramHomeMessageParams struct {
 // restart.
 func (q *Queries) DeleteTelegramHomeMessage(ctx context.Context, arg DeleteTelegramHomeMessageParams) error {
 	_, err := q.db.ExecContext(ctx, deleteTelegramHomeMessage, arg.ChatID, arg.MessageID)
+	return err
+}
+
+const deleteTelegramMessage = `-- name: DeleteTelegramMessage :exec
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind IN ('cont', 'alert')
+`
+
+type DeleteTelegramMessageParams struct {
+	ChatID    int64
+	MessageID int64
+}
+
+// A continuation or an alert the notifier deleted (the body shrank, a newer alert, the card settled): its row must not
+// come back after a restart.
+func (q *Queries) DeleteTelegramMessage(ctx context.Context, arg DeleteTelegramMessageParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTelegramMessage, arg.ChatID, arg.MessageID)
 	return err
 }
 
@@ -72,6 +72,47 @@ func (q *Queries) GetTelegramMessage(ctx context.Context, arg GetTelegramMessage
 		&i.ResourceVersion,
 	)
 	return i, err
+}
+
+const listTelegramHomeMessages = `-- name: ListTelegramHomeMessages :many
+SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL ORDER BY created_at, message_id
+`
+
+type ListTelegramHomeMessagesRow struct {
+	LinkID          sql.NullString
+	ChatID          int64
+	MessageID       int64
+	ResourceVersion int64
+}
+
+// The pinned home summaries (kind home), one per link: the message to edit and whether it was pinned (resource_version 1).
+// Read once when the notifier starts.
+func (q *Queries) ListTelegramHomeMessages(ctx context.Context) ([]ListTelegramHomeMessagesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTelegramHomeMessages)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTelegramHomeMessagesRow{}
+	for rows.Next() {
+		var i ListTelegramHomeMessagesRow
+		if err := rows.Scan(
+			&i.LinkID,
+			&i.ChatID,
+			&i.MessageID,
+			&i.ResourceVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTelegramMessagesByResource = `-- name: ListTelegramMessagesByResource :many
@@ -111,47 +152,6 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 			&i.ResourceVersion,
 			&i.CreatedAt,
 			&i.MessageThreadID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listTelegramHomeMessages = `-- name: ListTelegramHomeMessages :many
-SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL ORDER BY created_at, message_id
-`
-
-type ListTelegramHomeMessagesRow struct {
-	LinkID          sql.NullString
-	ChatID          int64
-	MessageID       int64
-	ResourceVersion int64
-}
-
-// The pinned home summaries (kind home), one per link: the message to edit and whether it was pinned (resource_version 1).
-// Read once when the notifier starts.
-func (q *Queries) ListTelegramHomeMessages(ctx context.Context) ([]ListTelegramHomeMessagesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listTelegramHomeMessages)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListTelegramHomeMessagesRow{}
-	for rows.Next() {
-		var i ListTelegramHomeMessagesRow
-		if err := rows.Scan(
-			&i.LinkID,
-			&i.ChatID,
-			&i.MessageID,
-			&i.ResourceVersion,
 		); err != nil {
 			return nil, err
 		}
