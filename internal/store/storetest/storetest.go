@@ -17,7 +17,7 @@ import (
 
 // MaxTxDuration is the longest a write transaction may hold the write lock in tests (Hallpass HP-DB-004). Time spent
 // waiting for the writer and SQLITE_BUSY retries does not count (ADR-0070).
-// SM_TEST_TX_MAX overrides it for slow runners; without the race detector the default matches the requirement. On
+// SM_TEST_TX_MAX overrides it for slow runners, and every bound stretches on an oversubscribed machine (effectiveMax); without the race detector the default matches the requirement. On
 // GitHub's hosted runners CI's coverage and race steps use 1s, its login-timing and fuzz jobs 250ms (ADR-0062).
 //
 // A binary built with the race detector defaults to RaceMaxTxDuration instead: the detector slows the pure-Go SQLite
@@ -28,7 +28,6 @@ import (
 // hosted CI uses 1s or 250ms (ADR-0062).
 var MaxTxDuration = func() time.Duration {
 	if v, err := time.ParseDuration(os.Getenv("SM_TEST_TX_MAX")); err == nil && v > 0 {
-		explicitMax = true
 		return v
 	}
 	if raceEnabled {
@@ -37,15 +36,14 @@ var MaxTxDuration = func() time.Duration {
 	return 100 * time.Millisecond
 }()
 
-// explicitMax is set when SM_TEST_TX_MAX chose the bound; that value is never load-scaled.
-var explicitMax bool
-
-// The default bound stretches on an overloaded machine. A hold is wall-clock time, and when more threads are runnable
-// than there are CPUs a 20 ms transaction can take 100+ ms without doing anything slow. When a hold exceeds the
-// bound, the guard reads the load (load.go) and, if the machine is oversubscribed, compares the hold with the bound
-// times loadScale instead. An idle or lightly loaded machine, SM_TEST_TX_MAX and OpenStrict keep the bound as is.
+// The bound stretches on an overloaded machine. A hold is wall-clock time, and when more threads are runnable than
+// there are CPUs a 20 ms transaction can take 100+ ms without doing anything slow. When a hold exceeds the bound, the
+// guard reads the load (load.go) and, if the machine is oversubscribed, compares the hold with the bound times
+// loadScale instead. An idle or lightly loaded machine keeps the bound as is, and so does SM_TEST_TX_STRICT=1 (and
+// OpenStrict, for the guard's own tests). The scaling applies to an SM_TEST_TX_MAX value too, because `make check` and
+// CI set one.
 func effectiveMax(strict bool) time.Duration {
-	if strict || explicitMax {
+	if strict || os.Getenv("SM_TEST_TX_STRICT") == "1" {
 		return MaxTxDuration
 	}
 	return time.Duration(float64(MaxTxDuration) * loadScale())

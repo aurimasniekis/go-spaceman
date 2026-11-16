@@ -2872,10 +2872,12 @@
   larger of the load average and the runnable thread count over the CPU count, and only when `r > 1`. Rationale: a
   thread gets about `1/r` of a CPU, and SMT and cache sharing cost about as much again. The bound stays 100 ms on an
   idle machine, on a runner with `r <= 1` (CI runs one package set per runner), wherever `/proc/loadavg` is missing, and
-  whenever `SM_TEST_TX_MAX` is set, so no explicit setting is loosened. The guard's own tests use `storetest.OpenStrict`.
+  and when `SM_TEST_TX_STRICT=1` is set. It applies to an explicit `SM_TEST_TX_MAX` as well, because `make check` and CI
+  set one (a first version that skipped explicit values did not help the gate: `fleet.limit_wait_claim` held 580 ms
+  against the Makefile's 500 ms at that load). The guard's own tests use `storetest.OpenStrict`.
   A transaction that really is slow still fails on an idle or moderately loaded machine, which is where
   `make check-fast` and CI run it; only a machine with more runnable threads than CPUs gets the margin. The alternative,
-  raising the number, was rejected because it loosens the idle case too.
+  raising the number, was rejected because it loosens the idle case too. Not reproduced and so unchanged: `TestBudget`.
 - **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
   the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
   tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock

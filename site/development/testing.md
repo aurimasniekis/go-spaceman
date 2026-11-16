@@ -35,8 +35,8 @@ runners are slower, so the coverage and race steps in `ci` and `release` use 1 s
 jobs 250 ms (ADR-0062).
 On a machine with more runnable threads than CPUs (load average or run queue over the CPU count, read from
 `/proc/loadavg`), a hold that exceeds the default bound is compared with the bound times 1 plus that ratio, up to 8
-times. An explicit `SM_TEST_TX_MAX`, an idle machine and a system without `/proc/loadavg` keep the bound as it is
-(ADR-0062, update 2026-11-16).
+times, whether the bound is the default or an `SM_TEST_TX_MAX` value. An idle machine, a system without
+`/proc/loadavg` and `SM_TEST_TX_STRICT=1` keep the bound as it is (ADR-0062, update 2026-11-16).
 
 A store opened by `storetest.Open` is set up so that setup work doesn't land inside a test's transactions (ADR-0062,
 update 2026-11-13, hold analysis). `storetest.Seed` flushes its copy of the database to disk before the store opens, because
