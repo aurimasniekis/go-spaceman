@@ -167,6 +167,13 @@ type Agent struct {
 	// heldReports are the runs whose report came between the hello and the welcome (guarded by mu): the minor is not
 	// negotiated yet, so the report would go out stripped of what the central's minor decides. They are re-sent after the welcome.
 	heldReports map[string]struct{}
+	// preConn is set (under mu) from before the hello snapshot (helloRuns) until the connection is set: a report in that
+	// window cannot go out (no connection) and is not in the snapshot, so it is held like one between the hello and the
+	// welcome (sendReport). a.conn is not set earlier: another sender would then write before the hello.
+	// Lock order: limitSend, then mu (sendReport); session takes only mu here and never limitSend, so no cycle.
+	preConn bool
+	// helloStage, when set, runs after the hello snapshot and before the connection is set. Tests race a report there.
+	helloStage  func()
 	limitTimers map[string]*time.Timer
 	limitFiles  map[string]os.FileInfo
 	// statusSnaps are the latest status-line snapshots and failureClasses the latest non-limit StopFailure class of
@@ -411,6 +418,14 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 	conn.SetReadLimit(proto.MaxMessage)
 	defer func() { _ = conn.CloseNow() }()
+	a.mu.Lock()
+	a.preConn = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.preConn = false
+		a.mu.Unlock()
+	}()
 	runs, follow, err := a.helloRuns(ctx)
 	if err != nil {
 		return err
@@ -426,8 +441,11 @@ func (a *Agent) session(ctx context.Context) error {
 		// below 13 would store a filled reset as the transcript's. reportAllHookData sends it after a minor-13 welcome.
 		hello.Runs = append(hello.Runs, r.report(a.now()))
 	}
+	if a.helloStage != nil {
+		a.helloStage()
+	}
 	a.mu.Lock()
-	a.conn = conn
+	a.conn, a.preConn = conn, false
 	a.mu.Unlock()
 	if err := a.send(ctx, proto.TypeHello, hello); err != nil {
 		return err
@@ -660,7 +678,7 @@ func (a *Agent) resendHeldReports(ctx context.Context, held map[string]struct{})
 // sendReport sends a run's report as it is (limitSend held).
 func (a *Agent) sendReport(ctx context.Context, r runRow) {
 	a.mu.Lock()
-	if a.conn != nil && !a.connected {
+	if a.preConn || (a.conn != nil && !a.connected) {
 		if a.heldReports == nil {
 			a.heldReports = map[string]struct{}{}
 		}

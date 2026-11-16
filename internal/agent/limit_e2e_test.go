@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,4 +351,30 @@ func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
 		t.Fatal("no report after the welcome")
 	}
 	wantOpen(t, "after welcome", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+}
+
+// A run end reported between the hello snapshot and the connection being set is not in the hello and has no
+// connection to go out on: it is held and sent after the welcome, or central keeps the run live until the next reconnect.
+func TestRunEndBetweenHelloSnapshotAndConnIsSentAfterWelcome(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	fc := newWSCentral(t, proto.MinorUsageLimit)
+	var once sync.Once
+	a.helloStage = func() {
+		once.Do(func() {
+			ccLaunch(a, "run_gap")
+			row := getRun(t, a, "run_gap")
+			row.State = proto.RunExited
+			if err := a.j.updateRun(context.Background(), row); err != nil {
+				t.Error(err)
+			}
+			a.report(context.Background(), getRun(t, a, "run_gap"))
+		})
+	}
+	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
+	fc.next(t, proto.TypeHello)
+	rs := fc.collect(t, "run_gap", 500*time.Millisecond)
+	if len(rs) == 0 || rs[len(rs)-1].State != proto.RunExited {
+		t.Fatalf("run end not reported after the welcome: %d reports", len(rs))
+	}
 }
