@@ -175,8 +175,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/accounts/{account_id}` | `delete-account` | Delete an account and its bindings |
 | `GET` | `/accounts/{account_id}` | `get-account` | An account (never its secret) |
 | `PUT` | `/accounts/{account_id}` | `update-account` | Edit or rotate an account |
+| `GET` | `/accounts/{account_id}/usage` | `get-account-usage` | An account's usage over time, in the spaces you can read |
 | `GET` | `/accounts/{account_id}/usage-limits` | `list-account-usage-limits` | An account's open usage-limit holds in every space |
 | `POST` | `/accounts/{account_id}/usage-limits/clear` | `clear-account-usage-limits` | Clear an account's usage-limit holds in every space now |
+| `GET` | `/accounts/{account_id}/windows` | `get-account-windows` | An account's latest rate-limit windows |
 | `GET` | `/spaces/{space_id}/account-pools` | `list-space-role-pools` | A space's role pools |
 | `PUT` | `/spaces/{space_id}/account-pools/{role}` | `put-space-role-pool` | Set a role's pool |
 | `GET` | `/spaces/{space_id}/accounts` | `list-space-accounts` | Accounts the space's runs may use |
@@ -569,7 +571,9 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/spaces/{space_id}/account-windows` | `list-space-account-windows` | The latest rate-limit windows of the accounts bound to a space |
 | `DELETE` | `/spaces/{space_id}/runs/{run_id}/transcript` | `delete-transcript` | Delete a run's stored transcript |
 | `GET` | `/spaces/{space_id}/runs/{run_id}/usage` | `get-run-usage` | A run's usage |
 | `GET` | `/spaces/{space_id}/usage` | `get-space-usage` | A space's usage |
+| `GET` | `/spaces/{space_id}/usage/series` | `get-space-usage-series` | A space's usage over time |
 

@@ -86,3 +86,20 @@ DELETE FROM limit_waits WHERE id IN (SELECT w.id FROM limit_waits w WHERE w.stat
 -- name: PruneClosedAccountSwitches :execrows
 DELETE FROM account_switches WHERE id IN (SELECT a.id FROM account_switches a WHERE a.state IN ('succeeded', 'failed', 'fell_back', 'cancelled')
   AND a.updated_at < sqlc.arg(cutoff) LIMIT sqlc.arg(lim));
+
+-- name: ListAccountUsageBuckets :many
+-- An account's buckets across spaces (the API keeps only the spaces the caller may read).
+SELECT * FROM usage_buckets WHERE account_id = ? AND granularity = ? AND bucket_start >= ? AND bucket_start < ?
+ORDER BY bucket_start, space_id, role, harness, model;
+
+-- name: ListAccountBindingSpaces :many
+SELECT space_id FROM space_accounts WHERE account_id = ? ORDER BY space_id;
+
+-- name: ListSpaceAccountWindows :many
+-- The latest windows of the accounts bound to a space.
+SELECT w.account_id, a.name AS account_name, sa.harness, w.kind, w.used_pct, w.resets_at, w.observed_at
+FROM space_accounts sa
+JOIN accounts a ON a.id = sa.account_id
+JOIN account_windows w ON w.account_id = sa.account_id
+WHERE sa.space_id = ?
+ORDER BY sa.harness, sa.created_at, w.account_id, w.kind;
