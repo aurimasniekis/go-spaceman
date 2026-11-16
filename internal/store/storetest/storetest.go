@@ -28,6 +28,7 @@ import (
 // hosted CI uses 1s or 250ms (ADR-0062).
 var MaxTxDuration = func() time.Duration {
 	if v, err := time.ParseDuration(os.Getenv("SM_TEST_TX_MAX")); err == nil && v > 0 {
+		explicitMax = true
 		return v
 	}
 	if raceEnabled {
@@ -35,6 +36,20 @@ var MaxTxDuration = func() time.Duration {
 	}
 	return 100 * time.Millisecond
 }()
+
+// explicitMax is set when SM_TEST_TX_MAX chose the bound; that value is never load-scaled.
+var explicitMax bool
+
+// The default bound stretches on an overloaded machine. A hold is wall-clock time, and when more threads are runnable
+// than there are CPUs a 20 ms transaction can take 100+ ms without doing anything slow. When a hold exceeds the
+// bound, the guard reads the load (load.go) and, if the machine is oversubscribed, compares the hold with the bound
+// times loadScale instead. An idle or lightly loaded machine, SM_TEST_TX_MAX and OpenStrict keep the bound as is.
+func effectiveMax(strict bool) time.Duration {
+	if strict || explicitMax {
+		return MaxTxDuration
+	}
+	return time.Duration(float64(MaxTxDuration) * loadScale())
+}
 
 // RaceMaxTxDuration is MaxTxDuration's default in a binary built with the race detector; it is the value scripts/race.sh
 // uses.
@@ -69,12 +84,24 @@ func WithReaders(n int) Option { return func(o *store.Options) { o.Readers = n }
 // canceled or timed out (a canceled callback may hold the lock until it notices).
 func Open(t testing.TB, opts ...Option) *store.Store {
 	t.Helper()
+	return open(t, false, opts)
+}
+
+// OpenStrict is Open without the load scaling of the default bound. The guard's own tests use it, because they hold
+// the lock on purpose for twice MaxTxDuration.
+func OpenStrict(t testing.TB, opts ...Option) *store.Store {
+	t.Helper()
+	return open(t, true, opts)
+}
+
+func open(t testing.TB, strict bool, opts []Option) *store.Store {
+	t.Helper()
 	var mu sync.Mutex
 	o := store.Options{
 		DataDir: filepath.Join(t.TempDir(), "data"),
 		Readers: Readers,
 		TxObserver: func(name string, d time.Duration, err error) {
-			if d > MaxTxDuration && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if d > MaxTxDuration && d > effectiveMax(strict) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				mu.Lock()
 				defer mu.Unlock()
 				outcome := ""

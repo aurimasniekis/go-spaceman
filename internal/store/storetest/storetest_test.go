@@ -122,7 +122,7 @@ func TestGuardCountsLockHoldNotWait(t *testing.T) {
 	// Not parallel: it asserts that a quick transaction's hold stays under MaxTxDuration, which CPU contention from
 	// parallel tests could push over.
 	g := &guardTB{TB: t}
-	s := storetest.Open(g)
+	s := storetest.OpenStrict(g)
 	ctx := context.Background()
 	hold := 2 * storetest.MaxTxDuration
 
@@ -162,7 +162,7 @@ func TestGuardCountsLockHoldNotWait(t *testing.T) {
 func TestGuardCountsTheLongestAttempt(t *testing.T) {
 	t.Parallel()
 	g := &guardTB{TB: t}
-	s := storetest.Open(g)
+	s := storetest.OpenStrict(g)
 	hold := 2 * storetest.MaxTxDuration
 	attempts := 0
 	err := s.W().TxNamed(context.Background(), "test.retried", func(tx *store.Tx) error {
@@ -185,7 +185,7 @@ func TestGuardCountsTheLongestAttempt(t *testing.T) {
 func TestGuardChecksFailedTransactions(t *testing.T) {
 	t.Parallel()
 	g := &guardTB{TB: t}
-	s := storetest.Open(g)
+	s := storetest.OpenStrict(g)
 	hold := 2 * storetest.MaxTxDuration
 	failure := errors.New("the callback failed")
 	if err := s.W().TxNamed(context.Background(), "test.failed", func(tx *store.Tx) error {
@@ -226,5 +226,26 @@ func TestOpenReaderPool(t *testing.T) {
 				t.Fatalf("reader pool of %d connections, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestScaleFromLoadavg(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		in   string
+		cpus int
+		want float64
+	}{
+		{"0.50 0.40 0.30 2/300 123", 8, 1},
+		{"8.00 4.00 2.00 3/300 123", 8, 1},  // exactly one runnable thread per CPU is not overload
+		{"16.00 4.00 2.00 3/300 123", 8, 3}, // 2 per CPU: 1+2
+		{"1.00 1.00 1.00 24/300 123", 8, 4}, // the instantaneous run queue counts when it is higher
+		{"900.0 4.00 2.00 3/300 123", 8, 8}, // capped
+		{"garbage", 8, 1},
+		{"16.00 4.00 2.00 3/300 123", 0, 1},
+	} {
+		if got := storetest.ScaleFromLoadavgForTest(c.in, c.cpus); got != c.want {
+			t.Errorf("%q on %d CPUs: %v, want %v", c.in, c.cpus, got, c.want)
+		}
 	}
 }
