@@ -1,5 +1,4 @@
--- 0058_usage_ledger: the usage ledger of the account-switching plan (ADR-0090, plan T6). The number may change at merge
--- time, when another branch also takes it.
+-- 0057_usage_ledger: the usage ledger of the account-switching plan (ADR-0090, plan T6).
 --
 -- run_usage gains the run's account, role and harness (copied from the run, so a bucket needs no join).
 --
@@ -27,7 +26,7 @@ UPDATE run_usage SET
                          FROM runs r WHERE r.id = run_usage.run_id), '');
 
 CREATE TABLE usage_ledger_marks (
-  space_id     TEXT NOT NULL,
+  space_id     TEXT NOT NULL REFERENCES spaces (id) ON DELETE CASCADE,
   mark_key     TEXT NOT NULL,
   counted_json TEXT NOT NULL DEFAULT '[]',
   counted_cost REAL NOT NULL DEFAULT 0,
@@ -38,23 +37,38 @@ CREATE TABLE usage_ledger_marks (
 CREATE INDEX ix_usage_ledger_marks_updated ON usage_ledger_marks (updated_at);
 
 -- The counters of existing usage, one mark per session (the run whose report was latest) or per run without one. The
--- run_usage models are proto.ModelUsage objects; the mark keeps its own shorter keys.
+-- run_usage models are proto.ModelUsage objects; the mark keeps its own shorter keys. The keys follow the runtime rules
+-- (usage.markKey and usage.modelCounters), or a run active during the migration would count its total once more: a
+-- session id only when it is 1-100 characters of [A-Za-z0-9._-], otherwise the run's key; a model id only when it matches
+-- the model pattern (first character alphanumeric, then up to 127 of [A-Za-z0-9._:/[]-]), otherwise 'unknown'; models
+-- sharing a name keep the highest counters; counters are clamped to 0..2^40.
 INSERT INTO usage_ledger_marks (space_id, mark_key, counted_json, counted_cost, updated_at)
 SELECT space_id, mark_key,
-  COALESCE((SELECT json_group_array(json_object('model', COALESCE(json_extract(m.value, '$.model'), 'unknown'),
-      'in', COALESCE(json_extract(m.value, '$.input_tokens'), 0), 'out', COALESCE(json_extract(m.value, '$.output_tokens'), 0),
-      'cw', COALESCE(json_extract(m.value, '$.cache_write_tokens'), 0), 'cr', COALESCE(json_extract(m.value, '$.cache_read_tokens'), 0),
-      'req', COALESCE(json_extract(m.value, '$.requests'), 0)))
-    FROM json_each(CASE WHEN json_valid(models_json) THEN models_json ELSE '[]' END) m), '[]'),
+  COALESCE((SELECT json_group_array(json_object('model', g.model, 'in', g.i, 'out', g.o, 'cw', g.cw, 'cr', g.cr, 'req', g.req))
+    FROM (
+      SELECT model, max(i) AS i, max(o) AS o, max(cw) AS cw, max(cr) AS cr, max(req) AS req FROM (
+        SELECT CASE WHEN json_type(m.value, '$.model') = 'text' AND json_extract(m.value, '$.model') GLOB '[A-Za-z0-9]*'
+                     AND length(json_extract(m.value, '$.model')) <= 128
+                     AND json_extract(m.value, '$.model') NOT GLOB '*[^]A-Za-z0-9._:/[-]*'
+                    THEN json_extract(m.value, '$.model') ELSE 'unknown' END AS model,
+          min(max(CASE WHEN json_type(m.value, '$.input_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.input_tokens') ELSE 0 END, 0), 1099511627776) AS i,
+          min(max(CASE WHEN json_type(m.value, '$.output_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.output_tokens') ELSE 0 END, 0), 1099511627776) AS o,
+          min(max(CASE WHEN json_type(m.value, '$.cache_write_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.cache_write_tokens') ELSE 0 END, 0), 1099511627776) AS cw,
+          min(max(CASE WHEN json_type(m.value, '$.cache_read_tokens') IN ('integer', 'real') THEN json_extract(m.value, '$.cache_read_tokens') ELSE 0 END, 0), 1099511627776) AS cr,
+          min(max(CASE WHEN json_type(m.value, '$.requests') IN ('integer', 'real') THEN json_extract(m.value, '$.requests') ELSE 0 END, 0), 1099511627776) AS req
+        FROM json_each(CASE WHEN json_valid(models_json) THEN models_json ELSE '[]' END) m
+      ) GROUP BY model ORDER BY model
+    ) g), '[]'),
   CASE WHEN json_valid(estimate_json) THEN COALESCE(json_extract(estimate_json, '$.usd'), 0) ELSE 0 END, updated_at
 FROM (
-  SELECT u.space_id, CASE WHEN r.session_id <> '' THEN r.session_id ELSE 'run:' || u.run_id END AS mark_key, u.models_json, u.estimate_json, u.updated_at,
-    row_number() OVER (PARTITION BY u.space_id, CASE WHEN r.session_id <> '' THEN r.session_id ELSE 'run:' || u.run_id END ORDER BY u.updated_at DESC, u.run_id DESC) AS rn
-  FROM run_usage u JOIN runs r ON r.id = u.run_id WHERE u.source = 'claude-transcript'
+  SELECT u.space_id, CASE WHEN length(r.session_id) BETWEEN 1 AND 100 AND r.session_id NOT GLOB '*[^A-Za-z0-9._-]*' THEN r.session_id ELSE 'run:' || u.run_id END AS mark_key, u.models_json, u.estimate_json, u.updated_at,
+    row_number() OVER (PARTITION BY u.space_id, CASE WHEN length(r.session_id) BETWEEN 1 AND 100 AND r.session_id NOT GLOB '*[^A-Za-z0-9._-]*' THEN r.session_id ELSE 'run:' || u.run_id END ORDER BY u.updated_at DESC, u.run_id DESC) AS rn
+  FROM run_usage u JOIN runs r ON r.id = u.run_id
+  WHERE u.source = 'claude-transcript'
 ) WHERE rn = 1;
 
 CREATE TABLE usage_buckets (
-  space_id            TEXT NOT NULL,
+  space_id            TEXT NOT NULL REFERENCES spaces (id) ON DELETE CASCADE,
   account_id          TEXT NOT NULL,
   role                TEXT NOT NULL,
   harness             TEXT NOT NULL,
@@ -97,6 +111,13 @@ CREATE TABLE account_window_samples (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX ix_account_window_samples_time ON account_window_samples (observed_at);
+
+-- Retention (usage_ledger.sql) deletes cleared limits and finished waits and switches by age: partial indexes keep each
+-- pass off a table scan. (The state indexes are plain: SQLite uses a partial index only for a query that repeats its
+-- predicate exactly, and these filter by an IN list.)
+CREATE INDEX ix_usage_limits_cleared ON usage_limits (cleared_at) WHERE cleared_at IS NOT NULL;
+CREATE INDEX ix_limit_waits_finished ON limit_waits (state, updated_at);
+CREATE INDEX ix_account_switches_finished ON account_switches (state, updated_at);
 
 -- +goose Down
 SELECT 'forward-only migrations: restore the pre-migration snapshot instead';

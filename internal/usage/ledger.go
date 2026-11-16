@@ -174,24 +174,56 @@ func runAccount(r db.Run) string {
 	return la.AccountRef
 }
 
+// countedFor is what the run's session has had counted: the higher of the session's mark and the mark the run itself
+// kept before it learned its session id, per model and counter (so neither key can book growth the other already holds).
+func (svc *Service) countedFor(ctx context.Context, tx *store.Tx, r db.Run) ([]counters, float64, error) {
+	var out []counters
+	var cost float64
+	keys := []string{markKey(r)}
+	if k := "run:" + r.ID; k != keys[0] {
+		keys = append(keys, k)
+	}
+	byModel := map[string]counters{}
+	for _, k := range keys {
+		mark, err := tx.Q.GetUsageLedgerMark(ctx, db.GetUsageLedgerMarkParams{SpaceID: r.SpaceID, MarkKey: k})
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		var cs []counters
+		if mark.CountedJson != "" {
+			if err := json.Unmarshal([]byte(mark.CountedJson), &cs); err != nil {
+				return nil, 0, err
+			}
+		}
+		for _, c := range cs {
+			byModel[c.Model] = maxCounters(byModel[c.Model], c)
+		}
+		cost = max(cost, mark.CountedCost)
+	}
+	for _, c := range byModel {
+		out = append(out, c)
+	}
+	return out, cost, nil
+}
+
 // account books a kept report in the ledger, inside the report's transaction: the growth over what the run's session
 // has already had counted goes into the current hour's buckets, and the run's windows into the account's.
 func (svc *Service) account(ctx context.Context, tx *store.Tx, r db.Run, rep proto.UsageReport) error {
-	mark, err := tx.Q.GetUsageLedgerMark(ctx, db.GetUsageLedgerMarkParams{SpaceID: r.SpaceID, MarkKey: markKey(r)})
-	if errors.Is(err, sql.ErrNoRows) && markKey(r) != "run:"+r.ID {
-		// The run reported before it learned its session id: what it had counted is filed under the run.
-		mark, err = tx.Q.GetUsageLedgerMark(ctx, db.GetUsageLedgerMarkParams{SpaceID: r.SpaceID, MarkKey: "run:" + r.ID})
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	// The run's session id is read again here, inside the transaction: the one Report read before it may be stale, and a
+	// delta computed from an old key's mark would book growth the session's mark already holds.
+	if cur, err := tx.Q.GetRun(ctx, r.ID); err == nil {
+		r.SessionID = cur.SessionID
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	var counted []counters
-	if mark.CountedJson != "" {
-		if err := json.Unmarshal([]byte(mark.CountedJson), &counted); err != nil {
-			return err
-		}
+	counted, countedCost, err := svc.countedFor(ctx, tx, r)
+	if err != nil {
+		return err
 	}
-	d := computeDelta(counted, mark.CountedCost, rep.Models, rep.Estimate)
+	d := computeDelta(counted, countedCost, rep.Models, rep.Estimate)
 	key := runKey{space: r.SpaceID, account: runAccount(r), role: r.Role, harness: r.Harness}
 	start := HourStart(tx.Now)
 	costModel := d.costModel()

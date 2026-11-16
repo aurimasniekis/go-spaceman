@@ -366,3 +366,108 @@ func TestLedgerSessionLearnedLater(t *testing.T) {
 		t.Fatalf("counted %d, want 150", got)
 	}
 }
+
+// A far-future observation is dropped, not clamped to now: no window is stored for it.
+func TestAccountWindowFutureObservationDropped(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t)
+	now := f.clk.Now()
+	for _, ahead := range []time.Duration{time.Hour, 24 * time.Hour} {
+		f.svc.Report(f.ctx, "nod_1", proto.UsageReport{RunID: lrA, Source: proto.UsageClaudeTranscript, Windows: []proto.UsageWindow{
+			{Kind: "seven_day", UsedPct: 50, ObservedAt: now.Add(ahead)}}})
+	}
+	if n := countRows(t, f, `SELECT count(*) FROM account_windows`) + countRows(t, f, `SELECT count(*) FROM account_window_samples`); n != 0 {
+		t.Fatalf("a future observation was kept (%d rows)", n)
+	}
+	// Within the skew it is kept, as of now.
+	f.svc.Report(f.ctx, "nod_1", proto.UsageReport{RunID: lrA, Source: proto.UsageClaudeTranscript, Windows: []proto.UsageWindow{
+		{Kind: "seven_day", UsedPct: 50, ObservedAt: now.Add(time.Minute)}}})
+	if n := countRows(t, f, `SELECT count(*) FROM account_windows WHERE observed_at = ?`, now.UnixMicro()); n != 1 {
+		t.Fatalf("a window inside the skew: %d", n)
+	}
+}
+
+// A mark the ledger cannot read fails the report's transaction: nothing is booked and the run's usage row is not stored,
+// so the node's next report is not lost as a repeat.
+func TestLedgerUnreadableMark(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t)
+	if err := f.s.W().TxNamed(f.ctx, "x", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(f.ctx, `INSERT INTO usage_ledger_marks (space_id, mark_key, counted_json, counted_cost, updated_at) VALUES ('spc_a', 'sess-1', 'not json', 0, 0)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.report(lrA, false, 1, mu("m", 100, 1, 0, 0, 1))
+	if got := f.buckets(t); len(got) != 0 {
+		t.Fatalf("booked with an unreadable mark: %+v", got)
+	}
+	if n := countRows(t, f, `SELECT count(*) FROM run_usage WHERE run_id = ?`, lrA); n != 0 {
+		t.Fatal("the report was stored although its booking failed")
+	}
+}
+
+// A report whose run was read before the session id was learned (a stale read) books against the session's mark, not
+// the old run key: the growth the session already holds is not booked twice.
+func TestLedgerStaleSessionRead(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t)
+	exec := func(q string) {
+		if err := f.s.W().TxNamed(f.ctx, "x", func(tx *store.Tx) error { _, err := tx.SQL.ExecContext(f.ctx, q); return err }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`UPDATE runs SET session_id = '' WHERE id = '` + lrA + `'`)
+	f.report(lrA, false, 0, mu("m", 100, 1, 0, 0, 1)) // filed under run:<id>
+	stale, err := f.s.R().GetRun(f.ctx, lrA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(`UPDATE runs SET session_id = 'sess-1' WHERE id = '` + lrA + `'`)
+	f.report(lrA, false, 0, mu("m", 150, 1, 0, 0, 2)) // moves the mark to the session key
+	// The stale report is booked with the run as read before (no session id), as a concurrent Report would.
+	rep := proto.UsageReport{RunID: lrA, Source: proto.UsageClaudeTranscript, Models: []proto.ModelUsage{mu("m", 120, 1, 0, 0, 2)}}
+	if err := f.s.W().TxNamed(f.ctx, "stale", func(tx *store.Tx) error { return f.svc.account(f.ctx, tx, stale, rep) }); err != nil {
+		t.Fatal(err)
+	}
+	if got := sumIn(f.buckets(t), "acc_1"); got != 150 {
+		t.Fatalf("counted %d, want 150 (the stale report's growth was booked twice)", got)
+	}
+	// Both keys holding marks: the higher counters win, so neither key books what the other holds.
+	exec(`INSERT INTO usage_ledger_marks (space_id, mark_key, counted_json, counted_cost, updated_at) VALUES ('spc_a', 'run:` + lrA + `', '[{"model":"m","in":400,"out":0,"cw":0,"cr":0,"req":0}]', 0, 0)
+		ON CONFLICT DO UPDATE SET counted_json = excluded.counted_json`)
+	f.report(lrA, true, 0, mu("m", 450, 1, 0, 0, 3))
+	if got := sumIn(f.buckets(t), "acc_1"); got != 200 {
+		t.Fatalf("counted %d after the merge, want 200 (150 plus the growth over the higher mark, 50)", got)
+	}
+}
+
+// A window that has reset or went stale is skipped even when it is the most used; the next current one answers.
+func TestMostUsedWindowSkipsStaleAndReset(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t)
+	now := f.clk.Now()
+	read := func() (float64, bool) {
+		u, _, k, err := AccountHeadroomFunc(f.clk.Now)(f.ctx, f.s.R(), "acc_1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u, k
+	}
+	r5, r7 := now.Add(30*time.Minute), now.Add(48*time.Hour)
+	f.svc.Report(f.ctx, "nod_1", proto.UsageReport{RunID: lrA, Source: proto.UsageClaudeTranscript, Windows: []proto.UsageWindow{
+		{Kind: "five_hour", UsedPct: 95, ResetsAt: &r5, ObservedAt: now}, {Kind: "seven_day", UsedPct: 30, ResetsAt: &r7, ObservedAt: now}}})
+	if u, k := read(); !k || u != 95 {
+		t.Fatalf("most used %v %v", u, k)
+	}
+	f.clk.Advance(40 * time.Minute) // the five-hour window reset (95 % no longer counts); the seven-day one is still current
+	f.svc.Report(f.ctx, "nod_1", proto.UsageReport{RunID: lrA, Source: proto.UsageClaudeTranscript, Windows: []proto.UsageWindow{
+		{Kind: "seven_day", UsedPct: 31, ResetsAt: &r7, ObservedAt: f.clk.Now()}}})
+	if u, k := read(); !k || u != 31 {
+		t.Fatalf("after the reset %v %v, want the seven-day window", u, k)
+	}
+	f.clk.Advance(2 * time.Hour) // everything stale: unknown, not zero
+	if u, k := read(); k || u != 0 {
+		t.Fatalf("stale %v %v", u, k)
+	}
+}

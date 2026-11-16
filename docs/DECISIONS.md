@@ -5457,6 +5457,7 @@
     the resume uses the target account either way.
   - New space limits are named as in decision 5, without a unit suffix: `usage_limit_wait_if_reset_within` (minutes)
     and `usage_limit_switch_max_per_day`. Metric `spaceman_account_switches_total{result}`.
+- **Known limitation (T6 usage ledger):** a run's growth is booked when its report arrives, to the account the run was launched with. If the final report of run A is lost or arrives late, A's last tokens are booked with a later report of the session, which is the next run's (the account after a switch). The tokens are misattributed to that account, never counted twice: the per-session high-water marks (`usage_ledger_marks`) guarantee each token is booked once.
 - **Security-relevant because:**
   - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
   - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now

@@ -38,7 +38,9 @@ func MostUsedWindow(ctx context.Context, q *db.Queries, accountID string, now ti
 }
 
 // AccountHeadroomFunc is the read the launch-time headroom gate takes as fleet.Options.AccountHeadroom, on the given
-// clock.
+// clock. It returns the most-used window that has not reset: a stale window (observed more than WindowMaxAge ago) or one
+// whose reset has passed is skipped by MostUsedWindow and counts as unknown (known false), never as zero use
+// (TestMostUsedWindow, TestMostUsedWindowSkipsStaleAndReset).
 func AccountHeadroomFunc(now func() time.Time) func(ctx context.Context, q *db.Queries, accountID string) (float64, time.Time, bool, error) {
 	return func(ctx context.Context, q *db.Queries, accountID string) (float64, time.Time, bool, error) {
 		return MostUsedWindow(ctx, q, accountID, now())
