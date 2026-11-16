@@ -837,11 +837,11 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if err := env.Decode(&rep); err != nil {
 			return err
 		}
-		h.spawn(func() {
-			if ack, ok := svc.roleRenamed(context.WithoutCancel(ctx), s.nodeID, rep); ok {
-				_ = s.send(proto.TypeMemoryRenamedAck, svc.now(), ack)
-			}
-		})
+		// Recorded in order, before the next message is read: the node syncs the role under its new name right after
+		// reporting the move, and that sync must find the rename done.
+		if ack, ok := svc.roleRenamed(context.WithoutCancel(ctx), s.nodeID, rep); ok {
+			_ = s.send(proto.TypeMemoryRenamedAck, svc.now(), ack)
+		}
 		return nil
 	case proto.TypeTakeoverEnded:
 		var m proto.TakeoverEnded

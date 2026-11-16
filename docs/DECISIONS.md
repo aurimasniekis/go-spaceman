@@ -6307,7 +6307,10 @@
   - **The resurrection guard also covers a reused name while the move is open.** The plan accepted the old name again
     once `space_roles` had it. But while the node has not moved its folder, a sync under that name is still the renamed
     role's history and would start the new role's collection with it. So memory under a former name is refused while
-    any rename away from it is open, and afterwards only while no role has the name.
+    any rename away from it is open, and afterwards only while no role has the name. **The new name is refused too while
+    the move is open**: until the node has moved its folders, a folder of the new name on the node is a leftover it will
+    set aside, and its history must not reach the renamed collection. The hub records `memory.renamed` in the read loop,
+    in order, so the node's sync under the new name right after its `ok` finds the rename done.
   - **Backups hold the moves** (`memory.Service.HoldMoves`, wired as `backup.Sources.HoldMemory`) from before the
     database snapshot until the memory is bundled, so each bundle sits under the name its snapshot gives the collection.
     The backup walks the disk, not the database, so without the hold a move between the listing and the bundling would

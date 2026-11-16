@@ -49,7 +49,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a durable `memory.rename` command (node protocol minor 14) and reports `memory.renamed`. The rename's `node_state` is
   `pending` until then, `failed` with the node's reason if it could not move the folder, and `done` once it has; until it
   is done, launches of the role and dream runs in the space are held, the space cannot be relocated, and central refuses
-  memory under the old name (`role renamed`) without creating a collection for it.
+  memory under the old name, and under the new one until the node has moved (`role renamed`), without creating a collection for it.
 - **Memory conflicts close when reconciled** (ADR-0092). Control and the dreamer get `spaceman_memory_conflict_list` and
   `spaceman_memory_conflict_resolve` (control: any role of its space; a dreamer: the roles of its dream), audited as the
   run. A conflict also resolves by itself, as the system actor `memory-reconcile`, when an accepted checkpoint removes

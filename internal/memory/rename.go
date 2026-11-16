@@ -163,9 +163,10 @@ func (svc *Service) move(ctx context.Context, r db.SpaceRoleRename) error {
 	})
 }
 
-// renamedAway reports whether memory under the role name is refused because the name was renamed away: the node has
-// not moved its folder of that name yet, or no role has the name again (a stale node, or one restored from an old
-// backup, would otherwise start a second collection under the old name).
+// renamedAway reports whether memory under the role name is refused because of a rename: the node has not moved its
+// folders yet (a rename from or to the name is open: the node's folder of the old name is still the renamed role's, and
+// one of the new name would be a leftover it sets aside), or the name was renamed away and no role has it again (a
+// stale node, or one restored from an old backup, would otherwise start a second collection under the old name).
 func (svc *Service) renamedAway(ctx context.Context, spaceID, role string) (bool, error) {
 	n, err := svc.s.R().RoleNameRenamedAway(ctx, db.RoleNameRenamedAwayParams{SpaceID: spaceID, Name: role})
 	return n > 0, err

@@ -1683,9 +1683,11 @@ func (q *Queries) RoleListsKBRepos(ctx context.Context, spaceID string) ([]RoleL
 
 const roleNameRenamedAway = `-- name: RoleNameRenamedAway :one
 SELECT count(*) FROM space_role_renames r
-WHERE r.space_id = ?1 AND r.from_name = ?2
-  AND (r.node_state IN ('pending', 'failed')
-    OR NOT EXISTS (SELECT 1 FROM space_roles s WHERE s.space_id = r.space_id AND s.name = r.from_name))
+WHERE r.space_id = ?1
+  AND ((r.from_name = ?2
+      AND (r.node_state IN ('pending', 'failed')
+        OR NOT EXISTS (SELECT 1 FROM space_roles s WHERE s.space_id = r.space_id AND s.name = r.from_name)))
+    OR (r.to_name = ?2 AND r.node_state IN ('pending', 'failed')))
 `
 
 type RoleNameRenamedAwayParams struct {
@@ -1693,8 +1695,9 @@ type RoleNameRenamedAwayParams struct {
 	Name    string
 }
 
-// Whether memory under a role name must be refused because the name was renamed away: the node has not moved the
-// folder of that name yet (an open rename from it), or no role has the name again.
+// Whether memory under a role name must be refused because of a rename: the node has not moved its folders yet (an
+// open rename from or to the name: until then the node's folder of either name is not the renamed role's memory under
+// that name), or the name was renamed away and no role has it again.
 func (q *Queries) RoleNameRenamedAway(ctx context.Context, arg RoleNameRenamedAwayParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, roleNameRenamedAway, arg.SpaceID, arg.Name)
 	var count int64

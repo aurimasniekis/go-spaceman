@@ -169,7 +169,8 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 	if away, err := svc.renamedAway(ctx, m.SpaceID, m.Role); err != nil {
 		return fail("internal error", err)
 	} else if away {
-		// The node sends this history again under the new name once it has moved the role's folder (ADR-0093).
+		// The node sends this history again under the new name once it has moved the role's folder and reported it
+		// (ADR-0093).
 		return fail(ErrRoleRenamed, nil)
 	}
 	defer svc.lock(m.SpaceID + "/" + m.Role)()

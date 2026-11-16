@@ -168,13 +168,16 @@ SELECT * FROM space_role_renames WHERE central_moved_at IS NULL ORDER BY space_i
 -- name: SetRoleRenameCentralMoved :execrows
 UPDATE space_role_renames SET central_moved_at = ? WHERE id = ? AND central_moved_at IS NULL;
 
--- Whether memory under a role name must be refused because the name was renamed away: the node has not moved the
--- folder of that name yet (an open rename from it), or no role has the name again.
+-- Whether memory under a role name must be refused because of a rename: the node has not moved its folders yet (an
+-- open rename from or to the name: until then the node's folder of either name is not the renamed role's memory under
+-- that name), or the name was renamed away and no role has it again.
 -- name: RoleNameRenamedAway :one
 SELECT count(*) FROM space_role_renames r
-WHERE r.space_id = sqlc.arg(space_id) AND r.from_name = sqlc.arg(name)
-  AND (r.node_state IN ('pending', 'failed')
-    OR NOT EXISTS (SELECT 1 FROM space_roles s WHERE s.space_id = r.space_id AND s.name = r.from_name));
+WHERE r.space_id = sqlc.arg(space_id)
+  AND ((r.from_name = sqlc.arg(name)
+      AND (r.node_state IN ('pending', 'failed')
+        OR NOT EXISTS (SELECT 1 FROM space_roles s WHERE s.space_id = r.space_id AND s.name = r.from_name)))
+    OR (r.to_name = sqlc.arg(name) AND r.node_state IN ('pending', 'failed')));
 
 -- name: RenameSpaceRoleRow :execrows
 UPDATE space_roles SET name = sqlc.arg(to_name), revision = revision + 1, version = version + 1, updated_at = sqlc.arg(now)

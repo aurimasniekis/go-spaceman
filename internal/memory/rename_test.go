@@ -119,8 +119,15 @@ func TestRenameMovesRepositoryAfterCommit(t *testing.T) {
 	if _, err := e.svc.Files(e.ctx, "spc_a", oldRole); err == nil {
 		t.Fatal("the old name still serves files")
 	}
-	// The node moved its folder and offers what it wrote since under the new name, from the head central acknowledged.
+	// Until the node has moved its folders, memory under the new name is refused too: a folder of that name on the node
+	// would be a leftover it sets aside, not the role's memory.
 	h2 := e.commit("decisions.md", "two")
+	if ack := e.syncAs(newRole, h1, h2); ack.Result != proto.MemoryError || ack.Message != ErrRoleRenamed {
+		t.Fatalf("sync under the new name before the node move: %+v", ack)
+	}
+	// The node moved its folder, reported it, and offers what it wrote since under the new name, from the head central
+	// acknowledged.
+	e.exec(`UPDATE space_role_renames SET node_state = 'done' WHERE id = ?`, rn.ID)
 	if ack := e.syncAs(newRole, h1, h2); ack.Result != proto.MemoryOK || ack.Head != h2 {
 		t.Fatalf("sync under the new name: %+v", ack)
 	}
@@ -152,6 +159,7 @@ func TestRenameMoveFinishedAfterCrash(t *testing.T) {
 			}
 		}},
 		{"apply", func(e *renameEnv, h1 string) {
+			e.exec(`UPDATE space_role_renames SET node_state = 'done'`) // the node moved and reported it
 			h2 := e.commit("b.md", "b")
 			if ack := e.syncAs(newRole, h1, h2); ack.Result != proto.MemoryOK {
 				e.t.Fatalf("sync: %+v", ack)
@@ -324,7 +332,7 @@ func TestHoldMovesDefersRename(t *testing.T) {
 	}
 }
 
-// The guard query answers per space and name.
+// The guard answers per space and name: while the node move is open both names are refused.
 func TestRenamedAwayIsPerSpace(t *testing.T) {
 	t.Parallel()
 	e := newRenameEnv(t)
@@ -333,10 +341,20 @@ func TestRenamedAwayIsPerSpace(t *testing.T) {
 	for _, c := range []struct {
 		space, role string
 		want        bool
-	}{{"spc_a", oldRole, true}, {"spc_a", newRole, false}, {"spc_b", oldRole, false}} {
+	}{{"spc_a", oldRole, true}, {"spc_a", newRole, true}, {"spc_b", oldRole, false}, {"spc_b", newRole, false}} {
 		got, err := e.svc.renamedAway(e.ctx, c.space, c.role)
 		if err != nil || got != c.want {
 			t.Errorf("%s/%s: %v %v, want %v", c.space, c.role, got, err, c.want)
+		}
+	}
+	// Once the node has moved, the new name is the role's, and the old one stays refused while no role has it.
+	e.exec(`UPDATE space_role_renames SET node_state = 'done'`)
+	for _, c := range []struct {
+		role string
+		want bool
+	}{{oldRole, true}, {newRole, false}} {
+		if got, err := e.svc.renamedAway(e.ctx, "spc_a", c.role); err != nil || got != c.want {
+			t.Errorf("done, %s: %v %v, want %v", c.role, got, err, c.want)
 		}
 	}
 }
