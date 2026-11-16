@@ -2864,6 +2864,18 @@
   `storetest`) and stays 100 ms without it; `SM_TEST_TX_MAX` still wins unscaled. The non-race runs (local
   `make check-fast`, coverage) keep enforcing HP-DB-004 at its original value, and `make race`, CI and release already
   set 500 ms to 1 s, so no run that was strict becomes looser.
+- **Update, 2026-11-16, load-scaled default (not security-relevant):** with `-cover` and no race detector, at a load of
+  about 40 on 32 CPUs, ordinary transactions (`human.create`, `human.respond`, `human.policy_set`, about 20 ms of CPU)
+  held the lock 100-136 ms and tripped the guard in `internal/human` and `internal/auth`. A hold is wall-clock time, so
+  CPU starvation lengthens it without any slow work in the transaction. When a hold exceeds the default bound, the
+  guard now reads `/proc/loadavg` and compares the hold with the bound times `1 + r` (capped at 8), where `r` is the
+  larger of the load average and the runnable thread count over the CPU count, and only when `r > 1`. Rationale: a
+  thread gets about `1/r` of a CPU, and SMT and cache sharing cost about as much again. The bound stays 100 ms on an
+  idle machine, on a runner with `r <= 1` (CI runs one package set per runner), wherever `/proc/loadavg` is missing, and
+  whenever `SM_TEST_TX_MAX` is set, so no explicit setting is loosened. The guard's own tests use `storetest.OpenStrict`.
+  A transaction that really is slow still fails on an idle or moderately loaded machine, which is where
+  `make check-fast` and CI run it; only a machine with more runnable threads than CPUs gets the margin. The alternative,
+  raising the number, was rejected because it loosens the idle case too.
 - **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
   the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
   tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock

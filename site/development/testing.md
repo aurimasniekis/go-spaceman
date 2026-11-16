@@ -33,6 +33,10 @@ sets, because the detector slows SQLite several-fold. Without the race detector,
 `make test`, `make coverage` and a bare `go test`; `make check-fast` sets `SM_TEST_TX_MAX=500ms`. GitHub's hosted
 runners are slower, so the coverage and race steps in `ci` and `release` use 1 s, and the login-timing and fuzz
 jobs 250 ms (ADR-0062).
+On a machine with more runnable threads than CPUs (load average or run queue over the CPU count, read from
+`/proc/loadavg`), a hold that exceeds the default bound is compared with the bound times 1 plus that ratio, up to 8
+times. An explicit `SM_TEST_TX_MAX`, an idle machine and a system without `/proc/loadavg` keep the bound as it is
+(ADR-0062, update 2026-11-16).
 
 A store opened by `storetest.Open` is set up so that setup work doesn't land inside a test's transactions (ADR-0062,
 update 2026-11-13, hold analysis). `storetest.Seed` flushes its copy of the database to disk before the store opens, because

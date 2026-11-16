@@ -89,6 +89,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   test output and a memory log are uploaded as the `race-output` artifact (CI) or `race-output-release` (release) when
   it fails. `internal/app`'s race cap in CI is now 2 (was 4), because its test binary reached 10-12 GB resident and
   exhausted 16 GB runners; the job takes about 14 minutes at the lower cap, measured on a hosted runner.
+- Test flakes under heavy node load (test-only; no behavior change). The 100 ms write-lock guard (HP-DB-004) now stretches
+  by `1 + load/CPUs` (at most 8x) when more threads are runnable than CPUs, in the default case only: an explicit
+  `SM_TEST_TX_MAX` and an idle machine are unchanged (ADR-0062, update 2026-11-16). The large-recording catch-up test waits
+  for progress instead of a fixed 20 s, the StopFailure scan test waits 30 s instead of 5 s for an event-driven report,
+  the notifier budget test allows one more timed mapping write per elapsed second, the hello-reapply test applies 120
+  journal runs instead of 400, and the fleet e2e cleanup retries emptying the agent directory.
 
 ## [0.1.7] - 2026-11-16
 
