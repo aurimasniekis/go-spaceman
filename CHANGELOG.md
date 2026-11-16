@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-16
+
 **v0.1.8 was tagged but never released** (its release build produced no images), so its changes ship in v0.1.9.
 
 Release on top of v0.1.7. **Central and the node agents both need it**, central first. The main changes are account
@@ -103,6 +105,11 @@ minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to 0060, agent m
 
 ### Fixed
 
+- **Run reports around a node agent's reconnect.** A run report issued between the agent's hello and its welcome went out
+  before the protocol minor was negotiated, so a usage limit it carried was stripped; a run report issued between the hello
+  snapshot and the connection being set went nowhere, and a run end that had only gone out live was never re-sent. Such
+  reports are now held and re-sent after the welcome, and a limit change scanned in that window is held too. A hello that
+  fails clears the hold.
 - Input the node refuses (a busy or blocked program, a takeover, a run that ended) is no longer lost silently: the run
   page shows a "Message not delivered" toast and the audit log records the reason. Operator input containing control
   characters (C0, DEL and C1, other than tab and newline: escape sequences, carriage returns) is refused with a 400; `\r\n` is read as
@@ -2049,7 +2056,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5
