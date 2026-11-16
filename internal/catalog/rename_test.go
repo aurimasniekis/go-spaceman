@@ -699,6 +699,21 @@ func TestCurrentRoleName(t *testing.T) {
 	former("e3", "e1")
 	former("e2")
 
+	// The chain only follows renames after the one it came from: n -> x, then m -> n into the freed name. m leads to
+	// the new n, not on to x (the older n -> x rename was of the previous n).
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "n", TemplateID: "rtp_1"})
+	must(t, err)
+	_, r6, err := f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "n", "x", 0)
+	must(t, err)
+	mark(r6.ID)
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "m", TemplateID: "rtp_1"})
+	must(t, err)
+	_, r7, err := f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "m", "n", 0)
+	must(t, err)
+	mark(r7.ID)
+	resolve("m", "n")
+	resolve("n", "n")
+
 	// A cycle in the table (not reachable through renames) resolves to the name unchanged.
 	f.exec(`INSERT INTO space_role_renames (id, space_id, from_name, to_name, renamed_at, renamed_by, node_state)
 		VALUES ('rrn_c1', 'spc_a', 'p', 'q', 1, 't', 'done'), ('rrn_c2', 'spc_a', 'q', 'p', 2, 't', 'done')`)
