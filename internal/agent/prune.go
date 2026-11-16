@@ -2,12 +2,15 @@ package agent
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
@@ -48,8 +51,84 @@ func (a *Agent) pruneLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			a.pruneRuns(ctx)
+			a.sweepOrphanRecordings(ctx)
 		}
 	}
+}
+
+// orphanRecordingAge is how long an unreferenced recording directory must have been untouched before the sweep removes it.
+const orphanRecordingAge = 24 * time.Hour
+
+// sweepOrphanRecordings removes the recording directories earlier releases left behind when they pruned a run: the
+// directory of a run with a well-formed ID and no journal row (in any state, so the journal's pins and in-use sets are
+// untouched), with nothing pending to ship, nothing in it modified for orphanRecordingAge. It stays inside the runs
+// folder, never follows a symlink and logs one line per sweep. It returns how many directories it removed.
+func (a *Agent) sweepOrphanRecordings(ctx context.Context) int {
+	root := filepath.Join(a.o.DataDir, "runs")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	rows, err := a.j.runs(ctx, false)
+	if err != nil {
+		return 0
+	}
+	journaled := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		journaled[r.RunID] = true
+	}
+	cutoff := a.now().Add(-orphanRecordingAge)
+	var n int
+	var freed int64
+	for _, e := range entries {
+		id := e.Name()
+		if ctx.Err() != nil {
+			break
+		}
+		if !e.IsDir() || !ids.Valid(ids.Run, id) || journaled[id] { // IsDir is false for a symlink
+			continue
+		}
+		dir := a.RecordingDir(id)
+		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || a.recordingPending(id) {
+			continue
+		}
+		size, newest, ok := recordingTreeStat(dir)
+		if !ok || newest.After(cutoff) {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			a.log.Warn("orphan recording removal", slog.String(obs.FieldRunID, id), obs.Err(err))
+			continue
+		}
+		n++
+		freed += size
+	}
+	if n > 0 {
+		a.log.Info("orphan recordings removed", slog.Int("dirs", n), slog.Int64("bytes", freed))
+	}
+	return n
+}
+
+// recordingTreeStat returns the total size of the files under dir and the newest modification time of anything in it
+// (links are not followed); ok is false when the tree could not be read.
+func recordingTreeStat(dir string) (size int64, newest time.Time, ok bool) {
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+		}
+		if fi.Mode().IsRegular() {
+			size += fi.Size()
+		}
+		return nil
+	})
+	return size, newest, err == nil
 }
 
 // retention returns the configured journal retention, never shorter than claudePinWindow: the journal's runs are where

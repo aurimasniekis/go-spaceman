@@ -77,7 +77,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - **Agent journal pruning.** A pruned run's recording directory is now removed with it, once its recording is fully
   acknowledged, and the journal is pruned every hour instead of only after a reconnect, so a long-lived connection no
-  longer keeps ended runs and their recordings forever.
+  longer keeps ended runs and their recordings forever. The same pass removes recording directories that earlier
+  releases left behind: only those of a well-formed run ID with no journal row and nothing modified for 24 hours.
 - The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
   harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
   late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.

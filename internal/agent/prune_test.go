@@ -13,6 +13,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -451,5 +452,63 @@ func TestPruneLoopPrunesOnTimer(t *testing.T) {
 			t.Fatal("periodic prune did not delete the run")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The sweep removes only old, unreferenced recording dirs of well-formed run IDs, and follows no symlink.
+func TestSweepOrphanRecordings(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a := pruneAgent(t, dir)
+	mk := func(id string, age time.Duration) string {
+		d := a.RecordingDir(id)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		f := filepath.Join(d, "seg-1")
+		if err := os.WriteFile(f, []byte("data"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-age)
+		for _, p := range []string{f, d} {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return d
+	}
+	oldOrphan, freshOrphan := ids.New(ids.Run), ids.New(ids.Run)
+	journaled, pinned := ids.New(ids.Run), ids.New(ids.Run)
+	oldDir := mk(oldOrphan, 48*time.Hour)
+	freshDir := mk(freshOrphan, time.Hour)
+	jDir := mk(journaled, 48*time.Hour)
+	pDir := mk(pinned, 48*time.Hour)
+	badDir := mk("not-a-run", 48*time.Hour)
+	seedRun(t, a, journaled, proto.RunExited, 45*day)
+	a.mu.Lock()
+	a.recorders = map[string]*recorder{pinned: {}} // in use
+	a.mu.Unlock()
+	// A symlinked run folder pointing at an old orphan outside the runs folder.
+	outside := filepath.Join(t.TempDir(), "recording")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "runs", ids.New(ids.Run))
+	if err := os.Symlink(filepath.Dir(outside), link); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	_ = os.Chtimes(outside, old, old)
+
+	if n := a.sweepOrphanRecordings(ctx); n != 1 {
+		t.Fatalf("swept %d dirs, want 1", n)
+	}
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatalf("old orphan kept: %v", err)
+	}
+	for name, d := range map[string]string{"fresh orphan": freshDir, "journaled": jDir, "in use": pDir, "bad name": badDir, "symlink target": outside} {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("%s was removed: %v", name, err)
+		}
 	}
 }
