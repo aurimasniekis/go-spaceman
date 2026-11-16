@@ -331,3 +331,17 @@ func TestCardTapInGroupRefused(t *testing.T) {
 		t.Fatal("a group tap adopted a card")
 	}
 }
+
+// A quick action that leaves its form behind (here: the typed-answer prompt is pending) doesn't break the card's
+// other buttons: More… starts over from the card.
+func TestCardMoreAfterAPendingPrompt(t *testing.T) {
+	e := newEnv(t)
+	reg := e.withCards()
+	a := e.addHuman(spA, hid('1'), "question", "Name it", `{"options":["x"],"allow_text":true}`)
+	c := e.postCard(reg, a, "tgl_1")
+	e.tapData(find(c, "Answer"), c)
+	e.tapData(find(c, "More…"), c)
+	if f := e.cardOf(c.MessageID); find(f, "‹ Back") == "" || find(f, "Claim") == "" {
+		t.Fatalf("More… after a prompt: %q (answer %q)", f.Text, e.lastAnswer())
+	}
+}

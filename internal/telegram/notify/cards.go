@@ -332,11 +332,27 @@ func (c *cards) observe(chat int64, r *Resource) (reminded, escalated, reassigne
 }
 
 // touch refreshes the stored time of a card, which is also when its reminders and escalations were last announced.
+// It reads and writes under one lock, so a version recorded meanwhile (an edit of the notifier or the chat) is kept.
 func (c *cards) touch(linkID string, chat int64, r *Resource, now time.Time) {
-	if cd := c.get(chat, r.Key); cd != nil {
-		c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: r.SpaceID, Key: r.Key, Version: cd.version, CreatedAt: now, Thread: cd.thread, ThreadKnown: cd.threadKnown}, nil)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cd, ok := c.byCard[cardKey{chat, r.Key}]
+	if !ok {
+		return
 	}
+	m := Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: r.SpaceID, Key: r.Key, Version: cd.version, CreatedAt: now, Thread: cd.thread, ThreadKnown: cd.threadKnown}
+	if c.store != nil {
+		for _, ct := range cd.conts { // the continuation rows move forward with the card's, as record does
+			cm := m
+			cm.MessageID, cm.Cont = ct.id, true
+			c.pending[[2]int64{chat, int64(ct.id)}] = cm
+		}
+	}
+	c.pendLocked(m)
 }
+
+// retracted: the card says only card.Gone and nothing of the item is left (no continuation, no alert).
+func (cd *cardState) retracted() bool { return cd.gone && len(cd.conts) == 0 && cd.alert == 0 }
 
 func (c *cards) forget(chat int64, k Key) {
 	c.mu.Lock()
@@ -412,11 +428,23 @@ func (c *cards) swapAlert(chat int64, k Key, id int) int {
 	return old
 }
 
-// dropAlert deletes a card's last alert (best effort: one that is gone or too old to delete is forgotten anyway).
-func (c *cards) dropAlert(ctx context.Context, cl *botapi.Client, pay func() error, chat int64, k Key) {
-	if old := c.swapAlert(chat, k, 0); old != 0 && pay() == nil {
-		_ = cl.DeleteMessage(ctx, chat, old)
+// dropAlert deletes a card's last alert. One that is gone or too old to delete is forgotten; any other failure keeps
+// it for the next try and is returned.
+func (c *cards) dropAlert(ctx context.Context, cl *botapi.Client, pay func() error, chat int64, k Key) error {
+	old := c.swapAlert(chat, k, 0)
+	if old == 0 {
+		return nil
 	}
+	err := pay()
+	if err == nil {
+		if err = cl.DeleteMessage(ctx, chat, old); isDeleteGone(err) {
+			err = nil
+		}
+	}
+	if err != nil {
+		c.swapAlert(chat, k, old)
+	}
+	return err
 }
 
 // flush writes the pending mappings in one transaction; it writes nothing when there are none.
@@ -514,18 +542,22 @@ func (c *cards) retract(ctx context.Context, cl *botapi.Client, chat int64, k Ke
 	mu.Lock()
 	defer mu.Unlock()
 	cd := c.get(chat, k)
-	if cd == nil || cd.gone {
+	if cd == nil || cd.retracted() {
 		return nil
 	}
 	pay := payer(ctx)
+	if cd.gone {
+		// A retry: the card already says it is gone, but parts that carry the body (or the alert) are left.
+		return errors.Join(c.dropAlert(ctx, cl, pay, chat, k), c.deleteConts(ctx, cl, pay, chat, k, 0))
+	}
 	_ = pay()
 	_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: card.Gone,
 		ReplyMarkup: cardPart{}.EditMarkup()})
 	switch {
 	case err == nil || isNotModified(err):
 		c.markGone(chat, k)
-		c.dropAlert(ctx, cl, pay, chat, k)
-		return c.deleteConts(ctx, cl, pay, chat, k, 0)
+		// A failure is retried by the sender: retracted() stays false until the alert and the continuations are gone.
+		return errors.Join(c.dropAlert(ctx, cl, pay, chat, k), c.deleteConts(ctx, cl, pay, chat, k, 0))
 	case isGone(err):
 		_ = c.deleteConts(ctx, cl, pay, chat, k, 0)
 		c.dropConts(chat, k, 0)
@@ -555,7 +587,7 @@ func (c *cards) upsertOnce(ctx context.Context, cl *botapi.Client, pay func() er
 			c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now(), Thread: cd.thread, ThreadKnown: cd.threadKnown}, r)
 			c.setSig(chat, r.Key, sig)
 			if r.Final {
-				c.dropAlert(ctx, cl, pay, chat, r.Key) // settled: the reminder about it is noise now
+				_ = c.dropAlert(ctx, cl, pay, chat, r.Key) // settled: the reminder about it is noise now (best effort)
 			}
 			return c.syncConts(ctx, cl, pay, send, linkID, chat, r, spaceID, cd.messageID, parts, protect)
 		case isGone(err) && !r.Final:

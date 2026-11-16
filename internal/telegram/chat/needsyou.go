@@ -358,6 +358,12 @@ func (h *Handler) humanCallback(ctx context.Context, q *botapi.CallbackQuery, l 
 	defer h.formMu.Unlock()
 	key := pendingKey{q.Message.Chat.ID, q.Message.MessageID}
 	fm := h.formFor(key, l.ID)
+	if fm != nil && fm.fromCard && fm.back == backCard && isCardVerb(verb) {
+		// A quick action left its form behind (a prompt pending, a refused answer) while the card stayed on screen: a
+		// card button starts over from the card.
+		h.dropForm(key)
+		fm = nil
+	}
 	if fm != nil && h.cardMoved(ctx, fm) {
 		h.dropForm(key) // the notifier drew a newer state of the card over the form: the form is stale
 		fm = nil

@@ -396,3 +396,24 @@ func TestDeletedCardDropsItsContinuationRows(t *testing.T) {
 		})
 	}
 }
+
+// A retraction whose continuation delete fails is retried until nothing of the body is left: the card already saying
+// it is gone doesn't end the retries.
+func TestRetractionRetriesLeftoverContinuations(t *testing.T) {
+	e := newEnv(t, 1)
+	defer e.run(nil)()
+	r := question("hum_1", 1)
+	r.Detail = longBody(12)
+	e.change("hum_1", r, 1, changefeed.Created)
+	e.waitExactly(3)
+	muted := []string{"spc_1"}
+	e.editLink(func(l *notify.Link) { l.Prefs.MutedSpaces = &muted })
+	e.fake.FailNext("deleteMessage", 500, "Internal Server Error", 0)
+	r2 := question("hum_1", 2)
+	r2.Detail = longBody(12)
+	e.change("hum_1", r2, 2, changefeed.Updated)
+	e.waitExactly(1)
+	if m := e.fake.Messages(1001)[0]; m.Text != card.Gone {
+		t.Fatalf("card %q", m.Text)
+	}
+}

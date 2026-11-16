@@ -78,7 +78,7 @@ func (n *Notifier) itemURL(spaceID string, k Key) string {
 // it. It shares the card's coalescing key, so it replaces a content edit still waiting in the sender.
 func (n *Notifier) retract(snd *sender.Sender, l *Link, r *Resource) {
 	cd, _ := n.cards.state(l.ChatID, r.Key)
-	if cd == nil || cd.gone {
+	if cd == nil || cd.retracted() {
 		return
 	}
 	chat, linkID, k := l.ChatID, l.ID, r.Key
