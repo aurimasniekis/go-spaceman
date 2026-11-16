@@ -5477,10 +5477,11 @@
     account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
     launches SpaceMan makes itself: `LaunchInput.RequirePoolMember` (not part of the API) is set by the limit-wait resume
     (a switch, a pool-exhausted resume and ADR-0079's resume alike) and by the control supervisor's and autostart's
-    relaunch. When the role has a pool of its own for the harness and the named account is not in it, the ref is dropped:
-    with failover on the pool picks (priority, holds); with failover off, where an unnamed launch would take the space's
-    default and so widen the pool, the pool's first account is named; an empty pool refuses the launch (the wait defers).
-    A role without a pool of its own keeps the named account.
+    relaunch. Role pools apply only while failover is on (decision 3), so the check runs only then. When the role has a
+    pool of its own for the harness and the named account is not in it, the ref is dropped and the pool picks (priority,
+    holds), or refuses the launch when nothing in it is usable (the wait defers). A role without a pool of its own keeps
+    the named account. With failover off, role pools don't apply and the ref is kept: a run launched on the space's
+    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen.
   - Launches that an operator or the API make with a named account do not set the flag and keep today's behaviour: an
     explicit ref names any enabled account bound to the space, inside the role's pool or not. `accounts.Resolve` itself is
     unchanged. The claim-time check of T10 stays as an early decision; this one closes the window after it.

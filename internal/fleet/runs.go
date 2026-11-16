@@ -292,8 +292,12 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
 			}
 			ref := in.AccountRef
-			if in.RequirePoolMember && ref != "" {
-				if ref, err = poolMemberRef(ctx, tx, spaceID, in.Harness, in.Role, ref, avoid != nil); err != nil {
+			// Role pools apply only while failover is on (ADR-0090 decision 3): with it off the resolver ignores them, so
+			// a run launched on the space default outside the pool keeps its account. Phrased as "the avoid function is
+			// set" so a later gate on the same function (the headroom gate) switches this with one line.
+			rolePoolsApply := avoid != nil
+			if in.RequirePoolMember && ref != "" && rolePoolsApply {
+				if ref, err = poolMemberRef(ctx, tx, spaceID, in.Harness, in.Role, ref); err != nil {
 					return err
 				}
 			}
@@ -1224,10 +1228,10 @@ func (svc *Service) KickSpace(ctx context.Context, spaceID string) {
 }
 
 // poolMemberRef keeps a named account ref only while it is still in the role's pool. A role with a pool of its own never
-// widens, so a ref that left it is dropped (ADR-0090): with failover on it becomes "" and the pool picks (priority, holds);
-// with failover off, where an unnamed launch would take the space's default, the pool's first account is named. A role
-// without a pool of its own keeps the ref; an empty pool refuses the launch.
-func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref string, failover bool) (string, error) {
+// widens (ADR-0090), so a ref that left it is dropped to "" and the resolver's scoped path picks from the pool (priority,
+// holds) or refuses when nothing is usable. A role without a pool of its own keeps the ref. Callers run it only when role
+// pools apply at all (failover on); see the call site.
+func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref string) (string, error) {
 	scoped, err := accounts.RoleScoped(ctx, tx, spaceID, harness, role)
 	if err != nil || !scoped {
 		return ref, err
@@ -1236,13 +1240,10 @@ func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, re
 	if err != nil {
 		return "", err
 	}
-	switch {
-	case slices.Contains(pool, ref):
+	// Stored refs (a run's launch spec, a wait's account) are resolved account IDs, and PoolAccounts returns IDs, so
+	// comparing IDs is enough.
+	if slices.Contains(pool, ref) {
 		return ref, nil
-	case failover:
-		return "", nil
-	case len(pool) > 0:
-		return pool[0], nil
 	}
-	return "", apperr.New(apperr.CodePrecondition, "no enabled %s account of role %q's pool is usable; enable one or change the role's pool", harness, role)
+	return "", nil
 }

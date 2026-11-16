@@ -99,16 +99,30 @@ func TestLaunchPoolExplicitOperatorRefKept(t *testing.T) {
 	}
 }
 
-// With failover off an unnamed launch would take the space's default, so a dropped ref names the pool's first account
-// instead; an empty pool refuses the launch.
-func TestLaunchPoolFailoverOffStaysInPool(t *testing.T) {
+// With failover off role pools don't apply (ADR-0090 decision 3), so the check is a no-op: a run on the space default,
+// outside the pool, keeps its account.
+func TestLaunchPoolFailoverOffKeepsRef(t *testing.T) {
 	e := newPoolEnv(t)
 	e.running("run_z", "worker", 2)
 	e.armAndPark("run_z")
 	e.movePool()
 	e.exec(`DELETE FROM space_role_accounts WHERE account_id = 'acc_1'`)
 	e.failoverOn = false
-	if got := e.relaunch("run_z", func(in *LaunchInput) { in.AccountRef = "acc_2" }); got != "acc_3" {
-		t.Fatalf("launched on %q, want acc_3 (the space's default is outside the role pool)", got)
+	if got := e.relaunch("run_z", func(in *LaunchInput) { in.AccountRef = "acc_2" }); got != "acc_2" {
+		t.Fatalf("launched on %q, want acc_2 kept (failover off: role pools don't apply)", got)
+	}
+}
+
+// A resume whose account is still a pool member keeps it, even with a higher-priority member present.
+func TestLaunchPoolMemberKeptOverHigherPriority(t *testing.T) {
+	e := newPoolEnv(t)
+	e.running("run_m", "worker", 2)
+	e.armAndPark("run_m")
+	e.movePool()
+	e.exec(`UPDATE space_role_accounts SET priority = 10 WHERE account_id = 'acc_1'`)
+	e.exec(`UPDATE space_role_accounts SET priority = 100 WHERE account_id = 'acc_3'`)
+	e.exec(`UPDATE usage_limits SET cleared_at = 1`)
+	if got := e.relaunch("run_m", func(in *LaunchInput) { in.AccountRef = "acc_3" }); got != "acc_3" {
+		t.Fatalf("launched on %q, want the member acc_3 kept", got)
 	}
 }
