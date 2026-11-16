@@ -51,10 +51,12 @@ function BindModal({ spaceId, current, onClose }: { spaceId: string; current: Ac
       try {
         unwrap(await api.PUT('/spaces/{space_id}/accounts', {
           params: { path: { space_id: spaceId } },
-          body: { items: value.picked.map((id) => ({ account_id: id, default: Object.values(value.defaults).includes(id) })) },
+          // A kept account keeps its pool priority; choosing accounts must not reset the failover order.
+          body: { items: value.picked.map((id) => ({ account_id: id, default: Object.values(value.defaults).includes(id), priority: current.find((b) => b.account_id === id)?.priority })) },
         }))
         void qc.invalidateQueries({ queryKey: keys.spaceAccounts(spaceId) })
         void qc.invalidateQueries({ queryKey: keys.accounts })
+        void qc.invalidateQueries({ queryKey: keys.rolePools(spaceId) })
         notifyOk('Accounts saved')
         onClose()
       } catch (e) {

@@ -4,9 +4,9 @@ import type { ReactNode } from 'react'
 import { isMiniApp } from '@/api/session'
 import { useHumanActions, useInbox, useMessages, useRuns, useXSpaceRequests } from '@/api/queries'
 
-type Section = 'overview' | 'terminals' | 'inbox' | 'queue' | 'human' | 'messages' | 'repositories' | 'knowledge' | 'memory' | 'events' | 'schedules' | 'limits' | 'cross-space'
+type Section = 'overview' | 'terminals' | 'inbox' | 'queue' | 'human' | 'messages' | 'repositories' | 'knowledge' | 'memory' | 'events' | 'schedules' | 'limits' | 'accounts' | 'usage' | 'cross-space'
 type To = '/spaces/$spaceId' | '/spaces/$spaceId/terminals' | '/spaces/$spaceId/inbox' | '/spaces/$spaceId/queue' | '/spaces/$spaceId/human' | '/spaces/$spaceId/messages' | '/spaces/$spaceId/repositories'
-  | '/spaces/$spaceId/knowledge' | '/spaces/$spaceId/memory' | '/spaces/$spaceId/events' | '/spaces/$spaceId/schedules' | '/spaces/$spaceId/limits' | '/spaces/$spaceId/cross-space'
+  | '/spaces/$spaceId/knowledge' | '/spaces/$spaceId/memory' | '/spaces/$spaceId/events' | '/spaces/$spaceId/schedules' | '/spaces/$spaceId/limits' | '/spaces/$spaceId/accounts' | '/spaces/$spaceId/usage' | '/spaces/$spaceId/cross-space'
 
 /**
  * Section links of a space; inbox, human actions and messages show how many items wait. They are navigation links
@@ -22,7 +22,7 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
   const incoming = (useXSpaceRequests(spaceId, !mini).data ?? []).filter((r) => r.side === 'incoming' && r.state === 'pending').length
   const running = (useRuns(spaceId).data ?? []).filter((r) => !['exited', 'failed', 'lost'].includes(r.observed)).length
   const active: Section = path.includes('/terminals') || path.includes('/runs/') ? 'terminals' : path.includes('/inbox') ? 'inbox' : path.includes('/events') ? 'events' : path.includes('/queue') ? 'queue'
-    : path.includes('/schedules') ? 'schedules' : path.includes('/limits') ? 'limits' : path.includes('/repositories') ? 'repositories'
+    : path.includes('/schedules') ? 'schedules' : path.includes('/limits') ? 'limits' : path.includes('/accounts') ? 'accounts' : path.includes('/usage') ? 'usage' : path.includes('/repositories') ? 'repositories'
     : path.includes('/human') ? 'human' : path.includes('/messages') ? 'messages' : path.includes('/memory') ? 'memory' : path.includes('/knowledge') ? 'knowledge' : path.includes('/cross-space') ? 'cross-space' : 'overview'
   const count = (n: number, color?: string) => (n > 0 ? <Badge size="xs" color={color} circle={n < 10}>{n}</Badge> : null)
   const items: { key: Section; to: To; label: string; extra?: ReactNode }[] = [
@@ -38,6 +38,8 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
     { key: 'events', to: '/spaces/$spaceId/events', label: 'Events' },
     { key: 'schedules', to: '/spaces/$spaceId/schedules', label: 'Schedules' },
     { key: 'limits', to: '/spaces/$spaceId/limits', label: 'Limits' },
+    { key: 'accounts', to: '/spaces/$spaceId/accounts', label: 'Accounts' },
+    { key: 'usage', to: '/spaces/$spaceId/usage', label: 'Usage' },
     { key: 'cross-space', to: '/spaces/$spaceId/cross-space', label: 'Cross-space', extra: count(incoming, 'owlYellow') },
   ]
   // Sections whose pages need operations the Mini App is refused (TelegramExcluded) are left out.

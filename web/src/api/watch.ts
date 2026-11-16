@@ -85,6 +85,8 @@ export function applyChange(qc: QueryClient, c: Change) {
       invalidate(qc, keys.queue(c.resource_id))
       invalidate(qc, keys.space(c.resource_id))
       invalidate(qc, keys.spaceAccounts(c.resource_id))
+      invalidate(qc, keys.rolePools(c.resource_id))
+      invalidate(qc, keys.accountWindows(c.resource_id))
       invalidate(qc, keys.restore)
       invalidate(qc, keys.spaceRoles(c.resource_id))
       invalidate(qc, keys.spaceHumanTypes(c.resource_id))
@@ -100,6 +102,8 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'account':
       invalidate(qc, keys.accounts)
       invalidate(qc, ['space-accounts'])
+      invalidate(qc, ['role-pools'])
+      invalidate(qc, ['account-windows'])
       break
     case 'run':
       if (c.space_id) {
@@ -199,6 +203,9 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'usage_limit':
       // Every space's holds: a hold on a shared account also shows, redacted, in the other spaces bound to it.
       invalidate(qc, ['usage-limits'])
+      break
+    case 'account_switch':
+      if (c.space_id) invalidate(qc, keys.accountSwitches(c.space_id))
       break
     case 'limit_wait':
       if (c.space_id) invalidate(qc, keys.limitWaits(c.space_id))
