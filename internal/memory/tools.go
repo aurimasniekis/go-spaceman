@@ -17,7 +17,7 @@ import (
 // Control and the dreamer also get spaceman_memory_conflict_list and spaceman_memory_conflict_resolve. Control reaches
 // every role of its space; a dreamer only the roles its dream configuration covers (dreamRoles answers that for a run;
 // nil allows none). Other runs never see them.
-func Tools(svc *Service, dreamRoles func(ctx context.Context, runID string) ([]string, error)) func(r *agenttools.Registry) {
+func Tools(svc *Service, dreamRoles DreamRoles) func(r *agenttools.Registry) {
 	all := []string{agenttools.KindControl, agenttools.KindWorker, agenttools.KindKB, agenttools.KindDreamer, agenttools.KindDiagnostic}
 	return func(r *agenttools.Registry) {
 		agenttools.Add(r, "spaceman_memory_status", "Your role memory's sync state: the history central has preserved, what the node has not synced "+
@@ -80,6 +80,9 @@ func Tools(svc *Service, dreamRoles func(ctx context.Context, runID string) ([]s
 	}
 }
 
+// DreamRoles answers, for a dreamer run, the memory roles its dream covers ("*": every role) and the roles it excludes.
+type DreamRoles func(ctx context.Context, runID string) (roles, exclude []string, err error)
+
 var reconcilers = []string{agenttools.KindControl, agenttools.KindDreamer}
 
 type conflictListIn struct {
@@ -97,17 +100,22 @@ type conflictRow struct {
 }
 
 // reachable returns the roles the run may reconcile (just role when one is named and allowed).
-func reachable(ctx context.Context, svc *Service, p *fleet.RunPrincipal, dreamRoles func(context.Context, string) ([]string, error), role string) ([]string, error) {
+func reachable(ctx context.Context, svc *Service, p *fleet.RunPrincipal, dreamRoles DreamRoles, role string) ([]string, error) {
 	var covered []string // nil: every role of the space
+	var excluded []string
 	switch p.Kind {
 	case agenttools.KindControl:
 	case agenttools.KindDreamer:
 		if dreamRoles == nil {
 			return nil, apperr.New(apperr.CodeForbidden, "this run has no dream configuration")
 		}
-		rs, err := dreamRoles(ctx, p.RunID)
+		rs, exclude, err := dreamRoles(ctx, p.RunID)
 		if err != nil {
 			return nil, err
+		}
+		excluded = exclude
+		if role != "" && slices.Contains(excluded, role) {
+			return nil, apperr.New(apperr.CodeForbidden, "the dream excludes the memory of role %q", role)
 		}
 		if !slices.Contains(rs, "*") {
 			covered = rs
@@ -125,7 +133,7 @@ func reachable(ctx context.Context, svc *Service, p *fleet.RunPrincipal, dreamRo
 		return []string{role}, nil
 	}
 	if covered != nil {
-		return covered, nil
+		return slices.DeleteFunc(slices.Clone(covered), func(r string) bool { return slices.Contains(excluded, r) }), nil
 	}
 	cols, err := svc.List(ctx, p.SpaceID)
 	if err != nil {
@@ -133,7 +141,9 @@ func reachable(ctx context.Context, svc *Service, p *fleet.RunPrincipal, dreamRo
 	}
 	roles := make([]string, 0, len(cols))
 	for _, c := range cols {
-		roles = append(roles, c.Role)
+		if !slices.Contains(excluded, c.Role) {
+			roles = append(roles, c.Role)
+		}
 	}
 	return roles, nil
 }

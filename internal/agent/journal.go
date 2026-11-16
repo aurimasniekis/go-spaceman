@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
@@ -294,15 +295,22 @@ type memRow struct {
 	SpaceID, Role, Acked, LastError string
 	LastAckAt, LastCheckpoint       *time.Time
 	Retries, Conflicts              int
+	// ConflictFolders are the conflicts/ folders of the most recent preserved conflicts, oldest first (one per
+	// increment of Conflicts), so central can tie each conflict it records to its folder exactly.
+	ConflictFolders []string
 }
 
 func (j *Journal) memory(ctx context.Context, spaceID, role string) (memRow, error) {
 	r := memRow{SpaceID: spaceID, Role: role}
 	var ack, cp sql.NullInt64
-	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT acked, last_ack_at, last_checkpoint_at, retries, conflicts, last_error FROM memory_sync
-		WHERE space_id = ? AND role = ?`, spaceID, role).Scan(&r.Acked, &ack, &cp, &r.Retries, &r.Conflicts, &r.LastError)
+	var folders string
+	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT acked, last_ack_at, last_checkpoint_at, retries, conflicts, last_error, conflict_folders FROM memory_sync
+		WHERE space_id = ? AND role = ?`, spaceID, role).Scan(&r.Acked, &ack, &cp, &r.Retries, &r.Conflicts, &r.LastError, &folders)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, nil
+	}
+	if folders != "" {
+		r.ConflictFolders = strings.Split(folders, "\n")
 	}
 	if ack.Valid {
 		t := time.UnixMicro(ack.Int64).UTC()
@@ -324,12 +332,12 @@ func nullTime(t *time.Time) sql.NullInt64 {
 
 func (j *Journal) putMemory(ctx context.Context, r memRow) error {
 	return j.s.W().TxNamed(ctx, "journal.memory", func(tx *store.Tx) error {
-		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO memory_sync (space_id, role, acked, last_ack_at, last_checkpoint_at, retries, conflicts, last_error, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO memory_sync (space_id, role, acked, last_ack_at, last_checkpoint_at, retries, conflicts, last_error, conflict_folders, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (space_id, role) DO UPDATE SET acked = excluded.acked, last_ack_at = excluded.last_ack_at,
 			last_checkpoint_at = excluded.last_checkpoint_at, retries = excluded.retries, conflicts = excluded.conflicts,
-			last_error = excluded.last_error, updated_at = excluded.updated_at`,
-			r.SpaceID, r.Role, r.Acked, nullTime(r.LastAckAt), nullTime(r.LastCheckpoint), r.Retries, r.Conflicts, r.LastError, tx.NowMicros())
+			last_error = excluded.last_error, conflict_folders = excluded.conflict_folders, updated_at = excluded.updated_at`,
+			r.SpaceID, r.Role, r.Acked, nullTime(r.LastAckAt), nullTime(r.LastCheckpoint), r.Retries, r.Conflicts, r.LastError, strings.Join(r.ConflictFolders, "\n"), tx.NowMicros())
 		return err
 	})
 }

@@ -126,6 +126,23 @@ func TestDreamConsolidates(t *testing.T) {
 	if _, err := e.c.Dreams.Start(ctx, admin, sp.ID, cfg.ID); err == nil {
 		t.Fatal("a second concurrent dream started")
 	}
+	// The memory scope of the dreamer's tools is the real MemoryRolesOfRun: the dream's roles and, without include_own,
+	// the dreamer's own role excluded; include_own lifts the exclusion; a run that is no dream is refused.
+	if roles, ex, err := e.c.Dreams.MemoryRolesOfRun(ctx, d1.RunID); err != nil || !slices.Equal(roles, []string{"implementor"}) || !slices.Equal(ex, []string{"dreamer"}) {
+		t.Fatalf("MemoryRolesOfRun: %v %v %v", roles, ex, err)
+	}
+	if _, _, err := e.c.Dreams.MemoryRolesOfRun(ctx, "run_not_a_dream"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("MemoryRolesOfRun of a non-dream: %v", err)
+	}
+	own, err := e.c.Dreams.Create(ctx, admin, sp.ID, dream.Input{Slug: "own", Name: "Own", SpaceRole: "dreamer", MemoryRoles: []string{"*"}, IncludeOwn: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d2, err := e.c.Dreams.Start(ctx, admin, sp.ID, own.ID); err != nil {
+		t.Fatal(err)
+	} else if roles, ex, err := e.c.Dreams.MemoryRolesOfRun(ctx, d2.RunID); err != nil || !slices.Equal(roles, []string{"*"}) || len(ex) != 0 {
+		t.Fatalf("MemoryRolesOfRun with include_own: %v %v %v", roles, ex, err)
+	}
 	manifest, err := os.ReadFile(filepath.Join(dir, "DREAM.md"))
 	if err != nil || !strings.Contains(string(manifest), "memory/implementor/") || !strings.Contains(string(manifest), "s1.jsonl") || strings.Contains(string(manifest), "own.jsonl") {
 		t.Fatalf("DREAM.md: %s %v", manifest, err)

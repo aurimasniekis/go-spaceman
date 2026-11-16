@@ -70,7 +70,7 @@ under `refs/conflicts/` too and reports it, instead of replacing what it acknowl
 
 Agents can check the same with the `spaceman_memory_status` tool. Control and the dreamer can also list the open
 conflicts and mark one reconciled with `spaceman_memory_conflict_list` and `spaceman_memory_conflict_resolve`: control for
-any role of its space, a dreamer for the roles its dream covers. The action is audited with the run as the actor.
+any role of its space, a dreamer for the roles its dream covers (not its own role, unless the dream sets include_own). The action is audited with the run as the actor.
 
 ::: warning Memory is untrusted content
 Memory is written by agents. Treat it like any other agent output: it can be wrong, and it can contain prompt

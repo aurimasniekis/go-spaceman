@@ -249,6 +249,9 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 	return m.preserve(ctx, spaceID, role, instance, head, theirs, strings.Fields(out))
 }
 
+// maxConflictFolders bounds how many recent conflict folders the node remembers and reports.
+const maxConflictFolders = 50
+
 // preserve keeps an instance's conflicting history and moves the instance onto the shared history: the local commits
 // are pushed to refs/conflicts/…, and the local versions of the conflicting files are added under conflicts/ so the
 // role sees them and can reconcile. Nothing is overwritten.
@@ -298,6 +301,10 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	}
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	st.Conflicts++
+	st.ConflictFolders = append(st.ConflictFolders, filepath.Base(dir))
+	if n := len(st.ConflictFolders); n > maxConflictFolders {
+		st.ConflictFolders = st.ConflictFolders[n-maxConflictFolders:]
+	}
 	_ = m.a.j.putMemory(ctx, st)
 	m.a.log.Warn("memory conflict preserved", slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.ref", ref),
 		slog.Int("files", len(files)))
@@ -431,7 +438,7 @@ func (m *memManager) statusOf(ctx context.Context, spaceID, role string) proto.M
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	head := m.git.RevParse(ctx, shared, "refs/heads/main")
 	c := proto.MemoryCollectionStatus{SpaceID: spaceID, Role: role, Head: head, Acked: st.Acked, LastAckAt: st.LastAckAt, LastCheckpoint: st.LastCheckpoint,
-		Conflicts: st.Conflicts, Retries: st.Retries, LastError: st.LastError, ConflictFolders: m.git.ConflictFolders(ctx, shared, head)}
+		Conflicts: st.Conflicts, Retries: st.Retries, LastError: st.LastError, PreservedFolders: st.ConflictFolders}
 	if head != "" && head != st.Acked {
 		c.Pending = true
 		base := st.Acked

@@ -35,7 +35,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `spaceman_memory_conflict_resolve` (control: any role of its space; a dreamer: the roles of its dream), audited as the
   run. A conflict also resolves by itself, as the system actor `memory-reconcile`, when an accepted checkpoint removes
   its `conflicts/<name>/` folder; the preserved ref stays. Schema migration `0060_memory_conflict_folder` (applied on
-  start, forward-only); conflicts recorded before it close through the tool, the CLI or the web UI.
+  start, forward-only; the node journal gets `0009`); the node reports each preserved conflict's folder, so the tie is exact; a
+  git read error resolves nothing; conflicts recorded before it close through the tool, the CLI or the web UI.
 - **Queue policy changes reach control.** When a queue policy write changes `max_active` or an incident setting, control
   gets one system message with each changed field's old and new value (`max_active 2 → 4`) and the audit event; a write
   that changes nothing sends none.
