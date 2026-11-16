@@ -268,3 +268,86 @@ func TestUsageLimitWrapUpAndOldCentral(t *testing.T) {
 		}
 	}
 }
+
+// A run report that comes between the hello and the welcome (the restarted agent's adopt/reconcile) must not go out
+// before the minor is negotiated: it would be stripped of its limit, and central would see the limit unset. It is
+// held and re-sent, with the limit, after the welcome.
+func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	at := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+	reset := at.Add(5 * time.Hour)
+	hold := make(chan struct{})
+	fc := newHeldWSCentral(t, proto.MinorUsageLimit, hold)
+	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
+	fc.next(t, proto.TypeHello) // sent: the connection is set, the welcome is held
+	ccLaunch(a, "run_held")
+	fc.collect(t, "run_held", 100*time.Millisecond)
+	if err := a.j.setRunLimit(context.Background(), "run_held", runLimit{Kind: proto.LimitFiveHour, ResetsAt: &reset, Since: &at, Offset: 1}); err != nil {
+		t.Fatal(err)
+	}
+	a.report(context.Background(), getRun(t, a, "run_held"))
+	if rs := fc.collect(t, "run_held", 200*time.Millisecond); len(rs) != 0 {
+		t.Fatalf("%d reports before the welcome: %+v", len(rs), rs[0].Limit)
+	}
+	close(hold)
+	rs := fc.collect(t, "run_held", 500*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the welcome")
+	}
+	for _, r := range rs {
+		wantOpen(t, "after welcome", r, proto.LimitFiveHour, reset, at)
+	}
+}
+
+// A limit the transcript scan finds between the hello and the welcome (the hello is already built) is held and sent
+// after the welcome, not dropped.
+func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
+	old := limitSettle
+	limitSettle = 10 * time.Millisecond
+	t.Cleanup(func() { limitSettle = old })
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	hold := make(chan struct{})
+	fc := newHeldWSCentral(t, proto.MinorUsageLimit, hold)
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	startAgent(t, a, fc, clk)
+	fc.next(t, proto.TypeHello)
+	ccLaunch(a, "run_scan")
+	// The launch's own report is held too, and its re-send would read the limit from the journal: forget it, so only
+	// the scan can send the limit.
+	a.mu.Lock()
+	if _, ok := a.heldReports["run_scan"]; !ok {
+		a.mu.Unlock()
+		t.Fatal("the launch report was not held")
+	}
+	delete(a.heldReports, "run_scan")
+	a.mu.Unlock()
+	row := getRun(t, a, "run_scan")
+	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	at := clk.Now().Add(-time.Minute)
+	reset := at.Add(5 * time.Hour).Truncate(time.Second)
+	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	// The limit record alone, with no status change: a status report would hold the run too.
+	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at), rt.LimitRecord(proto.LimitFiveHour, reset, at), rt.NoticeRecord(at)); err != nil {
+		t.Fatal(err)
+	}
+	a.limitScan(context.Background(), "run_scan", false)
+	if j := getRun(t, a, "run_scan").Limit; j.Kind != proto.LimitFiveHour {
+		t.Fatalf("limit not journaled: %+v", j)
+	}
+	if rs := fc.collect(t, "run_scan", 200*time.Millisecond); len(rs) != 0 {
+		t.Fatalf("%d reports before the welcome", len(rs))
+	}
+	close(hold)
+	rs := fc.collect(t, "run_scan", 500*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the welcome")
+	}
+	wantOpen(t, "after welcome", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+}
