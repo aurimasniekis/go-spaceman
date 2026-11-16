@@ -438,7 +438,7 @@ func (n *Notifier) sendHome(ctx context.Context, c *botapi.Client, linkID string
 	}
 	// The link may have moved to another chat while this was sent: that chat's state is not this message's. It is
 	// rechecked before anything is recorded, so no row is left for a message the link's state doesn't know; the
-	// message in the chat it left is deleted.
+	// row of the message in the chat it left is dropped from the record.
 	h.mu.Lock()
 	if hl.chat != chat {
 		h.mu.Unlock()
@@ -458,8 +458,11 @@ func (n *Notifier) sendHome(ctx context.Context, c *botapi.Client, linkID string
 			return nil // the summary is there; the pin is tried again with the next edit
 		}
 		h.mu.Lock()
+		defer h.mu.Unlock()
+		if hl.chat != chat || hl.msg != msg { // moved during the pin: its row is already dropped, not recorded again
+			return nil
+		}
 		hl.pinned = true
-		h.mu.Unlock()
 		n.homeRow(linkID, chat, msg, true)
 	}
 	return nil
