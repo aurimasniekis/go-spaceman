@@ -858,6 +858,14 @@ func (c *Central) Serve(ctx context.Context) error {
 			return fmt.Errorf("telegram: %w", err)
 		}
 	}
+	// The Telegram notifier's start position is read before anything can change data (the listener, the recover
+	// passes, the deadline loop): a change made from here on is delivered once it runs. A failure only costs the lazy
+	// start at Run.
+	if c.TelegramNotify != nil {
+		if err := c.TelegramNotify.Prime(ctx); err != nil {
+			c.Log.Warn("telegram notifier: reading the start position failed; it starts when it runs", slog.String("error", err.Error()))
+		}
+	}
 	srv := c.publicServer(ctx)
 	errc := make(chan error, 2)
 	go func() {
@@ -932,7 +940,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.TelegramBot.Start(ctx)
 	// Telegram settings: the cache reloads on every published change.
 	go c.TelegramSettings.Run(ctx)
-	// Telegram notifications: starts at the newest change; sends nothing while the bot is off.
+	// Telegram notifications: starts at the position Prime read; sends nothing while the bot is off.
 	go func() { _ = c.TelegramNotify.Run(ctx) }()
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)

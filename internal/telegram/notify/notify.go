@@ -193,7 +193,8 @@ type Notifier struct {
 	notices *notices
 	home    *home
 
-	cursor int64 // only the Run goroutine touches it
+	cursor int64 // Prime sets it before Run starts; after that only the Run goroutine touches it
+	primed bool  // Prime read the start position, so Run starts from cursor instead of reading Latest
 
 	sweepNow  chan struct{} // the link list was reloaded: sweep (see kickSweep)
 	ready     chan struct{} // closed once Run has subscribed and read its start position
@@ -231,6 +232,18 @@ func New(o Options) *Notifier {
 // doesn't replay, so a caller that produces a change and expects a card (a test, say) waits for it first.
 func (n *Notifier) Ready() <-chan struct{} { return n.ready }
 
+// Prime reads the start position, so a change made after it is delivered once Run starts. Central calls it before
+// anything that can change data (the HTTP listener, the recover passes, the deadline loop), and starts Run later. A
+// failed Prime leaves Run to read the start position itself, as before. It must finish before Run starts.
+func (n *Notifier) Prime(ctx context.Context) error {
+	latest, err := n.o.Feed.Latest(ctx)
+	if err != nil {
+		return err
+	}
+	n.cursor, n.primed = latest, true
+	return nil
+}
+
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
 // between is seen; a failed start read is retried by the next wake-up of the loop's safety timer.
 func (n *Notifier) Run(ctx context.Context) error {
@@ -256,7 +269,12 @@ func (n *Notifier) Run(ctx context.Context) error {
 		n.cursor, started = latest, true
 		n.readyOnce.Do(func() { close(n.ready) })
 	}
-	start()
+	if n.primed {
+		started = true
+		n.readyOnce.Do(func() { close(n.ready) }) // subscribed above, and the start position is Prime's
+	} else {
+		start()
+	}
 	n.loadNotices(ctx)
 	n.loadHome(ctx)
 	flush := time.NewTicker(n.o.FlushEvery)
@@ -269,6 +287,12 @@ func (n *Notifier) Run(ctx context.Context) error {
 	}
 	var late <-chan time.Time  // armed after an access event: the caches it refreshes may be read a moment later than it
 	var again <-chan time.Time // armed once after a failed feed read: the unread rest is processed without a new change
+	if n.primed {              // what changed between Prime and the subscription has no wake-up of its own
+		if n.process(ctx) {
+			again = time.After(n.o.RetryAfter)
+		}
+		armHome()
+	}
 	for {
 		select {
 		case <-ctx.Done():
