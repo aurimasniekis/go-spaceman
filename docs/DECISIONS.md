@@ -5484,11 +5484,15 @@
     account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
     launches SpaceMan makes itself: `LaunchInput.RequirePoolMember` (not part of the API) is set by the limit-wait resume
     (a switch, a pool-exhausted resume and ADR-0079's resume alike) and by the control supervisor's and autostart's
-    relaunch. Role pools apply only while failover is on (decision 3), so the check runs only then. When the role has a
+    relaunch. Role pools apply only while failover is on (decision 3) or the launch-time headroom gate is on (decision 4),
+    so the check runs only then: with the gate on, the role's pool governs launches and SpaceMan's resumes even with
+    failover off, and a ref outside the pool is dropped so the gate picks within it. When the role has a
     pool of its own for the harness and the named account is not in it, the ref is dropped and the pool picks (priority,
     holds), or refuses the launch when nothing in it is usable (the wait defers). A role without a pool of its own keeps
     the named account. With failover off, role pools don't apply and the ref is kept: a run launched on the space's
-    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen.
+    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen. A gate refusal's wait
+    is capped at one hour from now (the age after which the usage ledger stops counting a window), so a distant reset
+    (seven days) does not defer autostart or a limit-wait resume for days.
   - Launches that an operator or the API make with a named account do not set the flag and keep today's behaviour: an
     explicit ref names any enabled account bound to the space, inside the role's pool or not. `accounts.Resolve` itself is
     unchanged. The claim-time check of T10 stays as an early decision; this one closes the window after it.
