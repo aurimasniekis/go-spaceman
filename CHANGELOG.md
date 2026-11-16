@@ -75,6 +75,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Input the node refuses (a busy or blocked program, a takeover, a run that ended) is no longer lost silently: the run
+  page shows a "Message not delivered" toast and the audit log records the reason. Operator input containing control
+  characters other than tab and newline (escape sequences, carriage returns) is refused with a 400; `\r\n` is read as
+  `\n`. A restored space starts control as soon as its lease is granted instead of at the next sweep.
 - The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
   harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
   late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.

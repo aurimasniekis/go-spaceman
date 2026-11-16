@@ -392,4 +392,27 @@ func TestControlAutostartOnUnpause(t *testing.T) {
 	if n := controls(); n != 1 {
 		t.Fatalf("control started %d times", n)
 	}
+
+	// Auto-start off: stop control, queue work while paused, and the resume starts nothing.
+	runs, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 50)
+	for _, r := range runs {
+		if r.Kind == "control" && r.Desired == "running" {
+			if _, err := e.c.Fleet.StopRun(ctx, admin, r.ID, "kill", "auto-start off case"); err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, "control stopped", func() bool { return e.run1(r.ID).Observed == "exited" })
+		}
+	}
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlAutostart: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	setState("paused", fleet.PauseHold)
+	if _, _, err := e.c.Inbox.Create(ctx, admin, sp.ID, inbox.CreateInput{SourceKind: "operator", SourceID: "usr_admin", Body: "Waiting, auto-start off"}); err != nil {
+		t.Fatal(err)
+	}
+	setState("active", "")
+	time.Sleep(time.Second)
+	if n := controls(); n != 1 {
+		t.Fatalf("control started on resume with auto-start off: %d control runs", n)
+	}
 }

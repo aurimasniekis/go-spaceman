@@ -97,6 +97,9 @@ type Options struct {
 	// OnSpaceState is called after an operator paused, resumed, archived or restored a space (SetSpaceState), with
 	// the new state: deferred work can go out on resume, and subscriptions that stop while paused stop or start.
 	OnSpaceState func(spaceID, state string)
+	// OnLeaseGranted is called after a lease started, moved or resumed (not on a plain renewal): work that waited for the
+	// lease, such as control after a restore, starts now instead of at the next sweep.
+	OnLeaseGranted func(spaceID string)
 	// OnSpaceRenamed is called after a commit that changed a space's name (UpdateSpace), with the new name: the Telegram
 	// topics of the space take it. It runs on the request's goroutine, so it must not block.
 	OnSpaceRenamed func(ctx context.Context, spaceID, name string)

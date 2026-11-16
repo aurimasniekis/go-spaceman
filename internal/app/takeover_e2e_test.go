@@ -295,3 +295,50 @@ func TestMessageBusyAgentIsDeliveredAtOnce(t *testing.T) {
 		}
 	}
 }
+
+// The operator is told when the node refuses their message (here: a busy program and an unforced send), and input
+// holding control characters is refused before anything is queued.
+func TestRejectedInputIsSurfaced(t *testing.T) {
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "rejected", Name: "Rejected", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "impl-rejected", Harness: hns.KindClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "running", func() bool { return e.run1(r.ID).Observed == "running" })
+	e.run.SetStatus(e.run1(r.ID).TerminalID, "working")
+
+	for _, bad := range []string{"\x1b[31mred", "a\rb", "bell\a", "nul\x00"} {
+		if err := e.c.Fleet.SendInput(ctx, admin, r.ID, bad, true); err == nil {
+			t.Fatalf("input %q was accepted", bad)
+		}
+	}
+	if err := e.c.Fleet.SendInput(ctx, admin, r.ID, "tab\tand\r\nnewline\n", true); err != nil {
+		t.Fatalf("plain text refused: %v", err)
+	}
+	// A normal message still reaches the program (the submit keystroke is the runner's, not part of the text); CRLF is read as LF.
+	term := e.run1(r.ID).TerminalID
+	eventually(t, "normal message submitted", func() bool {
+		in := e.run.Inputs(term)
+		return len(in) == 1 && in[0] == "tab\tand\nnewline\n"
+	})
+
+	if err := e.c.Fleet.SendInput(ctx, admin, r.ID, "too early", false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "rejection audited", func() bool {
+		var n int
+		err := e.c.Store.ReadDB().QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE action = 'run.input_rejected' AND target_id = ?`, r.ID).Scan(&n)
+		return err == nil && n == 1
+	})
+}

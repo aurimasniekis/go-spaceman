@@ -17,7 +17,9 @@ import { TerminalView } from '@/features/terminal/TerminalView'
 import { atLeast, roleIn } from '@/lib/access'
 import { useNarrow } from '@/lib/media'
 import { datetime, isSet } from '@/lib/format'
-import { notifyError, notifyOk } from '@/lib/notify'
+import { notifications } from '@mantine/notifications'
+import { changeListeners, type Change } from '@/api/watch'
+import { closeButtonProps, notifyError, notifyOk } from '@/lib/notify'
 import { RunLimitBadge } from '@/features/limits/LimitTime'
 import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText, agentMessageBody } from './runInfo'
 import { type Dependency, dependencyText, runHarnessVersion } from './harnessVersion'
@@ -74,6 +76,17 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
     })
   }
   const onKeys = useTakeoverInput(spaceId, r.id, r, me)
+  // The node refused a message sent to this run (a busy or blocked program, a takeover): tell the operator (the reason is in the audit log).
+  useEffect(() => {
+    const runId = r.id
+    const listener = (c: Change) => {
+      if (c.resource_type === 'run_input_rejected' && c.resource_id === runId) {
+        notifications.show({ color: 'owlRed', title: 'Message not delivered', message: 'The program did not take it (it may be busy, waiting on a prompt, or taken over). Send it again when it is ready.', closeButtonProps })
+      }
+    }
+    changeListeners.add(listener)
+    return () => { changeListeners.delete(listener) }
+  }, [r.id])
   const stop = async (m: 'interrupt' | 'kill') => {
     try {
       qc.setQueryData(keys.run(spaceId, r.id), unwrap(await api.POST('/spaces/{space_id}/runs/{run_id}/stop', {

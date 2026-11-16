@@ -356,6 +356,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.TelegramTopics.Renamed(ctx, spaceID, name) // the topics take the new name (ADR-0089); one read and queued calls
 			}
 		},
+		OnLeaseGranted: func(string) {
+			if c.Notifier != nil {
+				c.Notifier.Kick() // control waited for the lease (a restored space), so it starts now
+			}
+		},
 		OnSpaceState: func(spaceID, state string) {
 			if c.Events != nil {
 				c.Events.SpaceStateChanged() // subscriptions with while_paused stop stop or start (SM-EVT-014)

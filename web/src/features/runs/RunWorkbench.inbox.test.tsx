@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type InboxItem, type Me, type Run } from '@/api/client'
 import { keys } from '@/api/queries'
+import { changeListeners } from '@/api/watch'
 import { NARROW_QUERY } from '@/lib/media'
 import { RunWorkbench } from './RunWorkbench'
 
@@ -166,5 +167,16 @@ describe('terminal composer: Send as inbox item', () => {
     await waitFor(() => expect(post).toHaveBeenCalled())
     expect(await within(dialog).findByRole('alert')).toBeInTheDocument()
     expect(message().value).toBe('Look at the flaky test')
+  })
+})
+
+describe('terminal view: rejected input', () => {
+  it('tells the operator when the node refused a message for this run, and ignores other runs', async () => {
+    await show(operator)
+    const at = Date.now()
+    for (const l of changeListeners) l({ seq: 1, at, space_id: SPACE, resource_type: 'run_input_rejected', resource_id: 'run_other', action: 'created' })
+    expect(screen.queryByText('Message not delivered')).toBeNull()
+    for (const l of changeListeners) l({ seq: 2, at, space_id: SPACE, resource_type: 'run_input_rejected', resource_id: 'run_1', action: 'created' })
+    expect(await screen.findByText('Message not delivered')).toBeTruthy()
   })
 })
