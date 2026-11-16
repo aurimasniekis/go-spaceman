@@ -300,3 +300,38 @@ func TestStoreCardThread(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreCursorsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := notify.StoreCursors{S: storetest.Open(t)}
+	if _, _, ok, err := c.Load(ctx); err != nil || ok {
+		t.Fatalf("Load before any save = ok %v, %v", ok, err)
+	}
+	at := time.UnixMicro(1_700_000_000_123_456)
+	for _, seq := range []int64{7, 9} {
+		if err := c.Save(ctx, seq, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if seq, got, ok, err := c.Load(ctx); err != nil || !ok || seq != 9 || !got.Equal(at) {
+		t.Errorf("Load = %d, %v, %v, %v; want 9 at %v", seq, got, ok, err, at)
+	}
+}
+
+// A value that doesn't parse reads as "none saved", never as an error or a position.
+func TestStoreCursorsMalformedValueIsNoneSaved(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	c := notify.StoreCursors{S: st}
+	for _, v := range []string{"", "12", "x:1", "1:y", "-3:5", "1:2:3"} {
+		err := st.W().TxNamed(ctx, "test.cursor", func(tx *store.Tx) error {
+			return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: "telegram.notifier_cursor", Value: v, UpdatedAt: 1})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seq, _, ok, err := c.Load(ctx); err != nil || ok {
+			t.Errorf("Load of %q = %d, ok %v, %v; want none saved", v, seq, ok, err)
+		}
+	}
+}

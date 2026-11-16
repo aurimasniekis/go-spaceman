@@ -261,3 +261,67 @@ export async function seedWorld(page: Page, tag = ''): Promise<World> {
   await api.call('POST', '/tokens', { name: `overflow-ci${t}`, grants: [{ role: 'viewer', domain: '*' }], expires_in_days: 30 })
   return { space: sp.id, peer: peer.id, item: item.id, run: done.id, live: run.id, prompt: prompt.id, template: issueTpl.id, subscription: sub.id }
 }
+
+/**
+ * What a phone shows (mobile emulation, where the layout viewport grows to fit wide content instead of scrolling): the
+ * viewport is the device's, the page is no wider, an open dialog lies inside it, and nothing in the dialog is cut off at
+ * its right edge or the viewport's. Content inside its own scroll box (a table, a code block) is not cut off.
+ */
+export async function phoneProblems(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const out: string[] = []
+    const vw = window.visualViewport?.width ?? window.innerWidth
+    if (Math.abs(vw - window.innerWidth) > 1) out.push(`visual viewport ${vw} differs from the layout viewport ${window.innerWidth} (page zoomed out to fit wide content)`)
+    const doc = document.documentElement
+    if (doc.scrollWidth > window.innerWidth) out.push(`page is wider than the screen: ${doc.scrollWidth}/${window.innerWidth}`)
+    for (const c of Array.from(document.querySelectorAll<HTMLElement>('.mantine-Modal-content, .mantine-Drawer-content'))) {
+      const r = c.getBoundingClientRect()
+      if (r.width === 0) continue
+      if (r.left < -0.5 || r.right > window.innerWidth + 0.5) out.push(`dialog lies outside the screen: ${Math.round(r.left)}..${Math.round(r.right)} of ${window.innerWidth}`)
+      for (const e of Array.from(c.querySelectorAll<HTMLElement>('*'))) {
+        const b = e.getBoundingClientRect()
+        if (b.width === 0 || b.height === 0) continue
+        if (getComputedStyle(e).position === 'fixed' || getComputedStyle(e).visibility === 'hidden') continue
+        let scrollBox = false
+        for (let p = e.parentElement; p && p !== c; p = p.parentElement) {
+          const o = getComputedStyle(p).overflowX
+          if (o === 'auto' || o === 'scroll' || o === 'hidden') { scrollBox = true; break }
+        }
+        if (scrollBox && e.parentElement !== c) continue
+        if (b.right > r.right + 0.5 || b.right > window.innerWidth + 0.5 || b.left < -0.5)
+          out.push(`cut off: ${e.tagName.toLowerCase()}.${String(e.className).split(' ')[0]} ${Math.round(b.left)}..${Math.round(b.right)} (dialog ${Math.round(r.left)}..${Math.round(r.right)})`)
+      }
+    }
+    return out.slice(0, 8)
+  })
+}
+
+/** Pinch-zoom must stay possible: the viewport meta does not forbid it and no element on the page turns it off. */
+export async function zoomBlockers(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const out: string[] = []
+    const meta = document.querySelector('meta[name=viewport]')?.getAttribute('content') ?? ''
+    if (/user-scalable\s*=\s*(no|0)|maximum-scale\s*=\s*1(\.0)?\b/.test(meta)) out.push(`viewport meta: ${meta}`)
+    for (const e of [document.documentElement, document.body, ...Array.from(document.querySelectorAll<HTMLElement>('.mantine-Modal-root, .mantine-Modal-inner, .mantine-Modal-content, .mantine-Drawer-root, .mantine-Drawer-inner, .mantine-Drawer-content, .mantine-Modal-overlay'))]) {
+      const t = getComputedStyle(e).touchAction
+      if (t !== 'auto' && t !== 'manipulation' && !t.includes('pinch-zoom')) out.push(`touch-action ${t} on ${e.tagName.toLowerCase()}.${String(e.className).split(' ')[0]}`)
+    }
+    return out
+  })
+}
+
+/**
+ * Fires a two-finger touchmove (a pinch) at the open dialog and says whether something cancelled it. A cancelled
+ * touchmove is what stops a browser from zooming: Mantine's scroll lock (react-remove-scroll) cancels every touchmove
+ * outside a scrollable box unless it is told to let pinches through (`allowPinchZoom`).
+ */
+export async function pinchCancelled(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    // The topmost dialog: one opened over another covers the one below, whose touches are blocked by design.
+    const target = Array.from(document.querySelectorAll('.mantine-Modal-body, .mantine-Drawer-body')).pop() ?? document.body
+    const touch = (id: number, x: number) => new Touch({ identifier: id, target, clientX: x, clientY: 200 })
+    const ev = new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: [touch(1, 100), touch(2, 250)], targetTouches: [touch(1, 100), touch(2, 250)], changedTouches: [touch(1, 100), touch(2, 250)] })
+    target.dispatchEvent(ev)
+    return ev.defaultPrevented
+  })
+}

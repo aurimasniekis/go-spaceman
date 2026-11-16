@@ -81,6 +81,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   space instead of the chat's current one. A lone letter or number is matched against both an option's position and the
   start of every label ("C" with `Continue`, `Deploy`; "1" with `30 minutes`, `1 hour`): when they name different
   options the bot asks "Which option?" and answers nothing. Any reply to a free-text question is taken as its answer.
+- Telegram notifications are no longer lost for changes made while central starts or while it is restarting: the
+  notifier reads its start position before the listener starts, and resumes from a saved position (up to 5 minutes
+  old) after a restart (ADR-0089 follow-up).
+- **Web, phones: pinch-zoom while a dialog is open, wide editor tables, input zoom.** Mantine's scroll lock cancelled
+  every two-finger touch while a modal or drawer was open, so the page could not be zoomed (or zoomed back out); pinches
+  now pass (`allowPinchZoom`) and one-finger scrolling stays locked. A table in the editor that was wider than its dialog
+  was cut off by the dialog's `overflow-x: hidden`; it now scrolls in its own box. Inputs are 16 px on touch screens, so
+  iOS no longer zooms the page in when one takes focus. `ui-overflow.spec.ts` opens every dialog in phone emulation.
 - The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
   harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
   late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.
