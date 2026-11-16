@@ -424,6 +424,10 @@ func (svc *Service) leaseFor(ctx context.Context, tx *store.Tx, sp db.Space) (pr
 		if err := svc.record(ctx, tx, sp.ID, "space", sp.ID, "updated", sp.Version); err != nil {
 			return proto.LeaseGrant{}, err
 		}
+		if svc.opts.OnLeaseGranted != nil {
+			spaceID := sp.ID
+			tx.AfterCommit(func() { svc.opts.OnLeaseGranted(spaceID) })
+		}
 	}
 	if err := tx.Q.UpsertLease(ctx, db.UpsertLeaseParams{SpaceID: sp.ID, NodeID: sp.NodeID, Generation: gen, GrantedAt: tx.NowMicros(),
 		RenewedAt: tx.NowMicros(), ExpiresAt: exp.UnixMicro(), GraceUs: svc.opts.DisconnectGrace.Microseconds()}); err != nil {

@@ -651,6 +651,10 @@ func (svc *Service) SendInput(ctx context.Context, actor audit.Actor, runID, tex
 	if text == "" || len(text) > 64<<10 {
 		return apperr.New(apperr.CodeInvalid, "text must be 1-65536 bytes")
 	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	if strings.IndexFunc(text, isRefusedControl) >= 0 {
+		return apperr.New(apperr.CodeInvalid, "text must not contain control characters (only tab and newline are allowed)")
+	}
 	var nodeID string
 	err := svc.s.W().TxNamed(ctx, "fleet.send_input", func(tx *store.Tx) error {
 		r, err := tx.Q.GetRun(ctx, runID)
@@ -679,6 +683,20 @@ func (svc *Service) SendInput(ctx context.Context, actor audit.Actor, runID, tex
 		svc.hub.Kick(nodeID)
 	}
 	return err
+}
+
+// inputRejected tells the operator that the node refused the input they sent (a blocked program, a takeover, a run that
+// ended): the run's audit trail gets the reason and the change feed a "run_input_rejected" entry the run page turns into a toast.
+// Notices queued for the run are not the operator's input and are left alone.
+func (svc *Service) inputRejected(ctx context.Context, tx *store.Tx, cmd db.NodeCommand, a proto.Ack) error {
+	if cmd.Kind != proto.CmdInput || a.Result != proto.AckRejected || !cmd.RunID.Valid || !strings.HasPrefix(cmd.IdempotencyKey, "input:") {
+		return nil
+	}
+	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "run.input_rejected", Target: audit.Target{Type: "run", ID: cmd.RunID.String},
+		Details: map[string]any{"reason": truncate(a.Reason, 300)}}); err != nil {
+		return err
+	}
+	return svc.record(ctx, tx, cmd.SpaceID, "run_input_rejected", cmd.RunID.String, "created", 0)
 }
 
 // GetRun returns a run.
@@ -1260,4 +1278,11 @@ func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, re
 		return ref, nil
 	}
 	return "", nil
+}
+
+// isRefusedControl reports a C0 control, DEL or C1 control (U+0080-U+009F) other than tab and newline: an escape
+// sequence or a carriage return typed into the terminal would act on the program instead of being read as the message,
+// and U+009B (CSI) is one in terminals that read C1 (it ends a bracketed paste). Other non-ASCII text is accepted.
+func isRefusedControl(r rune) bool {
+	return (r < 0x20 && r != '\t' && r != '\n') || (r >= 0x7f && r <= 0x9f)
 }
