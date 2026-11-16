@@ -2007,6 +2007,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/account-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's account switches
+         * @description The runs moved to another account of their pool at a usage limit (ADR-0090), newest first, with their state and the fixed reason of one that fell back or failed. Identifiers, kinds and times only.
+         */
+        get: operations["list-space-account-switches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/account-windows": {
         parameters: {
             query?: never;
@@ -6642,6 +6662,38 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        FleetAccountSwitch: {
+            /** Format: date-time */
+            armed_until?: string;
+            /** @enum {string} */
+            cause: "usage_limit" | "operator";
+            /** Format: date-time */
+            created_at: string;
+            from_account_id: string;
+            from_run_id: string;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            id: string;
+            instance_id: string;
+            limit_kind: string;
+            /** Format: date-time */
+            limit_resets_at?: string;
+            limit_wait_id?: string;
+            new_run_id?: string;
+            reason?: string;
+            role: string;
+            /** @enum {string} */
+            run_kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            space_id: string;
+            /** @enum {string} */
+            state: "pending" | "parked" | "resumed" | "succeeded" | "failed" | "fell_back" | "cancelled";
+            to_account_id?: string;
+            /** Format: date-time */
+            updated_at: string;
+            usage_limit_id?: string;
+            /** Format: int64 */
+            version: number;
+        };
         FleetContinuity: {
             detail: string;
             label: string;
@@ -9229,6 +9281,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["CatalogSkill"][];
+        };
+        "List-space-account-switchesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-account-switchesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetAccountSwitch"][];
         };
         "List-space-git-ssh-keysResponse": {
             /**
@@ -17542,6 +17603,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpaceRolePools"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-account-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-account-switchesResponse"];
                 };
             };
             /** @description Error */
