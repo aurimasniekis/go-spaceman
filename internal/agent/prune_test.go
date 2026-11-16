@@ -400,27 +400,98 @@ func TestSendFollowUpSkipsChangedRowAndUsesItsConn(t *testing.T) {
 	}
 }
 
-// A pruned run's recording directory goes with it; the directory of a run that stays is untouched.
+// A pruned run's recording directory goes with it, and so do its quota file and its now-empty run directory; the
+// directory of a run that stays is untouched, and a run directory holding something else stays.
 func TestPruneRemovesRecordingDir(t *testing.T) {
 	ctx := context.Background()
 	a := pruneAgent(t, t.TempDir())
-	seedRun(t, a, "run_old", proto.RunExited, 45*day)
-	seedRun(t, a, "run_recent", proto.RunExited, time.Hour)
-	for _, id := range []string{"run_old", "run_recent"} {
+	oldID, recentID, otherID := ids.New(ids.Run), ids.New(ids.Run), ids.New(ids.Run)
+	seedRun(t, a, oldID, proto.RunExited, 45*day)
+	seedRun(t, a, recentID, proto.RunExited, time.Hour)
+	seedRun(t, a, otherID, proto.RunExited, 45*day)
+	for _, id := range []string{oldID, recentID, otherID} {
 		w, err := recording.Open(recording.Options{Dir: a.RecordingDir(id)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		_ = w.Close() // no records: nothing to ship
+		if err := a.saveRecordingQuota(id, 5<<20); err != nil {
+			t.Fatal(err)
+		}
 		r, _ := a.j.getRun(ctx, id)
 		a.noteSent([]runRow{r})
 	}
+	if err := os.WriteFile(filepath.Join(a.runDir(otherID), "keep.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	a.finalAck(ctx, proto.Reconcile{})
-	if _, err := os.Stat(a.RecordingDir("run_old")); !os.IsNotExist(err) {
+	if _, err := os.Stat(a.RecordingDir(oldID)); !os.IsNotExist(err) {
 		t.Fatalf("pruned run's recording dir still there: %v", err)
 	}
-	if _, err := os.Stat(a.RecordingDir("run_recent")); err != nil {
+	if _, err := os.Stat(a.runDir(oldID)); !os.IsNotExist(err) {
+		t.Fatalf("pruned run's empty run dir still there: %v", err)
+	}
+	if _, err := os.Stat(a.RecordingDir(recentID)); err != nil {
 		t.Fatalf("recording dir of a run still in the journal was removed: %v", err)
+	}
+	if _, err := os.Stat(a.RecordingDir(otherID)); !os.IsNotExist(err) {
+		t.Fatalf("recording dir of the pruned run kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.runDir(otherID), "keep.txt")); err != nil {
+		t.Fatalf("a file the prune does not own was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.runDir(otherID), recordingQuotaFile)); err != nil {
+		t.Fatalf("quota file removed from a run dir that holds something else: %v", err)
+	}
+}
+
+// A run whose journal prune is refused (a pending transcript upload) keeps its recording dir.
+func TestPruneKeepsRecordingDirWhenRowStays(t *testing.T) {
+	ctx := context.Background()
+	for name, insert := range map[string]string{
+		"transcript upload": `INSERT INTO transcript_uploads (run_id, path, size, sha256, done, updated_at) VALUES (?, 'p', 1, 'x', 0, 1)`,
+		"dream pending":     `INSERT INTO dream_pending (run_id, config_id, path, offset) VALUES (?, 'c', 'p', 0)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := pruneAgent(t, t.TempDir())
+			id := ids.New(ids.Run)
+			seedRun(t, a, id, proto.RunExited, 45*day)
+			w, err := recording.Open(recording.Options{Dir: a.RecordingDir(id)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = w.Close()
+			err = a.j.s.W().TxNamed(ctx, "test.hold", func(tx *store.Tx) error {
+				_, err := tx.SQL.ExecContext(ctx, insert, id)
+				return err
+			})
+			if err != nil {
+				t.Fatalf("seeding %s: %v", name, err)
+			}
+			r, _ := a.j.getRun(ctx, id)
+			a.noteSent([]runRow{r})
+			a.finalAck(ctx, proto.Reconcile{})
+			if got := runIDs(t, a); len(got) != 1 {
+				t.Fatalf("run pruned despite the %s: %v", name, got)
+			}
+			if _, err := os.Stat(a.RecordingDir(id)); err != nil {
+				t.Fatalf("recording dir removed although the run stayed: %v", err)
+			}
+		})
+	}
+}
+
+// A malformed run ID removes nothing.
+func TestRemoveRecordingRejectsMalformedID(t *testing.T) {
+	a := pruneAgent(t, t.TempDir())
+	d := a.RecordingDir("run_old")
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a.removeRecording("run_old")
+	a.removeRecording("../../x")
+	if _, err := os.Stat(d); err != nil {
+		t.Fatalf("a malformed ID removed a directory: %v", err)
 	}
 }
 
@@ -455,7 +526,7 @@ func TestPruneLoopPrunesOnTimer(t *testing.T) {
 	}
 }
 
-// The sweep removes only old, unreferenced recording dirs of well-formed run IDs, and follows no symlink.
+// The sweep removes only old, unreferenced, segmentless recording dirs of well-formed run IDs, and follows no symlink.
 func TestSweepOrphanRecordings(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -465,7 +536,7 @@ func TestSweepOrphanRecordings(t *testing.T) {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		f := filepath.Join(d, "seg-1")
+		f := filepath.Join(d, "notes.txt")
 		if err := os.WriteFile(f, []byte("data"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -510,5 +581,106 @@ func TestSweepOrphanRecordings(t *testing.T) {
 		if _, err := os.Stat(d); err != nil {
 			t.Errorf("%s was removed: %v", name, err)
 		}
+	}
+}
+
+// writeSegmented writes a real recording (one record, so a seg-*.smrec.zst segment) into the run's recording dir and ages
+// everything under it.
+func writeSegmented(t *testing.T, a *Agent, id string, age time.Duration) string {
+	t.Helper()
+	d := a.RecordingDir(id)
+	w, err := recording.Open(recording.Options{Dir: d})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Add(recording.Record{Kind: "out", Data: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !hasSegments(d) {
+		t.Fatal("the writer left no segment")
+	}
+	old := time.Now().Add(-age)
+	_ = filepath.WalkDir(d, func(p string, _ os.DirEntry, _ error) error { return os.Chtimes(p, old, old) })
+	return d
+}
+
+// A recording with real segments and no journal row is kept however old it is, and the sweep does not decode it.
+func TestSweepKeepsSegmentedRecordingWithoutJournalRow(t *testing.T) {
+	a := pruneAgent(t, t.TempDir())
+	id := ids.New(ids.Run)
+	d := writeSegmented(t, a, id, 48*time.Hour)
+	reads := 0
+	old := readRecording
+	readRecording = func(dir string, after uint64) (recording.ReadResult, error) { reads++; return old(dir, after) }
+	t.Cleanup(func() { readRecording = old })
+	if n := a.sweepOrphanRecordings(context.Background()); n != 0 {
+		t.Fatalf("swept %d dirs, want 0", n)
+	}
+	if !hasSegments(d) {
+		t.Fatal("a segmented recording without a journal row was removed")
+	}
+	if reads != 0 {
+		t.Fatalf("an unknown run's recording was decoded %d times", reads)
+	}
+}
+
+// For a run central's acknowledgement is unknown for, any segment counts as pending without a decode: a corrupt segment
+// is pending too, and the decoder is never called.
+func TestRecordingPendingUnknownRunIsNotDecoded(t *testing.T) {
+	a := pruneAgent(t, t.TempDir())
+	id := ids.New(ids.Run)
+	d := a.RecordingDir(id)
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "seg-000001.smrec.zst"), []byte("not zstd"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := readRecording
+	readRecording = func(string, uint64) (recording.ReadResult, error) {
+		t.Error("recording decoded for an unknown run")
+		return recording.ReadResult{}, nil
+	}
+	t.Cleanup(func() { readRecording = old })
+	if !a.recordingPending(id) {
+		t.Fatal("a segmented recording of an unknown run is not pending")
+	}
+}
+
+// The periodic loop also runs the orphan sweep.
+func TestPruneLoopRunsSweep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake := clock.NewFake(time.Now())
+	a := pruneAgent(t, t.TempDir())
+	a.o.Clock = fake
+	old := pruneEvery
+	pruneEvery = 10 * time.Millisecond
+	t.Cleanup(func() { pruneEvery = old })
+	id := ids.New(ids.Run)
+	d := a.RecordingDir(id)
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(d, past, past)
+	go a.pruneLoop(ctx)
+	time.Sleep(100 * time.Millisecond) // too young: kept
+	if _, err := os.Stat(d); err != nil {
+		t.Fatalf("a young orphan was swept: %v", err)
+	}
+	fake.Advance(48 * time.Hour)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(d); os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the periodic loop did not sweep the orphan")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

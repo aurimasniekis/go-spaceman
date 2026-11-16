@@ -59,10 +59,13 @@ func (a *Agent) pruneLoop(ctx context.Context) {
 // orphanRecordingAge is how long an unreferenced recording directory must have been untouched before the sweep removes it.
 const orphanRecordingAge = 24 * time.Hour
 
-// sweepOrphanRecordings removes the recording directories earlier releases left behind when they pruned a run: the
-// directory of a run with a well-formed ID and no journal row (in any state, so the journal's pins and in-use sets are
-// untouched), with nothing pending to ship, nothing in it modified for orphanRecordingAge. It stays inside the runs
-// folder, never follows a symlink and logs one line per sweep. It returns how many directories it removed.
+// sweepOrphanRecordings removes the recording directories earlier releases left behind when they pruned a run, and only
+// those that hold no segments: the directory of a run with a well-formed ID and no journal row (in any state, so the
+// journal's pins and in-use sets are untouched), with nothing pending to ship and nothing in it modified for
+// orphanRecordingAge. A recording that has segments and no journal row is always kept: a lost or reset journal makes
+// every run look orphaned, and without central's confirmation the node cannot tell the two apart, so it does not reclaim
+// legacy recordings. The sweep stays inside the runs folder, never follows a symlink and logs one line per sweep. It
+// returns how many directories it removed.
 func (a *Agent) sweepOrphanRecordings(ctx context.Context) int {
 	root := filepath.Join(a.o.DataDir, "runs")
 	entries, err := os.ReadDir(root)
@@ -85,21 +88,19 @@ func (a *Agent) sweepOrphanRecordings(ctx context.Context) int {
 		if ctx.Err() != nil {
 			break
 		}
+		// The cheap checks first; the pending check (which may read the recording) is last.
 		if !e.IsDir() || !ids.Valid(ids.Run, id) || journaled[id] { // IsDir is false for a symlink
 			continue
 		}
 		dir := a.RecordingDir(id)
-		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || a.recordingPending(id) {
+		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
 			continue
 		}
 		size, newest, ok := recordingTreeStat(dir)
-		if !ok || newest.After(cutoff) {
+		if !ok || newest.After(cutoff) || a.recordingPending(id) {
 			continue
 		}
-		if err := os.RemoveAll(dir); err != nil {
-			a.log.Warn("orphan recording removal", slog.String(obs.FieldRunID, id), obs.Err(err))
-			continue
-		}
+		a.removeRecording(id)
 		n++
 		freed += size
 	}
@@ -107,6 +108,31 @@ func (a *Agent) sweepOrphanRecordings(ctx context.Context) int {
 		a.log.Info("orphan recordings removed", slog.Int("dirs", n), slog.Int64("bytes", freed))
 	}
 	return n
+}
+
+// removeRecording deletes a run's recording directory, then its quota file and the run directory itself when nothing
+// else is in it (a run directory holding anything else stays as it is). A malformed run ID removes nothing.
+func (a *Agent) removeRecording(runID string) {
+	if !ids.Valid(ids.Run, runID) { // the ID becomes a path below
+		a.log.Warn("recording directory kept: malformed run ID", slog.Int("id_len", len(runID)))
+		return
+	}
+	if err := os.RemoveAll(a.RecordingDir(runID)); err != nil {
+		a.log.Warn("recording directory removal", slog.String(obs.FieldRunID, runID), obs.Err(err))
+		return
+	}
+	run := a.runDir(runID)
+	left, err := os.ReadDir(run)
+	if err != nil {
+		return
+	}
+	for _, e := range left {
+		if e.Name() != recordingQuotaFile || !e.Type().IsRegular() {
+			return
+		}
+	}
+	_ = os.Remove(filepath.Join(run, recordingQuotaFile))
+	_ = os.Remove(run) // fails (and stays) if anything appeared meanwhile
 }
 
 // recordingTreeStat returns the total size of the files under dir and the newest modification time of anything in it
@@ -285,9 +311,7 @@ func (a *Agent) pruneRuns(ctx context.Context) int {
 		n++
 		// The run is gone from the journal and its recording is fully acknowledged (recordingPending above): nothing
 		// references the directory any more.
-		if err := os.RemoveAll(a.RecordingDir(r.RunID)); err != nil {
-			a.log.Warn("recording directory removal", slog.String(obs.FieldRunID, r.RunID), obs.Err(err))
-		}
+		a.removeRecording(r.RunID)
 		a.mu.Lock()
 		delete(a.finalAcked, r.RunID)
 		delete(a.finalSent, r.RunID)
@@ -318,12 +342,20 @@ func (a *Agent) recordingPending(runID string) bool {
 	if _, err := os.Stat(dir); err != nil {
 		return false
 	}
-	res, err := recording.Read(dir, acked)
+	if !known {
+		// Nothing is known about central's copy: any segment is pending, and there is no need to decode it.
+		segs, err := recording.Segments(dir)
+		return err != nil || len(segs) > 0
+	}
+	res, err := readRecording(dir, acked)
 	if err != nil {
 		return true // unreadable: keep, don't guess
 	}
-	return len(res.Records) > 0 || !known && hasSegments(dir)
+	return len(res.Records) > 0
 }
+
+// readRecording decodes a recording directory; tests replace it to see whether a decode happened.
+var readRecording = recording.Read
 
 // deleteEndedRun deletes an ended run's row and its finished transcript upload row, and reports whether it deleted the
 // run: the row must still be ended and unchanged since r was read, no transcript upload may be unfinished and no dream's
