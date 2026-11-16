@@ -82,7 +82,11 @@ func TestCatchUpShipsLargeRecordingInBoundedMessages(t *testing.T) {
 	fc := newWSCentral(t, proto.MaxMinor)
 	runAgent(t, a, fc)
 	var seqs []uint64
-	deadline := time.After(20 * time.Second)
+	// The test is about message bounds and ordering, not throughput, and 19 MiB of JSON takes a variable time under
+	// -race on a loaded machine. So the bound is a stall: no chunk for 20 s fails it, however long the whole takes.
+	const stall = 20 * time.Second
+	timer := time.NewTimer(stall)
+	defer timer.Stop()
 	for len(seqs) < n {
 		select {
 		case env := <-fc.msgs:
@@ -103,8 +107,9 @@ func TestCatchUpShipsLargeRecordingInBoundedMessages(t *testing.T) {
 				}
 				seqs = append(seqs, r.Seq)
 			}
-		case <-deadline:
-			t.Fatalf("central received %d of %d records", len(seqs), n)
+			timer.Reset(stall)
+		case <-timer.C:
+			t.Fatalf("central received %d of %d records, then nothing for %s", len(seqs), n, stall)
 		}
 	}
 	for i, s := range seqs {
