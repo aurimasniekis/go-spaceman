@@ -151,16 +151,18 @@ func (a *Agent) renameMemory(ctx context.Context, id string, resend bool) {
 // moveRoleMemory moves the rename's role folder (ADR-0093 §3.3 steps 2-7) and returns the outcome to report. The memory
 // locks of both names are held throughout, so no checkpoint, preparation or sync of either name runs meanwhile.
 func (a *Agent) moveRoleMemory(ctx context.Context, r renameRow) (result, msg string) {
-	if busy, err := a.renameBusy(ctx, r); err != nil {
-		return proto.MemoryRenameError, "list the node's runs: " + err.Error()
-	} else if busy != "" {
-		return proto.MemoryRenameDeferred, busy
-	}
 	m := a.mem
 	keys := []string{colKey(r.SpaceID, r.From), colKey(r.SpaceID, r.To)}
 	slices.Sort(keys)
 	defer m.lock(keys[0])()
 	defer m.lock(keys[1])()
+	// Checked with both locks held: a launch preparing either name holds its lock, so no run can start between this
+	// check and the move (prepare refuses the old name once the rename is journaled).
+	if busy, err := a.renameBusy(ctx, r); err != nil {
+		return proto.MemoryRenameError, "list the node's runs: " + err.Error()
+	} else if busy != "" {
+		return proto.MemoryRenameDeferred, busy
+	}
 	m.forget(r.SpaceID, r.From)
 	m.forget(r.SpaceID, r.To)
 	dir := filepath.Join(m.root, r.SpaceID)
@@ -335,6 +337,15 @@ func (j *Journal) renameHeld(ctx context.Context, spaceID, role string) bool {
 	var n int
 	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND (from_role = ? OR to_role = ?)
 		AND (state IN ('pending', 'moving') OR (state = 'done' AND acked = 0))`, spaceID, role, role).Scan(&n)
+	return err != nil || n > 0
+}
+
+// renameFrom reports whether role is the old name of a rename that has not been dropped: its memory moves (or moved) to
+// the new name, so nothing may start a collection under the old one.
+func (j *Journal) renameFrom(ctx context.Context, spaceID, role string) bool {
+	var n int
+	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ?
+		AND state IN ('pending', 'moving', 'done')`, spaceID, role).Scan(&n)
 	return err != nil || n > 0
 }
 

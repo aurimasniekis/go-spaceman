@@ -418,7 +418,10 @@ func TestRoleRenameErrorRetriedAtStart(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 	a.command(ctx, rnCommand(t, "implementor", "builder"))
 	r := rnWait(t, a, "failed", func(r renameRow) bool { return r.Result == proto.MemoryRenameError })
-	if r.State == renameDone || !strings.Contains(r.Message, "move the folder") || !exists(a.mem.shared(rnSpace, "implementor")) {
+	if r.State != renameMoving {
+		t.Fatalf("a failed rename move is journaled %q, want %q (the move was started)", r.State, renameMoving)
+	}
+	if !strings.Contains(r.Message, "move the folder") || !exists(a.mem.shared(rnSpace, "implementor")) {
 		t.Fatalf("failed move %+v", r)
 	}
 	a.roleRenamedAck(ctx, proto.MemoryRenamedAck{RenameID: rnID, Result: proto.MemoryRenameError})
@@ -658,4 +661,68 @@ func TestRoleRenameLateCheckpointWritesNothing(t *testing.T) {
 	if exists(filepath.Join(dir, "implementor")) {
 		t.Fatal("the late checkpoint recreated the old folder")
 	}
+}
+
+// The hello advertises the minor this agent implements, not whatever proto.MaxMinor becomes after a later central-side bump.
+func TestAgentMaxMinorPinned(t *testing.T) {
+	if agentMaxMinor != proto.MinorRoleRename {
+		t.Fatalf("agentMaxMinor %d, want %d (raise it with the code that speaks the new minor, never set it to proto.MaxMinor)", agentMaxMinor, proto.MinorRoleRename)
+	}
+	if agentMaxMinor > proto.MaxMinor {
+		t.Fatalf("agentMaxMinor %d above proto.MaxMinor %d", agentMaxMinor, proto.MaxMinor)
+	}
+}
+
+// A launch of the old name of a pending, moving or done rename is refused (it would create a fresh collection that
+// strands edits); a dropped rename no longer holds the name.
+func TestPrepareRefusesRenamedFrom(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	for _, st := range []string{renamePending, renameMoving, renameDone, renameDropped} {
+		id := "rrn_prep" + st
+		if err := a.j.insertRoleRename(ctx, renameRow{ID: id, SpaceID: rnSpace, From: "from-" + st, To: "to-" + st, State: st}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := a.mem.prepare(ctx, rnSpace, "from-"+st, "ins_x")
+		if st == renameDropped {
+			if err != nil {
+				t.Fatalf("dropped rename refused prepare: %v", err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "being renamed") {
+			t.Fatalf("%s: prepare of the old name: %v", st, err)
+		}
+		if exists(a.mem.shared(rnSpace, "from-"+st)) {
+			t.Fatalf("%s: a collection was created under the old name", st)
+		}
+	}
+	stopTimers(a.mem)
+}
+
+// A run that starts while the move waits for the memory locks is still seen: the busy check runs with both locks held.
+func TestRoleRenameBusyCheckedUnderLocks(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	rnSeed(t, a, "implementor")
+	r := renameRow{ID: rnID, SpaceID: rnSpace, From: "implementor", To: "builder", State: renamePending}
+	if err := a.j.insertRoleRename(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	unlock := a.mem.lock(colKey(rnSpace, "implementor")) // a launch preparing the old name holds this lock
+	type res struct{ result, msg string }
+	out := make(chan res, 1)
+	go func() { x, y := a.moveRoleMemory(ctx, r); out <- res{x, y} }()
+	time.Sleep(200 * time.Millisecond)
+	run := runRow{RunID: "run_rename00000000000000000003", SpaceID: rnSpace, Generation: 1, Kind: "worker", Role: "implementor", InstanceID: "ins_one",
+		TerminalName: "r-x", Desired: "running", State: proto.RunRunning}
+	if err := a.j.insertRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	got := <-out
+	if got.result != proto.MemoryRenameDeferred || !exists(a.mem.shared(rnSpace, "implementor")) {
+		t.Fatalf("move %+v with a run that started while it waited for the locks", got)
+	}
+	stopTimers(a.mem)
 }

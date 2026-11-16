@@ -96,6 +96,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		return "", errors.New("invalid memory collection")
 	}
 	defer m.lock(colKey(spaceID, role))()
+	if m.a.j.renameFrom(ctx, spaceID, role) {
+		return "", fmt.Errorf("role %s is being renamed; its memory moves to the new name", role)
+	}
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if err := m.git.InitBare(ctx, shared); err != nil {
 		return "", err
