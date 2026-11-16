@@ -227,6 +227,15 @@ func TestStoreHomeRows(t *testing.T) {
 	if got, _ := m.Lookup(ctx, k); len(got) != 0 {
 		t.Errorf("a home summary is not a card: Lookup = %+v", got)
 	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, Kind: notify.MappingHome, Delete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := m.HomeMessages(ctx); len(rows) != 0 {
+		t.Fatalf("a deleted home row is still listed: %+v", rows)
+	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, LinkID: "tgl_a", Kind: notify.MappingHome, Key: k, Version: 1, CreatedAt: time.Unix(1, 0)}}); err != nil {
+		t.Fatal(err)
+	}
 	var pruned int64
 	if err := st.W().Tx(ctx, func(tx *store.Tx) (err error) {
 		pruned, err = tx.Q.PruneTelegramMessages(ctx, db.PruneTelegramMessagesParams{Cutoff: time.Now().UnixMicro(), Lim: 100})

@@ -25,6 +25,22 @@ func (q *Queries) DeleteTelegramMessage(ctx context.Context, arg DeleteTelegramM
 	return err
 }
 
+const deleteTelegramHomeMessage = `-- name: DeleteTelegramHomeMessage :exec
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'home'
+`
+
+type DeleteTelegramHomeMessageParams struct {
+	ChatID    int64
+	MessageID int64
+}
+
+// A home summary that was deleted or left behind (its link moved to another chat): its row must not come back after a
+// restart.
+func (q *Queries) DeleteTelegramHomeMessage(ctx context.Context, arg DeleteTelegramHomeMessageParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTelegramHomeMessage, arg.ChatID, arg.MessageID)
+	return err
+}
+
 const getTelegramMessage = `-- name: GetTelegramMessage :one
 SELECT link_id, space_id, resource_type, resource_id, resource_version FROM telegram_messages
 WHERE chat_id = ? AND message_id = ? AND kind = 'card'
@@ -108,7 +124,7 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 }
 
 const listTelegramHomeMessages = `-- name: ListTelegramHomeMessages :many
-SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL
+SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL ORDER BY created_at, message_id
 `
 
 type ListTelegramHomeMessagesRow struct {

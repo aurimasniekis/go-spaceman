@@ -122,18 +122,25 @@ func (n *Notifier) homeTick(ctx context.Context) time.Duration {
 	h.mu.Unlock()
 	snd := n.o.Sender()
 	if snd == nil {
-		return 0 // the bot is off; the next window starts over
+		return n.homeEvery() // the bot is off: look again later
 	}
+	// The flag is cleared before the read, so a change that lands during it marks the summaries dirty again.
+	h.mu.Lock()
+	h.dirty = false
+	h.mu.Unlock()
 	counts, err := n.o.Pending(ctx) // one read for every link
 	if err != nil {
 		n.log.Warn("telegram notifier: reading the pending counts failed", slog.String("error", err.Error()))
+		h.mu.Lock()
+		h.dirty = true
+		h.mu.Unlock()
 		return n.homeEvery() // try again
 	}
 	every, now := n.homeEvery(), n.o.Now()
 	var wait time.Duration
 	links := n.o.Links.Snapshot()
 	h.mu.Lock()
-	h.counts, h.dirty = counts, false
+	h.counts = counts
 	h.mu.Unlock()
 	for i := range links {
 		l := &links[i]
@@ -147,6 +154,9 @@ func (n *Notifier) homeTick(ctx context.Context) time.Duration {
 			h.links[l.ID] = hl
 		}
 		if hl.chat != l.ChatID { // the link moved to another chat: that chat has no summary
+			if hl.msg != 0 {
+				n.cards.pend(Mapping{ChatID: hl.chat, MessageID: hl.msg, Kind: MappingHome, Delete: true})
+			}
 			hl.chat, hl.msg, hl.pinned, hl.sig = l.ChatID, 0, false, 0
 		}
 		due := hl.msg == 0 || hl.last.IsZero() || now.Sub(hl.last) >= every
@@ -258,7 +268,18 @@ func (n *Notifier) spaceLink(ctx context.Context, l *Link, spaceID string) strin
 
 func homeSig(text string, ents []botapi.MessageEntity, mk *botapi.InlineKeyboardMarkup) uint64 {
 	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s\x00%v\x00%v", text, ents, mk)
+	_, _ = fmt.Fprintf(h, "%s\x00%v", text, ents)
+	if mk != nil {
+		for _, row := range mk.InlineKeyboard {
+			for _, b := range row {
+				app := ""
+				if b.WebApp != nil {
+					app = b.WebApp.URL // by value: a pointer would print as an address
+				}
+				_, _ = fmt.Fprintf(h, "\x00%s\x00%s\x00%s", b.Text, b.URL, app)
+			}
+		}
+	}
 	return h.Sum64() | 1
 }
 
@@ -321,7 +342,7 @@ func (n *Notifier) sendHome(ctx context.Context, c *botapi.Client, linkID string
 		case err == nil || isNotModified(err):
 		case isGone(err):
 			// The person deleted it: it is sent and pinned again.
-			n.cards.pend(Mapping{ChatID: chat, MessageID: msg, Delete: true})
+			n.cards.pend(Mapping{ChatID: chat, MessageID: msg, Kind: MappingHome, Delete: true})
 			msg, pinned = 0, false
 		default:
 			return err
@@ -341,6 +362,10 @@ func (n *Notifier) sendHome(ctx context.Context, c *botapi.Client, linkID string
 		n.homeRow(linkID, chat, msg, false)
 	}
 	h.mu.Lock()
+	if hl.chat != chat { // the link moved while this was sent: that chat's state is not this message's
+		h.mu.Unlock()
+		return nil
+	}
 	hl.msg, hl.sig, hl.last = msg, nsig, n.o.Now()
 	h.mu.Unlock()
 	if !pinned {

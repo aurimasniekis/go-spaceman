@@ -43,6 +43,12 @@ type StoreMappings struct{ S *store.Store }
 func (m StoreMappings) Save(ctx context.Context, rows []Mapping) error {
 	return m.S.W().TxNamed(ctx, "telegram.messages", func(tx *store.Tx) error {
 		for _, r := range rows {
+			if r.Delete && r.Kind == MappingHome {
+				if err := tx.Q.DeleteTelegramHomeMessage(ctx, db.DeleteTelegramHomeMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID)}); err != nil {
+					return err
+				}
+				continue
+			}
 			if r.Delete {
 				if err := tx.Q.DeleteTelegramMessage(ctx, db.DeleteTelegramMessageParams{ChatID: r.ChatID, MessageID: int64(r.MessageID)}); err != nil {
 					return err

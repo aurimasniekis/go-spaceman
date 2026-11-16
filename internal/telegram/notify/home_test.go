@@ -221,3 +221,41 @@ func TestHomeSummaryNotSentWhenNothingWaits(t *testing.T) {
 		t.Fatalf("%d sends with nothing waiting", n)
 	}
 }
+
+// A rebuild that shows what is already there makes no edit, with a web_app button too.
+func TestHomeSummaryUnchangedMakesNoEdit(t *testing.T) {
+	e, c := homeEnv(t, 1)
+	c.set(notify.SpaceCount{SpaceID: "spc_1", Name: "Alpha", N: 2})
+	stop := e.run(e.maps)
+	defer stop()
+	e.touch("hum_1", 1)
+	e.waitCalls("pinChatMessage", 1)
+	e.clk.Advance(time.Minute)
+	e.touch("hum_1", 2)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(e.fake.Calls("editMessageText")); n != 0 {
+		t.Errorf("%d edits for an unchanged summary", n)
+	}
+}
+
+// A summary the person deleted is sent and pinned again, and the old row is gone, so a restart doesn't find it.
+func TestHomeSummaryDeletedIsSentAgain(t *testing.T) {
+	e, c := homeEnv(t, 1)
+	c.set(notify.SpaceCount{SpaceID: "spc_1", Name: "Alpha", N: 2})
+	stop := e.run(e.maps)
+	defer stop()
+	e.touch("hum_1", 1)
+	e.waitCalls("pinChatMessage", 1)
+	first := e.fake.Messages(1001)
+	if len(first) != 1 {
+		t.Fatalf("%d messages", len(first))
+	}
+	e.fake.FailNext("editMessageText", 400, "Bad Request: message to edit not found", 0)
+	e.clk.Advance(time.Minute)
+	c.set(notify.SpaceCount{SpaceID: "spc_1", Name: "Alpha", N: 3})
+	e.touch("hum_1", 2)
+	e.waitCalls("pinChatMessage", 2)
+	if n := len(e.fake.Calls("sendMessage")); n != 2 {
+		t.Errorf("%d sends, want 2", n)
+	}
+}

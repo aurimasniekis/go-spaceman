@@ -25,10 +25,15 @@ DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
 -- The links that were sent a one-time notice of a type (read once when the notifier starts).
 SELECT DISTINCT link_id FROM telegram_messages WHERE kind = 'notice' AND resource_type = ?;
 
+-- name: DeleteTelegramHomeMessage :exec
+-- A home summary that was deleted or left behind (its link moved to another chat): its row must not come back after a
+-- restart.
+DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ? AND kind = 'home';
+
 -- name: ListTelegramHomeMessages :many
 -- The pinned home summaries (kind home), one per link: the message to edit and whether it was pinned (resource_version 1).
 -- Read once when the notifier starts.
-SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL;
+SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL ORDER BY created_at, message_id;
 
 -- name: GetTelegramMessage :one
 -- A card by its message, for a button that doesn't carry the resource (the link it was sent to binds the tap).
