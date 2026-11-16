@@ -12,6 +12,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -24,14 +25,27 @@ const (
 	// RenameNameTaken: the target name is a role, has a memory collection, or leftovers of a deleted role of that name
 	// would collide with the role's grants or pool.
 	RenameNameTaken = "name_taken"
+	// RenameNodeTooOld: the space's node last negotiated a protocol minor below proto.MinorRoleRename, so it cannot move
+	// the role's memory folder. The node may hold memory central has not seen yet, so the rename is refused.
+	RenameNodeTooOld = "node_too_old"
 )
 
-// Node states of a rename.
+// Node states of a rename (ADR-0093). A rename on a space with a node starts pending and queues one memory.rename for
+// the node. The node's memory.renamed report moves it: ok to done (final), error to failed, deferred back to pending.
+// A failed rename becomes done on a later ok. Pending and failed renames are open: they hold launches of both names and
+// dream launches in the space, block another rename of either name and a clean relocation of the space (a source_unavailable one closes the rename as
+// not_needed), and make central
+// refuse memory under both names. A space without a node starts and stays not_needed.
 const (
 	RenameNodePending   = "pending"
+	RenameNodeFailed    = "failed"
 	RenameNodeDone      = "done"
 	RenameNodeNotNeeded = "not_needed"
 )
+
+// RenameCommandKey is the idempotency key of a rename's first memory.rename command; a command queued again after the
+// node refused one is keyed RenameCommandKey(id) + ":<n>".
+func RenameCommandKey(renameID string) string { return "role-rename:" + renameID }
 
 // crossSpaceRequester is the requester role knowledge-base requests from other spaces carry (kb.AskCrossSpace); it
 // names no role, so a role is never renamed to it.
@@ -62,7 +76,7 @@ type RoleRename struct {
 	RenamedAt      time.Time  `json:"renamed_at"`
 	RenamedBy      string     `json:"renamed_by"`
 	NodeID         string     `json:"node_id,omitempty"`
-	NodeState      string     `json:"node_state" enum:"pending,done,not_needed"`
+	NodeState      string     `json:"node_state" enum:"pending,failed,done,not_needed"`
 	NodeMessage    string     `json:"node_message,omitempty"`
 	NodeDoneAt     *time.Time `json:"node_done_at,omitempty"`
 	CentralMovedAt *time.Time `json:"central_moved_at,omitempty"`
@@ -163,6 +177,11 @@ func (svc *Service) RenameSpaceRole(ctx context.Context, actor audit.Actor, spac
 	if err != nil {
 		return nil, nil, err
 	}
+	if svc.AfterRename != nil {
+		if rn, err := svc.s.R().GetSpaceRoleRename(ctx, id); err == nil {
+			svc.AfterRename(ctx, *renameOut(rn))
+		}
+	}
 	r, err := svc.s.R().GetSpaceRole(ctx, db.GetSpaceRoleParams{SpaceID: spaceID, Name: to})
 	if err != nil {
 		return nil, nil, err
@@ -212,6 +231,9 @@ func (svc *Service) renameTx(ctx context.Context, tx *store.Tx, actor audit.Acto
 		return apperr.Wrap(apperr.CodeAlreadyExists, &RenameRefused{Reason: RenameNameTaken, Blockers: taken},
 			"the name %s is taken (%s): %s", to, RenameNameTaken, strings.Join(taken, "; "))
 	}
+	if err := renameNodeReady(ctx, q, sp); err != nil {
+		return err
+	}
 
 	now := tx.NowMicros()
 	rewritten := map[string]int64{}
@@ -235,6 +257,11 @@ func (svc *Service) renameTx(ctx context.Context, tx *store.Tx, actor audit.Acto
 	if err := q.InsertSpaceRoleRename(ctx, db.InsertSpaceRoleRenameParams{ID: id, SpaceID: spaceID, FromName: from, ToName: to, RenamedAt: now,
 		RenamedBy: actor.ID, NodeID: sp.NodeID, NodeState: state}); err != nil {
 		return err
+	}
+	if state == RenameNodePending {
+		if err := QueueMemoryRename(ctx, tx, sp, id, RenameCommandKey(id), from, to); err != nil {
+			return err
+		}
 	}
 	if err := svc.changes.Record(ctx, tx, spaceID, "space", spaceID, "updated", 0); err != nil {
 		return err
@@ -309,16 +336,54 @@ func renameBlockers(ctx context.Context, q *db.Queries, sp db.Space, from, to st
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	pending, err := q.ListPendingSpaceRoleRenames(ctx, sp.ID)
+	pending, err := q.ListOpenSpaceRoleRenames(ctx, sp.ID)
 	if err != nil {
 		return nil, err
 	}
 	for _, p := range pending {
 		if p.FromName == from || p.ToName == from || p.FromName == to || p.ToName == to {
-			out = append(out, fmt.Sprintf("rename %s (%s to %s) waiting for node %s to move its memory", p.ID, p.FromName, p.ToName, p.NodeID))
+			out = append(out, fmt.Sprintf("rename %s (%s to %s) waiting for node %s to move its memory (%s)", p.ID, p.FromName, p.ToName, p.NodeID, p.NodeState))
 		}
 	}
 	return out, nil
+}
+
+// renameNodeReady refuses a rename whose space's node cannot move the role's memory folder: one that last negotiated a
+// protocol minor below proto.MinorRoleRename (or never connected). Central cannot skip the node's move, since the node may
+// hold history of the role that central has not received yet.
+func renameNodeReady(ctx context.Context, q *db.Queries, sp db.Space) error {
+	if sp.NodeID == "" {
+		return nil
+	}
+	n, err := q.GetNode(ctx, sp.NodeID)
+	if err != nil {
+		return err
+	}
+	if n.ProtocolMinor >= proto.MinorRoleRename {
+		return nil
+	}
+	return apperr.Wrap(apperr.CodePrecondition, &RenameRefused{Reason: RenameNodeTooOld},
+		"the space's node %s last spoke node protocol 1.%d; renaming a role needs 1.%d, which moves the role's memory on the node (%s): "+
+			"upgrade its spaceman-agent and let it connect first", n.Name, n.ProtocolMinor, proto.MinorRoleRename, RenameNodeTooOld)
+}
+
+// QueueMemoryRename queues the node's memory.rename for a rename, inside the rename's (or a re-queue's) transaction. The
+// command is execution in the space, so it carries a lease generation: the current lease's, or 1 before any lease. The
+// hub sends it at the space's lease generation at the time it is delivered (a lease granted again after the node was
+// away has a newer one), so the stored generation only orders it.
+func QueueMemoryRename(ctx context.Context, tx *store.Tx, sp db.Space, renameID, key, from, to string) error {
+	gen := int64(1)
+	if l, err := tx.Q.GetLease(ctx, sp.ID); err == nil {
+		gen = l.Generation
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	b, err := json.Marshal(proto.MemoryRename{RenameID: renameID, SpaceID: sp.ID, From: from, To: to})
+	if err != nil {
+		return err
+	}
+	return tx.Q.InsertNodeCommand(ctx, db.InsertNodeCommandParams{ID: ids.New(ids.Command), NodeID: sp.NodeID, SpaceID: sp.ID, Generation: gen,
+		Kind: proto.CmdMemoryRename, IdempotencyKey: key, PayloadJson: string(b), CreatedAt: tx.NowMicros()})
 }
 
 // renameTaken lists why the target name is not free (ADR-0093 decision 3): a role has it, a memory collection has it

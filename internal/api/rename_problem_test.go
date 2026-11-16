@@ -16,7 +16,7 @@ import (
 func TestRenameProblem(t *testing.T) {
 	busy := apperr.Wrap(apperr.CodePrecondition, &catalog.RenameRefused{Reason: catalog.RenameRoleBusy, Blockers: []string{"run run_1"}}, "busy")
 	taken := apperr.Wrap(apperr.CodeAlreadyExists, &catalog.RenameRefused{Reason: catalog.RenameNameTaken}, "taken")
-	tooOld := apperr.Wrap(apperr.CodePrecondition, &catalog.RenameRefused{Reason: "node_too_old"}, "old node")
+	tooOld := apperr.Wrap(apperr.CodePrecondition, &catalog.RenameRefused{Reason: catalog.RenameNodeTooOld}, "old node")
 	d := &Deps{}
 	for _, c := range []struct {
 		name   string

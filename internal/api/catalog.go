@@ -678,7 +678,9 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				"knowledge-base requests and pending human notifications). Records of what happened (runs, usage, approvals, audit) keep the name they " +
 				"were written with. A role with live work is refused with 409 role_busy, listing what to stop or finish first; a target name already " +
 				"used by a role or a memory collection is 409 name_taken. An invalid or unchanged name is 422 validation_failed. `If-Match` is optional: with it, the role's revision must match (409 precondition_failed otherwise). " +
-				"`rename.node_state` is pending while the space's node has not yet moved the role's memory; launches of the role are held until then."},
+				"A space whose node last spoke a node protocol below 1.14 (or never connected) is 409 node_too_old. " +
+				"`rename.node_state` is pending while the space's node has not yet moved the role's memory, and failed when it reported that it could not; " +
+				"launches of the role are held until it is done."},
 			func(ctx context.Context, in *struct {
 				SpacePath
 				OptionalIfMatch
@@ -697,7 +699,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			})
 		huma.Register(api, huma.Operation{OperationID: "list-space-role-renames", Method: http.MethodGet, Path: "/spaces/{space_id}/role-renames",
 			Summary: "A space's role renames, newest first", Tags: tags,
-			Description: "Each rename with the state of the node's memory move (pending, done or not_needed). A former role name can be followed to " +
+			Description: "Each rename with the state of the node's memory move (pending, failed, done or not_needed). A former role name can be followed to " +
 				"the role that carries it now."},
 			func(ctx context.Context, in *SpacePath) (*struct{ Body RoleRenamesOut }, error) {
 				l, err := svc.ListRoleRenames(ctx, in.SpaceID)

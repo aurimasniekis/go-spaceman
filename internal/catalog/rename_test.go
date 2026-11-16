@@ -169,20 +169,28 @@ type renameFx struct {
 func newRenameFx(t *testing.T) *renameFx {
 	t.Helper()
 	f := &renameFx{fx: newFx(t)}
-	must(t, f.s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
-		s := &seeder{t: t, ctx: f.ctx, tx: tx, cols: map[string][]colInfo{}}
+	// One transaction per role keeps each under the write-lock guard with the race detector on (every row type of a
+	// role is seeded, and the seeder reads each table's columns).
+	s := &seeder{t: t, ctx: f.ctx, cols: map[string][]colInfo{}}
+	seed := func(fn func()) {
+		must(t, f.s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
+			s.tx = tx
+			fn()
+			return nil
+		}))
+	}
+	seed(func() {
 		s.ins("spaces", map[string]any{"id": "spc_b", "slug": "bbb", "name": "B", "node_id": "nod_1", "state": "active", "workdir": "b"})
 		s.ins("role_templates", map[string]any{"id": "rtp_1", "slug": "worker", "kind": "worker"})
 		s.ins("mcp_servers", map[string]any{"id": "mcp_1", "slug": "srv"})
 		s.ins("accounts", map[string]any{"id": "acc_1", "name": "acct"})
-		for _, sp := range []string{"spc_a", "spc_b"} {
-			for _, r := range []string{"a", "other"} {
-				f.seedRole(s, sp, r, sp == "spc_a" && r == "a")
-			}
+	})
+	for _, sp := range []string{"spc_a", "spc_b"} {
+		for _, r := range []string{"a", "other"} {
+			seed(func() { f.seedRole(s, sp, r, sp == "spc_a" && r == "a") })
 		}
-		s.ins("space_roles", map[string]any{"space_id": "spc_a", "name": "c", "template_id": "rtp_1"})
-		return nil
-	}))
+	}
+	seed(func() { s.ins("space_roles", map[string]any{"space_id": "spc_a", "name": "c", "template_id": "rtp_1"}) })
 	must(t, f.s.W().TxNamed(f.ctx, "seed.audit", func(tx *store.Tx) error {
 		id, err := f.svc.audit.Append(f.ctx, tx, audit.Event{Actor: op, Action: "space.role_saved", Target: audit.Target{Type: "space", ID: "spc_a"},
 			Details: map[string]any{"role": "a"}})

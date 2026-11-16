@@ -10,13 +10,15 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // ADR-0093 over HTTP: renaming a role needs space configuration write (a viewer is denied, an operator is allowed).
 // Its refusals keep the documented contract: an invalid or same name is 422 validation_failed, a stale If-Match is
-// 409 precondition_failed, a busy role is 409 role_busy, a taken name is 409 name_taken, a missing role is 404. A
+// 409 precondition_failed, a busy role is 409 role_busy, a taken name is 409 name_taken, a node below protocol minor 14
+// is 409 node_too_old, a missing role is 404. A
 // renamed-away name is 404 and names its successor; the renames list is newest first.
 func TestRoleRenameOverHTTP(t *testing.T) {
 	t.Parallel()
@@ -84,6 +86,20 @@ func TestRoleRenameOverHTTP(t *testing.T) {
 	p = rename(op, "reviewer", "implementor").problem(t)
 	if p.Status != 409 || p.Code != "name_taken" {
 		t.Fatalf("taken name: %+v", p)
+	}
+
+	// A node that has not spoken protocol minor 14 (this one never connected) cannot move the role's memory: 409
+	// node_too_old, and nothing changes. Once it has (the minor its connect records), the rename goes ahead.
+	p = rename(op, "reviewer", "reviewer-2").problem(t)
+	if p.Status != 409 || p.Code != "node_too_old" || !strings.Contains(p.Detail, "node-a") {
+		t.Fatalf("old node: %+v", p)
+	}
+	expect(t, root.do("GET", base+"/roles/reviewer", nil), 200)
+	if err := h.c.Store.W().TxNamed(ctx, "test.node_minor", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE nodes SET protocol_minor = ? WHERE id = ?`, proto.MinorRoleRename, en.Node.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	// The rename: 200 with the renamed role and its rename record, pending until the node moves the memory.

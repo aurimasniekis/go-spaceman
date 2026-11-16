@@ -427,7 +427,8 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 	return svc.GetRun(ctx, runID)
 }
 
-// ReasonRoleRenamePending names a launch held by a role rename whose memory move the node has not reported yet.
+// ReasonRoleRenamePending names a launch held by a role rename whose memory move the node has not reported done yet
+// (the rename is pending or failed).
 const ReasonRoleRenamePending = "role_rename_pending"
 
 // RenamePendingError is the cause of a launch held by a pending role rename (ADR-0093): the role was renamed and the
@@ -436,6 +437,9 @@ const ReasonRoleRenamePending = "role_rename_pending"
 type RenamePendingError struct {
 	RenameID, From, To, NodeID string
 	Dream                      bool
+	// Failed: the node reported that it could not move the directory (node_state failed); the hold stays until it
+	// reports the move done.
+	Failed bool
 }
 
 func (e *RenamePendingError) Error() string { return ReasonRoleRenamePending + ": " + e.RenameID }
@@ -445,19 +449,23 @@ func (e *RenamePendingError) Error() string { return ReasonRoleRenamePending + "
 // space.
 func renameHold(ctx context.Context, q *db.Queries, spaceID string, in LaunchInput) error {
 	dream := in.Dream != nil || in.Kind == "dreamer"
-	r, err := q.PendingRoleRenameHold(ctx, db.PendingRoleRenameHoldParams{SpaceID: spaceID, Role: in.Role, Dream: b2i(dream)})
+	r, err := q.OpenRoleRenameHold(ctx, db.OpenRoleRenameHoldParams{SpaceID: spaceID, Role: in.Role, Dream: b2i(dream)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	cause := &RenamePendingError{RenameID: r.ID, From: r.FromName, To: r.ToName, NodeID: r.NodeID, Dream: dream && in.Role != r.ToName}
-	if cause.Dream {
-		return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s has not moved its memory yet (%s); dreams in this space start once it reports",
-			r.FromName, r.ToName, r.NodeID, ReasonRoleRenamePending)
+	cause := &RenamePendingError{RenameID: r.ID, From: r.FromName, To: r.ToName, NodeID: r.NodeID, Dream: dream && in.Role != r.ToName, Failed: r.NodeState == "failed"}
+	state := "has not moved its memory yet"
+	if cause.Failed {
+		state = "could not move its memory (" + r.NodeMessage + "); it retries when its agent starts again"
 	}
-	return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s has not moved its memory yet (%s); %s launches once the node reports",
-		r.FromName, r.ToName, r.NodeID, ReasonRoleRenamePending, in.Role)
+	if cause.Dream {
+		return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s %s (%s); dreams in this space start once it reports the move",
+			r.FromName, r.ToName, r.NodeID, state, ReasonRoleRenamePending)
+	}
+	return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s %s (%s); %s launches once the node reports the move",
+		r.FromName, r.ToName, r.NodeID, state, ReasonRoleRenamePending, in.Role)
 }
 
 func (svc *Service) queueCommand(ctx context.Context, tx *store.Tx, nodeID, spaceID, runID string, gen int64, kind, key string, payload any) error {

@@ -333,6 +333,12 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   role's memory, an abandon action and a web UI rename are follow-ups. A rename changes only its own space: the
   installation-wide default human policy keeps a successor role of the old name.
 
+- **A role rename can stay open.** There is no "abandon the node move" action yet. A node that keeps reporting `error`
+  leaves the rename `failed` (central does not queue the command again on an `error`), and a node downgraded below
+  protocol minor 14 after a rename never receives it. Until it is done the rename holds launches of both names and
+  refuses a clean relocation; the exits are fixing or upgrading the node, or a `source_unavailable` relocation (which
+  closes the open rename; ADR-0093).
+
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.
 - **Both nodes need protocol 1.3** (this release's agent). An older agent rejects relocation steps, which block.

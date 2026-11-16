@@ -136,8 +136,53 @@ ORDER BY renamed_at, id LIMIT 1;
 -- name: ListSpaceRoleRenamesTo :many
 SELECT * FROM space_role_renames WHERE space_id = ? AND to_name = ? ORDER BY renamed_at DESC, id DESC;
 
--- name: ListPendingSpaceRoleRenames :many
-SELECT * FROM space_role_renames WHERE space_id = ? AND node_state = 'pending' ORDER BY renamed_at, id;
+-- The open renames of a space: the node has not moved the memory folder yet (pending) or could not (failed).
+-- name: ListOpenSpaceRoleRenames :many
+SELECT * FROM space_role_renames WHERE space_id = ? AND node_state IN ('pending', 'failed') ORDER BY renamed_at, id;
+
+-- name: ListOpenRoleRenamesByNode :many
+SELECT * FROM space_role_renames WHERE node_id = ? AND node_state IN ('pending', 'failed') ORDER BY renamed_at, id;
+
+-- The node's memory.rename commands of one rename: the first one's key is role-rename:<id>, a re-queued one's
+-- role-rename:<id>:<n> (the range covers both and uses the (node_id, idempotency_key) index).
+-- name: ListRoleRenameCommands :many
+SELECT id, state, idempotency_key FROM node_commands
+WHERE node_id = sqlc.arg(node_id) AND idempotency_key >= sqlc.arg(key) AND idempotency_key < sqlc.arg(key_end) AND kind = 'memory.rename'
+ORDER BY created_at, id;
+
+-- The node's outcome of a rename's memory move. Only an open rename changes: a done one is final.
+-- name: SetRoleRenameNodeState :execrows
+UPDATE space_role_renames SET node_state = sqlc.arg(node_state), node_message = sqlc.arg(node_message), node_done_at = sqlc.arg(node_done_at)
+WHERE id = sqlc.arg(id) AND node_state IN ('pending', 'failed');
+
+-- Closes a space's open renames without the node's report (a source_unavailable relocation: the node is gone).
+-- name: CloseOpenSpaceRoleRenames :execrows
+UPDATE space_role_renames SET node_state = 'not_needed', node_message = sqlc.arg(node_message), node_done_at = sqlc.arg(node_done_at)
+WHERE space_id = sqlc.arg(space_id) AND node_state IN ('pending', 'failed');
+
+-- name: SetRoleRenameNodeMessage :execrows
+UPDATE space_role_renames SET node_message = ? WHERE id = ? AND node_state IN ('pending', 'failed');
+
+-- Renames whose central repository has not moved yet, oldest first (a chain a->b->c moves in order).
+-- name: ListUnmovedSpaceRoleRenames :many
+SELECT * FROM space_role_renames WHERE space_id = ? AND central_moved_at IS NULL ORDER BY renamed_at, id;
+
+-- name: ListUnmovedRoleRenames :many
+SELECT * FROM space_role_renames WHERE central_moved_at IS NULL ORDER BY space_id, renamed_at, id;
+
+-- name: SetRoleRenameCentralMoved :execrows
+UPDATE space_role_renames SET central_moved_at = ? WHERE id = ? AND central_moved_at IS NULL;
+
+-- Whether memory under a role name must be refused because of a rename: the node has not moved its folders yet (an
+-- open rename from or to the name: until then the node's folder of either name is not the renamed role's memory under
+-- that name), or the name was renamed away and no role has it again.
+-- name: RoleNameRenamedAway :one
+SELECT count(*) FROM space_role_renames r
+WHERE r.space_id = sqlc.arg(space_id)
+  AND ((r.from_name = sqlc.arg(name)
+      AND (r.node_state IN ('pending', 'failed')
+        OR NOT EXISTS (SELECT 1 FROM space_roles s WHERE s.space_id = r.space_id AND s.name = r.from_name)))
+    OR (r.to_name = sqlc.arg(name) AND r.node_state IN ('pending', 'failed')));
 
 -- name: RenameSpaceRoleRow :execrows
 UPDATE space_roles SET name = sqlc.arg(to_name), revision = revision + 1, version = version + 1, updated_at = sqlc.arg(now)
@@ -253,9 +298,9 @@ SELECT action_type, agent_roles_json FROM space_human_type_permissions WHERE spa
 UPDATE space_human_type_permissions SET agent_roles_json = ?, version = version + 1, updated_at = ?, updated_by = ?
 WHERE space_id = ? AND action_type = ?;
 
--- The launch hold (ADR-0093): a pending rename holds launches of its new name, of its old name (the node's directory
--- of that name is the one still to move) and dream launches in the space.
--- name: PendingRoleRenameHold :one
+-- The launch hold (ADR-0093): an open rename (pending or failed) holds launches of its new name, of its old name (the
+-- node's directory of that name is the one still to move) and dream launches in the space.
+-- name: OpenRoleRenameHold :one
 SELECT * FROM space_role_renames
-WHERE space_id = sqlc.arg(space_id) AND node_state = 'pending' AND (to_name = sqlc.arg(role) OR from_name = sqlc.arg(role) OR CAST(sqlc.arg(dream) AS INTEGER) = 1)
+WHERE space_id = sqlc.arg(space_id) AND node_state IN ('pending', 'failed') AND (to_name = sqlc.arg(role) OR from_name = sqlc.arg(role) OR CAST(sqlc.arg(dream) AS INTEGER) = 1)
 ORDER BY renamed_at, id LIMIT 1;

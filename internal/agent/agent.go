@@ -387,6 +387,11 @@ func (a *Agent) capabilities(ctx context.Context) proto.Capabilities {
 	return c
 }
 
+// agentMaxMinor is the newest protocol minor this agent speaks. It stays below proto.MinorRoleRename until the agent
+// handles memory.rename (ADR-0093 T-H3): a node that claimed minor 14 without moving its memory folder would hold a
+// renamed role forever, while one that stays at 13 makes central refuse the rename (node_too_old).
+const agentMaxMinor = proto.MinorRoleRename - 1
+
 // session runs one connection.
 func (a *Agent) session(ctx context.Context) error {
 	u, err := wsURL(a.o.CentralURL)
@@ -415,7 +420,7 @@ func (a *Agent) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor,
+	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: agentMaxMinor,
 		Capacity: a.o.Capacity, Runs: []proto.RunReport{}, Leases: a.leaseStates()}
 	a.mu.Lock()
 	hello.Capabilities = a.caps
