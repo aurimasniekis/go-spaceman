@@ -305,3 +305,94 @@ func TestRoleRenameWhileNodeOffline(t *testing.T) {
 		t.Fatalf("after ok: %+v", s)
 	}
 }
+
+// A memory.rename is delivered only while the node holds the space's valid lease (ADR-0093 §3.3). A space with a
+// desired node (a relocation under way) gets its lease revoked at the node's lease sync and none granted: the command
+// stays undelivered on that connection and the rename stays pending. (A connected node's lease is always renewed by the
+// sync, so a revoked lease is reached through this state.)
+func TestRoleRenameNotDeliveredWithoutValidLease(t *testing.T) {
+	t.Parallel()
+	e := newRenameNodeEnv(t)
+	n, _ := e.connect(proto.MaxMinor) // records minor 14
+	_ = n.conn.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "node disconnected", func() bool { nd, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !nd.Connected })
+	rn, err := e.rename("reviewer", "critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := e.addNode("node-b")
+	b.stop()
+	if err := e.c.Store.W().TxNamed(e.ctx, "test.desired", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(e.ctx, `UPDATE spaces SET desired_node_id = ? WHERE id = ?`, b.id, e.spaceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n = dialRawNode(t, e.fleetEnv, proto.MaxMinor)
+	n.next(t, proto.TypeWelcome)
+	n.noMemoryRename(t, 1500*time.Millisecond)
+	if s := e.state(rn.ID); s.NodeState != catalog.RenameNodePending {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// A memory.renamed from a node that is not the rename's node is acknowledged with an error and closes nothing: node B
+// cannot end node A's rename.
+func TestRoleRenamedFromAnotherNodeIsRefused(t *testing.T) {
+	t.Parallel()
+	e := newRenameNodeEnv(t)
+	n, _ := e.connect(proto.MaxMinor)
+	rn, err := e.rename("reviewer", "critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.memoryRename(t, proto.AckAccepted)
+	b := e.addNode("node-b")
+	b.stop()
+	nb := dialRawNodeCred(t, e.fleetEnv, b.cred, proto.MaxMinor)
+	nb.next(t, proto.TypeWelcome)
+	nb.send(t, proto.TypeMemoryRenamed, proto.MemoryRenamed{RenameID: rn.ID, SpaceID: e.spaceID, Result: proto.MemoryRenameOK})
+	var ack proto.MemoryRenamedAck
+	if err := nb.next(t, proto.TypeMemoryRenamedAck).Decode(&ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.Error == "" {
+		t.Fatalf("ack %+v", ack)
+	}
+	if s := e.state(rn.ID); s.NodeState != catalog.RenameNodePending {
+		t.Fatalf("another node closed the rename: %+v", s)
+	}
+}
+
+// A memory.renamed on a session that negotiated a minor below 14 is rejected and records nothing.
+func TestRoleRenamedOnOldMinorIsRejected(t *testing.T) {
+	t.Parallel()
+	e := newRenameNodeEnv(t)
+	n, _ := e.connect(proto.MaxMinor) // records minor 14 so the rename is accepted
+	rn, err := e.rename("reviewer", "critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = n.conn.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "node disconnected", func() bool { nd, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !nd.Connected })
+	old, _ := e.connect(proto.MinorRoleRename - 1)
+	old.send(t, proto.TypeMemoryRenamed, proto.MemoryRenamed{RenameID: rn.ID, SpaceID: e.spaceID, Result: proto.MemoryRenameOK})
+	deadline := time.After(2 * time.Second)
+wait:
+	for {
+		select {
+		case env, ok := <-old.ch:
+			if !ok {
+				break wait
+			}
+			if env.Type == proto.TypeMemoryRenamedAck {
+				t.Fatal("acknowledged on a minor-13 session")
+			}
+		case <-deadline:
+			break wait
+		}
+	}
+	if s := e.state(rn.ID); s.NodeState != catalog.RenameNodePending {
+		t.Fatalf("a minor-13 session closed the rename: %+v", s)
+	}
+}

@@ -457,8 +457,10 @@ func (svc *Service) relocationPreconditions(ctx context.Context, tx *store.Tx, s
 	if sp.State == "archived" {
 		return apperr.New(apperr.CodePrecondition, "the space is archived; restore it before relocating")
 	}
-	if err := renameOpenForRelocation(ctx, tx.Q, sp.ID); err != nil {
-		return err
+	if mode != RelocSourceUnavailable { // a lost node's open rename is closed by the finalize transaction
+		if err := renameOpenForRelocation(ctx, tx.Q, sp.ID); err != nil {
+			return err
+		}
 	}
 	if in.DestinationNodeID == sp.NodeID {
 		return apperr.New(apperr.CodeInvalid, "destination_node_id: the space is already pinned to that node")

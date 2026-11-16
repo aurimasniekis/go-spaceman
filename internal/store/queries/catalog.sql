@@ -155,6 +155,11 @@ ORDER BY created_at, id;
 UPDATE space_role_renames SET node_state = sqlc.arg(node_state), node_message = sqlc.arg(node_message), node_done_at = sqlc.arg(node_done_at)
 WHERE id = sqlc.arg(id) AND node_state IN ('pending', 'failed');
 
+-- Closes a space's open renames without the node's report (a source_unavailable relocation: the node is gone).
+-- name: CloseOpenSpaceRoleRenames :execrows
+UPDATE space_role_renames SET node_state = 'not_needed', node_message = sqlc.arg(node_message), node_done_at = sqlc.arg(node_done_at)
+WHERE space_id = sqlc.arg(space_id) AND node_state IN ('pending', 'failed');
+
 -- name: SetRoleRenameNodeMessage :execrows
 UPDATE space_role_renames SET node_message = ? WHERE id = ? AND node_state IN ('pending', 'failed');
 

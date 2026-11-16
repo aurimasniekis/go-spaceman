@@ -162,7 +162,7 @@ func (h *Hub) memoryRenameGeneration(ctx context.Context, c db.NodeCommand, node
 // errRenameNotDeliverable marks a memory.rename the hub leaves undelivered on this connection (memoryRenameGeneration).
 var errRenameNotDeliverable = errors.New("memory.rename waits for a connection at protocol minor 14 that holds the space's lease")
 
-// renameOpenForRelocation refuses a relocation while a role rename of the space is open: the node that holds the
+// renameOpenForRelocation refuses a clean relocation while a role rename of the space is open: the node that holds the
 // role's memory has not moved it yet, and a relocation would carry it away under the old name.
 func renameOpenForRelocation(ctx context.Context, q *db.Queries, spaceID string) error {
 	open, err := q.ListOpenSpaceRoleRenames(ctx, spaceID)

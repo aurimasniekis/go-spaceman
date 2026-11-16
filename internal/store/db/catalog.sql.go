@@ -10,6 +10,26 @@ import (
 	"database/sql"
 )
 
+const closeOpenSpaceRoleRenames = `-- name: CloseOpenSpaceRoleRenames :execrows
+UPDATE space_role_renames SET node_state = 'not_needed', node_message = ?1, node_done_at = ?2
+WHERE space_id = ?3 AND node_state IN ('pending', 'failed')
+`
+
+type CloseOpenSpaceRoleRenamesParams struct {
+	NodeMessage string
+	NodeDoneAt  sql.NullInt64
+	SpaceID     string
+}
+
+// Closes a space's open renames without the node's report (a source_unavailable relocation: the node is gone).
+func (q *Queries) CloseOpenSpaceRoleRenames(ctx context.Context, arg CloseOpenSpaceRoleRenamesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeOpenSpaceRoleRenames, arg.NodeMessage, arg.NodeDoneAt, arg.SpaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteProfile = `-- name: DeleteProfile :execrows
 DELETE FROM harness_profiles WHERE id = ?
 `

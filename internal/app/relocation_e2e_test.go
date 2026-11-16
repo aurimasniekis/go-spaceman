@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -16,10 +17,12 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/agent"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // node is one node agent with an in-memory runner (simulated evidence: the runner is a fake, git and the protocol are real).
@@ -122,6 +125,12 @@ type relocSpace struct {
 
 func setupRelocSpace(t *testing.T, e *fleetEnv, a *node, slug string) relocSpace {
 	t.Helper()
+	return setupRelocSpaceRole(t, e, a, slug, "implementor-backend")
+}
+
+// setupRelocSpaceRole is setupRelocSpace with memory written and synced by a run of role.
+func setupRelocSpaceRole(t *testing.T, e *fleetEnv, a *node, slug, role string) relocSpace {
+	t.Helper()
 	ctx := context.Background()
 	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: slug, Name: slug, NodeID: a.id})
 	if err != nil {
@@ -142,12 +151,12 @@ func setupRelocSpace(t *testing.T, e *fleetEnv, a *node, slug string) relocSpace
 	git(t, rs.repo, "push", "-q", "-u", "origin", "main")
 	rs.head = git(t, rs.repo, "rev-parse", "HEAD")
 	// A run writes role memory; it is synced to central when the run ends.
-	run, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor-backend", Harness: hns.KindClaude})
+	run, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: role, Harness: hns.KindClaude})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "run running", func() bool { return e.run1(run.ID).Observed == "running" })
-	mem := filepath.Join(a.dir, "memory", sp.ID, "implementor-backend", "instances", e.run1(run.ID).InstanceID)
+	mem := filepath.Join(a.dir, "memory", sp.ID, role, "instances", e.run1(run.ID).InstanceID)
 	if err := os.WriteFile(filepath.Join(mem, "decisions.md"), []byte("- relocate cleanly\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -155,11 +164,11 @@ func setupRelocSpace(t *testing.T, e *fleetEnv, a *node, slug string) relocSpace
 		t.Fatal(err)
 	}
 	eventuallyFor(t, "memory acknowledged by central", 20*time.Second, func() bool {
-		c, err := e.c.Memory.Get(ctx, sp.ID, "implementor-backend")
-		files, _ := e.c.Memory.Files(ctx, sp.ID, "implementor-backend")
+		c, err := e.c.Memory.Get(ctx, sp.ID, role)
+		files, _ := e.c.Memory.Files(ctx, sp.ID, role)
 		return err == nil && slices.Contains(files, "decisions.md") && c.Node != nil && !c.Node.Pending
 	})
-	c, _ := e.c.Memory.Get(ctx, sp.ID, "implementor-backend")
+	c, _ := e.c.Memory.Get(ctx, sp.ID, role)
 	rs.memory = c.Head
 	return rs
 }
@@ -601,4 +610,77 @@ func TestRelocationOverHTTP(t *testing.T) {
 	if code, _ := do(http.MethodPost, "/relocation/cancel", nil); code != http.StatusPreconditionFailed && code != http.StatusConflict && code != http.StatusUnprocessableEntity {
 		t.Fatalf("cancel without a relocation in progress: %d", code)
 	}
+}
+
+// ADR-0093 T-H2: an open role rename does not pin a space to a node that is gone for good. A clean relocation is still
+// refused while the rename is open; a source_unavailable relocation goes through, closes the rename (not_needed, so the
+// launch hold and the re-queue end), and the memory, which central already moved, is present under the new name on the
+// new node.
+func TestRelocationUnavailableSourceClosesOpenRename(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	a, b := e.addNode("node-a"), e.addNode("node-b")
+	rs := setupRelocSpaceRole(t, e, a, "lost-rename", "implementor")
+	sp := rs.sp
+	if _, err := e.c.Catalog.AddStarterRoles(ctx, admin, sp.ID); err != nil {
+		t.Fatal(err)
+	}
+	a.stop()
+	eventually(t, "node-a gone", func() bool { n, _ := e.c.Fleet.GetNode(ctx, a.id); return !n.Connected })
+	// The node agent in this test does not speak minor 14 yet (its half is a later task); record that it last did.
+	if err := e.c.Store.W().TxNamed(ctx, "test.minor", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE nodes SET protocol_minor = ? WHERE id = ?`, proto.MinorRoleRename, a.id)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, rn, err := e.c.Catalog.RenameSpaceRole(ctx, admin, sp.ID, "implementor", "builder", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rn.NodeState != catalog.RenameNodePending {
+		t.Fatalf("rename %+v", rn)
+	}
+	var pe *fleet.RenamePendingError
+	_, err = e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "builder", Harness: hns.KindClaude})
+	if !errors.As(err, &pe) {
+		t.Fatalf("launch of the new name not held: %v", err)
+	}
+	// A clean relocation stays refused while the rename is open.
+	if _, err := e.c.Fleet.StartRelocation(ctx, admin, sp.ID, fleet.StartRelocationInput{DestinationNodeID: b.id, StopRuns: true}); apperr.CodeOf(err) != apperr.CodePrecondition ||
+		!strings.Contains(err.Error(), "has not moved its memory yet") {
+		t.Fatalf("clean relocation during an open rename: %v", err)
+	}
+	in := fleet.StartRelocationInput{DestinationNodeID: b.id, StopRuns: true, SourceUnavailable: true, AcknowledgeLoss: true,
+		Acknowledgement: "node-a died; anything not on central is gone", Repositories: []fleet.RepoSpec{{Path: "app", URL: rs.origin, Branch: "main"}}}
+	if _, err := e.c.Fleet.StartRelocation(ctx, admin, sp.ID, in); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.waitRelocation(sp.ID, fleet.RelocDone, fleet.RelocBlocked, fleet.RelocFailed); r.State != fleet.RelocDone {
+		t.Fatalf("relocation %s: %s", r.State, r.Error)
+	}
+	renames, err := e.c.Catalog.ListRoleRenames(ctx, sp.ID)
+	if err != nil || len(renames) != 1 {
+		t.Fatalf("renames %v %v", renames, err)
+	}
+	if got := renames[0]; got.NodeState != catalog.RenameNodeNotNeeded || got.NodeDoneAt == nil || !strings.Contains(got.NodeMessage, "node lost") {
+		t.Fatalf("the rename was not closed: %+v", got)
+	}
+	// Launches of the new name are no longer held by the rename (any other error is fine here: the space is paused).
+	_, err = e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "builder", Harness: hns.KindClaude})
+	if errors.As(err, &pe) {
+		t.Fatalf("launch still held after the relocation: %v", err)
+	}
+	// Central's memory moved with the rename; the new node holds it under the new name.
+	if files, _ := e.c.Memory.Files(ctx, sp.ID, "builder"); !slices.Contains(files, "decisions.md") {
+		t.Fatalf("central memory under the new name: %v", files)
+	}
+	eventuallyFor(t, "memory under the new name on node-b", 20*time.Second, func() bool {
+		out, err := exec.Command("git", "-C", filepath.Join(b.dir, "memory", sp.ID, "builder", "shared.git"), "rev-parse", "refs/heads/main").Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
+	})
 }
