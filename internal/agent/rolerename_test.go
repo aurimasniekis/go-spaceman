@@ -673,20 +673,32 @@ func TestAgentMaxMinorPinned(t *testing.T) {
 	}
 }
 
-// A launch of the old name of a pending, moving or done rename is refused (it would create a fresh collection that
-// strands edits); a dropped rename no longer holds the name.
+// A launch of the old name of a pending or moving rename, or of a done one central has not acknowledged, is refused (it
+// would create a fresh collection that strands edits); once acknowledged, or when dropped, the name is free.
 func TestPrepareRefusesRenamedFrom(t *testing.T) {
 	a := rnAgent(t)
 	ctx := context.Background()
-	for _, st := range []string{renamePending, renameMoving, renameDone, renameDropped} {
+	for _, st := range []string{renamePending, renameMoving, "done-unacked", "done-acked", renameDropped} {
+		state := strings.TrimSuffix(strings.TrimSuffix(st, "-unacked"), "-acked")
+		if strings.HasPrefix(st, "done") {
+			state = renameDone
+		}
 		id := "rrn_prep" + st
-		if err := a.j.insertRoleRename(ctx, renameRow{ID: id, SpaceID: rnSpace, From: "from-" + st, To: "to-" + st, State: st}); err != nil {
+		if err := a.j.insertRoleRename(ctx, renameRow{ID: id, SpaceID: rnSpace, From: "from-" + st, To: "to-" + st, State: state}); err != nil {
 			t.Fatal(err)
 		}
+		if st == "done-acked" {
+			if err := a.j.setRoleRenameResult(ctx, id, proto.MemoryRenameOK, ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.j.ackRoleRename(ctx, id, proto.MemoryRenameOK, false); err != nil {
+				t.Fatal(err)
+			}
+		}
 		_, err := a.mem.prepare(ctx, rnSpace, "from-"+st, "ins_x")
-		if st == renameDropped {
+		if st == "done-acked" || st == renameDropped {
 			if err != nil {
-				t.Fatalf("dropped rename refused prepare: %v", err)
+				t.Fatalf("%s: prepare refused: %v", st, err)
 			}
 			continue
 		}
@@ -696,6 +708,60 @@ func TestPrepareRefusesRenamedFrom(t *testing.T) {
 		if exists(a.mem.shared(rnSpace, "from-"+st)) {
 			t.Fatalf("%s: a collection was created under the old name", st)
 		}
+	}
+	stopTimers(a.mem)
+}
+
+// rnMove journals a rename, moves it and takes central's ok acknowledgement.
+func rnMove(t *testing.T, a *Agent, id, from, to string) {
+	t.Helper()
+	ctx := context.Background()
+	r := renameRow{ID: id, SpaceID: rnSpace, From: from, To: to, State: renamePending}
+	if err := a.j.insertRoleRename(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if res, msg := a.moveRoleMemory(ctx, r); res != proto.MemoryRenameOK {
+		t.Fatalf("move %s->%s: %s %s", from, to, res, msg)
+	}
+	if err := a.j.ackRoleRename(ctx, id, proto.MemoryRenameOK, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A chain on one node (b->x, then a->b into the freed name) and a reused name: once central acknowledged a rename, the old
+// name launches again; the new b has a's memory.
+func TestPrepareAfterRenameChain(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	for _, role := range []string{"a", "b"} {
+		if _, err := a.mem.prepare(ctx, rnSpace, role, "ins_"+role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rnMove(t, a, "rrn_chain0000000000000000001", "b", "x")
+	rnMove(t, a, "rrn_chain0000000000000000002", "a", "b")
+	inst, err := a.mem.prepare(ctx, rnSpace, "b", "ins_new")
+	if err != nil {
+		t.Fatalf("prepare of the reused name b: %v", err)
+	}
+	if readme, _ := os.ReadFile(filepath.Join(inst, "README.md")); !strings.Contains(string(readme), "# a memory") {
+		t.Fatalf("the new b does not hold a's memory: %q", readme)
+	}
+	if _, err := a.mem.prepare(ctx, rnSpace, "x", "ins_x"); err != nil {
+		t.Fatalf("prepare of x: %v", err)
+	}
+	// a is free again and starts fresh.
+	if _, err := a.mem.prepare(ctx, rnSpace, "a", "ins_a2"); err != nil {
+		t.Fatalf("prepare of the freed name a: %v", err)
+	}
+	// x->y, acknowledged: x is reusable and starts a fresh collection.
+	rnMove(t, a, "rrn_chain0000000000000000003", "x", "y")
+	inst, err = a.mem.prepare(ctx, rnSpace, "x", "ins_x2")
+	if err != nil {
+		t.Fatalf("prepare of the reused name x: %v", err)
+	}
+	if readme, _ := os.ReadFile(filepath.Join(inst, "README.md")); !strings.Contains(string(readme), "# x memory") {
+		t.Fatalf("the new x is not fresh: %q", readme)
 	}
 	stopTimers(a.mem)
 }

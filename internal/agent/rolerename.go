@@ -340,12 +340,13 @@ func (j *Journal) renameHeld(ctx context.Context, spaceID, role string) bool {
 	return err != nil || n > 0
 }
 
-// renameFrom reports whether role is the old name of a rename that has not been dropped: its memory moves (or moved) to
-// the new name, so nothing may start a collection under the old one.
+// renameFrom reports whether role is the old name of a rename central still holds: one that has not moved, or whose ok
+// central has not acknowledged. Until then nothing may start a collection under the old name (it would strand edits);
+// once central recorded the rename done the name is free again and may be reused (a chain b->x, a->b, or a new role).
 func (j *Journal) renameFrom(ctx context.Context, spaceID, role string) bool {
 	var n int
 	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ?
-		AND state IN ('pending', 'moving', 'done')`, spaceID, role).Scan(&n)
+		AND (state IN ('pending', 'moving') OR (state = 'done' AND acked = 0))`, spaceID, role).Scan(&n)
 	return err != nil || n > 0
 }
 
