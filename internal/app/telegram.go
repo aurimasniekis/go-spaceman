@@ -218,10 +218,15 @@ func miniAppActionLink(origin, spaceID, actionID string) string {
 // cardAppURL is the Mini App link a notifier card's cut body continues in. Only a human action has a page of its own
 // here, so the other cards offer no button.
 func (c *Central) cardAppURL(r notify.Resource) string {
+	return cardAppLink(c.miniAppOrigin(), r)
+}
+
+// cardAppLink is cardAppURL on a given Mini App origin: a human action's page, and nothing for any other card.
+func cardAppLink(origin string, r notify.Resource) string {
 	if r.Type != notify.TypeHumanAction {
 		return ""
 	}
-	return miniAppActionLink(c.miniAppOrigin(), r.SpaceID, r.ID)
+	return miniAppActionLink(origin, r.SpaceID, r.ID)
 }
 
 // topicSpaces lists the spaces whose Telegram settings turn topics mode on and that Telegram may see, sorted.
