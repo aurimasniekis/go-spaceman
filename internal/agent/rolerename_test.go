@@ -624,3 +624,38 @@ func runAgent2(t *testing.T, a *Agent, url string) {
 		<-done
 	})
 }
+
+// A checkpoint of the old name that started before the move (it saw the checkout, then waited for the collection's
+// lock) finds the checkout gone once it has the lock: it writes nothing and records no sync state under the old name.
+func TestRoleRenameLateCheckpointWritesNothing(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	rnSeed(t, a, "implementor")
+	stopTimers(m)
+	if err := a.j.putMemory(ctx, memRow{SpaceID: rnSpace, Role: "builder"}); err != nil {
+		t.Fatal(err)
+	}
+	unlock := m.lock(colKey(rnSpace, "implementor"))
+	errc := make(chan error, 1)
+	go func() { errc <- m.checkpointErr(ctx, rnSpace, "implementor", "ins_one", "idle") }()
+	time.Sleep(200 * time.Millisecond) // the checkpoint has seen the checkout and waits for the lock
+	dir := filepath.Join(m.root, rnSpace)
+	if err := os.Rename(filepath.Join(dir, "implementor"), filepath.Join(dir, "builder")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.j.finishRoleRename(ctx, renameRow{ID: rnID, SpaceID: rnSpace, From: "implementor", To: "builder"}); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if err := <-errc; err != nil {
+		t.Fatalf("late checkpoint: %v", err)
+	}
+	var n int
+	if err := a.j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_sync WHERE space_id = ? AND role = 'implementor'`, rnSpace).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("sync state written under the old name: %d %v", n, err)
+	}
+	if exists(filepath.Join(dir, "implementor")) {
+		t.Fatal("the late checkpoint recreated the old folder")
+	}
+}
