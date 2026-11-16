@@ -99,6 +99,40 @@ func (m StoreMappings) NoticeLinks(ctx context.Context, typ string) ([]string, e
 	return out, nil
 }
 
+// HomeMessages returns the home summaries and whether each was pinned.
+func (m StoreMappings) HomeMessages(ctx context.Context) ([]HomeRow, error) {
+	rows, err := m.S.R().ListTelegramHomeMessages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HomeRow, 0, len(rows))
+	for _, r := range rows {
+		if r.LinkID.Valid {
+			out = append(out, HomeRow{LinkID: r.LinkID.String, ChatID: r.ChatID, MessageID: int(r.MessageID), Pinned: r.ResourceVersion == 1})
+		}
+	}
+	return out, nil
+}
+
+// StorePending counts the pending human actions per space, with the space's name, in two small reads.
+func StorePending(s *store.Store) func(ctx context.Context) ([]SpaceCount, error) {
+	return func(ctx context.Context) ([]SpaceCount, error) {
+		rows, err := s.R().CountPendingHuman(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]SpaceCount, 0, len(rows))
+		for _, r := range rows {
+			c := SpaceCount{SpaceID: r.SpaceID, N: r.N}
+			if sp, err := s.R().GetSpace(ctx, r.SpaceID); err == nil {
+				c.Name = sp.Name
+			}
+			out = append(out, c)
+		}
+		return out, nil
+	}
+}
+
 // StoreReader reads resources with one lean row read each, as the system (no principal: recipients are checked
 // afterwards, in memory).
 type StoreReader struct {

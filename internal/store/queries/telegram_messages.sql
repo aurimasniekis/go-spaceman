@@ -15,14 +15,20 @@ SELECT chat_id, message_id, kind, resource_version, created_at, message_thread_i
 WHERE resource_type = ? AND resource_id = ? AND kind IN ('card', 'cont');
 
 -- name: PruneTelegramMessages :execrows
--- A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). Links are never
--- deleted, so there is one such row per link at most, and the rows stay bounded by the links ever made.
+-- A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). So is a link's
+-- home summary (kind home): it is the pinned message the notifier keeps editing. Links are never deleted, so there is
+-- one such row per link at most, and the rows stay bounded by the links ever made.
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
-  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < sqlc.arg(cutoff) AND m.kind <> 'notice' LIMIT sqlc.arg(lim));
+  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < sqlc.arg(cutoff) AND m.kind NOT IN ('notice', 'home') LIMIT sqlc.arg(lim));
 
 -- name: ListTelegramNoticeLinks :many
 -- The links that were sent a one-time notice of a type (read once when the notifier starts).
 SELECT DISTINCT link_id FROM telegram_messages WHERE kind = 'notice' AND resource_type = ?;
+
+-- name: ListTelegramHomeMessages :many
+-- The pinned home summaries (kind home), one per link: the message to edit and whether it was pinned (resource_version 1).
+-- Read once when the notifier starts.
+SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL;
 
 -- name: GetTelegramMessage :one
 -- A card by its message, for a button that doesn't carry the resource (the link it was sent to binds the tap).

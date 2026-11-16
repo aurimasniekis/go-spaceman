@@ -46,6 +46,8 @@ type Mappings interface {
 	Lookup(ctx context.Context, k Key) ([]Mapping, error)
 	// NoticeLinks returns the links that were sent the one-time notice of a type (kind notice), read once at start.
 	NoticeLinks(ctx context.Context, typ string) ([]string, error)
+	// HomeMessages returns the links' home summaries (kind home), read once at start.
+	HomeMessages(ctx context.Context) ([]HomeRow, error)
 }
 
 const (

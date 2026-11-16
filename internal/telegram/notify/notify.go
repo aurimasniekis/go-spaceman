@@ -151,8 +151,23 @@ type Options struct {
 	// Topics routes messages to each link's space topics when its chat layout is on (nil: everything goes to the main
 	// chat).
 	Topics *topics.Manager
-	Bus    *eventbus.Bus
-	Log    *slog.Logger
+	// Pending reads the number of pending human actions per space, once per rebuild of the home summaries (nil: no
+	// summaries). Each link's summary keeps only the spaces it may read.
+	Pending func(ctx context.Context) ([]SpaceCount, error)
+	// NeedsURL is the Mini App's cross-space Needs-you page, the summary's web_app button; without it NeedsLink (the
+	// t.me/<bot>?startapp=needs link) is a plain URL button; with neither there is no button. Both are read when a summary
+	// is sent (the Mini App host can change while running).
+	NeedsURL, NeedsLink func() string
+	// SpaceLink is the Mini App link of a space (t.me/<bot>?startapp=space-<id>) for a summary line whose space has no
+	// topic (the layout is off); BotUsername builds the topic links. Nil or "": no link.
+	SpaceLink   func(spaceID string) string
+	BotUsername func() string
+	// HomeEvery is the least time between two edits of a link's summary (default DefaultHomeEvery); HomeAfter waits
+	// for it (default time.After; tests pass one they control).
+	HomeEvery time.Duration
+	HomeAfter func(time.Duration) <-chan time.Time
+	Bus       *eventbus.Bus
+	Log       *slog.Logger
 	// Now is the clock (default time.Now); After waits (default time.After; tests pass one they control).
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
@@ -171,6 +186,7 @@ type Notifier struct {
 	cards   *cards
 	digest  *digestBuf
 	notices *notices
+	home    *home
 
 	cursor int64 // only the Run goroutine touches it
 }
@@ -192,11 +208,14 @@ func New(o Options) *Notifier {
 	if o.RetryAfter <= 0 {
 		o.RetryAfter = time.Second
 	}
+	if o.HomeAfter == nil {
+		o.HomeAfter = time.After
+	}
 	if o.FlushRows <= 0 {
 		o.FlushRows = 100
 	}
 	return &Notifier{o: o, log: o.Log, cards: newCards(o.Store, o.FlushRows, o.Now), digest: newDigestBuf(),
-		notices: &notices{sent: map[string]bool{}}}
+		notices: &notices{sent: map[string]bool{}}, home: newHome()}
 }
 
 // Run follows the change feed until ctx ends. It subscribes before it reads the start position, so a change made in
@@ -220,8 +239,15 @@ func (n *Notifier) Run(ctx context.Context) error {
 	}
 	start()
 	n.loadNotices(ctx)
+	n.loadHome(ctx)
 	flush := time.NewTicker(n.o.FlushEvery)
 	defer flush.Stop()
+	var homeWake <-chan time.Time // armed while a summary waits for its next edit
+	armHome := func() {
+		if d := n.homeTick(ctx); d > 0 {
+			homeWake = n.o.HomeAfter(d)
+		}
+	}
 	var again <-chan time.Time // armed once after a failed feed read: the unread rest is processed without a new change
 	for {
 		select {
@@ -236,11 +262,17 @@ func (n *Notifier) Run(ctx context.Context) error {
 				start()
 			}
 			n.loadNotices(ctx)
+			n.loadHome(ctx)
+			armHome()
+		case <-homeWake:
+			homeWake = nil
+			armHome()
 		case <-again:
 			again = nil
 			if n.process(ctx) {
 				again = time.After(n.o.RetryAfter)
 			}
+			armHome()
 		case _, ok := <-sub.C:
 			if !ok {
 				return nil
@@ -258,6 +290,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 			if n.process(ctx) {
 				again = time.After(n.o.RetryAfter)
 			}
+			armHome()
 		}
 	}
 }
@@ -353,9 +386,13 @@ func (n *Notifier) handle(ctx context.Context, w *window) {
 	if w.overflow {
 		// Above the cap the details are skipped: one "many changes" notice per chat (plan 4.2 step 3).
 		n.overflow(snd, links, w.spaces, now)
+		n.homeTouch()
 		return
 	}
 	for _, k := range w.keys {
+		if k.Type == TypeHumanAction {
+			n.homeTouch()
+		}
 		r, err := n.o.Reader.Read(ctx, scope, k)
 		if err != nil {
 			n.log.Warn("telegram notifier: reading a resource failed", slog.String("type", k.Type), slog.String("error", err.Error()))
@@ -633,6 +670,17 @@ func (n *Notifier) MayRead(linkID string, chat int64, spaceID string) bool {
 	}
 	now := n.o.Now()
 	return l.Usable(now) && n.o.Authz.AllowedAll(l.Subjects(n.o.Policy.Current().LinkSSOGrants, now), spaceID, authz.SpaceRead)
+}
+
+// Muted reports whether the link muted a space, from memory (false for a link that is gone).
+func (n *Notifier) Muted(linkID, spaceID string) bool {
+	links := n.o.Links.Snapshot()
+	for i := range links {
+		if links[i].ID == linkID {
+			return links[i].Prefs.IsMuted(spaceID)
+		}
+	}
+	return false
 }
 
 // currentLink is the link as it is now (nil: gone, or moved to another chat).

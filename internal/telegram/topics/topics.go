@@ -402,6 +402,22 @@ func (m *Manager) SpaceOf(ctx context.Context, linkID string, thread int) (strin
 	return "", false
 }
 
+// ThreadOf is the forward lookup: the topic the link has for a space (false: none, or the link's topics can't be read).
+// It never creates a topic and never waits for one being created.
+func (m *Manager) ThreadOf(ctx context.Context, linkID, spaceID string) (int, bool) {
+	if m == nil || spaceID == "" || spaceID == HomeKey || spaceID == LegacyNeeds || !m.on(linkID) {
+		return 0, false
+	}
+	ls := m.link(linkID)
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	if !m.loadLocked(ctx, ls, linkID) {
+		return 0, false
+	}
+	t := ls.threads[spaceID]
+	return t, t > 0
+}
+
 // forget drops a thread that Telegram says is gone, unless another send already replaced it.
 func (m *Manager) forget(ctx context.Context, linkID, key string, thread int) {
 	ls := m.link(linkID)

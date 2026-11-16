@@ -5499,6 +5499,20 @@
   notifier's settled state replaces the chat's form. Known limits: alert IDs are kept in memory only (a restart forgets
   the alert to delete); a retraction happens on the next change of the resource, not on the mute or grant change
   itself; the card's final line names no responder. Tests: TRACEABILITY SM-TG-006. Simulated only.
+  T5 (home): `/needs` with no pinned space and no argument lists the pending actions of every space from
+  `GET /human-actions`, grouped by space, with a "See all" web_app button for the Mini App's `/human`; the API leaves out
+  spaces the link's principal can't read, and the chat drops spaces Telegram may not show and spaces the link muted
+  before it counts or lists anything. In a space's topic, or with a space named, it lists that space only, as before.
+  `/spaces` rows get a "Go to topic" URL button (`t.me/<bot>/<thread>`) when the link has that topic. The notifier keeps
+  one pinned "Needs you" summary per link in home: one read of the pending counts per rebuild (not per recipient), each
+  link's view filtered in memory by the card rule (link usable, space read and human-action read held, visible to
+  Telegram, not muted) and checked again when it is sent, edited at most once per 30 s per chat, sent and pinned once,
+  and stored as a `telegram_messages` row of kind `home` (resource version 1 once the pin worked) that retention keeps
+  like a notice, so a restart edits the message instead of sending and pinning another. Per-space lines link to the
+  topic, or to `startapp=space-<id>` with the layout off; without the Mini App host the button is the `startapp=needs`
+  link. Known limits: the counts are per space, so an action whose type the link may not view (type permissions)
+  still counts in a space it may read; a mute or grant change shows on the next human-action window, not at once.
+  Simulated only.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9

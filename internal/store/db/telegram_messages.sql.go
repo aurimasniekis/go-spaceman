@@ -107,6 +107,47 @@ func (q *Queries) ListTelegramMessagesByResource(ctx context.Context, arg ListTe
 	return items, nil
 }
 
+const listTelegramHomeMessages = `-- name: ListTelegramHomeMessages :many
+SELECT link_id, chat_id, message_id, resource_version FROM telegram_messages WHERE kind = 'home' AND link_id IS NOT NULL
+`
+
+type ListTelegramHomeMessagesRow struct {
+	LinkID          sql.NullString
+	ChatID          int64
+	MessageID       int64
+	ResourceVersion int64
+}
+
+// The pinned home summaries (kind home), one per link: the message to edit and whether it was pinned (resource_version 1).
+// Read once when the notifier starts.
+func (q *Queries) ListTelegramHomeMessages(ctx context.Context) ([]ListTelegramHomeMessagesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTelegramHomeMessages)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTelegramHomeMessagesRow{}
+	for rows.Next() {
+		var i ListTelegramHomeMessagesRow
+		if err := rows.Scan(
+			&i.LinkID,
+			&i.ChatID,
+			&i.MessageID,
+			&i.ResourceVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTelegramNoticeLinks = `-- name: ListTelegramNoticeLinks :many
 SELECT DISTINCT link_id FROM telegram_messages WHERE kind = 'notice' AND resource_type = ?
 `
@@ -137,7 +178,7 @@ func (q *Queries) ListTelegramNoticeLinks(ctx context.Context, resourceType stri
 
 const pruneTelegramMessages = `-- name: PruneTelegramMessages :execrows
 DELETE FROM telegram_messages WHERE (chat_id, message_id) IN (
-  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < ?1 AND m.kind <> 'notice' LIMIT ?2)
+  SELECT m.chat_id, m.message_id FROM telegram_messages m WHERE m.created_at < ?1 AND m.kind NOT IN ('notice', 'home') LIMIT ?2)
 `
 
 type PruneTelegramMessagesParams struct {
@@ -145,8 +186,9 @@ type PruneTelegramMessagesParams struct {
 	Lim    int64
 }
 
-// A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). Links are never
-// deleted, so there is one such row per link at most, and the rows stay bounded by the links ever made.
+// A one-time notice (kind notice) is kept: it is what stops the notice from being sent again (ADR-0089). So is a link's
+// home summary (kind home): it is the pinned message the notifier keeps editing. Links are never deleted, so there is
+// one such row per link at most, and the rows stay bounded by the links ever made.
 func (q *Queries) PruneTelegramMessages(ctx context.Context, arg PruneTelegramMessagesParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, pruneTelegramMessages, arg.Cutoff, arg.Lim)
 	if err != nil {

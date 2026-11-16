@@ -282,6 +282,29 @@ func TestSpaceOf(t *testing.T) {
 	}
 }
 
+// ThreadOf is the forward lookup: a space's stored topic, never created by asking, none for the legacy or home keys.
+func TestThreadOf(t *testing.T) {
+	_, c, _, mk := setup(t)
+	m := mk()
+	ctx := context.Background()
+	if th, ok := m.ThreadOf(ctx, "tgl_1", "spc_1"); ok {
+		t.Fatalf("ThreadOf before any topic = %d", th)
+	}
+	a := send(t, m, c, "spc_1", "one").MessageThreadID
+	if th, ok := mk().ThreadOf(ctx, "tgl_1", "spc_1"); !ok || th != a {
+		t.Errorf("ThreadOf = %d, %v; want %d", th, ok, a)
+	}
+	for _, k := range []string{"", topics.HomeKey, topics.LegacyNeeds} {
+		if th, ok := m.ThreadOf(ctx, "tgl_1", k); ok {
+			t.Errorf("ThreadOf(%q) = %d", k, th)
+		}
+	}
+	var nilm *topics.Manager
+	if _, ok := nilm.ThreadOf(ctx, "tgl_1", "spc_1"); ok {
+		t.Error("a nil Manager has no topics")
+	}
+}
+
 // The legacy Needs-you topic: on the first topic send after the upgrade, one note is posted in it and its key is
 // dropped from the link's topics; the topic is never deleted. A second send, a new Manager on the same store and many
 // concurrent sends post no second note.

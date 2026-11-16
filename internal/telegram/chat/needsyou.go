@@ -174,6 +174,10 @@ func (h *Handler) cmdNeedsYou(ctx context.Context, l updates.Link, arg string) {
 	if !ok {
 		return
 	}
+	if _, inGroup := groupOf(ctx); arg == "" && pinnedOf(ctx) == "" && !inGroup {
+		h.needsHome(ctx, l, c) // home: every space the link may read, not the current one
+		return
+	}
 	s, msg := h.target(ctx, c, l, arg)
 	if msg != "" {
 		h.send(ctx, l.ChatID, reply{text: msg})
@@ -203,6 +207,71 @@ func (h *Handler) cmdNeedsYou(ctx context.Context, l updates.Link, arg string) {
 			continue
 		}
 		rows = append(rows, []botapi.InlineKeyboardButton{button(typeMark(a.Type)+clean(a.Title, 50), humanData('o', s.ID, a.ID, -1))})
+	}
+	h.send(ctx, l.ChatID, reply{text: b.String(), markup: markup(rows...)})
+}
+
+// needsHome lists what waits for the person across spaces (GET /human-actions), grouped by space. The API leaves out
+// spaces the link's principal may not read; the chat then drops what Telegram may not show (a hidden space) and what the
+// link muted, the same filter the pinned summary applies. Each row opens the action, like a row of a space's list.
+func (h *Handler) needsHome(ctx context.Context, l updates.Link, c caller) {
+	vis, r := h.visibleSpaces(ctx, c)
+	if !r.ok() {
+		h.send(ctx, l.ChatID, reply{text: failText(r)})
+		return
+	}
+	names := map[string]spaceRef{}
+	for _, s := range vis {
+		if h.o.Muted == nil || !h.o.Muted(l.ID, s.ID) {
+			names[s.ID] = s
+		}
+	}
+	var out struct {
+		Items []humanAction `json:"items"`
+	}
+	if r := c.get(ctx, "/human-actions?limit=500", &out); !r.ok() {
+		h.send(ctx, l.ChatID, reply{text: failText(r)})
+		return
+	}
+	bySpace := map[string][]humanAction{}
+	var order []string
+	total := 0
+	for _, a := range out.Items {
+		if _, ok := names[a.SpaceID]; !ok || !a.pending() || !humanIDRe.MatchString(a.ID) {
+			continue
+		}
+		if _, seen := bySpace[a.SpaceID]; !seen {
+			order = append(order, a.SpaceID)
+		}
+		bySpace[a.SpaceID] = append(bySpace[a.SpaceID], a)
+		total++
+	}
+	var b strings.Builder
+	var rows [][]botapi.InlineKeyboardButton
+	if total == 0 {
+		b.WriteString("Needs you\nNothing is waiting for you.")
+	} else {
+		fmt.Fprintf(&b, "Needs you — %d", total)
+	}
+	shown := 0
+	for _, id := range order {
+		s := names[id]
+		fmt.Fprintf(&b, "\n• %s — %d", s.title(), len(bySpace[id]))
+		for _, a := range bySpace[id] {
+			if shown >= h.o.PageSize {
+				break
+			}
+			shown++
+			rows = append(rows, []botapi.InlineKeyboardButton{button(typeMark(a.Type)+clean(s.title(), 20)+": "+clean(a.Title, 40), humanData('o', s.ID, a.ID, -1))})
+		}
+	}
+	if total > shown {
+		b.WriteString("\n… more in the app")
+	}
+	if h.o.AppPage != nil {
+		if u := h.o.AppPage("/human"); u != "" {
+			rows = append(rows, []botapi.InlineKeyboardButton{{Text: "See all", WebApp: &botapi.WebAppInfo{URL: u}}})
+		}
 	}
 	h.send(ctx, l.ChatID, reply{text: b.String(), markup: markup(rows...)})
 }
