@@ -471,7 +471,8 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		for _, r := range live {
 			s.liveAtConnect[r.ID] = r.Version
 		}
-		return nil
+		// A role rename's memory.rename the node refused earlier goes out again on this connection (ADR-0093).
+		return svc.requeueRoleRenames(ctx, tx, s.nodeID)
 	}); err != nil {
 		return err
 	}
@@ -683,6 +684,11 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			if err := svc.inputRejected(ctx, tx, cmd, a); err != nil {
 				return err
 			}
+			if cmd.Kind == proto.CmdMemoryRename && a.Result == proto.AckRejected {
+				if err := memoryRenameRejected(ctx, tx, cmd, a.Reason); err != nil {
+					return err
+				}
+			}
 			if svc.opts.OnCommandAck == nil {
 				return nil
 			}
@@ -823,6 +829,20 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		return nil
 	case proto.TypeNodeCapabilities:
 		return h.nodeCapabilities(ctx, s, env)
+	case proto.TypeMemoryRenamed:
+		if s.minor < proto.MinorRoleRename {
+			return apperr.New(apperr.CodeInvalid, "memory.renamed needs protocol minor %d", proto.MinorRoleRename)
+		}
+		var rep proto.MemoryRenamed
+		if err := env.Decode(&rep); err != nil {
+			return err
+		}
+		h.spawn(func() {
+			if ack, ok := svc.roleRenamed(context.WithoutCancel(ctx), s.nodeID, rep); ok {
+				_ = s.send(proto.TypeMemoryRenamedAck, svc.now(), ack)
+			}
+		})
+		return nil
 	case proto.TypeTakeoverEnded:
 		var m proto.TakeoverEnded
 		if err := env.Decode(&m); err != nil {
@@ -995,6 +1015,9 @@ func (h *Hub) dispatch(ctx context.Context, s *session) (retry, ok bool) {
 		if errors.Is(err, errMintPending) {
 			continue // the mint kicks this loop when it is done
 		}
+		if errors.Is(err, errRenameNotDeliverable) {
+			continue // waits for a lease grant or a newer agent, both of which run this loop again
+		}
 		if err != nil {
 			s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
 			retry = true
@@ -1067,6 +1090,17 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 		if keyed {
 			msg.Payload = mustJSON(p)
 		}
+		return msg, nil
+	}
+	if c.Kind == proto.CmdMemoryRename {
+		gen, ok, err := h.memoryRenameGeneration(ctx, c, nodeID, minor)
+		if err != nil {
+			return msg, err
+		}
+		if !ok {
+			return msg, errRenameNotDeliverable
+		}
+		msg.Generation = gen
 		return msg, nil
 	}
 	if c.Kind != proto.CmdLaunch {

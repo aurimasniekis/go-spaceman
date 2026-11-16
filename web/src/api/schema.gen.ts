@@ -3385,7 +3385,7 @@ export interface paths {
         };
         /**
          * A space's role renames, newest first
-         * @description Each rename with the state of the node's memory move (pending, done or not_needed). A former role name can be followed to the role that carries it now.
+         * @description Each rename with the state of the node's memory move (pending, failed, done or not_needed). A former role name can be followed to the role that carries it now.
          */
         get: operations["list-space-role-renames"];
         put?: never;
@@ -3463,7 +3463,7 @@ export interface paths {
         put?: never;
         /**
          * Rename a role in place
-         * @description Renames the role and every live reference to it in the space (MCP grants, knowledge-base and dream configuration, schedules, the human policy successor, human type permissions, the role's account pool, its memory, open tasks, unacknowledged messages, open knowledge-base requests and pending human notifications). Records of what happened (runs, usage, approvals, audit) keep the name they were written with. A role with live work is refused with 409 role_busy, listing what to stop or finish first; a target name already used by a role or a memory collection is 409 name_taken. An invalid or unchanged name is 422 validation_failed. `If-Match` is optional: with it, the role's revision must match (409 precondition_failed otherwise). `rename.node_state` is pending while the space's node has not yet moved the role's memory; launches of the role are held until then.
+         * @description Renames the role and every live reference to it in the space (MCP grants, knowledge-base and dream configuration, schedules, the human policy successor, human type permissions, the role's account pool, its memory, open tasks, unacknowledged messages, open knowledge-base requests and pending human notifications). Records of what happened (runs, usage, approvals, audit) keep the name they were written with. A role with live work is refused with 409 role_busy, listing what to stop or finish first; a target name already used by a role or a memory collection is 409 name_taken. An invalid or unchanged name is 422 validation_failed. `If-Match` is optional: with it, the role's revision must match (409 precondition_failed otherwise). A space whose node last spoke a node protocol below 1.14 (or never connected) is 409 node_too_old. `rename.node_state` is pending while the space's node has not yet moved the role's memory, and failed when it reported that it could not; launches of the role are held until it is done.
          */
         post: operations["rename-space-role"];
         delete?: never;
@@ -5966,7 +5966,7 @@ export interface components {
             node_id?: string;
             node_message?: string;
             /** @enum {string} */
-            node_state: "pending" | "done" | "not_needed";
+            node_state: "pending" | "failed" | "done" | "not_needed";
             /** Format: date-time */
             renamed_at: string;
             renamed_by: string;
