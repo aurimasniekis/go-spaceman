@@ -310,8 +310,9 @@ func (h *Handler) cancelConfirmTap(ctx context.Context, q *botapi.CallbackQuery,
 		h.answer(ctx, q.ID, TextConfirmGone)
 		return
 	}
-	h.formMu.Lock()
-	defer h.formMu.Unlock()
+	fl := h.formLock(k.chat)
+	fl.Lock()
+	defer fl.Unlock()
 	r := c.do(ctx, http.MethodPost, "/spaces/"+s.ID+"/human-actions/"+actionID+"/cancel", map[string]any{"reason": "Withdrawn from Telegram"},
 		map[string]string{"If-Match": fmt.Sprintf(`"%d"`, version)})
 	f := h.formByAction(l.ID, s.ID, actionID, l.ChatID)
@@ -368,8 +369,8 @@ func (h *Handler) files(ctx context.Context, q *botapi.CallbackQuery, l updates.
 // document is uploaded through the API and attached. The prompt is already consumed; a reply that can't be used asks
 // again with a fresh ForceReply prompt bound to the new message, at most maxPromptRetries times.
 //
-// It runs without formMu: the downloads and uploads can take a while and must not block other taps. The form is looked
-// up briefly first, the files are moved, and the form is looked up again under formMu before the comment is posted. If
+// It runs without the chat's form lock: the downloads and uploads can take a while and must not block other taps. The form is looked
+// up briefly first, the files are moved, and the form is looked up again under the form lock before the comment is posted. If
 // the form or the action went away meanwhile, the uploaded attachments stay unlinked (the server owns them until they
 // are attached or expire).
 func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates.Link, k pendingKey, p prompt) {
@@ -384,13 +385,14 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 			h.addPrompt(pendingKey{l.ChatID, nm.MessageID}, p)
 		}
 	}
-	h.formMu.Lock()
+	fl := h.formLock(p.form.chat)
+	fl.Lock()
 	f0 := h.formFor(p.form, l.ID)
 	var spaceID, actionID string
 	if f0 != nil {
 		spaceID, actionID = f0.spaceID, f0.action
 	}
-	h.formMu.Unlock()
+	fl.Unlock()
 	if f0 == nil {
 		h.send(ctx, l.ChatID, reply{text: TextFormExpired})
 		return
@@ -451,8 +453,8 @@ func (h *Handler) commentReply(ctx context.Context, m *botapi.Message, l updates
 	if len(ids) > 0 {
 		in["attachment_ids"] = ids
 	}
-	h.formMu.Lock() // only the comment call and the redraw run under the lock
-	defer h.formMu.Unlock()
+	fl.Lock() // only the comment call and the redraw run under the lock
+	defer fl.Unlock()
 	f := h.formFor(p.form, l.ID)
 	if f == nil {
 		h.send(ctx, l.ChatID, reply{text: TextFormExpired + " Nothing was sent."})
