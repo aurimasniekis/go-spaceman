@@ -35,7 +35,7 @@ GATE := $(CURDIR)/scripts/gate-slot.sh
 # more CPUs its serial tests run in a second process next to its parallel ones (RACE_APP_SPLIT).
 # RACE_PARALLEL caps t.Parallel tests per package for the other packages (go test's default is GOMAXPROCS, multiplied by
 # the packages running at once), so a many-core machine doesn't starve leases and write transactions; 4 matches CI's
-# runners. RACE_APP_PARALLEL is internal/app's own cap: empty means min(16, nproc/2), at least 4; CI sets 4.
+# runners. RACE_APP_PARALLEL is internal/app's own cap: empty means min(16, nproc/2), at least 4; CI sets 2 (race-detector memory on 16 GB runners).
 RACE_PARALLEL ?= 4
 # Every go test -race invocation has a timeout (RACE_APP_TIMEOUT, default 25m, for internal/app; RACE_TIMEOUT, default
 # 15m, for the rest) so a hang ends as a panic with a dump of every goroutine; GOTRACEBACK=all is set too. RACE_P caps

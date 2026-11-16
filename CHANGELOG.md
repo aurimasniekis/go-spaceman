@@ -60,7 +60,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - The CI and release race jobs no longer run until the hosted runner is lost. Every `go test -race` invocation has a
   timeout (25 minutes for `internal/app`, 15 for the other packages) and `GOTRACEBACK=all`, so a hung test ends as a
   panic with a dump of every goroutine; the job has a time limit, and its test output and a memory log are uploaded as
-  the `race-output` artifact when it fails.
+  the `race-output` artifact when it fails. `internal/app`'s race cap in CI is now 2 (was 4), because its test binary
+  reached 10-12 GB resident and exhausted 16 GB runners; the job takes about 10 minutes longer.
 
 ## [0.1.7] - 2026-11-16
 
