@@ -220,28 +220,53 @@ func TestFailureEndedAfterRestart(t *testing.T) {
 	}
 }
 
-// On the wire at minor 13 a node that holds nothing (as after a restart) clears the run's stored failure with its first
-// working report (the no-transition case is covered by TestFailureEndedAfterRestart).
+// On the wire at minor 13, through observe: a node restarted while the run's status was already working holds no class,
+// so the next working observe (no transition) sends a clear; a class stored late, while already working, survives the
+// next working observe and no clear is sent.
 func TestFailureClearedAfterRestartOnTheWire(t *testing.T) {
 	a, fc, runID, _, f := startHookAgentMinor(t, proto.MinorAccountUsage, nil)
+	ctx := context.Background()
 	row := getRun(t, a, runID)
 	f.SetStatus(row.TerminalID, "working")
 	fc.collect(t, runID, 500*time.Millisecond)
+	observe := func() []proto.RunReport {
+		t.Helper()
+		p, err := f.Get(ctx, row.TerminalID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cur := getRun(t, a, runID)
+		if cur.Status != "working" {
+			t.Fatalf("journal status %q, want working before the observe", cur.Status)
+		}
+		a.observe(ctx, cur, *p, false)
+		return fc.collect(t, runID, 500*time.Millisecond)
+	}
+
 	a.mu.Lock()
-	a.failureClasses = nil // the restart
+	a.failureClasses = nil // the restart: nothing held, status working in the journal
 	a.mu.Unlock()
-	f.SetStatus(row.TerminalID, "idle")
-	fc.collect(t, runID, 300*time.Millisecond)
-	a.mu.Lock()
-	a.failureClasses = nil
-	a.mu.Unlock()
-	f.SetStatus(row.TerminalID, "working")
 	cleared := false
-	for _, r := range fc.collect(t, runID, 500*time.Millisecond) {
+	for _, r := range observe() {
 		cleared = cleared || r.FailureCleared && r.Failure == ""
 	}
 	if !cleared {
-		t.Fatal("the first working report after a restart did not clear the failure")
+		t.Fatal("a working observe after a restart did not clear the stored failure")
+	}
+
+	a.mu.Lock()
+	a.failureClasses = map[string]string{runID: "overloaded"} // a late StopFailure, status still working
+	a.mu.Unlock()
+	for _, r := range observe() {
+		if r.FailureCleared {
+			t.Fatalf("a late class was cleared by a working observe: %+v", r)
+		}
+	}
+	a.mu.Lock()
+	got := a.failureClasses[runID]
+	a.mu.Unlock()
+	if got != "overloaded" {
+		t.Fatalf("late class = %q, want overloaded", got)
 	}
 }
 
