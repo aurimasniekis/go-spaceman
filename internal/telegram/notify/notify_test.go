@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -770,6 +771,7 @@ func notifyDefaults() settings.NotificationDefaults { return settings.Defaults()
 // replyGate holds sendMessage replies after the fake server has logged the request, the gap in which Telegram has
 // the message and the notifier does not yet know its id.
 type replyGate struct {
+	method  string        // the Bot API method whose replies are held
 	reached chan struct{} // one value per held reply
 	release chan struct{}
 }
@@ -778,8 +780,8 @@ type gateTransport struct{ e *env }
 
 func (g gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := http.DefaultTransport.RoundTrip(r)
-	if err == nil && strings.HasSuffix(r.URL.Path, "/sendMessage") {
-		if gate := g.e.gate.Load(); gate != nil {
+	if err == nil {
+		if gate := g.e.gate.Load(); gate != nil && path.Base(r.URL.Path) == gate.method {
 			gate.reached <- struct{}{}
 			select {
 			case <-gate.release:
@@ -792,8 +794,11 @@ func (g gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // holdReplies holds every sendMessage reply from now on. wait blocks until n replies are held; release lets them
 // (and later ones) through.
-func (e *env) holdReplies() (wait func(n int), release func()) {
-	g := &replyGate{reached: make(chan struct{}, 64), release: make(chan struct{})}
+func (e *env) holdReplies() (wait func(n int), release func()) { return e.holdMethod("sendMessage") }
+
+// holdMethod is holdReplies for the replies of any one Bot API method.
+func (e *env) holdMethod(method string) (wait func(n int), release func()) {
+	g := &replyGate{method: method, reached: make(chan struct{}, 64), release: make(chan struct{})}
 	e.gate.Store(g)
 	wait = func(n int) {
 		e.t.Helper()
