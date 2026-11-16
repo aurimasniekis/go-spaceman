@@ -34,6 +34,8 @@ it comes from and where SpaceMan enforces it.
 | Usage-limit keep-alive (`usage_limit_keep_alive_max_minutes`) | 360 | 1–1,440 | how long a run at a usage limit waits for the reset with its process kept alive (after that, or at once when the reset is further away, SpaceMan stops it and parks it to resume at the reset); also the longest gap between re-checks of a hold whose reset time is unknown | usage-limit holds and parking |
 | Usage-limit maximum wait (`usage_limit_max_wait_hours`) | 168 (7 days) | 1–720 | how long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned; control is never given up on | usage-limit waits |
 | Usage-limit people notice (`usage_limit_notify_after_hours`) | 12 | 0–720 (0: never) | how far away the reset of an account held at a usage limit must be for the space's people to get one human action about it, once per account and limit window (12 h: weekly limits, not 5-hour ones) | usage-limit holds |
+| Usage-limit wait for a near reset (`usage_limit_wait_if_reset_within`) | 15 | 0–1,440 minutes | with failover on, a run at its usage limit moves to another account of its pool unless its account resets within this many minutes; then it waits (an unknown reset counts as further away) | run reports |
+| Account switches per day (`usage_limit_switch_max_per_day`) | 6 | 0–50 (0: never move) | how many times one agent instance may move to another account in 24 hours; beyond it the run waits for the reset | run reports |
 
 Some limits are set elsewhere and only shown here: the node's **capacity** (the node agent's `capacity` setting, shared
 by every space on the node), each knowledge base's own session limit, human-action rate limits per type

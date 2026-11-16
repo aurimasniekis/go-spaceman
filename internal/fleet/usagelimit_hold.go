@@ -40,6 +40,11 @@ type UsageLimitSettings struct {
 	// NotifyAfter is how far away a hold's reset must be for the space's people to be told once (Q5); 0: never. With
 	// no Options.UsageLimitSettings it is DefaultLimitNotifyAfter.
 	NotifyAfter time.Duration
+	// WaitIfResetWithin is how near the limited account's reset must be for a run to wait for it instead of moving to
+	// another account of its pool (ADR-0090 decision 2; an unknown reset is further away). 0: always move.
+	WaitIfResetWithin time.Duration
+	// SwitchMaxPerDay bounds an instance's account switches in 24 hours (ADR-0090 decision 5); 0: never switch.
+	SwitchMaxPerDay int
 }
 
 // HoldTarget is what a launch would use that a usage-limit hold can hold: an account, or the gateway references of a

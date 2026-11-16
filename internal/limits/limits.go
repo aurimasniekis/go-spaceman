@@ -69,6 +69,10 @@ const (
 	UsageLimitMaxWait = "usage_limit_max_wait_hours"
 	// UsageLimitNotifyAfter is how far away a hold's reset must be for the space's people to be told once (Q5; 0: never).
 	UsageLimitNotifyAfter = "usage_limit_notify_after_hours"
+	// UsageLimitWaitIfResetWithin is how near (minutes) a limited account's reset must be for its run to wait rather than
+	// move to another account of its pool; UsageLimitSwitchMaxPerDay bounds the moves per instance (ADR-0090).
+	UsageLimitWaitIfResetWithin = "usage_limit_wait_if_reset_within"
+	UsageLimitSwitchMaxPerDay   = "usage_limit_switch_max_per_day"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -179,6 +183,12 @@ var Defs = []Def{
 	{Key: UsageLimitNotifyAfter, Label: "Usage-limit people notice", Unit: "hours", ZeroNone: true,
 		Scope:    "how far away the reset of an account (or gateway) held at a usage limit must be for the space's people to get one human action about it, once per account window (default 12: weekly limits, not 5-hour ones; 0: never)",
 		Enforced: "usage-limit holds (people notice, deadline timer)", OnLower: "Applies to holds not yet announced; an action already raised stays.", Overridable: true},
+	{Key: UsageLimitWaitIfResetWithin, Label: "Usage-limit wait for a near reset", Unit: "minutes",
+		Scope:    "with usage-limit failover on, a run whose account reaches its usage limit moves to another account of its pool unless the account resets within this many minutes; then it waits for the reset (an unknown reset counts as further away; 0: always move when an account is free)",
+		Enforced: "run reports (account switch decision)", OnLower: "Applies to limits reached from then on.", Overridable: true},
+	{Key: UsageLimitSwitchMaxPerDay, Label: "Account switches per day", Unit: "count",
+		Scope:    "how many times one agent instance may move to another account of its pool at a usage limit in 24 hours; beyond it the run waits for the reset (0: never move)",
+		Enforced: "run reports (account switch decision)", OnLower: "Applies to limits reached from then on; a switch already armed goes on.", Overridable: true},
 }
 
 const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."

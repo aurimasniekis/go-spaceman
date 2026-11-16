@@ -665,7 +665,7 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 	})
 	if ref == "" && scoped && len(cands) == 0 {
 		// The role's pool has accounts for this harness but none is usable: never widen to the space's accounts.
-		return "", apperr.New(apperr.CodePrecondition, "no enabled %s account of role %q's pool is usable; enable one or change the role's pool", harness, role)
+		return "", apperr.New(apperr.CodePrecondition, "no enabled %s account of role %q's pool is usable; enable one, change the role's pool, or name an account in the launch", harness, role)
 	}
 	chosen, err := pick(usable, harness, ref)
 	if ref == "" && len(cands) > 0 && cands[0].fromRole {
@@ -691,6 +691,17 @@ func ResolveWith(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref 
 		}
 	}
 	return chosen, nil
+}
+
+// RoleScoped reports whether role has a pool of its own for harness in the space: one of its accounts is bound for the
+// harness (usable or not), so the role's pool governs and never widens to the space's accounts.
+func RoleScoped(ctx context.Context, tx *store.Tx, spaceID, harness, role string) (bool, error) {
+	bs, err := bindings(ctx, tx.Q, spaceID)
+	if err != nil {
+		return false, err
+	}
+	_, scoped, err := candidates(ctx, tx.Q, spaceID, harness, role, bs, nil)
+	return scoped, err
 }
 
 // candidate is an account of the pool in play: its priority there and its place in the space's binding order.

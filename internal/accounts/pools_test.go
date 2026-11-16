@@ -252,3 +252,54 @@ func TestRolePoolWithoutEntryForHarnessFallsBack(t *testing.T) {
 		t.Fatalf("got %s, want the space pool's b", got)
 	}
 }
+
+// Deleting an account bumps accounts_version of every space whose bindings or role pools it was in (their If-Match
+// values change with the cascade), and of no other space.
+func TestDeleteBumpsAccountsVersion(t *testing.T) {
+	f := newFx(t)
+	must(t, f.s.W().TxNamed(f.ctx, "space", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(f.ctx, `INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at)
+			VALUES ('spc_b', 'bbb', 'B', 'nod_1', 'active', 'b', 0, 't', 0)`)
+		return err
+	}))
+	a, b := f.add("a", "claude_oauth_token", "ta"), f.add("b", "claude_oauth_token", "tb")
+	_, err := f.svc.SetBindings(f.ctx, admin, "spc_a", []Binding{{AccountID: a.ID, Default: true}, {AccountID: b.ID}})
+	must(t, err)
+	_, err = f.svc.SetBindings(f.ctx, admin, "spc_b", []Binding{{AccountID: b.ID, Default: true}})
+	must(t, err)
+	_, v, err := f.svc.Pools(f.ctx, "spc_a")
+	must(t, err)
+	_, err = f.svc.SetRolePool(f.ctx, admin, "spc_a", "rev", []PoolEntry{{AccountID: a.ID}}, v)
+	must(t, err)
+	va, err := f.svc.AccountsVersion(f.ctx, "spc_a")
+	must(t, err)
+	vb, err := f.svc.AccountsVersion(f.ctx, "spc_b")
+	must(t, err)
+	must(t, f.svc.Delete(f.ctx, admin, a.ID))
+	if got, _ := f.svc.AccountsVersion(f.ctx, "spc_a"); got != va+1 {
+		t.Fatalf("space A accounts_version %d after deleting its account, want %d", got, va+1)
+	}
+	if got, _ := f.svc.AccountsVersion(f.ctx, "spc_b"); got != vb {
+		t.Fatalf("space B accounts_version %d after deleting an account it doesn't use, want %d", got, vb)
+	}
+	if pools, _, _ := f.svc.Pools(f.ctx, "spc_a"); len(pools) != 0 {
+		t.Fatalf("role pool kept the deleted account: %+v", pools)
+	}
+}
+
+// A role pool with no usable account refuses a launch that names none, and the refusal says how to go on.
+func TestRolePoolRefusalNamesTheWayOut(t *testing.T) {
+	f := newFx(t)
+	a, b := f.add("a", "claude_oauth_token", "ta"), f.add("b", "claude_oauth_token", "tb")
+	_, err := f.svc.SetBindings(f.ctx, admin, "spc_a", []Binding{{AccountID: a.ID, Default: true}, {AccountID: b.ID}})
+	must(t, err)
+	_, err = f.svc.SetRolePool(f.ctx, admin, "spc_a", "rev", []PoolEntry{{AccountID: b.ID}}, 0)
+	must(t, err)
+	_, err = f.svc.Update(f.ctx, admin, b.ID, b.Version, Input{Name: b.Name, Enabled: false})
+	must(t, err)
+	_, err = f.resolvePolicy("rev", "", Policy{Avoid: func(string) (bool, error) { return false, nil }})
+	code(t, err, apperr.CodePrecondition)
+	if !strings.Contains(err.Error(), "or name an account in the launch") {
+		t.Fatalf("refusal %q", err)
+	}
+}
