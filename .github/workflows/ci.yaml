@@ -87,8 +87,9 @@ jobs:
   race:
     name: go race tests
     runs-on: ubuntu-24.04
-    # A healthy run takes about 25 minutes at the lower cap. go test's own timeouts (35 m internal/app, 15 m the rest) fire first; this
-    # ends a job that outlives them cleanly (logs and artifact kept) instead of leaving it until the runner is lost.
+    # A healthy run takes about 14 minutes at the lower cap, measured on a hosted runner. go test's own timeouts (35 m
+    # internal/app, 15 m the rest) fire first; this ends a job that outlives them cleanly (logs and artifact kept)
+    # instead of leaving it until the runner is lost.
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,7 +113,8 @@ jobs:
         # scripts/race.sh builds modernc's SQLite without checkptr (ADR-0062, update 2026-11-13, hold analysis).
         # internal/app runs as its own invocation next to the other packages (scripts/race.sh); on a 4-vCPU runner its
         # cap is 2: under -race an internal/app test binary reached 10-12 GB resident at 4, which with the other packages
-        # exhausted a 16 GB hosted runner (three runner losses after ~54 min); the run takes about 10 minutes longer. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
+        # exhausted a 16 GB hosted runner (three runner losses after ~54 min). The run takes about 14 minutes at the
+        # lower cap, measured on a hosted runner. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
           SM_TEST_TX_MAX: 1s
           RACE_APP_PARALLEL: "2"

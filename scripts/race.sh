@@ -20,7 +20,7 @@
 # Environment (the Makefile passes its variables through):
 #   GO                 go binary (default go)
 #   RACE_PARALLEL      go test -parallel for every package except internal/app (default 4, CI's runner size)
-#   RACE_APP_PARALLEL  go test -parallel for internal/app (default min(16, nproc/2), at least 4; CI sets 4)
+#   RACE_APP_PARALLEL  go test -parallel for internal/app (default min(16, nproc/2), at least 4; CI sets 2)
 #   RACE_APP_SPLIT     1 runs internal/app's serial tests in a process of their own, 0 doesn't (default 1 with 16 or
 #                      more CPUs, else 0)
 #   RACE_TIMEOUT       go test -timeout for every package except internal/app (default 15m)
@@ -117,7 +117,7 @@ if (( keep )); then
       { date -u +%T; free -m; ps -eo rss,pcpu,args --sort=-rss | head -8 | cut -c1-160; echo; } >>"$tmp/mem.log" 2>&1 || true
       sleep 20
     done
-  ) &
+  ) >/dev/null 2>&1 &
   monitor_pid=$!
 fi
 
@@ -160,6 +160,7 @@ for (( i = 0; i < ${#names[@]}; i++ )); do
   (( prc == 0 )) || rc=$prc
 done
 pids=()
-[[ -z "$monitor_pid" ]] || kill -TERM "$monitor_pid" 2>/dev/null || true
+# The sampler's sleep is a child of the subshell: stop it too, or it outlives this script for up to 20 s.
+[[ -z "$monitor_pid" ]] || { pkill -TERM -P "$monitor_pid" 2>/dev/null || true; kill -TERM "$monitor_pid" 2>/dev/null || true; }
 echo "race: $summary, total $(( SECONDS - start )) s"
 exit "$rc"
