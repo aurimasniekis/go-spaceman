@@ -37,6 +37,9 @@ func TestUsageLedgerMigrationFrom0056(t *testing.T) {
 		usage("run_1", `[{"model":"m","input_tokens":10,"requests":1}]`, `{"usd":0.5}`, 1),
 		usage("run_2", `[{"model":"m","input_tokens":30,"output_tokens":3,"cache_read_tokens":7,"requests":4}]`, `{"usd":1.5}`, 2),
 		usage("run_3", `not json`, ``, 3),
+		// Out-of-range and non-integer counters: negative and over 2^40 are clamped, a real is truncated to an integer.
+		run("run_6", "", `{}`, "rev"),
+		usage("run_6", `[{"model":"c","input_tokens":-5,"output_tokens":2000000000000,"cache_read_tokens":7.9,"requests":3}]`, `{"usd":0}`, 6),
 		usage("run_5", `[{"model":"bad model!","input_tokens":5},{"model":"also bad ","input_tokens":9,"requests":2},{"model":"ok.model:1[1m]","input_tokens":3}]`, `{"usd":2}`, 5),
 		`INSERT INTO run_usage (run_id, space_id, source, final, updated_at) VALUES ('run_4', 'spc_a', 'unavailable', 1, 4)`,
 	} {
@@ -60,8 +63,8 @@ func TestUsageLedgerMigrationFrom0056(t *testing.T) {
 		}
 	}
 	var n int
-	if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM usage_ledger_marks`).Scan(&n); err != nil || n != 3 {
-		t.Fatalf("marks %d %v, want one for the session, one for run_3 and one for run_5 (run_4's usage is unavailable)", n, err)
+	if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM usage_ledger_marks`).Scan(&n); err != nil || n != 4 {
+		t.Fatalf("marks %d %v, want one for the session, one each for run_3, run_5 and run_6 (run_4's usage is unavailable)", n, err)
 	}
 	var counted string
 	var cost float64
@@ -81,6 +84,12 @@ func TestUsageLedgerMigrationFrom0056(t *testing.T) {
 	if err := s.rdb.QueryRowContext(ctx, `SELECT group_concat(json_extract(e.value, '$.model') || '=' || json_extract(e.value, '$.in') || '/' || json_extract(e.value, '$.req'), ',')
 		FROM usage_ledger_marks, json_each(counted_json) e WHERE mark_key = 'run:run_5'`).Scan(&m5); err != nil || m5 != "ok.model:1[1m]=3/0,unknown=9/2" {
 		t.Fatalf("run_5 mark %q %v", m5, err)
+	}
+	// run_6: a negative counter clamps to 0, one over 2^40 to 2^40, and a real is stored as an integer (it unmarshals into int64).
+	var c6 string
+	if err := s.rdb.QueryRowContext(ctx, `SELECT group_concat(json_extract(e.value, '$.in') || '/' || json_extract(e.value, '$.out') || '/' || json_extract(e.value, '$.cr') || '/' || json_type(e.value, '$.cr'), ',')
+		FROM usage_ledger_marks, json_each(counted_json) e WHERE mark_key = 'run:run_6'`).Scan(&c6); err != nil || c6 != "0/1099511627776/7/integer" {
+		t.Fatalf("run_6 mark %q %v", c6, err)
 	}
 	// A purged space takes its ledger rows with it.
 	for _, q := range []string{
