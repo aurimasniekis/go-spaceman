@@ -13070,7 +13070,7 @@ export interface operations {
                 from?: string;
                 /** @description End of the range, exclusive (RFC 3339). Default: now */
                 to?: string;
-                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days */
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days */
                 bucket?: "hour" | "day";
                 /** @description Opaque cursor from a previous response's next_cursor */
                 cursor?: string;
@@ -22585,7 +22585,7 @@ export interface operations {
                 from?: string;
                 /** @description End of the range, exclusive (RFC 3339). Default: now */
                 to?: string;
-                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days */
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days */
                 bucket?: "hour" | "day";
                 /** @description Opaque cursor from a previous response's next_cursor */
                 cursor?: string;

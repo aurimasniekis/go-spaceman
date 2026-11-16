@@ -34,7 +34,7 @@ var UsageRules = map[string]Rule{
 type UsageSeriesQuery struct {
 	From   time.Time `query:"from" format:"date-time" doc:"Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to"`
 	To     time.Time `query:"to" format:"date-time" doc:"End of the range, exclusive (RFC 3339). Default: now"`
-	Bucket string    `query:"bucket" enum:"hour,day" default:"hour" doc:"Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days"`
+	Bucket string    `query:"bucket" enum:"hour,day" default:"hour" doc:"Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days"`
 	Page
 }
 

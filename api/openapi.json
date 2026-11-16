@@ -20536,13 +20536,13 @@
             }
           },
           {
-            "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days",
+            "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days",
             "explode": false,
             "in": "query",
             "name": "bucket",
             "schema": {
               "default": "hour",
-              "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days",
+              "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days",
               "enum": [
                 "hour",
                 "day"
@@ -35413,13 +35413,13 @@
             }
           },
           {
-            "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days",
+            "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days",
             "explode": false,
             "in": "query",
             "name": "bucket",
             "schema": {
               "default": "hour",
-              "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days",
+              "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days",
               "enum": [
                 "hour",
                 "day"

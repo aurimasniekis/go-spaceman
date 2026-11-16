@@ -110,3 +110,17 @@ func TestWindowsViews(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A daily series covers whole UTC days: a from in the middle of a day still counts that day's earlier hours.
+func TestDaySeriesUsesWholeDays(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t) // 09:35 UTC
+	f.report(lrA, false, 0.1, mu("m", 100, 0, 0, 0, 1))
+	f.clk.Advance(time.Hour)
+	f.report(lrA, false, 0.2, mu("m", 150, 0, 0, 0, 2))
+	from := f.clk.Now().Add(30 * time.Minute) // after the first hour's bucket
+	s, err := f.svc.SpaceSeries(f.ctx, "spc_a", SeriesQuery{Bucket: GranDay, GroupBy: "role", From: from, To: from.Add(2 * time.Hour)})
+	if err != nil || s.Totals.InputTokens != 150 || !s.From.Equal(from.Truncate(24*time.Hour)) {
+		t.Fatalf("%+v %v", s, err)
+	}
+}

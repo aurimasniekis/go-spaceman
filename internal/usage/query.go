@@ -98,6 +98,13 @@ func (q SeriesQuery) normalize(now time.Time, groups []string) (SeriesQuery, err
 		}
 	}
 	q.From, q.To = q.From.UTC(), q.To.UTC()
+	if q.Bucket == GranDay {
+		// Whole UTC days, so a day rolled up from hours and a day not yet rolled up count the same hours.
+		q.From = q.From.Truncate(24 * time.Hour)
+		if t := q.To.Truncate(24 * time.Hour); t.Before(q.To) {
+			q.To = t.Add(24 * time.Hour)
+		}
+	}
 	if !q.From.Before(q.To) {
 		return q, apperr.New(apperr.CodeInvalid, "from must be before to")
 	}
