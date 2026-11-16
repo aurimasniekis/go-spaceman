@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/usage"
 )
 
 // The launch-time headroom gate (ADR-0090 decision 4, usage_limit_min_headroom_percent). It only removes accounts from
@@ -31,7 +32,7 @@ func (svc *Service) belowHeadroom(ctx context.Context, q *db.Queries, ul UsageLi
 	used, resets, known, err := svc.opts.AccountHeadroom(ctx, q, accountID)
 	if err != nil {
 		// Fail open: a ledger that can't be read leaves the account eligible.
-		svc.opts.Log.Debug("headroom gate: read account usage", slog.String("account.id", accountID), obs.Err(err))
+		svc.opts.Log.Warn("headroom gate: read account usage", slog.String("account.id", accountID), obs.Err(err))
 		return false, time.Time{}, nil //nolint:nilerr // fail open: an unreadable usage ledger never blocks a launch
 	}
 	// No usage known leaves the account eligible, and a window whose reset has passed is stale and no longer counts.
@@ -59,7 +60,7 @@ func (svc *Service) withHeadroom(ctx context.Context, q *db.Queries, ul UsageLim
 
 // checkHeadroom refuses a launch whose chosen account is below the gate, which means Resolve found no eligible account
 // in the pool (it prefers any other). The refusal is a HoldError (429) until the earliest known reset of the pool's
-// accounts, so the caller waits as it does for an exhausted account.
+// accounts (at most usage.WindowMaxAge from now), so the caller waits as it does for an exhausted account.
 func (svc *Service) checkHeadroom(ctx context.Context, tx *store.Tx, ul UsageLimitSettings, spaceID, harness, role, chosen string) error {
 	below, _, err := svc.belowHeadroom(ctx, tx.Q, ul, chosen)
 	if err != nil || !below {
@@ -75,9 +76,16 @@ func (svc *Service) checkHeadroom(ctx context.Context, tx *store.Tx, ul UsageLim
 			earliest = at
 		}
 	}
+	// A window counts for the gate only while it is fresh (usage.WindowMaxAge), so the account may become eligible again
+	// that long from now whatever the reset says: the wait never exceeds it (a seven-day reset would defer for days).
+	if !earliest.IsZero() {
+		if limit := svc.now().Add(usage.WindowMaxAge); earliest.After(limit) {
+			earliest = limit
+		}
+	}
 	msg := fmt.Sprintf("every %s account usable here has less than %d%% of a usage window left (the launch headroom gate); launches wait for a reset", harness, ul.MinHeadroomPercent)
 	if !earliest.IsZero() {
-		msg = fmt.Sprintf("every %s account usable here has less than %d%% of a usage window left (the launch headroom gate); the earliest reset is %s",
+		msg = fmt.Sprintf("every %s account usable here has less than %d%% of a usage window left (the launch headroom gate); the earliest reset (or recheck) is %s",
 			harness, ul.MinHeadroomPercent, earliest.UTC().Format(holdTimeLayout))
 	}
 	return &HoldError{Gate: true, Target: HoldTarget{AccountID: chosen}, Until: earliest, Known: !earliest.IsZero(), err: apperr.New(apperr.CodeRateLimited, "%s", msg)}

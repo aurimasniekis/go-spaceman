@@ -114,6 +114,23 @@ func TestHeadroomGateNoEligibleAccount(t *testing.T) {
 	}
 }
 
+// A far reset (seven days) is capped at usage.WindowMaxAge: the window stops counting after that, so the wait must not
+// outlast it. The refusal is flagged as the gate's own.
+func TestHeadroomGateCapsUntil(t *testing.T) {
+	e := headroomEnv(t, 20, &usageStub{
+		used:  map[string]float64{"acc_1": 95, "acc_2": 99},
+		reset: map[string]time.Duration{"acc_1": 7 * 24 * time.Hour, "acc_2": 8 * 24 * time.Hour},
+	})
+	_, err := e.launch("spc_a", "")
+	h := wantHold(t, err, "headroom gate")
+	if !h.Known || !h.Until.Equal(e.svc.now().Add(usage.WindowMaxAge).UTC()) {
+		t.Fatalf("until %v known %v, want now+%s", h.Until, h.Known, usage.WindowMaxAge)
+	}
+	if hh, ok := AsHold(err); !ok || !hh.Gate {
+		t.Fatalf("a gate refusal is not flagged Gate: %+v", hh)
+	}
+}
+
 func mustErr(_ *Run, err error) error { return err }
 
 // A scoped role pool never widens: with every pool account below the gate the launch is refused, even though the
