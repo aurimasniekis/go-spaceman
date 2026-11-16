@@ -5457,6 +5457,21 @@
     the resume uses the target account either way.
   - New space limits are named as in decision 5, without a unit suffix: `usage_limit_wait_if_reset_within` (minutes)
     and `usage_limit_switch_max_per_day`. Metric `spaceman_account_switches_total{result}`.
+- **T10 implementation notes (2026-11-16):**
+  - With failover on, a pool is exhausted when every account of the run's pool (the role's pool when it has one, never
+    widened; otherwise the space's enabled accounts for the harness) has an open hold that hasn't reset. A wait parked
+    then, or a switch's wait that finds no eligible account at its resume, resumes at the pool's earliest reset (plus
+    ADR-0079's slack) instead of its own account's. An account frees up when its last hold resets; an account whose
+    hold has no known reset counts as limited and is left out of the earliest. When no reset in the pool is known the
+    wait keeps ADR-0079's time. No new state is stored: exhaustion is read when the wait is parked.
+  - The resume re-resolves through the launch path. With failover on and a role pool, a resume that is not a switch and whose
+    parked account has left the pool no longer names it: the role's pool picks, so an account outside the pool is never used.
+    The window of the people notice is the pool's earliest reset, so a reset that moves later raises another notice.
+  - Control gets its park message with the pool's accounts and the resume time. The people get one informational human
+    action per space, harness and window (the pool's earliest reset; the day when none is known) under the reserved
+    dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
+    or a pool with a free account, raises none. The action is created after the park's transaction commits, so a crash
+    in between loses it; the control message is in the transaction.
 - **Security-relevant because:**
   - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
   - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now
