@@ -308,6 +308,53 @@ func (c *Client) CreateForumTopic(ctx context.Context, p CreateForumTopicParams)
 	return t, err
 }
 
+// EditForumTopicParams are editForumTopic's parameters (API#editforumtopic). Name is 0–128 characters; an empty name keeps
+// the current one. The topic's colour can't be changed.
+type EditForumTopicParams struct {
+	ChatID          int64  `json:"chat_id"`
+	MessageThreadID int    `json:"message_thread_id"`
+	Name            string `json:"name,omitempty"`
+}
+
+// EditForumTopic renames a topic in a private chat (or a forum supergroup).
+func (c *Client) EditForumTopic(ctx context.Context, p EditForumTopicParams) error {
+	return c.Call(ctx, "editForumTopic", p, nil)
+}
+
+// PinChatMessageParams are pinChatMessage's parameters (API#pinchatmessage). In a private chat any non-service message
+// can be pinned.
+type PinChatMessageParams struct {
+	ChatID              int64 `json:"chat_id"`
+	MessageID           int   `json:"message_id"`
+	DisableNotification bool  `json:"disable_notification,omitempty"`
+}
+
+// PinChatMessage pins a message in the chat.
+func (c *Client) PinChatMessage(ctx context.Context, p PinChatMessageParams) error {
+	return c.Call(ctx, "pinChatMessage", p, nil)
+}
+
+// UnpinChatMessageParams are unpinChatMessage's parameters (API#unpinchatmessage). MessageID 0 unpins the most recent
+// pinned message.
+type UnpinChatMessageParams struct {
+	ChatID    int64 `json:"chat_id"`
+	MessageID int   `json:"message_id,omitempty"`
+}
+
+// UnpinChatMessage unpins one message, or the most recent pinned message when MessageID is 0.
+func (c *Client) UnpinChatMessage(ctx context.Context, p UnpinChatMessageParams) error {
+	return c.Call(ctx, "unpinChatMessage", p, nil)
+}
+
+// DeleteMessages deletes several messages at once (API#deletemessages): 1–100 IDs. Messages that can't be found are
+// skipped; the limits of deleteMessage (48 h) apply to each.
+func (c *Client) DeleteMessages(ctx context.Context, chatID int64, messageIDs []int) error {
+	return c.Call(ctx, "deleteMessages", struct {
+		ChatID     int64 `json:"chat_id"`
+		MessageIDs []int `json:"message_ids"`
+	}{chatID, messageIDs}, nil)
+}
+
 // IsTopicGone reports whether err says the topic a message was addressed to was deleted or closed, or never existed:
 // the caller recreates the topic or falls back to the main chat.
 func IsTopicGone(err error) bool {

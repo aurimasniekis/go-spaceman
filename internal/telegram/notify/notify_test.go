@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,8 +16,10 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
@@ -162,6 +165,8 @@ type mappings struct {
 	rows    map[[2]int64]notify.Mapping
 	saves   int
 	lookups int
+	// noticeReads counts NoticeLinks calls.
+	noticeReads int
 }
 
 func (m *mappings) Save(_ context.Context, rows []notify.Mapping) error {
@@ -189,6 +194,42 @@ func (m *mappings) Lookup(_ context.Context, k notify.Key) ([]notify.Mapping, er
 		}
 	}
 	return out, nil
+}
+
+func (m *mappings) NoticeLinks(_ context.Context, typ string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.noticeReads++
+	var out []string
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingNotice && r.Key.Type == typ {
+			out = append(out, r.LinkID)
+		}
+	}
+	return out, nil
+}
+
+func (m *mappings) HomeMessages(_ context.Context) ([]notify.HomeRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []notify.HomeRow
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingHome {
+			out = append(out, notify.HomeRow{LinkID: r.LinkID, ChatID: r.ChatID, MessageID: r.MessageID, Pinned: r.Version == 1})
+		}
+	}
+	return out, nil
+}
+
+func (m *mappings) notices() (rows []notify.Mapping, reads int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.rows {
+		if r.Kind == notify.MappingNotice {
+			rows = append(rows, r)
+		}
+	}
+	return rows, m.noticeReads
 }
 
 func (m *mappings) lookupCount() int {
@@ -230,8 +271,12 @@ type env struct {
 	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
 	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
 	authz      notify.Authorizer
-	tp         *topics.Manager              // topics mode (nil: off)
-	appURL     func(notify.Resource) string // the notifier's Options.AppURL (nil: no continuation button)
+	tp         *topics.Manager                                            // chat threads (nil: off)
+	pending    func(context.Context) ([]notify.SpaceCount, error)         // the home summaries' counts (nil: no summaries)
+	perms      func(context.Context, string) (human.PermissionSet, error) // the type permissions of a space (nil: defaults)
+	homeWake   chan time.Time                                             // the home summary's debounce wait ends when the test sends here
+	needsURL   string
+	itemURL    func(string, notify.Key) string // the notifier's Options.ItemURL (nil: no Open in app button)
 }
 
 func linkFor(i int) notify.Link {
@@ -291,22 +336,7 @@ func (e *env) allow(l notify.Link, space string) {
 // run starts the notifier; its windows end when the test calls endWindow.
 func (e *env) run(m notify.Mappings) (stop func()) {
 	e.t.Helper()
-	opts := notify.Options{Feed: e.feed, Reader: e.rd, Authz: e.az, Policy: e.pol, Links: e.links, Sender: func() *sender.Sender { return e.snd },
-		Bus: e.bus, Now: e.clk.Now, FlushEvery: e.flushEvery, RetryAfter: e.retry,
-		After: func(time.Duration) <-chan time.Time {
-			ch := make(chan time.Time, 1)
-			go func() { <-e.window; ch <- time.Now() }()
-			return ch
-		}}
-	opts.Topics = e.tp
-	opts.AppURL = e.appURL
-	if m != nil {
-		opts.Store = m
-	}
-	if e.authz != nil {
-		opts.Authz = e.authz
-	}
-	n := notify.New(opts)
+	n := notify.New(e.options(m))
 	e.n = n
 	started := e.feed.latests.Load()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -321,6 +351,32 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 		time.Sleep(time.Millisecond)
 	}
 	return func() { cancel(); <-done }
+}
+
+// options is the notifier's wiring over the env's fakes.
+func (e *env) options(m notify.Mappings) notify.Options {
+	opts := notify.Options{Feed: e.feed, Reader: e.rd, Authz: e.az, Policy: e.pol, Links: e.links, Sender: func() *sender.Sender { return e.snd },
+		Bus: e.bus, Now: e.clk.Now, FlushEvery: e.flushEvery, RetryAfter: e.retry,
+		After: func(time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			go func() { <-e.window; ch <- time.Now() }()
+			return ch
+		}}
+	opts.Topics = e.tp
+	if e.pending != nil {
+		opts.Pending, opts.HomeEvery = e.pending, 30*time.Second
+		opts.HomeAfter = func(time.Duration) <-chan time.Time { return e.homeWake }
+		opts.NeedsURL = func() string { return e.needsURL }
+		opts.Perms = e.perms
+	}
+	opts.ItemURL = e.itemURL
+	if m != nil {
+		opts.Store = m
+	}
+	if e.authz != nil {
+		opts.Authz = e.authz
+	}
+	return opts
 }
 
 func (e *env) ring() { e.bus.Publish(eventbus.Event{Topic: eventbus.TopicChange}) }
@@ -347,8 +403,12 @@ func action(id string, version int64, final bool) notify.Resource {
 	if final {
 		st = "resolved: approved"
 	}
+	a := &card.Action{ID: id, Type: "approval", Status: "open"}
+	if final {
+		a.Status, a.Outcome = "resolved", "approved"
+	}
 	return notify.Resource{Key: notify.Key{Type: notify.TypeHumanAction, ID: id}, SpaceID: "spc_1", Version: version, Kind: notify.KindAction,
-		Perm: authz.HumanRead, Label: "Approval", Title: "Deploy " + id, Detail: "Please approve", State: st, Priority: "normal", Notify: !final, Final: final}
+		Perm: authz.HumanRead, Label: "Approval", Title: "Deploy " + id, Detail: "Please approve", State: st, Priority: "normal", Notify: !final, Final: final, Action: a}
 }
 
 // settle waits until the notifier has handled a ring: the feed was read after it.
@@ -452,6 +512,87 @@ func TestStartsAtTheNewestChange(t *testing.T) {
 	if n := len(e.fake.Calls("sendMessage")); n != 1 || !strings.Contains(calls[0].Params["text"], "hum_new") {
 		t.Errorf("sends = %d, first %q: history must not be replayed", n, calls[0].Params["text"])
 	}
+}
+
+// latestFeed is a feed whose Latest is decided by the test: it blocks on gate, then answers with err, if any.
+type latestFeed struct {
+	*feed
+	entered chan struct{} // receives one value per Latest call
+	gate    chan struct{} // Latest returns once this is closed
+	err     atomic.Pointer[error]
+}
+
+func (f *latestFeed) Latest(ctx context.Context) (int64, error) {
+	select {
+	case f.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-f.gate:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	if p := f.err.Load(); p != nil {
+		return 0, *p
+	}
+	return f.feed.Latest(ctx)
+}
+
+func (e *env) runWith(f notify.Feed) (stop func()) {
+	e.t.Helper()
+	opts := e.options(nil)
+	opts.Feed = f
+	e.n = notify.New(opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = e.n.Run(ctx); close(done) }()
+	return func() { cancel(); <-done }
+}
+
+func notReady(t *testing.T, n *notify.Notifier, why string) {
+	t.Helper()
+	select {
+	case <-n.Ready():
+		t.Fatalf("Ready closed %s", why)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A change made before Run has its start position is history, so callers wait for Ready before producing one: Ready
+// stays open while the start position is unread, and closes once it is.
+func TestReadyMeansTheStartPositionIsRead(t *testing.T) {
+	e := newEnv(t, 1)
+	f := &latestFeed{feed: e.feed, entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	stop := e.runWith(f)
+	defer stop()
+	select {
+	case <-f.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run never read the start position")
+	}
+	notReady(t, e.n, "while the start position was still being read")
+	close(f.gate)
+	select {
+	case <-e.n.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("Ready was not closed after the start position was read")
+	}
+}
+
+func TestReadyStaysOpenWhileTheStartReadFails(t *testing.T) {
+	e := newEnv(t, 1)
+	f := &latestFeed{feed: e.feed, entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	boom := errors.New("feed down")
+	f.err.Store(&boom)
+	close(f.gate)
+	stop := e.runWith(f)
+	defer stop()
+	select {
+	case <-f.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run never read the start position")
+	}
+	notReady(t, e.n, "although the start read failed")
 }
 
 func TestWindowIsBounded(t *testing.T) {
@@ -618,14 +759,14 @@ func TestCardEdit(t *testing.T) {
 		t.Errorf("%d sends, want the one card", n)
 	}
 	msgs := e.fake.Messages(1001)
-	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "resolved: approved") {
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "✅ Approved") {
 		t.Fatalf("messages = %+v, want one card in its final state", msgs)
 	}
 	if edits[0].Params["message_id"] != fmt.Sprint(msgs[0].MessageID) {
 		t.Errorf("edited message %s, want %d", edits[0].Params["message_id"], msgs[0].MessageID)
 	}
-	if len(msgs[0].Entities) != 1 || msgs[0].Entities[0].Type != "bold" {
-		t.Errorf("entities = %+v, want the bold head", msgs[0].Entities)
+	if len(msgs[0].Entities) != 0 || msgs[0].Text != "✅ Approved · Deploy hum_1" {
+		t.Errorf("final card %q %+v, want the compact line without formatting", msgs[0].Text, msgs[0].Entities)
 	}
 
 	// The same version again changes nothing; a resolved action nobody was told about sends nothing.
@@ -689,7 +830,7 @@ func TestCoalescedStates(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("%d messages for one action, want its single card", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Text, "resolved") {
+	if !strings.Contains(msgs[0].Text, "Approved") {
 		t.Errorf("card %q doesn't show the final state", msgs[0].Text)
 	}
 }
@@ -718,6 +859,7 @@ func notifyDefaults() settings.NotificationDefaults { return settings.Defaults()
 // replyGate holds sendMessage replies after the fake server has logged the request, the gap in which Telegram has
 // the message and the notifier does not yet know its id.
 type replyGate struct {
+	method  string        // the Bot API method whose replies are held
 	reached chan struct{} // one value per held reply
 	release chan struct{}
 }
@@ -726,8 +868,8 @@ type gateTransport struct{ e *env }
 
 func (g gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := http.DefaultTransport.RoundTrip(r)
-	if err == nil && strings.HasSuffix(r.URL.Path, "/sendMessage") {
-		if gate := g.e.gate.Load(); gate != nil {
+	if err == nil {
+		if gate := g.e.gate.Load(); gate != nil && path.Base(r.URL.Path) == gate.method {
 			gate.reached <- struct{}{}
 			select {
 			case <-gate.release:
@@ -740,8 +882,11 @@ func (g gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // holdReplies holds every sendMessage reply from now on. wait blocks until n replies are held; release lets them
 // (and later ones) through.
-func (e *env) holdReplies() (wait func(n int), release func()) {
-	g := &replyGate{reached: make(chan struct{}, 64), release: make(chan struct{})}
+func (e *env) holdReplies() (wait func(n int), release func()) { return e.holdMethod("sendMessage") }
+
+// holdMethod is holdReplies for the replies of any one Bot API method.
+func (e *env) holdMethod(method string) (wait func(n int), release func()) {
+	g := &replyGate{method: method, reached: make(chan struct{}, 64), release: make(chan struct{})}
 	e.gate.Store(g)
 	wait = func(n int) {
 		e.t.Helper()

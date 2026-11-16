@@ -24,6 +24,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
@@ -78,6 +79,21 @@ type Options struct {
 	// and the link it was sent to, so a Telegram reply to the card is a reply to the message (TG-8b). Nil: such replies
 	// are not taken.
 	ResolveMessage func(ctx context.Context, chatID int64, messageID int) (spaceID, msgID, linkID string, ok bool)
+	// Card returns the notifier card a chat message is (notify.Notifier.Card: from memory first, then the
+	// telegram_messages row): the action, its space, the link it was sent to and the version it shows. A card's own
+	// buttons (quick actions, More…) act through it. Nil: they are refused.
+	Card func(ctx context.Context, chatID int64, messageID int) (CardRef, bool)
+	// EditCard runs edit, an edit of a card message showing the action at version (as its form when form, settled when
+	// final), under the notifier's card lock (notify.Notifier.EditCard); it is skipped, and reports false, when the
+	// card already shows a state that must win (a newer one, or the item retracted). Nil: edit runs as is.
+	EditCard func(chatID int64, messageID int, actionID string, version int64, form, final bool, edit func() bool) bool
+	// CardCaps is what a link's card of an action offers (notify.Notifier.CardCaps), for redrawing the card. Cosmetic
+	// only. Nil: no quick actions are drawn.
+	CardCaps func(linkID string, chatID int64, spaceID, actionID string) card.Caps
+	// CardSpace maps any notifier card (chat, message), whatever it shows, to its space and the link it was sent to, so
+	// a reply that isn't an answer goes to that space rather than the current one. Nil: such replies are captured as
+	// plain messages.
+	CardSpace func(ctx context.Context, chatID int64, messageID int) (spaceID, linkID string, ok bool)
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
 	// AppPage is the Mini App URL of one of its pages, e.g. "/settings" (nil or "": the Mini App isn't available).
@@ -103,6 +119,12 @@ type Options struct {
 	// from thread IDs the bot stored). A message written in a space's topic acts on that space, re-authorized like any
 	// named space; the Needs-you topic and unknown threads answer false and keep the current-space behaviour. Nil: none.
 	SpaceOfThread func(ctx context.Context, linkID string, thread int) (spaceID string, ok bool)
+	// Muted reports whether the link muted a space (the notifier's in-memory check); the cross-space /needs leaves a
+	// muted space out. Nil: nothing is muted.
+	Muted func(linkID, spaceID string) bool
+	// ThreadOf is the topic the link has for a space (topics.Manager.ThreadOf), for /spaces' "Go to topic" button. Nil or
+	// false: no button.
+	ThreadOf func(ctx context.Context, linkID, spaceID string) (thread int, ok bool)
 	// AlbumQuiet is how long an album waits for its next part before it becomes one item (default 1.5 s).
 	AlbumQuiet time.Duration
 
@@ -116,7 +138,7 @@ type Handler struct {
 	o Options
 
 	mu      sync.Mutex
-	formMu  sync.Mutex         // serializes changes to forms
+	formMu  [64]sync.Mutex     // serialize changes to forms, one stripe per chat (formLock)
 	current map[string]string  // link ID -> space ID chosen with /spaces or /space
 	pending map[pendingKey]rej // a reject reason being asked for
 	forms   map[pendingKey]*form
@@ -187,7 +209,7 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 			}
 			return
 		}
-		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l) || h.qrReply(ctx, m, l)) {
+		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l) || h.qrReply(ctx, m, l) || h.cardReply(ctx, m, l)) {
 			return
 		}
 		if h.controlText(ctx, m, l) {
@@ -233,9 +255,11 @@ func (h *Handler) bot() Bot {
 }
 
 type reply struct {
-	text   string
-	markup *botapi.InlineKeyboardMarkup
-	force  *botapi.ForceReply
+	text string
+	// entities format text (a card's bold title); they must lie inside it.
+	entities []botapi.MessageEntity
+	markup   *botapi.InlineKeyboardMarkup
+	force    *botapi.ForceReply
 	// replyTo makes the message a reply to that message of the chat (0: none), and thread puts it in that forum topic.
 	replyTo, thread int
 	// protect sets protect_content (no forwarding or saving), for message bodies (ADR-0083 decision 13).
@@ -254,7 +278,7 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 	if r.thread == 0 && r.replyTo == 0 {
 		thread = threadOf(ctx)
 	}
-	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: thread, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
+	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: thread, Text: r.text, Entities: r.entities, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
 	if r.replyTo != 0 {
 		p.ReplyParameters = &botapi.ReplyParameters{MessageID: r.replyTo}
 	}
@@ -305,7 +329,7 @@ func (h *Handler) show(ctx context.Context, chatID int64, tapped *botapi.Message
 	b := h.bot()
 	if b != nil && tapped != nil && tapped.MessageID != 0 && r.force == nil {
 		ectx, cancel := context.WithTimeout(ctx, apiTimeout)
-		_, err := b.EditMessageText(ectx, botapi.EditMessageTextParams{ChatID: chatID, MessageID: tapped.MessageID, Text: r.text,
+		_, err := b.EditMessageText(ectx, botapi.EditMessageTextParams{ChatID: chatID, MessageID: tapped.MessageID, Text: r.text, Entities: r.entities,
 			LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: r.markup})
 		cancel()
 		if err == nil {
@@ -536,4 +560,10 @@ func markup(rows ...[]botapi.InlineKeyboardButton) *botapi.InlineKeyboardMarkup 
 		return nil
 	}
 	return &botapi.InlineKeyboardMarkup{InlineKeyboard: out}
+}
+
+// formLock is the lock that serializes changes to a chat's forms: taps and replies in one chat go one at a time, and a
+// long wait in one chat (a rate-limited send, a slow upload) never holds up another chat's.
+func (h *Handler) formLock(chat int64) *sync.Mutex {
+	return &h.formMu[uint64(chat)%uint64(len(h.formMu))] //nolint:gosec // G115: any stripe will do for a negative ID
 }

@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
@@ -12,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
 
 // prefsEnv: users usr_a (links tgl_a1, tgl_a2, and the revoked tgl_a3) and usr_b (link tgl_b1).
@@ -74,7 +76,7 @@ func TestLinkPrefsOwnership(t *testing.T) {
 	in.NewActions = ptr(false)
 
 	p, err := svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1"))
-	if err != nil || p.LinkID != "tgl_a1" || p.Version != 1 || !p.Effective.NewActions || p.Topics.Available {
+	if err != nil || p.LinkID != "tgl_a1" || p.Version != 1 || !p.Effective.NewActions {
 		t.Fatalf("own link: %+v, %v", p, err)
 	}
 	refused := []struct {
@@ -208,32 +210,84 @@ func TestSetTelegramLinkPrefsQueryGuards(t *testing.T) {
 	}
 }
 
-// Topics mode is reported read-only: available when wired, only the spaces the link may read, and the chat's refusal.
+// The chat layout is reported: availability, the effective mode and the link's own override, whether messages go to
+// topics now, the readable spaces that already have a thread in this link's topics_json, and the chat's refusal.
 func TestLinkPrefsTopicsState(t *testing.T) {
 	t.Parallel()
-	svc, _ := prefsEnv(t)
+	svc, s := prefsEnv(t)
+	if err := s.W().TxNamed(context.Background(), "seed", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(context.Background(), `UPDATE telegram_links SET topics_json = '{"spc_01aaaaaaaaaaaaaaaaaaaaaaab":3,"spc_01aaaaaaaaaaaaaaaaaaaaaaaa":2,"spc_01aaaaaaaaaaaaaaaaaaaaaaah":4,"needs":9,"home":8}' WHERE id = 'tgl_a1'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	refused := false
-	svc.o.TopicSpaces = func() []string { return []string{"spc_a", "spc_hidden"} }
 	svc.o.TopicsRefused = func(chat int64) bool { return refused && chat == 11 }
-	svc.o.CanRead = func(_ []string, id string) bool { return id == "spc_a" }
+	svc.o.TopicsEnabled = func(mode string, chat int64) bool { return mode != settings.ThreadsOff && (!refused || chat != 11) }
+	svc.o.CanRead = func(_ []string, id string) bool { return id != "spc_01aaaaaaaaaaaaaaaaaaaaaaah" }
 	ctx := context.Background()
 	p, err := svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1"))
-	if err != nil || !p.Topics.Available || len(p.Topics.Spaces) != 1 || p.Topics.Spaces[0] != "spc_a" || p.Topics.Refused {
+	if err != nil || !p.Topics.Available || p.Topics.Mode != settings.ThreadsAuto || p.Topics.Override != nil || !p.Topics.Active ||
+		!slices.Equal(p.Topics.Spaces, []string{"spc_01aaaaaaaaaaaaaaaaaaaaaaaa", "spc_01aaaaaaaaaaaaaaaaaaaaaaab"}) || p.Topics.Refused {
 		t.Fatalf("topics %+v, %v", p.Topics, err)
 	}
 	refused = true
-	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || !p.Topics.Refused {
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || !p.Topics.Refused || p.Topics.Active {
 		t.Fatalf("refused chat: %+v, %v", p.Topics, err)
 	}
-	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a2")); err != nil || p.Topics.Refused {
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a2")); err != nil || p.Topics.Refused || len(p.Topics.Spaces) != 0 {
 		t.Fatalf("another chat: %+v, %v", p.Topics, err)
 	}
+	// A space hidden from Telegram is not listed even when the link may read it.
+	svc.o.VisibleSpaces = func() []string { return []string{"spc_01aaaaaaaaaaaaaaaaaaaaaaaa"} }
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || !slices.Equal(p.Topics.Spaces, []string{"spc_01aaaaaaaaaaaaaaaaaaaaaaaa"}) {
+		t.Fatalf("hidden space listed: %+v, %v", p.Topics, err)
+	}
+	svc.o.VisibleSpaces = nil
 	svc.o.CanRead = func([]string, string) bool { return false }
-	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || p.Topics.Refused || len(p.Topics.Spaces) != 0 {
-		t.Fatalf("no readable topic space: %+v, %v", p.Topics, err)
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || len(p.Topics.Spaces) != 0 {
+		t.Fatalf("no readable thread space: %+v, %v", p.Topics, err)
 	}
 	svc.o.TopicsAvailable = func() bool { return false }
 	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || p.Topics.Available {
-		t.Fatalf("bot off: %+v, %v", p.Topics, err)
+		t.Fatalf("bot off or topics disabled: %+v, %v", p.Topics, err)
+	}
+}
+
+// The override is saved through the threads field with If-Match, reported back as mode and override, validated, cleared
+// again by leaving it out, and published at once so the notifier re-reads the link.
+func TestLinkPrefsThreadsOverrideRoundTrip(t *testing.T) {
+	t.Parallel()
+	svc, s := prefsEnv(t)
+	ctx := context.Background()
+	pr := tgPrincipal("usr_a", "tgl_a1")
+	actor := audit.Actor{Type: audit.ActorUser, ID: "usr_a"}
+	svc.o.TopicsEnabled = func(mode string, _ int64) bool { return mode == settings.ThreadsOn }
+
+	in := PrefsInput{}
+	in.Threads = ptr(settings.ThreadsOn)
+	p, err := svc.SetPrefs(ctx, pr, actor, 1, in)
+	if err != nil || p.Version != 2 || p.Topics.Mode != settings.ThreadsOn || p.Topics.Override == nil || *p.Topics.Override != settings.ThreadsOn || !p.Topics.Active {
+		t.Fatalf("on: %+v, %v", p, err)
+	}
+	if raw, _ := storedPrefs(t, s, "tgl_a1"); raw != `{"threads":"on"}` {
+		t.Fatalf("stored %s", raw)
+	}
+	// A stale version is refused.
+	_, err = svc.SetPrefs(ctx, pr, actor, 1, in)
+	wantCode(t, "stale", err, apperr.CodePrecondition)
+	// An unknown value is refused and changes nothing.
+	bad := PrefsInput{}
+	bad.Threads = ptr("sideways")
+	_, err = svc.SetPrefs(ctx, pr, actor, 2, bad)
+	wantCode(t, "invalid", err, apperr.CodeInvalid)
+	// off reads back as off, not active.
+	in.Threads = ptr(settings.ThreadsOff)
+	if p, err = svc.SetPrefs(ctx, pr, actor, 2, in); err != nil || p.Topics.Mode != settings.ThreadsOff || p.Topics.Active || p.Topics.Refused {
+		t.Fatalf("off: %+v, %v", p.Topics, err)
+	}
+	// Leaving it out follows the administrator's default (auto) again.
+	if p, err = svc.SetPrefs(ctx, pr, actor, 3, PrefsInput{}); err != nil || p.Topics.Override != nil || p.Topics.Mode != settings.ThreadsAuto {
+		t.Fatalf("cleared: %+v, %v", p.Topics, err)
 	}
 }

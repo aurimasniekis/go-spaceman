@@ -37,9 +37,10 @@ var FleetRules = map[string]Rule{
 
 	// Usage limits (ADR-0079). A space's holds include other spaces' open holds on its accounts, redacted to what the
 	// space may know (the account and the window); the account view names every space and needs account:read.
-	"list-space-usage-limits":   InSpace(authz.RunRead),
-	"list-space-limit-waits":    InSpace(authz.RunRead),
-	"list-account-usage-limits": Global(authz.AccountRead),
+	"list-space-usage-limits":     InSpace(authz.RunRead),
+	"list-space-limit-waits":      InSpace(authz.RunRead),
+	"list-space-account-switches": InSpace(authz.RunRead),
+	"list-account-usage-limits":   Global(authz.AccountRead),
 	// "Clear now" (decision 7): a space's own hold with the permission that launches runs there; every space's holds
 	// on an account with the permission that manages accounts (accounts are global).
 	"clear-space-usage-limit":    InSpace(authz.RunControl),
@@ -335,6 +336,27 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 					}
 				}{}
 				out.Body.Items = ws
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-account-switches", Method: http.MethodGet, Path: "/spaces/{space_id}/account-switches",
+			Summary: "A space's account switches",
+			Description: "The runs moved to another account of their pool at a usage limit (ADR-0090), newest first, with their state and the " +
+				"fixed reason of one that fell back or failed. Identifiers, kinds and times only.", Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []fleet.AccountSwitch `json:"items"`
+				}
+			}, error) {
+				ss, err := f.AccountSwitches(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "account_switches.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []fleet.AccountSwitch `json:"items"`
+					}
+				}{}
+				out.Body.Items = ss
 				return out, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "resume-limit-wait", Method: http.MethodPost, Path: "/spaces/{space_id}/limit-waits/{wait_id}/resume",

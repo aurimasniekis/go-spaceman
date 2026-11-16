@@ -69,6 +69,7 @@ import (
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	tgnotify "github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	tgtopics "github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
@@ -280,7 +281,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock, WakeDeadlines: wakeDeadlines, StaleRunGrace: o.StaleRunGrace,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve, AccountHeadroom: usage.AccountHeadroomFunc(o.Clock.Now),
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
 			if err != nil {
@@ -350,6 +351,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Human.Kick() // route responses the run had not acknowledged (SM-HUM-009)
 			}
 		},
+		OnSpaceRenamed: func(ctx context.Context, spaceID, name string) {
+			if c.TelegramTopics != nil {
+				c.TelegramTopics.Renamed(ctx, spaceID, name) // the topics take the new name (ADR-0089); one read and queued calls
+			}
+		},
 		OnSpaceState: func(spaceID, state string) {
 			if c.Events != nil {
 				c.Events.SpaceStateChanged() // subscriptions with while_paused stop stop or start (SM-EVT-014)
@@ -406,7 +412,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines,
 		// ADR-0079: failover and the probe backoff cap are space limits.
 		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
-			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter}
+			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter,
+				WaitIfResetWithin: fleet.DefaultSwitchWaitIfResetWithin, SwitchMaxPerDay: fleet.DefaultSwitchMaxPerDay}
 			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
 				out.Failover = v.Get(limits.UsageLimitFailover) != 0
 				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
@@ -416,6 +423,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 					out.MaxWait = time.Duration(h) * time.Hour
 				}
 				out.NotifyAfter = time.Duration(v.Get(limits.UsageLimitNotifyAfter)) * time.Hour // 0: never
+				out.WaitIfResetWithin = time.Duration(v.Get(limits.UsageLimitWaitIfResetWithin)) * time.Minute
+				out.SwitchMaxPerDay = int(v.Get(limits.UsageLimitSwitchMaxPerDay))
+				out.MinHeadroomPercent = int(v.Get(limits.UsageLimitMinHeadroomPercent))
 			}
 			return out
 		},
@@ -529,7 +539,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	bc := cfg.Backups
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
 		Sources: backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
-		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
+		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(),
+		StallTimeout: bc.StallTimeout.D(), MaxDuration: bc.MaxDuration.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
 		PrepareMemory: c.prepareBackupMemory})
 	c.Fleet.Hub().Usage = usageWithBudgets{Service: c.Usage, limits: c.Limits}
 	c.Schedules = schedule.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, o.Clock, obs.Component(log, "schedule"))
@@ -679,6 +690,13 @@ func (c *Central) Close() error {
 	}
 	if c.Gateway != nil {
 		c.Gateway.Close()
+	}
+	// The Telegram notifier writes its last mappings and position after its context ends: the store stays open for it.
+	if c.TelegramNotify != nil && c.TelegramNotify.Started() {
+		select {
+		case <-c.TelegramNotify.Done():
+		case <-time.After(shutdownGrace):
+		}
 	}
 	return c.Store.Close()
 }
@@ -847,6 +865,14 @@ func (c *Central) Serve(ctx context.Context) error {
 			return fmt.Errorf("telegram: %w", err)
 		}
 	}
+	// The Telegram notifier's start position is read before anything can change data (the listener, the recover
+	// passes, the deadline loop): a change made from here on is delivered once it runs. A failure only costs the lazy
+	// start at Run.
+	if c.TelegramNotify != nil {
+		if err := c.TelegramNotify.Prime(ctx); err != nil {
+			c.Log.Warn("telegram notifier: reading the start position failed; it starts when it runs", slog.String("error", err.Error()))
+		}
+	}
 	srv := c.publicServer(ctx)
 	errc := make(chan error, 2)
 	go func() {
@@ -900,7 +926,12 @@ func (c *Central) Serve(ctx context.Context) error {
 		// Gateway usage-limit holds: their reset estimated from Harbor Pilot, re-read every 15 minutes (ADR-0079 decision 9).
 		human.Deadline{Name: "gateway_waits", Next: c.HarborPilotWaits.Next, Due: c.HarborPilotWaits.Due},
 		// Holds whose reset is far away: the space's people get one human action each (ADR-0079 Q5). A limit report wakes it.
-		human.Deadline{Name: "usage_limit_people", Due: c.Supervisor.TellLongHolds},
+		human.Deadline{Name: "usage_limit_people", Due: func(ctx context.Context) (int, error) {
+			// Pool-exhausted notices whose action wasn't created yet (a crash, the space's open-action cap) are raised again here.
+			n, err := c.Supervisor.TellPoolExhausted(ctx)
+			m, err2 := c.Supervisor.TellLongHolds(ctx)
+			return n + m, errors.Join(err, err2)
+		}},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
@@ -916,7 +947,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.TelegramBot.Start(ctx)
 	// Telegram settings: the cache reloads on every published change.
 	go c.TelegramSettings.Run(ctx)
-	// Telegram notifications: starts at the newest change; sends nothing while the bot is off.
+	// Telegram notifications: starts at the position Prime read; sends nothing while the bot is off.
 	go func() { _ = c.TelegramNotify.Run(ctx) }()
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)
@@ -1139,10 +1170,19 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 	}
 	links := tgnotify.NewLinks(c.Store, c.Bus, users, obs.Component(log, "telegram.notify"), 0)
 	links.OnChange = c.Human.Kick // a changed zone or digest time moves the next digest: the deadline loop looks again
-	// Topics mode: a space whose Telegram settings turn it on gets a topic in each link's private chat.
+	// Chat layout per link (ADR-0089): with the link's threads mode on (or auto while the bot has topics enabled), each
+	// space gets a topic in the link's private chat. Both inputs are read from memory at send time.
+	var notifier *tgnotify.Notifier // set below; MayRead runs only at rename time, after construction
 	c.TelegramTopics = tgtopics.New(tgtopics.Options{
-		Store:   tgtopics.StoreTopics{S: c.Store},
-		Enabled: func(spaceID string) bool { sp := c.TelegramSettings.Space(spaceID); return sp.Topics && sp.Visible() },
+		MayRead: func(linkID string, chatID int64, spaceID string) bool {
+			return notifier != nil && notifier.MayRead(linkID, chatID, spaceID)
+		},
+		Store: tgtopics.StoreTopics{S: c.Store},
+		Mode: func(linkID string) string {
+			return links.ThreadsMode(linkID, c.TelegramSettings.Current().NotificationDefaults)
+		},
+		BotTopics: c.TelegramBot.HasTopics,
+		Sender:    func() *sender.Sender { return c.TelegramBot.Sender() },
 		SpaceName: func(ctx context.Context, spaceID string) string {
 			sp, err := c.Store.R().GetSpace(ctx, spaceID)
 			if err != nil {
@@ -1152,12 +1192,22 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		},
 		Now: c.Clock.Now, Log: obs.Component(log, "telegram.topics"),
 	})
-	return tgnotify.New(tgnotify.Options{
+	notifier = tgnotify.New(tgnotify.Options{
 		Topics: c.TelegramTopics,
 		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
-		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
-		AppURL: c.cardAppURL})
+		// The pinned Needs-you summary (ADR-0089): the Mini App's cross-space page, or its direct link without the host.
+		Pending:     tgnotify.StorePending(c.Store),
+		Perms:       tgnotify.StorePerms(c.Human),
+		NeedsURL:    func() string { return c.telegramPageURL("/human") },
+		NeedsLink:   func() string { return c.telegramStartAppLink("needs") },
+		SpaceLink:   func(spaceID string) string { return c.telegramStartAppLink("space-" + spaceID) },
+		BotUsername: func() string { return c.TelegramBot.Username() },
+		Store:       tgnotify.StoreMappings{S: c.Store}, Cursors: tgnotify.StoreCursors{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
+		// A human action's card opens the action in the Mini App (the chat's forms use the same URL); other cards have no
+		// Open in app button.
+		ItemURL: c.cardAppURL})
+	return notifier
 }
 
 // gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,6 +59,14 @@ func (s *Server) dispatch(r *http.Request, method string, p params, files map[st
 		return w, nil
 	case "createForumTopic":
 		return s.createForumTopicLocked(p)
+	case "editForumTopic":
+		return s.editForumTopicLocked(p)
+	case "pinChatMessage":
+		return s.pinLocked(p)
+	case "unpinChatMessage":
+		return s.unpinLocked(p)
+	case "deleteMessages":
+		return s.deleteMessagesLocked(p)
 	case "sendMessage":
 		return s.sendMessageLocked(p)
 	case "editMessageText":
@@ -319,7 +328,103 @@ func (s *Server) deleteMessageLocked(p params) (any, *apiError) {
 	if s.clk.Now().Sub(time.Unix(m.Date, 0)) > 48*time.Hour {
 		return nil, badRequest("message can't be deleted")
 	}
-	delete(s.messages[chat.ID], m.MessageID)
+	s.forgetLocked(chat.ID, m.MessageID)
+	return true, nil
+}
+
+// forgetLocked removes a deleted message from the chat and from the pinned list.
+func (s *Server) forgetLocked(chatID int64, id int) {
+	delete(s.messages[chatID], id)
+	s.pinned[chatID] = slices.DeleteFunc(s.pinned[chatID], func(x int) bool { return x == id })
+}
+
+// pinLocked pins a message the bot sent or a user sent (any non-service message in a private chat). Pinning a message
+// already pinned moves it to the top of the list.
+func (s *Server) pinLocked(p params) (any, *apiError) {
+	chat, e := s.targetLocked(p)
+	if e != nil {
+		return nil, e
+	}
+	id, _ := p.int64("message_id")
+	if _, ok := s.messages[chat.ID][int(id)]; !ok {
+		if _, ok := s.known[chat.ID][int(id)]; !ok {
+			return nil, badRequest("message to pin not found")
+		}
+	}
+	s.pinned[chat.ID] = append(slices.DeleteFunc(s.pinned[chat.ID], func(x int) bool { return x == int(id) }), int(id))
+	return true, nil
+}
+
+// unpinLocked unpins message_id, or the most recent pin when message_id is 0 or absent. "Most recent" means the latest
+// sending date, as Telegram documents it, not the last one pinned. Unpinning a message that isn't pinned, or a chat with
+// nothing pinned, succeeds without effect (Telegram's answer there is not documented).
+func (s *Server) unpinLocked(p params) (any, *apiError) {
+	chat, e := s.targetLocked(p)
+	if e != nil {
+		return nil, e
+	}
+	id, _ := p.int64("message_id")
+	list := s.pinned[chat.ID]
+	switch {
+	case len(list) == 0:
+	case id == 0:
+		latest := 0
+		for i := 1; i < len(list); i++ {
+			if s.sentBeforeLocked(chat.ID, list[latest], list[i]) {
+				latest = i
+			}
+		}
+		s.pinned[chat.ID] = slices.Delete(list, latest, latest+1)
+	default:
+		s.pinned[chat.ID] = slices.DeleteFunc(list, func(x int) bool { return x == int(id) })
+	}
+	return true, nil
+}
+
+// sentBeforeLocked reports whether message a was sent before message b in chatID: by sending date, then by message ID
+// (IDs grow within a chat, which settles two messages sent in the same second). A message the fake doesn't know has no
+// date and sorts first.
+func (s *Server) sentBeforeLocked(chatID int64, a, b int) bool {
+	da, ia := s.sentKeyLocked(chatID, a)
+	db, ib := s.sentKeyLocked(chatID, b)
+	if da != db {
+		return da < db
+	}
+	return ia < ib
+}
+
+// sentKeyLocked returns a message's sending date (Unix seconds) and ID, from the bot's messages or the users' ones.
+func (s *Server) sentKeyLocked(chatID int64, id int) (int64, int) {
+	if m, ok := s.messages[chatID][id]; ok {
+		return m.Date, id
+	}
+	if m, ok := s.known[chatID][id]; ok {
+		return m.Date, id
+	}
+	return 0, id
+}
+
+// deleteMessagesLocked deletes 1–100 messages. Missing messages and messages older than 48 h are skipped; the documented
+// rule is only that deleteMessage refuses them, and what Telegram answers for a batch with such IDs is not recorded.
+func (s *Server) deleteMessagesLocked(p params) (any, *apiError) {
+	chat, e := s.targetLocked(p)
+	if e != nil {
+		return nil, e
+	}
+	var ids []int
+	if err := p.json("message_ids", &ids); err != nil {
+		return nil, badRequest("can't parse message identifiers JSON object")
+	}
+	if len(ids) < 1 || len(ids) > MaxDeleteMessages {
+		return nil, badRequest("message identifiers must be %d-%d", 1, MaxDeleteMessages)
+	}
+	for _, id := range ids {
+		m, ok := s.messages[chat.ID][id]
+		if !ok || s.clk.Now().Sub(time.Unix(m.Date, 0)) > 48*time.Hour {
+			continue
+		}
+		s.forgetLocked(chat.ID, id)
+	}
 	return true, nil
 }
 

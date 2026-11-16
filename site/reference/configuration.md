@@ -143,6 +143,8 @@ Configures where central keeps backups and the backup schedule (SM-STORE-005, AD
 | `backups.interval` | `24h0m0s` | `SPACEMAN_BACKUPS_INTERVAL` | The time between scheduled backups (15m to 168h). |
 | `backups.keep_last` | `7` | `SPACEMAN_BACKUPS_KEEP_LAST` | How many complete backups retention keeps at least (the newest ones; 1-1000). |
 | `backups.max_age` | `0` | `SPACEMAN_BACKUPS_MAX_AGE` | Deletes backups older than this beyond the newest one (0 keeps them, bounded by keep_last only). |
+| `backups.stall_timeout` | `10m0s` | `SPACEMAN_BACKUPS_STALL_TIMEOUT` | Fails a backup or verification whose current stage makes no progress (no new stage, no file done and no bytes moved to or from object storage) for this long (1m to 24h, ADR-0091). |
+| `backups.max_duration` | `1h0m0s` | `SPACEMAN_BACKUPS_MAX_DURATION` | Fails a backup or verification that runs longer than this in total (10m to 72h, ADR-0091). |
 | `backups.target` | `local` | `SPACEMAN_BACKUPS_TARGET` | "local" (default) or "s3". |
 | `backups.local_dir` | (empty) | `SPACEMAN_BACKUPS_LOCAL_DIR` | The local target directory (default &lt;data_dir&gt;/backups). Prefer another disk. |
 | `backups.s3.endpoint` | (empty) | `SPACEMAN_BACKUPS_S3_ENDPOINT` | The S3 API endpoint URL (required for s3). |
@@ -190,6 +192,9 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.usage_limit_keep_alive_max_minutes` | `360` | `SPACEMAN_LIMITS_USAGE_LIMIT_KEEP_ALIVE_MAX_MINUTES` | How long a run at a usage limit waits for the reset with its process kept alive, and the longest gap between checks of a hold whose reset time is unknown (1-1440, default 360; ADR-0079). |
 | `limits.usage_limit_max_wait_hours` | `168` | `SPACEMAN_LIMITS_USAGE_LIMIT_MAX_WAIT_HOURS` | How long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned (1-720, default 168: 7 days; control is never given up on; ADR-0079 Q2). |
 | `limits.usage_limit_notify_after_hours` | `12` | `SPACEMAN_LIMITS_USAGE_LIMIT_NOTIFY_AFTER_HOURS` | How far away a usage-limit hold's reset must be for the space's people to get one human action about it, once per account window (0-720, default 12: weekly limits, not 5-hour ones; 0: never; ADR-0079 Q5). |
+| `limits.usage_limit_wait_if_reset_within` | `15` | `SPACEMAN_LIMITS_USAGE_LIMIT_WAIT_IF_RESET_WITHIN` | Is, in minutes, how near the reset of a run's limited account must be for the run to wait for it (ADR-0079's keep-alive and park) instead of moving to another account of its pool (0-1440, default 15; an unknown reset counts as further away; ADR-0090 decision 2). |
+| `limits.usage_limit_switch_max_per_day` | `6` | `SPACEMAN_LIMITS_USAGE_LIMIT_SWITCH_MAX_PER_DAY` | How many times one instance may move to another account in 24 hours before it waits as ADR-0079 does (0-50, default 6; 0: never switch; ADR-0090 decision 5). |
+| `limits.usage_limit_min_headroom_percent` | `0` | `SPACEMAN_LIMITS_USAGE_LIMIT_MIN_HEADROOM_PERCENT` | The launch-time headroom gate: a new run does not start on an account whose known window usage leaves less than this percentage free (0-100, default 0: off; ADR-0090 decision 4). Running agents are never moved because of it. |
 
 ### `retention`
 

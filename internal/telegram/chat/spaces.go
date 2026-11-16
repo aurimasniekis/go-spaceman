@@ -165,10 +165,10 @@ func (h *Handler) cmdSpaces(ctx context.Context, l updates.Link) {
 	if !ok {
 		return
 	}
-	h.send(ctx, l.ChatID, h.spacesReply(ctx, c))
+	h.send(ctx, l.ChatID, h.spacesReply(ctx, l, c))
 }
 
-func (h *Handler) spacesReply(ctx context.Context, c caller) reply {
+func (h *Handler) spacesReply(ctx context.Context, l updates.Link, c caller) reply {
 	vis, r := h.visibleSpaces(ctx, c)
 	if !r.ok() {
 		return reply{text: failText(r)}
@@ -183,9 +183,29 @@ func (h *Handler) spacesReply(ctx context.Context, c caller) reply {
 		if b := badges[s.ID]; b != "" {
 			label += "  " + b
 		}
-		rows = append(rows, []botapi.InlineKeyboardButton{button(label, "sp:"+s.ID)})
+		row := []botapi.InlineKeyboardButton{button(label, "sp:"+s.ID)}
+		if u := h.topicLink(ctx, l, s.ID); u != "" {
+			row = append(row, botapi.InlineKeyboardButton{Text: "Go to topic", URL: u})
+		}
+		rows = append(rows, row)
 	}
 	return reply{text: "Your spaces. Tap one to switch to it and see its overview.", markup: markup(rows...)}
+}
+
+// topicLink is the t.me link of the space's topic in the link's private chat ("" when there is none: the layout is off,
+// the topic was never created, or the bot's username is unknown; never in a group).
+func (h *Handler) topicLink(ctx context.Context, l updates.Link, spaceID string) string {
+	if _, inGroup := groupOf(ctx); inGroup || h.o.ThreadOf == nil || h.o.BotUsername == nil || l.ChatID <= 0 {
+		return ""
+	}
+	bot := h.o.BotUsername()
+	if bot == "" {
+		return ""
+	}
+	if t, ok := h.o.ThreadOf(ctx, l.ID, spaceID); ok && t > 0 {
+		return fmt.Sprintf("https://t.me/%s/%d", bot, t)
+	}
+	return ""
 }
 
 // badges reads the attention summary once and returns a short badge line per space: pending human actions, blocked
@@ -327,7 +347,7 @@ func (h *Handler) overview(ctx context.Context, c caller, s spaceRef) reply {
 func (h *Handler) spaceCallback(ctx context.Context, q *botapi.CallbackQuery, l updates.Link, c caller, data string) {
 	if data == "sl" {
 		h.answer(ctx, q.ID, "")
-		h.show(ctx, l.ChatID, q.Message, h.spacesReply(ctx, c))
+		h.show(ctx, l.ChatID, q.Message, h.spacesReply(ctx, l, c))
 		return
 	}
 	id, _ := strings.CutPrefix(data, "sp:")

@@ -1,0 +1,15 @@
+[
+  {
+    "text": "🔐 Approval\nCreate the issue\nPriority normal · from worker",
+    "entities": [
+      {
+        "type": "bold",
+        "offset": 12,
+        "length": 16
+      }
+    ],
+    "markup": {
+      "inline_keyboard": []
+    }
+  }
+]

@@ -54,6 +54,7 @@ func (h *Handler) cmdHelp(ctx context.Context, l updates.Link, _ string) {
 	for _, c := range commands.Menu() {
 		b.WriteString("\n/" + c.Command + " - " + c.Description)
 	}
+	b.WriteString("\n\nIn this chat /needs lists everything that waits for you, across spaces; in a space's topic it lists that space only.")
 	h.send(ctx, l.ChatID, reply{text: b.String()})
 }
 

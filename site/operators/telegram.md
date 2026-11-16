@@ -40,6 +40,25 @@ repository): until they ship, use the API or CLI.
 
 Changing the bot's host is a step-up, audited change.
 
+## BotFather settings
+
+The chat layout ([Chat layout](/guide/telegram#chat-layout)) needs the bot's **topics in private chats**, a setting in
+BotFather that no API call can change. Do this once per bot:
+
+1. In BotFather, open the bot's settings and **turn on topics for private chats**. Telegram's documentation doesn't name
+   the setting, so look for the topics (threaded mode) switch in BotFather's Mini App.
+2. Turn **off** users creating and deleting topics (the bot's other BotFather setting for topics). A topic a user creates is
+   not known to SpaceMan, and a message written in it acts on the user's current space.
+3. Check it: `spaceman telegram bot get` shows `has_topics_enabled` and `allows_users_to_create_topics` as Telegram last
+   reported them. The Mini App's **Chat layout** setting says when topics are unavailable.
+
+With topics off, nothing breaks: every message goes to one chat and each card names its space. Topics the bot has created in
+users' chats stay when you turn the setting off, and `notification_defaults.threads = off` doesn't remove them: Telegram
+can delete a topic only together with its messages.
+
+For forms to open the Mini App from the chat and from a group, also set the bot's Main Mini App
+([Binding a group](#binding-a-group)).
+
 ## Webhook or polling
 
 `mode` is `webhook` (the default) or `polling`.
@@ -126,12 +145,12 @@ off; links stay and resume if the same bot is configured again.
 | `init_data_max_age_seconds` | 300 | 60–3600 |
 | `miniapp_session_idle_seconds` | 900 | 300–3600 |
 | `miniapp_session_absolute_seconds` | 3600 | 900–43200 |
-| `topics_mode_default` | off | stored but not read yet: the per-space `topics` setting is the switch |
-| `notification_defaults` | see the guide | each link's starting notification preferences |
+| `topics_mode_default` | off | deprecated, no effect: `notification_defaults.threads` chooses the chat layout |
+| `notification_defaults` | see the guide | each link's starting notification preferences, including `threads` (`auto`, `on`, `off`; default `auto`: a topic per space when the bot has topics enabled) |
 
 ### Spaces
 
-Per space: `enabled`, `content_level`, `enforced_approvals`, `topics`, `terminal_watch` and `group_chat_id` (see the
+Per space: `enabled`, `content_level`, `enforced_approvals`, `topics` (deprecated, no effect), `terminal_watch` and `group_chat_id` (see the
 [guide](/guide/telegram#spaces-content-levels-and-the-terminal)). Writes need `space_config:write` in the space and a
 step-up. A space with no row, or a disabled one, is invisible to Telegram.
 

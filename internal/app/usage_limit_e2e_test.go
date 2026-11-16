@@ -171,6 +171,12 @@ func TestUsageLimitReportVisibleThroughAPI(t *testing.T) {
 	if st := get(viewerA, "/spaces/"+sp.ID+"/limit-waits", &waits); st != http.StatusOK || len(waits.Items) != 0 {
 		t.Fatalf("waits: %d %+v", st, waits)
 	}
+	var sws struct {
+		Items []fleet.AccountSwitch `json:"items"`
+	}
+	if st := get(viewerA, "/spaces/"+sp.ID+"/account-switches", &sws); st != http.StatusOK || sws.Items == nil || len(sws.Items) != 0 {
+		t.Fatalf("switches: %d %+v", st, sws)
+	}
 	var b list
 	if st := get(viewerB, "/spaces/"+spB.ID+"/usage-limits", &b); st != http.StatusOK || len(b.Items) != 1 || !b.Items[0].Shared ||
 		b.Items[0].SpaceID != "" || b.Items[0].FirstRunID != "" || b.Items[0].AccountID != acc {
@@ -182,6 +188,9 @@ func TestUsageLimitReportVisibleThroughAPI(t *testing.T) {
 	}
 	if st := get(viewerB, "/spaces/"+sp.ID+"/limit-waits", nil); st != http.StatusNotFound {
 		t.Fatalf("viewer of B reading A's waits: %d", st)
+	}
+	if st := get(viewerB, "/spaces/"+sp.ID+"/account-switches", nil); st != http.StatusNotFound {
+		t.Fatalf("viewer of B reading A's switches: %d", st)
 	}
 	if st := get(viewerA, "/accounts/"+acc+"/usage-limits", nil); st != http.StatusForbidden {
 		t.Fatalf("space viewer reading the account view: %d", st)
@@ -197,9 +206,10 @@ func TestUsageLimitReportVisibleThroughAPI(t *testing.T) {
 func TestUsageLimitRules(t *testing.T) {
 	t.Parallel()
 	for op, want := range map[string]api.Rule{
-		"list-space-usage-limits":   api.InSpace(authz.RunRead),
-		"list-space-limit-waits":    api.InSpace(authz.RunRead),
-		"list-account-usage-limits": api.Global(authz.AccountRead),
+		"list-space-usage-limits":     api.InSpace(authz.RunRead),
+		"list-space-limit-waits":      api.InSpace(authz.RunRead),
+		"list-space-account-switches": api.InSpace(authz.RunRead),
+		"list-account-usage-limits":   api.Global(authz.AccountRead),
 	} {
 		if got, ok := app.SpecDeps().RuleFor(op); !ok || got != want {
 			t.Errorf("%s: %+v, want %+v", op, got, want)

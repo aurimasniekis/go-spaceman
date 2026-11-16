@@ -15,9 +15,12 @@ Aliases: `accounts`.
 | [`spaceman account holds`](#spaceman-account-holds) | An account's open usage-limit holds in every space |
 | [`spaceman account kinds`](#spaceman-account-kinds) | Account kinds and the harness each serves |
 | [`spaceman account list`](#spaceman-account-list) | Accounts (never their secrets) |
+| [`spaceman account pool`](#spaceman-account-pool) | A space's role pools: the accounts one role's runs use instead of the space's bindings (usage-limit failover) |
 | [`spaceman account set-space`](#spaceman-account-set-space) | Replace the accounts a space's runs may use (at most one default per harness) |
 | [`spaceman account space`](#spaceman-account-space) | Accounts a space's runs may use |
+| [`spaceman account space-windows`](#spaceman-account-space-windows) | The latest rate-limit windows of the accounts a space's runs may use |
 | [`spaceman account update`](#spaceman-account-update) | Edit an account; give --secret-file or --secret-stdin to rotate the secret |
+| [`spaceman account windows`](#spaceman-account-windows) | An account's latest 5-hour and 7-day rate-limit windows (needs an account bound to a space you can read) |
 
 ## spaceman account clear-holds
 
@@ -116,6 +119,55 @@ Aliases: `ls`.
 
 API: `list-accounts` ([HTTP API](../api)).
 
+## spaceman account pool
+
+A space's role pools: the accounts one role's runs use instead of the space's bindings (usage-limit failover).
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman account pool list`](#spaceman-account-pool-list) | A space's role pools |
+| [`spaceman account pool set`](#spaceman-account-pool-set) | Replace a role's pool; with no --account the role uses the space's bindings again |
+
+## spaceman account pool list
+
+A space's role pools.
+
+```sh
+spaceman account pool list [flags]
+```
+
+Aliases: `ls`.
+
+API: `list-space-role-pools` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman account pool set
+
+Replace a role's pool; with no --account the role uses the space's bindings again.
+
+```sh
+spaceman account pool set <role> [flags]
+```
+
+API: `list-space-role-pools`, `put-space-role-pool` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman account pool set --space payments reviewer --account acc_01… --account acc_02… --priority acc_02…=10
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--account` | string, repeatable |  | account ID of the pool (each must be bound to the space) (repeatable or comma-separated) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--priority` | string, repeatable |  | ACCOUNT=N: order within the pool, 1 to 1000, lower first (default 100) (repeatable or comma-separated) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman account set-space
 
 Replace the accounts a space's runs may use (at most one default per harness).
@@ -129,14 +181,15 @@ API: `set-space-accounts` ([HTTP API](../api)).
 Example:
 
 ```sh
-spaceman account set-space --space payments --account acc_01… --account acc_02… --default acc_01…
+spaceman account set-space --space payments --account acc_01… --account acc_02… --default acc_01… --priority acc_02…=10
 ```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--account` | string, repeatable |  | account ID the space may use (repeatable or comma-separated) |
+| `--account` | string, repeatable |  | account ID the space may use (the order given is the binding order) (repeatable or comma-separated) |
 | `--default` | string, repeatable |  | account ID that is its harness's default (repeatable or comma-separated) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--priority` | string, repeatable |  | ACCOUNT=N: pool order for usage-limit failover, 1 to 1000, lower first (default 100) (repeatable or comma-separated) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman account space
@@ -148,6 +201,20 @@ spaceman account space [flags]
 ```
 
 API: `list-space-accounts` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman account space-windows
+
+The latest rate-limit windows of the accounts a space's runs may use.
+
+```sh
+spaceman account space-windows [flags]
+```
+
+API: `list-space-account-windows` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -174,4 +241,14 @@ API: `get-account`, `update-account` ([HTTP API](../api)).
 | `--name` | string |  | name |
 | `--secret-file` | string |  | the credential (read from this file; never pass secrets as flag values) |
 | `--secret-stdin` | bool |  | read --secret-file's value from standard input instead |
+
+## spaceman account windows
+
+An account's latest 5-hour and 7-day rate-limit windows (needs an account bound to a space you can read).
+
+```sh
+spaceman account windows <account> [flags]
+```
+
+API: `get-account-windows` ([HTTP API](../api)).
 

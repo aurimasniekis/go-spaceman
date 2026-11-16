@@ -332,16 +332,18 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 	if err := os.Chmod(tmp, 0o700); err != nil { //nolint:gosec // G302: a directory needs the search bit; owner only
 		return nil, err
 	}
-	b := &builder{kek: kek, dir: tmp, m: &Manifest{Format: Format, Version: FormatVersion, ID: o.ID, CreatedAt: o.Clock.Now().UTC(),
+	b := &builder{kek: kek, dir: tmp, t: trackerFrom(ctx), m: &Manifest{Format: Format, Version: FormatVersion, ID: o.ID, CreatedAt: o.Clock.Now().UTC(),
 		SpaceManVersion: buildinfo.Get().Version, KEKNotice: KEKNotice, SourceDataDir: src.Dir(), Included: Included, Excluded: Excluded,
 		MemoryFlush: o.MemoryFlush}}
 	if w := o.MemoryFlush.staleWarning(); w != "" {
 		b.m.Warnings = append(b.m.Warnings, w)
 	}
+	b.t.enter(StageSnapshot)
 	if err := b.database(ctx, src); err != nil {
 		return nil, err
 	}
 	s := o.Sources
+	b.t.enter(StageFiles)
 	for _, t := range []struct{ root, dir, kind string }{
 		{s.Recordings, dirRecordings, KindRecording},
 		{s.Artifacts, dirArtifacts, KindAttachment},
@@ -351,12 +353,15 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 			return nil, err
 		}
 	}
+	b.t.enter(StageObjects)
 	if err := b.objects(ctx, s.Store); err != nil {
 		return nil, err
 	}
+	b.t.enter(StageMemory)
 	if err := b.memory(ctx, s.Memory, s.Git); err != nil {
 		return nil, err
 	}
+	b.t.enter(StageManifest)
 	if o.Config != nil {
 		if err := b.bytes(ConfigFile, KindConfig, o.Config); err != nil {
 			return nil, err
@@ -382,12 +387,14 @@ type builder struct {
 	kek keyring.KeyWrapper
 	dir string
 	m   *Manifest
+	t   *tracker // nil without a service
 }
 
 func (b *builder) add(p, kind string, plain, sealed sizeSum) {
 	b.m.Files = append(b.m.Files, File{Path: p, Kind: kind, Size: plain.size, SHA256: plain.sum, SealedSize: sealed.size, SealedSHA256: sealed.sum})
 	b.m.Bytes += plain.size
 	b.m.SealedBytes += sealed.size
+	b.t.file()
 }
 
 func (b *builder) sealPath(p, kind, src string) error {
@@ -535,7 +542,7 @@ func (b *builder) objects(ctx context.Context, st artifacts.Store) error {
 			if sum, ok := artifacts.AttachmentSum(info.Key); ok {
 				r = artifacts.Verified(o, sum)
 			}
-			plain, sealed, err := sealReader(r, filepath.Join(b.dir, filepath.FromSlash(p+SealedSuffix)), b.kek, SealedKindFile(p), b.m.ID)
+			plain, sealed, err := sealReader(b.t.reader(r), filepath.Join(b.dir, filepath.FromSlash(p+SealedSuffix)), b.kek, SealedKindFile(p), b.m.ID)
 			_ = r.Close()
 			if err != nil {
 				return fmt.Errorf("copy %s from the artifact store: %w", info.Key, err)

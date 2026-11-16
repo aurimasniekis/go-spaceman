@@ -156,6 +156,7 @@ too), `edit` or `digest`. Chat, link and user identifiers are never labels.
 | `spaceman_runs_started_total` | counter | `harness`, `result` | Launch outcomes. |
 | `spaceman_runs_ended_total` | counter | `harness`, `reason` | Run ends. |
 | `spaceman_runs_reconciled_stale_total` | counter | `reason` (`stale_not_on_node`, `stale_lease_lost`) | Runs the stale-run sweeper moved to `lost` (ADR-0074). |
+| `spaceman_account_switches_total` | counter | `result` (`started`, `succeeded`, `failed`, `fell_back`, `cancelled`) | Runs moved to another account of their pool at a usage limit: armed, and how each switch ended (ADR-0090). |
 | `spaceman_gateway_revocations_failed` | gauge | | Harbor Pilot run or validation tokens whose revocation failed; each stays valid until it expires unless a person revokes it, or its parent, in Harbor Pilot. |
 | `spaceman_build_info` | gauge | `version`, `revision`, `goversion` | Always 1. |
 

@@ -87,6 +87,10 @@ jobs:
   race:
     name: go race tests
     runs-on: ubuntu-24.04
+    # A healthy run takes about 14 minutes at the lower cap, measured on a hosted runner. go test's own timeouts (35 m
+    # internal/app, 15 m the rest) fire first; this ends a job that outlives them cleanly (logs and artifact kept)
+    # instead of leaving it until the runner is lost.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,12 +112,26 @@ jobs:
         # 290 ms). The non-race coverage job uses the same 1 s (ADR-0062, update 2026-11-13, coverage at 1 s).
         # scripts/race.sh builds modernc's SQLite without checkptr (ADR-0062, update 2026-11-13, hold analysis).
         # internal/app runs as its own invocation next to the other packages (scripts/race.sh); on a 4-vCPU runner its
-        # cap stays 4, as before. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
+        # cap is 2: under -race an internal/app test binary reached 10-12 GB resident at 4, which with the other packages
+        # exhausted a 16 GB hosted runner (three runner losses after ~54 min). The run takes about 14 minutes at the
+        # lower cap, measured on a hosted runner. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
           SM_TEST_TX_MAX: 1s
-          RACE_APP_PARALLEL: "4"
+          RACE_APP_PARALLEL: "2"
+          RACE_APP_TIMEOUT: 35m # slower at the lower cap; the job limit below stays above it
+          RACE_OUT_DIR: ${{ runner.temp }}/race-out
         # RACE_COUNT=1: every test runs, never a cached pass from the restored build cache (only local runs cache).
         run: make race RACE_COUNT=1
+      - name: upload race output
+        # The test output, the goroutine dump of a timed-out test and mem.log (memory samples) of the run, kept when
+        # the run fails or is cancelled, so a hang can be read without the job log (scripts/race.sh, RACE_OUT_DIR).
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: race-output
+          path: ${{ runner.temp }}/race-out
+          if-no-files-found: warn
+          retention-days: 14
 
   coverage:
     name: go coverage floor

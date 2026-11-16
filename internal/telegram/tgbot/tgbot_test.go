@@ -401,6 +401,68 @@ func private(id int64, text string) botapi.Update {
 	return botapi.Update{Message: &botapi.Message{MessageID: 1, From: &botapi.User{ID: id, FirstName: "Stranger"}, Chat: botapi.Chat{ID: id, Type: botapi.ChatPrivate}, Text: text}}
 }
 
+// The getMe topic flags (has_topics_enabled, allows_users_to_create_topics) reach the bot's health as read at each
+// startup, so a change in BotFather shows after the bot is reconfigured.
+func TestStatusExposesGetMeTopicFlags(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.tg.SetBotTopics(true, false)
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("health %+v, want topics on and user topics off", b.Health)
+	}
+	e.tg.SetBotTopics(true, true)
+	b = e.put(b.Version, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !b.Health.HasTopicsEnabled || !b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("health after the flags changed: %+v", b.Health)
+	}
+}
+
+// The topic flags are not kept past what getMe last said: disabling the bot, a getMe that fails on the next start and a
+// token for another bot each leave HasTopics and the health flags at what is true now, never at an older bot's value.
+func TestTopicFlagsResetAndRefresh(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.tg.SetBotTopics(true, true)
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !e.svc.HasTopics() || !b.Health.HasTopicsEnabled || !b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("on: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
+	// Disabled: the bot is off, so nothing is claimed about topics.
+	b = e.put(b.Version, Input{Enabled: false})
+	if e.svc.HasTopics() || b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("disabled: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
+	// Enabled again, but getMe fails: the old flags must not come back.
+	e.tg.FailNext("getMe", 500, "Internal Server Error", 0)
+	b = e.put(b.Version, Input{Enabled: true})
+	if e.svc.HasTopics() || b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("failed getMe: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
+	// Back on with the flags true again, straight into the token switch: only the reset can explain the flags it reports.
+	b = e.put(b.Version, Input{BotToken: e.tg.Token(), Enabled: true})
+	if !e.svc.HasTopics() || !b.Health.HasTopicsEnabled || !b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("on again: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+
+	// A token for another bot, which has topics off: its flags replace the old ones.
+	other := tgtest.New(t, tgtest.Options{Limits: tgtest.Limits{Disabled: true}})
+	other.SetBotTopics(false, false)
+	e.svc.o.BaseURL = other.URL()
+	b = e.put(b.Version, Input{BotToken: other.Token(), Enabled: true})
+	if e.svc.HasTopics() || b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("another bot: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+	other.SetBotTopics(true, false)
+	b = e.put(b.Version, Input{BotToken: other.Token(), Enabled: true})
+	if !e.svc.HasTopics() || !b.Health.HasTopicsEnabled || b.Health.AllowsUsersToCreateTopics {
+		t.Fatalf("flags refreshed: HasTopics %v, health %+v", e.svc.HasTopics(), b.Health)
+	}
+}
+
 // Plan §4.1 startup in webhook mode: getMe, commands, the menu button (the Mini App when a host is set), then
 // setWebhook on central's public URL with the generated secret, the allowed updates and max_connections 10. The
 // webhook route accepts Telegram's deliveries; health comes from getWebhookInfo and reports a delivery error newer

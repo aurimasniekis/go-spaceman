@@ -20,13 +20,13 @@ func (a *App) telegramCmd() *cobra.Command {
 			integer("init-data-max-age", "init_data_max_age_seconds", "oldest Mini App initData accepted, 60 to 3600 seconds (default 300)").
 			integer("miniapp-session-idle", "miniapp_session_idle_seconds", "Mini App session idle timeout, 300 to 3600 seconds (default 900)").
 			integer("miniapp-session-absolute", "miniapp_session_absolute_seconds", "Mini App session lifetime, 900 to 43200 seconds (default 3600)").
-			boolean("topics-mode-default", "topics_mode_default", "new links start in topics mode")
+			boolean("topics-mode-default", "topics_mode_default", "deprecated, no effect (notification_defaults.threads chooses the chat layout)")
 	}
 	spaceForm := func(f *form) {
 		f.boolean("enabled", "enabled", "make the space visible through Telegram").
 			str("content-level", "content_level", "full, summary or off (default full)").
 			str("enforced-approvals", "enforced_approvals", "web_only or confirm (default web_only)").
-			boolean("topics", "topics", "give the space its own topic for users in topics mode").
+			boolean("topics", "topics", "deprecated, no effect (the chat layout is chosen per link)").
 			boolean("terminal-watch", "terminal_watch", "allow watching run terminals (read-only) from the Mini App").
 			integer("group-chat-id", "group_chat_id", "bind the forum supergroup with this chat ID (negative; the bot must be in it) to the space, 0 to unbind; admins only")
 	}

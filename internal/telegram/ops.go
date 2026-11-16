@@ -9,7 +9,12 @@ import "github.com/aurimasniekis/go-spaceman/internal/api"
 // Telegram link can do: it needs a security review.
 var Ops = map[string]api.TelegramClass{
 	// Spaces and the cross-space views.
-	"list-spaces":                api.TelegramBoth,
+	"list-spaces": api.TelegramBoth,
+	// Usage ledger and account windows (ADR-0090): read-only numbers and IDs, never a credential.
+	"get-space-usage-series":     api.TelegramBoth,
+	"list-space-account-windows": api.TelegramBoth,
+	"get-account-usage":          api.TelegramBoth,
+	"get-account-windows":        api.TelegramBoth,
 	"get-space":                  api.TelegramBoth,
 	"get-attention":              api.TelegramBoth,
 	"list-pending-human-actions": api.TelegramBoth,
@@ -207,9 +212,12 @@ var Ops = map[string]api.TelegramClass{
 	"list-schedules":                api.TelegramExcluded,
 	"list-skills":                   api.TelegramExcluded,
 	"list-space-accounts":           api.TelegramExcluded,
+	"list-space-role-pools":         api.TelegramExcluded,
+	"put-space-role-pool":           api.TelegramExcluded,
 	"list-space-git-ssh-keys":       api.TelegramExcluded,
 	"list-space-human-policies":     api.TelegramExcluded,
 	"list-space-limit-waits":        api.TelegramExcluded,
+	"list-space-account-switches":   api.TelegramExcluded,
 	"list-space-mcp-grants":         api.TelegramExcluded,
 	"list-space-repositories":       api.TelegramExcluded,
 	"list-space-roles":              api.TelegramExcluded,

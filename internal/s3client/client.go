@@ -130,6 +130,9 @@ func New(cfg Config) (*Client, error) {
 		MaxIdleConnsPerHost:   4,
 		IdleConnTimeout:       90 * time.Second,
 		ForceAttemptHTTP2:     true,
+		// A silently dead HTTP/2 connection is detected by pings instead of blocking a body read or write forever
+		// (ADR-0091): without them a stalled stream waits on the kernel or never ends.
+		HTTP2: &http.HTTP2Config{SendPingTimeout: cfg.Timeout, PingTimeout: min(cfg.Timeout, 15*time.Second)},
 	}
 	// No overall client timeout: uploads of large snapshots take as long as they take; contexts bound them.
 	hc := &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Git runs the git command line for memory repositories. Every call uses a scrubbed environment (no inherited GIT_*
@@ -69,6 +70,8 @@ func (g *Git) run(ctx context.Context, dir string, id *Identity, stdin []byte, a
 		env = append(env, "GIT_AUTHOR_NAME="+id.Name, "GIT_AUTHOR_EMAIL="+id.Email, "GIT_COMMITTER_NAME="+id.Name, "GIT_COMMITTER_EMAIL="+id.Email)
 	}
 	cmd.Env = env
+	// A grandchild holding the pipes open must not block Wait after the kill.
+	cmd.WaitDelay = 5 * time.Second
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

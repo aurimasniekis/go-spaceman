@@ -6,6 +6,122 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-16
+
+Release on top of v0.1.7. **Central and the node agents both need it**, central first. The main changes are account
+switching on usage limits (ADR-0090: a run that reaches its limit moves to another account of its pool, off unless
+`usage_limit_failover` is on), Telegram chat threads per space with actionable cards (ADR-0089), the backup hang fix
+(ADR-0091: a backup or verification that stops making progress now fails instead of holding `busy` until a restart),
+the notifier no longer losing notifications around restarts, text replies to cards, and mobile dialogs (pinch-zoom,
+wide tables, 16 px inputs). It brings node protocol minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to
+0059 and the configuration keys listed below.
+
+### Upgrade notes
+
+- **Schema migrations 0054 to 0059 are forward-only: take a backup first.** `0054_account_pools` to
+  `0058_pool_exhausted_notices` (ADR-0090) add account pools, account switches, a run's failure class, the usage ledger
+  and the pool-exhausted notices. `0059_telegram_message_thread` adds the nullable `telegram_messages.message_thread_id`,
+  the topic a card was sent in; a card row from before it has no topic recorded and is edited in place as before. They
+  are applied on start and need no other action.
+- **Node protocol minor 13 (v0.1.7 speaks up to minor 12).** Upgrade central first, then the node agents. An older agent
+  keeps working, and its runs still switch on a limit it reports, but only an agent of this release reports the status
+  line's usage windows, the cost estimate and the `StopFailure` failure class, so the usage windows, the headroom gate's
+  figures and a wrap-up limit's missing reset need the agent upgrade.
+- **New configuration keys**, with their defaults (the usage-limit keys are also space limits, set with
+  `spaceman limits set --space <space> --set <key>=<value>`, without the `limits.` prefix):
+  - `backups.stall_timeout`: `10m`. A backup or verification with no progress for this long fails (1 m to 24 h, ADR-0091).
+  - `backups.max_duration`: `1h`. A backup or verification running longer than this in total fails (10 m to 72 h, ADR-0091).
+  - `limits.usage_limit_wait_if_reset_within`: `15` (minutes). A run whose account resets this soon waits for the reset
+    instead of switching (0 to 1440, ADR-0090).
+  - `limits.usage_limit_switch_max_per_day`: `6`. How many times one instance may switch account in 24 hours before it
+    waits as ADR-0079 does; `0` never switches (0 to 50).
+  - `limits.usage_limit_min_headroom_percent`: `0` (off). A new run does not start on an account whose known window usage
+    leaves less than this percentage free (0 to 100). Running agents are never moved because of it.
+  - `notification_defaults.threads` (Telegram administrator setting, not the config file): `auto`. See **Chat layout**.
+- **Live account switching stays off unless `usage_limit_failover` is on.** That is the existing switch (default off).
+  An installation that leaves it off keeps ADR-0079's wait, whatever the keys above say.
+- **Chat layout.** Links start on `notification_defaults.threads = auto`, so a bot with topics enabled in BotFather moves each
+  chat to a topic per space at its next space message, with one announcement in the chat without a topic. To keep one chat,
+  set `threads` to `off`, per link or in the administrator defaults. **Topics the bot creates stay in users' chats**
+  whatever you set later: Telegram deletes a topic only together with its messages.
+
+### Added
+
+- **Account switching** (ADR-0090, security-relevant). With `usage_limit_failover` on, a Claude Code run that reaches
+  its usage limit moves to another account of its pool: at its next idle point it is parked and resumed at once with its
+  session (`--resume`) under the next eligible account. Nothing is sent to the running process and no credential is
+  written to the instance folder. Control gets one message per switch. A switch's resume re-checks the target and takes
+  the pool's next account, or falls back to ADR-0079's wait, when it is no longer usable.
+- **Pools:** a space's accounts for a harness form its pool, ordered by priority; an optional role pool replaces it for
+  one role. A launch takes the space's default account first when it is eligible; otherwise, and for a role pool,
+  accounts are taken by priority, then the fewest live runs, then binding order. A switch ignores the default and takes
+  the pool order. Account usage does not rank the pool.
+- **Wait if the reset is near:** a run whose account resets within `usage_limit_wait_if_reset_within` waits for it
+  instead of switching; beyond `usage_limit_switch_max_per_day` switches an instance waits too.
+- **Launch headroom gate:** with `usage_limit_min_headroom_percent` above 0, a launch or resume does not start on an
+  account whose known window usage leaves less than that percentage free. Running agents are never moved because of it.
+- **Pool exhausted:** when every account of a pool is at its limit, the parked run resumes at the pool's earliest reset,
+  and the people get one informational human action per space, harness, role and window (and so a Telegram card). The
+  notice is stored with the park, so a crash or a space at its open-action cap delays it but does not lose it.
+- **Usage ledger:** tokens and the list-price cost estimate per space, account, role, harness and model, hourly (90 days)
+  and daily (730 days), and each account's latest 5-hour and weekly windows. API: `GET /spaces/{id}/usage/series`,
+  `GET /accounts/{id}/usage`, `GET /accounts/{id}/windows`, `GET /spaces/{id}/account-windows`, the account pools
+  (`GET /spaces/{id}/account-pools`, `PUT /spaces/{id}/account-pools/{role}`) and `GET /spaces/{id}/account-switches`.
+  CLI: `spaceman usage space|account`, `spaceman account windows|space-windows|pool`, `spaceman limits switches`.
+- **Web:** per-space **Accounts** (pool order, role pools, failover and switch settings) and **Usage** (tokens first, the
+  cost only as an estimate, a chart with a table of the same numbers) pages; a run links to the switch away from it and
+  the one into it.
+- **Evidence:** account switching is tested with simulated harnesses only. It has not yet been verified with two real
+  claude.ai accounts (open item K-17).
+- Telegram cards are actionable and edited in place (ADR-0089): a question's options, Approve and Deny, Mark completed,
+  Acknowledge and Dismiss sit on the card, **More…** turns it into the full form and **Back** returns, and a resolved card
+  becomes one line with no buttons. Reminders, escalations and assignments are replies to the card. A card of a space you can
+  no longer see is edited to "No longer available here". A card outside its space's topic names the space.
+- Telegram home: `/needs` lists every readable space with its total, and a **Needs you** summary is pinned in the chat without a
+  topic and edited in place (at most once every 30 seconds). It counts only the spaces and action types the link may view.
+  **Known limit:** a `/needs` row opens a form; it doesn't link to the item's card yet.
+- A relink of the same chat by the same user reuses the topics of the revoked link, and a space's rename renames its topic.
+- The backup status shows where a running backup or verification is (`current`: stage, stage start, files done, last
+  progress; `stage` on the running item), and central logs every stage's start and end at Info.
+
+### Changed
+
+- Telegram guide: the section "Topics mode" is now "Chat layout" (the old anchor `#topics-mode` is gone). It no longer
+  says a bound group gets notifier cards (it gets none: its replies and taps only), describes `/needs` as cross-space,
+  and the setup page has the BotFather steps for topics.
+- Telegram: the chat layout is chosen per link (ADR-0089). The new `notification_defaults.threads` setting (`auto`, `on`, `off`; default `auto`, which is on when the bot has topics enabled in BotFather) and a link's own override put every message about a space, needs-you cards included, in that space's topic; the digest and the "many changes" notice stay in the chat without a topic. The shared "Needs you" topic is no longer used: the bot posts a note in it once. The per-space `topics` flag and `topics_mode_default` are deprecated and have no effect. **Topics the bot creates stay in users' chats** when the layout is turned off again: Telegram can only delete a topic together with its messages.
+
+### Fixed
+
+- A Telegram text reply to a notifier card is now about that card. Replying to a question's card answers it (an option's
+  letter, number or label, or free text; the same API call, version check and authorisation as its buttons, and a
+  closed action says so); an approval is never decided from text; a reply that is not an answer goes to the card's own
+  space instead of the chat's current one. A lone letter or number is matched against both an option's position and the
+  start of every label ("C" with `Continue`, `Deploy`; "1" with `30 minutes`, `1 hour`): when they name different
+  options the bot asks "Which option?" and answers nothing. Any reply to a free-text question is taken as its answer.
+- Telegram notifications are no longer lost for changes made while central starts or while it is restarting: the
+  notifier reads its start position before the listener starts, and resumes from a saved position (up to 5 minutes
+  old) after a restart (ADR-0089 follow-up).
+- **Web, phones: pinch-zoom while a dialog is open, wide editor tables, input zoom.** Mantine's scroll lock cancelled
+  every two-finger touch while a modal or drawer was open, so the page could not be zoomed (or zoomed back out); pinches
+  now pass (`allowPinchZoom`) and one-finger scrolling stays locked. A table in the editor that was wider than its dialog
+  was cut off by the dialog's `overflow-x: hidden`; it now scrolls in its own box. Inputs are 16 px on touch screens, so
+  iOS no longer zooms the page in when one takes focus. `ui-overflow.spec.ts` opens every dialog in phone emulation.
+- The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
+  harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
+  late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.
+- A backup or verification that stops making progress no longer hangs with `busy` set until central restarts. A watchdog
+  fails it after 10 minutes without progress or 1 hour in total (new keys `backups.stall_timeout` and
+  `backups.max_duration`), records it as failed with an error naming the stage,
+  and the next backup can start. HTTP/2 connections to object storage now send health pings, so a silently dead
+  connection no longer blocks a transfer forever.
+- The CI and release race jobs no longer run until the hosted runner is lost. Every `go test -race` invocation has a
+  timeout (25 minutes for `internal/app`, 15 for the other packages; CI uses 35 minutes for `internal/app`) and
+  `GOTRACEBACK=all`, so a hung test ends as a panic with a dump of every goroutine; the job has a time limit, and its
+  test output and a memory log are uploaded as the `race-output` artifact (CI) or `race-output-release` (release) when
+  it fails. `internal/app`'s race cap in CI is now 2 (was 4), because its test binary reached 10-12 GB resident and
+  exhausted 16 GB runners; the job takes about 14 minutes at the lower cap, measured on a hosted runner.
+
 ## [0.1.7] - 2026-11-16
 
 Release on top of v0.1.6. It is a central-only release: the node agent is unchanged, so agents can stay on v0.1.6. It has
@@ -1906,7 +2022,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5

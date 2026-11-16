@@ -101,15 +101,19 @@ type LimitWait struct {
 	NewRunID     string     `json:"new_run_id,omitempty"`
 	Attempts     int64      `json:"attempts"`
 	LastError    string     `json:"last_error,omitempty"`
-	Version      int64      `json:"version"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// SwitchToAccountID is the account the resume uses instead of the parked run's (an account switch, ADR-0090).
+	SwitchToAccountID string    `json:"switch_to_account_id,omitempty" doc:"The account the resume uses instead of the parked run's (an account switch)"`
+	AccountSwitchID   string    `json:"account_switch_id,omitempty" doc:"The account switch this wait belongs to"`
+	Version           int64     `json:"version"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 func limitWaitFromRow(r db.LimitWait) LimitWait {
 	return LimitWait{ID: r.ID, SpaceID: r.SpaceID, RunID: r.RunID, TaskID: r.TaskID, RunKind: r.RunKind, Role: r.Role, NodeID: r.NodeID,
 		InstanceID: r.InstanceID, Harness: r.Harness, UsageLimitID: r.UsageLimitID, ResumeAt: time.UnixMicro(r.ResumeAt).UTC(),
 		ReleaseAt: microsPtr(r.ReleaseAt), State: r.State, NewRunID: r.NewRunID, Attempts: r.Attempts, LastError: r.LastError, Version: r.Version,
+		SwitchToAccountID: r.SwitchToAccountID, AccountSwitchID: r.AccountSwitchID,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC()}
 }
 
@@ -166,7 +170,9 @@ func reportedLimit(cur limitState, rep proto.RunReport, now time.Time) (limitSta
 		next.since = cur.since
 	}
 	if cur.kind != "" && cur.since == next.since {
-		if !next.resets.Valid {
+		// A reset the status line filled (minor ≥ 13) never replaces the one the transcript gave the stored limit; it only
+		// fills a missing one (the node sends it only for a limit whose record lacked a reset).
+		if !next.resets.Valid || (l.Source == proto.LimitSourceStatusLine && cur.resets.Valid) {
 			next.resets = cur.resets
 		}
 		if next.kind == proto.LimitUnknown {

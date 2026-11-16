@@ -270,6 +270,33 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Model-specific weekly limits hold the whole account**, for every model, not only the exhausted one.
 - **KB support and dreamer runs aren't parked**; their schedulers start them again when needed.
 
+### Account switching and pools (ADR-0090)
+- **No real two-account evidence.** A move to another claude.ai account, its `--resume` under that account, the
+  `oauthAccount` change, whether the status line shows the new account's windows, and whether the `StopFailure` hook
+  and the notification fire as documented at a real limit are all unverified. Everything is simulated: a fake
+  harness, a fake API, a scripted node and a fake clock.
+- **Headroom gate is simulated only.** With `usage_limit_min_headroom_percent` above 0, a new run (a launch, a resume of a
+  parked run or a switch's resume) skips an account whose known window leaves less than that share free, and waits for the
+  pool's earliest reset (at most an hour: usage older than an hour no longer counts). It reads the status-line windows of
+  Claude Code runs, so an account that reports none is never refused, and an unreadable usage ledger fails open.
+  Running agents are never moved for it. Tested with fake windows and a fake clock only.
+- **Pool order ignores utilisation.** The resolver orders by priority, then the fewest live runs, then binding order. The
+  windows are recorded and shown, and the headroom gate can refuse an account, but they don't rank the pool.
+- **Claude Code only.** Codex runs are not moved; a Codex run at its limit waits as before.
+- **A move ends the old process.** Background shells and subagents end with it, and the new run's prompt cache starts
+  cold (an extra uncached request).
+- **A move can misattribute the last tokens of the old run.** A report that is lost or late is booked with the next
+  run's report (the account after the move); tokens are counted once, but to the wrong account.
+- **Subscription accounts are the case covered.** The status line reports windows for subscription accounts; an
+  account that reports none shows unknown use.
+- **Pool-exhausted notices can be late.** A space at its open-action cap, or a crash in between, raises the notice
+  later, within the hour; it is dropped once its window passes, never raised for a reset in
+  the past.
+- **Web UI not built.** The usage page, the switches list and the pools editor are not in the web UI yet; they are
+  available through the API and the CLI.
+- **Harbor Pilot routing per role isn't built.** Harbor Pilot is for third-party models only; no role is routed through
+  it to pick a cheaper model.
+
 ## Dreams
 - **Token budgets are advisory.** The dreamer is told its token budget; SpaceMan enforces only the time budget (by
   stopping the run) and the evidence budget.

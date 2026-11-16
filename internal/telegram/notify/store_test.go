@@ -9,6 +9,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 )
@@ -82,6 +83,22 @@ func TestStoreFeedAndMappings(t *testing.T) {
 	}
 	if got, err = m.Lookup(ctx, k); err != nil || len(got) != 1 || got[0].MessageID != 5 {
 		t.Fatalf("Lookup after deleting the continuation = %+v, %v", got, err)
+	}
+	// The last alert is found with the card, is never a card, and its row is removed when the alert is.
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 9, MessageID: 7, Key: k, Version: 4, CreatedAt: time.Now(), Kind: notify.MappingAlert}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = m.Lookup(ctx, k); err != nil || len(got) != 2 || got[1].Kind != notify.MappingAlert || got[1].MessageID != 7 {
+		t.Fatalf("Lookup with an alert = %+v, %v", got, err)
+	}
+	if _, err := m.Card(ctx, 9, 7); !errors.Is(err, notify.ErrNoCard) {
+		t.Fatalf("an alert is not a card: %v", err)
+	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 9, MessageID: 7, Key: k, Kind: notify.MappingAlert, Delete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = m.Lookup(ctx, k); err != nil || len(got) != 1 {
+		t.Fatalf("Lookup after deleting the alert = %+v, %v", got, err)
 	}
 }
 
@@ -168,5 +185,153 @@ func TestLinksZoneChangeKicksTheDigest(t *testing.T) {
 	case <-changed:
 		t.Error("an unchanged reload must not kick the deadline loop")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// A notice row is stored with its kind, is not a card (Lookup and Card don't see it), and NoticeLinks lists its link.
+func TestStoreNoticeRows(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	if err := st.W().Exec(ctx, `INSERT INTO users (id, display_name, enabled, provisioned_via, created_at, created_by, updated_at) VALUES ('usr_a', 'a', 1, 'admin', 0, 't', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.W().Exec(ctx, `INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, prefs_json, created_at, updated_at)
+		VALUES ('tgl_a', 'usr_a', 7, 1, 11, 'active', '{}', 0, 0)`); err != nil {
+		t.Fatal(err)
+	}
+	m := notify.StoreMappings{S: st}
+	k := notify.Key{Type: notify.NoticeThreads, ID: "tgl_a"}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 3, LinkID: "tgl_a", Kind: notify.MappingNotice, Key: k, CreatedAt: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := m.NoticeLinks(ctx, notify.NoticeThreads)
+	if err != nil || len(ids) != 1 || ids[0] != "tgl_a" {
+		t.Fatalf("NoticeLinks = %v, %v", ids, err)
+	}
+	if ids, _ := m.NoticeLinks(ctx, "other"); len(ids) != 0 {
+		t.Errorf("NoticeLinks(other) = %v", ids)
+	}
+	if got, _ := m.Lookup(ctx, k); len(got) != 0 {
+		t.Errorf("a notice is not a card: Lookup = %+v", got)
+	}
+	if _, err := m.Card(ctx, 11, 3); !errors.Is(err, notify.ErrNoCard) {
+		t.Errorf("a notice is not a card: Card error %v", err)
+	}
+}
+
+// A home summary row is stored with its kind and pin flag, is listed by HomeMessages, is no card, and survives the
+// retention prune like a notice.
+func TestStoreHomeRows(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	if err := st.W().Exec(ctx, `INSERT INTO users (id, display_name, enabled, provisioned_via, created_at, created_by, updated_at) VALUES ('usr_a', 'a', 1, 'admin', 0, 't', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.W().Exec(ctx, `INSERT INTO telegram_links (id, user_id, bot_id, tg_user_id, chat_id, state, prefs_json, created_at, updated_at)
+		VALUES ('tgl_a', 'usr_a', 7, 1, 11, 'active', '{}', 0, 0)`); err != nil {
+		t.Fatal(err)
+	}
+	m := notify.StoreMappings{S: st}
+	k := notify.Key{Type: notify.HomeResource, ID: "tgl_a"}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, LinkID: "tgl_a", Kind: notify.MappingHome, Key: k, Version: 1, CreatedAt: time.Unix(1, 0)}}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := m.HomeMessages(ctx)
+	if err != nil || len(rows) != 1 || rows[0] != (notify.HomeRow{LinkID: "tgl_a", ChatID: 11, MessageID: 5, Pinned: true}) {
+		t.Fatalf("HomeMessages = %+v, %v", rows, err)
+	}
+	if got, _ := m.Lookup(ctx, k); len(got) != 0 {
+		t.Errorf("a home summary is not a card: Lookup = %+v", got)
+	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, Kind: notify.MappingHome, Delete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := m.HomeMessages(ctx); len(rows) != 0 {
+		t.Fatalf("a deleted home row is still listed: %+v", rows)
+	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 11, MessageID: 5, LinkID: "tgl_a", Kind: notify.MappingHome, Key: k, Version: 1, CreatedAt: time.Unix(1, 0)}}); err != nil {
+		t.Fatal(err)
+	}
+	var pruned int64
+	if err := st.W().Tx(ctx, func(tx *store.Tx) (err error) {
+		pruned, err = tx.Q.PruneTelegramMessages(ctx, db.PruneTelegramMessagesParams{Cutoff: time.Now().UnixMicro(), Lim: 100})
+		return err
+	}); err != nil || pruned != 0 {
+		t.Errorf("prune removed %d home rows (%v), want 0", pruned, err)
+	}
+}
+
+// The thread a card was sent in is stored (0 is the main chat, and different from unknown), survives a write that
+// doesn't know it, and a row without one reads back as unknown.
+func TestStoreCardThread(t *testing.T) {
+	ctx := context.Background()
+	m := notify.StoreMappings{S: storetest.Open(t)}
+	k := notify.Key{Type: notify.TypeHumanAction, ID: "hum_1"}
+	now := time.Now()
+	if err := m.Save(ctx, []notify.Mapping{
+		{ChatID: 9, MessageID: 1, Key: k, Version: 1, CreatedAt: now, Thread: 7, ThreadKnown: true},
+		{ChatID: 9, MessageID: 2, Key: k, Version: 1, CreatedAt: now, Thread: 0, ThreadKnown: true},
+		{ChatID: 9, MessageID: 3, Key: k, Version: 1, CreatedAt: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A later write without the thread (an older process, a refresh) leaves the stored one alone.
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 9, MessageID: 1, Key: k, Version: 2, CreatedAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.Lookup(ctx, k)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("Lookup = %+v, %v", got, err)
+	}
+	for _, r := range got {
+		switch r.MessageID {
+		case 1:
+			if !r.ThreadKnown || r.Thread != 7 || r.Version != 2 {
+				t.Errorf("card 1 = %+v, want thread 7 kept", r)
+			}
+		case 2:
+			if !r.ThreadKnown || r.Thread != 0 {
+				t.Errorf("card 2 = %+v, want the main chat, known", r)
+			}
+		case 3:
+			if r.ThreadKnown {
+				t.Errorf("card 3 = %+v, want an unknown thread", r)
+			}
+		}
+	}
+}
+
+func TestStoreCursorsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := notify.StoreCursors{S: storetest.Open(t)}
+	if _, _, ok, err := c.Load(ctx); err != nil || ok {
+		t.Fatalf("Load before any save = ok %v, %v", ok, err)
+	}
+	at := time.UnixMicro(1_700_000_000_123_456)
+	for _, seq := range []int64{7, 9} {
+		if err := c.Save(ctx, seq, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if seq, got, ok, err := c.Load(ctx); err != nil || !ok || seq != 9 || !got.Equal(at) {
+		t.Errorf("Load = %d, %v, %v, %v; want 9 at %v", seq, got, ok, err, at)
+	}
+}
+
+// A value that doesn't parse reads as "none saved", never as an error or a position.
+func TestStoreCursorsMalformedValueIsNoneSaved(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	c := notify.StoreCursors{S: st}
+	for _, v := range []string{"", "12", "x:1", "1:y", "-3:5", "1:2:3"} {
+		err := st.W().TxNamed(ctx, "test.cursor", func(tx *store.Tx) error {
+			return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: "telegram.notifier_cursor", Value: v, UpdatedAt: 1})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seq, _, ok, err := c.Load(ctx); err != nil || ok {
+			t.Errorf("Load of %q = %d, ok %v, %v; want none saved", v, seq, ok, err)
+		}
 	}
 }

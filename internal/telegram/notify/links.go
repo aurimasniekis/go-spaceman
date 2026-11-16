@@ -82,6 +82,8 @@ type Links struct {
 	// so the deadline loop looks at the next digest time again. Set it before Start.
 	OnChange func()
 	sig      string
+	// afterReload is called after every reload (the notifier sweeps its cards then); set by Notifier.Run.
+	afterReload func()
 
 	mu    sync.RWMutex
 	links []Link
@@ -103,6 +105,17 @@ func (l *Links) Snapshot() []Link {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.links
+}
+
+// ThreadsMode is a link's effective chat layout under the defaults d (settings.ThreadsAuto, ThreadsOn or ThreadsOff),
+// from memory; a link that isn't in the list (gone, or not notifiable) is off. It is the topics Manager's Mode.
+func (l *Links) ThreadsMode(linkID string, d settings.NotificationDefaults) string {
+	for _, k := range l.Snapshot() {
+		if k.ID == linkID {
+			return k.Prefs.Effective(d).Threads
+		}
+	}
+	return settings.ThreadsOff
 }
 
 // Set replaces the links (tests).
@@ -143,6 +156,9 @@ func (l *Links) reload(ctx context.Context) {
 		out = nil
 	}
 	l.Set(out)
+	if l.afterReload != nil {
+		l.afterReload()
+	}
 	if l.OnChange != nil {
 		if sig := digestSignature(out); sig != l.sig {
 			l.sig = sig

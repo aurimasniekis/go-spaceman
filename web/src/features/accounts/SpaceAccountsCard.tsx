@@ -2,8 +2,8 @@ import { Badge, Button, Card, Checkbox, Group, Modal, Radio, Stack, Table, Text 
 import { IconSettings } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, unwrap, type Account, type AccountBinding } from '@/api/client'
-import { keys, useAccounts, useMe, useSpaceAccounts } from '@/api/queries'
+import { api, ifMatch, unwrap, type Account, type AccountBinding } from '@/api/client'
+import { keys, useAccounts, useMe, useRolePools, useSpaceAccounts } from '@/api/queries'
 import { useAppForm } from '@/components/form/appForm'
 import { hasGlobal } from '@/lib/access'
 import { notifyError, notifyOk } from '@/lib/notify'
@@ -42,6 +42,8 @@ export function SpaceAccountsCard({ spaceId }: { spaceId: string }) {
 function BindModal({ spaceId, current, onClose }: { spaceId: string; current: AccountBinding[]; onClose: () => void }) {
   const qc = useQueryClient()
   const all = useAccounts().data ?? []
+  // The pool editors' configuration version: a concurrent change to the bindings is a conflict, not lost.
+  const version = useRolePools(spaceId).data?.accounts_version
   const form = useAppForm({
     defaultValues: {
       picked: current.map((b) => b.account_id),
@@ -50,11 +52,13 @@ function BindModal({ spaceId, current, onClose }: { spaceId: string; current: Ac
     onSubmit: async ({ value }) => {
       try {
         unwrap(await api.PUT('/spaces/{space_id}/accounts', {
-          params: { path: { space_id: spaceId } },
-          body: { items: value.picked.map((id) => ({ account_id: id, default: Object.values(value.defaults).includes(id) })) },
+          params: { path: { space_id: spaceId }, header: version === undefined ? {} : { 'If-Match': ifMatch(version) } },
+          // A kept account keeps its pool priority; choosing accounts must not reset the failover order.
+          body: { items: value.picked.map((id) => ({ account_id: id, default: Object.values(value.defaults).includes(id), priority: current.find((b) => b.account_id === id)?.priority })) },
         }))
         void qc.invalidateQueries({ queryKey: keys.spaceAccounts(spaceId) })
         void qc.invalidateQueries({ queryKey: keys.accounts })
+        void qc.invalidateQueries({ queryKey: keys.rolePools(spaceId) })
         notifyOk('Accounts saved')
         onClose()
       } catch (e) {

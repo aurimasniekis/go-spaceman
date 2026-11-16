@@ -40,10 +40,12 @@ const task = (n: number, status = 'ready') => ({
 const run = { id: 'run_pages1', space_id: SPACE, role: 'implementor', turn: 2, kind: 'worker', harness: 'claude-code', observed: 'running', desired: 'running', status: 'working', created_at: now, started_at: now, generation: 1, adopted: false, instance_id: 'i', node_id: 'n', launch: {} }
 const message = { id: 'msg_pages1', space_id: SPACE, kind: 'request', subject: 'Please look at the deploy', body: 'Hello', state: 'available', from_kind: 'control', to_kind: 'operators', created_at: now, attachments: [] }
 
+function topics(t: Record<string, unknown>) { return { available: true, mode: 'auto', active: true, spaces: [SPACE], refused: false, ...t } }
+
 function basePrefs(): Record<string, unknown> {
   const d = { assigned_to_me: true, clarifications: true, digest: true, digest_time: '09:00', escalations: true, failed_runs: 'digest', inbox_items: 'digest', min_priority: 'normal', new_actions: true,
-    operator_messages: true, quiet_hours: true, quiet_hours_end: '08:00', quiet_hours_start: '23:00', reminders: 'push', tasks_in_review: 'digest' }
-  return { link_id: 'tgl_1', overrides: {}, defaults: d, effective: { ...d, muted_spaces: [] }, timezone: 'Europe/Vilnius', topics: { available: true, spaces: [SPACE], refused: false }, version: 3 }
+    operator_messages: true, quiet_hours: true, quiet_hours_end: '08:00', quiet_hours_start: '23:00', reminders: 'push', tasks_in_review: 'digest', threads: 'auto' }
+  return { link_id: 'tgl_1', overrides: {}, defaults: d, effective: { ...d, muted_spaces: [] }, timezone: 'Europe/Vilnius', topics: topics({}), version: 3 }
 }
 
 /** The fixtures a test can replace: the queue's tasks, the scheduled messages to control and the space's attention counts. */
@@ -81,10 +83,12 @@ async function launch(page: Page, o: Fixtures) {
       if (!ifMatch) return route.fulfill(json({ status: 428, code: 'precondition_required', title: 'x', detail: 'x' }, 428))
       if (conflicts-- > 0) {
         prefs = { ...prefs, version: (prefs.version as number) + 1, timezone: 'Europe/Paris' }
-        return route.fulfill({ status: 412, contentType: 'application/problem+json', body: JSON.stringify({ status: 412, code: 'version_conflict', title: 'Precondition failed', detail: 'changed' }) })
+        return route.fulfill({ status: 409, contentType: 'application/problem+json', body: JSON.stringify({ status: 409, code: 'precondition_failed', title: 'Conflict', detail: 'changed' }) })
       }
       const b = req.postDataJSON() as Record<string, unknown>
-      prefs = { ...prefs, version: (prefs.version as number) + 1, timezone: (b.timezone as string) ?? prefs.timezone, overrides: { ...b, timezone: undefined }, effective: { ...(prefs.defaults as object), ...b, muted_spaces: b.muted_spaces ?? [] } }
+      const layout = (b.threads as string | undefined) ?? 'auto'
+      prefs = { ...prefs, version: (prefs.version as number) + 1, timezone: (b.timezone as string) ?? prefs.timezone, overrides: { ...b, timezone: undefined }, effective: { ...(prefs.defaults as object), ...b, muted_spaces: b.muted_spaces ?? [] },
+        topics: topics({ mode: layout, override: b.threads, active: (layout === 'on' || (layout === 'auto' && (prefs.topics as { available: boolean }).available)) && !(prefs.topics as { refused: boolean }).refused }) }
       return route.fulfill(json(prefs))
     }
     if (p === `/spaces/${SPACE}/queue/next`) return route.fulfill(json({ selected: task(1), skipped: [{ task_id: T(2), title: 'Blocked one', reason: 'depends on Task number 1' }] }))
@@ -320,12 +324,13 @@ test('the queue shows the Next card and never sends record=true', async ({ page 
   expect(seen.requests.filter((r) => r.includes('record'))).toEqual([])
 })
 
-test('settings: edit and save round-trips with If-Match, and topics are read-only', async ({ page }) => {
+test('settings: edit and save round-trips with If-Match', async ({ page }) => {
   const seen = await launch(page, { path: '/settings' })
   const form = page.getByRole('form', { name: 'Notification settings' })
   await expect(form.getByText(/Per user, not per link/)).toBeVisible()
-  await expect(form.getByText(/Topics are on for: Pages space/)).toBeVisible()
-  await expect(form.getByText(/turned on per space/)).toBeVisible()
+  await expect(form.getByLabel('Chat layout', { exact: true })).toHaveValue('auto')
+  await expect(form.getByText(/Topics so far: Pages space/)).toBeVisible()
+  await expect(form.getByText(/turned on per space|Needs you/)).toHaveCount(0)
   await expect(form.getByText('Not available yet')).toHaveCount(0)
   await clean(page)
   await form.getByLabel('New inbox items').selectOption('push')
@@ -339,6 +344,65 @@ test('settings: edit and save round-trips with If-Match, and topics are read-onl
   await expect(form.getByLabel('New inbox items')).toHaveValue('push')
   await expect(form.getByLabel('Time zone')).toHaveValue('Europe/London')
   expect(seen.requests.filter((r) => r.includes('record'))).toEqual([])
+})
+
+test('settings: the chat layout round-trips with If-Match in all three states', async ({ page }) => {
+  const seen = await launch(page, { path: '/settings' })
+  const form = page.getByRole('form', { name: 'Notification settings' })
+  const layout = form.getByLabel('Chat layout', { exact: true })
+  await expect(layout.locator('option')).toHaveText(['A topic per space', 'One chat', 'Automatic'])
+  await clean(page)
+  const saved = () => expect(page.getByText('Your Telegram notification settings were saved.').first()).toBeVisible()
+  await layout.selectOption({ label: 'A topic per space' })
+  await form.getByRole('button', { name: 'Save' }).click()
+  await saved()
+  expect(seen.puts[0]).toEqual({ ifMatch: '"3"', body: { threads: 'on' } })
+  await expect(layout).toHaveValue('on')
+  await expect(form.getByText('Each space gets a topic of its own in this chat.')).toBeVisible()
+  await layout.selectOption({ label: 'One chat' })
+  await form.getByRole('button', { name: 'Save' }).click()
+  await expect.poll(() => seen.puts.length).toBe(2)
+  expect(seen.puts[1]).toEqual({ ifMatch: '"4"', body: { threads: 'off' } })
+  await expect(form.getByText('Everything arrives in this one chat.')).toBeVisible()
+  await expect(form.getByText(/Topics so far/)).toHaveCount(0)
+  // Back to the default: the override is dropped, so the body names no threads field.
+  await layout.selectOption({ label: 'Automatic' })
+  await form.getByRole('button', { name: 'Save' }).click()
+  await expect.poll(() => seen.puts.length).toBe(3)
+  expect(seen.puts[2]).toEqual({ ifMatch: '"5"', body: {} })
+  await expect(layout).toHaveValue('auto')
+})
+
+test('settings: the chat layout says when topics are unavailable', async ({ page }) => {
+  const base = basePrefs()
+  await launch(page, { path: '/settings', prefs: { ...base, topics: topics({ available: false, active: false, spaces: [] }) } })
+  const form = page.getByRole('form', { name: 'Notification settings' })
+  await expect(form.getByText(/not available now.*not enabled for it in BotFather/)).toBeVisible()
+  await clean(page)
+})
+
+test('settings: the chat layout says when topics are on but the bot lacks them', async ({ page }) => {
+  const base = basePrefs()
+  const seen = await launch(page, { path: '/settings', prefs: { ...base, overrides: { threads: 'on' }, effective: { ...(base.effective as object), threads: 'on' }, topics: topics({ available: false, active: true, mode: 'on', override: 'on', spaces: [] }) } })
+  const form = page.getByRole('form', { name: 'Notification settings' })
+  await expect(form.getByText(/Topics are on, but the bot does not have them enabled in BotFather.*refuse/)).toBeVisible()
+  await expect(form.getByText(/Topics are not available now/)).toHaveCount(0)
+  await clean(page)
+  // The mock answers a save the way the server does: on stays active while topics are unavailable.
+  const layout = form.getByLabel('Chat layout', { exact: true })
+  await layout.selectOption({ label: 'Automatic' })
+  await expect(form.getByText('Save to apply this layout.')).toBeVisible()
+  await form.getByRole('button', { name: 'Save' }).click()
+  await expect.poll(() => seen.puts.length).toBe(1)
+  await expect(form.getByText('Save to apply this layout.')).toHaveCount(0)
+})
+
+test('settings: the chat layout says when Telegram refused topics', async ({ page }) => {
+  const base = basePrefs()
+  await launch(page, { path: '/settings', prefs: { ...base, topics: topics({ active: false, refused: true }) } })
+  const form = page.getByRole('form', { name: 'Notification settings' })
+  await expect(form.getByText(/Telegram refused to create a topic.*BotFather/)).toBeVisible()
+  await clean(page)
 })
 
 test('settings: a save without editing the time zone sends no timezone', async ({ page }) => {
@@ -364,7 +428,7 @@ test('settings: an untouched override equal to the default is kept', async ({ pa
   expect(seen.puts[0].body).toEqual({ reminders: 'push', failed_runs: 'off', inbox_items: 'push' })
 })
 
-test('settings: a stale save (412) reloads the form and shows a conflict notice', async ({ page }) => {
+test('settings: a stale save (409) reloads the form and shows a conflict notice', async ({ page }) => {
   const seen = await launch(page, { path: '/settings', putStatus: 412 })
   const form = page.getByRole('form', { name: 'Notification settings' })
   await form.getByLabel('New inbox items').selectOption('push')

@@ -4,6 +4,22 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
+)
+
+// renderCard renders a resource's card the way the notifier does for a link without buttons.
+func renderCard(r *Resource, full bool, appURL string) []cardPart {
+	v := card.View{Label: r.Label, Title: r.Title, State: r.State, Full: full, Final: r.Final}
+	if full {
+		v.Body = r.Detail
+	}
+	return card.Render(v, card.Caps{AppURL: appURL})
+}
+
+const (
+	maxParts   = card.MaxParts
+	maxMessage = card.MaxMessage
 )
 
 func TestRenderCardMarkdown(t *testing.T) {

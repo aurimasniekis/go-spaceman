@@ -57,14 +57,6 @@ func (n *Notifier) silent(l *Link, now time.Time) bool {
 	return quiet(l.Prefs.Effective(n.o.Policy.Current().NotificationDefaults), l.Zone, now)
 }
 
-// appURL is the Mini App link a card's cut body continues in ("" when there is none).
-func (n *Notifier) appURL(r *Resource) string {
-	if n.o.AppURL == nil {
-		return ""
-	}
-	return n.o.AppURL(*r)
-}
-
 // Digest bounds: items kept per link, and lines shown in one digest.
 const (
 	maxDigestItems = 50
@@ -256,7 +248,8 @@ func (n *Notifier) enqueueDigest(snd *sender.Sender, l *Link, items []digestItem
 			if text == "" {
 				return nil
 			}
-			_, err := c.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, DisableNotification: n.silent(cur, now), ProtectContent: true})
+			// The digest spans spaces: it goes home (ADR-0089).
+			_, err := n.route(linkID, "")(ctx, c, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, DisableNotification: n.silent(cur, now), ProtectContent: true})
 			return err
 		}})
 	if err != nil {

@@ -17,15 +17,16 @@ import (
 
 // qrChat drives the chat of Telegram user 42 through the real dispatcher.
 type qrChat struct {
-	t *testing.T
-	e *miniAppEnv
-	n int64
+	t  *testing.T
+	e  *miniAppEnv
+	n  int64
+	ui *client // the linked user's signed-in session
 }
 
 func newQRChat(t *testing.T) (*qrChat, string) {
 	t.Helper()
 	e := newMiniAppEnv(t)
-	_ = enrolledSession(t, e.h, "mini@example.com") // operators must enroll MFA; until then the link is Limited too
+	ui := enrolledSession(t, e.h, "mini@example.com") // operators must enroll MFA; until then the link is Limited too
 	e.startBot(t)
 	// A test taps faster than a person; the default burst (10) would answer "slow down".
 	expect(t, e.root.do("PUT", "/telegram/settings", map[string]any{"inbound_limits": map[string]any{"actions_per_minute": 600, "actions_burst": 100}}), 200)
@@ -40,6 +41,13 @@ func newQRChat(t *testing.T) (*qrChat, string) {
 		<-done
 		t.Logf("notifier stopped in %v", time.Since(st))
 	})
+	// Changes made before the notifier has its start position are history it doesn't replay: wait, or a loaded runner
+	// that starts the goroutine late loses the first card.
+	select {
+	case <-e.h.c.TelegramNotify.Ready():
+	case <-time.After(30 * time.Second):
+		t.Fatal("the notifier did not start")
+	}
 	on := true
 	if _, err := e.h.c.TelegramSettings.PutSpace(ctx, audit.System, e.space, 0, tgsettings.SpaceInput{Enabled: &on}); err != nil {
 		t.Fatal(err)
@@ -47,7 +55,7 @@ func newQRChat(t *testing.T) (*qrChat, string) {
 	if err := e.h.c.TelegramSettings.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return &qrChat{t: t, e: e}, e.space
+	return &qrChat{t: t, e: e, ui: ui}, e.space
 }
 
 // push hands an update to the bot the way Telegram does: the fake Bot API serves it to the running poller, which gives

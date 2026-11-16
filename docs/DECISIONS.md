@@ -5413,6 +5413,380 @@
 - **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`, `TestWorkerInboxDedupKeyEffectiveLimit`;
   `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
 
+### ADR-0089 — Telegram chat threads per link: a thread per space, cards edited in place, a home summary
+- **Status:** Accepted, 2026-11-15. The operator accepted every planner default, Q1–Q10 below, on 2026-11-15 (the epic;
+  plan `docs/plans/2026-11-15-telegram-chat-ux.md` on `plan/telegram-chat-ux`). Amends
+  ADR-0083 decision 16 and its topics answer (Q6): the per-space topics opt-in becomes a per-link mode. The work is in
+  T1–T9 on `feat/tg-chat-threads`; T6 (Mini App home) goes straight to `next/v0.1.6`. Not security-relevant (see below).
+  Requirement IDs are unchanged: SM-TG-008 and SM-TG-009 keep their wording.
+- **Security label:** not security-relevant. **Authorization is unchanged.** A topic only chooses where a message is
+  shown. `may()`/`stillMay()` run at send time, a tap is authorized as the tapping link, `SpaceOf` is taken only from
+  bot-created threads, enforced approvals follow ADR-0083 decision 14, and content levels are unchanged (a `summary`
+  space never shows a body, a group is always `summary`). The one new path that acts on a person's tap is the card's
+  Approve/Deny button (Q6); its callback handling is the security review point in T4, before T4 merges.
+- **Context:**
+  - Topics mode (TG-11, #107) puts a space's messages into a topic of the private chat, chosen by one per-space flag.
+    Cards stay new messages forever, resolved cards keep their buttons, and the chat without a topic mixes everything.
+  - What Telegram allows, and what is undocumented, is in `docs/contracts/telegram.md` § Topics (sources and the list of
+    open points). The design uses only documented calls; each undocumented point has a fallback.
+- **Decision:**
+  1. **Thread mode per link (Q1).** `threads` is `auto`, `on` or `off`, default `auto` (on when the bot has topics
+     enabled). It is stored with the link's preferences (T3). The space `topics` flag and `topics_mode_default` are
+     deprecated and have no effect; they are removed later.
+  2. **Home is the chat without a topic (Q2).** A bot-created "🏠 Home" topic is the switch when the real-bot check
+     shows that untargeted messages are awkward.
+  3. **The legacy "Needs you" topic is left alone (Q3).** It gets a note and is no longer used. It is never deleted,
+     because deleting a topic deletes all its messages.
+  4. **A resolved card is edited to one compact line with no buttons (Q4).** It is never deleted: deletion is possible
+     only within 48 h and would lose the history.
+  5. **The pinned home summary is edited in place, at most once per 30 s (Q5).**
+  6. **Approve/Deny on the card (Q6).** For approvals that are not enforced, with the existing two-step confirm. Enforced
+     approvals follow the space's `enforced_approvals` setting (`web_only` by default).
+  7. **The Mini App's "Needs you" lists human actions only (Q7),** like the web's `/human`. Operator messages, tasks in
+     review and failed runs stay in `/attention` and on the space pages. Another kind needs a new API operation and a
+     security review.
+  8. **BotFather (Q8).** The operator enables private-chat topics and turns off user topic creation and deletion. The
+     bot status shows both flags from getMe: `has_topics_enabled` and `allows_users_to_create_topics`.
+  9. **Reminders and escalations are replies to the card (Q9).** The previous alert is deleted, and the card gets a
+     "reminded 2×" line. A silent card edit was rejected: it sends no alert.
+  10. **No new run notices (Q10).** Failed or lost runs only, as today.
+- **Alternatives rejected:**
+  - Keeping the per-space flag: one setting for every linked user, and it can't show a user's own choice.
+  - A Home topic by default (Q2): it creates a topic the user didn't ask for, and untargeted messages are not known to
+    be a problem.
+  - Deleting resolved cards (Q4) or using silent edits for reminders (Q9): see decisions 4 and 9.
+- **Consequences:** Topic creation becomes a per-link action, and a user can have no topic at all. The Bot API surface
+  grows by `editForumTopic`, `pinChatMessage`, `unpinChatMessage` and `deleteMessages` (T1, no behaviour change). The
+  facts the design relies on are recorded in the contract with a source; the new rows were checked against the Bot API
+  page on 2026-11-15. Nothing has been observed against a real bot yet.
+  T7 known limitation: a space renamed while the bot is off is not replayed; its topics keep the old title until the
+  space is renamed again or a topic is created again. A rename edits only the topics of links that may read the space
+  (checked when queued and when sent, in memory), and a relink reuses only the topics of the same user's link on the
+  same bot.
+- **Evidence:** T1: `internal/telegram/botapi` `TestGetMeTopicFlags`, `TestEditForumTopic`, `TestMessagesInRecordsThread`,
+  `TestPinAndUnpin`, `TestDeleteMessages`; `internal/telegram/tgbot` `TestStatusExposesGetMeTopicFlags` and `TestTopicFlagsResetAndRefresh` (the flags reset on a disable and on a failed getMe, and follow a token for another bot). T2 (routing): `notification_defaults.threads` (`auto`/`on`/`off`, default `auto`) with
+  the link override; `topics.Manager.Route(link, space)` and `Enabled(link, chat)` read the link's effective mode from
+  the notifier's in-memory link list and getMe's `has_topics_enabled` at send time; the digest and the "many changes"
+  notice go home (`Route(link, "")`); the legacy `needs` key gets one note and is dropped (never deleted); one home
+  announcement per link, kept as a `telegram_messages` row of kind `notice` (retention keeps it). Topic creation is
+  bounded to 5/s over every chat, and a link's lookups no longer wait for its topic create. Tests:
+  `internal/telegram/topics` `TestRoutePerLink`, `TestEnabledFollowsRefusal`, `TestLegacyNeedsRetiredOnceUnderConcurrentSends`,
+  `TestCreatesAreRateLimited`; `internal/telegram/notify` `TestThreadsEveryKindLandsInItsSpaceTopic`,
+  `TestThreadsDigestAndOverflowGoHome`, `TestThreadsFallbacks`, `TestThreadsModeReadAtSendTime`,
+  `TestThreadsAnnouncedOncePerLink`; `internal/app` `TestTelegramThreadsRouteEachSpaceToItsTopic`,
+  `TestTelegramThreadsFallbacks`, `TestTelegramThreadsRetireTheLegacyNeedsTopic`; `internal/retention`
+  `TestPassKeepsTelegramNotices`. T3 (link prefs and the Mini App): `GET/PUT /telegram/link/prefs` return `topics`
+  (`available`, `mode`, `override`, `active`, `spaces`, `refused`); the override is saved through the `threads` field with
+  If-Match, and `active` comes from `topics.Manager.EnabledFor(mode, chat)` (the layout just saved, which the notifier's
+  own view only learns of once the change commits; `Enabled(link, chat)` is the same check for a link the notifier
+  already knows). `spaces` are the readable spaces that have a thread in the link's `topics_json`. The Mini App's
+  "Chat layout" control offers "A topic per space", "One chat" and "Automatic". All of it is simulated
+  (`internal/telegram/tgtest`); the real-bot run is TG-14 (plan §6.3).
+  T4 (cards edited in place): a pure renderer, `internal/telegram/card`, draws every card (header with the space's name
+  outside its topic, bold title, meta line, body only at `full` and never for an enforced approval, the keyboard), for
+  the notifier and for the chat's redraw of a card. Quick actions by type use explicit `h<verb>:<space>:<action>` data;
+  More… (`hn`) shows the form on the card's own message and Back (`hz`) draws the card again; a settled card is one
+  compact line with an empty keyboard; a link that loses access, mutes the space or a hidden space gets its card edited
+  to "No longer available here." with nothing of the item and its continuations deleted; reminders, escalations and
+  assignments reply to the card, the newer deleting the older and the settled card deleting the last. Security review:
+  a card tap adopts the card message only when the notifier's record of it (memory first, then the row) names the
+  tapping link and the button's space and action and shows the server's version; the action is then read and answered
+  as the tapping link through the in-process API with that version as If-Match, so a hidden button protects nothing and
+  a shown one permits nothing; the second step of an approval never adopts a card; an enforced approval in a
+  `web_only` space has no callback on its card and a forged one is refused as before (server rule unchanged); the
+  retraction renders no content and needs no recipient check. Ordering: notifier and chat edits of a card take one
+  lock per chat; a chat edit loses to a newer version shown or queued and to a settled or retracted card, and the
+  notifier's settled state replaces the chat's form. T4 follow-ups: the chat's form lock is per chat (a rate-limit
+  pause in one chat no longer delays another chat's taps); the last alert of a card is a `telegram_messages` row of
+  kind `alert` (no migration), so a restart still deletes it; a sweep over the cards in memory retracts a card when the
+  link's grants, mute or the space's visibility change (on the bus events, after a link reload, and every 10 s as the
+  backstop), using the same recipient check as a send and removing content only. Known limits: a card loaded from its
+  row after a restart is not swept until its item next changes or a queued send re-checks it; the card's final line
+  names no responder (the only responder stored is the actor's ID, which the API exposes to readers but which is not a
+  name; showing a name would need a user read and would expose a display name that a reader of the action does not get
+  today). Tests: TRACEABILITY SM-TG-006. Simulated only.
+  T5 (home): `/needs` with no pinned space and no argument lists the pending actions of every space from
+  `GET /human-actions`, grouped by space, with a "See all" web_app button for the Mini App's `/human`; the API leaves out
+  spaces the link's principal can't read, and the chat drops spaces Telegram may not show and spaces the link muted
+  before it counts or lists anything. In a space's topic, or with a space named, it lists that space only, as before.
+  `/spaces` rows get a "Go to topic" URL button (`t.me/<bot>/<thread>`) when the link has that topic. The notifier keeps
+  one pinned "Needs you" summary per link in home: one read of the pending counts per rebuild (not per recipient), each
+  link's view filtered in memory by the card rule (link usable, space read and human-action read held, visible to
+  Telegram, not muted) and checked again when it is sent, edited at most once per 30 s per chat, sent and pinned once,
+  and stored as a `telegram_messages` row of kind `home` (resource version 1 once the pin worked) that retention keeps
+  like a notice, so a restart edits the message instead of sending and pinning another. Per-space lines link to the
+  topic, or to `startapp=space-<id>` with the layout off; without the Mini App host the button is the `startapp=needs`
+  link. The counts are read per space and action type, and a link's view counts only the types whose view role (the
+  space's type permissions, loaded once per space per rebuild) the link holds, as a card and the API's counts do; a
+  space left with nothing to show for it isn't listed, and one whose permissions can't be read is left out. `/needs`
+  at home takes its items and counts from `GET /human-actions`, which applies the same type permissions. A rebuild reads
+  the counts only when a link's summary is due; a link that moves chats mid-send leaves no row and the message it sent
+  in the old chat is dropped from the record. Known limit: a mute or grant change shows on the next human-action
+  window, not at once. Simulated only.
+- **Integration into v0.1.8 (2026-11-16):**
+  - The migration is `0059_telegram_message_thread`, after account switching's 0054–0058 (ADR-0090). Evidence:
+    `internal/store` `TestTelegramThreadMigrationFrom0058` (a database at 0058 upgrades to 0059, and a fresh one applies
+    every migration).
+  - v0.1.7's topic-creation charge (#161) is kept on top of this ADR's two link locks. A topic create, the legacy note
+    and the title fix after a create are each charged to the sender's rate limits (`sender.Take` after the dispatch's
+    free call). That wait holds only `create`, never `mu`, so `SpaceOf`, `ThreadOf` and sends to an existing topic don't
+    wait for it. The 5/s create limiter stays.
+  - v0.1.7's Open-in-app link on long cards (#162) is this ADR's per-item `ItemURL`: a human action's Mini App page, and
+    no button on other cards. The notifier keeps one link option (`ItemURL`, central's `cardAppURL`) instead of v0.1.7's
+    `AppURL func(Resource)`.
+- **Follow-up (2026-11-16): the notifier's start position (not security-relevant).** The notifier used to start at the
+  newest change when `Run` began, with the position in memory only. A change made while central was starting (agents
+  reconnecting, the recover passes, the deadline loop) or around a restart never got a card or alert; the web UI still
+  showed it.
+  - `Serve` calls `Notifier.Prime` before the listener and the recover passes. It reads the start position there, and
+    `Run` follows from it and processes what changed in between. A failed `Prime` keeps the old lazy start.
+  - The position is saved in the `settings` table (`telegram.notifier_cursor`, value `<seq>:<saved at>`; no migration),
+    on the mapping flush when it moved, once a minute when it did not (the save time is what measures an outage), and
+    at shutdown. A start resumes from it when it is not beyond the newest change (a restore from backup) and was
+    saved at most **5 minutes** ago (`DefaultMaxReplay`); otherwise it starts at the newest change, so a long outage does
+    not flood a chat. A burst above `MaxKeys` is still one "many changes" notice per chat.
+  - Shutdown does not process the window being collected: the sender drops its queue when the same context ends, so
+    those sends would be lost with the position already advanced. The position is saved behind that window and the next
+    start delivers it, within the bound. Delivery stays at most once per change for what was already queued: a card
+    queued but not sent at a crash is lost, as before.
+  - The window waits for the bot's sender. `Serve` starts the bot and the notifier side by side, and the sender is
+    nil until the bot's start has run (or for good after a failed start). While it is nil the notifier neither reads
+    nor advances the position and looks again every `RetryAfter`; after the replay bound it gives the window up and
+    follows the newest change. The position is not saved meanwhile, so a restart can't take a stale position for a
+    fresh one.
+  - A replayed window loads the stored card mappings even for items it saw created, so a crash can't send a second
+    card for one that was sent in the last seconds before it.
+  - `Central.Close` waits (at most 5 s) for the notifier's shutdown writes (mappings first, position second) before it
+    closes the store.
+
+### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
+- **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the
+  recommended defaults; see decisions 2 and 4). Tasks T2–T11 of the plan in `docs/plans/2026-11-15-account-switching.md`.
+  T3 (the switch core, decisions 1, 2, 5 and 7 for Claude Code) is implemented and tested with simulated evidence only
+  (fleet tests and a scripted-node app e2e); the pool-exhausted resume time (decision 8, T10), the headroom gate
+  (decision 4, T9) and the API, CLI and UI listings (T7, T8) are not. Real two-account evidence is open as K-17.
+- **T3 implementation notes (2026-11-15):**
+  - The switch decision runs in the report transaction that opens the run's limit window, before control is told
+    about the limit; a run with an armed switch gets no "kept alive" message. A run that ends at its limit by itself is
+    decided in its end report.
+  - A switch row is written only when a switch is decided: armed (`pending`) or `fell_back` (`no_eligible_account`,
+    `budget_spent`). A reset within `usage_limit_wait_if_reset_within`, failover off, a gateway run, a run kind that
+    isn't parked, or a run with no session to resume write no row: they are ADR-0079's ordinary wait. An armed switch
+    whose limit is re-read with a near reset falls back (`reset_near`); one whose limit clears, or whose run is stopped
+    or replaced, is `cancelled`.
+  - The daily budget counts the instance's switches created in the last 24 hours in any state but `fell_back` and
+    `cancelled`. A budget of 0 never switches.
+  - The resume re-resolves the target in its claim transaction: still eligible, it stays; held, gone, unbound or
+    disabled, the pool's next eligible account takes its place (the wait and the switch follow); none left, or
+    failover turned off, the switch falls back, the wait loses its target and its resume time becomes ADR-0079's (the
+    hold's reset), and control gets ADR-0079's "parked" message.
+  - A switch's park and resume carry the switch on the limit-wait event; control gets one message per switch at its
+    resume (`account-switch:` plus the switch ID, a control message, not a human action or task, so no reserved
+    dedup prefix is involved), naming both runs and both accounts by name.
+  - The target is resolved from the limited account (bound, so a space without a default still resolves; avoided,
+    so the pool's order decides). A preferred target stays only while it is an eligible member of the run's pool (the
+    role's pool when it has one); a re-targeted switch is audited (`account.switch_retargeted`).
+  - An armed switch that ends without moving the run while it is still alive at its limit (a near reset re-read,
+    failover turned off before the idle point, the run already parked) lets control's held-back "kept alive" notice
+    go out, so control never loses the ADR-0079 message.
+  - A resumed run that hits a limit before its first turn keeps the session it was resumed with: its next switch
+    resumes it again (a plain ADR-0079 re-park is unchanged).
+  - A switch's failed resume gets ADR-0079's fresh retry on the account it moved to (`limit_waits.switch_to_account_id`
+    on the retry wait). With no limited account to anchor on, the role's pool still decides the retry's target
+    (never widened); only a role without a pool of its own falls back to the account the switch moved to (it is bound),
+    so a space without a default account keeps it. A resumed run an operator stops before its first turn
+    cancels its switch (`run_stopped`); it is not a failed resume.
+  - A limit that clears while the switch is parked still moves the run to the target: the run is already stopped, and
+    the resume uses the target account either way.
+  - New space limits are named as in decision 5, without a unit suffix: `usage_limit_wait_if_reset_within` (minutes)
+    and `usage_limit_switch_max_per_day`. Metric `spaceman_account_switches_total{result}`.
+- **T10 implementation notes (2026-11-16):**
+  - With failover on, a pool is exhausted when every account of the run's pool (the role's pool when it has one, never
+    widened; otherwise the space's enabled accounts for the harness) has an open hold that hasn't reset. A wait parked
+    then, or a switch's wait that finds no eligible account at its resume, resumes at the pool's earliest reset (plus
+    ADR-0079's slack) instead of its own account's. An account frees up when its last hold resets; an account whose
+    hold has no known reset counts as limited and is left out of the earliest. When no reset in the pool is known the
+    wait keeps ADR-0079's time. No new state is stored: exhaustion is read when the wait is parked.
+  - The resume re-resolves through the launch path. With failover on and a role pool, a resume that is not a switch and whose
+    parked account has left the pool no longer names it: the role's pool picks, so an account outside the pool is never used.
+    The window of the people notice is the pool's earliest reset (rounded down to ten minutes, so a few seconds of
+    restating the same reset stay in one window), so a reset that moves later across a window raises another notice.
+  - Control gets its park message with the pool's accounts and the resume time. The people get one informational human
+    action per space, harness, role and window (the pool's earliest reset; the day when none is known) under the reserved
+    dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
+    or a pool with a free account, raises none. The park's transaction records the notice (table
+    `pool_exhausted_notices`) and the action is created after it commits; the row is deleted once the action exists. A
+    crash in between or a space at its open-action cap (rate limited) leaves the row, and the deadline
+    loop raises it on a later round (at the latest within the hour, or at the next limit report), so the notice is late,
+    never lost, until its window is over: the row's `expires_at` (the end of the reset's 10-minute window, or the end of
+    the UTC day when none is known) drops it undelivered, so stale rows never pile up or announce a reset in the past. A
+    row of an archived space is dropped, and a row that keeps failing is logged and skipped so the rows after it are
+    still raised. While a space is at its cap the notice waits until a person answers an action.
+- **T8 implementation notes (2026-11-16):**
+  - The web gets an **Accounts** and a **Usage** section per space. The pool order (priorities 10, 20, ... written from the
+    shown order; a space's accounts keep their priority when the accounts are chosen again), the role pools and the
+    failover, wait-if-reset-within, switches-per-day and headroom settings are the existing APIs and the space's limit
+    overrides; nothing new is stored. Windows are shown as observations with their age: older than an hour, or past
+    their reset, they say they may be out of date.
+  - The plan's `GET /spaces/{id}/account-switches` did not exist after T3 and T7, so T8 adds it (read-only, run:read, the
+    fleet service method T3 wrote), with `spaceman limits switches`. A run's page links to the switch away from it and
+    the one into it from that list; `GET /runs/{id}` gains no switch fields.
+  - The Usage page puts tokens first and shows cost only as "≈ $" with the API's list-price note, never as a bill; unknown
+    usage is missing, not zero. The chart is inline SVG in the validated categorical palette (a fixed slot order by group
+    name, at most seven groups and Other), with a legend, a hover and focus tooltip and a table of the same numbers.
+- **Launch-time pool check (2026-11-16):**
+  - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
+    account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
+    launches SpaceMan makes itself: `LaunchInput.RequirePoolMember` (not part of the API) is set by the limit-wait resume
+    (a switch, a pool-exhausted resume and ADR-0079's resume alike) and by the control supervisor's and autostart's
+    relaunch. Role pools apply only while failover is on (decision 3) or the launch-time headroom gate is on (decision 4),
+    so the check runs only then: with the gate on, the role's pool governs launches and SpaceMan's resumes even with
+    failover off, and a ref outside the pool is dropped so the gate picks within it. When the role has a
+    pool of its own for the harness and the named account is not in it, the ref is dropped and the pool picks (priority,
+    holds), or refuses the launch when nothing in it is usable (the wait defers). A role without a pool of its own keeps
+    the named account. With failover off, role pools don't apply and the ref is kept: a run launched on the space's
+    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen. A gate refusal's wait
+    is capped at one hour from now (the age after which the usage ledger stops counting a window), so a distant reset
+    (seven days) does not defer autostart or a limit-wait resume for days.
+  - Launches that an operator or the API make with a named account do not set the flag and keep today's behaviour: an
+    explicit ref names any enabled account bound to the space, inside the role's pool or not. `accounts.Resolve` itself is
+    unchanged. The claim-time check of T10 stays as an early decision; this one closes the window after it.
+  - Evidence: simulated (`internal/fleet/launchpool_test.go`), with a mutation check: removing the check fails the tests.
+- **Known limitation (T6 usage ledger):** a run's growth is booked when its report arrives, to the account the run was launched with. If the final report of run A is lost or arrives late, A's last tokens are booked with a later report of the session, which is the next run's (the account after a switch). The tokens are misattributed to that account, never counted twice: the per-session high-water marks (`usage_ledger_marks`) guarantee each token is booked once.
+- **Security-relevant because:**
+  - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
+  - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now
+    move the run to another credential;
+  - SpaceMan takes ownership of two more Claude Code settings keys that run commands (`statusLine`, a `StopFailure` hook).
+- **Context:**
+  - ADR-0079 keeps a limited run alive or parks it until its reset. Its failover (`usage_limit_failover`, off by default)
+    applies only when a run is launched or resumed, and a resume names its old account, so in practice a limited run waits.
+  - The operator wants a limited run to continue at once on another subscription account of its pool, without a proxy or
+    gateway (no Harbor Pilot, no `claude -p` behind a proxy). This applies to subscription traffic; Harbor Pilot routing (ADR-0060) stays for 3rd-party/gateway models and is unchanged.
+  - Claude Code fixes `CLAUDE_CODE_OAUTH_TOKEN` for the life of the process ("To replace an expired token, generate a new
+    one and restart", official env-vars docs). Codex refuses to adopt a different account's `auth.json` in a running
+    process (`codex-rs/login/src/auth/manager.rs`: reload skipped on an account-id mismatch).
+  - Sessions belong to the instance's config folder, not the credential. `--resume` under another token works against a
+    fake API (2.1.323); with two real claude.ai accounts it is not verified (K-16, K-17).
+  - Claude Code 2.1.325 has a `StopFailure` hook (fire-and-forget; `error` enum includes `rate_limit`,
+    `authentication_failed`, `billing_error` …). Its status line receives `rate_limits.{five_hour,seven_day}.
+    {used_percentage,resets_at}` for subscription accounts, plus cost and token fields (official statusline docs).
+- **Decision:**
+  1. **A switch is a park with an immediate resume on another account.** When a run's limit opens, failover is on, the run
+     had a turn, the limited account's reset is more than `usage_limit_wait_if_reset_within` away (an unknown reset counts
+     as more), and the pool has an eligible account other than the run's, central arms a switch. At the run's next idle
+     point (at most 10 min) it parks the run as ADR-0079 does, with `resume_at = now` and the target account. The resume
+     launches a new run of the same instance with `--resume <session>` under that account and a fixed prompt. Nothing is
+     sent to a running process; no credential is written to the instance folder.
+  2. **Near reset: wait.** When the limited account resets within `usage_limit_wait_if_reset_within` (default 15 min), the
+     run does not switch. It waits as ADR-0079 does: kept alive, then parked until the reset.
+  3. **Pools.** The space's bindings for the harness, ordered by `space_accounts.priority`. An optional role pool
+     (`space_role_accounts`) replaces it for that role. Eligible: enabled, bound, compatible, with no open hold in any space
+     (probe-due holds included). Order: priority, lowest known utilisation of the window that limited the run, fewest live runs, binding order. The
+     same order applies to launches and resumes whenever failover is on.
+  4. **Launch-time headroom gate, no pre-emptive switch.** `usage_limit_min_headroom_percent` (0–100, default 0 = off). A
+     new run (a launch, a fresh resume, or a switch's resume) starts on an account only if every window with known usage
+     keeps at least that percentage free (`100 − used_pct`). An account with no known usage is not refused by the gate. When
+     no eligible account passes, the start waits, as an exhausted account does today (refused with the reset time, SM-RUN-005).
+     Running agents are never switched before they reach a limit.
+  5. **Settings.** `usage_limit_failover` (existing, default off) enables live switching too. `usage_limit_switch_max_per_day`
+     (default 6 per instance) bounds switches; beyond it ADR-0079's wait applies. `usage_limit_wait_if_reset_within`
+     (default 15 min) and `usage_limit_min_headroom_percent` as in decisions 2 and 4.
+  6. **Detection.** ADR-0079's typed transcript scan stays the only thing that opens a hold or sets a limit. A
+     SpaceMan-owned `StopFailure` hook and status-line wrapper report allowlisted typed fields over the run's authenticated
+     bridge socket. The hook kicks the scan and records the failure class. The status line supplies window utilisation and
+     resets (filling the wrap-up path's missing reset, clamped as before), the cost estimate and tokens. A profile's own
+     status line is wrapped (run with the same input; its output is shown). No display text is read or forwarded.
+  7. **History and notices.** `account_switches` records every switch (states pending → parked → resumed → succeeded |
+     failed | fell_back | cancelled), with audit (`account.switch_*`), outbox events (`fleet.account_switch.*`) and the change
+     feed. Control gets one message per switch (`account-switch:<id>`), replacing the park and resume messages of that wait.
+     People are told only when the whole pool is exhausted (one human action per space and window).
+  8. **All accounts exhausted.** ADR-0079 unchanged, except that the wait's resume time is the earliest reset in the pool,
+     and the resume re-resolves.
+  9. **Usage ledger.** `run_usage` gains account, role and harness. `usage_buckets` (hourly, rolled up to daily) holds token
+     sums and the cost estimate per space, account, role, harness and model, written from cumulative deltas in the
+     usage-report transaction. `account_windows` holds each account's latest window snapshot, with 10-minute samples.
+     Retention: hourly 90 days, daily 730 days, samples 30 days; closed holds, waits and switches 180 days.
+  10. **Codex** follows in stages after a spike with real ChatGPT logins: typed `token_count.rate_limits` detection, then the
+      same switch with `codex resume` and the login links swapped. If a resume under another account is refused, Codex
+      switching stays off.
+  11. **Numbers and GOAL.** Protocol minor 13 (`MinorAccountUsage`: usage windows, cost estimate, limit source, failure
+      class; all optional). One central migration (pools, switches, ledger). SM-ACCT-003 amended; SM-ACCT-007, SM-RUN-007 and
+      SM-OBS-007 added, with TRACEABILITY rows marked `todo` (not implemented).
+- **Alternatives:**
+  - **Route through a gateway that holds several accounts** (Harbor Pilot). Rejected by the operator: usage, caching and
+    behaviour differ from the real interactive client.
+  - **In-place swap through a stored `.credentials.json`** (the binary re-reads it on an mtime change). Keeps background
+    shells, but leaves a long-lived token in the instance folder between runs, relies on undocumented behaviour and needs a
+    stored-login shape for `setup-token` tokens. Deferred to an optional spike.
+  - **`apiKeyHelper`** printing the current token. A 429 does not re-run it, whether a subscription token works through it is
+    unverified, and it outranks the env token for every run.
+  - **Switch on the status line alone** (utilisation at 100 %). Rejected as the only signal: it is display-adjacent data from
+    a command SpaceMan runs, not a typed transcript record. It is used only to fill resets and for the headroom gate.
+  - **Always switch, however close the reset** (the draft's default for Q4). Replaced by the wait window (decision 2).
+  - **A pre-emptive switch at a utilisation threshold** (the draft's `usage_limit_switch_at_percent`). Rejected by the
+    operator (plan Q5); the headroom gate applies only when a new run starts.
+- **Consequences:**
+  - A forged transcript record can now also move a run to another account. This is bounded by the 8-day hold clamp, the
+    daily switch budget, and the fact that the target is always an operator-bound account of the same pool.
+  - A switch ends the process: background shells and subagents end, and the prompt cache starts cold under the new
+    organization (an extra uncached request).
+  - A run whose reset is near waits rather than switching, so it can be stopped for up to the reset, as today.
+  - The headroom gate only changes behaviour when set above 0; the default leaves launches unchanged.
+  - Until two real accounts are tested (K-17, plan T1), the switch is implemented and simulated only.
+- **Implementation notes (T6, the usage ledger):**
+  - Buckets take the growth of a run's cumulative counters, not the counters. The counters already counted are kept per
+    harness session (`usage_ledger_marks`), not per run, because a resumed run (a switch) continues the same native
+    transcript and so starts at the earlier run's totals; each account is booked only with what its own run added. A
+    repeat, a stale report that arrives late and the report after the final one add nothing; unknown counters count as zero.
+    A session idle for more than 180 days that reports again counts its whole history once more (its mark was pruned).
+  - The estimated cost of a report is one figure for the run; its growth is booked under the model whose tokens grew most.
+  - Windows are the account's latest `five_hour` and `seven_day` observation (newest wins), sampled at most once per 10
+    minutes, taken from the status line's snapshot in `UsageReport.windows` (minor 13) and validated again at central. The
+    status line's own cost figure (`cost.total_usd_estimate`) is not on the wire yet: buckets carry the transcript
+    estimate.
+  - Retention periods are the fixed ones of Q9 (not per-space limits): hourly buckets 90 days, then rolled into daily buckets
+    by whole UTC days, daily 730 days, window samples 30 days, closed holds, finished waits and finished switches 180 days.
+
+### ADR-0091 — Backups and verifications are bounded by a progress watchdog
+- **Status:** Accepted, 2026-11-16. No migration. New configuration keys `backups.stall_timeout` and
+  `backups.max_duration`; the backup status API gains `current` and `items[].stage`.
+- **Context:** a manual backup stayed `running` with `busy` set for almost an hour, at 1–2 % CPU and almost no disk I/O,
+  with nothing logged, and blocked every later backup until a restart. The backup goroutine ran under the service
+  context, which has no deadline, and only the role-memory flush bounded its own wait (one minute plus grace). Every other
+  stage relied on a context to bound it: `VACUUM INTO`, `git bundle`, and above all the S3 transfers (artifact-store
+  objects are streamed into the backup, the backup is uploaded object by object). The S3 transport bounds the dial, the
+  TLS handshake and the response headers only, and with `ForceAttemptHTTP2` and no health pings a silently dead
+  connection can block a body read or write indefinitely. Idle CPU and disk fit a goroutine waiting on the network; the
+  exact call could not be confirmed after the fact because the process was restarted without a goroutine dump.
+- **Decision:**
+  - Each backup and verification runs under a watchdog. It fails the run when its current stage makes **no progress for
+    10 minutes** (`backups.stall_timeout`, 1m to 24h), or when the run takes **more than 1 hour** in total
+    (`backups.max_duration`, 10m to 72h). Progress is a new stage, a file sealed, uploaded, fetched, checked or pruned,
+    or bytes read from or written to object storage, so a large transfer that is slow but moving is never stopped by the
+    stall limit; the stall limit is the main protection and the total is a backstop.
+  - The cause names the stage (`backup stopped in stage upload: no progress for 10m0s: …`). The outcome is recorded
+    under its own two-minute context derived from the service context, so a stopped run is still recorded as failed (a
+    shutdown still leaves it to `Recover`, which marks it interrupted), and `busy` is released when the goroutine ends.
+  - Each stage's start and end are logged at Info with the file count and duration; the status shows the current stage,
+    its start, its file count and the last progress.
+  - The S3 client sends HTTP/2 pings (`SendPingTimeout` = the client timeout, `PingTimeout` at most 15 s). They are set
+    through the standard library's `http.Transport.HTTP2` (`http.HTTP2Config`, Go 1.24+): one field, no
+    `golang.org/x/net/http2.ConfigureTransports` dependency, and HTTP/2 stays on (disabling `ForceAttemptHTTP2` would
+    also have removed the stall, but changes every artifact-store connection).
+- **Alternatives:** a fixed deadline per stage fails large but healthy installations (a bucket of recordings can take a
+  long time) or is too loose to help. A 10-minute stall is well above any pause a healthy stage has (the memory flush is
+  bounded at about 70 s, `VACUUM INTO` of a SpaceMan database takes seconds), and 1 hour is far above the longest healthy
+  backup seen (106 s); an installation copying a large S3 artifact store into its backups raises
+  `backups.max_duration`.
+- **Consequences:** a hung backup now fails within 10 minutes (at most 1 hour in total) and the next scheduled one is retried 15 minutes later.
+  `VACUUM INTO` reports no progress of its own, so a database whose snapshot takes more than 10 minutes would fail; that
+  is far beyond current sizes and would show up as a clear `stage snapshot` error. A blocked local file read (a hung
+  filesystem) cannot be interrupted by a context; the run is then still stuck, but the status and logs show the stage.
+- **Evidence:** `internal/backup` `TestServiceStalledStageFailsAndReleasesBusy` (a target whose upload blocks: the run
+  fails naming `upload`, the row is `failed`, `busy` clears, the next backup succeeds; the status shows the stage while
+  stuck), `TestServiceMaxDurationFailsBackup`, `TestWatchProgressAndStall`, `TestWatchStopIsNotAStall`.
+
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
   on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code
@@ -5788,3 +6162,4 @@
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
 | K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
 | K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run. None had been observed when the work was documented (UL-12, 2026-11-14). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |
+| K-17 | Account switching not verified with **two real claude.ai accounts** (ADR-0090; plan S-1, T1): `--resume` of a session under a different real account; `oauthAccount` in `.claude.json` after the change; whether the status line shows the new account's `rate_limits`; whether `StopFailure` and `Notification` fire as documented at a real limit (only if one can be reached cheaply). The Codex half (plan S-2, C1) is separate. Two subscription tokens come from the operator out of band; no token, email or account identity goes into the repository, logs or attachments. | SM-RUN-007, SM-ACCT-007 (real evidence) | Recorded in `docs/contracts/harnesses.md` when plan T1 runs. Until then the switch is implemented and simulated only (AGENTS.md status rules). Covers the switch path of K-16 |

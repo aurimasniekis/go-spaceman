@@ -66,7 +66,7 @@ type Settings struct {
 	SendLimits                    SendLimits           `json:"send_limits" doc:"Outbound rate limits and queue bounds"`
 	InboundLimits                 InboundLimits        `json:"inbound_limits" doc:"Inbound abuse limits"`
 	NotificationDefaults          NotificationDefaults `json:"notification_defaults" doc:"Each link's notification preferences, unless its user changed them"`
-	TopicsModeDefault             bool                 `json:"topics_mode_default" doc:"Whether a new link starts in topics mode (a topic per space in the private chat)"`
+	TopicsModeDefault             bool                 `json:"topics_mode_default" doc:"Deprecated, no effect (ADR-0089): notification_defaults.threads chooses the chat layout"`
 }
 
 // SendLimits bound what the bot sends (plan §4.4), at or below Telegram's published limits.
@@ -106,6 +106,7 @@ type NotificationDefaults struct {
 	QuietHours       bool   `json:"quiet_hours" doc:"Send silently (no sound) during quiet hours"`
 	QuietHoursStart  string `json:"quiet_hours_start" doc:"Quiet hours start, as HH:MM in the user's time zone"`
 	QuietHoursEnd    string `json:"quiet_hours_end" doc:"Quiet hours end, as HH:MM in the user's time zone (before the start: they run past midnight)"`
+	Threads          string `json:"threads" enum:"auto,on,off" doc:"Chat layout (ADR-0089): on puts each space's messages in a topic of its own in the private chat, off keeps everything in one chat, auto is on when the bot has topics enabled in BotFather"`
 }
 
 // Defaults are the built-in settings (plan §5.2, operator answers Q6–Q9).
@@ -121,7 +122,8 @@ func Defaults() Settings {
 			DownloadsPerHour: 50, UpdatesPerSecond: 20},
 		NotificationDefaults: NotificationDefaults{NewActions: true, MinPriority: "normal", AssignedToMe: true, Escalations: true,
 			Reminders: DeliveryPush, Clarifications: true, OperatorMessages: true, InboxItems: DeliveryDigest, TasksInReview: DeliveryDigest,
-			FailedRuns: DeliveryDigest, Digest: true, DigestTime: "09:00", QuietHours: true, QuietHoursStart: "23:00", QuietHoursEnd: "08:00"},
+			FailedRuns: DeliveryDigest, Digest: true, DigestTime: "09:00", QuietHours: true, QuietHoursStart: "23:00", QuietHoursEnd: "08:00",
+			Threads: ThreadsAuto},
 	}
 }
 
@@ -140,7 +142,7 @@ type Input struct {
 	SendLimits                    *SendLimitsInput           `json:"send_limits,omitempty"`
 	InboundLimits                 *InboundLimitsInput        `json:"inbound_limits,omitempty"`
 	NotificationDefaults          *NotificationDefaultsInput `json:"notification_defaults,omitempty"`
-	TopicsModeDefault             *bool                      `json:"topics_mode_default,omitempty" doc:"Default false"`
+	TopicsModeDefault             *bool                      `json:"topics_mode_default,omitempty" doc:"Deprecated, no effect (notification_defaults.threads replaced it). Default false"`
 }
 
 // SendLimitsInput sets send_limits; a field left out takes its default.
@@ -180,6 +182,7 @@ type NotificationDefaultsInput struct {
 	QuietHours       *bool   `json:"quiet_hours,omitempty" doc:"Default true"`
 	QuietHoursStart  *string `json:"quiet_hours_start,omitempty" pattern:"^([01][0-9]|2[0-3]):[0-5][0-9]$" doc:"HH:MM, default 23:00"`
 	QuietHoursEnd    *string `json:"quiet_hours_end,omitempty" pattern:"^([01][0-9]|2[0-3]):[0-5][0-9]$" doc:"HH:MM, default 08:00"`
+	Threads          *string `json:"threads,omitempty" enum:"auto,on,off" doc:"Default auto"`
 }
 
 func set[T any](dst *T, src *T) {
@@ -245,8 +248,16 @@ func (d NotificationDefaults) Apply(in NotificationDefaultsInput) NotificationDe
 	set(&d.QuietHours, in.QuietHours)
 	set(&d.QuietHoursStart, in.QuietHoursStart)
 	set(&d.QuietHoursEnd, in.QuietHoursEnd)
+	set(&d.Threads, in.Threads)
 	return d
 }
+
+// Chat layouts (notification_defaults.threads, ADR-0089).
+const (
+	ThreadsAuto = "auto" // on when the bot has topics enabled
+	ThreadsOn   = "on"   // a topic per space
+	ThreadsOff  = "off"  // one chat
+)
 
 var priorities = map[string]bool{"low": true, "normal": true, "high": true, "urgent": true}
 
@@ -322,6 +333,9 @@ func (d NotificationDefaults) validate(v *apperr.Validation, prefix string) {
 		if _, err := ParseClock(x); err != nil {
 			v.Add(prefix+f, "%v", err)
 		}
+	}
+	if d.Threads != ThreadsAuto && d.Threads != ThreadsOn && d.Threads != ThreadsOff {
+		v.Add(prefix+"threads", "must be auto, on or off")
 	}
 	if d.QuietHoursStart == d.QuietHoursEnd {
 		v.Add(prefix+"quiet_hours_end", "must differ from quiet_hours_start")

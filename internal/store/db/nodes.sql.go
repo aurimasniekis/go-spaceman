@@ -145,7 +145,7 @@ func (q *Queries) GetActiveRunToken(ctx context.Context, runID string) ([]byte, 
 }
 
 const getLatestControlRun = `-- name: GetLatestControlRun :one
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at DESC, id DESC LIMIT 1
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since, failure FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at DESC, id DESC LIMIT 1
 `
 
 func (q *Queries) GetLatestControlRun(ctx context.Context, spaceID string) (Run, error) {
@@ -192,6 +192,7 @@ func (q *Queries) GetLatestControlRun(ctx context.Context, spaceID string) (Run,
 		&i.LimitKind,
 		&i.LimitResetsAt,
 		&i.LimitSince,
+		&i.Failure,
 	)
 	return i, err
 }
@@ -342,7 +343,7 @@ func (q *Queries) GetNodeEnrollment(ctx context.Context, mac []byte) (NodeEnroll
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE id = ?
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since, failure FROM runs WHERE id = ?
 `
 
 func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
@@ -389,6 +390,7 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.LimitKind,
 		&i.LimitResetsAt,
 		&i.LimitSince,
+		&i.Failure,
 	)
 	return i, err
 }
@@ -430,7 +432,7 @@ func (q *Queries) GetRunCredential(ctx context.Context, mac []byte) (GetRunCrede
 }
 
 const getSpace = `-- name: GetSpace :one
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces WHERE id = ?
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces WHERE id = ?
 `
 
 func (q *Queries) GetSpace(ctx context.Context, id string) (Space, error) {
@@ -454,12 +456,13 @@ func (q *Queries) GetSpace(ctx context.Context, id string) (Space, error) {
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.AccountsVersion,
 	)
 	return i, err
 }
 
 const getSpaceBySlug = `-- name: GetSpaceBySlug :one
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces WHERE slug = ?
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces WHERE slug = ?
 `
 
 func (q *Queries) GetSpaceBySlug(ctx context.Context, slug string) (Space, error) {
@@ -483,6 +486,7 @@ func (q *Queries) GetSpaceBySlug(ctx context.Context, slug string) (Space, error
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.AccountsVersion,
 	)
 	return i, err
 }
@@ -709,7 +713,7 @@ func (q *Queries) InsertSpace(ctx context.Context, arg InsertSpaceParams) error 
 }
 
 const listActiveRunsByNode = `-- name: ListActiveRunsByNode :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE node_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since, failure FROM runs WHERE node_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at
 `
 
 // The active runs of a node or a space are its live ones (fleet.Live: observed not exited, failed or lost). desired is
@@ -764,6 +768,7 @@ func (q *Queries) ListActiveRunsByNode(ctx context.Context, nodeID string) ([]Ru
 			&i.LimitKind,
 			&i.LimitResetsAt,
 			&i.LimitSince,
+			&i.Failure,
 		); err != nil {
 			return nil, err
 		}
@@ -779,7 +784,7 @@ func (q *Queries) ListActiveRunsByNode(ctx context.Context, nodeID string) ([]Ru
 }
 
 const listActiveRunsBySpace = `-- name: ListActiveRunsBySpace :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE space_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since, failure FROM runs WHERE space_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at
 `
 
 func (q *Queries) ListActiveRunsBySpace(ctx context.Context, spaceID string) ([]Run, error) {
@@ -832,6 +837,7 @@ func (q *Queries) ListActiveRunsBySpace(ctx context.Context, spaceID string) ([]
 			&i.LimitKind,
 			&i.LimitResetsAt,
 			&i.LimitSince,
+			&i.Failure,
 		); err != nil {
 			return nil, err
 		}
@@ -1068,7 +1074,7 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 }
 
 const listRunsBySpace = `-- name: ListRunsBySpace :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since, failure FROM runs WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
 `
 
 type ListRunsBySpaceParams struct {
@@ -1126,6 +1132,7 @@ func (q *Queries) ListRunsBySpace(ctx context.Context, arg ListRunsBySpaceParams
 			&i.LimitKind,
 			&i.LimitResetsAt,
 			&i.LimitSince,
+			&i.Failure,
 		); err != nil {
 			return nil, err
 		}
@@ -1141,7 +1148,7 @@ func (q *Queries) ListRunsBySpace(ctx context.Context, arg ListRunsBySpaceParams
 }
 
 const listSpaces = `-- name: ListSpaces :many
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces ORDER BY name, id
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces ORDER BY name, id
 `
 
 func (q *Queries) ListSpaces(ctx context.Context) ([]Space, error) {
@@ -1171,6 +1178,7 @@ func (q *Queries) ListSpaces(ctx context.Context) ([]Space, error) {
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.AccountsVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -1186,7 +1194,7 @@ func (q *Queries) ListSpaces(ctx context.Context) ([]Space, error) {
 }
 
 const listSpacesByNode = `-- name: ListSpacesByNode :many
-SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at FROM spaces WHERE node_id = ? ORDER BY id
+SELECT id, slug, name, description, goals, standing_instructions, node_id, desired_node_id, state, pause_mode, disconnect_policy, workdir, version, created_at, created_by, updated_at, archived_at, accounts_version FROM spaces WHERE node_id = ? ORDER BY id
 `
 
 func (q *Queries) ListSpacesByNode(ctx context.Context, nodeID string) ([]Space, error) {
@@ -1216,6 +1224,7 @@ func (q *Queries) ListSpacesByNode(ctx context.Context, nodeID string) ([]Space,
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.AccountsVersion,
 		); err != nil {
 			return nil, err
 		}

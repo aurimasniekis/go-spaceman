@@ -1,0 +1,49 @@
+[
+  {
+    "text": "❓ Question\nDeploy the release candidate?\nPriority high · from control\n\nThe build is green.",
+    "entities": [
+      {
+        "type": "bold",
+        "offset": 11,
+        "length": 29
+      },
+      {
+        "type": "bold",
+        "offset": 75,
+        "length": 5
+      }
+    ],
+    "markup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "Yes",
+            "callback_data": "hq:aaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbb:0"
+          },
+          {
+            "text": "No",
+            "callback_data": "hq:aaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbb:1"
+          }
+        ],
+        [
+          {
+            "text": "✏ Answer",
+            "callback_data": "hf:aaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        [
+          {
+            "text": "More…",
+            "callback_data": "hn:aaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          {
+            "text": "Open in app",
+            "web_app": {
+              "url": "https://tg.example.com/spaces/x/human?action=y"
+            }
+          }
+        ]
+      ]
+    }
+  }
+]
