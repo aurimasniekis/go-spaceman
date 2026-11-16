@@ -348,3 +348,21 @@ func TestMostUsedWindow(t *testing.T) {
 		t.Fatal("stale windows counted")
 	}
 }
+
+// A run that reported before it knew its session id keeps its counted counters when the id appears.
+func TestLedgerSessionLearnedLater(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t)
+	exec := func(q string) {
+		if err := f.s.W().TxNamed(f.ctx, "x", func(tx *store.Tx) error { _, err := tx.SQL.ExecContext(f.ctx, q); return err }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`UPDATE runs SET session_id = '' WHERE id = '` + lrA + `'`)
+	f.report(lrA, false, 0, mu("m", 100, 1, 0, 0, 1))
+	exec(`UPDATE runs SET session_id = 'sess-1' WHERE id = '` + lrA + `'`)
+	f.report(lrA, true, 0, mu("m", 150, 1, 0, 0, 2))
+	if got := sumIn(f.buckets(t), "acc_1"); got != 150 {
+		t.Fatalf("counted %d, want 150", got)
+	}
+}

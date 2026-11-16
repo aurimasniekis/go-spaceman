@@ -178,12 +178,18 @@ func runAccount(r db.Run) string {
 // has already had counted goes into the current hour's buckets, and the run's windows into the account's.
 func (svc *Service) account(ctx context.Context, tx *store.Tx, r db.Run, rep proto.UsageReport) error {
 	mark, err := tx.Q.GetUsageLedgerMark(ctx, db.GetUsageLedgerMarkParams{SpaceID: r.SpaceID, MarkKey: markKey(r)})
+	if errors.Is(err, sql.ErrNoRows) && markKey(r) != "run:"+r.ID {
+		// The run reported before it learned its session id: what it had counted is filed under the run.
+		mark, err = tx.Q.GetUsageLedgerMark(ctx, db.GetUsageLedgerMarkParams{SpaceID: r.SpaceID, MarkKey: "run:" + r.ID})
+	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	var counted []counters
 	if mark.CountedJson != "" {
-		_ = json.Unmarshal([]byte(mark.CountedJson), &counted)
+		if err := json.Unmarshal([]byte(mark.CountedJson), &counted); err != nil {
+			return err
+		}
 	}
 	d := computeDelta(counted, mark.CountedCost, rep.Models, rep.Estimate)
 	key := runKey{space: r.SpaceID, account: runAccount(r), role: r.Role, harness: r.Harness}
