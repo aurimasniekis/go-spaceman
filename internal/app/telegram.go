@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/chat"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
@@ -159,30 +160,46 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			return c.TelegramTopics.SpaceOf(ctx, linkID, thread)
 		},
 		// A notifier card's button names no action: it comes from the card mapping, only for the link the card went to.
+		// The notifier's memory is asked first, so a card sent within the last flush interval is found too.
 		Resolve: func(ctx context.Context, chatID int64, messageID int) (string, string, string, bool) {
-			m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)
-			if err != nil || m.Key.Type != notify.TypeHumanAction {
+			m, ok := c.telegramCard(ctx, chatID, messageID)
+			if !ok || m.Key.Type != notify.TypeHumanAction {
 				return "", "", "", false
 			}
 			return m.SpaceID, m.Key.ID, m.LinkID, true
 		},
+		// A card's own buttons (ADR-0089 T4) name their action; the card's record supplies the link it was sent to and
+		// the version it shows, and every edit of a card message goes through the notifier's card lock.
+		Card: func(ctx context.Context, chatID int64, messageID int) (chat.CardRef, bool) {
+			m, ok := c.telegramCard(ctx, chatID, messageID)
+			if !ok || m.Key.Type != notify.TypeHumanAction || m.Cont {
+				return chat.CardRef{}, false
+			}
+			return chat.CardRef{SpaceID: m.SpaceID, ActionID: m.Key.ID, LinkID: m.LinkID, Version: m.Version}, true
+		},
+		EditCard: func(chatID int64, messageID int, actionID string, version int64, form, final bool, edit func() bool) bool {
+			if c.TelegramNotify == nil {
+				return edit()
+			}
+			return c.TelegramNotify.EditCard(chatID, messageID, notify.Key{Type: notify.TypeHumanAction, ID: actionID},
+				notify.ChatEdit{Version: version, Form: form, Final: final}, edit)
+		},
+		CardCaps: func(linkID string, chatID int64, spaceID, actionID string) card.Caps {
+			if c.TelegramNotify == nil {
+				return card.Caps{}
+			}
+			return c.TelegramNotify.CardCaps(linkID, chatID, spaceID, actionID)
+		},
 		// A notifier card of a message to the operators: a Telegram reply to it is a reply to that message (TG-8b).
 		ResolveMessage: func(ctx context.Context, chatID int64, messageID int) (string, string, string, bool) {
-			m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)
-			if err != nil || m.Key.Type != notify.TypeMessage {
+			m, ok := c.telegramCard(ctx, chatID, messageID)
+			if !ok || m.Key.Type != notify.TypeMessage {
 				return "", "", "", false
 			}
 			return m.SpaceID, m.Key.ID, m.LinkID, true
 		},
 		// Approvals and forms too complex for the chat open in the Mini App; without its host there is no button.
-		AppURL: func(spaceID, actionID string) string {
-			o := c.miniAppOrigin()
-			if o == "" {
-				return ""
-			}
-			// The shell's route for one action (the web's /spaces/$spaceId/human?action=).
-			return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
-		},
+		AppURL: c.telegramActionURL,
 		// A page of the Mini App (the /settings command); without its host there is none.
 		AppPage: func(path string) string {
 			if o := c.miniAppOrigin(); o != "" {
@@ -214,4 +231,23 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 		Clock: c.Clock,
 		Log:   obs.Component(c.Log, "telegram"),
 	}))
+}
+
+// telegramCard is the notifier card a chat message is: the notifier's memory first, then the telegram_messages row.
+func (c *Central) telegramCard(ctx context.Context, chatID int64, messageID int) (notify.Mapping, bool) {
+	if c.TelegramNotify != nil {
+		return c.TelegramNotify.Card(ctx, chatID, messageID)
+	}
+	m, err := notify.StoreMappings{S: c.Store}.Card(ctx, chatID, messageID)
+	return m, err == nil
+}
+
+// telegramActionURL is the Mini App URL of one human action ("" without the Mini App host): the shell's route for an
+// action (the web's /spaces/$spaceId/human?action=).
+func (c *Central) telegramActionURL(spaceID, actionID string) string {
+	o := c.miniAppOrigin()
+	if o == "" {
+		return ""
+	}
+	return o + "/spaces/" + url.PathEscape(spaceID) + "/human?action=" + url.QueryEscape(actionID)
 }

@@ -69,7 +69,7 @@ func TestTelegramNeedsYouCommonActions(t *testing.T) {
 		t.Fatalf("claim: %+v", a)
 	}
 	card := c.message(f.MessageID)
-	if !strings.Contains(card.Text, "Claimed by you") || buttonData(card, "Release") == "" {
+	if !strings.Contains(card.Text, "claimed by you") || buttonData(card, "Release") == "" {
 		t.Fatalf("card after claim: %q", card.Text)
 	}
 

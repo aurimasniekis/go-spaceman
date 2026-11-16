@@ -250,11 +250,11 @@ func TestExpiryEditsTheCard(t *testing.T) {
 	e.newAction("hum_1", 1)
 	e.waitCalls("sendMessage", 1)
 	r := action("hum_1", 2, true)
-	r.State = "expired"
+	r.State, r.Action.Status, r.Action.Outcome = "expired", "expired", ""
 	e.update(r, 2)
 	e.waitCalls("editMessageText", 1)
 	m := e.fake.Messages(1001)
-	if len(m) != 1 || !strings.Contains(m[0].Text, "expired") || len(e.fake.Calls("sendMessage")) != 1 {
+	if len(m) != 1 || !strings.Contains(m[0].Text, "Expired") || len(e.fake.Calls("sendMessage")) != 1 {
 		t.Fatalf("messages = %+v", m)
 	}
 }

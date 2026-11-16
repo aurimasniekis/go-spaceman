@@ -212,7 +212,7 @@ func TestThreadsDigestAndOverflowGoHome(t *testing.T) {
 	_, _ = e.n.NextDigest(context.Background())                 // first sight of the link
 	e.emit(inboxItem("inb_1", "Digest me"), changefeed.Created) // digest by default
 	e.emit(message("msg_1"), changefeed.Created)                // a topic message first, so the topic exists
-	e.waitText(1001, "Message: ")
+	e.waitText(1001, "💬 Message\n")
 	e.clk.Set(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
 	if n, err := e.n.DigestDue(context.Background()); n != 1 || err != nil {
 		t.Fatalf("DigestDue = %d, %v", n, err)
@@ -273,7 +273,7 @@ func TestThreadsFallbacks(t *testing.T) {
 		bot.Store(true)
 		e.emit(message("msg_2"), changefeed.Created)
 		e.waitMessages(1001, 2)
-		if e.threadWith(1001, "Message: Hello msg_2") == 0 {
+		if e.threadWith(1001, "💬 Message\nHello msg_2") == 0 {
 			t.Error("auto with getMe topics on must use the space topic")
 		}
 	})
@@ -292,11 +292,11 @@ func TestThreadsModeReadAtSendTime(t *testing.T) {
 	off := settings.ThreadsOff
 	e.setLinkPrefs(func(p *notify.Prefs) { p.Threads = &off })
 	release()
-	e.waitText(1001, "Message: Hello msg_2")
-	if th := e.threadWith(1001, "Message: Hello msg_2"); th != 0 {
+	e.waitText(1001, "💬 Message\nHello msg_2")
+	if th := e.threadWith(1001, "💬 Message\nHello msg_2"); th != 0 {
 		t.Errorf("second card in thread %d, want the main chat (the link turned threads off)", th)
 	}
-	if th := e.threadWith(1001, "Message: Hello msg_1"); th == 0 {
+	if th := e.threadWith(1001, "💬 Message\nHello msg_1"); th == 0 {
 		t.Error("the first card was sent before the change, in the topic")
 	}
 }
@@ -333,13 +333,13 @@ func TestThreadsLegacyNeedsTopicRetired(t *testing.T) {
 	defer stop()
 	e.emit(action("hum_1", 1, false), changefeed.Created)
 	e.emit(action("hum_2", 1, false), changefeed.Created)
-	e.waitText(1001, "Approval: Deploy hum_2")
+	e.waitText(1001, "🔐 Approval\nDeploy hum_2")
 	in := e.fake.MessagesIn(1001, legacy)
 	if len(in) != 1 || in[0].Text != topics.LegacyNote {
 		t.Fatalf("legacy topic messages %+v, want the note only", in)
 	}
 	for _, id := range []string{"hum_1", "hum_2"} {
-		if th := e.threadWith(1001, "Approval: Deploy "+id); th == 0 || th == legacy {
+		if th := e.threadWith(1001, "🔐 Approval\nDeploy "+id); th == 0 || th == legacy {
 			t.Errorf("%s in thread %d, want the space topic (legacy %d)", id, th, legacy)
 		}
 	}
@@ -379,7 +379,7 @@ func TestThreadsAnnouncedOncePerLink(t *testing.T) {
 	stop = e.run(e.maps) // a restart: the row keeps it from being sent again
 	defer stop()
 	e.emit(message("msg_3"), changefeed.Created)
-	e.waitText(1001, "Message: Hello msg_3")
+	e.waitText(1001, "💬 Message\nHello msg_3")
 	time.Sleep(100 * time.Millisecond)
 	n := 0
 	for _, m := range e.fake.Messages(1001) {
@@ -421,7 +421,7 @@ func TestTopicDeletedIsRecreated(t *testing.T) {
 	e.fake.DeleteTopic(1001, old)
 	e.emit(action("hum_2", 1, false), changefeed.Created)
 	e.waitCalls("createForumTopic", 2)
-	msgs := e.waitText(1001, "Approval: Deploy hum_2")
+	msgs := e.waitText(1001, "🔐 Approval\nDeploy hum_2")
 	if got := msgs[len(msgs)-1].MessageThreadID; got == 0 || got == old {
 		t.Errorf("thread %d, want a new topic (old %d)", got, old)
 	}
@@ -437,7 +437,7 @@ func TestTopicClosedFallsBackToTheMainChat(t *testing.T) {
 	e.fake.CloseTopic(1001, e.threadOf(1001, 0))
 	e.fake.DisableTopics(1001) // it can't be recreated either
 	e.emit(action("hum_2", 1, false), changefeed.Created)
-	if th := e.threadWith(1001, "Approval: Deploy hum_2"); th != 0 {
+	if th := e.threadWith(1001, "🔐 Approval\nDeploy hum_2"); th != 0 {
 		t.Errorf("thread %d, want the main chat", th)
 	}
 }

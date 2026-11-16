@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 )
 
 // StoreFeed reads the change feed from the database.
@@ -141,7 +143,25 @@ func (r StoreReader) Read(ctx context.Context, scope map[string]any, k Key) (*Re
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
+	if err == nil && out != nil {
+		out.SpaceName = r.spaceName(ctx, scope, out.SpaceID)
+	}
 	return out, err
+}
+
+// spaceName is a space's name for the cards' headers, read once per space and window ("" when it can't be read: the
+// header then leaves it out).
+func (r StoreReader) spaceName(ctx context.Context, scope map[string]any, spaceID string) string {
+	k := "name:" + spaceID
+	if n, ok := scope[k].(string); ok {
+		return n
+	}
+	name := ""
+	if sp, err := r.S.R().GetSpace(ctx, spaceID); err == nil {
+		name = sp.Name
+	}
+	scope[k] = name
+	return name
 }
 
 func (r StoreReader) action(ctx context.Context, scope map[string]any, k Key) (*Resource, error) {
@@ -165,37 +185,37 @@ func (r StoreReader) action(ctx context.Context, scope map[string]any, k Key) (*
 		state = fmt.Sprintf("%s: %s", a.Status, a.Outcome)
 	}
 	detail := a.Body
+	enforced := false
 	if a.Type == human.TypeApproval {
 		// An enforced approval's body carries its (redacted) arguments: never sent to Telegram (SM-APPR-005, ADR-0083
 		// decision 14). Enforced: an approvals row points at it, or the approvals package's dedup key (set before the
 		// row is linked); a lookup error counts as enforced.
 		if strings.HasPrefix(a.DedupKey, "approval:") {
-			detail = ""
+			detail, enforced = "", true
 		} else if _, err := r.S.R().GetApprovalByAction(ctx, a.ID); !errors.Is(err, sql.ErrNoRows) {
-			detail = ""
+			detail, enforced = "", true
 		}
 	}
 	return &Resource{Key: k, SpaceID: a.SpaceID, Version: a.Version, Kind: KindAction, Perm: authz.HumanRead, ViewRole: role,
 		Label: humanLabel(a.Type, a.TypeSlug), Title: a.Title, Detail: detail, State: state, Priority: a.Priority, Assignee: a.Assignee,
-		Notify: open, Final: !open, RemindedAt: a.RemindedAt.Int64, EscalatedAt: a.EscalatedAt.Int64}, nil
+		Notify: open, Final: !open, RemindedAt: a.RemindedAt.Int64, EscalatedAt: a.EscalatedAt.Int64, Action: actionCard(a, enforced)}, nil
 }
 
-func humanLabel(t, slug string) string {
-	switch t {
-	case human.TypeQuestion:
-		return "Question"
-	case human.TypeApproval:
-		return "Approval"
-	case human.TypeTodo:
-		return "To-do"
-	case human.TypeMessage:
-		return "Message"
+// actionCard is what a human action's card shows and offers beyond the common fields: its request's options, the
+// requester, the status and outcome, the reminders and the escalation.
+func actionCard(a db.HumanAction, enforced bool) *card.Action {
+	var req struct {
+		Options     []string `json:"options"`
+		AllowText   bool     `json:"allow_text"`
+		RequiresAck bool     `json:"requires_ack"`
 	}
-	if slug != "" {
-		return slug
-	}
-	return "Action"
+	_ = json.Unmarshal([]byte(a.RequestJson), &req)
+	return &card.Action{ID: a.ID, Type: a.Type, Requester: a.RequesterLabel, Options: req.Options, AllowText: req.AllowText,
+		RequiresAck: req.RequiresAck, Enforced: enforced, Status: a.Status, Outcome: a.Outcome, Reminders: a.ReminderCount,
+		Escalated: a.EscalatedAt.Valid && a.EscalatedAt.Int64 != 0}
 }
+
+func humanLabel(t, slug string) string { return card.Label(t, slug) }
 
 func inboxResource(k Key, it db.InboxItem) *Resource {
 	fresh := it.Status == "new"

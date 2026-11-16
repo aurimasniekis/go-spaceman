@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
@@ -371,8 +372,12 @@ func action(id string, version int64, final bool) notify.Resource {
 	if final {
 		st = "resolved: approved"
 	}
+	a := &card.Action{ID: id, Type: "approval", Status: "open"}
+	if final {
+		a.Status, a.Outcome = "resolved", "approved"
+	}
 	return notify.Resource{Key: notify.Key{Type: notify.TypeHumanAction, ID: id}, SpaceID: "spc_1", Version: version, Kind: notify.KindAction,
-		Perm: authz.HumanRead, Label: "Approval", Title: "Deploy " + id, Detail: "Please approve", State: st, Priority: "normal", Notify: !final, Final: final}
+		Perm: authz.HumanRead, Label: "Approval", Title: "Deploy " + id, Detail: "Please approve", State: st, Priority: "normal", Notify: !final, Final: final, Action: a}
 }
 
 // settle waits until the notifier has handled a ring: the feed was read after it.
@@ -642,14 +647,14 @@ func TestCardEdit(t *testing.T) {
 		t.Errorf("%d sends, want the one card", n)
 	}
 	msgs := e.fake.Messages(1001)
-	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "resolved: approved") {
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "✅ Approved") {
 		t.Fatalf("messages = %+v, want one card in its final state", msgs)
 	}
 	if edits[0].Params["message_id"] != fmt.Sprint(msgs[0].MessageID) {
 		t.Errorf("edited message %s, want %d", edits[0].Params["message_id"], msgs[0].MessageID)
 	}
-	if len(msgs[0].Entities) != 1 || msgs[0].Entities[0].Type != "bold" {
-		t.Errorf("entities = %+v, want the bold head", msgs[0].Entities)
+	if len(msgs[0].Entities) != 0 || msgs[0].Text != "✅ Approved · Deploy hum_1" {
+		t.Errorf("final card %q %+v, want the compact line without formatting", msgs[0].Text, msgs[0].Entities)
 	}
 
 	// The same version again changes nothing; a resolved action nobody was told about sends nothing.
@@ -713,7 +718,7 @@ func TestCoalescedStates(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("%d messages for one action, want its single card", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Text, "resolved") {
+	if !strings.Contains(msgs[0].Text, "Approved") {
 		t.Errorf("card %q doesn't show the final state", msgs[0].Text)
 	}
 }

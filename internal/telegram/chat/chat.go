@@ -24,6 +24,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
@@ -78,6 +79,17 @@ type Options struct {
 	// and the link it was sent to, so a Telegram reply to the card is a reply to the message (TG-8b). Nil: such replies
 	// are not taken.
 	ResolveMessage func(ctx context.Context, chatID int64, messageID int) (spaceID, msgID, linkID string, ok bool)
+	// Card returns the notifier card a chat message is (notify.Notifier.Card: from memory first, then the
+	// telegram_messages row): the action, its space, the link it was sent to and the version it shows. A card's own
+	// buttons (quick actions, More…) act through it. Nil: they are refused.
+	Card func(ctx context.Context, chatID int64, messageID int) (CardRef, bool)
+	// EditCard runs edit, an edit of a card message showing the action at version (as its form when form, settled when
+	// final), under the notifier's card lock (notify.Notifier.EditCard); it is skipped, and reports false, when the
+	// card already shows a state that must win (a newer one, or the item retracted). Nil: edit runs as is.
+	EditCard func(chatID int64, messageID int, actionID string, version int64, form, final bool, edit func() bool) bool
+	// CardCaps is what a link's card of an action offers (notify.Notifier.CardCaps), for redrawing the card. Cosmetic
+	// only. Nil: no quick actions are drawn.
+	CardCaps func(linkID string, chatID int64, spaceID, actionID string) card.Caps
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
 	// AppPage is the Mini App URL of one of its pages, e.g. "/settings" (nil or "": the Mini App isn't available).
@@ -233,7 +245,9 @@ func (h *Handler) bot() Bot {
 }
 
 type reply struct {
-	text   string
+	text string
+	// entities format text (a card's bold title); they must lie inside it.
+	entities []botapi.MessageEntity
 	markup *botapi.InlineKeyboardMarkup
 	force  *botapi.ForceReply
 	// replyTo makes the message a reply to that message of the chat (0: none), and thread puts it in that forum topic.
@@ -254,7 +268,7 @@ func (h *Handler) send(ctx context.Context, chatID int64, r reply) (botapi.Messa
 	if r.thread == 0 && r.replyTo == 0 {
 		thread = threadOf(ctx)
 	}
-	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: thread, Text: r.text, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
+	p := botapi.SendMessageParams{ChatID: chatID, MessageThreadID: thread, Text: r.text, Entities: r.entities, LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ProtectContent: r.protect}
 	if r.replyTo != 0 {
 		p.ReplyParameters = &botapi.ReplyParameters{MessageID: r.replyTo}
 	}
@@ -305,7 +319,7 @@ func (h *Handler) show(ctx context.Context, chatID int64, tapped *botapi.Message
 	b := h.bot()
 	if b != nil && tapped != nil && tapped.MessageID != 0 && r.force == nil {
 		ectx, cancel := context.WithTimeout(ctx, apiTimeout)
-		_, err := b.EditMessageText(ectx, botapi.EditMessageTextParams{ChatID: chatID, MessageID: tapped.MessageID, Text: r.text,
+		_, err := b.EditMessageText(ectx, botapi.EditMessageTextParams{ChatID: chatID, MessageID: tapped.MessageID, Text: r.text, Entities: r.entities,
 			LinkPreviewOptions: &botapi.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: r.markup})
 		cancel()
 		if err == nil {

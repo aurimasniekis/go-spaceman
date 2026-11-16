@@ -1171,7 +1171,14 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		Topics: c.TelegramTopics,
 		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
-		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
+		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
+		// A human action's card opens the action in the Mini App (the chat's forms use the same URL).
+		ItemURL: func(spaceID string, k tgnotify.Key) string {
+			if k.Type != tgnotify.TypeHumanAction {
+				return ""
+			}
+			return c.telegramActionURL(spaceID, k.ID)
+		}})
 	return notifier
 }
 

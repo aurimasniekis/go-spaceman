@@ -9,11 +9,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/render"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 )
 
@@ -59,7 +58,7 @@ type cardKey struct {
 	key  Key
 }
 
-type card struct {
+type cardState struct {
 	messageID int
 	version   int64
 	// thread is the topic the card was sent in (0: the main chat) when threadKnown. The card's continuations and the
@@ -76,6 +75,15 @@ type card struct {
 	remindedSeen, escalatedSeen int64
 	assignee                    string
 	known                       bool
+	// linkID and spaceID are the link and space the card was sent for ("" for a card loaded from its row: the chat
+	// handler's lookup then reads the row).
+	linkID, spaceID string
+	// final: what the card shows is settled. form: the chat handler shows the action's form on the card message (at
+	// version), not the card. gone: the card says only card.Gone (the link may no longer see the item).
+	final, form, gone bool
+	// alert is the last reminder, escalation or assignment alert sent as a reply to the card (0: none); a newer one
+	// and the card's final state delete it (best effort: Telegram deletes only within 48 h).
+	alert int
 }
 
 // cont is a continuation message and a signature of what it shows (0 after a restart), so a retried update doesn't
@@ -91,22 +99,27 @@ type cards struct {
 	rows  int
 	full  chan struct{}
 
+	// locks serialize the edits of a chat's cards between the notifier (upsert, retract) and the chat handler
+	// (Notifier.EditCard), one stripe per chat: whoever edits second sees what the first one left.
+	locks [64]sync.Mutex
+
 	mu      sync.Mutex
-	byCard  map[cardKey]card
+	byCard  map[cardKey]cardState
+	byMsg   map[[2]int64]Key // (chat, card message) -> resource
 	loaded  map[Key]bool
 	pending map[[2]int64]Mapping // (chat, message) -> row
 	queued  map[cardKey]int      // sends enqueued and not yet finished
 	// base is the announce baseline (reminders, escalations, assignee) of a card whose first send is queued or in flight,
 	// so a change observed before the send's mapping is recorded is still announced, and only once.
-	base map[cardKey]card
+	base map[cardKey]cardState
 }
 
 func newCards(st Mappings, rows int, now func() time.Time) *cards {
-	return &cards{now: now, store: st, rows: rows, full: make(chan struct{}, 1), byCard: map[cardKey]card{}, loaded: map[Key]bool{},
-		pending: map[[2]int64]Mapping{}, queued: map[cardKey]int{}, base: map[cardKey]card{}}
+	return &cards{now: now, store: st, rows: rows, full: make(chan struct{}, 1), byCard: map[cardKey]cardState{}, byMsg: map[[2]int64]Key{}, loaded: map[Key]bool{},
+		pending: map[[2]int64]Mapping{}, queued: map[cardKey]int{}, base: map[cardKey]cardState{}}
 }
 
-func (c *cards) get(chat int64, k Key) *card {
+func (c *cards) get(chat int64, k Key) *cardState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if v, ok := c.byCard[cardKey{chat, k}]; ok {
@@ -139,7 +152,8 @@ func (c *cards) load(ctx context.Context, k Key) {
 		ck := cardKey{m.ChatID, k}
 		if _, ok := c.byCard[ck]; !ok && !m.Cont {
 			seen := m.CreatedAt.UnixMicro()
-			c.byCard[ck] = card{messageID: m.MessageID, version: m.Version, remindedSeen: seen, escalatedSeen: seen, thread: m.Thread, threadKnown: m.ThreadKnown}
+			c.byCard[ck] = cardState{messageID: m.MessageID, version: m.Version, remindedSeen: seen, escalatedSeen: seen, thread: m.Thread, threadKnown: m.ThreadKnown}
+			c.byMsg[[2]int64{m.ChatID, int64(m.MessageID)}] = k
 		}
 	}
 	for _, m := range rows { // continuations after the cards, oldest first (message IDs grow)
@@ -158,6 +172,7 @@ func (c *cards) bound() {
 		if len(c.byCard) < maxCards {
 			break
 		}
+		delete(c.byMsg, [2]int64{k.chat, int64(c.byCard[k].messageID)})
 		delete(c.byCard, k)
 		delete(c.loaded, k.key) // so the database is asked again for a resource whose card was forgotten
 	}
@@ -183,13 +198,22 @@ func (c *cards) record(m Mapping, r *Resource) {
 	if !ok {
 		cur = c.base[ck] // what was observed while the first send was on its way
 	}
+	if ok && cur.messageID != m.MessageID {
+		delete(c.byMsg, [2]int64{m.ChatID, int64(cur.messageID)})
+	}
 	cur.messageID, cur.version = m.MessageID, m.Version
+	c.byMsg[[2]int64{m.ChatID, int64(m.MessageID)}] = m.Key
+	if m.LinkID != "" {
+		cur.linkID, cur.spaceID = m.LinkID, m.SpaceID
+	}
 	if m.ThreadKnown {
 		cur.thread, cur.threadKnown = m.Thread, true
 	} else {
 		m.Thread, m.ThreadKnown = cur.thread, cur.threadKnown // a refresh keeps the thread the card was sent in
 	}
 	if r != nil {
+		// The notifier's own state of the card: what the chat handler or a retraction left is replaced.
+		cur.final, cur.form, cur.gone = r.Final, false, false
 		cur.remindedSeen, cur.escalatedSeen = max(cur.remindedSeen, r.RemindedAt), max(cur.escalatedSeen, r.EscalatedAt)
 		if !cur.known {
 			cur.assignee, cur.known = r.Assignee, true
@@ -313,8 +337,73 @@ func (c *cards) touch(linkID string, chat int64, r *Resource, now time.Time) {
 
 func (c *cards) forget(chat int64, k Key) {
 	c.mu.Lock()
+	if cd, ok := c.byCard[cardKey{chat, k}]; ok {
+		delete(c.byMsg, [2]int64{chat, int64(cd.messageID)})
+	}
 	delete(c.byCard, cardKey{chat, k})
 	c.mu.Unlock()
+}
+
+// chatLock is the lock of a chat's card edits.
+func (c *cards) chatLock(chat int64) *sync.Mutex {
+	return &c.locks[uint64(chat)%uint64(len(c.locks))] //nolint:gosec // G115: any stripe will do for a negative ID
+}
+
+// byMessage returns the card a chat message is, from memory (nil: not known here).
+func (c *cards) byMessage(chat int64, msg int) (Key, *cardState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	k, ok := c.byMsg[[2]int64{chat, int64(msg)}]
+	if !ok {
+		return Key{}, nil
+	}
+	cd, ok := c.byCard[cardKey{chat, k}]
+	if !ok || cd.messageID != msg {
+		return Key{}, nil
+	}
+	return k, &cd
+}
+
+// shown records what the chat handler put on a card message: the action at version, as its form or as the card again
+// (a settled one when final). The signature is unknown from now on, so the notifier's next edit isn't skipped.
+func (c *cards) shown(chat int64, k Key, version int64, form, final bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cd, ok := c.byCard[cardKey{chat, k}]; ok {
+		cd.version, cd.form, cd.final, cd.sig = version, form, final, 0
+		c.byCard[cardKey{chat, k}] = cd
+	}
+}
+
+// markGone records that a card now says only card.Gone.
+func (c *cards) markGone(chat int64, k Key) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cd, ok := c.byCard[cardKey{chat, k}]; ok {
+		cd.gone, cd.form, cd.sig = true, false, 0
+		c.byCard[cardKey{chat, k}] = cd
+	}
+}
+
+// swapAlert remembers the alert just sent as a reply to a card and returns the one before it (0: none).
+func (c *cards) swapAlert(chat int64, k Key, id int) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cd, ok := c.byCard[cardKey{chat, k}]
+	if !ok {
+		return 0
+	}
+	old := cd.alert
+	cd.alert = id
+	c.byCard[cardKey{chat, k}] = cd
+	return old
+}
+
+// dropAlert deletes a card's last alert (best effort: one that is gone or too old to delete is forgotten anyway).
+func (c *cards) dropAlert(ctx context.Context, cl *botapi.Client, pay func() error, chat int64, k Key) {
+	if old := c.swapAlert(chat, k, 0); old != 0 && pay() == nil {
+		_ = cl.DeleteMessage(ctx, chat, old)
+	}
 }
 
 // flush writes the pending mappings in one transaction; it writes nothing when there are none.
@@ -347,26 +436,36 @@ func (c *cards) flush(ctx context.Context) error {
 // sendFunc sends a message, to the topic its caller chose (or the main chat).
 type sendFunc func(ctx context.Context, cl *botapi.Client, p botapi.SendMessageParams) (botapi.Message, error)
 
-// upsert sends the resource's card, or edits it when it was sent before. It runs on a sender goroutine, so it sees
-// the card of a send that completed ahead of it in the chat's queue. parts[0] is the card; the others are its
-// continuation messages, replies to the card that are edited, sent or deleted along with it.
-func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, parts []cardPart, protect, silent bool) error {
-	// The sender paid for the first Bot API call of this job; every further one pays for itself (sender.Take).
+// payer returns the charge of a sender job's Bot API calls: the sender paid for the first one; every further one
+// pays for itself (sender.Take).
+func payer(ctx context.Context) func() error {
 	paid := false
-	pay := func() error {
+	return func() error {
 		if !paid {
 			paid = true
 			return nil
 		}
 		return sender.Take(ctx)
 	}
+}
+
+// upsert sends the resource's card, or edits it when it was sent before. It runs on a sender goroutine, so it sees
+// the card of a send that completed ahead of it in the chat's queue. parts[0] is the card; the others are its
+// continuation messages, replies to the card that are edited, sent or deleted along with it. It holds the chat's card
+// lock, so an edit of the chat handler (Notifier.EditCard) lands before or after it, never in between.
+func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, parts []cardPart, protect, silent bool) error {
+	mu := c.chatLock(chat)
+	mu.Lock()
+	defer mu.Unlock()
+	pay := payer(ctx)
 	err := c.upsertOnce(ctx, cl, pay, send, linkID, chat, r, spaceID, parts, protect, silent)
 	if errors.Is(err, errCardThreadGone) {
 		// The topic the card lives in was closed or deleted, so a part can't follow it: a non-final card is sent again,
 		// with its continuations, the way a card whose message was deleted is.
 		if r.Final {
-			// A settled card is not sent again, and what it shows was just edited: keep it. The part that couldn't be sent
-			// is not there (the Mini App has the rest); the parts before it are still right.
+			// A settled card is not sent again: the card message stays as it is (edited to this state, or already showing
+			// it when a retry skipped the edit). The part that couldn't be sent is not there (the Mini App has the
+			// rest); the parts before it are still right.
 			return nil
 		}
 		c.retire(ctx, cl, pay, chat, r.Key)
@@ -394,19 +493,57 @@ func (c *cards) retire(ctx context.Context, cl *botapi.Client, pay func() error,
 	c.pend(Mapping{ChatID: chat, MessageID: cd.messageID, Key: k, Delete: true})
 }
 
+// retract edits a card the link may no longer see (its access, a mute, the space hidden) to card.Gone: no title, no
+// body, no keyboard; its continuations (which carry the body) and its last alert are deleted. Nothing is rendered from
+// the resource, so it needs no recipient check. A card already retracted, or none, costs nothing.
+func (c *cards) retract(ctx context.Context, cl *botapi.Client, chat int64, k Key) error {
+	mu := c.chatLock(chat)
+	mu.Lock()
+	defer mu.Unlock()
+	cd := c.get(chat, k)
+	if cd == nil || cd.gone {
+		return nil
+	}
+	pay := payer(ctx)
+	_ = pay()
+	_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: card.Gone,
+		ReplyMarkup: cardPart{}.EditMarkup()})
+	switch {
+	case err == nil || isNotModified(err):
+		c.markGone(chat, k)
+		c.dropAlert(ctx, cl, pay, chat, k)
+		return c.deleteConts(ctx, cl, pay, chat, k, 0)
+	case isGone(err):
+		_ = c.deleteConts(ctx, cl, pay, chat, k, 0)
+		c.dropConts(chat, k, 0)
+		c.forget(chat, k)
+		c.pend(Mapping{ChatID: chat, MessageID: cd.messageID, Key: k, Delete: true})
+		return nil
+	}
+	return err
+}
+
 // upsertOnce is one try of upsert; pay charges each Bot API call after the first.
 func (c *cards) upsertOnce(ctx context.Context, cl *botapi.Client, pay func() error, send sendFunc, linkID string, chat int64, r *Resource, spaceID string, parts []cardPart, protect, silent bool) error {
-	sig := parts[0].sig()
+	sig := partSig(parts[0])
 	if cd := c.get(chat, r.Key); cd != nil {
+		// The chat handler may have put a newer state on the card message (its form after the person's own change), or
+		// this very version as a form: that stays until the resource moves on. A settled state always replaces a form.
+		if r.Version != 0 && (cd.version > r.Version || cd.version == r.Version && cd.form && !r.Final) {
+			return nil
+		}
 		var err error
 		if cd.sig != sig || cd.version != r.Version { // a retry after a failed continuation doesn't edit the card again (edits count against the rate limit)
 			_ = pay()
-			_, err = cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: parts[0].Text, Entities: parts[0].Entities, ReplyMarkup: parts[0].markup()})
+			_, err = cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: parts[0].Text, Entities: parts[0].Entities, ReplyMarkup: parts[0].EditMarkup()})
 		}
 		switch {
 		case err == nil || isNotModified(err):
 			c.record(Mapping{ChatID: chat, MessageID: cd.messageID, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now(), Thread: cd.thread, ThreadKnown: cd.threadKnown}, r)
 			c.setSig(chat, r.Key, sig)
+			if r.Final {
+				c.dropAlert(ctx, cl, pay, chat, r.Key) // settled: the reminder about it is noise now
+			}
 			return c.syncConts(ctx, cl, pay, send, linkID, chat, r, spaceID, cd.messageID, parts, protect)
 		case isGone(err) && !r.Final:
 			_ = c.deleteConts(ctx, cl, pay, chat, r.Key, 0) // best effort: the card is sent again, with new continuations
@@ -424,7 +561,7 @@ func (c *cards) upsertOnce(ctx context.Context, cl *botapi.Client, pay func() er
 	if err := pay(); err != nil {
 		return err
 	}
-	m, err := send(ctx, cl, botapi.SendMessageParams{ChatID: chat, Text: parts[0].Text, Entities: parts[0].Entities, ReplyMarkup: parts[0].markupAny(), ProtectContent: protect, DisableNotification: silent})
+	m, err := send(ctx, cl, botapi.SendMessageParams{ChatID: chat, Text: parts[0].Text, Entities: parts[0].Entities, ReplyMarkup: markupAny(parts[0]), ProtectContent: protect, DisableNotification: silent})
 	if err != nil {
 		return err
 	}
@@ -443,7 +580,7 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, pay func() err
 	}
 	have := cd.conts
 	for i, p := range parts[1:] {
-		sig := p.sig()
+		sig := partSig(p)
 		if i < len(have) {
 			if have[i].sig == sig {
 				continue
@@ -451,7 +588,7 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, pay func() err
 			if err := pay(); err != nil {
 				return err
 			}
-			_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: have[i].id, Text: p.Text, Entities: p.Entities, ReplyMarkup: p.markup()})
+			_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: have[i].id, Text: p.Text, Entities: p.Entities, ReplyMarkup: p.EditMarkup()})
 			if err == nil || isNotModified(err) {
 				c.recordCont(Mapping{ChatID: chat, MessageID: have[i].id, LinkID: linkID, SpaceID: spaceID, Key: r.Key, Version: r.Version, CreatedAt: c.now(), Cont: true}, sig)
 				continue
@@ -468,7 +605,7 @@ func (c *cards) syncConts(ctx context.Context, cl *botapi.Client, pay func() err
 		if err := pay(); err != nil {
 			return err
 		}
-		m, err := c.sendInCardThread(ctx, cl, send, chat, r.Key, botapi.SendMessageParams{ChatID: chat, Text: p.Text, Entities: p.Entities, ReplyMarkup: p.markupAny(),
+		m, err := c.sendInCardThread(ctx, cl, send, chat, r.Key, botapi.SendMessageParams{ChatID: chat, Text: p.Text, Entities: p.Entities, ReplyMarkup: markupAny(p),
 			ReplyParameters: &botapi.ReplyParameters{MessageID: cardID}, ProtectContent: protect, DisableNotification: true})
 		if err != nil {
 			if botapi.IsTopicGone(err) {
@@ -543,106 +680,27 @@ func isGone(err error) bool {
 		(strings.Contains(e.Description, "message to edit not found") || strings.Contains(e.Description, "message can't be edited"))
 }
 
-// Card text limits. A card at content level full carries the whole body: the first message up to maxMessage UTF-16
-// units, the rest in continuation messages ("(2/3)"), at most maxParts messages in all (the Mini App has the rest).
-const (
-	maxTitle   = 200
-	maxMessage = 4096
-	maxParts   = 4
-	contMark   = "(%d/%d)\n"
-)
+// cardPart is one message of a card (rendered by the card package).
+type cardPart = card.Part
 
-// cardPart is one message of a card: text, entities and, on the last one of a cut body, a Mini App button.
-type cardPart struct {
-	Text     string
-	Entities []botapi.MessageEntity
-	Buttons  []render.Button
-}
-
-// sig is a signature of what the part shows.
-func (p cardPart) sig() uint64 {
+// partSig is a signature of what a part shows.
+func partSig(p cardPart) uint64 {
 	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s\x00%v\x00%v", p.Text, p.Entities, p.Buttons)
+	_, _ = fmt.Fprintf(h, "%s\x00%v\x00%v\x00%v", p.Text, p.Entities, p.Keyboard, p.Buttons)
 	return h.Sum64() | 1 // never 0, which means unknown
 }
 
-func (p cardPart) markup() *botapi.InlineKeyboardMarkup {
-	if len(p.Buttons) == 0 {
-		return nil
-	}
-	row := make([]botapi.InlineKeyboardButton, len(p.Buttons))
-	for i, b := range p.Buttons {
-		row[i] = botapi.InlineKeyboardButton{Text: b.Text, WebApp: &botapi.WebAppInfo{URL: b.WebAppURL}}
-	}
-	return &botapi.InlineKeyboardMarkup{InlineKeyboard: [][]botapi.InlineKeyboardButton{row}}
-}
-
-// markupAny is markup as the interface sendMessage takes (nil stays nil).
-func (p cardPart) markupAny() botapi.ReplyMarkup {
-	if m := p.markup(); m != nil {
+// markupAny is a part's keyboard as the interface sendMessage takes (nil stays nil: a new message without buttons).
+func markupAny(p cardPart) botapi.ReplyMarkup {
+	if m := p.Markup(); m != nil {
 		return m
 	}
 	return nil
 }
 
-func units(s string) int { return len(utf16.Encode([]rune(s))) }
-
-func entities(es []render.Entity, shift int) []botapi.MessageEntity {
-	out := make([]botapi.MessageEntity, len(es))
-	for i, e := range es {
-		out[i] = botapi.MessageEntity{Type: e.Type, Offset: e.Offset + shift, Length: e.Length, URL: e.URL, Language: e.Language}
-	}
-	return out
-}
-
-// renderCard builds a card's messages: the first has the bold title, the state line and the start of the body; at
-// content level full the body is Markdown turned into entities (never raw HTML; links only http, https and mailto)
-// and split into continuation messages when it doesn't fit. appURL, when set, is the Mini App link of a cut body.
-func renderCard(r *Resource, full bool, appURL string) []cardPart {
-	head := r.Label + ": " + clip(oneLine(r.Title), maxTitle)
-	var b strings.Builder
-	b.WriteString(head)
-	if r.State != "" {
-		b.WriteString("\n")
-		b.WriteString(r.State)
-	}
-	bold := []botapi.MessageEntity{{Type: "bold", Offset: 0, Length: units(head)}}
-	if !full {
-		b.WriteString("\n\nOpen the app for details.")
-		return []cardPart{{Text: b.String(), Entities: bold}}
-	}
-	if strings.TrimSpace(r.Detail) == "" {
-		return []cardPart{{Text: b.String(), Entities: bold}}
-	}
-	b.WriteString("\n\n")
-	prefix := units(b.String())
-	// Every part is cut to the same size, small enough for the first (the title and state before the body).
-	msg := render.Parse(r.Detail).Entities(render.Options{Limit: maxMessage - prefix, MaxParts: maxParts, ContinueURL: appURL})
-	if len(msg.Parts) == 0 {
-		return []cardPart{{Text: b.String(), Entities: bold}}
-	}
-	first := msg.Parts[0]
-	parts := []cardPart{{Text: b.String() + first.Text, Entities: append(bold, entities(first.Entities, prefix)...), Buttons: first.Buttons}}
-	for i, p := range msg.Parts[1:] {
-		mark := fmt.Sprintf(contMark, i+2, len(msg.Parts))
-		parts = append(parts, cardPart{Text: mark + p.Text, Entities: entities(p.Entities, units(mark)), Buttons: p.Buttons})
-	}
-	return parts
-}
-
-func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
-
-// clip cuts s to n runes (with an ellipsis), never inside a rune.
-func clip(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n-1]) + "…"
-}
-
 // state returns, under one lock, the card (nil: none) and whether a send of the card is waiting in the sender. One
 // snapshot, so a send finishing between two reads can't make the card look absent and the send gone at once.
-func (c *cards) state(chat int64, k Key) (cd *card, queued bool) {
+func (c *cards) state(chat int64, k Key) (cd *cardState, queued bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ck := cardKey{chat, k}
@@ -660,7 +718,7 @@ func (c *cards) queue(chat int64, r *Resource) func(error) {
 	c.queued[ck]++
 	if _, ok := c.byCard[ck]; !ok {
 		if _, ok := c.base[ck]; !ok {
-			c.base[ck] = card{remindedSeen: r.RemindedAt, escalatedSeen: r.EscalatedAt, assignee: r.Assignee, known: true}
+			c.base[ck] = cardState{remindedSeen: r.RemindedAt, escalatedSeen: r.EscalatedAt, assignee: r.Assignee, known: true}
 		}
 	}
 	c.mu.Unlock()
@@ -672,4 +730,16 @@ func (c *cards) queue(chat int64, r *Resource) func(error) {
 		}
 		c.mu.Unlock()
 	}
+}
+
+const maxTitle = card.MaxTitle
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// clip cuts s to n runes (with an ellipsis), never inside a rune.
+func clip(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n-1]) + "…"
 }
