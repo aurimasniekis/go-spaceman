@@ -33,8 +33,9 @@ const (
 // Node states of a rename (ADR-0093). A rename on a space with a node starts pending and queues one memory.rename for
 // the node. The node's memory.renamed report moves it: ok to done (final), error to failed, deferred back to pending.
 // A failed rename becomes done on a later ok. Pending and failed renames are open: they hold launches of both names and
-// dream launches in the space, block another rename of either name and a relocation of the space, and make central
-// refuse memory under the old name. A space without a node starts and stays not_needed.
+// dream launches in the space, block another rename of either name and a clean relocation of the space (a source_unavailable one closes the rename as
+// not_needed), and make central
+// refuse memory under both names. A space without a node starts and stays not_needed.
 const (
 	RenameNodePending   = "pending"
 	RenameNodeFailed    = "failed"

@@ -6294,7 +6294,10 @@
     `deferred` → `pending`; each stores the node's message. A failed rename becomes done on a later `ok` (the node
     retries at its next start, T-H3). A report on a done rename changes nothing. Pending and failed renames are **open**:
     both hold launches of either name and dream launches in the space, block another rename of either name, refuse a
-    relocation of the space, and make central refuse memory under the old name. `node_too_old` is not a state: it is
+    clean relocation of the space, and make central refuse memory under both names. A `source_unavailable` relocation is
+    not refused: its finalize transaction closes the space's open renames as `not_needed` ("node lost; relocated from
+    central"), which ends the hold and the re-queue; central's copy already moved, so the memory carries over under the
+    new name. `node_too_old` is not a state: it is
     refused at rename time, before anything is written, for a node whose stored `protocol_minor` is below 14 (also one
     that never connected).
   - **`memory.renamed.ack`** carries `error` for a rename that is unknown or not this node's, so the node stops sending
@@ -6317,7 +6320,8 @@
     fail the backup or carry the repository under the wrong name. A rename that commits meanwhile records no
     `central_moved_at`: the move runs when the backup releases the hold (or on the next access to the space's memory,
     which waits for the release). A backup with the rename but not the move restores consistently, because the
-    start-up reconciler finishes the move on the restored disk.
+    start-up reconciler finishes the move on the restored disk. A memory sync (or any `ensureMoved` caller) in a space
+    whose rename committed during a backup can stall until the backup has bundled and released the hold.
   - **`ensureMoved` is per space**, not per role: it finishes the space's unmoved renames in time order, so a chain
     `a→b→c` interrupted before both moves ends with `c`. It runs before `Apply`, `Report`, `Files`, `File`, `History`
     and `ExportBundles`; the start-up reconciler (`FinishAllRenames`) runs while central is built, before it serves

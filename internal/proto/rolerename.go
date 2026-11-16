@@ -25,7 +25,7 @@ import (
 //     node tries again at its next start and reports again, and a later ok ends the rename.
 //
 // Only ok is final: a deferred or failed rename becomes done once an ok arrives, and a deferred report after an error
-// makes it pending again. A report for a rename that is already done changes nothing. Until the rename is done, central refuses memory syncs under the old name
+// makes it pending again. A report for a rename that is already done changes nothing. Until the rename is done, central refuses memory syncs under the old name and under the new one
 // ("role renamed") and creates no collection for it: the node offers that history again under the new name after its
 // move.
 
