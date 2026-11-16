@@ -327,6 +327,10 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   protocol minor 5, does not answer in time or has history central did not acknowledge is backed up with the history
   central acknowledged, and the manifest and the Backups page name it as possibly stale. Offline backups
   (`spaceman backup create` with central stopped) cannot flush (SM-MEM-005).
+- **Planned: renaming a role (ADR-0093, not implemented).** When it lands: a busy role cannot be renamed, and a node
+  that never comes back keeps the renamed role held. There will be no "abandon the node move" action at first, and a
+  deleted role's leftover memory collection will block reusing its name as a rename target. Deleting or archiving a
+  role's memory, an abandon action and a web UI rename are follow-ups.
 
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.

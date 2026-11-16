@@ -6201,6 +6201,62 @@
   - A real subscription limit can't be forced in tests; until one is observed on a SpaceMan run, real evidence stays
     empty (K-16).
 
+### ADR-0093 — A space role can be renamed in place; live references follow, history stays
+
+- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0010 (rename results),
+  protocol minor 14 (`memory.rename`, `memory.renamed`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
+- **Context:** a space role's name is its identity: the primary key of `space_roles`. It is also copied as text into
+  grants, pools, KB and dream configuration, schedules, human policies and permissions, open tasks, messages and
+  requests, memory collections (including the directory names of the central and node Git repositories) and the history
+  of every run. No foreign key ties these copies to the role. Deleting and recreating a role under a new name keeps the
+  stale copies: grants, pools and routes silently stop matching, and the role's memory stays under the old name. The
+  Terraform provider replaces the role on a name change, which does exactly that.
+- **Decision:**
+  1. A rename is one write transaction. It changes the role row and every **live** reference: configuration, plus open
+     tasks, pending messages, open KB requests and pending notifications. It records a `space_role_renames` row. Records
+     of what happened keep the name they were written with: runs and their manifests, usage, approvals, cross-space and
+     KB requester history, human actions, inbox items, audit and outbox.
+  2. The rename is refused while the role is busy: an unfinished run, an open limit wait or account switch, a queued
+     launch, an unfinished dream run in the space, or a relocation. A live run carries the name in its token,
+     environment, prompt and memory path, so renaming under it would split its routes and memory. The error lists what
+     to stop.
+  3. The target name must be unused by a role and by a memory collection. Existing memory is never merged.
+  4. Memory moves on both sides without copying or rewriting history:
+     - central renames its repository after commit, and finishes an interrupted move on the next access or at start;
+     - the space's node renames its role directory on a durable, idempotent `memory.rename` command and reports
+       `memory.renamed`;
+     - until the node has reported, launches of the role and dream runs in the space are held;
+     - central never creates a collection under a name that was renamed away and has not been reused;
+     - a node below the new protocol minor makes the rename fail rather than risk unsynced memory.
+  5. Old names resolve to the current name only where SpaceMan relaunches from a history row (control restart and
+     autostart) and for the dream transcript filter. A name that is a live role is never redirected.
+  6. The rename is exposed as `POST /spaces/{space_id}/roles/{name}/rename` with the same permission as saving a role.
+     It is also in the CLI (`spaceman role rename`) and the admin MCP (classified dangerous). The Terraform provider
+     treats a name change as an in-place update that calls it, never as a replace.
+- **Alternatives:**
+  - *Allow renaming a live role and update the runs:* every live run's token, environment, system prompt, memory path
+    and node timers would have to change under a running agent. Rejected.
+  - *Key memory repositories by collection id instead of role name:* this removes the directory moves but needs a disk
+    layout migration on central, every node and in backups. Rejected as larger and riskier than one atomic rename per
+    side.
+  - *`ON UPDATE CASCADE` foreign keys:* half the references are JSON arrays or conditional (open rows only), and SQLite
+    would need table rebuilds. Rejected.
+  - *Terraform `MoveState`:* only needed across resource types. A name change is an update, and renaming the address is
+    covered by core `moved`.
+- **Consequences:**
+  - Renaming needs a quiet role.
+  - With the node offline, the role cannot launch until the node reconnects.
+  - Former names remain in history and in the rename table.
+  - An MCP grant on the role is revoked and re-added by Terraform, because grants cannot be edited.
+  - A leftover directory under the target name is moved aside to `.retained`, never deleted.
+  - Deleting a role still leaves its memory collection, and that blocks reusing the name as a rename target: pick
+    another name. Deleting or archiving a role's memory is a follow-up.
+  - A node that never comes back keeps the renamed role held. There is no "abandon the node move" action yet; it is a
+    follow-up.
+  - A test classifies every role-name column as live or history, so a new column cannot be missed.
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. The operation uses the existing role
+  write permission, and every rename is audited.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
