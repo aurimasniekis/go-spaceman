@@ -63,22 +63,24 @@ A space's **pool** for a harness is the set of accounts bound to the space for t
 **priority** (lower first, default 100) that orders the pool. Set bindings and priorities with
 `spaceman account set-space --space <space> --account <id> --priority <id>=<n>`, or with the API.
 
-**Pools apply only while usage-limit failover is on.** With failover off, a run keeps the account it was launched on,
-and role pools are ignored. With failover on:
+**Pools apply while usage-limit failover or the [headroom gate](#launch-headroom-gate) is on.** With both off, a run
+keeps the account it was launched on, and role pools are ignored. With either on:
 
 - the space's pool is its bindings for the harness, in priority order;
 - a **role pool** replaces that for one role: a run of that role uses only the pool's accounts, in priority order, and
-  each of them must also be bound to the space. A role without a pool uses the space's bindings. Set a role's pool with
+  each of them must also be bound to the space. A role without a pool uses the space's bindings. A limit-wait resume
+  or a relaunch SpaceMan makes itself never uses an account outside the role's pool. Set a role's pool with
   `spaceman account pool set --space <space> <role> --account <id> … --priority <id>=<n>`; setting it with no
   `--account` removes the pool, so the role uses the bindings again. A pool never widens: it can't send a run to an
   account outside it.
 
 An account is **eligible** for a launch, a resume or a switch when it is enabled, bound to the space, of the run's
-harness, and has no open hold in any space. Among eligible accounts, SpaceMan picks by priority, then by the fewest live
-runs on the account, then by binding order. A switch never moves a run to an account that is held.
+harness, and has no open hold in any space. With the headroom gate on, it must also pass the gate for a new run (below).
+Among eligible accounts, SpaceMan picks by priority, then by the fewest live runs on the account, then by binding order.
+Account utilisation is not part of that order yet. A switch never moves a run to an account that is held.
 
 The latest 5-hour and 7-day windows of each account (from the status line) are shown on the usage API and in the CLI.
-They don't yet decide which account a run uses; see [the headroom gate](#launch-headroom-gate-not-built-yet).
+They decide which account a new run may start on only when the headroom gate is on; see [the headroom gate](#launch-headroom-gate).
 
 ## Moving a run to another account
 
@@ -116,15 +118,32 @@ usage limit*. It isn't raised for a single limited account, for a pool that stil
 move. A notice that can't be raised before its window passes is dropped, so it never announces a reset that has
 already happened.
 
-## Launch headroom gate: not built yet
+## Launch headroom gate
 
-Planned: a setting `usage_limit_min_headroom_percent` (off by default) that would keep a **new** run (a launch, a fresh
-resume, or a move's resume) off an account whose known window use leaves less than that share free. When no eligible
-account passed, the start would wait, as an exhausted account does today. Running agents would never be moved for
-headroom.
+The setting `usage_limit_min_headroom_percent` (0 to 100, default 0: off) keeps a **new** run off an account that is
+nearly full. An account fails the gate when one of its windows with known usage leaves less than that percentage free
+(100 minus the used percentage; exactly at the threshold passes). It applies to:
 
-This is **not in this release**. There is no setting for it, and new runs start on the first eligible account of their
-pool, whatever its windows show. Running runs are moved only when they reach their limit.
+- a launch,
+- a fresh resume (including a limit-wait resume and a switch's resume),
+
+and **never to a running agent**: nothing is moved because of the gate. Gateway (Harbor Pilot) runs use no account and
+are not gated.
+
+When the gate is on:
+
+- **The next eligible account is chosen.** The gate removes the failing accounts from the pool, and the launch uses the
+  first of the rest in the usual order (priority, then the fewest live runs, then binding order). The role's pool
+  applies even when failover is off.
+- **If none qualifies, the launch waits** until the earliest reset among the pool's failing windows, and is refused with
+  `rate_limited` and that time until then. The wait is never longer than an hour: a window's usage older than an hour no
+  longer counts, so the launch is checked again at least hourly. When no reset is known, it is rechecked within the hour.
+  A window that has reset counts as free.
+- **Accounts with no known usage are not refused.** The gate reads the usage ledger; if the ledger can't be read, it
+  **fails open** and the account stays eligible.
+
+Turn it on with `usage_limit_min_headroom_percent`, per space or as an installation default
+([Limits and budgets](./limits)). Set it back to 0 to turn the gate off.
 
 ## Short waits: kept alive
 
@@ -278,10 +297,11 @@ overrides per space ([Limits and budgets](./limits)).
   claude.ai account is not checked yet.
 - **A move ends the old process.** Background shells and subagents of the old run end with it, and the new run's prompt
   cache starts cold, which costs an extra uncached request.
-- **Headroom gate: not built.** See [above](#launch-headroom-gate-not-built-yet). New runs start on the first eligible
-  account of the pool.
+- **The headroom gate is simulated only.** It reads the windows that the status line reports, which only a
+  subscription account's Claude Code run provides; an account with no windows is never refused. Its waits rely on the
+  one-hour window age, so a window that stops being reported ends the refusal within the hour.
 - **Pool order ignores utilisation.** Priority, then the fewest live runs, then binding order decide; the 5-hour and
-  7-day windows are shown, not used to choose.
+  7-day windows are shown, and the headroom gate can refuse an account, but they don't rank the pool.
 - **Web UI: coming** for the usage page, the switches list and the pools editor. Use the API or the CLI.
 - **Codex isn't covered.** Codex runs are never detected at their limit, so they are neither kept alive nor parked, and
   they open no hold. A Codex launch through a Harbor Pilot connection that a Claude Code run found exhausted is still
