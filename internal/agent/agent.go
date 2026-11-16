@@ -675,10 +675,20 @@ func (a *Agent) resendHeldReports(ctx context.Context, held map[string]struct{})
 	}
 }
 
+// holdsReportsLocked is whether a report must wait for the welcome (mu held): the hello is being built or sent.
+func (a *Agent) holdsReportsLocked() bool { return a.preConn || (a.conn != nil && !a.connected) }
+
+// holdingReports is holdsReportsLocked, taking mu.
+func (a *Agent) holdingReports() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.holdsReportsLocked()
+}
+
 // sendReport sends a run's report as it is (limitSend held).
 func (a *Agent) sendReport(ctx context.Context, r runRow) {
 	a.mu.Lock()
-	if a.preConn || (a.conn != nil && !a.connected) {
+	if a.holdsReportsLocked() {
 		if a.heldReports == nil {
 			a.heldReports = map[string]struct{}{}
 		}

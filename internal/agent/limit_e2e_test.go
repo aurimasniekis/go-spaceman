@@ -378,3 +378,14 @@ func TestRunEndBetweenHelloSnapshotAndConnIsSentAfterWelcome(t *testing.T) {
 		t.Fatalf("run end not reported after the welcome: %d reports", len(rs))
 	}
 }
+
+// A limit the scan finds in the same window (before the connection is set) is held too, not dropped.
+func TestUsageLimitScannedBeforeConnIsHeld(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.mu.Lock()
+	a.preConn = true
+	a.mu.Unlock()
+	if !a.holdingReports() {
+		t.Fatal("the pre-connection window does not hold reports")
+	}
+}

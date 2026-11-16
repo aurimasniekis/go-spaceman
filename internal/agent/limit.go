@@ -413,10 +413,7 @@ func (a *Agent) limitScan(ctx context.Context, runID string, final bool) {
 	// next hello carries the journaled limit.
 	if !a.protocolAtLeast(proto.MinorUsageLimit) {
 		// Between the hello and the welcome the hello is already built: sendReport holds the run for the welcome.
-		a.mu.Lock()
-		held := a.conn != nil && !a.connected
-		a.mu.Unlock()
-		if held {
+		if a.holdingReports() {
 			if cur, err := a.j.getRun(ctx, runID); err == nil {
 				a.sendReport(ctx, cur)
 			}
