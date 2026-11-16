@@ -215,9 +215,10 @@ isn't built yet.
 
 ## Usage page, API and CLI
 
-The space's usage page (totals by role, account and model, the switches, and the windows of the accounts) is **web UI:
-coming**. Until it ships, the same figures are on the API and in the CLI. The space overview has a small usage totals
-card, the Limits page's **Usage limits** card and each run's usage card remain in the web UI.
+In the web UI, a space's **Usage** page charts its tokens, and its **Accounts** page has the pools, the windows of the
+accounts and the switches ([Accounts and usage in the web UI](#accounts-and-usage-in-the-web-ui)). The space overview
+has a small usage totals card, and the Limits page's **Usage limits** card and each run's usage card stay too. The same
+figures are on the API and in the CLI:
 
 - **Usage over time** (tokens first; the cost is a list-price estimate, labelled as one):
   `GET /api/v1/spaces/{space_id}/usage/series` (group by `role`, `account`, `model` or `harness`),
@@ -331,7 +332,6 @@ overrides per space ([Limits and budgets](./limits)).
   one-hour window age, so a window that stops being reported ends the refusal within the hour.
 - **Pool order ignores utilisation.** Priority, then the fewest live runs, then binding order decide; the 5-hour and
   7-day windows are shown, and the headroom gate can refuse an account, but they don't rank the pool.
-- **Web UI: coming** for the usage page, the switches list and the pools editor. Use the API or the CLI.
 - **Codex isn't covered.** Codex runs are never detected at their limit, so they are neither kept alive nor parked, and
   they open no hold. A Codex launch through a Harbor Pilot connection that a Claude Code run found exhausted is still
   refused while the hold is open.

@@ -1,6 +1,5 @@
 -- 0054_account_pools: account pools for usage-limit failover. A space's bindings for a harness form its pool, ordered by
--- priority (lower first); an optional role pool replaces the space pool for one role. The number may change at merge
--- time, when another branch also takes it.
+-- priority (lower first); an optional role pool replaces the space pool for one role.
 
 -- +goose Up
 ALTER TABLE space_accounts ADD COLUMN priority INTEGER NOT NULL DEFAULT 100;

@@ -35,8 +35,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   written to the instance folder. Control gets one message per switch. A switch's resume re-checks the target and takes
   the pool's next account, or falls back to ADR-0079's wait, when it is no longer usable.
 - **Pools:** a space's accounts for a harness form its pool, ordered by priority; an optional role pool replaces it for
-  one role. Accounts are chosen by priority, then the lowest known use of the window that limited the run, then the
-  fewest live runs.
+  one role. A launch takes the space's default account first when it is eligible; otherwise, and for a role pool,
+  accounts are taken by priority, then the fewest live runs, then binding order. A switch ignores the default and takes
+  the pool order. Account usage does not rank the pool.
 - **Wait if the reset is near:** a run whose account resets within `usage_limit_wait_if_reset_within` waits for it
   instead of switching; beyond `usage_limit_switch_max_per_day` switches an instance waits too.
 - **Launch headroom gate:** with `usage_limit_min_headroom_percent` above 0, a launch or resume does not start on an

@@ -1,5 +1,4 @@
 -- 0055_account_switches: a run that reaches its usage limit moves to another account of its pool (ADR-0090, plan T3).
--- The number may change at merge time, when another branch also takes it.
 --
 -- account_switches: one row per switch central armed, or decided against (fell_back) when failover is on. state moves
 -- pending (armed, waiting for the run's idle point until armed_until) -> parked (the run is parked with a limit wait
