@@ -2,15 +2,19 @@
 
 A claude.ai subscription has a 5-hour window and a weekly window. When a Claude Code run uses one up, Claude Code ends
 the turn and refuses new requests until the window resets. A Harbor Pilot gateway does the same when every account it
-could route to is exhausted, or when a budget blocks. SpaceMan notices this and does four things:
+could route to is exhausted, or when a budget blocks. SpaceMan notices this. With usage-limit failover on, it first
+tries to **move the run to another account** of its pool and continue the same session there
+([moving a run](#moving-a-run-to-another-account)). Otherwise, or when no other account is free, it waits and does four
+things:
 
 - It **holds the account** until the reset, so no new run is started into the same limit.
 - It keeps a short wait **alive** and **parks** a long one, keeping the run's session and task.
 - At the reset it **resumes** parked runs with their conversation.
 - It **tells control and the people** of the space, once each.
 
-The design is recorded as ADR-0079 in the [decision log](/security/decisions). Before you rely on it, read
-[what isn't covered](#what-isn-t-covered): no real usage limit has been observed on a SpaceMan run yet.
+The waiting design is recorded as ADR-0079 and the switching design as ADR-0090 in the [decision log](/security/decisions).
+Before you rely on it, read [what isn't covered](#what-isn-t-covered): no real usage limit has been observed on a
+SpaceMan run yet, and no move has been tried between two real accounts.
 
 ## What SpaceMan notices
 
@@ -53,6 +57,29 @@ whether the account works again: after an hour, then two, four and so on, at mos
 another account bound to the space for the same harness that isn't held. A space routed through Harbor Pilot never
 falls back to a direct account.
 
+## Accounts and pools
+
+A space's **pool** for a harness is the set of accounts bound to the space for that harness. Each binding has a
+**priority** (lower first, default 100) that orders the pool. Set bindings and priorities with
+`spaceman account set-space --space <space> --account <id> --priority <id>=<n>`, or with the API.
+
+**Pools apply only while usage-limit failover is on.** With failover off, a run keeps the account it was launched on,
+and role pools are ignored. With failover on:
+
+- the space's pool is its bindings for the harness, in priority order;
+- a **role pool** replaces that for one role: a run of that role uses only the pool's accounts, in priority order, and
+  each of them must also be bound to the space. A role without a pool uses the space's bindings. Set a role's pool with
+  `spaceman account pool set --space <space> <role> --account <id> … --priority <id>=<n>`; setting it with no
+  `--account` removes the pool, so the role uses the bindings again. A pool never widens: it can't send a run to an
+  account outside it.
+
+An account is **eligible** for a launch, a resume or a switch when it is enabled, bound to the space, of the run's
+harness, and has no open hold in any space. Among eligible accounts, SpaceMan picks by priority, then by the fewest live
+runs on the account, then by binding order. A switch never moves a run to an account that is held.
+
+The latest 5-hour and 7-day windows of each account (from the status line) are shown on the usage API and in the CLI.
+They don't yet decide which account a run uses; see [the headroom gate](#launch-headroom-gate-not-built-yet).
+
 ## Moving a run to another account
 
 With failover on, a run that reaches its usage limit also **moves to another account** of its pool (the space's
@@ -75,6 +102,29 @@ session** there:
 
 Every move is recorded with its outcome (succeeded, failed, fell back to waiting, cancelled), audited and published as
 `fleet.account_switch.*` events. Claude Code only; Codex runs aren't moved yet.
+
+## When the whole pool is at its limit
+
+When every account of the run's pool (its role's pool, or the space's bindings) has a hold that hasn't reset, there is
+no account to move to. The run then waits for the pool's **earliest reset**, not its own account's. An account whose
+hold has no known reset counts as still limited and is left out of that earliest reset. When no reset in the pool is
+known, the wait uses the usual time, and the run is tried again then.
+
+Control gets one message naming the pool's accounts and when the run resumes. The people get one informational human
+action per space, harness, role and limit window, titled *Every claude-code account of the `<role>` pool is at its
+usage limit*. It isn't raised for a single limited account, for a pool that still has a free account, or for a
+move. A notice that can't be raised before its window passes is dropped, so it never announces a reset that has
+already happened.
+
+## Launch headroom gate: not built yet
+
+Planned: a setting `usage_limit_min_headroom_percent` (off by default) that would keep a **new** run (a launch, a fresh
+resume, or a move's resume) off an account whose known window use leaves less than that share free. When no eligible
+account passed, the start would wait, as an exhausted account does today. Running agents would never be moved for
+headroom.
+
+This is **not in this release**. There is no setting for it, and new runs start on the first eligible account of their
+pool, whatever its windows show. Running runs are moved only when they reach their limit.
 
 ## Short waits: kept alive
 
@@ -132,6 +182,36 @@ This needs the connection's service-principal token (`usage.read`; see
 from time to time like any hold with an unknown reset. A gateway run is kept alive for at most 30 minutes before it is
 parked, because Claude Code doesn't wait for a gateway by itself.
 
+## Harbor Pilot is for third-party models only
+
+Harbor Pilot routes a run's model traffic through a gateway, for **third-party models**. Subscription accounts don't
+go through it, and account switching and pools don't apply to it: a gateway run is never moved to another account, and
+a space routed through Harbor Pilot never falls back to a direct account. A gateway run that reaches its limit follows
+[the gateway's own rules](#runs-through-harbor-pilot). Choosing a Harbor Pilot route per role, to pick a cheaper model,
+isn't built yet.
+
+## Usage page, API and CLI
+
+The space's usage page (totals by role, account and model, the switches, and the windows of the accounts) is **web UI:
+coming**. Until it ships, the same figures are on the API and in the CLI. The Limits page's **Usage limits** card and
+each run's usage card remain in the web UI.
+
+- **Usage over time** (tokens first; the cost is a list-price estimate, labelled as one):
+  `GET /api/v1/spaces/{space_id}/usage/series` (group by `role`, `account`, `model` or `harness`),
+  `GET /api/v1/accounts/{account_id}/usage` (group by `space`, `role` or `model`, in the spaces you can read), and the
+  space and run totals `GET /api/v1/spaces/{space_id}/usage` and `GET /api/v1/spaces/{space_id}/runs/{run_id}/usage`.
+  CLI: `spaceman usage space`, `spaceman usage account <account>`, `spaceman space usage`, `spaceman run usage`.
+- **Windows:** `GET /api/v1/accounts/{account_id}/windows` and `GET /api/v1/spaces/{space_id}/account-windows`. CLI:
+  `spaceman account windows <account>` and `spaceman account space-windows --space <space>`.
+- **Pools:** `GET /api/v1/spaces/{space_id}/account-pools` and `PUT /api/v1/spaces/{space_id}/account-pools/{role}`
+  (with `If-Match` once the space has a pool). CLI: `spaceman account pool list` and `spaceman account pool set`.
+- **Bindings and priority:** `PUT /api/v1/spaces/{space_id}/accounts`, or `spaceman account set-space`.
+- **Holds and waits:** `spaceman limits holds` and `spaceman limits waits` for a space, `spaceman account holds` for an
+  account in every space.
+
+A space's usage needs the permission to read its runs. The account views count only the spaces you can read, so they
+never include another space's rows.
+
 ## Who is told
 
 **Control** gets one message when one of its runs is kept alive at its limit and one when the limit clears; one when a
@@ -139,7 +219,8 @@ run is parked, saying when it resumes and when its task would be given back; and
 Don't relaunch or reassign a parked run's task: its wait brings it back. See
 [Control and workers](./control).
 
-**People** are told only about long waits. When an account (or the Harbor Pilot gateway) is held until a reset more
+**People** are told about two things: a long wait for one account, and a whole pool at its limit (see
+[above](#when-the-whole-pool-is-at-its-limit)). For a long wait, when an account (or the Harbor Pilot gateway) is held until a reset more
 than **12 hours** away (`usage_limit_notify_after_hours`), typically a weekly limit, the space gets one **human action**:
 an informational message from SpaceMan ("Usage limits") with normal priority, in the space's Needs-you list. It names
 the account, the reset time, and how many runs (and tasks) are waiting on it, and says what you can do (below).
@@ -165,7 +246,8 @@ Usually nothing: if the work can wait, the waits bring it back. Otherwise:
   This clears it in your space only: launches on the account stay refused while another space still holds it. With
   `account:write`, **Clear in every space** (`spaceman account clear-holds <account>`) clears the account's holds in
   all spaces.
-- **Add capacity:** bind another account of the same harness to the space and turn on usage-limit failover.
+- **Add capacity:** bind another account of the same harness to the space and turn on usage-limit failover. To keep a
+  role on its own accounts, give it a [role pool](#accounts-and-pools).
 
 Resuming, releasing and clearing in a space need the permission that launches runs there (operators and admins), and
 each is audited. `spaceman limits holds` and `spaceman limits waits` list a space's holds and waits.
@@ -190,6 +272,16 @@ overrides per space ([Limits and budgets](./limits)).
   Every test of this feature is simulated: scripted node reports, a fake harness, a fake clock and a fake Harbor Pilot.
   The gateway side was also checked against a real Harbor Pilot demo installation, with a scripted node. Resuming a
   real parked session, and resuming it under another real account (failover), are not verified.
+- **Switching isn't verified with two real accounts.** A move, its resume under another account and a whole pool at its
+  limit are tested with simulated accounts and a scripted node only. Whether a session resumes under a different real
+  claude.ai account is not checked yet.
+- **A move ends the old process.** Background shells and subagents of the old run end with it, and the new run's prompt
+  cache starts cold, which costs an extra uncached request.
+- **Headroom gate: not built.** See [above](#launch-headroom-gate-not-built-yet). New runs start on the first eligible
+  account of the pool.
+- **Pool order ignores utilisation.** Priority, then the fewest live runs, then binding order decide; the 5-hour and
+  7-day windows are shown, not used to choose.
+- **Web UI: coming** for the usage page, the switches list and the pools editor. Use the API or the CLI.
 - **Codex isn't covered.** Codex runs are never detected at their limit, so they are neither kept alive nor parked, and
   they open no hold. A Codex launch through a Harbor Pilot connection that a Claude Code run found exhausted is still
   refused while the hold is open.
