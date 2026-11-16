@@ -272,6 +272,8 @@ var LimitRanges = map[string][2]int64{
 	// Account switching (ADR-0090): minutes of a near reset that a run waits for, and switches per instance per day.
 	"usage_limit_wait_if_reset_within": {0, 1440},
 	"usage_limit_switch_max_per_day":   {0, 50},
+	// Launch-time headroom gate (ADR-0090): the percentage of every known window a new run needs free (0: off).
+	"usage_limit_min_headroom_percent": {0, 100},
 }
 
 // TerminalLimitFloor is the smallest value other than 0 that the terminal_cols and terminal_rows limits accept.
@@ -293,7 +295,8 @@ func (c *Config) LimitValues() map[string]int64 {
 		"terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows,
 		"usage_limit_failover": l.UsageLimitFailover, "usage_limit_keep_alive_max_minutes": l.UsageLimitKeepAliveMaxMinutes,
 		"usage_limit_max_wait_hours": l.UsageLimitMaxWaitHours, "usage_limit_notify_after_hours": l.UsageLimitNotifyAfterHours,
-		"usage_limit_wait_if_reset_within": l.UsageLimitWaitIfResetWithin, "usage_limit_switch_max_per_day": l.UsageLimitSwitchMaxPerDay}
+		"usage_limit_wait_if_reset_within": l.UsageLimitWaitIfResetWithin, "usage_limit_switch_max_per_day": l.UsageLimitSwitchMaxPerDay,
+		"usage_limit_min_headroom_percent": l.UsageLimitMinHeadroomPercent}
 }
 
 func (v *validator) limits(c *Config) {
