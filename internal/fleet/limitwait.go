@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -100,6 +101,9 @@ type LimitWaitEvent struct {
 	// Switch is the account switch a park or resume belongs to (ADR-0090): control hears one message per switch, at its
 	// resume, instead of the parked and resumed messages.
 	Switch *AccountSwitch
+	// PoolExhausted is set on a park when every account of the run's pool is limited (ADR-0090 decision 7): the wait
+	// resumes at the pool's earliest reset.
+	PoolExhausted *PoolExhausted
 }
 
 // Limit-wait changes.
@@ -264,7 +268,15 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 			return nil, err
 		}
 	}
-	w.ResumeAt = waitResumeAt(now, lim, hold, w.Attempts, ul.KeepAliveMax).UnixMicro()
+	resumeAt := waitResumeAt(now, lim, hold, w.Attempts, ul.KeepAliveMax)
+	var exhausted *PoolExhausted
+	if scope, _, _, ok := limitScope(r, lim.kind); sw == nil && ok && scope == LimitScopeAccount {
+		// Every account of the pool limited: wait for the earliest reset of the pool, not this account's own.
+		if resumeAt, exhausted, err = svc.poolWaitTx(ctx, tx, ul, r.SpaceID, r.Harness, r.Role, resumeAt); err != nil {
+			return nil, err
+		}
+	}
+	w.ResumeAt = resumeAt.UnixMicro()
 	if sw != nil {
 		// A switch resumes at once on its target (ADR-0090 decision 1).
 		w.ResumeAt, w.SwitchToAccountID, w.AccountSwitchID = now.UnixMicro(), sw.ToAccountID, sw.ID
@@ -297,7 +309,7 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 		}
 	}
 	if svc.opts.OnLimitWaitTx != nil {
-		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitParked, Repark: repark, Switch: evSwitch}); err != nil {
+		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitParked, Repark: repark, Switch: evSwitch, PoolExhausted: exhausted}); err != nil {
 			return nil, err
 		}
 	}
@@ -869,8 +881,10 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 	var w db.LimitWait
 	var sp db.Space
 	claimed := false
+	poolResolve := false
 	err := svc.s.W().TxNamed(ctx, "fleet.limit_wait_claim", func(tx *store.Tx) error {
 		claimed = false
+		poolResolve = false
 		var err error
 		if w, err = tx.Q.GetLimitWait(ctx, waitID); err != nil {
 			return err
@@ -905,6 +919,15 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 		if sp, err = tx.Q.GetSpace(ctx, w.SpaceID); err != nil {
 			return err
 		}
+		// A resume with failover on that isn't a switch re-resolves its account through the run's pool. A role's pool
+		// never widens, so the launch doesn't name the old account: it could have left the pool since.
+		var spec LaunchSpec
+		direct := json.Unmarshal([]byte(w.LaunchJson), &spec) == nil && (spec.Gateway == nil || spec.Gateway.Kind == "")
+		if direct && w.SwitchToAccountID == "" && svc.ulSettings(ctx, tx.Q, w.SpaceID).Failover {
+			if poolResolve, err = accounts.RoleScoped(ctx, tx, w.SpaceID, w.Harness, w.Role); err != nil {
+				return err
+			}
+		}
 		// The parked run has ended: it no longer holds the space's single control slot (or anything else) as wanted.
 		if old, err := tx.Q.GetRun(ctx, w.RunID); err != nil {
 			return err
@@ -931,6 +954,9 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 	fresh := sp.NodeID != w.NodeID
 	in, err := waitLaunch(w, fresh)
 	if err == nil {
+		if poolResolve && w.SwitchToAccountID == "" && in.AccountRef != "" {
+			in.AccountRef = ""
+		}
 		in.inTx = func(ctx context.Context, tx *store.Tx, runID string) error {
 			return svc.resumedTx(ctx, tx, actor, w, runID, fresh)
 		}

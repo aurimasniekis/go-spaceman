@@ -704,6 +704,31 @@ func RoleScoped(ctx context.Context, tx *store.Tx, spaceID, harness, role string
 	return scoped, err
 }
 
+// PoolAccounts returns the usable accounts of the pool a run of role launches from, in the pool's order of binding:
+// the role's pool when it has one (never widened to the space's accounts), otherwise the space's enabled bindings for
+// the harness.
+func PoolAccounts(ctx context.Context, tx *store.Tx, spaceID, harness, role string) ([]string, error) {
+	bs, err := bindings(ctx, tx.Q, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	var usable []Binding
+	for _, b := range bs {
+		if b.Harness == harness && b.Enabled {
+			usable = append(usable, b)
+		}
+	}
+	cands, _, err := candidates(ctx, tx.Q, spaceID, harness, role, bs, usable)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, c.AccountID)
+	}
+	return out, nil
+}
+
 // candidate is an account of the pool in play: its priority there and its place in the space's binding order.
 type candidate struct {
 	Binding
