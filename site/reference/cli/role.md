@@ -119,7 +119,7 @@ Rename a role in place: its configuration, pending work and memory follow.
 spaceman role rename <name> [flags]
 ```
 
-API: `rename-space-role` ([HTTP API](../api)).
+API: `get-space-role`, `rename-space-role` ([HTTP API](../api)).
 
 Example:
 
@@ -130,6 +130,7 @@ spaceman role rename implementor --to implementor-hard --space payments
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--to` | string |  | the new name (required) |
 
