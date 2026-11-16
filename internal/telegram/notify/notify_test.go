@@ -454,6 +454,21 @@ func TestStartsAtTheNewestChange(t *testing.T) {
 	}
 }
 
+// A change made before Run has its start position is history, so callers wait for Ready before producing one.
+func TestReadyMeansTheStartPositionIsRead(t *testing.T) {
+	e := newEnv(t, 1)
+	stop := e.run(nil)
+	defer stop()
+	select {
+	case <-e.n.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("Ready was not closed after Run started")
+	}
+	if e.feed.latests.Load() == 0 {
+		t.Error("Ready closed before the start position was read")
+	}
+}
+
 func TestWindowIsBounded(t *testing.T) {
 	e := newEnv(t, 2)
 	stop := e.run(nil)
