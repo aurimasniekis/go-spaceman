@@ -27,8 +27,10 @@ func (svc *Service) belowHeadroom(ctx context.Context, q *db.Queries, ul UsageLi
 		return false, time.Time{}, nil
 	}
 	used, resets, known, err := svc.opts.AccountHeadroom(ctx, q, accountID)
-	if err != nil || !known {
-		return false, time.Time{}, err
+	// Fail open: a ledger that can't be read, or has no usage, leaves the account eligible. A window whose reset has
+	// passed is stale and no longer counts.
+	if err != nil || !known || (!resets.IsZero() && !resets.After(svc.now())) {
+		return false, time.Time{}, nil
 	}
 	return 100-used < float64(ul.MinHeadroomPercent), resets, nil
 }

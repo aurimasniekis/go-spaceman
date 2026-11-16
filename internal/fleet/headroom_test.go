@@ -191,3 +191,17 @@ func TestHeadroomGateSwitchTarget(t *testing.T) {
 		t.Fatalf("target %q", id)
 	}
 }
+
+// A window whose reset has passed no longer counts, and a ledger error leaves the account eligible.
+func TestHeadroomGateStaleWindowAndLedgerError(t *testing.T) {
+	e := headroomEnv(t, 20, &usageStub{used: map[string]float64{"acc_1": 99}, reset: map[string]time.Duration{"acc_1": -time.Minute}})
+	if r, err := e.launch("spc_a", ""); err != nil || r.Launch.AccountRef != "acc_1" {
+		t.Fatalf("stale window: %v %+v", err, r)
+	}
+	e.svc.opts.AccountHeadroom = func(context.Context, *db.Queries, string) (float64, time.Time, bool, error) {
+		return 99, time.Time{}, true, context.DeadlineExceeded
+	}
+	if r, err := e.launch("spc_a", ""); err != nil || r.Launch.AccountRef != "acc_1" {
+		t.Fatalf("ledger error: %v %+v", err, r)
+	}
+}
