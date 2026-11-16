@@ -4469,6 +4469,120 @@
         ],
         "type": "object"
       },
+      "FleetAccountSwitch": {
+        "additionalProperties": false,
+        "properties": {
+          "armed_until": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cause": {
+            "enum": [
+              "usage_limit",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "from_account_id": {
+            "type": "string"
+          },
+          "from_run_id": {
+            "type": "string"
+          },
+          "harness": {
+            "enum": [
+              "claude-code",
+              "codex"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "instance_id": {
+            "type": "string"
+          },
+          "limit_kind": {
+            "type": "string"
+          },
+          "limit_resets_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "limit_wait_id": {
+            "type": "string"
+          },
+          "new_run_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_kind": {
+            "enum": [
+              "control",
+              "worker",
+              "kb",
+              "dreamer",
+              "diagnostic"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "parked",
+              "resumed",
+              "succeeded",
+              "failed",
+              "fell_back",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "to_account_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "usage_limit_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "instance_id",
+          "role",
+          "run_kind",
+          "harness",
+          "from_run_id",
+          "from_account_id",
+          "cause",
+          "limit_kind",
+          "state",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "FleetContinuity": {
         "additionalProperties": false,
         "properties": {
@@ -11079,6 +11193,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/CatalogSkill"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-space-account-switchesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-space-account-switchesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetAccountSwitch"
             },
             "type": "array"
           }
@@ -26922,6 +27060,49 @@
         "summary": "Set a role's pool",
         "tags": [
           "accounts"
+        ]
+      }
+    },
+    "/spaces/{space_id}/account-switches": {
+      "get": {
+        "description": "The runs moved to another account of their pool at a usage limit (ADR-0090), newest first, with their state and the fixed reason of one that fell back or failed. Identifiers, kinds and times only.",
+        "operationId": "list-space-account-switches",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-space-account-switchesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's account switches",
+        "tags": [
+          "runs"
         ]
       }
     },

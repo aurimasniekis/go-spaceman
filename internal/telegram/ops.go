@@ -217,6 +217,7 @@ var Ops = map[string]api.TelegramClass{
 	"list-space-git-ssh-keys":       api.TelegramExcluded,
 	"list-space-human-policies":     api.TelegramExcluded,
 	"list-space-limit-waits":        api.TelegramExcluded,
+	"list-space-account-switches":   api.TelegramExcluded,
 	"list-space-mcp-grants":         api.TelegramExcluded,
 	"list-space-repositories":       api.TelegramExcluded,
 	"list-space-roles":              api.TelegramExcluded,

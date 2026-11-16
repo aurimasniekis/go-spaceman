@@ -48,6 +48,10 @@ export const keys = {
   spaceGitKeys: (space: string) => ['git-ssh-keys', 'space', space] as const,
   accountKinds: ['account-kinds'] as const,
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
+  accountSwitches: (space: string) => ['account-switches', space] as const,
+  rolePools: (space: string) => ['role-pools', space] as const,
+  accountWindows: (space: string) => ['account-windows', space] as const,
+  spaceUsage: (space: string, bucket: string, groupBy: string, from: string, to: string) => ['space-usage', space, bucket, groupBy, from, to] as const,
   messages: (space: string) => ['messages', space] as const,
   /** Under keys.messages, so invalidating a space's messages refreshes it too. */
   scheduledMessages: (space: string) => ['messages', space, 'scheduled'] as const,
@@ -406,6 +410,51 @@ export const useSpaceAccounts = (space: string) =>
     queryKey: keys.spaceAccounts(space),
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/accounts', { params: { path: { space_id: space } }, signal })).items,
   })
+
+/** A space's account switches, newest first (ADR-0090). */
+export const useAccountSwitches = (space: string) =>
+  useQuery({
+    queryKey: keys.accountSwitches(space),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/account-switches', { params: { path: { space_id: space } }, signal })).items,
+  })
+
+/** The role pools of a space (AS-T2): the accounts a role may use at a usage limit, in order. */
+export const useRolePools = (space: string) =>
+  useQuery({
+    queryKey: keys.rolePools(space),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/account-pools', { params: { path: { space_id: space } }, signal })),
+  })
+
+/** The latest 5-hour and 7-day windows of the accounts bound to a space, as the last run on each reported them. */
+export const useAccountWindows = (space: string) =>
+  useQuery({
+    queryKey: keys.accountWindows(space),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/account-windows', { params: { path: { space_id: space } }, signal })).items,
+  })
+
+/** A space's token usage over time from the ledger. Tokens are the primary unit; cost is the harness's own list-price estimate. */
+export const useSpaceUsage = (space: string, bucket: 'hour' | 'day', groupBy: 'role' | 'account' | 'model' | 'harness', from: string, to: string) =>
+  useQuery({
+    queryKey: keys.spaceUsage(space, bucket, groupBy, from, to),
+    queryFn: async ({ signal }) => {
+      // One page holds a whole range for any normal space; follow the cursor so totals and rows never disagree.
+      const items = [] as NonNullable<Awaited<ReturnType<typeof usagePage>>>['items']
+      let first: Awaited<ReturnType<typeof usagePage>> | undefined
+      let cursor: string | undefined
+      for (let i = 0; i < 20; i++) {
+        const page = await usagePage(space, { bucket, group_by: groupBy, from, to, cursor, limit: 200 }, signal)
+        first ??= page
+        items.push(...page.items)
+        cursor = page.next_cursor
+        if (!cursor) break
+      }
+      return { ...first!, items, next_cursor: cursor }
+    },
+  })
+
+async function usagePage(space: string, query: { bucket: 'hour' | 'day'; group_by: 'role' | 'account' | 'model' | 'harness'; from: string; to: string; cursor?: string; limit: number }, signal: AbortSignal) {
+  return unwrap(await api.GET('/spaces/{space_id}/usage/series', { params: { path: { space_id: space }, query }, signal }))
+}
 
 /** A space's recent messages and how many wait for operators. */
 export const useMessages = (space: string) =>
