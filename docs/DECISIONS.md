@@ -2864,6 +2864,22 @@
   `storetest`) and stays 100 ms without it; `SM_TEST_TX_MAX` still wins unscaled. The non-race runs (local
   `make check-fast`, coverage) keep enforcing HP-DB-004 at its original value, and `make race`, CI and release already
   set 500 ms to 1 s, so no run that was strict becomes looser.
+- **Update, 2026-11-16, load-scaled bound (not security-relevant; supersedes "`SM_TEST_TX_MAX` still wins unscaled" in the 2026-11-15 update):** with `-cover` and no race detector, at a load of
+  about 40 on 32 CPUs, ordinary transactions (`human.create`, `human.respond`, `human.policy_set`, about 20 ms of CPU)
+  held the lock 100-136 ms and tripped the guard in `internal/human` and `internal/auth`. A hold is wall-clock time, so
+  CPU starvation lengthens it without any slow work in the transaction. When a hold exceeds `MaxTxDuration` (whatever `SM_TEST_TX_MAX` sets it to, not only the 100 ms default), the
+  guard now reads `/proc/loadavg` and compares the hold with the bound times `1 + r` (capped at 8), where `r` is the
+  one-minute load average over the CPU count, and only when `r > 1`. The instantaneous run queue is not used: it counts
+  the test binary's own parallel goroutines, so a heavy-parallel run would loosen its own guard. Rationale: a
+  thread gets about `1/r` of a CPU, and SMT and cache sharing cost about as much again. The 100 ms bound applies when
+  `SM_TEST_TX_MAX` isn't set (without the race detector). The bound stays as it is on an idle machine, on a machine with
+  `r <= 1`, wherever `/proc/loadavg` is missing, and when `SM_TEST_TX_STRICT=1` is set. CI runs strict
+  (`SM_TEST_TX_STRICT=1`) in every job that runs the guard, so the scaling is for the shared node only. It applies to an explicit `SM_TEST_TX_MAX` as well, because `make check` and CI
+  set one (a first version that skipped explicit values did not help the gate: `fleet.limit_wait_claim` held 580 ms
+  against the Makefile's 500 ms at that load). The guard's own tests use `storetest.OpenStrict`.
+  A transaction that really is slow still fails on an idle or moderately loaded machine, and everywhere CI
+  runs (strict); only a shared machine whose one-minute load is over its CPU count gets the margin. The alternative,
+  raising the number, was rejected because it loosens the idle case too. `TestBudget` could not be reproduced; only its mapping-write bound, which depends on elapsed time, now says so.
 - **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
   the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
   tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock

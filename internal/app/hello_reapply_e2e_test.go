@@ -14,8 +14,12 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
-// helloRuns is the number of ended runs the node's journal re-reports in every hello.
-const helloRuns = 400
+// helloRuns is the number of ended runs the node's journal re-reports in every hello. The first hello ends every one
+// of them through the single writer, one transaction and a set of run-ended hooks each, which cost about 0.1 s per
+// run under -race and several times that on a loaded machine (the test took 400 s under -race -count=2 there).
+// What the test asserts, that a hello of unchanged runs writes nothing, holds at any count above a handful, so it is
+// kept at a size that makes the first hello affordable.
+const helloRuns = 120
 
 // Incident regression (a node with a long journal reconnecting): every hello re-reports every run in the node's
 // journal, ended ones included. A report that changes nothing must write nothing: no version bump and no change-feed

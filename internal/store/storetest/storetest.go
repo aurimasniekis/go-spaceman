@@ -17,7 +17,7 @@ import (
 
 // MaxTxDuration is the longest a write transaction may hold the write lock in tests (Hallpass HP-DB-004). Time spent
 // waiting for the writer and SQLITE_BUSY retries does not count (ADR-0070).
-// SM_TEST_TX_MAX overrides it for slow runners; without the race detector the default matches the requirement. On
+// SM_TEST_TX_MAX overrides it for slow runners, and every bound stretches on an oversubscribed machine (effectiveMax); without the race detector the default matches the requirement. On
 // GitHub's hosted runners CI's coverage and race steps use 1s, its login-timing and fuzz jobs 250ms (ADR-0062).
 //
 // A binary built with the race detector defaults to RaceMaxTxDuration instead: the detector slows the pure-Go SQLite
@@ -35,6 +35,19 @@ var MaxTxDuration = func() time.Duration {
 	}
 	return 100 * time.Millisecond
 }()
+
+// The bound stretches on an overloaded machine. A hold is wall-clock time, and when more threads are runnable than
+// there are CPUs a 20 ms transaction can take 100+ ms without doing anything slow. When a hold exceeds the bound, the
+// guard reads the load (load.go) and, if the machine is oversubscribed, compares the hold with the bound times
+// loadScale instead. An idle or lightly loaded machine keeps the bound as is, and so does SM_TEST_TX_STRICT=1 (and
+// OpenStrict, for the guard's own tests). The scaling applies to an SM_TEST_TX_MAX value too, because `make check` and
+// CI set one.
+func effectiveMax(strict bool) time.Duration {
+	if strict || os.Getenv("SM_TEST_TX_STRICT") == "1" {
+		return MaxTxDuration
+	}
+	return time.Duration(float64(MaxTxDuration) * loadScale())
+}
 
 // RaceMaxTxDuration is MaxTxDuration's default in a binary built with the race detector; it is the value scripts/race.sh
 // uses.
@@ -69,12 +82,24 @@ func WithReaders(n int) Option { return func(o *store.Options) { o.Readers = n }
 // canceled or timed out (a canceled callback may hold the lock until it notices).
 func Open(t testing.TB, opts ...Option) *store.Store {
 	t.Helper()
+	return open(t, false, opts)
+}
+
+// OpenStrict is Open without the load scaling of the default bound. The guard's own tests use it, because they hold
+// the lock on purpose for twice MaxTxDuration.
+func OpenStrict(t testing.TB, opts ...Option) *store.Store {
+	t.Helper()
+	return open(t, true, opts)
+}
+
+func open(t testing.TB, strict bool, opts []Option) *store.Store {
+	t.Helper()
 	var mu sync.Mutex
 	o := store.Options{
 		DataDir: filepath.Join(t.TempDir(), "data"),
 		Readers: Readers,
 		TxObserver: func(name string, d time.Duration, err error) {
-			if d > MaxTxDuration && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if d > MaxTxDuration && d > effectiveMax(strict) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				mu.Lock()
 				defer mu.Unlock()
 				outcome := ""

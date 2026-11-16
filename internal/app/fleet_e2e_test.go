@@ -101,8 +101,26 @@ func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config
 		if e.c != nil {
 			_ = e.c.Close()
 		}
+		if err := removeAllRetry(e.agentDir); err != nil {
+			t.Logf("the agent directory did not empty before cleanup: %v", err)
+		}
 	})
 	return e
+}
+
+// removeAllRetry empties dir before t.TempDir's own cleanup removes it. The agent's run handlers (a git or KB support
+// session, a recording flush) can still be writing into its data directory for a moment after Agent.Run returned, and
+// a RemoveAll that meets such a write fails with "directory not empty", which t.TempDir reports as a test failure
+// (seen in TestCrossSpaceRequests on a loaded node). A few retries let the stragglers finish; a directory that never
+// empties is left to TempDir, which reports it as before.
+func removeAllRetry(dir string) (err error) {
+	for range 50 {
+		if err = os.RemoveAll(dir); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
 }
 
 // longLease makes leases last 30 s, for tests whose runs must survive restartCentral. With StoreReaders: 4 a restart
