@@ -6,8 +6,32 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Schema migration `0054_telegram_message_thread`** (the number may change before release): adds the nullable
+  `telegram_messages.message_thread_id`, the topic a card was sent in. It is applied on start and needs no action. A card
+  row from before it has no topic recorded and is edited in place as before.
+- **Chat layout.** Links start on `notification_defaults.threads = auto`, so a bot with topics enabled in BotFather moves each
+  chat to a topic per space at its next space message, with one announcement in the chat without a topic. To keep one chat,
+  set `threads` to `off`, per link or in the administrator defaults. **Topics the bot creates stay in users' chats**
+  whatever you set later: Telegram deletes a topic only together with its messages.
+
+### Added
+
+- Telegram cards are actionable and edited in place (ADR-0089): a question's options, Approve and Deny, Mark completed,
+  Acknowledge and Dismiss sit on the card, **More…** turns it into the full form and **Back** returns, and a resolved card
+  becomes one line with no buttons. Reminders, escalations and assignments are replies to the card. A card of a space you can
+  no longer see is edited to "No longer available here". A card outside its space's topic names the space.
+- Telegram home: `/needs` lists every readable space with its total, and a **Needs you** summary is pinned in the chat without a
+  topic and edited in place (at most once every 30 seconds). It counts only the spaces and action types the link may view.
+  **Known limit:** a `/needs` row opens a form; it doesn't link to the item's card yet.
+- A relink of the same chat by the same user reuses the topics of the revoked link, and a space's rename renames its topic.
+
 ### Changed
 
+- Telegram guide: the section "Topics mode" is now "Chat layout" (the old anchor `#topics-mode` is gone). It no longer
+  says a bound group gets notifier cards (it gets none: its replies and taps only), describes `/needs` as cross-space,
+  and the setup page has the BotFather steps for topics.
 - Telegram: the chat layout is chosen per link (ADR-0089). The new `notification_defaults.threads` setting (`auto`, `on`, `off`; default `auto`, which is on when the bot has topics enabled in BotFather) and a link's own override put every message about a space, needs-you cards included, in that space's topic; the digest and the "many changes" notice stay in the chat without a topic. The shared "Needs you" topic is no longer used: the bot posts a note in it once. The per-space `topics` flag and `topics_mode_default` are deprecated and have no effect. **Topics the bot creates stay in users' chats** when the layout is turned off again: Telegram can only delete a topic together with its messages.
 
 ## [0.1.6] - 2026-11-15
