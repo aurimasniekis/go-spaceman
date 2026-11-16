@@ -116,6 +116,8 @@ var Ops = map[string]api.TelegramClass{
 	"delete-space-human-policy":     api.TelegramExcluded,
 	"delete-space-repository":       api.TelegramExcluded,
 	"delete-space-role":             api.TelegramExcluded,
+	"rename-space-role":             api.TelegramExcluded,
+	"list-space-role-renames":       api.TelegramExcluded,
 	"delete-subscription":           api.TelegramExcluded,
 	"delete-xspace-peer":            api.TelegramExcluded,
 	"diff-prompt-versions":          api.TelegramExcluded,

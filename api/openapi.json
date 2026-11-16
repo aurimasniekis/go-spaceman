@@ -2546,6 +2546,62 @@
         ],
         "type": "object"
       },
+      "CatalogRoleRename": {
+        "additionalProperties": false,
+        "properties": {
+          "central_moved_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_done_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_message": {
+            "type": "string"
+          },
+          "node_state": {
+            "enum": [
+              "pending",
+              "done",
+              "not_needed"
+            ],
+            "type": "string"
+          },
+          "renamed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "renamed_by": {
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "from",
+          "to",
+          "renamed_at",
+          "renamed_by",
+          "node_state"
+        ],
+        "type": "object"
+      },
       "CatalogRoleTemplate": {
         "additionalProperties": false,
         "properties": {
@@ -13768,6 +13824,12 @@
             "description": "A sync is due or in flight",
             "type": "boolean"
           },
+          "preserved_folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "retries": {
             "format": "int64",
             "type": "integer"
@@ -15108,6 +15170,110 @@
         },
         "type": "object"
       },
+      "RenameSpaceRoleInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RenameSpaceRoleInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "new_name": {
+            "description": "The role's new name: a lowercase name such as implementor-hard, not used by a role or a memory collection of the space",
+            "maxLength": 48,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_name"
+        ],
+        "type": "object"
+      },
+      "RenamedSpaceRole": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RenamedSpaceRole.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "instructions": {
+            "description": "Space-specific text appended after the role's prompt",
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "prompt_id": {
+            "type": "string"
+          },
+          "prompt_pin": {
+            "type": "string"
+          },
+          "rename": {
+            "$ref": "#/components/schemas/CatalogRoleRename",
+            "description": "The rename; node_state is pending until the space's node has moved the role's memory"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "skills": {
+            "description": "Added to the template's skills; a pin here wins",
+            "items": {
+              "$ref": "#/components/schemas/CatalogSkillRef"
+            },
+            "type": "array"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rename",
+          "space_id",
+          "name",
+          "template_id",
+          "settings",
+          "skills",
+          "revision",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
       "Reply-messageRequest": {
         "additionalProperties": false,
         "properties": {
@@ -16045,6 +16211,30 @@
           "profiles",
           "prompts",
           "skills"
+        ],
+        "type": "object"
+      },
+      "RoleRenamesOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RoleRenamesOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogRoleRename"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -32439,6 +32629,49 @@
         ]
       }
     },
+    "/spaces/{space_id}/role-renames": {
+      "get": {
+        "description": "Each rename with the state of the node's memory move (pending, done or not_needed). A former role name can be followed to the role that carries it now.",
+        "operationId": "list-space-role-renames",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRenamesOut"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's role renames, newest first",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
     "/spaces/{space_id}/roles": {
       "get": {
         "operationId": "list-space-roles",
@@ -32680,6 +32913,77 @@
           }
         },
         "summary": "A role's effective configuration and where each value comes from",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/spaces/{space_id}/roles/{name}/rename": {
+      "post": {
+        "description": "Renames the role and every live reference to it in the space (MCP grants, knowledge-base and dream configuration, schedules, the human policy successor, human type permissions, the role's account pool, its memory, open tasks, unacknowledged messages, open knowledge-base requests and pending human notifications). Records of what happened (runs, usage, approvals, audit) keep the name they were written with. A role with live work is refused with 409 role_busy, listing what to stop or finish first; a target name already used by a role or a memory collection is 409 name_taken. `If-Match` is optional: with it, the role's revision must match (412 otherwise). `rename.node_state` is pending while the space's node has not yet moved the role's memory; launches of the role are held until then.",
+        "operationId": "rename-space-role",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (optional: without it the resource is created or overwritten) [optional]",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 48,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSpaceRoleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenamedSpaceRole"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename a role in place",
         "tags": [
           "roles"
         ]

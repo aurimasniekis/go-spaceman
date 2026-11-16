@@ -478,11 +478,13 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/role-templates/{template_id}` | `get-role-template` | A role template (by ID or slug) |
 | `PUT` | `/role-templates/{template_id}` | `save-role-template` | Create (template_id "new") or update a role template |
 | `GET` | `/spaces/{space_id}/role-options` | `list-role-options` | Templates, profiles and prompts a space role can use (names only) |
+| `GET` | `/spaces/{space_id}/role-renames` | `list-space-role-renames` | A space's role renames, newest first |
 | `GET` | `/spaces/{space_id}/roles` | `list-space-roles` | A space's roles |
 | `DELETE` | `/spaces/{space_id}/roles/{name}` | `delete-space-role` | Remove a role from the space |
 | `GET` | `/spaces/{space_id}/roles/{name}` | `get-space-role` | One of a space's roles |
 | `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
 | `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
+| `POST` | `/spaces/{space_id}/roles/{name}/rename` | `rename-space-role` | Rename a role in place |
 | `POST` | `/spaces/{space_id}/starter-roles` | `add-starter-roles` | Give the space the starter roles it does not have yet |
 | `GET` | `/starter-roles` | `list-starter-roles` | The starter roles and whether each one's template still exists |
 
