@@ -344,8 +344,8 @@ func (c StoreCursors) Load(ctx context.Context) (int64, time.Time, bool, error) 
 	}
 	seq, err1 := strconv.ParseInt(seqS, 10, 64)
 	at, err2 := strconv.ParseInt(atS, 10, 64)
-	if err1 != nil || err2 != nil || seq < 0 {
-		return 0, time.Time{}, false, nil
+	if bad := errors.Join(err1, err2); bad != nil || seq < 0 {
+		return 0, time.Time{}, false, nil //nolint:nilerr // an unreadable value is "none saved"
 	}
 	return seq, time.UnixMicro(at), true, nil
 }
