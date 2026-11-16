@@ -5605,6 +5605,45 @@
   - Retention periods are the fixed ones of Q9 (not per-space limits): hourly buckets 90 days, then rolled into daily buckets
     by whole UTC days, daily 730 days, window samples 30 days, closed holds, finished waits and finished switches 180 days.
 
+### ADR-0091 — Backups and verifications are bounded by a progress watchdog
+- **Status:** Accepted, 2026-11-16. No migration. New configuration keys `backups.stall_timeout` and
+  `backups.max_duration`; the backup status API gains `current` and `items[].stage`.
+- **Context:** a manual backup stayed `running` with `busy` set for almost an hour, at 1–2 % CPU and almost no disk I/O,
+  with nothing logged, and blocked every later backup until a restart. The backup goroutine ran under the service
+  context, which has no deadline, and only the role-memory flush bounded its own wait (one minute plus grace). Every other
+  stage relied on a context to bound it: `VACUUM INTO`, `git bundle`, and above all the S3 transfers (artifact-store
+  objects are streamed into the backup, the backup is uploaded object by object). The S3 transport bounds the dial, the
+  TLS handshake and the response headers only, and with `ForceAttemptHTTP2` and no health pings a silently dead
+  connection can block a body read or write indefinitely. Idle CPU and disk fit a goroutine waiting on the network; the
+  exact call could not be confirmed after the fact because the process was restarted without a goroutine dump.
+- **Decision:**
+  - Each backup and verification runs under a watchdog. It fails the run when its current stage makes **no progress for
+    10 minutes** (`backups.stall_timeout`, 1m to 24h), or when the run takes **more than 1 hour** in total
+    (`backups.max_duration`, 10m to 72h). Progress is a new stage, a file sealed, uploaded, fetched, checked or pruned,
+    or bytes read from or written to object storage, so a large transfer that is slow but moving is never stopped by the
+    stall limit; the stall limit is the main protection and the total is a backstop.
+  - The cause names the stage (`backup stopped in stage upload: no progress for 10m0s: …`). The outcome is recorded
+    under its own two-minute context derived from the service context, so a stopped run is still recorded as failed (a
+    shutdown still leaves it to `Recover`, which marks it interrupted), and `busy` is released when the goroutine ends.
+  - Each stage's start and end are logged at Info with the file count and duration; the status shows the current stage,
+    its start, its file count and the last progress.
+  - The S3 client sends HTTP/2 pings (`SendPingTimeout` = the client timeout, `PingTimeout` at most 15 s). They are set
+    through the standard library's `http.Transport.HTTP2` (`http.HTTP2Config`, Go 1.24+): one field, no
+    `golang.org/x/net/http2.ConfigureTransports` dependency, and HTTP/2 stays on (disabling `ForceAttemptHTTP2` would
+    also have removed the stall, but changes every artifact-store connection).
+- **Alternatives:** a fixed deadline per stage fails large but healthy installations (a bucket of recordings can take a
+  long time) or is too loose to help. A 10-minute stall is well above any pause a healthy stage has (the memory flush is
+  bounded at about 70 s, `VACUUM INTO` of a SpaceMan database takes seconds), and 1 hour is far above the longest healthy
+  backup seen (106 s); an installation copying a large S3 artifact store into its backups raises
+  `backups.max_duration`.
+- **Consequences:** a hung backup now fails within 10 minutes (at most 1 hour in total) and the next scheduled one is retried 15 minutes later.
+  `VACUUM INTO` reports no progress of its own, so a database whose snapshot takes more than 10 minutes would fail; that
+  is far beyond current sizes and would show up as a clear `stage snapshot` error. A blocked local file read (a hung
+  filesystem) cannot be interrupted by a context; the run is then still stuck, but the status and logs show the stage.
+- **Evidence:** `internal/backup` `TestServiceStalledStageFailsAndReleasesBusy` (a target whose upload blocks: the run
+  fails naming `upload`, the row is `failed`, `busy` clears, the next backup succeeds; the status shows the stage while
+  stuck), `TestServiceMaxDurationFailsBackup`, `TestWatchProgressAndStall`, `TestWatchStopIsNotAStall`.
+
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9
   on 2026-11-13 by accepting every proposed default (decision 10, K-15). Implemented in UL-2..UL-10 for Claude Code

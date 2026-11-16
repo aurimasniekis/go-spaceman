@@ -5635,6 +5635,8 @@ export interface components {
             requested_by?: string;
             /** Format: int64 */
             schema_version?: number;
+            /** @enum {string} */
+            stage?: "" | "memory_flush" | "snapshot" | "files" | "objects" | "memory" | "manifest" | "upload" | "record" | "prune" | "fetch" | "verify";
             /** Format: date-time */
             started_at: string;
             /** @enum {string} */
@@ -5668,6 +5670,18 @@ export interface components {
             stale: components["schemas"]["BackupStaleMemory"][];
             /** Format: date-time */
             started_at?: string;
+        };
+        BackupProgress: {
+            /** @description The backup being made or verified */
+            id: string;
+            /** Format: date-time */
+            last_progress_at: string;
+            /** @enum {string} */
+            stage: "memory_flush" | "snapshot" | "files" | "objects" | "memory" | "manifest" | "upload" | "record" | "prune" | "fetch" | "verify";
+            /** Format: int64 */
+            stage_files: number;
+            /** Format: date-time */
+            stage_started_at: string;
         };
         BackupRestoreState: {
             /** Format: date-time */
@@ -5718,6 +5732,7 @@ export interface components {
              */
             readonly $schema?: string;
             busy: boolean;
+            current?: components["schemas"]["BackupProgress"];
             excluded: string[];
             included: string[];
             interval: string;

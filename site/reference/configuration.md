@@ -143,6 +143,8 @@ Configures where central keeps backups and the backup schedule (SM-STORE-005, AD
 | `backups.interval` | `24h0m0s` | `SPACEMAN_BACKUPS_INTERVAL` | The time between scheduled backups (15m to 168h). |
 | `backups.keep_last` | `7` | `SPACEMAN_BACKUPS_KEEP_LAST` | How many complete backups retention keeps at least (the newest ones; 1-1000). |
 | `backups.max_age` | `0` | `SPACEMAN_BACKUPS_MAX_AGE` | Deletes backups older than this beyond the newest one (0 keeps them, bounded by keep_last only). |
+| `backups.stall_timeout` | `10m0s` | `SPACEMAN_BACKUPS_STALL_TIMEOUT` | Fails a backup or verification whose current stage makes no progress (no new stage, no file done and no bytes moved to or from object storage) for this long (1m to 24h, ADR-0091). |
+| `backups.max_duration` | `1h0m0s` | `SPACEMAN_BACKUPS_MAX_DURATION` | Fails a backup or verification that runs longer than this in total (10m to 72h, ADR-0091). |
 | `backups.target` | `local` | `SPACEMAN_BACKUPS_TARGET` | "local" (default) or "s3". |
 | `backups.local_dir` | (empty) | `SPACEMAN_BACKUPS_LOCAL_DIR` | The local target directory (default &lt;data_dir&gt;/backups). Prefer another disk. |
 | `backups.s3.endpoint` | (empty) | `SPACEMAN_BACKUPS_S3_ENDPOINT` | The S3 API endpoint URL (required for s3). |

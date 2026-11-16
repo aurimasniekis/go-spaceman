@@ -187,6 +187,8 @@ func (v *validator) backups(b BackupsConfig, prod bool) {
 	if b.KeepLast < 1 || b.KeepLast > 1000 {
 		v.add("backups.keep_last must be within 1..1000, got %d", b.KeepLast)
 	}
+	v.durationRange("backups.stall_timeout", b.StallTimeout, time.Minute, 24*time.Hour)
+	v.durationRange("backups.max_duration", b.MaxDuration, 10*time.Minute, 72*time.Hour)
 	if b.MaxAge != 0 && b.MaxAge.D() < b.Interval.D() {
 		v.add("backups.max_age must be 0 (no age limit) or at least backups.interval")
 	}

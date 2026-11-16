@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgtest"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
 )
@@ -220,5 +223,153 @@ func TestSpaceOf(t *testing.T) {
 	}
 	if _, ok := m.SpaceOf(ctx, "tgl_other", a); ok {
 		t.Error("another link's lookup must not see this link's topics")
+	}
+}
+
+// Inside a sender, the topic creation is a second Bot API call, so it is charged against the chat's bucket like any other.
+func TestTopicCreationIsChargedThroughTake(t *testing.T) {
+	_, c, _, mk := setup(t)
+	clk := clock.NewFake(time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC))
+	s, err := sender.New(sender.Options{Client: c, Workers: 1, Clock: clk, After: func(d time.Duration) <-chan time.Time {
+		clk.Advance(d)
+		ch := make(chan time.Time, 1)
+		ch <- clk.Now()
+		return ch
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	m := mk()
+	start := clk.Now()
+	done := make(chan error, 1)
+	err = s.Enqueue(sender.Message{ChatID: chat, Priority: sender.NeedsYou, Done: func(err error) { done <- err },
+		Send: func(ctx context.Context, c *botapi.Client) error {
+			// The dispatch and two Takes use the chat's burst of 3. The creation is the free first call of Send, so
+			// it goes out at once; the SendMessage after it is the call that waits.
+			for range 2 {
+				if err := sender.Take(ctx); err != nil {
+					return err
+				}
+			}
+			_, err := m.Send(ctx, c, "tgl_1", chat, "spc_1", botapi.SendMessageParams{Text: "x"})
+			return err
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("send did not finish")
+	}
+	// The SendMessage after the free creation finds an empty bucket refilling at 1/s: it waits a second.
+	if el := clk.Now().Sub(start); el < time.Second {
+		t.Errorf("creation + send took %v of virtual time, want at least 1s", el)
+	}
+}
+
+// gated starts a sender whose waits block until release is closed, so a Take can be held mid-wait.
+func gated(t *testing.T, c *botapi.Client, release <-chan struct{}, hold *atomic.Bool) *sender.Sender {
+	t.Helper()
+	clk := clock.NewFake(time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC))
+	s, err := sender.New(sender.Options{Client: c, Workers: 1, Clock: clk, After: func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			if hold.Load() {
+				<-release
+			}
+			clk.Advance(d)
+			ch <- clk.Now()
+		}()
+		return ch
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = s.Run(ctx) }()
+	return s
+}
+
+// enqueueRecreate queues a send that drains the chat's burst, so that when the topic is gone the re-creation waits in Take.
+func enqueueRecreate(t *testing.T, s *sender.Sender, m *topics.Manager, hold *atomic.Bool, started chan<- struct{}, done chan<- error) {
+	t.Helper()
+	err := s.Enqueue(sender.Message{ChatID: chat, Priority: sender.NeedsYou, Done: func(err error) { done <- err },
+		Send: func(ctx context.Context, c *botapi.Client) error {
+			for range 2 {
+				if err := sender.Take(ctx); err != nil {
+					return err
+				}
+			}
+			hold.Store(true) // the drain waits above passed; from here a wait blocks
+			started <- struct{}{}
+			_, err := m.Send(ctx, c, "tgl_1", chat, "spc_1", botapi.SendMessageParams{Text: "x"})
+			return err
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A topic creation waiting on the buckets must not hold the link's lock: SpaceOf (called for every topic message) answers.
+func TestSpaceOfDoesNotBlockWhileCreationWaits(t *testing.T) {
+	srv, c, _, mk := setup(t)
+	m := mk()
+	first := send(t, m, c, "spc_1", "one").MessageThreadID
+	other := send(t, m, c, "spc_2", "two").MessageThreadID
+	srv.DeleteTopic(chat, first)
+	release := make(chan struct{})
+	var hold atomic.Bool
+	s := gated(t, c, release, &hold)
+	started, done := make(chan struct{}, 1), make(chan error, 1)
+	enqueueRecreate(t, s, m, &hold, started, done)
+	<-started
+	time.Sleep(100 * time.Millisecond) // let the send reach the wait
+	answered := make(chan string, 1)
+	go func() { id, _ := m.SpaceOf(context.Background(), "tgl_1", other); answered <- id }()
+	select {
+	case id := <-answered:
+		if id != "spc_2" {
+			t.Errorf("SpaceOf = %q", id)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("SpaceOf blocked behind a topic creation that waits on the buckets")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two sends that both find the topic gone and wait for the buckets create one topic between them.
+func TestConcurrentRecreationsWaitingInTakeCreateOneTopic(t *testing.T) {
+	srv, c, _, mk := setup(t)
+	m := mk()
+	first := send(t, m, c, "spc_1", "one").MessageThreadID
+	srv.DeleteTopic(chat, first)
+	release := make(chan struct{})
+	started, done := make(chan struct{}, 2), make(chan error, 2)
+	// Two senders (one per message), so both sends run at once and both wait.
+	var hold1, hold2 atomic.Bool // one per sender: a sender's drain waits must pass while the other one is held
+	enqueueRecreate(t, gated(t, c, release, &hold1), m, &hold1, started, done)
+	enqueueRecreate(t, gated(t, c, release, &hold2), m, &hold2, started, done)
+	<-started
+	<-started
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(srv.Calls("createForumTopic")); n != 2 { // the first one, and one re-creation
+		t.Errorf("%d topics created, want 2", n)
 	}
 }

@@ -227,6 +227,11 @@ type BackupsConfig struct {
 	KeepLast int `yaml:"keep_last"`
 	// MaxAge deletes backups older than this beyond the newest one (0 keeps them, bounded by keep_last only).
 	MaxAge Duration `yaml:"max_age"`
+	// StallTimeout fails a backup or verification whose current stage makes no progress (no new stage, no file done
+	// and no bytes moved to or from object storage) for this long (1m to 24h, ADR-0091).
+	StallTimeout Duration `yaml:"stall_timeout"`
+	// MaxDuration fails a backup or verification that runs longer than this in total (10m to 72h, ADR-0091).
+	MaxDuration Duration `yaml:"max_duration"`
 	// Target is "local" (default) or "s3".
 	Target string `yaml:"target"`
 	// LocalDir is the local target directory (default <data_dir>/backups). Prefer another disk.

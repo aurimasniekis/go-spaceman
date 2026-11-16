@@ -215,6 +215,8 @@ export async function createTerminal(el: HTMLElement, cols = 120, rows = 40): Pr
   term.open(el)
   watchKeys(term)
   setInputMode(term, false)
+  noteSize(term, cols, rows)
+  term.onResize(({ cols, rows }) => noteSize(term, cols, rows))
   installProbe()
   live.set(term, (ghostty as unknown as { memory?: WebAssembly.Memory }).memory)
   return term
@@ -332,6 +334,55 @@ export function skipBlankCells(proto: object = CanvasRenderer.prototype) {
     if (blank && !this.hoveredLinkRange && !(cell.hyperlink_id > 0 && cell.hyperlink_id === this.hoveredHyperlinkId)) return
     return renderCellText.call(this, cell, ...rest)
   }
+}
+
+/** Erases the screen and the scrollback and homes the cursor: what a terminal created in a reused instance is cleaned with. */
+export const ERASE_ALL = '\x1b[2J\x1b[3J\x1b[H'
+
+/** The most columns and rows each terminal has had: freed memory can hold cells out to that size. */
+const largest = new WeakMap<Terminal, { cols: number; rows: number }>()
+
+function noteSize(term: Terminal, cols: number, rows: number) {
+  const m = largest.get(term)
+  if (!m) largest.set(term, { cols, rows })
+  else {
+    m.cols = Math.max(m.cols, cols)
+    m.rows = Math.max(m.rows, rows)
+  }
+}
+
+/** The part of a wasm terminal eraseFreed needs. */
+export interface Erasable {
+  resize(cols: number, rows: number): void
+  write(data: string): void
+}
+
+/**
+ * Erases a new wasm terminal out to the largest size the terminal has had, then returns it to its own size. A new
+ * terminal starts out with the freed one's cells (wasm.test.ts) and erasing at its own size clears only those: a later
+ * resize to a wider or taller screen (the tail's size record) brought the old cells back.
+ */
+export function eraseFreed(w: Erasable, cols: number, rows: number, high: { cols: number; rows: number }) {
+  const big = high.cols > cols || high.rows > rows
+  if (big) w.resize(Math.max(cols, high.cols), Math.max(rows, high.rows))
+  w.write(ERASE_ALL)
+  if (big) w.resize(cols, rows)
+}
+
+/**
+ * Terminal.reset() frees the terminal and creates another one in the same WebAssembly instance, and a new terminal
+ * starts out with the freed one's cells (wasm.test.ts): rows the new output has not drawn yet showed the old screen,
+ * sometimes (a seek or a "load earlier" drew the lines it wrote and, below them, what the screen showed before). The
+ * new terminal is erased out to the largest size this one has had (eraseFreed), so a later resize shows nothing old.
+ */
+export function resetTerminal(term: Terminal) {
+  term.reset()
+  const w = (term as unknown as { wasmTerm?: Erasable }).wasmTerm
+  const high = largest.get(term) ?? { cols: term.cols, rows: term.rows }
+  if (w) {
+    eraseFreed(w, term.cols, term.rows, high)
+    term.scrollToBottom()
+  } else term.write(ERASE_ALL)
 }
 
 /** The parts of a ghostty-web 0.4.0 Terminal that holdDrawing reaches (private in its typings). */

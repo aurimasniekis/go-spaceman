@@ -17,8 +17,8 @@ vi.mock('@/components/AnchorLink', () => ({ AnchorLink: ({ to, children }: { to:
 vi.mock('@/components/StatusBadge', () => ({ SpaceState: () => null }))
 // The list itself is ActionList's job (its own tests cover it); here it shows which rows the home picked, and in what order.
 vi.mock('@/features/human/ActionList', () => ({
-  ActionList: ({ actions, spaceNames }: { actions: HumanAction[]; spaceNames?: Record<string, string> }) => (
-    <ul aria-label="Human actions">{actions.map((a) => <li key={a.id}>{a.title} · {spaceNames?.[a.space_id]}</li>)}</ul>
+  ActionList: ({ actions, spaceNames, noBulk }: { actions: HumanAction[]; spaceNames?: Record<string, string>; noBulk?: boolean }) => (
+    <ul aria-label="Human actions" data-no-bulk={String(!!noBulk)}>{actions.map((a) => <li key={a.id}>{a.title} · {spaceNames?.[a.space_id]}</li>)}</ul>
   ),
 }))
 
@@ -59,6 +59,27 @@ describe('TgHome Needs you', () => {
       'Action n2 · Beta',
       'Action n3 · Alpha',
     ])
+  })
+
+  it('lists without the bulk bar, since the home only opens rows', () => {
+    state.pending = { total: 1, counts: {}, items: [act('a', 'normal', '2026-11-01T00:00:00Z')] }
+    show()
+    expect(screen.getByRole('list', { name: 'Human actions' }).getAttribute('data-no-bulk')).toBe('true')
+  })
+
+  it('ranks an unknown priority as normal, between high and low', () => {
+    state.pending = {
+      total: 4,
+      counts: {},
+      items: [
+        act('low1', 'low', '2026-11-01T00:00:00Z'),
+        act('odd1', 'bogus' as HumanAction['priority'], '2026-11-02T00:00:00Z'),
+        act('high1', 'high', '2026-11-04T00:00:00Z'),
+        act('norm1', 'normal', '2026-11-03T00:00:00Z'),
+      ],
+    }
+    show()
+    expect(rows()).toEqual(['Action high1 · Alpha', 'Action odd1 · Alpha', 'Action norm1 · Alpha', 'Action low1 · Alpha'])
   })
 
   it('links See all to /human and keeps Needs attention as a secondary line', () => {

@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { Ghostty, type GhosttyTerminal } from 'ghostty-web'
 
+import { eraseFreed } from './ghostty'
+
 /**
  * The ghostty-web behaviour createTerminal works around (ghostty.ts), against the WebAssembly module it loads: in one
  * shared instance, a terminal created after another was freed starts out with the freed terminal's cells, and freed
@@ -42,6 +44,31 @@ describe('ghostty-web 0.4.0 WebAssembly instances', () => {
     const g = await instance()
     viewAndLeave(g, runA)
     expect(screen(nextTerminal(g))).toContain('run A secret line')
+  })
+
+  it('are erased by eraseFreed, in the order a reset runs: reset, erase, size record, a wider resize', async () => {
+    const g = await instance()
+    viewAndLeave(g, runA)
+    // Terminal.reset(): a new terminal at the current size (80×24) after the page had been at 200×120.
+    const t = g.createTerminal(80, 24, { scrollbackLimit: 10_000 })
+    eraseFreed(t, 80, 24, { cols: 200, rows: 120 })
+    t.resize(200, 120) // the tail's size record
+    t.write('run B\r\n')
+    expect(screen(t)).not.toContain('run A')
+    expect(screen(t)).toContain('run B')
+    // And narrower, then wider again.
+    t.resize(80, 24)
+    t.resize(200, 120)
+    expect(screen(t)).not.toContain('run A')
+  })
+
+  it('leave the old screen to a wider resize when erased only at the new size', async () => {
+    const g = await instance()
+    viewAndLeave(g, runA)
+    const t = g.createTerminal(80, 24, { scrollbackLimit: 10_000 })
+    eraseFreed(t, 80, 24, { cols: 80, rows: 24 })
+    t.resize(200, 120)
+    expect(screen(t)).toContain('run A')
   })
 
   it('give a terminal of its own instance an empty screen', async () => {

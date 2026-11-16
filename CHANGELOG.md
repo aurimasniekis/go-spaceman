@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- A backup or verification that stops making progress no longer hangs with `busy` set until central restarts. A watchdog
+  fails it after 10 minutes without progress or 1 hour in total (new keys `backups.stall_timeout` and
+  `backups.max_duration`), records it as failed with an error naming the stage,
+  and the next backup can start. HTTP/2 connections to object storage now send health pings, so a silently dead
+  connection no longer blocks a transfer forever.
+
+### Added
+
+- The backup status shows where a running backup or verification is (`current`: stage, stage start, files done, last
+  progress; `stage` on the running item), and central logs every stage's start and end at Info.
+
+## [0.1.7] - 2026-11-16
+
+Release on top of v0.1.6. It is a central-only release: the node agent is unchanged, so agents can stay on v0.1.6. It has
+no migrations, no node protocol change and no configuration change. It fixes the web terminal's reset and "load earlier"
+behavior and the Telegram sender and topics, and it polishes the Mini App home and the links on Telegram cards.
+
+### Added
+
+- A Telegram card for a human action whose body is cut at the message cap now has an **Open in app** button, which opens that
+  action's page in the Mini App. Cards of other kinds still have no button.
+
+### Changed
+
+- The Mini App home's **Needs you** list is compact: its rows only open, so it shows no selection boxes and no bulk bar.
+  The full human-action list keeps its bulk actions.
+
+### Fixed
+
+- After a terminal reset (a seek, or **load earlier**), the web terminal no longer shows the old screen in rows the new output
+  has not drawn yet. The new terminal is erased out to the largest size the old one had, so a later resize shows nothing old.
+- **Load earlier** puts the viewer's lines back only once the catch-up has reached the record the screen ended on, so they no
+  longer end up at the bottom of the scrollback.
+- A live terminal whose stream ends or is refused while **load earlier** waits for its records no longer stays "reloading":
+  the button comes back.
+- Telegram's urgent sends (callback answers) are no longer starved by long cards. A quarter of the sender's worker slots (two
+  by default) are kept for Interactive messages, so a multi-message send waiting in the rate limits cannot hold every slot.
+- Creating a Telegram topic is now charged to the sender's rate limits like any other Bot API call. The wait for that budget
+  no longer holds the link's topics lock, so the link's other topic messages do not queue behind it.
+- A human action with a priority the Mini App does not know yet sorts as normal in the **Needs you** list. Before, it had no
+  rank in the sort.
+
 ## [0.1.6] - 2026-11-15
 
 ### Added
@@ -1875,7 +1919,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...v0.1.4

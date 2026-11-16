@@ -230,7 +230,8 @@ type env struct {
 	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
 	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
 	authz      notify.Authorizer
-	tp         *topics.Manager // topics mode (nil: off)
+	tp         *topics.Manager              // topics mode (nil: off)
+	appURL     func(notify.Resource) string // the notifier's Options.AppURL (nil: no continuation button)
 }
 
 func linkFor(i int) notify.Link {
@@ -298,6 +299,7 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 			return ch
 		}}
 	opts.Topics = e.tp
+	opts.AppURL = e.appURL
 	if m != nil {
 		opts.Store = m
 	}

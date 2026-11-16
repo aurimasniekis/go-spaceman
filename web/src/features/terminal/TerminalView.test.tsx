@@ -20,6 +20,11 @@ const fake = vi.hoisted(() => {
     onResize: () => sub,
     onData: () => sub,
     focus: () => {},
+    cols: 80,
+    getScrollbackLength: () => 0,
+    buffer: { active: { type: 'normal' } },
+    scrollToBottom: () => {},
+    scrollLines: vi.fn(),
   }
   /** The feeds started by seeks: each applies its records only when the test finishes it. */
   const feeds: { finish(): void }[] = []
@@ -33,6 +38,7 @@ vi.mock('./ghostty', () => ({
   followCursor: () => () => {},
   holdDrawing: () => () => {},
   regularCell: () => null,
+  resetTerminal: (t: { reset(): void }) => t.reset(),
   rowHeight: () => 0,
   scrollWithWheelAndTouch: () => () => {},
   setInputMode: (t: { options: { disableStdin?: boolean } }, on: boolean) => void (t.options.disableStdin = !on),
@@ -221,5 +227,93 @@ describe('tails (ADR-0081)', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  describe('loading earlier output', () => {
+    const streams: { url: string; readyState: number; onerror: (() => void) | null; on: Record<string, (ev: MessageEvent) => void> }[] = []
+    class FakeEventSource {
+      static CLOSED = 2
+      readyState = 1
+      onopen: (() => void) | null = null
+      onerror: (() => void) | null = null
+      on: Record<string, (ev: MessageEvent) => void> = {}
+      constructor(public url: string) {
+        streams.push(this)
+      }
+      addEventListener(kind: string, fn: (ev: MessageEvent) => void) {
+        this.on[kind] = fn
+      }
+      close() {}
+    }
+    const tail = { from: 7, skipped_bytes: 5000, cols: 0, rows: 0, modes: [], gaps: 0, truncated: false }
+    const send = (n: number, kind: string, data: unknown) => act(() => streams[n].on[kind](new MessageEvent(kind, { data: JSON.stringify(data) })))
+    const reloading = (c: HTMLElement) => c.querySelector('[data-earlier]')?.getAttribute('data-reloading')
+
+    /** A live terminal that drew records 7 and 8 and shows the load-earlier button; it is clicked, opening a second stream. */
+    async function loadEarlier() {
+      streams.length = 0
+      vi.stubGlobal('EventSource', FakeEventSource)
+      const { container } = render(<MantineProvider><TerminalView spaceId="spc_1" runId="run_1" mode="live" /></MantineProvider>)
+      await flush()
+      send(0, 'tail', tail)
+      send(0, 'record', out(7, 'x'))
+      send(0, 'record', out(8, 'y'))
+      await act(async () => fake.feeds[0].finish())
+      // The fake terminal never moves its cursor or scrolls: the box's scroll event runs the check that offers the button.
+      fireEvent.scroll(container.querySelector('[data-earlier]')!)
+      await flush(50)
+      fireEvent.click(screen.getByTestId('load-earlier'))
+      await flush()
+      expect(streams).toHaveLength(2)
+      expect(reloading(container)).toBe('true')
+      return container
+    }
+
+    it('keeps waiting while only the tail records arrived, and finishes at the record the screen ended on', async () => {
+      try {
+        const container = await loadEarlier()
+        send(1, 'tail', { ...tail, from: 3 })
+        await act(async () => fake.feeds[1].finish())
+        expect(reloading(container)).toBe('true')
+        expect(screen.queryByTestId('load-earlier')).toBeNull()
+        send(1, 'record', out(8, 'y'))
+        await act(async () => fake.feeds[1].finish())
+        expect(reloading(container)).toBe('false')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('does not cancel a reload whose records are queued when the end arrives before they are drawn', async () => {
+      try {
+        const container = await loadEarlier()
+        vi.mocked(fake.term.scrollLines).mockClear()
+        send(1, 'tail', { ...tail, from: 3 })
+        send(1, 'record', out(8, 'y'))
+        send(1, 'end', {})
+        expect(reloading(container)).toBe('true')
+        expect(fake.term.scrollLines).not.toHaveBeenCalled()
+        await act(async () => fake.feeds[1].finish())
+        expect(fake.term.scrollLines).toHaveBeenCalled()
+        expect(reloading(container)).toBe('false')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('stops waiting when the stream ends for good before the records came', async () => {
+      try {
+        const container = await loadEarlier()
+        send(1, 'tail', { ...tail, from: 3 })
+        await act(async () => fake.feeds[1].finish())
+        expect(reloading(container)).toBe('true')
+        send(1, 'end', { reason: 'forbidden' })
+        expect(reloading(container)).toBe('false')
+        await flush(50)
+        expect(screen.getByTestId('load-earlier')).toBeTruthy()
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
   })
 })
