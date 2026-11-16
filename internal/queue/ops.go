@@ -476,9 +476,17 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID st
 		return Policy{}, err
 	}
 	triggers, _ := json.Marshal(p.IncidentTriggers)
+	var fx effects
 	err := svc.s.W().TxNamed(ctx, "queue.policy", func(tx *store.Tx) error {
+		fx = effects{}
 		if _, err := tx.Q.GetSpace(ctx, spaceID); errors.Is(err, sql.ErrNoRows) {
 			return apperr.New(apperr.CodeNotFound, "space not found")
+		}
+		old := svc.defaultPolicy()
+		if row, err := tx.Q.GetQueuePolicy(ctx, spaceID); err == nil {
+			old = policyFromRow(row)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
 		}
 		if err := tx.Q.UpsertQueuePolicy(ctx, db.UpsertQueuePolicyParams{SpaceID: spaceID, MaxActive: int64(p.MaxActive), IncidentInsertion: p.IncidentInsertion,
 			IncidentPreempts: b2i(p.IncidentPreempts), EscalationReorders: b2i(p.EscalationReorders), IncidentTriggersJson: string(triggers),
@@ -489,15 +497,57 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID st
 		if err := svc.changes.Record(ctx, tx, spaceID, "space", spaceID, "updated", 0); err != nil {
 			return err
 		}
-		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "queue.policy_updated", Target: audit.Target{Type: "space", ID: spaceID},
+		auditID, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "queue.policy_updated", Target: audit.Target{Type: "space", ID: spaceID},
 			Details: map[string]any{"max_active": p.MaxActive, "incident_insertion": p.IncidentInsertion, "incident_preempts": p.IncidentPreempts,
 				"escalation_reorders": p.EscalationReorders, "incident_triggers": p.IncidentTriggers, "incident_untrusted": p.IncidentUntrusted,
 				"incident_workers": p.IncidentWorkers, "incident_capacity": p.IncidentCapacity, "incident_resume": p.IncidentResume}})
-		return err
+		if err != nil {
+			return err
+		}
+		if changes := policyChanges(old, p); len(changes) > 0 {
+			fx.note(spaceID, "queue-policy:"+auditID, "Queue policy changed: "+strings.Join(changes, ", "),
+				"The queue policy changed ("+strings.Join(changes, "; ")+"). Work that is now eligible can be launched; see spaceman_queue_next. Audit event "+auditID+".")
+		}
+		return nil
 	})
 	if err != nil {
 		return Policy{}, err
 	}
+	svc.after(ctx, actor, &fx)
 	_, pol, err := svc.List(ctx, spaceID)
 	return pol, err
+}
+
+// policyFromRow converts a stored queue policy.
+func policyFromRow(p db.QueuePolicy) Policy {
+	out := Policy{MaxActive: int(p.MaxActive), IncidentInsertion: p.IncidentInsertion, IncidentPreempts: p.IncidentPreempts == 1,
+		EscalationReorders: p.EscalationReorders == 1, IncidentTriggers: []string{}, IncidentUntrusted: p.IncidentUntrusted,
+		IncidentWorkers: p.IncidentWorkers, IncidentCapacity: int(p.IncidentCapacity), IncidentResume: p.IncidentResume, Version: p.Version}
+	_ = json.Unmarshal([]byte(p.IncidentTriggersJson), &out.IncidentTriggers)
+	slices.Sort(out.IncidentTriggers)
+	return out
+}
+
+// policyChanges describes the fields that differ between two policies as "field old → new" (field names and values
+// only, nothing else). normalizePolicy has already sorted the new triggers.
+func policyChanges(o, n Policy) []string {
+	var out []string
+	o.IncidentTriggers = slices.Sorted(slices.Values(o.IncidentTriggers))
+	add := func(name string, a, b any) {
+		if a != b {
+			out = append(out, fmt.Sprintf("%s %v → %v", name, a, b))
+		}
+	}
+	add("max_active", o.MaxActive, n.MaxActive)
+	add("incident_insertion", o.IncidentInsertion, n.IncidentInsertion)
+	add("incident_preempts", o.IncidentPreempts, n.IncidentPreempts)
+	add("escalation_reorders", o.EscalationReorders, n.EscalationReorders)
+	if !slices.Equal(o.IncidentTriggers, n.IncidentTriggers) {
+		out = append(out, fmt.Sprintf("incident_triggers [%s] → [%s]", strings.Join(o.IncidentTriggers, ","), strings.Join(n.IncidentTriggers, ",")))
+	}
+	add("incident_untrusted", o.IncidentUntrusted, n.IncidentUntrusted)
+	add("incident_workers", o.IncidentWorkers, n.IncidentWorkers)
+	add("incident_capacity", o.IncidentCapacity, n.IncidentCapacity)
+	add("incident_resume", o.IncidentResume, n.IncidentResume)
+	return out
 }
