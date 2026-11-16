@@ -13,6 +13,7 @@ var (
 	profileCols  = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("HARNESS", "harness"), c("MODEL", "model"), c("REVISION", "revision")}
 	templateCols = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("KIND", "kind"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("REVISION", "revision")}
 	starterCols  = []col{c("ROLE", "name"), c("KIND", "kind"), c("TEMPLATE", "template"), c("TEMPLATE ID", "template_id"), c("DESCRIPTION", "description")}
+	renameCols   = []col{c("ID", "id"), c("FROM", "from"), c("TO", "to"), c("NODE", "node_state"), c("RENAMED", "renamed_at"), c("BY", "renamed_by")}
 	roleCols     = []col{c("NAME", "name"), c("TEMPLATE", "template_id"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("MODEL", "model"), c("REVISION", "revision")}
 	connCols     = []col{c("ID", "id"), c("NAME", "name"), c("URL", "url"), c("STREAM", "stream"), c("CLIENT", "client_id"), c("ENABLED", "enabled")}
 	etplCols     = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("BUILTIN", "builtin"), {head: "VERSIONS", fn: countOf("versions")}}
@@ -233,6 +234,11 @@ func (a *App) roleCmd() *cobra.Command {
 		a.cmd(opts{use: "preview", short: "A role's effective configuration and where each value comes from", op: "preview-space-role", scoped: true,
 			args: pos("name")}),
 		a.cmd(opts{use: "delete", short: "Remove a role from a space", op: "delete-space-role", scoped: true, args: pos("name"), done: "Role removed."}),
+		a.cmd(opts{use: "rename", short: "Rename a role in place: its configuration, pending work and memory follow", op: "rename-space-role", scoped: true,
+			args: pos("name"), form: func(f *form) { f.str("to", "new_name", "the new name (required)") }, note: renameNote,
+			example: "spaceman role rename implementor --to implementor-hard --space payments"}),
+		a.cmd(opts{use: "renames", short: "A space's role renames, newest first, and the state of each memory move", op: "list-space-role-renames", scoped: true,
+			view: view{items: "items", cols: renameCols, empty: "No role renames."}}),
 		a.cmd(opts{use: "add-starters", short: "Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer)",
 			op: "add-starter-roles", scoped: true, example: "spaceman role add-starters --space payments"}),
 		tpl,
@@ -439,4 +445,15 @@ func (a *App) approvalPolicyCmd() *cobra.Command {
 		a.cmd(opts{use: "delete", short: "Remove a policy (approvals it produced stay usable until they expire)", op: "delete-approval-policy",
 			args: pos("policy"), done: "Approval policy removed."}),
 	)
+}
+
+// renameNote tells the operator what a rename left to do: "Role renamed.", and when the node still has to move the
+// role's memory, that launches of the role wait for it.
+func renameNote(m map[string]any) string {
+	out := "Role renamed."
+	if rn, _ := m["rename"].(map[string]any); rn != nil && rn["node_state"] == "pending" {
+		node, _ := rn["node_id"].(string)
+		out += " The role's memory moves when node " + node + " reconnects and reports; launches of the role wait until then."
+	}
+	return out
 }

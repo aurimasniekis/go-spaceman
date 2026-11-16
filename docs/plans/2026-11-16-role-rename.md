@@ -182,7 +182,8 @@ Other facts:
 retries:
 
 1. Validate `to` against the role regex. Load `space_roles(space, from)`; if it is missing, return 404. If an
-   `If-Match` revision is given and differs, return 412.
+   `If-Match` revision is given and differs, return 409 `precondition_failed`. (This departs from the earlier 412 on
+   purpose, to match the API's documented status contract; see §3.4.)
 2. **Blockers** (decision 2). Collect all of them, then fail once with the list (run ids, wait ids, `relocation`,
    `dream run …`).
 3. **Target free** (decision 3).
@@ -331,8 +332,9 @@ rename is refused during a relocation, decision 2). A node that is gone for good
   - Body `{new_name}`, optional `If-Match` (role revision).
   - Returns `200` with the renamed `SpaceRole` plus `rename: {id, node_state, node_id}`.
   - Rule: `InSpace(authz.SpaceConfigWrite)`, the same as save and delete; no step-up, matching delete, which loses more.
-  - Errors: 404 (no role), 409 (`role_busy` with the blockers; `name_taken`; `node_too_old`), 412 (revision), 400
-    (invalid or same name).
+  - Errors: 404 (no role), 409 (`role_busy` with the blockers; `name_taken`; `node_too_old`), 409 `precondition_failed`
+    (revision), 422 `validation_failed` (invalid or same name). This departs from the earlier 412 and 400 on purpose, to
+    match the API's documented status contract (`site/reference/api.md`).
 - `list-space-role-renames`: `GET /spaces/{space_id}/role-renames`, newest first, read rule `SpaceConfigRead`. The
   provider uses it to follow a rename made outside Terraform (§3.5), and the operator uses it to see a pending node
   move.
@@ -552,7 +554,9 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 
 ### T-L2: API and CLI tests (light)
 - **Goal:** API e2e tests in the `internal/app` style:
-  - 200, 404, 400 (same name), 409 `role_busy` (a running run of the role), 409 `name_taken`, 412 (stale If-Match);
+  - 200, 404, 422 (same name), 409 `role_busy` (a running run of the role), 409 `name_taken`, 409
+    `precondition_failed` (stale If-Match). These depart from the earlier 400 and 412 on purpose, to match the API's
+    documented status contract (§3.4);
   - viewer denied, operator allowed;
   - `list-space-role-renames` order.
 

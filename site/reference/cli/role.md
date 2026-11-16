@@ -14,6 +14,8 @@ Aliases: `roles`.
 | [`spaceman role list`](#spaceman-role-list) | A space's roles |
 | [`spaceman role options`](#spaceman-role-options) | Templates, profiles, prompts and skills a space role can use |
 | [`spaceman role preview`](#spaceman-role-preview) | A role's effective configuration and where each value comes from |
+| [`spaceman role rename`](#spaceman-role-rename) | Rename a role in place: its configuration, pending work and memory follow |
+| [`spaceman role renames`](#spaceman-role-renames) | A space's role renames, newest first, and the state of each memory move |
 | [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration) |
 | [`spaceman role template`](#spaceman-role-template) | Role templates: list, show, create, update, delete and the starter set |
 
@@ -104,6 +106,42 @@ spaceman role preview <name> [flags]
 ```
 
 API: `preview-space-role` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman role rename
+
+Rename a role in place: its configuration, pending work and memory follow.
+
+```sh
+spaceman role rename <name> [flags]
+```
+
+API: `rename-space-role` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman role rename implementor --to implementor-hard --space payments
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--to` | string |  | the new name (required) |
+
+## spaceman role renames
+
+A space's role renames, newest first, and the state of each memory move.
+
+```sh
+spaceman role renames [flags]
+```
+
+API: `list-space-role-renames` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

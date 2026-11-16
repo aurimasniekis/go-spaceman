@@ -155,6 +155,48 @@ configuration** shows what a launch of the role gets now and where each value co
 
 Launching a run with a configured role needs only the role's name; its template, profile and prompt fill in the rest.
 
+## Rename a role
+
+A space role can be renamed in place, so its configuration, pending work and memory stay with it. Deleting and re-creating
+a role under a new name would leave every copy of the old name behind.
+
+```sh
+spaceman role rename implementor --to implementor-hard --space payments
+spaceman role renames --space payments
+```
+
+The API is `POST /spaces/{space_id}/roles/{name}/rename` with `{"new_name": "…"}` (the same permission as saving a role;
+an optional `If-Match` with the role's revision), and `GET /spaces/{space_id}/role-renames` lists the renames. Over the
+administrator MCP the tools are `rename_space_role` (classified dangerous, like saving a role) and
+`list_space_role_renames`. Telegram does not offer role operations.
+
+**What moves.** In one transaction the rename changes the role and everything that still acts on its name: MCP grants,
+knowledge-base and dream configuration (including the role lists), schedules, the human policy's successor, human type
+permissions, the role's account pool, its memory collection, open tasks, messages to the role that have not been
+acknowledged, open knowledge-base requests and pending human notifications. Wildcards (`*`) in role lists are left alone.
+
+**What stays.** Records of what happened keep the name they were written with: runs and their manifests, usage, approvals,
+cross-space and knowledge-base history, human actions, inbox items, the audit log, and closed tasks and messages. Only where
+SpaceMan starts something again from a history row (the control run's restart and autostart) and for a dream's transcript
+filter does a former name resolve to the role that carries it now. A name that is a live role is never redirected, so a new
+role may reuse a name that was renamed away.
+
+**The role must be quiet.** A rename is refused with `409 role_busy`, which lists what to stop or finish first, while the
+role has a run that is not finished, an open usage-limit wait or account switch, a queued launch, an unfinished dream run
+in the space, or while the space is being relocated. A run carries the old name in its token, its memory path and its
+prompt, so renaming under it would split its routes and memory. A target name already used by a role or by a memory
+collection is `409 name_taken`; memory is never merged. A stale `If-Match` is `409 precondition_failed`, and an invalid or
+unchanged name is `422 validation_failed`. A node too old to move the role's memory makes the rename fail with `409 node_too_old`: upgrade the node first.
+
+**Memory moves with the role.** The central copy of the role's memory moves at once. The space's node moves its folder on
+its next contact, and `spaceman role renames` shows that move as `pending` until the node reports it (`done`, or
+`not_needed` for a space without a node). While it is pending, launches of the renamed role and dream runs in the space
+are held, with the node named in the reason, and a node that is offline keeps them held until it reconnects. Nothing the
+node wrote meanwhile is lost. See [Memory](memory.md).
+
+Role names also appear in other configuration you manage outside SpaceMan, for example in Terraform. Update those
+references to the new name.
+
 ## How values are combined
 
 Layers apply in this order, each overriding the previous one:

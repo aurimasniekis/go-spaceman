@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Upgrade notes
 
+- **Renaming a role needs nodes on the new protocol minor.** The rename moves the role's memory folder on the space's
+  node, so a space whose node is older is refused (`node_too_old`) until the node agent is upgraded.
 - **Schema migrations `0054_account_pools` to `0058_pool_exhausted_notices`** (account switching, ADR-0090): account
   pools, account switches, a run's failure class, the usage ledger and the pool-exhausted notices. They are applied on
   start, need no action and are forward-only: **take a backup first**.
@@ -31,6 +33,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Rename a space role in place** (ADR-0093). `POST /spaces/{space_id}/roles/{name}/rename`,
+  `spaceman role rename NAME --to NEW` and the administrator MCP tool `rename_space_role` (classified dangerous) rename a role and every
+  live reference to it in one transaction: MCP grants, knowledge-base and dream configuration, schedules, the human policy
+  successor, human type permissions, the account pool, memory, open tasks, unacknowledged messages, open knowledge-base
+  requests and pending notifications. History keeps the name it was written with. A busy role is refused (`409 role_busy`,
+  listing what to stop), as is a name already used by a role or a memory collection (`409 name_taken`); an invalid name is
+  `422 validation_failed` and a stale `If-Match` is `409 precondition_failed`. `GET /spaces/{space_id}/role-renames` and `spaceman role renames` list the renames and the state of each
+  memory move. Telegram does not offer them. See the roles guide.
 - **Memory conflicts close when reconciled** (ADR-0092). Control and the dreamer get `spaceman_memory_conflict_list` and
   `spaceman_memory_conflict_resolve` (control: any role of its space; a dreamer: the roles of its dream), audited as the
   run. A conflict also resolves by itself, as the system actor `memory-reconcile`, when an accepted checkpoint removes
