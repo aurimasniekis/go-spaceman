@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // renameNodeEnv is a central with one enrolled node, a space with the starter roles, and helpers to drive a role
@@ -271,18 +272,30 @@ func TestRoleRenameCommandRedeliveryAndMinor(t *testing.T) {
 	}
 }
 
-// A rename while the node is away commits at once; its memory.rename is delivered when the node connects.
+// A rename while the node is away commits at once; its memory.rename is delivered when the node connects, at the lease
+// generation of that connection.
 func TestRoleRenameWhileNodeOffline(t *testing.T) {
 	t.Parallel()
 	e := newRenameNodeEnv(t)
-	n, _ := e.connect(proto.MaxMinor) // records minor 14
+	n, first := e.connect(proto.MaxMinor) // records minor 14
 	_ = n.conn.Close(websocket.StatusNormalClosure, "")
 	eventually(t, "node disconnected", func() bool { nd, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !nd.Connected })
 	rn, err := e.rename("reviewer", "critic")
 	if err != nil || rn.NodeState != catalog.RenameNodePending {
 		t.Fatalf("offline rename: %+v %v", rn, err)
 	}
+	// The lease is revoked meanwhile (as a pause or a relocation away and back would), so the next grant has a newer
+	// generation than the one the command was queued with: it goes out at the new one, or the node would refuse it.
+	if err := e.c.Store.W().TxNamed(e.ctx, "test.revoke", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(e.ctx, `UPDATE execution_leases SET state = 'revoked' WHERE space_id = ?`, e.spaceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	n, gen := e.connect(proto.MaxMinor)
+	if gen <= first {
+		t.Fatalf("the lease was granted again at generation %d, not after %d", gen, first)
+	}
 	c, p := n.memoryRename(t, proto.AckAccepted)
 	if c.Generation != gen || p.RenameID != rn.ID || c.IdempotencyKey != catalog.RenameCommandKey(rn.ID) {
 		t.Fatalf("command %+v %+v (generation %d)", c, p, gen)
