@@ -159,10 +159,22 @@ func TestTelegramThreadsHomeSummaryCounts(t *testing.T) {
 
 	c.question(t, alpha, "Second question")
 	c.question(t, beta, "Third question")
+	// Approvals are viewable by admins only, and the link is an operator: they are not counted, and a space with
+	// nothing else is not listed.
+	gamma := c.addSpace(t, "gamma", "Gamma space")
+	for _, sp := range []string{beta, gamma} {
+		expect(t, e.root.do("PUT", "/spaces/"+sp+"/human-type-permissions/approval", map[string]any{"view_role": "admin", "respond_role": "admin"}), 200)
+	}
+	for sp, n := range map[string]int{beta: 1, gamma: 2} {
+		for i := range n {
+			expect(t, e.root.do("POST", "/spaces/"+sp+"/human-actions", map[string]any{"type": "approval", "title": "Restricted approval " + strconv.Itoa(i),
+				"request": map[string]any{"action": "deploy"}}), 201)
+		}
+	}
 	e.h.clk.Advance(2 * notify.DefaultHomeEvery) // the summary is edited at most once per interval
 	eventuallyFor(t, "the summary counting three items", 30*time.Second, func() bool {
 		m := c.cardNow(t, home.MessageID)
-		return strings.HasPrefix(m.Text, "Needs you — 3") && strings.Contains(m.Text, "SSO space — 2") && strings.Contains(m.Text, "Beta space — 1")
+		return strings.HasPrefix(m.Text, "Needs you — 3") && strings.Contains(m.Text, "SSO space — 2") && strings.Contains(m.Text, "Beta space — 1") && !strings.Contains(m.Text, "Gamma")
 	})
 	if n := c.count("Needs you"); n != 1 {
 		t.Errorf("%d summaries in the chat, want the one edited in place", n)
