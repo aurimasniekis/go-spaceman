@@ -8,8 +8,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Upgrade notes
 
-- **Renaming a role needs nodes on the new protocol minor.** The rename moves the role's memory folder on the space's
-  node, so a space whose node is older is refused (`node_too_old`) until the node agent is upgraded.
+- **Renaming a role needs nodes on node protocol minor 14.** The rename moves the role's memory folder on the space's
+  node (`memory.rename`), so a space whose node last connected with an older agent, or never connected, is refused
+  (`409 node_too_old`) until the node agent is upgraded and has connected. Upgrade central first.
+- **Schema migration `0062_role_rename_failed`**: rebuilds `space_role_renames` to add the `failed` node state. It is
+  applied on start, needs no action and is forward-only.
 - **Schema migrations `0054_account_pools` to `0058_pool_exhausted_notices`** (account switching, ADR-0090): account
   pools, account switches, a run's failure class, the usage ledger and the pool-exhausted notices. They are applied on
   start, need no action and are forward-only: **take a backup first**.
@@ -41,6 +44,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   listing what to stop), as is a name already used by a role or a memory collection (`409 name_taken`); an invalid name is
   `422 validation_failed` and a stale `If-Match` is `409 precondition_failed`. `GET /spaces/{space_id}/role-renames` and `spaceman role renames` list the renames and the state of each
   memory move. Telegram does not offer them. See the roles guide.
+  The role's memory moves with it: central renames its repository right after the commit (after a backup that is
+  bundling memory, if one is) and finishes an interrupted move on the next access or at start, and the space's node gets
+  a durable `memory.rename` command (node protocol minor 14) and reports `memory.renamed`. The rename's `node_state` is
+  `pending` until then, `failed` with the node's reason if it could not move the folder, and `done` once it has; until it
+  is done, launches of the role and dream runs in the space are held, the space cannot be relocated, and central refuses
+  memory under the old name (`role renamed`) without creating a collection for it.
 - **Memory conflicts close when reconciled** (ADR-0092). Control and the dreamer get `spaceman_memory_conflict_list` and
   `spaceman_memory_conflict_resolve` (control: any role of its space; a dreamer: the roles of its dream), audited as the
   run. A conflict also resolves by itself, as the system actor `memory-reconcile`, when an accepted checkpoint removes

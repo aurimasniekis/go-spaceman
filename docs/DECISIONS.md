@@ -6203,8 +6203,8 @@
 
 ### ADR-0093 — A space role can be renamed in place; live references follow, history stays
 
-- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0010 (rename results),
-  protocol minor 14 (`memory.rename`, `memory.renamed`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
+- **Status:** Proposed, 2026-11-16. Central migrations 0061 (`space_role_renames`) and 0062 (the `failed` node state),
+  agent migration 0010 (rename results), protocol minor 14 (`memory.rename`, `memory.renamed`, `memory.renamed.ack`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
 - **Context:** a space role's name is its identity: the primary key of `space_roles`. It is also copied as text into
   grants, pools, KB and dream configuration, schedules, human policies and permissions, open tasks, messages and
   requests, memory collections (including the directory names of the central and node Git repositories) and the history
@@ -6286,6 +6286,43 @@
   - The **change feed** also records the rewritten messages and the memory collection.
   - The control supervisor gets the resolver through a hook, `Supervisor.RoleName`, which central wires to
     `Catalog.CurrentRoleName`. This follows the existing `ControlRole` hook.
+- **Implementation notes (T-H2, 2026-11-16):** central's memory move and the central half of protocol minor 14
+  (`internal/memory/rename.go`, `internal/proto/rolerename.go`, `internal/fleet/rolerename.go`). Where the code differs
+  from the plan, or adds to it:
+  - **The node move's state machine.** Central migration **0062** adds `failed` to `node_state`. The node's
+    `memory.renamed` report moves an open rename: `ok` → `done` (sets `node_done_at`; final), `error` → `failed`,
+    `deferred` → `pending`; each stores the node's message. A failed rename becomes done on a later `ok` (the node
+    retries at its next start, T-H3). A report on a done rename changes nothing. Pending and failed renames are **open**:
+    both hold launches of either name and dream launches in the space, block another rename of either name, refuse a
+    relocation of the space, and make central refuse memory under the old name. `node_too_old` is not a state: it is
+    refused at rename time, before anything is written, for a node whose stored `protocol_minor` is below 14 (also one
+    that never connected).
+  - **`memory.renamed.ack`** carries `error` for a rename that is unknown or not this node's, so the node stops sending
+    it. A report central could not store (a database error) gets no ack, so the node sends it again.
+  - **The command's generation.** `memory.rename` needs the space's lease like every non-stop command, but a rename can
+    commit while the node is away, and a lease granted after a revocation has a newer generation. So the hub sends it at
+    the space's **current** lease generation, and only on a connection that negotiated minor 14 and holds the lease;
+    otherwise it stays undelivered. A command the node refuses (`rejected`) is noted on the rename (`node_message`) and
+    queued again, with key `role-rename:<id>:<n>`, in the node's next connect transaction.
+  - **The resurrection guard also covers a reused name while the move is open.** The plan accepted the old name again
+    once `space_roles` had it. But while the node has not moved its folder, a sync under that name is still the renamed
+    role's history and would start the new role's collection with it. So memory under a former name is refused while
+    any rename away from it is open, and afterwards only while no role has the name.
+  - **Backups hold the moves** (`memory.Service.HoldMoves`, wired as `backup.Sources.HoldMemory`) from before the
+    database snapshot until the memory is bundled, so each bundle sits under the name its snapshot gives the collection.
+    The backup walks the disk, not the database, so without the hold a move between the listing and the bundling would
+    fail the backup or carry the repository under the wrong name. A rename that commits meanwhile records no
+    `central_moved_at`: the move runs when the backup releases the hold (or on the next access to the space's memory,
+    which waits for the release). A backup with the rename but not the move restores consistently, because the
+    start-up reconciler finishes the move on the restored disk.
+  - **`ensureMoved` is per space**, not per role: it finishes the space's unmoved renames in time order, so a chain
+    `a→b→c` interrupted before both moves ends with `c`. It runs before `Apply`, `Report`, `Files`, `File`, `History`
+    and `ExportBundles`; the start-up reconciler (`FinishAllRenames`) runs while central is built, before it serves
+    nodes. An error leaves the space's memory untouched by the caller.
+  - **`.retained` repositories are not in backups** (the bundler takes only `<space>/<role>.git`). They are leftovers
+    without a collection, kept on central's disk for an operator to look at.
+  - **The agent advertises minor 13 until T-H3** (`agentMaxMinor` in `internal/agent/agent.go`): a node that claimed 14
+    without moving its folder would hold a renamed role forever, while one at 13 makes central refuse the rename.
 
 ## 2. Open items and unresolved contracts
 

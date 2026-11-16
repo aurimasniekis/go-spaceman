@@ -186,13 +186,19 @@ role has a run that is not finished, an open usage-limit wait or account switch,
 in the space, or while the space is being relocated. A run carries the old name in its token, its memory path and its
 prompt, so renaming under it would split its routes and memory. A target name already used by a role or by a memory
 collection is `409 name_taken`; memory is never merged. A stale `If-Match` is `409 precondition_failed`, and an invalid or
-unchanged name is `422 validation_failed`. A node too old to move the role's memory makes the rename fail with `409 node_too_old`: upgrade the node first.
+unchanged name is `422 validation_failed`. A node too old to move the role's memory (one that last connected with an
+agent below node protocol 1.14, or never connected) makes the rename fail with `409 node_too_old`, and nothing changes:
+upgrade the node's agent and let it connect first.
 
-**Memory moves with the role.** The central copy of the role's memory moves at once. The space's node moves its folder on
-its next contact, and `spaceman role renames` shows that move as `pending` until the node reports it (`done`, or
-`not_needed` for a space without a node). While it is pending, launches of the renamed role and dream runs in the space
-are held, with the node named in the reason, and a node that is offline keeps them held until it reconnects. Nothing the
-node wrote meanwhile is lost. See [Memory](memory.md).
+**Memory moves with the role.** The central copy of the role's memory moves at once (if a backup is bundling memory at
+that moment, right after it). The space's node moves its folder when it next receives the rename, and
+`spaceman role renames` shows that move as `pending` until the node reports it: `done` once the folder has moved, or
+`failed` with the node's reason when it could not move it (the node tries again when its agent next starts).
+`not_needed` is a space without a node. While the move is `pending` or `failed`, launches of the role under either name
+and dream runs in the space are held, with the node named in the reason, and the space cannot be relocated; a node that
+is offline keeps them held until it reconnects. Nothing the node wrote meanwhile is lost: it wrote under the old folder
+name, which is the folder that moves, and central refuses that history under the old name (`role renamed`) without
+consuming it, so the node offers it again under the new name after its move. See [Memory](memory.md).
 
 Role names also appear in other configuration you manage outside SpaceMan, for example in Terraform. Update those
 references to the new name.

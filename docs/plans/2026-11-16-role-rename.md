@@ -475,6 +475,11 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 - **Risks:**
   - Lock ordering with `Apply`'s per-collection mutex (sort the keys).
   - The backup bundler's path listing.
+- **Done (2026-11-16, `feat/role-rename-memory`).** Deviations are in ADR-0093's T-H2 implementation notes: migration
+  0062 adds the `failed` node state; the hub sends the command at the space's current lease generation and re-queues
+  one the node refused; the guard also refuses a reused old name while the node move is open; a backup holds the moves
+  from its snapshot until it has bundled the memory (the bundler walks the disk, so the plan's "list from the DB" was
+  replaced by this hold).
 
 ### T-H3: node-side memory rename (hard)
 - **Goal:** the node half of §3.3:
@@ -498,6 +503,14 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 
   Instance checkouts still fetch and publish after the move. `make check-fast` passes.
 - **Depends on:** T-H2 (proto types).
+- **What T-H2 leaves for it:**
+  - raise `agentMaxMinor` (`internal/agent/agent.go`) to `proto.MaxMinor` once the handler exists;
+  - accept `memory.rename` with the lease at the command's generation (central sends the current one);
+  - answer `error` only for a move that failed, keep it journaled, retry it at the next agent start and report again
+    (central turns a failed rename done on a later `ok`, and pending on `deferred`);
+  - resend every unacknowledged `memory.renamed` on reconnect until `memory.renamed.ack` arrives; an ack with `error`
+    (unknown rename, or not this node's) also ends the resend;
+  - after the move, sync under the new name: central refuses the old name with `memory.ack{error, "role renamed"}`.
 - **Risks:**
   - The dream symlink layout. Central's dream blocker and the node busy check both cover it; add a test.
   - Lease checks for the command.
