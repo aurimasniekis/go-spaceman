@@ -5482,6 +5482,23 @@
   already knows). `spaces` are the readable spaces that have a thread in the link's `topics_json`. The Mini App's
   "Chat layout" control offers "A topic per space", "One chat" and "Automatic". All of it is simulated
   (`internal/telegram/tgtest`); the real-bot run is TG-14 (plan §6.3).
+  T4 (cards edited in place): a pure renderer, `internal/telegram/card`, draws every card (header with the space's name
+  outside its topic, bold title, meta line, body only at `full` and never for an enforced approval, the keyboard), for
+  the notifier and for the chat's redraw of a card. Quick actions by type use explicit `h<verb>:<space>:<action>` data;
+  More… (`hn`) shows the form on the card's own message and Back (`hz`) draws the card again; a settled card is one
+  compact line with an empty keyboard; a link that loses access, mutes the space or a hidden space gets its card edited
+  to "No longer available here." with nothing of the item and its continuations deleted; reminders, escalations and
+  assignments reply to the card, the newer deleting the older and the settled card deleting the last. Security review:
+  a card tap adopts the card message only when the notifier's record of it (memory first, then the row) names the
+  tapping link and the button's space and action and shows the server's version; the action is then read and answered
+  as the tapping link through the in-process API with that version as If-Match, so a hidden button protects nothing and
+  a shown one permits nothing; the second step of an approval never adopts a card; an enforced approval in a
+  `web_only` space has no callback on its card and a forged one is refused as before (server rule unchanged); the
+  retraction renders no content and needs no recipient check. Ordering: notifier and chat edits of a card take one
+  lock per chat; a chat edit loses to a newer version shown or queued and to a settled or retracted card, and the
+  notifier's settled state replaces the chat's form. Known limits: alert IDs are kept in memory only (a restart forgets
+  the alert to delete); a retraction happens on the next change of the resource, not on the mute or grant change
+  itself; the card's final line names no responder. Tests: TRACEABILITY SM-TG-006. Simulated only.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9

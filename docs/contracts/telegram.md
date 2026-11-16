@@ -119,6 +119,8 @@ count toward rate limits (SpaceMan counts them as sends).
 - whether deleting a pinned message also unpins it (the fake does);
 - whether `deleteMessages` answers an error for a batch that contains a too-old message, or skips it (the fake skips it);
 - whether `editForumTopic` works on a closed topic (the fake allows it).
+- whether an edit without `reply_markup` drops the inline keyboard (the fake drops it). Card edits never rely on it:
+  every edit states the keyboard, and a card with none is edited with an empty `inline_keyboard` (ADR-0089 T4).
 
 ## Files
 
