@@ -137,8 +137,9 @@ type Options struct {
 	Sender func() *sender.Sender
 	// Store records card mappings (nil: cards are not remembered across restarts).
 	Store Mappings
-	// AppURL is the Mini App link offered on a card whose body was cut at the message cap (empty: no button).
-	AppURL string
+	// AppURL is the Mini App link offered on a card whose body was cut at the message cap, per card (nil, or an empty
+	// result: no button). It is a function because the link names the card's own item.
+	AppURL func(Resource) string
 	// Topics routes messages to topics in topics mode (nil: everything goes to the main chat).
 	Topics *topics.Manager
 	Bus    *eventbus.Bus
@@ -538,7 +539,7 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, edit bool) 
 			// The card is rendered here, from the space's current content level: a body queued at "full" is never sent
 			// after the space was lowered to "summary" while it waited. A group chat only ever gets the summary.
 			full := settings.Full(n.o.Policy.Space(res.SpaceID), settings.IsGroupChat(chat))
-			parts := renderCard(&res, full, n.o.AppURL)
+			parts := renderCard(&res, full, n.appURL(&res))
 			protect := full && res.Detail != ""                                                                                              // plan 3.8: a card with a body can't be forwarded or saved
 			return n.cards.upsert(ctx, c, n.sender(&res, linkID), linkID, chat, &res, res.SpaceID, parts, protect, n.silent(cur, n.o.Now())) // quiet hours: no sound
 		}})

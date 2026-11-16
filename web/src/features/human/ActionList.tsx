@@ -16,7 +16,7 @@ import { FollowUpBadges, HumanStatusBadge, isPending, PriorityBadge, requesterLa
  * A list of human actions with a detail drawer. Bulk operations are limited to safe ones (SM-HUI-003): claiming, and
  * acknowledging messages. Approvals, answers and completions are always made one at a time, with the request visible.
  */
-export function ActionList({ actions, spaceNames, empty }: { actions: HumanAction[]; spaceNames?: Record<string, string>; empty: string }) {
+export function ActionList({ actions, spaceNames, empty, noBulk }: { actions: HumanAction[]; spaceNames?: Record<string, string>; empty: string; noBulk?: boolean }) {
   const qc = useQueryClient()
   const me = useMe().data
   // The drawer keeps the last known copy, so an action that leaves a pending-only list (because it was just answered)
@@ -25,7 +25,8 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
   const setOpen = (id: string | null) => setOpenState(actions.find((a) => a.id === id) ?? null)
   const [picked, setPicked] = useState<string[]>([])
   const can = (a: HumanAction) => atLeast(roleIn(me, a.space_id), 'operator')
-  const selectable = actions.filter((a) => isPending(a) && can(a))
+  // noBulk: a short list (the Mini App home's) that only opens rows; no selection, so no bulk bar either.
+  const selectable = noBulk ? [] : actions.filter((a) => isPending(a) && can(a))
   const chosen = selectable.filter((a) => picked.includes(a.id))
   const ackable = chosen.filter((a) => a.type === 'message')
   const current = open ? (actions.find((a) => a.id === open.id) ?? open) : null
@@ -72,7 +73,7 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
             onClick={() => setOpen(a.id)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(a.id) }}>
             {/* The row wraps on a phone, so the title keeps a readable width instead of shrinking to nothing. */}
             <Group gap="xs">
-              {isPending(a) && can(a) && (
+              {!noBulk && isPending(a) && can(a) && (
                 <Checkbox size="xs" aria-label={`Select ${a.title}`} checked={picked.includes(a.id)} onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setPicked(e.currentTarget.checked ? [...picked, a.id] : picked.filter((x) => x !== a.id))} />
               )}

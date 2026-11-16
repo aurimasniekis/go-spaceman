@@ -1156,7 +1156,8 @@ func (c *Central) newTelegramNotifier(log *slog.Logger) *tgnotify.Notifier {
 		Topics: c.TelegramTopics,
 		Feed:   tgnotify.StoreFeed{S: c.Store}, Reader: tgnotify.StoreReader{S: c.Store, Human: c.Human}, Authz: c.Authz, Policy: c.TelegramSettings,
 		Links: links, Sender: c.TelegramBot.Sender,
-		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now})
+		Store: tgnotify.StoreMappings{S: c.Store}, Bus: c.Bus, Log: obs.Component(log, "telegram.notify"), Now: c.Clock.Now,
+		AppURL: c.cardAppURL})
 }
 
 // gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts
