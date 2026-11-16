@@ -134,7 +134,7 @@ type Handler struct {
 	o Options
 
 	mu      sync.Mutex
-	formMu  sync.Mutex         // serializes changes to forms
+	formMu  [64]sync.Mutex     // serialize changes to forms, one stripe per chat (formLock)
 	current map[string]string  // link ID -> space ID chosen with /spaces or /space
 	pending map[pendingKey]rej // a reject reason being asked for
 	forms   map[pendingKey]*form
@@ -556,4 +556,10 @@ func markup(rows ...[]botapi.InlineKeyboardButton) *botapi.InlineKeyboardMarkup 
 		return nil
 	}
 	return &botapi.InlineKeyboardMarkup{InlineKeyboard: out}
+}
+
+// formLock is the lock that serializes changes to a chat's forms: taps and replies in one chat go one at a time, and a
+// long wait in one chat (a rate-limited send, a slow upload) never holds up another chat's.
+func (h *Handler) formLock(chat int64) *sync.Mutex {
+	return &h.formMu[uint64(chat)%uint64(len(h.formMu))] //nolint:gosec // G115: any stripe will do for a negative ID
 }

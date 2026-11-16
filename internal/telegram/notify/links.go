@@ -82,6 +82,8 @@ type Links struct {
 	// so the deadline loop looks at the next digest time again. Set it before Start.
 	OnChange func()
 	sig      string
+	// afterReload is called after every reload (the notifier sweeps its cards then); set by Notifier.Run.
+	afterReload func()
 
 	mu    sync.RWMutex
 	links []Link
@@ -154,6 +156,9 @@ func (l *Links) reload(ctx context.Context) {
 		out = nil
 	}
 	l.Set(out)
+	if l.afterReload != nil {
+		l.afterReload()
+	}
 	if l.OnChange != nil {
 		if sig := digestSignature(out); sig != l.sig {
 			l.sig = sig

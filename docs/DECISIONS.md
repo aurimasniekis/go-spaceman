@@ -5496,9 +5496,15 @@
   `web_only` space has no callback on its card and a forged one is refused as before (server rule unchanged); the
   retraction renders no content and needs no recipient check. Ordering: notifier and chat edits of a card take one
   lock per chat; a chat edit loses to a newer version shown or queued and to a settled or retracted card, and the
-  notifier's settled state replaces the chat's form. Known limits: alert IDs are kept in memory only (a restart forgets
-  the alert to delete); a retraction happens on the next change of the resource, not on the mute or grant change
-  itself; the card's final line names no responder. Tests: TRACEABILITY SM-TG-006. Simulated only.
+  notifier's settled state replaces the chat's form. T4 follow-ups: the chat's form lock is per chat (a rate-limit
+  pause in one chat no longer delays another chat's taps); the last alert of a card is a `telegram_messages` row of
+  kind `alert` (no migration), so a restart still deletes it; a sweep over the cards in memory retracts a card when the
+  link's grants, mute or the space's visibility change (on the bus events, after a link reload, and every 10 s as the
+  backstop), using the same recipient check as a send and removing content only. Known limits: a card loaded from its
+  row after a restart is not swept until its item next changes or a queued send re-checks it; the card's final line
+  names no responder (the only responder stored is the actor's ID, which the API exposes to readers but which is not a
+  name; showing a name would need a user read and would expose a display name that a reader of the action does not get
+  today). Tests: TRACEABILITY SM-TG-006. Simulated only.
   T5 (home): `/needs` with no pinned space and no argument lists the pending actions of every space from
   `GET /human-actions`, grouped by space, with a "See all" web_app button for the Mini App's `/human`; the API leaves out
   spaces the link's principal can't read, and the chat drops spaces Telegram may not show and spaces the link muted

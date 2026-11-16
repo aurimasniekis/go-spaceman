@@ -17,6 +17,9 @@ const (
 	MappingNotice = "notice"
 	// MappingCont is the rest of a long card body, sent as a reply to the card.
 	MappingCont = "cont"
+	// MappingAlert is the last reminder, escalation or assignment alert sent as a reply to a card; kept so a restart
+	// still deletes it when a newer one is sent or the card settles.
+	MappingAlert = "alert"
 )
 
 // NoticeThreads is the resource type of the one-time announcement of the topic-per-space layout (ADR-0089); the

@@ -84,6 +84,22 @@ func TestStoreFeedAndMappings(t *testing.T) {
 	if got, err = m.Lookup(ctx, k); err != nil || len(got) != 1 || got[0].MessageID != 5 {
 		t.Fatalf("Lookup after deleting the continuation = %+v, %v", got, err)
 	}
+	// The last alert is found with the card, is never a card, and its row is removed when the alert is.
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 9, MessageID: 7, Key: k, Version: 4, CreatedAt: time.Now(), Kind: notify.MappingAlert}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = m.Lookup(ctx, k); err != nil || len(got) != 2 || got[1].Kind != notify.MappingAlert || got[1].MessageID != 7 {
+		t.Fatalf("Lookup with an alert = %+v, %v", got, err)
+	}
+	if _, err := m.Card(ctx, 9, 7); !errors.Is(err, notify.ErrNoCard) {
+		t.Fatalf("an alert is not a card: %v", err)
+	}
+	if err := m.Save(ctx, []notify.Mapping{{ChatID: 9, MessageID: 7, Key: k, Kind: notify.MappingAlert, Delete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = m.Lookup(ctx, k); err != nil || len(got) != 1 {
+		t.Fatalf("Lookup after deleting the alert = %+v, %v", got, err)
+	}
 }
 
 // TestLinksLoad: only active links of users who may act are notified, with their preferences, and a failing user

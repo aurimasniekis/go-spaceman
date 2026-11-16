@@ -4,7 +4,9 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/card"
@@ -350,3 +352,66 @@ func TestCardMoreAfterAPendingPrompt(t *testing.T) {
 		t.Fatalf("More… after a prompt: %q (answer %q)", f.Text, e.lastAnswer())
 	}
 }
+
+// A tap in chat A that waits (here, for the notifier's card lock, which an upsert holds across a rate-limit pause)
+// doesn't hold up a tap in chat B: the form lock is per chat.
+func TestFormLockIsPerChat(t *testing.T) {
+	e := newEnv(t)
+	reg := e.withCards()
+	a := e.addHuman(spA, hid('1'), "message", "FYI", `{"requires_ack":true}`)
+	ca := e.postCard(reg, a, "tgl_1")
+	const msgB = 9999
+	chatB := int64(chatID + 1)
+	for formLockStripe(e.h, chatB) == formLockStripe(e.h, chatID) {
+		chatB++ // another stripe, so the test can't pass or fail by a collision
+	}
+	reg.mu.Lock()
+	reg.refs[msgB] = CardRef{SpaceID: a.SpaceID, ActionID: a.ID, LinkID: "tgl_1", Version: a.Version}
+	reg.mu.Unlock()
+	e.h.o.Card = func(_ context.Context, chat int64, msg int) (CardRef, bool) {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		ref, ok := reg.refs[msg]
+		return ref, ok
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var reachedB atomic.Bool
+	e.h.o.EditCard = func(chat int64, _ int, _ string, _ int64, _, _ bool, _ func() bool) bool {
+		if chat == chatID {
+			close(entered)
+			<-release // the notifier's card lock is held elsewhere
+		} else {
+			reachedB.Store(true)
+		}
+		return false
+	}
+	doneA := make(chan struct{})
+	go func() {
+		defer close(doneA)
+		e.tapData(find(ca, "Acknowledge"), ca)
+	}()
+	<-entered
+	doneB := make(chan struct{})
+	go func() {
+		defer close(doneB)
+		u := botapi.Update{UpdateID: 777, CallbackQuery: &botapi.CallbackQuery{ID: "cbB", From: botapi.User{ID: chatID}, Data: humanData('m', spA, a.ID, -1),
+			Message: &botapi.Message{MessageID: msgB, Chat: botapi.Chat{ID: chatB}}}}
+		e.srv.PushUpdate(u)
+		lb := e.l
+		lb.ChatID = chatB // the same link, in another chat
+		e.h.Handle(context.Background(), u, lb)
+	}()
+	select {
+	case <-doneB:
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("a tap in another chat waited for the first chat's lock")
+	}
+	if !reachedB.Load() {
+		t.Errorf("the tap in the other chat never reached its card edit (answer %q): the test proves nothing", e.lastAnswer())
+	}
+	close(release)
+	<-doneA
+}
+
+func formLockStripe(h *Handler, chat int64) *sync.Mutex { return h.formLock(chat) }
