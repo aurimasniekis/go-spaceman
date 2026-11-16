@@ -35,7 +35,8 @@ type Mapping struct {
 	// before the thread was recorded has ThreadKnown false.
 	Thread      int
 	ThreadKnown bool
-	// Delete removes the row of a continuation message that was deleted (Save only; set with Cont).
+	// Delete removes the row (Save only): of a continuation message that was deleted (set with Cont) or of a card that
+	// was given up.
 	Delete bool
 }
 
@@ -361,12 +362,14 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, send sendFunc, li
 	}
 	err := c.upsertOnce(ctx, cl, pay, send, linkID, chat, r, spaceID, parts, protect, silent)
 	if errors.Is(err, errCardThreadGone) {
-		// The topic the card lives in was closed or deleted, so a part can't follow it: the card is sent again, with its
-		// continuations, the way a card whose message was deleted is.
-		c.retire(ctx, cl, pay, chat, r.Key)
+		// The topic the card lives in was closed or deleted, so a part can't follow it: a non-final card is sent again,
+		// with its continuations, the way a card whose message was deleted is.
 		if r.Final {
-			return nil // a settled card isn't sent again
+			// A settled card is not sent again, and what it shows was just edited: keep it. The part that couldn't be sent
+			// is not there (the Mini App has the rest); the parts before it are still right.
+			return nil
 		}
+		c.retire(ctx, cl, pay, chat, r.Key)
 		err = c.upsertOnce(ctx, cl, pay, send, linkID, chat, r, spaceID, parts, protect, silent)
 	}
 	return err
@@ -386,6 +389,7 @@ func (c *cards) retire(ctx context.Context, cl *botapi.Client, pay func() error,
 	if pay() == nil {
 		_ = cl.DeleteMessage(ctx, chat, cd.messageID)
 	}
+	c.dropConts(chat, k, 0) // what deleteConts left after a failure: queue its rows' removal before forgetting them
 	c.forget(chat, k)
 	c.pend(Mapping{ChatID: chat, MessageID: cd.messageID, Key: k, Delete: true})
 }
@@ -406,9 +410,11 @@ func (c *cards) upsertOnce(ctx context.Context, cl *botapi.Client, pay func() er
 			return c.syncConts(ctx, cl, pay, send, linkID, chat, r, spaceID, cd.messageID, parts, protect)
 		case isGone(err) && !r.Final:
 			_ = c.deleteConts(ctx, cl, pay, chat, r.Key, 0) // best effort: the card is sent again, with new continuations
+			c.dropConts(chat, r.Key, 0)                     // the rows of any left after a failure
 			c.forget(chat, r.Key)                           // the message was deleted: send the card again
 		case isGone(err):
 			_ = c.deleteConts(ctx, cl, pay, chat, r.Key, 0)
+			c.dropConts(chat, r.Key, 0)
 			c.forget(chat, r.Key)
 			return nil
 		default:
