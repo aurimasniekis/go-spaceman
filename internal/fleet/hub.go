@@ -722,6 +722,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if err := env.Decode(&rep); err != nil {
 			return err
 		}
+		rep = rep.ForMinor(s.minor)
 		if h.Usage != nil {
 			h.spawn(func() { h.Usage.Report(context.WithoutCancel(ctx), s.nodeID, rep) })
 		}

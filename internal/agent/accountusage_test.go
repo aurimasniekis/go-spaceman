@@ -343,3 +343,32 @@ func countFailure(rs []proto.RunReport, class string) int {
 	}
 	return n
 }
+
+// A usage report carries the status line's windows (minor ≥ 13, snapshot not older than statusMaxAge) as typed numbers.
+func TestUsageWindows(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	now := time.Now().UTC().Truncate(time.Second)
+	a.o.Clock = clock.NewFake(now)
+	reset := now.Add(time.Hour)
+	a.statusSnaps = map[string]StatusObservation{
+		"run_1": {ObservedAt: now.Add(-time.Minute), StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 42.5, ResetsAt: reset.Unix()}, SevenDay: &harness.Window{UsedPct: 7}}},
+		"run_2": {ObservedAt: now.Add(-statusMaxAge - time.Second), StatusSnapshot: harness.StatusSnapshot{FiveHour: &harness.Window{UsedPct: 1}}},
+	}
+	a.mu.Lock()
+	a.connected, a.minor = true, proto.MinorAccountUsage
+	a.mu.Unlock()
+	got := a.usageWindows("run_1")
+	if len(got) != 2 || got[0].Kind != proto.WindowFiveHour || got[0].UsedPct != 42.5 || got[0].ResetsAt == nil || !got[0].ResetsAt.Equal(reset) ||
+		got[1].Kind != proto.WindowSevenDay || got[1].ResetsAt != nil || !got[1].ObservedAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("%+v", got)
+	}
+	if a.usageWindows("run_2") != nil || a.usageWindows("run_3") != nil {
+		t.Fatal("a stale or missing snapshot gave windows")
+	}
+	a.mu.Lock()
+	a.minor = proto.MinorAccountUsage - 1
+	a.mu.Unlock()
+	if a.usageWindows("run_1") != nil {
+		t.Fatal("windows below minor 13")
+	}
+}

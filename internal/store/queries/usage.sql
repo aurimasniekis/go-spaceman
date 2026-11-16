@@ -1,6 +1,8 @@
--- name: UpsertRunUsage :exec
-INSERT INTO run_usage (run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+-- name: UpsertRunUsage :execrows
+-- account_id, role and harness are set when the row is created and never change; the rows affected say whether the report
+-- was kept (0: a final row, or usage a harness already reported, was not replaced), which the ledger needs.
+INSERT INTO run_usage (run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at, account_id, role, harness)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (run_id) DO UPDATE SET source = excluded.source, models_json = excluded.models_json, estimate_json = excluded.estimate_json,
   transcript_bytes = excluded.transcript_bytes, final = excluded.final, note = excluded.note, updated_at = excluded.updated_at
 -- A harness's own figures replace usage Harbor Pilot filled in (even when final); "unavailable" never replaces it.

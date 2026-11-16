@@ -44,7 +44,7 @@ func (q *Queries) GetRunTranscript(ctx context.Context, runID string) (RunTransc
 }
 
 const getRunUsage = `-- name: GetRunUsage :one
-SELECT run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at FROM run_usage WHERE run_id = ?
+SELECT run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at, account_id, role, harness FROM run_usage WHERE run_id = ?
 `
 
 func (q *Queries) GetRunUsage(ctx context.Context, runID string) (RunUsage, error) {
@@ -60,6 +60,9 @@ func (q *Queries) GetRunUsage(ctx context.Context, runID string) (RunUsage, erro
 		&i.Final,
 		&i.Note,
 		&i.UpdatedAt,
+		&i.AccountID,
+		&i.Role,
+		&i.Harness,
 	)
 	return i, err
 }
@@ -93,7 +96,7 @@ func (q *Queries) InsertRunTranscript(ctx context.Context, arg InsertRunTranscri
 }
 
 const listSpaceUsage = `-- name: ListSpaceUsage :many
-SELECT u.run_id, u.space_id, u.source, u.models_json, u.estimate_json, u.transcript_bytes, u.final, u.note, u.updated_at, r.role, r.kind, r.harness, r.created_at AS run_created_at FROM run_usage u JOIN runs r ON r.id = u.run_id
+SELECT u.run_id, u.space_id, u.source, u.models_json, u.estimate_json, u.transcript_bytes, u.final, u.note, u.updated_at, u.account_id, u.role, u.harness, r.role, r.kind, r.harness, r.created_at AS run_created_at FROM run_usage u JOIN runs r ON r.id = u.run_id
 WHERE u.space_id = ? ORDER BY r.created_at DESC LIMIT ?
 `
 
@@ -112,9 +115,12 @@ type ListSpaceUsageRow struct {
 	Final           int64
 	Note            string
 	UpdatedAt       int64
+	AccountID       string
 	Role            string
-	Kind            string
 	Harness         string
+	Role_2          string
+	Kind            string
+	Harness_2       string
 	RunCreatedAt    int64
 }
 
@@ -137,9 +143,12 @@ func (q *Queries) ListSpaceUsage(ctx context.Context, arg ListSpaceUsageParams) 
 			&i.Final,
 			&i.Note,
 			&i.UpdatedAt,
+			&i.AccountID,
 			&i.Role,
-			&i.Kind,
 			&i.Harness,
+			&i.Role_2,
+			&i.Kind,
+			&i.Harness_2,
 			&i.RunCreatedAt,
 		); err != nil {
 			return nil, err
@@ -178,9 +187,9 @@ func (q *Queries) SetRunTranscriptProgress(ctx context.Context, arg SetRunTransc
 	return err
 }
 
-const upsertRunUsage = `-- name: UpsertRunUsage :exec
-INSERT INTO run_usage (run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+const upsertRunUsage = `-- name: UpsertRunUsage :execrows
+INSERT INTO run_usage (run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at, account_id, role, harness)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (run_id) DO UPDATE SET source = excluded.source, models_json = excluded.models_json, estimate_json = excluded.estimate_json,
   transcript_bytes = excluded.transcript_bytes, final = excluded.final, note = excluded.note, updated_at = excluded.updated_at
 WHERE (run_usage.final = 0 AND NOT (run_usage.source = 'harbor-pilot' AND excluded.source = 'unavailable'))
@@ -197,11 +206,16 @@ type UpsertRunUsageParams struct {
 	Final           int64
 	Note            string
 	UpdatedAt       int64
+	AccountID       string
+	Role            string
+	Harness         string
 }
 
+// account_id, role and harness are set when the row is created and never change; the rows affected say whether the report
+// was kept (0: a final row, or usage a harness already reported, was not replaced), which the ledger needs.
 // A harness's own figures replace usage Harbor Pilot filled in (even when final); "unavailable" never replaces it.
-func (q *Queries) UpsertRunUsage(ctx context.Context, arg UpsertRunUsageParams) error {
-	_, err := q.db.ExecContext(ctx, upsertRunUsage,
+func (q *Queries) UpsertRunUsage(ctx context.Context, arg UpsertRunUsageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, upsertRunUsage,
 		arg.RunID,
 		arg.SpaceID,
 		arg.Source,
@@ -211,6 +225,12 @@ func (q *Queries) UpsertRunUsage(ctx context.Context, arg UpsertRunUsageParams) 
 		arg.Final,
 		arg.Note,
 		arg.UpdatedAt,
+		arg.AccountID,
+		arg.Role,
+		arg.Harness,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
