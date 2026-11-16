@@ -71,13 +71,16 @@ keeps the account it was launched on, and role pools are ignored. With either on
   each of them must also be bound to the space. A role without a pool uses the space's bindings. A limit-wait resume
   or a relaunch SpaceMan makes itself never uses an account outside the role's pool. Set a role's pool with
   `spaceman account pool set --space <space> <role> --account <id> … --priority <id>=<n>`; setting it with no
-  `--account` removes the pool, so the role uses the bindings again. A pool never widens: it can't send a run to an
-  account outside it.
+  `--account` removes the pool, so the role uses the bindings again. A pool never widens for a limit-wait resume, a
+  relaunch or a failover move: those never use an account outside it. An account a launch names is kept unless it is
+  held or fails the headroom gate.
 
 An account is **eligible** for a launch, a resume or a switch when it is enabled, bound to the space, of the run's
 harness, and has no open hold in any space. With the headroom gate on, it must also pass the gate for a new run (below).
-Among eligible accounts, SpaceMan picks by priority, then by the fewest live runs on the account, then by binding order.
-Account utilisation is not part of that order yet. A switch never moves a run to an account that is held.
+A launch with no role pool uses the space's default account when that is eligible. Otherwise, and for a role pool,
+eligible accounts are taken in priority order, then by the fewest live runs on the account, then by binding order. A
+switch always takes priority order. Account utilisation is not part of that order yet. A switch never moves a run to an
+account that is held.
 
 The latest 5-hour and 7-day windows of each account (from the status line) are shown on the usage API and in the CLI.
 They decide which account a new run may start on only when the headroom gate is on; see [the headroom gate](#launch-headroom-gate).
@@ -125,7 +128,7 @@ nearly full. An account fails the gate when one of its windows with known usage 
 (100 minus the used percentage; exactly at the threshold passes). It applies to:
 
 - a launch,
-- a fresh resume (including a limit-wait resume and a switch's resume),
+- a resume of a parked run, with or without its session, including a switch's resume,
 
 and **never to a running agent**: nothing is moved because of the gate. Gateway (Harbor Pilot) runs use no account and
 are not gated.
@@ -135,10 +138,10 @@ When the gate is on:
 - **The next eligible account is chosen.** The gate removes the failing accounts from the pool, and the launch uses the
   first of the rest in the usual order (priority, then the fewest live runs, then binding order). The role's pool
   applies even when failover is off.
-- **If none qualifies, the launch waits** until the earliest reset among the pool's failing windows, and is refused with
-  `rate_limited` and that time until then. The wait is never longer than an hour: a window's usage older than an hour no
-  longer counts, so the launch is checked again at least hourly. When no reset is known, it is rechecked within the hour.
-  A window that has reset counts as free.
+- **If none qualifies, the launch is refused** with `rate_limited` and the earliest reset among the pool's failing
+  windows. The refusal lasts at most an hour from now: a window's usage older than an hour no longer counts. Control and
+  parked runs retry then (a known reset adds a two-minute margin), and when no reset is known they retry in an hour. An
+  interactive launch gets the refusal at once. A window that has reset counts as free.
 - **Accounts with no known usage are not refused.** The gate reads the usage ledger; if the ledger can't be read, it
   **fails open** and the account stays eligible.
 

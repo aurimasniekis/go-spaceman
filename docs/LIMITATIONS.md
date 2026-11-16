@@ -275,8 +275,8 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   `oauthAccount` change, whether the status line shows the new account's windows, and whether the `StopFailure` hook
   and the notification fire as documented at a real limit are all unverified. Everything is simulated: a fake
   harness, a fake API, a scripted node and a fake clock.
-- **Headroom gate is simulated only.** With `usage_limit_min_headroom_percent` above 0, a new run (a launch, a fresh
-  resume or a switch's resume) skips an account whose known window leaves less than that share free, and waits for the
+- **Headroom gate is simulated only.** With `usage_limit_min_headroom_percent` above 0, a new run (a launch, a resume of a
+  parked run or a switch's resume) skips an account whose known window leaves less than that share free, and waits for the
   pool's earliest reset (at most an hour: usage older than an hour no longer counts). It reads the status-line windows of
   Claude Code runs, so an account that reports none is never refused, and an unreadable usage ledger fails open.
   Running agents are never moved for it. Tested with fake windows and a fake clock only.
