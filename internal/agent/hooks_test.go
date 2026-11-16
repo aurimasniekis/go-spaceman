@@ -347,7 +347,9 @@ func TestStopFailureStartsLimitScan(t *testing.T) {
 	// no earlier StopFailure's scan coalesces it away.
 	StopFailureHook(ctx, strings.NewReader(`{"error":"rate_limit","last_assistant_message":"SECRET","session_id":"`+row.SessionID+`"}`), socket, runID)
 	var found *proto.RunLimit
-	deadline := time.After(5 * time.Second)
+	// Only a hang detector: the scan is started by the hook and nothing waits for the settle delay, but the agent, its
+	// socket and the fake central share a loaded machine under -race, where 5 s was not enough.
+	deadline := time.After(30 * time.Second)
 	for found == nil {
 		select {
 		case env := <-fc.msgs:
