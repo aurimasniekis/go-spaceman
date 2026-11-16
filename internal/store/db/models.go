@@ -996,6 +996,16 @@ type OneTimeToken struct {
 	CreatedBy string
 }
 
+type PoolExhaustedNotice struct {
+	SpaceID   string
+	DedupKey  string
+	WaitID    string
+	Title     string
+	Body      string
+	CreatedAt int64
+	ExpiresAt int64
+}
+
 type Prompt struct {
 	ID          string
 	Slug        string

@@ -203,8 +203,34 @@ func (a *App) spaceExtra() []*cobra.Command {
 	}
 }
 
+var (
+	usageCols = []col{c("BUCKET", "bucket_start"), c("GROUP", "group"), c("TOKENS", "total_tokens"), c("INPUT", "input_tokens"), c("OUTPUT", "output_tokens"),
+		c("CACHE READ", "cache_read_tokens"), c("REQUESTS", "requests"), c("EST. COST USD", "total_cost_usd")}
+	windowCols = []col{c("ACCOUNT", "account_id"), c("NAME", "name"), c("HARNESS", "harness")}
+)
+
+func usageQuery() []qflag {
+	return []qflag{qs("from", "from", "start of the range, RFC 3339 (default: 7 days, or 30 with --bucket day, before --to)"),
+		qs("to", "to", "end of the range, RFC 3339 (default: now)"), qs("bucket", "bucket", "hour (default) or day"), limitFlag()}
+}
+
+// usageCmd shows the usage ledger: tokens per bucket, with the cost as the harnesses' list-price estimate (not a bill).
+func (a *App) usageCmd() *cobra.Command {
+	return group("usage", "Usage over time from the ledger: tokens first, cost as a list-price estimate", nil,
+		a.cmd(opts{use: "space", short: "A space's usage over time, grouped by role, account, model or harness", op: "get-space-usage-series", args: spaceArg(), paged: true,
+			query: append(usageQuery(), qs("group-by", "group_by", "role (default), account, model or harness")),
+			view:  view{items: "items", cols: usageCols, empty: "No usage in this range."}}),
+		a.cmd(opts{use: "account", short: "An account's usage over time in the spaces you can read, grouped by space, role or model", op: "get-account-usage",
+			args: pos("account"), paged: true, query: append(usageQuery(), qs("group-by", "group_by", "space (default), role or model")),
+			view: view{items: "items", cols: usageCols, empty: "No usage in this range."}}),
+	)
+}
+
 func (a *App) accountExtra() []*cobra.Command {
 	return []*cobra.Command{
+		a.cmd(opts{use: "windows", short: "An account's latest 5-hour and 7-day rate-limit windows (needs an account bound to a space you can read)", op: "get-account-windows", args: pos("account")}),
+		a.cmd(opts{use: "space-windows", short: "The latest rate-limit windows of the accounts a space's runs may use", op: "list-space-account-windows", scoped: true,
+			view: view{items: "items", cols: windowCols, empty: "No accounts bound."}}),
 		a.accountPoolCmd(),
 		a.cmd(opts{use: "space", short: "Accounts a space's runs may use", op: "list-space-accounts", scoped: true,
 			view: view{items: "items", cols: []col{c("ACCOUNT", "account_id"), c("NAME", "name"), c("HARNESS", "harness"), c("DEFAULT", "default"), c("PRIORITY", "priority"), c("ENABLED", "enabled")},

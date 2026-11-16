@@ -5466,12 +5466,19 @@
     wait keeps ADR-0079's time. No new state is stored: exhaustion is read when the wait is parked.
   - The resume re-resolves through the launch path. With failover on and a role pool, a resume that is not a switch and whose
     parked account has left the pool no longer names it: the role's pool picks, so an account outside the pool is never used.
-    The window of the people notice is the pool's earliest reset, so a reset that moves later raises another notice.
+    The window of the people notice is the pool's earliest reset (rounded down to ten minutes, so a few seconds of
+    restating the same reset stay in one window), so a reset that moves later across a window raises another notice.
   - Control gets its park message with the pool's accounts and the resume time. The people get one informational human
-    action per space, harness and window (the pool's earliest reset; the day when none is known) under the reserved
+    action per space, harness, role and window (the pool's earliest reset; the day when none is known) under the reserved
     dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
-    or a pool with a free account, raises none. The action is created after the park's transaction commits, so a crash
-    in between loses it; the control message is in the transaction.
+    or a pool with a free account, raises none. The park's transaction records the notice (table
+    `pool_exhausted_notices`) and the action is created after it commits; the row is deleted once the action exists. A
+    crash in between or a space at its open-action cap (rate limited) leaves the row, and the deadline
+    loop raises it on a later round (at the latest within the hour, or at the next limit report), so the notice is late,
+    never lost, until its window is over: the row's `expires_at` (the end of the reset's 10-minute window, or the end of
+    the UTC day when none is known) drops it undelivered, so stale rows never pile up or announce a reset in the past. A
+    row of an archived space is dropped, and a row that keeps failing is logged and skipped so the rows after it are
+    still raised. While a space is at its cap the notice waits until a person answers an action.
 - **Launch-time pool check (2026-11-16):**
   - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
     account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
