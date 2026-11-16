@@ -170,8 +170,9 @@ func TestHarnessReportReplacesGatewayFill(t *testing.T) {
 		t.Fatalf("fill %+v", ru)
 	}
 	if err := s.W().TxNamed(ctx, "report", func(tx *store.Tx) error {
-		return tx.Q.UpsertRunUsage(ctx, db.UpsertRunUsageParams{RunID: "run_1", SpaceID: "spc_a", Source: proto.UsageClaudeTranscript, ModelsJson: `[{"model":"m","requests":4}]`,
+		_, err := tx.Q.UpsertRunUsage(ctx, db.UpsertRunUsageParams{RunID: "run_1", SpaceID: "spc_a", Source: proto.UsageClaudeTranscript, ModelsJson: `[{"model":"m","requests":4}]`,
 			Final: 1, UpdatedAt: 1})
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}

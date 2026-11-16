@@ -135,10 +135,39 @@ func (a *Agent) usageReport(ctx context.Context, r runRow, final bool) proto.Usa
 		return rep
 	}
 	rep.Source, rep.Models, rep.Estimate = proto.UsageClaudeTranscript, models, est
+	rep.Windows = a.usageWindows(r.RunID)
 	if fi, err := os.Stat(abs); err == nil {
 		rep.Transcript = &proto.TranscriptRef{Path: rel, Bytes: fi.Size()}
 	}
 	return rep
+}
+
+// usageWindows are the rate-limit windows of the run's latest status-line snapshot (minor ≥ 13; none when the snapshot
+// is missing or older than statusMaxAge). Typed numbers only; central validates them again.
+func (a *Agent) usageWindows(runID string) []proto.UsageWindow {
+	if !a.protocolAtLeast(proto.MinorAccountUsage) {
+		return nil
+	}
+	snap, ok := a.StatusSnapshot(runID)
+	if !ok || a.now().Sub(snap.ObservedAt) > statusMaxAge {
+		return nil
+	}
+	var out []proto.UsageWindow
+	for _, w := range []struct {
+		kind string
+		w    *harness.Window
+	}{{proto.WindowFiveHour, snap.FiveHour}, {proto.WindowSevenDay, snap.SevenDay}} {
+		if w.w == nil {
+			continue
+		}
+		uw := proto.UsageWindow{Kind: w.kind, UsedPct: w.w.UsedPct, ObservedAt: snap.ObservedAt.UTC()}
+		if w.w.ResetsAt > 0 {
+			t := time.Unix(w.w.ResetsAt, 0).UTC()
+			uw.ResetsAt = &t
+		}
+		out = append(out, uw)
+	}
+	return out
 }
 
 func (a *Agent) protocolAtLeast(minor int) bool {

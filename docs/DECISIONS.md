@@ -5538,6 +5538,19 @@
   - A run whose reset is near waits rather than switching, so it can be stopped for up to the reset, as today.
   - The headroom gate only changes behaviour when set above 0; the default leaves launches unchanged.
   - Until two real accounts are tested (K-17, plan T1), the switch is implemented and simulated only.
+- **Implementation notes (T6, the usage ledger):**
+  - Buckets take the growth of a run's cumulative counters, not the counters. The counters already counted are kept per
+    harness session (`usage_ledger_marks`), not per run, because a resumed run (a switch) continues the same native
+    transcript and so starts at the earlier run's totals; each account is booked only with what its own run added. A
+    repeat, a stale report that arrives late and the report after the final one add nothing; unknown counters count as zero.
+    A session idle for more than 180 days that reports again counts its whole history once more (its mark was pruned).
+  - The estimated cost of a report is one figure for the run; its growth is booked under the model whose tokens grew most.
+  - Windows are the account's latest `five_hour` and `seven_day` observation (newest wins), sampled at most once per 10
+    minutes, taken from the status line's snapshot in `UsageReport.windows` (minor 13) and validated again at central. The
+    status line's own cost figure (`cost.total_usd_estimate`) is not on the wire yet: buckets carry the transcript
+    estimate.
+  - Retention periods are the fixed ones of Q9 (not per-space limits): hourly buckets 90 days, then rolled into daily buckets
+    by whole UTC days, daily 730 days, window samples 30 days, closed holds, finished waits and finished switches 180 days.
 
 ### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
 - **Status:** Accepted, 2026-11-14: implemented, not yet released. The operator answered the design's questions Q1–Q9

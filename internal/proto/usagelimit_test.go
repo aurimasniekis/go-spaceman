@@ -230,3 +230,32 @@ func TestFailureClass(t *testing.T) {
 		}
 	}
 }
+
+// A usage report's windows survive the envelope round trip and are dropped below minor 13, without changing the original.
+func TestUsageReportWindows(t *testing.T) {
+	at := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	reset := at.Add(time.Hour)
+	in := UsageReport{RunID: "run_1", Source: UsageClaudeTranscript, Windows: []UsageWindow{{Kind: WindowFiveHour, UsedPct: 12.5, ResetsAt: &reset, ObservedAt: at}}}
+	b, err := Encode("msg_1", TypeUsage, at, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := Decode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out UsageReport
+	if err := env.Decode(&out); err != nil || !reflect.DeepEqual(out, in) {
+		t.Fatalf("round trip %+v %v", out, err)
+	}
+	if got := in.ForMinor(MinorAccountUsage - 1); got.Windows != nil || got.RunID != "run_1" || len(in.Windows) != 1 {
+		t.Fatalf("downgrade %+v (original %+v)", got, in)
+	}
+	if got := in.ForMinor(MinorAccountUsage); len(got.Windows) != 1 {
+		t.Fatal("windows dropped at minor 13")
+	}
+	old, _ := json.Marshal(UsageReport{RunID: "run_1", Source: UsageUnavailable})
+	if strings.Contains(string(old), "windows") {
+		t.Fatalf("an empty report carries windows: %s", old)
+	}
+}
