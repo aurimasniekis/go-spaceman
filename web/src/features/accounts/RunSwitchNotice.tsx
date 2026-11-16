@@ -14,7 +14,7 @@ import { reasonLabel, switchesOfRun } from './switches'
 export function RunSwitchNotice({ spaceId, runId }: { spaceId: string; runId: string }) {
   const switches = useAccountSwitches(spaceId)
   const bound = useSpaceAccounts(spaceId)
-  const name = (id?: string) => (id ? (bound.data?.find((b) => b.account_id === id)?.name ?? 'a removed account') : 'another account')
+  const name = (id?: string) => (id ? (bound.data?.find((b) => b.account_id === id)?.name ?? 'another account') : 'another account')
   const { from, into } = switchesOfRun(switches.data ?? [], runId)
   if (!from && !into) return null
   return (
@@ -22,10 +22,12 @@ export function RunSwitchNotice({ spaceId, runId }: { spaceId: string; runId: st
       {from && (
         <Alert color={from.state === 'failed' ? 'owlRed' : 'owlBlue'} variant="light" icon={<IconArrowsExchange size={16} />}>
           <Text size="sm">
-            {from.state === 'fell_back' || from.state === 'cancelled' ? (
+            {from.state === 'fell_back' ? (
               <>No switch: this run waited at its limit instead{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
+            ) : from.state === 'cancelled' ? (
+              <>A switch to another account was cancelled{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
             ) : (
-              <>Moved to account <b>{name(from.to_account_id)}</b> ({limitKindLabel(from.limit_kind)} on {name(from.from_account_id)}
+              <>{from.state === 'pending' || from.state === 'parked' ? 'Moving' : 'Moved'} to account <b>{name(from.to_account_id)}</b> ({limitKindLabel(from.limit_kind)} on {name(from.from_account_id)}
                 {from.limit_resets_at && <>, resets <LimitTime at={from.limit_resets_at} /></>}){' '}
                 {from.new_run_id ? <>→ <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: from.new_run_id }} size="sm">the new run</AnchorLink></> : <>(the new run has not started yet)</>}
                 {from.state === 'failed' && from.reason ? `. It failed because ${reasonLabel(from.reason)}` : ''}.</>

@@ -12,7 +12,7 @@ const RECENT = 20
 export function AccountSwitchesCard({ spaceId }: { spaceId: string }) {
   const switches = useAccountSwitches(spaceId)
   const bound = useSpaceAccounts(spaceId)
-  const name = (id?: string) => (id ? (bound.data?.find((b) => b.account_id === id)?.name ?? 'a removed account') : 'no account')
+  const name = (id?: string) => (id ? (bound.data?.find((b) => b.account_id === id)?.name ?? (bound.data ? 'a removed account' : 'an account')) : 'no account')
   const items = (switches.data ?? []).slice(0, RECENT)
   return (
     <Card p={0} data-testid="account-switches">

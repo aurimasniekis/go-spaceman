@@ -1,6 +1,6 @@
 import { Alert, Card, Group, SegmentedControl, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core'
 import { IconInfoCircle } from '@tabler/icons-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { UsageRow } from '@/api/client'
 import { useSpaceAccounts, useSpaceUsage } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
@@ -39,7 +39,11 @@ export function SpaceUsage({ spaceId }: { spaceId: string }) {
   const [range, setRange] = useState<RangeKey>('7d')
   const [groupBy, setGroupBy] = useState<GroupBy>('role')
   // The range is fixed per mount and choice, so the query key doesn't change every render.
-  const r = useMemo(() => rangeOf(range), [range])
+  // A page left open moves on: the range is recomputed every few minutes, and the query key changes when a bucket ends.
+  const [tick, setTick] = useState(0)
+  useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 5 * 60_000); return () => clearInterval(t) }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const r = useMemo(() => rangeOf(range), [range, tick])
   const usage = useSpaceUsage(spaceId, r.bucket, groupBy, r.from, r.to)
   const accounts = useSpaceAccounts(spaceId)
   const names = useMemo(() => Object.fromEntries((accounts.data ?? []).map((a) => [a.account_id, a.name ?? ''])), [accounts.data])
@@ -63,6 +67,7 @@ export function SpaceUsage({ spaceId }: { spaceId: string }) {
           <Tile label="Estimated cost" value={estimate(d.totals.total_cost_usd)} note="list price, not a bill" />
         </SimpleGrid>
       )}
+      {d?.next_cursor && <Alert color="owlYellow" variant="light" title="Not every row is shown">The range has more rows than the page loads. The totals cover the whole range; the chart and table do not. Choose a shorter range.</Alert>}
       <Card>
         <Title order={5} mb={4}>Tokens per {r.bucket}, by {groupBy}</Title>
         {empty ? <Text size="sm" c="dimmed" data-testid="usage-empty">No usage was reported in this range.</Text> : chart && (
@@ -75,7 +80,8 @@ export function SpaceUsage({ spaceId }: { spaceId: string }) {
       </Card>
       {d && !empty && (
         <Card p={0}>
-          <Table.ScrollContainer minWidth={640}>
+          {/* The table can scroll sideways on a phone, and has nothing focusable in it: the region takes focus so a keyboard can scroll it. */}
+          <Table.ScrollContainer minWidth={640} scrollAreaProps={{ viewportProps: { tabIndex: 0, role: 'region', 'aria-label': `Usage by ${groupBy}, table` } }}>
             <Table verticalSpacing="xs" aria-label={`Usage by ${groupBy}`}>
               <Table.Thead>
                 <Table.Tr>

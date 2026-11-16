@@ -30,8 +30,10 @@ export function AccountPoolsCard({ spaceId }: { spaceId: string }) {
   const bound = useSpaceAccounts(spaceId)
   const pools = useRolePools(spaceId)
   const roles = useSpaceRoles(spaceId)
-  const canWrite = atLeast(roleIn(useMe().data, spaceId), 'admin')
+  // Both endpoints need account:write, which is global; Save also waits for the configuration's version, so it is never sent blind.
+  const me = useMe().data
   const version = pools.data?.accounts_version
+  const canWrite = atLeast(roleIn(me, '*'), 'admin') && version !== undefined
   return (
     <Card data-testid="account-pools">
       <Title order={5} mb={4}>Pool order</Title>
