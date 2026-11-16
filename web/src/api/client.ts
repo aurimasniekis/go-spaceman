@@ -88,6 +88,11 @@ export function ifMatch(version: number): string {
   return `"${version}"`
 }
 
+export type AccountSwitch = Schemas['FleetAccountSwitch']
+export type RolePool = Schemas['AccountsRolePool']
+export type UsageSeries = Schemas['UsageSeriesPage']
+export type UsageRow = Schemas['UsageRow']
+
 export type EventConnection = Schemas['EventsConnection']
 export type EventTemplate = Schemas['EventsTemplate']
 export type TemplateVersion = Schemas['EventsTemplateVersion']

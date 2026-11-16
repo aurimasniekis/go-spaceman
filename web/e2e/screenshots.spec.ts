@@ -660,6 +660,52 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByRole('button', { name: 'Choose accounts' }).click()
     await expect(page.getByLabel('Allow team-claude')).toBeChecked()
   })
+  // AS-T8: a space's Accounts page (pool order, a role pool, the failover settings, windows and switches) and its Usage
+  // page. Windows, switches and usage come from runs that report them, which the stub harness doesn't do, so these three
+  // reads are served here with invented figures; the pools and settings are the real API's.
+  const cfg = await api.call<{ accounts_version: number }>('GET', `/spaces/${payments.id}/account-pools`)
+  await api.call('PUT', `/spaces/${payments.id}/account-pools/reviewer`, { items: [{ account_id: ciAnthropic.id, priority: 10 }, { account_id: teamClaude.id, priority: 20 }] },
+    { 'If-Match': `"${cfg.accounts_version}"` })
+  await api.call('PUT', `/spaces/${payments.id}/limits`, { values: { usage_limit_failover: 1, usage_limit_wait_if_reset_within: 15, usage_limit_min_headroom_percent: 10 }, on_lower: 'drain' },
+    // A space with no overrides yet has version 0: no If-Match then.
+    (await api.call<{ version: number }>('GET', `/spaces/${payments.id}/limits`)).version > 0 ? { 'If-Match': `"${(await api.call<{ version: number }>('GET', `/spaces/${payments.id}/limits`)).version}"` } : {})
+  const at = Date.now()
+  const stamp = (ms: number) => new Date(ms).toISOString()
+  const dayMs = 86_400_000
+  const today0 = Math.floor(at / dayMs) * dayMs
+  const stub = async (pattern: string | RegExp, body: unknown) => { await page.route(pattern, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })) }
+  await stub(`**/api/v1/spaces/${payments.id}/account-windows`, { items: [
+    { account_id: teamClaude.id, name: 'team-claude', harness: 'claude-code', windows: [
+      { kind: 'five_hour', used_pct: 64, resets_at: stamp(at + 95 * 60_000), observed_at: stamp(at - 3 * 60_000) },
+      { kind: 'seven_day', used_pct: 41, resets_at: stamp(at + 4 * dayMs), observed_at: stamp(at - 3 * 60_000) }] },
+    { account_id: ciAnthropic.id, name: 'ci-anthropic', harness: 'claude-code', windows: [
+      { kind: 'five_hour', used_pct: 9, resets_at: stamp(at + 4 * 3600_000), observed_at: stamp(at - 12 * 60_000) }] },
+  ] })
+  await stub(`**/api/v1/spaces/${payments.id}/account-switches`, { items: [
+    { id: 'asw_shot1', space_id: payments.id, instance_id: 'ins_shot', role: 'reviewer', run_kind: 'worker', harness: 'claude-code', from_run_id: 'run_shot_a', new_run_id: 'run_shot_b', from_account_id: teamClaude.id,
+      to_account_id: ciAnthropic.id, cause: 'usage_limit', limit_kind: 'five_hour', limit_resets_at: stamp(at + 95 * 60_000), state: 'succeeded', version: 3, created_at: stamp(at - 50 * 60_000), updated_at: stamp(at - 48 * 60_000) },
+    { id: 'asw_shot2', space_id: payments.id, instance_id: 'ins_shot', role: 'control', run_kind: 'control', harness: 'claude-code', from_run_id: 'run_shot_c', from_account_id: teamClaude.id, to_account_id: '',
+      cause: 'usage_limit', limit_kind: 'five_hour', limit_resets_at: stamp(at - 5 * 3600_000 + 9 * 60_000), state: 'fell_back', reason: 'reset_near', version: 1, created_at: stamp(at - 5 * 3600_000), updated_at: stamp(at - 5 * 3600_000) },
+  ] })
+  const urow = (d: number, group: string, tokens: number, usd: number) => ({ bucket_start: stamp(today0 - d * dayMs).replace('.000Z', 'Z'), group, total_tokens: tokens, input_tokens: Math.round(tokens * 0.2),
+    output_tokens: Math.round(tokens * 0.05), cache_read_tokens: Math.round(tokens * 0.7), cache_write_tokens: Math.round(tokens * 0.05), reasoning_tokens: 0, requests: Math.round(tokens / 4000), total_cost_usd: usd })
+  const uitems = [6, 5, 4, 3, 2, 1, 0].flatMap((d) => [urow(d, 'control', 90_000 + ((d * 37) % 5) * 20_000, 0.3), urow(d, 'implementor', 420_000 + ((d * 53) % 7) * 80_000, 1.4 + d * 0.1), urow(d, 'reviewer', 110_000 + (d % 3) * 70_000, 0.4)])
+  const usum = (k: 'total_tokens' | 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_write_tokens' | 'requests' | 'total_cost_usd') => uitems.reduce((n, r) => n + r[k], 0)
+  await stub(new RegExp(`/api/v1/spaces/${payments.id}/usage/series`), { bucket: 'day', group_by: 'role', from: stamp(today0 - 6 * dayMs), to: stamp(today0 + dayMs), items: uitems,
+    cost_note: "The cost is the harness's own list-price estimate, not a bill; tokens are the primary unit.",
+    totals: { group: '', total_tokens: usum('total_tokens'), input_tokens: usum('input_tokens'), output_tokens: usum('output_tokens'), cache_read_tokens: usum('cache_read_tokens'),
+      cache_write_tokens: usum('cache_write_tokens'), reasoning_tokens: 0, requests: usum('requests'), total_cost_usd: usum('total_cost_usd') } })
+  await capture(page, 'space-account-pools', async () => {
+    await page.goto(`/spaces/${payments.id}/accounts`)
+    await expect(page.getByTestId('windows-team-claude')).toContainText('64 % used')
+    await expect(page.getByTestId('account-switches')).toContainText('team-claude → ci-anthropic')
+  })
+  await capture(page, 'space-usage-page', async () => {
+    await page.goto(`/spaces/${payments.id}/usage`)
+    await expect(page.getByTestId('usage-totals')).toContainText('Estimated cost')
+    await expect(page.getByRole('table', { name: 'Usage by role' })).toBeVisible()
+  })
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
   await capture(page, 'human-types', async () => {
     await page.goto('/human-types')
     await page.getByRole('cell', { name: /Deploy window/ }).first().click()
@@ -1005,7 +1051,9 @@ test('documentation screenshots', async ({ page, browser }) => {
   // an hourly task.
   // Retention periods are limits too (ADR-0045): 90 days for attachments of finished items, 180 for finished human actions.
   await api.call('PUT', `/spaces/${payments.id}/limits`, { values: { max_concurrent_runs: 4, max_tool_calls_per_run: 2000, budget_tokens_24h: 5_000_000,
-    budget_cost_cents_24h: 5000, task_deadline_minutes: 240, retention_attachments_days: 90, retention_human_actions_days: 180 }, on_lower: 'drain' })
+    budget_cost_cents_24h: 5000, task_deadline_minutes: 240, retention_attachments_days: 90, retention_human_actions_days: 180 }, on_lower: 'drain' },
+    // The Accounts shots above stored their own overrides, so this replaces them at their version.
+    { 'If-Match': `"${(await api.call<{ version: number }>('GET', `/spaces/${payments.id}/limits`)).version}"` })
   await capture(page, 'space-limits', async () => {
     await page.goto(`/spaces/${payments.id}/limits`)
     await expect(page.getByText('Not a hard currency limit', { exact: true })).toBeVisible()

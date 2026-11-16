@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
@@ -51,6 +53,8 @@ type Run struct {
 	Adopted    bool   `json:"adopted"`
 	// Limit is the run's open usage limit (ADR-0079): a live run with one is waiting for it to reset.
 	Limit *RunLimit `json:"limit,omitempty" doc:"The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset"`
+	// Failure is the latest non-limit failure class Claude Code reported for the run (node protocol 1.13 or later).
+	Failure string `json:"failure,omitempty" enum:"authentication_failed,oauth_org_not_allowed,account_on_hold,verification_required,billing_error,overloaded,invalid_request,model_not_found,server_error,unknown,max_output_tokens,cloud_credential_error" doc:"The latest failure class Claude Code reported for the run (not a usage limit); a run health signal (node protocol 1.13 or later)"`
 	// HarnessVersion, HarnessRequested and HarnessFallback are what the node reported launching (minor ≥ 11, ADR-0077).
 	HarnessVersion   string     `json:"harness_version,omitempty" doc:"The harness version the run launched, as its node reported it (node protocol 1.11 or later)"`
 	HarnessRequested string     `json:"harness_requested,omitempty" doc:"What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z)"`
@@ -100,6 +104,7 @@ func runFromRow(r db.Run) *Run {
 	_ = json.Unmarshal([]byte(r.LaunchJson), &out.Launch)
 	out.TerminalSize = terminalSizeOf(r.TerminalCols, r.TerminalRows)
 	out.Limit = runLimitOf(r)
+	out.Failure = r.Failure
 	return out
 }
 
@@ -131,6 +136,11 @@ type LaunchInput struct {
 	// Dream prepares a dream workspace (set by the dream scheduler, not part of the API).
 	Dream      *proto.DreamSpec `json:"-"`
 	AccountRef string           `json:"account_ref,omitempty"`
+	// RequirePoolMember is set by SpaceMan's own resume, switch and restart launches (not part of the API): the launch
+	// transaction then checks that a named AccountRef is still in the role's pool, so a pool change between the decision
+	// and the launch can't widen the pool (ADR-0090). A ref that left a scoped pool is dropped and the pool picks.
+	// Operator- and API-launched runs that name an account leave it unset and keep the named account.
+	RequirePoolMember bool `json:"-"`
 	// RecordingMaxBytes is the space's recording quota, filled by launch resolution (not part of the API).
 	RecordingMaxBytes int64 `json:"-"`
 	// TerminalSize is the size the run's terminal is held at from the start: the space's terminal_cols and
@@ -281,16 +291,39 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			if ul.Failover {
 				avoid = func(id string) (bool, error) { return accountHeld(ctx, tx.Q, id, tx.NowMicros()) }
 			}
+			// The launch-time headroom gate (a space setting, off by default) only removes accounts from what Resolve may
+			// choose: with it on, the pool's order applies even without failover, and no pool account passing refuses
+			// the launch. Running agents are never moved for it.
+			gated := svc.withHeadroom(ctx, tx.Q, ul, avoid)
 			ref := in.AccountRef
-			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, avoid); err != nil {
+			// Role pools apply only while failover or the headroom gate is on (ADR-0090 decisions 3 and 4): with both off the
+			// resolver ignores them, so a run launched on the space default outside the pool keeps its account. With the
+			// gate on the pool governs, and a ref outside it is dropped so the gate picks within the pool.
+			rolePoolsApply := gated != nil
+			if in.RequirePoolMember && ref != "" && rolePoolsApply {
+				if ref, err = poolMemberRef(ctx, tx, spaceID, in.Harness, in.Role, ref); err != nil {
+					return err
+				}
+			}
+			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, gated); err != nil {
 				return err
 			}
+			if svc.headroomOn(ul) {
+				if err := svc.checkHeadroom(ctx, tx, ul, spaceID, in.Harness, in.Role, in.AccountRef); err != nil {
+					return err
+				}
+			}
+			avoid = gated
 			if avoid != nil {
-				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, ref, nil); err == nil && base != in.AccountRef {
+				if base, err := svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.Role, ref, func(string) (bool, error) { return false, nil }); err == nil && base != in.AccountRef {
 					if resolved == nil {
 						resolved = map[string]any{}
 					}
-					resolved["account_failover"] = map[string]any{"from": base, "to": in.AccountRef, "reason": "usage_limit"}
+					reason := "usage_limit"
+					if below, _, err := svc.belowHeadroom(ctx, tx.Q, ul, base); err == nil && below {
+						reason = "headroom"
+					}
+					resolved["account_failover"] = map[string]any{"from": base, "to": in.AccountRef, "reason": reason}
 				}
 			}
 		}
@@ -799,7 +832,10 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		}
 		// A report that changes nothing (every hello re-reports the node's whole journal, ended runs included) writes
 		// nothing: no version, no change-feed entry, so a reconnect doesn't make every open UI refetch its runs.
-		if sweep == nil && !limitChanged && reportUnchanged(r, rep) {
+		// The failure class (minor ≥ 13): a report without one keeps what is stored; an unlisted value counts as none.
+		failure := proto.FailureClass(rep.Failure)
+		failureChanged := failure != "" && failure != r.Failure || failure == "" && rep.FailureCleared && r.Failure != ""
+		if sweep == nil && !limitChanged && !failureChanged && reportUnchanged(r, rep) {
 			return nil
 		}
 		var exit sql.NullInt64
@@ -827,12 +863,29 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			}
 			version += n
 		}
+		if failureChanged {
+			n, err := tx.Q.SetRunFailure(ctx, db.SetRunFailureParams{Failure: failure, Now: tx.NowMicros(), ID: r.ID, Generation: r.Generation})
+			if err != nil {
+				return err
+			}
+			version += n
+		}
 		if limitChanged {
 			n, err := svc.applyLimitTx(ctx, tx, r, curLimit, nextLimit)
 			if err != nil {
 				return err
 			}
 			version += n
+			// An account switch is decided before control hears of the limit (ADR-0090): control isn't told to leave a run
+			// alive that is about to move.
+			sr := r
+			if rep.SessionID != "" {
+				sr.SessionID = rep.SessionID
+			}
+			sr.Turn = max(sr.Turn, int64(min(rep.Turn, math.MaxInt64))) //nolint:gosec // saturated
+			if err := svc.switchOnLimitTx(ctx, tx, sr, curLimit, nextLimit, !ended(rep.State)); err != nil {
+				return err
+			}
 			if err := svc.limitWindowTx(ctx, tx, r.ID, curLimit, nextLimit); err != nil {
 				return err
 			}
@@ -869,6 +922,10 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 		}
+		// The first finished turn of a run an account switch started verifies the switch (ADR-0090 §3.4 step 5).
+		if err := svc.switchTurnTx(ctx, tx, r, int64(min(rep.Turn, math.MaxInt64)), nextLimit); err != nil { //nolint:gosec // saturated
+			return err
+		}
 		// A limit that clears while the program is idle counts as turning idle: the notices held for it go out and
 		// control's idle stop is armed again (ADR-0079 decision 3).
 		limitCleared := limitChanged && curLimit.kind != "" && nextLimit.kind == ""
@@ -895,7 +952,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				if sweep != nil {
 					why = sweep.Reason
 				}
-				if _, err := svc.parkTx(ctx, tx, pr, nextLimit, why); err != nil {
+				if err := svc.parkEndedTx(ctx, tx, pr, nextLimit, why); err != nil {
 					return err
 				}
 			} else if sweep == nil && r.Desired != "stopped" && r.Turn == 0 && rep.Turn == 0 && (rep.State == proto.RunFailed || rep.State == proto.RunExited) {
@@ -903,6 +960,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				if err := svc.resumeFailedTx(ctx, tx, r); err != nil {
 					return err
 				}
+			}
+			if err := svc.switchEndedTx(ctx, tx, r, max(r.Turn, int64(min(rep.Turn, math.MaxInt64)))); err != nil { //nolint:gosec // saturated
+				return err
 			}
 			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
 			if nodeReason != rep.Reason {
@@ -921,7 +981,14 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				}
 			}
 		}
-		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", version)
+		if err := svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", version); err != nil {
+			return err
+		}
+		// An armed account switch parks the run at its idle point (ADR-0090 §3.4 step 2).
+		if sweep == nil && !ended(rep.State) {
+			return svc.switchAtIdleTx(ctx, tx, r.ID, rep.Status)
+		}
+		return nil
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
 		svc.opts.OnRunIdle(rep.RunID)
@@ -1172,4 +1239,25 @@ func (svc *Service) KickSpace(ctx context.Context, spaceID string) {
 	if sp, err := svc.s.R().GetSpace(ctx, spaceID); err == nil {
 		svc.hub.Kick(sp.NodeID)
 	}
+}
+
+// poolMemberRef keeps a named account ref only while it is still in the role's pool. A role with a pool of its own never
+// widens (ADR-0090), so a ref that left it is dropped to "" and the resolver's scoped path picks from the pool (priority,
+// holds) or refuses when nothing is usable. A role without a pool of its own keeps the ref. Callers run it only when role
+// pools apply at all (failover on); see the call site.
+func poolMemberRef(ctx context.Context, tx *store.Tx, spaceID, harness, role, ref string) (string, error) {
+	scoped, err := accounts.RoleScoped(ctx, tx, spaceID, harness, role)
+	if err != nil || !scoped {
+		return ref, err
+	}
+	pool, err := accounts.PoolAccounts(ctx, tx, spaceID, harness, role)
+	if err != nil {
+		return "", err
+	}
+	// Stored refs (a run's launch spec, a wait's account) are resolved account IDs, and PoolAccounts returns IDs, so
+	// comparing IDs is enough.
+	if slices.Contains(pool, ref) {
+		return ref, nil
+	}
+	return "", nil
 }

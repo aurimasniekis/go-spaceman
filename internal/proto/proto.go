@@ -34,8 +34,9 @@ const (
 	// address and its child token in the secrets, delivered to the harness; ADR-0060); 10: run terminal sizes
 	// (terminal.sizes, ADR-0075); 11: harness versions (the profile's pin on launches, the launched version on run
 	// reports and node-managed harness details in capabilities, ADR-0077); 12: usage limits (the limit a node detected
-	// in a run's transcript on run reports, ADR-0079)
-	MaxMinor = 12
+	// in a run's transcript on run reports, ADR-0079); 13: account usage (a run's StopFailure class and the source of a
+	// limit's reset time on run reports, account-switching plan §3.9)
+	MaxMinor = 13
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -341,8 +342,14 @@ type RunReport struct {
 	// Minor ≥ 12 (ADR-0079): the run's open usage limit on every report while the node knows of one, and Cleared once
 	// it is over. Nil carries no limit information, so the receiver keeps what it has; always nil below minor 12
 	// (ForMinor).
-	Limit      *RunLimit `json:"limit,omitempty"`
-	ObservedAt time.Time `json:"observed_at"`
+	Limit *RunLimit `json:"limit,omitempty"`
+	// Minor ≥ 13: the latest non-limit StopFailure class of the run (one of FailureClasses), a run health signal. Empty
+	// carries none, so the receiver keeps what it has; always empty below minor 13 (ForMinor).
+	Failure string `json:"failure,omitempty"`
+	// FailureCleared (minor ≥ 13) says the failure is over: the run started a new turn after it. The node repeats it on
+	// every report until another failure arrives; it never accompanies a Failure.
+	FailureCleared bool      `json:"failure_cleared,omitempty"`
+	ObservedAt     time.Time `json:"observed_at"`
 }
 
 // Reconcile is central's desired state of the node's runs, sent after hello and on demand.
@@ -753,6 +760,33 @@ type UsageReport struct {
 	Transcript *TranscriptRef `json:"transcript,omitempty"`
 	Final      bool           `json:"final" doc:"The run ended; nothing more will be added"`
 	Note       string         `json:"note,omitempty"`
+	// Windows (minor ≥ 13) are the rate-limit windows of the run's account as the status line last showed them; central
+	// validates them again and keeps the newest observation per account and kind. Empty below minor 13 (ForMinor).
+	Windows []UsageWindow `json:"windows,omitempty"`
+}
+
+// Rate-limit window kinds a usage report may carry (a subset of the limit kinds).
+const (
+	WindowFiveHour = LimitFiveHour
+	WindowSevenDay = LimitSevenDay
+)
+
+// UsageWindow is one rate-limit window of the run's account: how much of it was used (percent) when it was observed,
+// and when it resets. Typed numbers only.
+type UsageWindow struct {
+	Kind       string     `json:"kind" enum:"five_hour,seven_day"`
+	UsedPct    float64    `json:"used_pct"`
+	ResetsAt   *time.Time `json:"resets_at,omitempty"`
+	ObservedAt time.Time  `json:"observed_at"`
+}
+
+// ForMinor returns the report as a session negotiated at minor may carry it: below MinorAccountUsage it has no windows.
+// The receiver is never changed.
+func (r UsageReport) ForMinor(minor int) UsageReport {
+	if minor < MinorAccountUsage {
+		r.Windows = nil
+	}
+	return r
 }
 
 // TranscriptMax bounds a stored transcript; TranscriptChunkMax one chunk.

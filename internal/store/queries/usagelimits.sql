@@ -92,8 +92,14 @@ ORDER BY u.resets_at DESC, u.id DESC LIMIT sqlc.arg(lim);
 
 -- name: InsertLimitWait :exec
 INSERT INTO limit_waits (id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id,
-  resume_at, release_at, attempts, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  resume_at, release_at, attempts, switch_to_account_id, account_switch_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- A switch's wait whose target changed (re-resolved) or that fell back to waiting (target cleared, resume_at moved).
+-- name: SetLimitWaitSwitch :execrows
+UPDATE limit_waits SET switch_to_account_id = sqlc.arg(switch_to_account_id), resume_at = sqlc.arg(resume_at), version = version + 1,
+  updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
 
 -- name: GetLimitWait :one
 SELECT * FROM limit_waits WHERE id = ?;
@@ -107,10 +113,11 @@ SELECT * FROM limit_waits WHERE space_id = ? AND instance_id = ? AND state IN ('
 -- name: ListLimitWaitsBySpace :many
 SELECT * FROM limit_waits WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?;
 
--- Waiting waits due to resume, control runs first, then the oldest (ADR-0079 decision 5).
+-- Waiting waits due to resume, control runs first, then account switches (ADR-0090), then the oldest (ADR-0079
+-- decision 5).
 -- name: ListDueLimitWaits :many
 SELECT * FROM limit_waits WHERE state = 'waiting' AND resume_at <= ?
-ORDER BY CASE run_kind WHEN 'control' THEN 0 ELSE 1 END, created_at, id LIMIT ?;
+ORDER BY CASE run_kind WHEN 'control' THEN 0 ELSE 1 END, CASE WHEN switch_to_account_id <> '' THEN 0 ELSE 1 END, created_at, id LIMIT ?;
 
 -- name: NextLimitWaitDue :one
 SELECT CAST(coalesce(min(resume_at), 0) AS INTEGER) AS at FROM limit_waits WHERE state = 'waiting';
@@ -163,3 +170,8 @@ SELECT count(*) FROM runs WHERE space_id = ? AND instance_id = ? AND id <> ? AND
 SELECT * FROM limit_waits WHERE state = 'waiting' AND resume_at > sqlc.arg(now)
   AND (usage_limit_id = sqlc.arg(usage_limit_id) OR last_error = 'account_held')
 ORDER BY resume_at, id LIMIT sqlc.arg(lim);
+
+-- The latest non-limit StopFailure class a node reported for a run (protocol minor 13); a repeat writes nothing.
+-- name: SetRunFailure :execrows
+UPDATE runs SET failure = sqlc.arg(failure), version = version + 1, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation) AND failure != sqlc.arg(failure);

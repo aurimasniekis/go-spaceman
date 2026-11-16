@@ -203,6 +203,17 @@ type LimitsConfig struct {
 	// human action about it, once per account window (0-720, default 12: weekly limits, not 5-hour ones; 0: never;
 	// ADR-0079 Q5).
 	UsageLimitNotifyAfterHours int64 `yaml:"usage_limit_notify_after_hours"`
+	// UsageLimitWaitIfResetWithin is, in minutes, how near the reset of a run's limited account must be for the run to
+	// wait for it (ADR-0079's keep-alive and park) instead of moving to another account of its pool (0-1440, default
+	// 15; an unknown reset counts as further away; ADR-0090 decision 2).
+	UsageLimitWaitIfResetWithin int64 `yaml:"usage_limit_wait_if_reset_within"`
+	// UsageLimitSwitchMaxPerDay is how many times one instance may move to another account in 24 hours before it waits
+	// as ADR-0079 does (0-50, default 6; 0: never switch; ADR-0090 decision 5).
+	UsageLimitSwitchMaxPerDay int64 `yaml:"usage_limit_switch_max_per_day"`
+	// UsageLimitMinHeadroomPercent is the launch-time headroom gate: a new run does not start on an account whose known
+	// window usage leaves less than this percentage free (0-100, default 0: off; ADR-0090 decision 4). Running agents
+	// are never moved because of it.
+	UsageLimitMinHeadroomPercent int64 `yaml:"usage_limit_min_headroom_percent"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual

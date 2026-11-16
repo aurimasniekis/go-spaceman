@@ -74,7 +74,7 @@ func (f *fx) resolveAvoiding(harness, ref string, avoid func(string) (bool, erro
 	var id string
 	err := f.s.W().TxNamed(f.ctx, "resolve", func(tx *store.Tx) error {
 		var err error
-		id, err = Resolve(f.ctx, tx, "spc_a", harness, ref, avoid)
+		id, err = Resolve(f.ctx, tx, "spc_a", harness, "", ref, avoid)
 		return err
 	})
 	return id, err

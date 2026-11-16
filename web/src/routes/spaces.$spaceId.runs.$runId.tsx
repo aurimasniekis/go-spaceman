@@ -5,6 +5,7 @@ import { useRun } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { RunWorkbench } from '@/features/runs/RunWorkbench'
 import { isEnded, runTitle } from '@/features/runs/runInfo'
+import { RunSwitchNotice } from '@/features/accounts/RunSwitchNotice'
 import { RunUsageCard } from '@/features/usage/UsageCards'
 import { isMiniApp } from '@/api/session'
 import { TgRunDetail } from '@/tg/pages/TgRunDetail'
@@ -47,6 +48,7 @@ function WebRunPage({ spaceId, runId }: { spaceId: string; runId: string }) {
     <>
       <RunWorkbench spaceId={spaceId} run={r} mode={mode} onMode={(v) => void navigate({ search: { view: v } })} crumbs={crumbs} />
       <div style={{ marginTop: 'var(--mantine-spacing-md)' }}>
+        <RunSwitchNotice spaceId={spaceId} runId={runId} />
         <RunUsageCard spaceId={spaceId} runId={runId} />
       </div>
     </>

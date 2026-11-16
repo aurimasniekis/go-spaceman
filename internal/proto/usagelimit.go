@@ -7,6 +7,34 @@ import "time"
 // limit on a report from a session negotiated below it (RunReport.ForMinor).
 const MinorUsageLimit = 12
 
+// MinorAccountUsage is the first minor version that carries account usage data (account-switching plan §3.9): a run
+// report may carry the non-limit StopFailure class the node saw (RunReport.Failure) and the source of a limit's reset
+// time (RunLimit.Source). A node below it sends neither, and central ignores both on a report from a session negotiated
+// below it (RunReport.ForMinor).
+const MinorAccountUsage = 13
+
+// Sources of a limit's reset time (RunLimit.Source). The transcript is the default and is sent as empty. The status
+// line only ever fills a reset the transcript record lacked; it never opens a limit.
+const (
+	LimitSourceTranscript = "transcript"
+	LimitSourceStatusLine = "statusline"
+)
+
+// FailureClasses is the allowlist of RunReport.Failure: Claude Code's StopFailure error values other than rate_limit
+// (which the transcript scan owns). Anything else is dropped, never stored as text.
+var FailureClasses = []string{"authentication_failed", "oauth_org_not_allowed", "account_on_hold", "verification_required", "billing_error",
+	"overloaded", "invalid_request", "model_not_found", "server_error", "unknown", "max_output_tokens", "cloud_credential_error"}
+
+// FailureClass returns f when it is on the allowlist and "" otherwise.
+func FailureClass(f string) string {
+	for _, v := range FailureClasses {
+		if f == v {
+			return f
+		}
+	}
+	return ""
+}
+
 // Usage-limit kinds (RunLimit.Kind): Claude Code's rateLimitType values, the two gateway cases and unknown (the
 // wrap-up path carries no kind). Anything else is reported as unknown.
 const (
@@ -56,6 +84,9 @@ type RunLimit struct {
 	// Since is when the node first saw the limit, within [now-MaxLimitReset, now+MaxLimitSkew].
 	Since   time.Time `json:"since,omitzero"`
 	Cleared bool      `json:"cleared,omitempty"`
+	// Source (minor ≥ 13) is where ResetsAt came from: LimitSourceStatusLine when the node filled a reset the transcript
+	// record lacked from the status line's rate-limit window; empty otherwise. Never set without a ResetsAt.
+	Source string `json:"source,omitempty"`
 }
 
 // Normalized returns l as it may be stored or sent, and false when it is not a limit at all (not cleared and no kind).
@@ -81,15 +112,31 @@ func (l RunLimit) Normalized(now time.Time) (RunLimit, bool) {
 	if r := l.ResetsAt; r != nil && r.After(since) && !r.After(since.Add(MaxLimitReset)) {
 		v := r.UTC()
 		out.ResetsAt = &v
+		if l.Source == LimitSourceStatusLine {
+			out.Source = LimitSourceStatusLine
+		}
 	}
 	return out, true
 }
 
-// ForMinor returns the report as a session negotiated at minor may carry it: below MinorUsageLimit it has no limit.
-// The node applies it before sending, central on receipt.
+// ForMinor returns the report as a session negotiated at minor may carry it: below MinorUsageLimit it has no limit,
+// and below MinorAccountUsage no failure class and no limit source. The node applies it before sending, central on
+// receipt. The receiver (and the limit it points to) is never changed.
 func (r RunReport) ForMinor(minor int) RunReport {
 	if minor < MinorUsageLimit {
 		r.Limit = nil
+	}
+	if minor < MinorAccountUsage {
+		r.Failure, r.FailureCleared = "", false
+		// A reset the status line filled is dropped with its source: the limit is what the transcript alone gave.
+		if r.Limit != nil && r.Limit.Source != "" {
+			l := *r.Limit
+			if l.Source == LimitSourceStatusLine {
+				l.ResetsAt = nil
+			}
+			l.Source = ""
+			r.Limit = &l
+		}
 	}
 	return r
 }

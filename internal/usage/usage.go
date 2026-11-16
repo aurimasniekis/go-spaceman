@@ -162,9 +162,17 @@ func (svc *Service) Report(ctx context.Context, nodeID string, rep proto.UsageRe
 		final = 1
 	}
 	err = svc.s.W().TxNamed(ctx, "usage.report", func(tx *store.Tx) error {
-		if err := tx.Q.UpsertRunUsage(ctx, db.UpsertRunUsageParams{RunID: r.ID, SpaceID: r.SpaceID, Source: rep.Source, ModelsJson: string(models), EstimateJson: est,
-			TranscriptBytes: tb, Final: final, Note: rep.Note, UpdatedAt: tx.NowMicros()}); err != nil {
+		kept, err := tx.Q.UpsertRunUsage(ctx, db.UpsertRunUsageParams{RunID: r.ID, SpaceID: r.SpaceID, Source: rep.Source, ModelsJson: string(models), EstimateJson: est,
+			TranscriptBytes: tb, Final: final, Note: rep.Note, UpdatedAt: tx.NowMicros(), AccountID: runAccount(r), Role: r.Role, Harness: r.Harness})
+		if err != nil {
 			return err
+		}
+		// Only a report the row kept is booked: a late report after the final one changes nothing, and a report that adds
+		// nothing new (a repeat) books nothing.
+		if kept > 0 && rep.Source == proto.UsageClaudeTranscript {
+			if err := svc.account(ctx, tx, r, rep); err != nil {
+				return err
+			}
 		}
 		return svc.changes.Record(ctx, tx, r.SpaceID, "run", r.ID, "updated", 0)
 	})

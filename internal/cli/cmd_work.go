@@ -15,6 +15,7 @@ var (
 	scheduleCols = []col{c("ID", "id"), c("NAME", "name"), c("KIND", "kind"), c("CRON", "cron"), c("EVERY(S)", "interval_seconds"), c("TARGET", "target"), c("ENABLED", "enabled"), c("NEXT", "next_at")}
 	holdCols     = []col{c("ID", "id"), c("SCOPE", "scope"), c("ACCOUNT", "account_id"), c("GATEWAY", "gateway_ref"), c("KIND", "kind"), c("RESETS", "resets_at"), c("SHARED", "shared"), c("SEEN", "seen_at"), c("CLEARED", "cleared_at")}
 	waitCols     = []col{c("ID", "id"), c("RUN", "run_id"), c("ROLE", "role"), c("TASK", "task_id"), c("STATE", "state"), c("RESUME", "resume_at"), c("RELEASE", "release_at"), c("ATTEMPTS", "attempts")}
+	switchCols   = []col{c("ID", "id"), c("ROLE", "role"), c("FROM", "from_account_id"), c("TO", "to_account_id"), c("STATE", "state"), c("REASON", "reason"), c("FROM RUN", "from_run_id"), c("NEW RUN", "new_run_id"), c("CREATED", "created_at")}
 	limitCols    = []col{c("KEY", "key"), c("VALUE", "value"), c("UNIT", "unit"), c("SOURCE", "source"), c("OVERRIDE", "override"), c("DEFAULT", "default"), c("LABEL", "label")}
 )
 
@@ -201,6 +202,8 @@ func (a *App) limitsCmd() *cobra.Command {
 			scoped: true, args: pos("limit")}),
 		a.cmd(opts{use: "waits", short: "A space's runs parked at a usage limit, waiting to resume", op: "list-space-limit-waits",
 			scoped: true, view: view{items: "items", cols: waitCols, empty: "No runs waiting for a usage limit."}}),
+		a.cmd(opts{use: "switches", short: "A space's account switches: runs moved to another account of their pool at a usage limit", op: "list-space-account-switches",
+			scoped: true, view: view{items: "items", cols: switchCols, empty: "No account switches."}}),
 		a.cmd(opts{use: "resume", short: "Resume a run parked at a usage limit now (the usual launch checks apply)", op: "resume-limit-wait",
 			scoped: true, args: pos("wait")}),
 		a.cmd(opts{use: "release", short: "Give up on a run parked at a usage limit; its task goes back to the queue", op: "release-limit-wait",

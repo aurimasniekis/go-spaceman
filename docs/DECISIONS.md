@@ -5413,6 +5413,198 @@
 - **Evidence:** `internal/agenttools` `TestWorkerInboxDedupScopedToRole`, `TestWorkerInboxDedupKeyEffectiveLimit`;
   `internal/xspace` `TestAcceptRefusesPlantedLegacyTask`, `TestAcceptRetryLinksOwnTask`; `internal/app` `TestHumanActionsOverHTTP` (HTTP 422 for a reserved `dedup_key`).
 
+> **Number gap:** ADR-0089 is reserved by the Telegram chat-threads work on another branch (its topic and thread design).
+> Both branches reach main, so this decision takes the next free number. The gap on this branch is expected.
+
+### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
+- **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the
+  recommended defaults; see decisions 2 and 4). Tasks T2–T11 of the plan in `docs/plans/2026-11-15-account-switching.md`.
+  T3 (the switch core, decisions 1, 2, 5 and 7 for Claude Code) is implemented and tested with simulated evidence only
+  (fleet tests and a scripted-node app e2e); the pool-exhausted resume time (decision 8, T10), the headroom gate
+  (decision 4, T9) and the API, CLI and UI listings (T7, T8) are not. Real two-account evidence is open as K-17.
+- **T3 implementation notes (2026-11-15):**
+  - The switch decision runs in the report transaction that opens the run's limit window, before control is told
+    about the limit; a run with an armed switch gets no "kept alive" message. A run that ends at its limit by itself is
+    decided in its end report.
+  - A switch row is written only when a switch is decided: armed (`pending`) or `fell_back` (`no_eligible_account`,
+    `budget_spent`). A reset within `usage_limit_wait_if_reset_within`, failover off, a gateway run, a run kind that
+    isn't parked, or a run with no session to resume write no row: they are ADR-0079's ordinary wait. An armed switch
+    whose limit is re-read with a near reset falls back (`reset_near`); one whose limit clears, or whose run is stopped
+    or replaced, is `cancelled`.
+  - The daily budget counts the instance's switches created in the last 24 hours in any state but `fell_back` and
+    `cancelled`. A budget of 0 never switches.
+  - The resume re-resolves the target in its claim transaction: still eligible, it stays; held, gone, unbound or
+    disabled, the pool's next eligible account takes its place (the wait and the switch follow); none left, or
+    failover turned off, the switch falls back, the wait loses its target and its resume time becomes ADR-0079's (the
+    hold's reset), and control gets ADR-0079's "parked" message.
+  - A switch's park and resume carry the switch on the limit-wait event; control gets one message per switch at its
+    resume (`account-switch:` plus the switch ID, a control message, not a human action or task, so no reserved
+    dedup prefix is involved), naming both runs and both accounts by name.
+  - The target is resolved from the limited account (bound, so a space without a default still resolves; avoided,
+    so the pool's order decides). A preferred target stays only while it is an eligible member of the run's pool (the
+    role's pool when it has one); a re-targeted switch is audited (`account.switch_retargeted`).
+  - An armed switch that ends without moving the run while it is still alive at its limit (a near reset re-read,
+    failover turned off before the idle point, the run already parked) lets control's held-back "kept alive" notice
+    go out, so control never loses the ADR-0079 message.
+  - A resumed run that hits a limit before its first turn keeps the session it was resumed with: its next switch
+    resumes it again (a plain ADR-0079 re-park is unchanged).
+  - A switch's failed resume gets ADR-0079's fresh retry on the account it moved to (`limit_waits.switch_to_account_id`
+    on the retry wait). With no limited account to anchor on, the role's pool still decides the retry's target
+    (never widened); only a role without a pool of its own falls back to the account the switch moved to (it is bound),
+    so a space without a default account keeps it. A resumed run an operator stops before its first turn
+    cancels its switch (`run_stopped`); it is not a failed resume.
+  - A limit that clears while the switch is parked still moves the run to the target: the run is already stopped, and
+    the resume uses the target account either way.
+  - New space limits are named as in decision 5, without a unit suffix: `usage_limit_wait_if_reset_within` (minutes)
+    and `usage_limit_switch_max_per_day`. Metric `spaceman_account_switches_total{result}`.
+- **T10 implementation notes (2026-11-16):**
+  - With failover on, a pool is exhausted when every account of the run's pool (the role's pool when it has one, never
+    widened; otherwise the space's enabled accounts for the harness) has an open hold that hasn't reset. A wait parked
+    then, or a switch's wait that finds no eligible account at its resume, resumes at the pool's earliest reset (plus
+    ADR-0079's slack) instead of its own account's. An account frees up when its last hold resets; an account whose
+    hold has no known reset counts as limited and is left out of the earliest. When no reset in the pool is known the
+    wait keeps ADR-0079's time. No new state is stored: exhaustion is read when the wait is parked.
+  - The resume re-resolves through the launch path. With failover on and a role pool, a resume that is not a switch and whose
+    parked account has left the pool no longer names it: the role's pool picks, so an account outside the pool is never used.
+    The window of the people notice is the pool's earliest reset (rounded down to ten minutes, so a few seconds of
+    restating the same reset stay in one window), so a reset that moves later across a window raises another notice.
+  - Control gets its park message with the pool's accounts and the resume time. The people get one informational human
+    action per space, harness, role and window (the pool's earliest reset; the day when none is known) under the reserved
+    dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
+    or a pool with a free account, raises none. The park's transaction records the notice (table
+    `pool_exhausted_notices`) and the action is created after it commits; the row is deleted once the action exists. A
+    crash in between or a space at its open-action cap (rate limited) leaves the row, and the deadline
+    loop raises it on a later round (at the latest within the hour, or at the next limit report), so the notice is late,
+    never lost, until its window is over: the row's `expires_at` (the end of the reset's 10-minute window, or the end of
+    the UTC day when none is known) drops it undelivered, so stale rows never pile up or announce a reset in the past. A
+    row of an archived space is dropped, and a row that keeps failing is logged and skipped so the rows after it are
+    still raised. While a space is at its cap the notice waits until a person answers an action.
+- **T8 implementation notes (2026-11-16):**
+  - The web gets an **Accounts** and a **Usage** section per space. The pool order (priorities 10, 20, ... written from the
+    shown order; a space's accounts keep their priority when the accounts are chosen again), the role pools and the
+    failover, wait-if-reset-within, switches-per-day and headroom settings are the existing APIs and the space's limit
+    overrides; nothing new is stored. Windows are shown as observations with their age: older than an hour, or past
+    their reset, they say they may be out of date.
+  - The plan's `GET /spaces/{id}/account-switches` did not exist after T3 and T7, so T8 adds it (read-only, run:read, the
+    fleet service method T3 wrote), with `spaceman limits switches`. A run's page links to the switch away from it and
+    the one into it from that list; `GET /runs/{id}` gains no switch fields.
+  - The Usage page puts tokens first and shows cost only as "≈ $" with the API's list-price note, never as a bill; unknown
+    usage is missing, not zero. The chart is inline SVG in the validated categorical palette (a fixed slot order by group
+    name, at most seven groups and Other), with a legend, a hover and focus tooltip and a table of the same numbers.
+- **Launch-time pool check (2026-11-16):**
+  - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
+    account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
+    launches SpaceMan makes itself: `LaunchInput.RequirePoolMember` (not part of the API) is set by the limit-wait resume
+    (a switch, a pool-exhausted resume and ADR-0079's resume alike) and by the control supervisor's and autostart's
+    relaunch. Role pools apply only while failover is on (decision 3) or the launch-time headroom gate is on (decision 4),
+    so the check runs only then: with the gate on, the role's pool governs launches and SpaceMan's resumes even with
+    failover off, and a ref outside the pool is dropped so the gate picks within it. When the role has a
+    pool of its own for the harness and the named account is not in it, the ref is dropped and the pool picks (priority,
+    holds), or refuses the launch when nothing in it is usable (the wait defers). A role without a pool of its own keeps
+    the named account. With failover off, role pools don't apply and the ref is kept: a run launched on the space's
+    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen. A gate refusal's wait
+    is capped at one hour from now (the age after which the usage ledger stops counting a window), so a distant reset
+    (seven days) does not defer autostart or a limit-wait resume for days.
+  - Launches that an operator or the API make with a named account do not set the flag and keep today's behaviour: an
+    explicit ref names any enabled account bound to the space, inside the role's pool or not. `accounts.Resolve` itself is
+    unchanged. The claim-time check of T10 stays as an early decision; this one closes the window after it.
+  - Evidence: simulated (`internal/fleet/launchpool_test.go`), with a mutation check: removing the check fails the tests.
+- **Known limitation (T6 usage ledger):** a run's growth is booked when its report arrives, to the account the run was launched with. If the final report of run A is lost or arrives late, A's last tokens are booked with a later report of the session, which is the next run's (the account after a switch). The tokens are misattributed to that account, never counted twice: the per-session high-water marks (`usage_ledger_marks`) guarantee each token is booked once.
+- **Security-relevant because:**
+  - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
+  - a run's own transcript (untrusted data) and its status-line and hook reports (typed fields only, decision 6) can now
+    move the run to another credential;
+  - SpaceMan takes ownership of two more Claude Code settings keys that run commands (`statusLine`, a `StopFailure` hook).
+- **Context:**
+  - ADR-0079 keeps a limited run alive or parks it until its reset. Its failover (`usage_limit_failover`, off by default)
+    applies only when a run is launched or resumed, and a resume names its old account, so in practice a limited run waits.
+  - The operator wants a limited run to continue at once on another subscription account of its pool, without a proxy or
+    gateway (no Harbor Pilot, no `claude -p` behind a proxy). This applies to subscription traffic; Harbor Pilot routing (ADR-0060) stays for 3rd-party/gateway models and is unchanged.
+  - Claude Code fixes `CLAUDE_CODE_OAUTH_TOKEN` for the life of the process ("To replace an expired token, generate a new
+    one and restart", official env-vars docs). Codex refuses to adopt a different account's `auth.json` in a running
+    process (`codex-rs/login/src/auth/manager.rs`: reload skipped on an account-id mismatch).
+  - Sessions belong to the instance's config folder, not the credential. `--resume` under another token works against a
+    fake API (2.1.323); with two real claude.ai accounts it is not verified (K-16, K-17).
+  - Claude Code 2.1.325 has a `StopFailure` hook (fire-and-forget; `error` enum includes `rate_limit`,
+    `authentication_failed`, `billing_error` …). Its status line receives `rate_limits.{five_hour,seven_day}.
+    {used_percentage,resets_at}` for subscription accounts, plus cost and token fields (official statusline docs).
+- **Decision:**
+  1. **A switch is a park with an immediate resume on another account.** When a run's limit opens, failover is on, the run
+     had a turn, the limited account's reset is more than `usage_limit_wait_if_reset_within` away (an unknown reset counts
+     as more), and the pool has an eligible account other than the run's, central arms a switch. At the run's next idle
+     point (at most 10 min) it parks the run as ADR-0079 does, with `resume_at = now` and the target account. The resume
+     launches a new run of the same instance with `--resume <session>` under that account and a fixed prompt. Nothing is
+     sent to a running process; no credential is written to the instance folder.
+  2. **Near reset: wait.** When the limited account resets within `usage_limit_wait_if_reset_within` (default 15 min), the
+     run does not switch. It waits as ADR-0079 does: kept alive, then parked until the reset.
+  3. **Pools.** The space's bindings for the harness, ordered by `space_accounts.priority`. An optional role pool
+     (`space_role_accounts`) replaces it for that role. Eligible: enabled, bound, compatible, with no open hold in any space
+     (probe-due holds included). Order: priority, lowest known utilisation of the window that limited the run, fewest live runs, binding order. The
+     same order applies to launches and resumes whenever failover is on.
+  4. **Launch-time headroom gate, no pre-emptive switch.** `usage_limit_min_headroom_percent` (0–100, default 0 = off). A
+     new run (a launch, a fresh resume, or a switch's resume) starts on an account only if every window with known usage
+     keeps at least that percentage free (`100 − used_pct`). An account with no known usage is not refused by the gate. When
+     no eligible account passes, the start waits, as an exhausted account does today (refused with the reset time, SM-RUN-005).
+     Running agents are never switched before they reach a limit.
+  5. **Settings.** `usage_limit_failover` (existing, default off) enables live switching too. `usage_limit_switch_max_per_day`
+     (default 6 per instance) bounds switches; beyond it ADR-0079's wait applies. `usage_limit_wait_if_reset_within`
+     (default 15 min) and `usage_limit_min_headroom_percent` as in decisions 2 and 4.
+  6. **Detection.** ADR-0079's typed transcript scan stays the only thing that opens a hold or sets a limit. A
+     SpaceMan-owned `StopFailure` hook and status-line wrapper report allowlisted typed fields over the run's authenticated
+     bridge socket. The hook kicks the scan and records the failure class. The status line supplies window utilisation and
+     resets (filling the wrap-up path's missing reset, clamped as before), the cost estimate and tokens. A profile's own
+     status line is wrapped (run with the same input; its output is shown). No display text is read or forwarded.
+  7. **History and notices.** `account_switches` records every switch (states pending → parked → resumed → succeeded |
+     failed | fell_back | cancelled), with audit (`account.switch_*`), outbox events (`fleet.account_switch.*`) and the change
+     feed. Control gets one message per switch (`account-switch:<id>`), replacing the park and resume messages of that wait.
+     People are told only when the whole pool is exhausted (one human action per space and window).
+  8. **All accounts exhausted.** ADR-0079 unchanged, except that the wait's resume time is the earliest reset in the pool,
+     and the resume re-resolves.
+  9. **Usage ledger.** `run_usage` gains account, role and harness. `usage_buckets` (hourly, rolled up to daily) holds token
+     sums and the cost estimate per space, account, role, harness and model, written from cumulative deltas in the
+     usage-report transaction. `account_windows` holds each account's latest window snapshot, with 10-minute samples.
+     Retention: hourly 90 days, daily 730 days, samples 30 days; closed holds, waits and switches 180 days.
+  10. **Codex** follows in stages after a spike with real ChatGPT logins: typed `token_count.rate_limits` detection, then the
+      same switch with `codex resume` and the login links swapped. If a resume under another account is refused, Codex
+      switching stays off.
+  11. **Numbers and GOAL.** Protocol minor 13 (`MinorAccountUsage`: usage windows, cost estimate, limit source, failure
+      class; all optional). One central migration (pools, switches, ledger). SM-ACCT-003 amended; SM-ACCT-007, SM-RUN-007 and
+      SM-OBS-007 added, with TRACEABILITY rows marked `todo` (not implemented).
+- **Alternatives:**
+  - **Route through a gateway that holds several accounts** (Harbor Pilot). Rejected by the operator: usage, caching and
+    behaviour differ from the real interactive client.
+  - **In-place swap through a stored `.credentials.json`** (the binary re-reads it on an mtime change). Keeps background
+    shells, but leaves a long-lived token in the instance folder between runs, relies on undocumented behaviour and needs a
+    stored-login shape for `setup-token` tokens. Deferred to an optional spike.
+  - **`apiKeyHelper`** printing the current token. A 429 does not re-run it, whether a subscription token works through it is
+    unverified, and it outranks the env token for every run.
+  - **Switch on the status line alone** (utilisation at 100 %). Rejected as the only signal: it is display-adjacent data from
+    a command SpaceMan runs, not a typed transcript record. It is used only to fill resets and for the headroom gate.
+  - **Always switch, however close the reset** (the draft's default for Q4). Replaced by the wait window (decision 2).
+  - **A pre-emptive switch at a utilisation threshold** (the draft's `usage_limit_switch_at_percent`). Rejected by the
+    operator (plan Q5); the headroom gate applies only when a new run starts.
+- **Consequences:**
+  - A forged transcript record can now also move a run to another account. This is bounded by the 8-day hold clamp, the
+    daily switch budget, and the fact that the target is always an operator-bound account of the same pool.
+  - A switch ends the process: background shells and subagents end, and the prompt cache starts cold under the new
+    organization (an extra uncached request).
+  - A run whose reset is near waits rather than switching, so it can be stopped for up to the reset, as today.
+  - The headroom gate only changes behaviour when set above 0; the default leaves launches unchanged.
+  - Until two real accounts are tested (K-17, plan T1), the switch is implemented and simulated only.
+- **Implementation notes (T6, the usage ledger):**
+  - Buckets take the growth of a run's cumulative counters, not the counters. The counters already counted are kept per
+    harness session (`usage_ledger_marks`), not per run, because a resumed run (a switch) continues the same native
+    transcript and so starts at the earlier run's totals; each account is booked only with what its own run added. A
+    repeat, a stale report that arrives late and the report after the final one add nothing; unknown counters count as zero.
+    A session idle for more than 180 days that reports again counts its whole history once more (its mark was pruned).
+  - The estimated cost of a report is one figure for the run; its growth is booked under the model whose tokens grew most.
+  - Windows are the account's latest `five_hour` and `seven_day` observation (newest wins), sampled at most once per 10
+    minutes, taken from the status line's snapshot in `UsageReport.windows` (minor 13) and validated again at central. The
+    status line's own cost figure (`cost.total_usd_estimate`) is not on the wire yet: buckets carry the transcript
+    estimate.
+  - Retention periods are the fixed ones of Q9 (not per-space limits): hourly buckets 90 days, then rolled into daily buckets
+    by whole UTC days, daily 730 days, window samples 30 days, closed holds, finished waits and finished switches 180 days.
+
 ### ADR-0091 — Backups and verifications are bounded by a progress watchdog
 - **Status:** Accepted, 2026-11-16. No migration. New configuration keys `backups.stall_timeout` and
   `backups.max_duration`; the backup status API gains `current` and `items[].stage`.
@@ -5827,3 +6019,4 @@
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
 | K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
 | K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run. None had been observed when the work was documented (UL-12, 2026-11-14). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |
+| K-17 | Account switching not verified with **two real claude.ai accounts** (ADR-0090; plan S-1, T1): `--resume` of a session under a different real account; `oauthAccount` in `.claude.json` after the change; whether the status line shows the new account's `rate_limits`; whether `StopFailure` and `Notification` fire as documented at a real limit (only if one can be reached cheaply). The Codex half (plan S-2, C1) is separate. Two subscription tokens come from the operator out of band; no token, email or account identity goes into the repository, logs or attachments. | SM-RUN-007, SM-ACCT-007 (real evidence) | Recorded in `docs/contracts/harnesses.md` when plan T1 runs. Until then the switch is implemented and simulated only (AGENTS.md status rules). Covers the switch path of K-16 |

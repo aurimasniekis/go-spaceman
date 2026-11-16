@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"io/fs"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -201,20 +203,54 @@ func (a *App) spaceExtra() []*cobra.Command {
 	}
 }
 
+var (
+	usageCols = []col{c("BUCKET", "bucket_start"), c("GROUP", "group"), c("TOKENS", "total_tokens"), c("INPUT", "input_tokens"), c("OUTPUT", "output_tokens"),
+		c("CACHE READ", "cache_read_tokens"), c("REQUESTS", "requests"), c("EST. COST USD", "total_cost_usd")}
+	windowCols = []col{c("ACCOUNT", "account_id"), c("NAME", "name"), c("HARNESS", "harness")}
+)
+
+func usageQuery() []qflag {
+	return []qflag{qs("from", "from", "start of the range, RFC 3339 (default: 7 days, or 30 with --bucket day, before --to)"),
+		qs("to", "to", "end of the range, RFC 3339 (default: now)"), qs("bucket", "bucket", "hour (default) or day"), limitFlag()}
+}
+
+// usageCmd shows the usage ledger: tokens per bucket, with the cost as the harnesses' list-price estimate (not a bill).
+func (a *App) usageCmd() *cobra.Command {
+	return group("usage", "Usage over time from the ledger: tokens first, cost as a list-price estimate", nil,
+		a.cmd(opts{use: "space", short: "A space's usage over time, grouped by role, account, model or harness", op: "get-space-usage-series", args: spaceArg(), paged: true,
+			query: append(usageQuery(), qs("group-by", "group_by", "role (default), account, model or harness")),
+			view:  view{items: "items", cols: usageCols, empty: "No usage in this range."}}),
+		a.cmd(opts{use: "account", short: "An account's usage over time in the spaces you can read, grouped by space, role or model", op: "get-account-usage",
+			args: pos("account"), paged: true, query: append(usageQuery(), qs("group-by", "group_by", "space (default), role or model")),
+			view: view{items: "items", cols: usageCols, empty: "No usage in this range."}}),
+	)
+}
+
 func (a *App) accountExtra() []*cobra.Command {
 	return []*cobra.Command{
+		a.cmd(opts{use: "windows", short: "An account's latest 5-hour and 7-day rate-limit windows (needs an account bound to a space you can read)", op: "get-account-windows", args: pos("account")}),
+		a.cmd(opts{use: "space-windows", short: "The latest rate-limit windows of the accounts a space's runs may use", op: "list-space-account-windows", scoped: true,
+			view: view{items: "items", cols: windowCols, empty: "No accounts bound."}}),
+		a.accountPoolCmd(),
 		a.cmd(opts{use: "space", short: "Accounts a space's runs may use", op: "list-space-accounts", scoped: true,
-			view: view{items: "items", cols: []col{c("ACCOUNT", "account_id"), c("NAME", "name"), c("HARNESS", "harness"), c("DEFAULT", "default"), c("ENABLED", "enabled")},
+			view: view{items: "items", cols: []col{c("ACCOUNT", "account_id"), c("NAME", "name"), c("HARNESS", "harness"), c("DEFAULT", "default"), c("PRIORITY", "priority"), c("ENABLED", "enabled")},
 				empty: "No accounts bound."}}),
 		a.cmd(opts{use: "set-space", short: "Replace the accounts a space's runs may use (at most one default per harness)", op: "set-space-accounts", scoped: true,
-			example: "spaceman account set-space --space payments --account acc_01… --account acc_02… --default acc_01…",
+			example: "spaceman account set-space --space payments --account acc_01… --account acc_02… --default acc_01… --priority acc_02…=10",
 			form: func(f *form) {
-				f.list("account", "items", "account ID the space may use").list("default", "defaults", "account ID that is its harness's default")
+				f.list("account", "items", "account ID the space may use (the order given is the binding order)").
+					list("default", "defaults", "account ID that is its harness's default").
+					list("priority", "priorities", "ACCOUNT=N: pool order for usage-limit failover, 1 to 1000, lower first (default 100)")
 			},
 			prepare: func(_ context.Context, _ *cobra.Command, _ *call, body map[string]any) error {
 				raw, ok := body["items"].([]any)
 				defs, _ := body["defaults"].([]any)
 				delete(body, "defaults")
+				prios, err := parsePriorities(body["priorities"])
+				if err != nil {
+					return err
+				}
+				delete(body, "priorities")
 				if !ok {
 					return usageErrorf("give the complete new set with --account (repeatable)")
 				}
@@ -228,16 +264,77 @@ func (a *App) accountExtra() []*cobra.Command {
 					if !isStr {
 						return nil // objects from --file
 					}
-					items = append(items, map[string]any{"account_id": s, "default": isDef[s]})
+					item := map[string]any{"account_id": s, "default": isDef[s]}
+					if n, ok := prios[s]; ok {
+						item["priority"] = n
+						delete(prios, s)
+					}
+					items = append(items, item)
 					delete(isDef, s)
 				}
 				for d := range isDef {
 					return usageErrorf("--default %s is not among the --account values", d)
 				}
+				for id := range prios {
+					return usageErrorf("--priority %s is not among the --account values", id)
+				}
 				body["items"] = items
 				return nil
 			}}),
 	}
+}
+
+// parsePriorities reads repeated ACCOUNT=N values.
+func parsePriorities(v any) (map[string]int, error) {
+	out := map[string]int{}
+	raw, _ := v.([]any)
+	for _, r := range raw {
+		id, n, ok := strings.Cut(cell(r), "=")
+		p, err := strconv.Atoi(n)
+		if !ok || id == "" || err != nil || p < 1 || p > 1000 {
+			return nil, usageErrorf("--priority wants ACCOUNT=N with N from 1 to 1000, not %q", cell(r))
+		}
+		out[id] = p
+	}
+	return out, nil
+}
+
+// accountPoolCmd is the role pools of a space (usage-limit failover).
+func (a *App) accountPoolCmd() *cobra.Command {
+	return group("pool", "A space's role pools: the accounts one role's runs use instead of the space's bindings (usage-limit failover)", nil,
+		a.cmd(opts{use: "list", short: "A space's role pools", op: "list-space-role-pools", scoped: true, alias: []string{"ls"},
+			view: view{items: "items", cols: []col{c("ROLE", "role"), c("ACCOUNTS", "items")}, empty: "No role pools."}}),
+		a.cmd(opts{use: "set", short: "Replace a role's pool; with no --account the role uses the space's bindings again", op: "put-space-role-pool",
+			get: "list-space-role-pools", version: func(o map[string]any) string { return cell(o["accounts_version"]) }, scoped: true, args: pos("role"),
+			example: "spaceman account pool set --space payments reviewer --account acc_01… --account acc_02… --priority acc_02…=10",
+			form: func(f *form) {
+				f.list("account", "items", "account ID of the pool (each must be bound to the space)").
+					list("priority", "priorities", "ACCOUNT=N: order within the pool, 1 to 1000, lower first (default 100)")
+			},
+			prepare: func(_ context.Context, _ *cobra.Command, _ *call, body map[string]any) error {
+				prios, err := parsePriorities(body["priorities"])
+				if err != nil {
+					return err
+				}
+				delete(body, "priorities")
+				items := []any{}
+				raw, _ := body["items"].([]any)
+				for _, r := range raw {
+					id := cell(r)
+					item := map[string]any{"account_id": id}
+					if n, ok := prios[id]; ok {
+						item["priority"] = n
+						delete(prios, id)
+					}
+					items = append(items, item)
+				}
+				for id := range prios {
+					return usageErrorf("--priority %s is not among the --account values", id)
+				}
+				body["items"] = items
+				return nil
+			}}),
+	)
 }
 
 func (a *App) promptExtra() []*cobra.Command {
