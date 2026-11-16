@@ -141,6 +141,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/spaces/{space_id}/account-switches` | `list-space-account-switches` | A space's account switches |
 | `GET` | `/spaces/{space_id}/limit-waits` | `list-space-limit-waits` | A space's runs parked at a usage limit, waiting to resume |
 | `POST` | `/spaces/{space_id}/limit-waits/{wait_id}/release` | `release-limit-wait` | Give up on a run parked at a usage limit |
 | `POST` | `/spaces/{space_id}/limit-waits/{wait_id}/resume` | `resume-limit-wait` | Resume a run parked at a usage limit now |
