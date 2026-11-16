@@ -282,3 +282,148 @@ func TestDoneIsClosedAfterRun(t *testing.T) {
 		t.Error("Started is false after Run")
 	}
 }
+
+// countCursors is a memCursors that counts Save calls.
+type countCursors struct {
+	memCursors
+	saves atomic.Int64
+}
+
+func (c *countCursors) Save(ctx context.Context, seq int64, at time.Time) error {
+	c.saves.Add(1)
+	return c.memCursors.Save(ctx, seq, at)
+}
+
+// resumedEnv has a card for hum_x (message 55, version 1) in the store, the item changed since (version 2, a Created
+// entry after the saved position), and a saved position that is recent: the first window is a resumed one.
+func resumedEnv(t *testing.T) (*env, notify.Options) {
+	t.Helper()
+	e := newEnv(t, 1)
+	e.retry = 10 * time.Millisecond
+	e.rd.set(action("hum_x", 2, false))
+	e.feed.add("spc_1", notify.TypeHumanAction, "hum_x", changefeed.Created, 2)
+	l := linkFor(1)
+	_ = e.maps.Save(context.Background(), []notify.Mapping{{ChatID: l.ChatID, MessageID: 55, LinkID: l.ID, SpaceID: "spc_1",
+		Key: notify.Key{Type: notify.TypeHumanAction, ID: "hum_x"}, Version: 1, CreatedAt: e.clk.Now(), Kind: notify.MappingCard}})
+	opts := e.options(e.maps)
+	opts.Cursors = &memCursors{seq: 0, at: e.clk.Now(), ok: true}
+	return e, opts
+}
+
+func runOpts(e *env, opts notify.Options) (stop func()) {
+	e.n = notify.New(opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = e.n.Run(ctx); close(done) }()
+	return func() { cancel(); <-done }
+}
+
+// A Created entry in a resumed window may have its card from before a crash: the stored card is loaded and edited
+// (the fake server doesn't hold the seeded message, so the edit may fall back to a send: the edit call is the proof).
+func TestResumedWindowEditsAnExistingCard(t *testing.T) {
+	e, opts := resumedEnv(t)
+	defer runOpts(e, opts)()
+	e.waitCalls("editMessageText", 1)
+	if e.maps.lookupCount() == 0 {
+		t.Error("the stored card was not looked up")
+	}
+}
+
+// A feed read that fails in a resumed window leaves it resumed: the retry still loads the stored card and edits it.
+func TestFailedReadKeepsTheWindowResumed(t *testing.T) {
+	e, opts := resumedEnv(t)
+	e.feed.failAt.Store(1)
+	defer runOpts(e, opts)()
+	e.waitCalls("editMessageText", 1)
+	if e.feed.reads.Load() < 2 {
+		t.Errorf("feed reads = %d; the failed read was not retried", e.feed.reads.Load())
+	}
+}
+
+// lateSender wires a sender that exists once up is set, and counts how often it is asked.
+func lateSender(e *env, opts *notify.Options) (up *atomic.Bool, asks *atomic.Int64) {
+	up, asks = new(atomic.Bool), new(atomic.Int64)
+	real := e.snd
+	opts.Sender = func() *sender.Sender {
+		asks.Add(1)
+		if up.Load() {
+			return real
+		}
+		return nil
+	}
+	return up, asks
+}
+
+func waitAsks(t *testing.T, asks *atomic.Int64, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for asks.Load() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("the sender was asked %d times, want %d", asks.Load(), n)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// While the window waits for a sender the position isn't saved, neither on the flush tick nor at shutdown: the saved
+// position and its time stay old.
+func TestPositionIsNotSavedWhileWaitingForASender(t *testing.T) {
+	e, opts := resumedEnv(t)
+	cur := &countCursors{memCursors: memCursors{seq: 0, at: e.clk.Now(), ok: true}}
+	opts.Cursors = cur
+	opts.FlushEvery = 5 * time.Millisecond
+	_, asks := lateSender(e, &opts)
+	stop := runOpts(e, opts)
+	waitAsks(t, asks, 3)
+	e.clk.Advance(2 * time.Minute) // the last save is old (a flush tick would save it again), still within the bound
+	base := asks.Load()
+	waitAsks(t, asks, base+5) // the loop and the flush ticker have run since
+	stop()                    // and shutdown
+	if n := cur.saves.Load(); n != 0 {
+		t.Errorf("saves = %d while no sender existed; want 0", n)
+	}
+	if cur.seq != 0 || !cur.at.Equal(t0) {
+		t.Errorf("saved position = %d at %v; want it unchanged", cur.seq, cur.at)
+	}
+}
+
+// A window that waited for a sender longer than the replay bound is given up: nothing of it is sent, and a change
+// made afterwards is delivered.
+func TestWindowIsGivenUpAfterTheReplayBound(t *testing.T) {
+	e := newEnv(t, 1)
+	e.retry = 10 * time.Millisecond
+	opts := e.options(nil)
+	up, asks := lateSender(e, &opts)
+	e.n = notify.New(opts)
+	if err := e.n.Prime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e.rd.set(action("hum_boot", 1, false))
+	e.feed.add("spc_1", notify.TypeHumanAction, "hum_boot", changefeed.Created, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = e.n.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	<-e.n.Ready()
+	waitAsks(t, asks, 3) // the window waits
+	latests := e.feed.latests.Load()
+	e.clk.Advance(notify.DefaultMaxReplay + time.Second)
+	deadline := time.Now().Add(20 * time.Second)
+	for e.feed.latests.Load() == latests { // giving up reads the newest change
+		if time.Now().After(deadline) {
+			t.Fatal("the window was not given up")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	up.Store(true)
+	e.rd.set(action("hum_after", 1, false))
+	e.feed.add("spc_1", notify.TypeHumanAction, "hum_after", changefeed.Created, 1)
+	e.ring()
+	e.endWindow()
+	calls := e.waitCalls("sendMessage", 1)
+	time.Sleep(100 * time.Millisecond)
+	all := e.fake.Calls("sendMessage")
+	if len(all) != 1 || !strings.Contains(calls[0].Params["text"], "hum_after") {
+		t.Errorf("sends = %d, first %q; want only hum_after (hum_boot was given up)", len(all), calls[0].Params["text"])
+	}
+}

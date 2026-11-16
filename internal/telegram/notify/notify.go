@@ -517,7 +517,9 @@ func (n *Notifier) process(ctx context.Context) (retry bool) {
 		retry = true
 	}
 	n.handle(ctx, w)
-	n.resumed = false
+	if !retry {
+		n.resumed = false // after a partial read the unread rest of a resumed window still needs the mappings
+	}
 	return retry
 }
 
