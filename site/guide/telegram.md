@@ -54,7 +54,7 @@ menu. Most act on a **current space**: the one named in the command (`/queue pay
 | Command | What it does |
 |---|---|
 | `/spaces`, `/space [name]` | List the spaces Telegram may show you with their counts, or switch the current space. |
-| `/needs` (also `/needsyou`) | What waits for you, across **every space you may read** when no space is picked (grouped by space, with the total), or in the current space when you are in a space's topic or picked one with `/space`: [questions, to-dos, messages, approvals and custom forms](#answer-needs-you-forms-and-approvals). |
+| `/needs` (also `/needsyou`) | What waits for you, across **every space you may read** when no space is picked (grouped by space, with the total), or a single space when you are in its topic or name it: `/needs <space>`: [questions, to-dos, messages, approvals and custom forms](#answer-needs-you-forms-and-approvals). |
 | `/inbox` | The current space's inbox with status filters. Open an item to read it, with its first attachments. |
 | `/queue` | What runs, what is ready and what waits. |
 | `/runs` | Live runs, and **Stop** a run. |
@@ -104,7 +104,7 @@ options and **✏ Answer**, **Mark completed** for a to-do, **Acknowledge** and 
 **Deny** for an approval (only if you may decide it; an enforced approval shows **Decide in app** unless the space allows
 deciding in chat). **More…** turns the same message into the full form, and **Back** returns to the card, so opening a
 form sends no new message. When the item is resolved, by you or anywhere else, the card is edited to one line such as
-`✅ Approved by Alice · Deploy the release candidate?` with no buttons, and its reminders are removed. If you lose access
+`✅ Approved · Deploy the release candidate?` with no buttons, and its reminders are removed. If you lose access
 to the space, mute it or it stops being visible to Telegram, the card is edited to "No longer available here". Reminders,
 escalations and assignments are sent as **replies to the card**.
 
@@ -265,8 +265,8 @@ after adding the bot, and add the bot again if it left. Group mode works togethe
 ## Notifications, quiet hours and digest
 
 The bot sends **cards** for new needs-you actions (edited in place as they change, so you don't get repeats), and
-reminders, escalations and assignments as replies to the card. In your private chat only: a bound group gets none. What you get is a mix of per-category choices (push, digest or off), starting from
-the administrator's defaults:
+reminders, escalations and assignments as replies to the card. In your private chat only: a bound group gets none. What you get is a mix of per-category choices (push, digest or
+off), starting from the administrator's defaults:
 
 | Category | Default |
 |---|---|
