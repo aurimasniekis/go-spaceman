@@ -271,6 +271,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	go a.monitor(ctx)
 	go a.enforce(ctx)
 	go a.capsLoop(ctx)
+	go a.pruneLoop(ctx)
 	go func() {
 		if err := a.ServeBridge(ctx); err != nil {
 			a.log.Warn("mcp bridge socket", obs.Err(err))
