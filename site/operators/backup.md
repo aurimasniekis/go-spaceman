@@ -159,8 +159,8 @@ with the file count and duration, under the `backup.id` field.
 
 A watchdog fails a backup or verification whose stage makes no progress for **10 minutes** (no new stage, no file sealed,
 uploaded or checked, and no bytes moved to or from object storage; `backups.stall_timeout`), or that runs longer than
-**1 hour** in total (`backups.max_duration`; raise it if your backups copy a large S3 artifact store) (ADR-0091). The run is recorded as failed with an error naming the stage, for example `backup stopped in stage upload:
-no progress for 10m0s: …`, and the next backup can start at once. A scheduled backup is retried 15 minutes after a
+**1 hour** in total (`backups.max_duration`; raise it if your backups copy a large S3 artifact store or your uplink is slow) (ADR-0091). The run is recorded as failed with an error naming the stage, for example `backup stopped in stage upload:
+no progress for 10m0s: …`, and the next backup can start at once. Retention (prune) gets its own window after a successful backup, so in the worst case `busy` lasts about `max_duration` + 2 minutes (recording) + `max_duration`. A scheduled backup is retried 15 minutes after a
 failure.
 
 Verify backups regularly and practise a restore on a spare host: a backup you have never restored is a hope, not a plan.
