@@ -33,6 +33,10 @@ const (
 	RenameNodeNotNeeded = "not_needed"
 )
 
+// crossSpaceRequester is the requester role knowledge-base requests from other spaces carry (kb.AskCrossSpace); it
+// names no role, so a role is never renamed to it.
+const crossSpaceRequester = "cross-space"
+
 // maxRenameHops bounds following a chain of renames (a→b→c…); a longer chain resolves to the name unchanged.
 const maxRenameHops = 16
 
@@ -90,6 +94,8 @@ func (svc *Service) RenameSpaceRole(ctx context.Context, actor audit.Actor, spac
 	v := &apperr.Validation{}
 	if !reRoleName.MatchString(to) {
 		v.Add("new_name", "must be a lowercase role name, e.g. implementor-backend")
+	} else if to == crossSpaceRequester {
+		v.Add("new_name", "is reserved: knowledge-base requests from other spaces carry it")
 	} else if from == to {
 		v.Add("new_name", "is the role's current name")
 	}
@@ -484,35 +490,45 @@ func count(m map[string]int64, table string, n int64) {
 type RoleNameReader interface {
 	GetSpaceRole(ctx context.Context, arg db.GetSpaceRoleParams) (db.SpaceRole, error)
 	LatestSpaceRoleRenameFrom(ctx context.Context, arg db.LatestSpaceRoleRenameFromParams) (db.SpaceRoleRename, error)
+	NextSpaceRoleRenameFrom(ctx context.Context, arg db.NextSpaceRoleRenameFromParams) (db.SpaceRoleRename, error)
 	ListSpaceRoleRenamesTo(ctx context.Context, arg db.ListSpaceRoleRenamesToParams) ([]db.SpaceRoleRename, error)
 }
 
 // CurrentRoleName resolves a role name taken from a history row (a run, a past control) to the role's current name
-// (ADR-0093 decision 5): name itself while a space role has it, otherwise where the renames from name lead to a role
-// that exists. A name that leads nowhere (the role was deleted, a cycle, more than 16 hops) comes back unchanged.
+// (ADR-0093 decision 5). A name a space role has is never redirected. Otherwise it follows the latest rename away from
+// the name and then, in time order, each later rename of the name it reached: the chain the role itself went through,
+// so a name reused on the way (a→b, b→c, then a new role b) does not capture it. The end of the chain is the answer
+// when a role has that name; a chain that leads nowhere (the role was deleted, more than 16 hops) gives the name back
+// unchanged.
 func CurrentRoleName(ctx context.Context, q RoleNameReader, spaceID, name string) (string, error) {
 	if name == "" {
 		return name, nil
 	}
-	cur := name
-	seen := map[string]bool{}
-	for range maxRenameHops + 1 {
-		if _, err := q.GetSpaceRole(ctx, db.GetSpaceRoleParams{SpaceID: spaceID, Name: cur}); err == nil {
-			return cur, nil
+	if _, err := q.GetSpaceRole(ctx, db.GetSpaceRoleParams{SpaceID: spaceID, Name: name}); err == nil {
+		return name, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return name, err
+	}
+	r, err := q.LatestSpaceRoleRenameFrom(ctx, db.LatestSpaceRoleRenameFromParams{SpaceID: spaceID, FromName: name})
+	if errors.Is(err, sql.ErrNoRows) {
+		return name, nil
+	} else if err != nil {
+		return name, err
+	}
+	for range maxRenameHops {
+		next, err := q.NextSpaceRoleRenameFrom(ctx, db.NextSpaceRoleRenameFromParams{SpaceID: spaceID, FromName: r.ToName, AfterAt: r.RenamedAt, AfterID: r.ID})
+		if err == nil {
+			r = next // renames only move forward in time, so the walk has no cycle
+			continue
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return name, err
 		}
-		if seen[cur] {
-			return name, nil
-		}
-		seen[cur] = true
-		r, err := q.LatestSpaceRoleRenameFrom(ctx, db.LatestSpaceRoleRenameFromParams{SpaceID: spaceID, FromName: cur})
-		if errors.Is(err, sql.ErrNoRows) {
-			return name, nil
-		} else if err != nil {
+		if _, err := q.GetSpaceRole(ctx, db.GetSpaceRoleParams{SpaceID: spaceID, Name: r.ToName}); err == nil {
+			return r.ToName, nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			return name, err
 		}
-		cur = r.ToName
+		return name, nil
 	}
 	return name, nil
 }
@@ -535,15 +551,14 @@ func FormerRoleNames(ctx context.Context, q RoleNameReader, spaceID, name string
 					continue
 				}
 				seen[r.FromName] = true
+				more = append(more, r.FromName) // walk on through a name reused since: an older name behind it may still lead here
 				cur, err := CurrentRoleName(ctx, q, spaceID, r.FromName)
 				if err != nil {
 					return nil, err
 				}
-				if cur != name {
-					continue // the name is a role again, or was renamed away since to somewhere else
+				if cur == name {
+					out = append(out, r.FromName)
 				}
-				out = append(out, r.FromName)
-				more = append(more, r.FromName)
 			}
 		}
 		next = more

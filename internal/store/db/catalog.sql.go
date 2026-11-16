@@ -880,9 +880,49 @@ func (q *Queries) ListSpaceRoles(ctx context.Context, spaceID string) ([]SpaceRo
 	return items, nil
 }
 
+const nextSpaceRoleRenameFrom = `-- name: NextSpaceRoleRenameFrom :one
+SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames
+WHERE space_id = ?1 AND from_name = ?2
+  AND (renamed_at > ?3 OR (renamed_at = ?3 AND id > ?4))
+ORDER BY renamed_at, id LIMIT 1
+`
+
+type NextSpaceRoleRenameFromParams struct {
+	SpaceID  string
+	FromName string
+	AfterAt  int64
+	AfterID  string
+}
+
+// The first rename away from a name after a given rename (renamed_at, id): the next step of a chain. A rename before
+// it belongs to an earlier holder of the name.
+func (q *Queries) NextSpaceRoleRenameFrom(ctx context.Context, arg NextSpaceRoleRenameFromParams) (SpaceRoleRename, error) {
+	row := q.db.QueryRowContext(ctx, nextSpaceRoleRenameFrom,
+		arg.SpaceID,
+		arg.FromName,
+		arg.AfterAt,
+		arg.AfterID,
+	)
+	var i SpaceRoleRename
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.FromName,
+		&i.ToName,
+		&i.RenamedAt,
+		&i.RenamedBy,
+		&i.NodeID,
+		&i.NodeState,
+		&i.NodeMessage,
+		&i.NodeDoneAt,
+		&i.CentralMovedAt,
+	)
+	return i, err
+}
+
 const pendingRoleRenameHold = `-- name: PendingRoleRenameHold :one
 SELECT id, space_id, from_name, to_name, renamed_at, renamed_by, node_id, node_state, node_message, node_done_at, central_moved_at FROM space_role_renames
-WHERE space_id = ?1 AND node_state = 'pending' AND (to_name = ?2 OR CAST(?3 AS INTEGER) = 1)
+WHERE space_id = ?1 AND node_state = 'pending' AND (to_name = ?2 OR from_name = ?2 OR CAST(?3 AS INTEGER) = 1)
 ORDER BY renamed_at, id LIMIT 1
 `
 
@@ -892,7 +932,8 @@ type PendingRoleRenameHoldParams struct {
 	Dream   int64
 }
 
-// The launch hold (ADR-0093): a pending rename holds launches of its new name and dream launches in the space.
+// The launch hold (ADR-0093): a pending rename holds launches of its new name, of its old name (the node's directory
+// of that name is the one still to move) and dream launches in the space.
 func (q *Queries) PendingRoleRenameHold(ctx context.Context, arg PendingRoleRenameHoldParams) (SpaceRoleRename, error) {
 	row := q.db.QueryRowContext(ctx, pendingRoleRenameHold, arg.SpaceID, arg.Role, arg.Dream)
 	var i SpaceRoleRename
@@ -1178,6 +1219,7 @@ func (q *Queries) RenameRoleMemoryCollection(ctx context.Context, arg RenameRole
 const renameRoleOpenKBRequests = `-- name: RenameRoleOpenKBRequests :execrows
 UPDATE kb_requests SET requester_role = ?1, updated_at = ?2
 WHERE space_id = ?3 AND requester_role = ?4 AND state IN ('queued', 'dispatched')
+  AND xspace_request_id = ''
 `
 
 type RenameRoleOpenKBRequestsParams struct {

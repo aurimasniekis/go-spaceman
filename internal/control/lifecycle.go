@@ -122,6 +122,13 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 		if errors.As(err, &ae) && ae.Code == apperr.CodeConflict {
 			return // another control became authoritative meanwhile
 		}
+		var rp *fleet.RenamePendingError
+		if errors.As(err, &rp) {
+			// Control's role was renamed and the node has not moved its memory yet (ADR-0093): not a fault, and it
+			// clears on its own. The next sweep for the waiting work starts control once the node has reported.
+			sv.log.Info("control start held: its role's rename waits for the node", slog.String("space.id", spaceID), slog.String("node.id", rp.NodeID))
+			return
+		}
 		sv.log.Warn("start control", slog.String("space.id", spaceID), obs.Err(err))
 		sv.attention(ctx, spaceID, sp.Name, "control-autostart-refused", "Work is waiting for control, but SpaceMan could not start it: "+err.Error()+". Fix the cause (control role, account, budget), then launch control or wait for the next event.")
 		return

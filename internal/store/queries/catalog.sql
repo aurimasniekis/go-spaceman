@@ -125,6 +125,14 @@ SELECT * FROM space_role_renames WHERE space_id = ? ORDER BY renamed_at DESC, id
 -- name: LatestSpaceRoleRenameFrom :one
 SELECT * FROM space_role_renames WHERE space_id = ? AND from_name = ? ORDER BY renamed_at DESC, id DESC LIMIT 1;
 
+-- The first rename away from a name after a given rename (renamed_at, id): the next step of a chain. A rename before
+-- it belongs to an earlier holder of the name.
+-- name: NextSpaceRoleRenameFrom :one
+SELECT * FROM space_role_renames
+WHERE space_id = sqlc.arg(space_id) AND from_name = sqlc.arg(from_name)
+  AND (renamed_at > sqlc.arg(after_at) OR (renamed_at = sqlc.arg(after_at) AND id > sqlc.arg(after_id)))
+ORDER BY renamed_at, id LIMIT 1;
+
 -- name: ListSpaceRoleRenamesTo :many
 SELECT * FROM space_role_renames WHERE space_id = ? AND to_name = ? ORDER BY renamed_at DESC, id DESC;
 
@@ -216,7 +224,8 @@ RETURNING id, version;
 
 -- name: RenameRoleOpenKBRequests :execrows
 UPDATE kb_requests SET requester_role = sqlc.arg(to_name), updated_at = sqlc.arg(now)
-WHERE space_id = sqlc.arg(space_id) AND requester_role = sqlc.arg(from_name) AND state IN ('queued', 'dispatched');
+WHERE space_id = sqlc.arg(space_id) AND requester_role = sqlc.arg(from_name) AND state IN ('queued', 'dispatched')
+  AND xspace_request_id = '';
 
 -- name: RenameRolePendingHumanNotifications :execrows
 UPDATE human_notifications SET target_role = sqlc.arg(to_name)
@@ -244,8 +253,9 @@ SELECT action_type, agent_roles_json FROM space_human_type_permissions WHERE spa
 UPDATE space_human_type_permissions SET agent_roles_json = ?, version = version + 1, updated_at = ?, updated_by = ?
 WHERE space_id = ? AND action_type = ?;
 
--- The launch hold (ADR-0093): a pending rename holds launches of its new name and dream launches in the space.
+-- The launch hold (ADR-0093): a pending rename holds launches of its new name, of its old name (the node's directory
+-- of that name is the one still to move) and dream launches in the space.
 -- name: PendingRoleRenameHold :one
 SELECT * FROM space_role_renames
-WHERE space_id = sqlc.arg(space_id) AND node_state = 'pending' AND (to_name = sqlc.arg(role) OR CAST(sqlc.arg(dream) AS INTEGER) = 1)
+WHERE space_id = sqlc.arg(space_id) AND node_state = 'pending' AND (to_name = sqlc.arg(role) OR from_name = sqlc.arg(role) OR CAST(sqlc.arg(dream) AS INTEGER) = 1)
 ORDER BY renamed_at, id LIMIT 1;

@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -293,6 +294,13 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 			sv.deferStart(r.SpaceID, h)
 			sv.startMu.Unlock()
 			sv.log.Info("control restart deferred: its account is held at a usage limit", slog.String(obs.FieldRunID, r.ID), slog.Time("until", h.Until))
+			return
+		}
+		var rp *fleet.RenamePendingError
+		if errors.As(err, &rp) {
+			// Control's role was renamed and the node has not moved its memory yet (ADR-0093): auto-start brings
+			// control back for waiting work once the node has reported.
+			sv.log.Info("control restart held: its role's rename waits for the node", slog.String(obs.FieldRunID, r.ID), slog.String("node.id", rp.NodeID))
 			return
 		}
 		sv.log.Warn("restart control", slog.String(obs.FieldRunID, r.ID), obs.Err(err))

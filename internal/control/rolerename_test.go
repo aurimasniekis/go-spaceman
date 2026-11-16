@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/catalog"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 )
 
@@ -74,6 +75,10 @@ func TestRenamedControlHeldWhileNodeMovePending(t *testing.T) {
 	e.sv.ControlWanted(e.ctx, "spc_a")
 	if got := e.relaunched(); got != "" {
 		t.Fatalf("control autostarted as %q while the rename's node move is pending", got)
+	}
+	// A held start is not a fault: nobody is asked to look.
+	if l, err := e.human.List(e.ctx, "spc_a", human.ListFilter{}); err != nil || len(l) != 0 {
+		t.Fatalf("people were asked to look at a held start: %d actions, %v", len(l), err)
 	}
 	// The move is reported: the next start goes through under the new name.
 	e.exec(`UPDATE space_role_renames SET node_state = 'done' WHERE id = 'rrn_1'`)

@@ -67,6 +67,9 @@ func (s *seeder) columns(table string) []colInfo {
 		}
 		out = append(out, c)
 	}
+	if err := rs.Err(); err != nil {
+		s.t.Fatal(err)
+	}
 	s.cols[table] = out
 	return out
 }
@@ -133,6 +136,9 @@ func snapshot(t *testing.T, ctx context.Context, q interface {
 	defer rs.Close()
 	cols, _ := rs.Columns()
 	if !rs.Next() {
+		if err := rs.Err(); err != nil {
+			t.Fatal(err)
+		}
 		return nil
 	}
 	vals := make([]any, len(cols))
@@ -178,8 +184,9 @@ func newRenameFx(t *testing.T) *renameFx {
 		return nil
 	}))
 	must(t, f.s.W().TxNamed(f.ctx, "seed.audit", func(tx *store.Tx) error {
-		_, err := f.svc.audit.Append(f.ctx, tx, audit.Event{Actor: op, Action: "space.role_saved", Target: audit.Target{Type: "space", ID: "spc_a"},
+		id, err := f.svc.audit.Append(f.ctx, tx, audit.Event{Actor: op, Action: "space.role_saved", Target: audit.Target{Type: "space", ID: "spc_a"},
 			Details: map[string]any{"role": "a"}})
+		f.rows = append(f.rows, row{table: "audit_events", key: map[string]any{"id": id}})
 		return err
 	}))
 	return f
@@ -254,6 +261,9 @@ func (f *renameFx) seedRole(s *seeder, sp, r string, live bool) {
 		add("kb_requests", map[string]any{"id": "kbq_" + tag + "_" + st, "kb_id": "kbr_" + tag, "space_id": sp, "requester_role": r, "state": st},
 			map[string]any{"requester_role": z})
 	}
+	// A request from another space carries a sentinel requester role, never a role of this space.
+	add("kb_requests", map[string]any{"id": "kbq_" + tag + "_xspace", "kb_id": "kbr_" + tag, "space_id": sp, "requester_role": r, "state": "queued",
+		"xspace_request_id": "xsr_" + tag}, nil)
 	for _, st := range []string{"answered", "failed", "cancelled", "timed_out"} {
 		add("kb_requests", map[string]any{"id": "kbq_" + tag + "_" + st, "kb_id": "kbr_" + tag, "space_id": sp, "requester_role": r, "state": st}, nil)
 	}
@@ -268,7 +278,7 @@ func (f *renameFx) seedRole(s *seeder, sp, r string, live bool) {
 	launch := fmt.Sprintf(`{"role":%q}`, r)
 	add("runs", map[string]any{"id": "run_" + tag, "space_id": sp, "node_id": "nod_1", "kind": "worker", "role": r, "desired": "running", "observed": "exited", "launch_json": launch,
 		"manifest_json": fmt.Sprintf(`{"role":%q}`, r)}, nil)
-	add("run_usage", map[string]any{"run_id": "run_" + tag, "space_id": sp}, nil)
+	add("run_usage", map[string]any{"run_id": "run_" + tag, "space_id": sp, "role": r}, nil)
 	add("usage_buckets", map[string]any{"space_id": sp, "account_id": "acc_1", "role": r}, nil)
 	add("limit_waits", map[string]any{"id": "lwt_" + tag, "space_id": sp, "run_id": "run_" + tag, "role": r, "launch_json": launch, "state": "resumed"}, nil)
 	add("account_switches", map[string]any{"id": "asw_" + tag, "space_id": sp, "role": r, "state": "succeeded"}, nil)
@@ -361,12 +371,13 @@ func TestRenameSpaceRoleRewritesLiveRows(t *testing.T) {
 	changes := map[string]int{}
 	rs, err := f.s.ReadDB().QueryContext(f.ctx, `SELECT resource_type, resource_id FROM changes WHERE space_id = 'spc_a' AND action = 'updated'`)
 	must(t, err)
+	defer rs.Close()
 	for rs.Next() {
 		var typ, id string
 		must(t, rs.Scan(&typ, &id))
 		changes[typ+":"+id]++
 	}
-	must(t, rs.Close())
+	must(t, rs.Err())
 	for _, c := range []string{"space:spc_a", "mcp_server:mcp_1", "kb:kbr_spc_a_a", "dream:drm_spc_a_a", "schedule:sch_spc_a_a", "human_policy:hpl_spc_a_a",
 		"memory:mem_spc_a_a", "task:tsk_spc_a_a_ready", "message:msg_spc_a_a_stored"} {
 		if changes[c] == 0 {
@@ -551,6 +562,8 @@ func TestRenameSpaceRoleRefusals(t *testing.T) {
 	code(t, err, apperr.CodeInvalid)
 	_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "a", "Bad Name", 0)
 	code(t, err, apperr.CodeInvalid)
+	_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "a", "cross-space", 0)
+	code(t, err, apperr.CodeInvalid)
 	_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "nope", "z", 0)
 	code(t, err, apperr.CodeNotFound)
 	_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_x", "a", "z", 0)
@@ -668,6 +681,23 @@ func TestCurrentRoleName(t *testing.T) {
 	resolve("a", "d")
 	former("d", "a")
 	former("c2", "b")
+
+	// A name reused in the middle of a chain does not capture it: e1 -> e2 -> e3, then a new role e2. e1 still leads
+	// to e3, the new e2 is itself, and only e1 is a former name of e3.
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "e1", TemplateID: "rtp_1"})
+	must(t, err)
+	_, r4, err := f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "e1", "e2", 0)
+	must(t, err)
+	mark(r4.ID)
+	_, r5, err := f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "e2", "e3", 0)
+	must(t, err)
+	mark(r5.ID)
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "e2", TemplateID: "rtp_1"})
+	must(t, err)
+	resolve("e1", "e3")
+	resolve("e2", "e2")
+	former("e3", "e1")
+	former("e2")
 
 	// A cycle in the table (not reachable through renames) resolves to the name unchanged.
 	f.exec(`INSERT INTO space_role_renames (id, space_id, from_name, to_name, renamed_at, renamed_by, node_state)

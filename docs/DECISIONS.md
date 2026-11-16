@@ -6256,6 +6256,36 @@
   - A test classifies every role-name column as live or history, so a new column cannot be missed.
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The operation uses the existing role
   write permission, and every rename is audited.
+- **Implementation notes (T-H1, 2026-11-16):** `catalog.RenameSpaceRole` and `catalog.CurrentRoleName` live in
+  `internal/catalog/rename.go`. Where the code differs from the plan, or adds to it:
+  - A **live run** is one whose `observed` is `pending`, `starting`, `running`, `stopping` or `unknown`. The plan
+    also counted `desired = 'running'`, but a run that ends on its own keeps that value
+    (`ListActiveRunsBySpace`), so that test would block a rename forever after any crash.
+  - **An extra blocker:** a rename whose node move is still pending and that involves either name. A second rename of
+    the same names waits until the node has moved the first one, so the node never receives two moves of one
+    directory out of order.
+  - **`name_taken` also covers leftovers of a deleted role with the target name that would collide**: an MCP grant on
+    the same server or a pool entry for the same account. Leftovers that don't collide are adopted, as they would be
+    by creating a role with that name.
+  - The **reasons** (`role_busy`, `name_taken`) travel as a `*catalog.RenameRefused` cause:
+    - `role_busy` uses `apperr.CodePrecondition`;
+    - `name_taken` uses `CodeAlreadyExists`;
+    - an `If-Match` revision mismatch uses `CodePrecondition`, like every other `If-Match` in the service (HTTP 409
+      today). T-M1 maps these codes to the HTTP statuses in §3.4.
+  - The **launch hold** is `fleet.RenamePendingError` under `CodePrecondition` (`role_rename_pending`). It also holds
+    launches of the **old** name: otherwise a new role with that name would start in the node directory that is still
+    to move. The control supervisor treats a held restart or autostart as a quiet deferral. It logs and asks no one,
+    and the next sweep for waiting work starts control once the node has reported.
+  - **`CurrentRoleName` follows the chain in time order.** It takes the latest rename away from the name, then each
+    later rename of the name it reached. So `a→b`, `b→c` and then a new role `b` still resolves `a` to `c`.
+    `FormerRoleNames` walks through a reused name rather than stopping at it.
+  - **`cross-space` is reserved.** Knowledge-base requests from other spaces carry it as their requester role.
+    Renaming to it is refused, and the rewrite skips open requests that came from another space.
+  - Migration 0061 adds **`node_message`** for the node's last deferral or error message, which T-H2 writes.
+  - The **dream's excluded own role** also gets its former names, as its transcript roles do.
+  - The **change feed** also records the rewritten messages and the memory collection.
+  - The control supervisor gets the resolver through a hook, `Supervisor.RoleName`, which central wires to
+    `Catalog.CurrentRoleName`. This follows the existing `ControlRole` hook.
 
 ## 2. Open items and unresolved contracts
 

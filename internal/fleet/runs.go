@@ -441,7 +441,8 @@ type RenamePendingError struct {
 func (e *RenamePendingError) Error() string { return ReasonRoleRenamePending + ": " + e.RenameID }
 
 // renameHold refuses a launch while a rename in the space waits for its node move: a launch of the rename's new name,
-// or any dream launch in the space.
+// of its old name (a new role of that name would start in the directory still to move), or any dream launch in the
+// space.
 func renameHold(ctx context.Context, q *db.Queries, spaceID string, in LaunchInput) error {
 	dream := in.Dream != nil || in.Kind == "dreamer"
 	r, err := q.PendingRoleRenameHold(ctx, db.PendingRoleRenameHoldParams{SpaceID: spaceID, Role: in.Role, Dream: b2i(dream)})
@@ -455,8 +456,8 @@ func renameHold(ctx context.Context, q *db.Queries, spaceID string, in LaunchInp
 		return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s has not moved its memory yet (%s); dreams in this space start once it reports",
 			r.FromName, r.ToName, r.NodeID, ReasonRoleRenamePending)
 	}
-	return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed from %s and node %s has not moved its memory yet (%s); it launches once the node reports",
-		r.ToName, r.FromName, r.NodeID, ReasonRoleRenamePending)
+	return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s has not moved its memory yet (%s); %s launches once the node reports",
+		r.FromName, r.ToName, r.NodeID, ReasonRoleRenamePending, in.Role)
 }
 
 func (svc *Service) queueCommand(ctx context.Context, tx *store.Tx, nodeID, spaceID, runID string, gen int64, kind, key string, payload any) error {
