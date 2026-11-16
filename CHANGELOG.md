@@ -6,24 +6,41 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+**v0.1.8 was tagged but never released** (its release build produced no images), so its changes ship in v0.1.9.
+
+Release on top of v0.1.7. **Central and the node agents both need it**, central first. The main changes are account
+switching on usage limits (ADR-0090: a run that reaches its limit moves to another account of its pool, off unless
+`usage_limit_failover` is on), Telegram chat threads per space with actionable cards (ADR-0089), the backup hang fix
+(ADR-0091: a backup or verification that stops making progress now fails instead of holding `busy` until a restart),
+the notifier no longer losing notifications around restarts, text replies to cards, and mobile dialogs (pinch-zoom,
+wide tables, 16 px inputs). Memory conflicts now close when reconciled (ADR-0092), and queue policy changes reach control. It brings node protocol
+minor 13 (v0.1.7 speaks up to minor 12), schema migrations 0054 to 0060, agent migration 0009 and the configuration keys listed below.
+
 ### Upgrade notes
 
-- **Schema migrations `0054_account_pools` to `0058_pool_exhausted_notices`** (account switching, ADR-0090): account
-  pools, account switches, a run's failure class, the usage ledger and the pool-exhausted notices. They are applied on
-  start, need no action and are forward-only: **take a backup first**.
-- **Node protocol minor 13.** Upgrade central first, then the node agents. An older agent keeps working, and its runs
-  still switch on a limit it reports, but only an agent of this release reports the status line's usage windows, the
-  cost estimate and the `StopFailure` failure class, so the usage windows, the headroom gate's figures and a wrap-up
-  limit's missing reset need the agent upgrade.
-- **New limits** (per space or as installation defaults): `usage_limit_wait_if_reset_within` (minutes, default 15),
-  `usage_limit_switch_max_per_day` (default 6; 0 never switches) and `usage_limit_min_headroom_percent` (default 0: off).
-  Live switching is off unless the existing `usage_limit_failover` is on, so an installation that leaves it off keeps
-  ADR-0079's wait.
-- **Schema migration `0059_telegram_message_thread`**: adds the nullable
-  `telegram_messages.message_thread_id`, the topic a card was sent in. It is applied on start and needs no action. A card
-  row from before it has no topic recorded and is edited in place as before.
-- **Schema migration `0060_memory_conflict_folder`**: adds `memory_conflicts.folder`. It is applied on start and needs no
-  action (ADR-0092).
+- **Schema migrations 0054 to 0060 are forward-only: take a backup first.** `0054_account_pools` to
+  `0058_pool_exhausted_notices` (ADR-0090) add account pools, account switches, a run's failure class, the usage ledger
+  and the pool-exhausted notices. `0059_telegram_message_thread` adds the nullable `telegram_messages.message_thread_id`,
+  the topic a card was sent in; a card row from before it has no topic recorded and is edited in place as before.
+  `0060_memory_conflict_folder` adds `memory_conflicts.folder` (ADR-0092), and the node agent's journal gets its own
+  migration `0009`. They are applied on start and need no other action.
+- **Node protocol minor 13 (v0.1.7 speaks up to minor 12).** Upgrade central first, then the node agents. An older agent
+  keeps working, and its runs still switch on a limit it reports, but only an agent of this release reports the status
+  line's usage windows, the cost estimate and the `StopFailure` failure class, so the usage windows, the headroom gate's
+  figures and a wrap-up limit's missing reset need the agent upgrade.
+- **New configuration keys**, with their defaults (the usage-limit keys are also space limits, set with
+  `spaceman limits set --space <space> --set <key>=<value>`, without the `limits.` prefix):
+  - `backups.stall_timeout`: `10m`. A backup or verification with no progress for this long fails (1 m to 24 h, ADR-0091).
+  - `backups.max_duration`: `1h`. A backup or verification running longer than this in total fails (10 m to 72 h, ADR-0091).
+  - `limits.usage_limit_wait_if_reset_within`: `15` (minutes). A run whose account resets this soon waits for the reset
+    instead of switching (0 to 1440, ADR-0090).
+  - `limits.usage_limit_switch_max_per_day`: `6`. How many times one instance may switch account in 24 hours before it
+    waits as ADR-0079 does; `0` never switches (0 to 50).
+  - `limits.usage_limit_min_headroom_percent`: `0` (off). A new run does not start on an account whose known window usage
+    leaves less than this percentage free (0 to 100). Running agents are never moved because of it.
+  - `notification_defaults.threads` (Telegram administrator setting, not the config file): `auto`. See **Chat layout**.
+- **Live account switching stays off unless `usage_limit_failover` is on.** That is the existing switch (default off).
+  An installation that leaves it off keeps ADR-0079's wait, whatever the keys above say.
 - **Chat layout.** Links start on `notification_defaults.threads = auto`, so a bot with topics enabled in BotFather moves each
   chat to a topic per space at its next space message, with one announcement in the chat without a topic. To keep one chat,
   set `threads` to `off`, per link or in the administrator defaults. **Topics the bot creates stay in users' chats**
@@ -96,6 +113,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   releases left behind, but only those with no segments, a well-formed run ID, no journal row and nothing modified for
   24 hours. A recording that has segments and no journal row is kept (a lost journal makes every run look orphaned);
   reclaiming those needs central's confirmation and is not done.
+- A Telegram text reply to a notifier card is now about that card. Replying to a question's card answers it (an option's
+  letter, number or label, or free text; the same API call, version check and authorisation as its buttons, and a
+  closed action says so); an approval is never decided from text; a reply that is not an answer goes to the card's own
+  space instead of the chat's current one. A lone letter or number is matched against both an option's position and the
+  start of every label ("C" with `Continue`, `Deploy`; "1" with `30 minutes`, `1 hour`): when they name different
+  options the bot asks "Which option?" and answers nothing. Any reply to a free-text question is taken as its answer.
+- Telegram notifications are no longer lost for changes made while central starts or while it is restarting: the
+  notifier reads its start position before the listener starts, and resumes from a saved position (up to 5 minutes
+  old) after a restart (ADR-0089 follow-up).
+- **Web, phones: pinch-zoom while a dialog is open, wide editor tables, input zoom.** Mantine's scroll lock cancelled
+  every two-finger touch while a modal or drawer was open, so the page could not be zoomed (or zoomed back out); pinches
+  now pass (`allowPinchZoom`) and one-finger scrolling stays locked. A table in the editor that was wider than its dialog
+  was cut off by the dialog's `overflow-x: hidden`; it now scrolls in its own box. Inputs are 16 px on touch screens, so
+  iOS no longer zooms the page in when one takes focus. `ui-overflow.spec.ts` opens every dialog in phone emulation.
 - The Telegram notifier has a `Ready` channel that closes once it is subscribed and has its start position. The e2e chat
   harness waits for it, because a change made before that is history the notifier doesn't replay: on a loaded runner a
   late-starting goroutine lost the first card and `TestTelegramTopicsModeRoutesCardsAndReplies` timed out.

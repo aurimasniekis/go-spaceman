@@ -204,6 +204,14 @@ func (c *Central) wireTelegramChat(apiH http.Handler) {
 			}
 			return m.SpaceID, m.Key.ID, m.LinkID, true
 		},
+		// Any card of the link: a reply to it that isn't an answer goes to the card's space.
+		CardSpace: func(ctx context.Context, chatID int64, messageID int) (string, string, bool) {
+			m, ok := c.telegramCard(ctx, chatID, messageID)
+			if !ok || m.SpaceID == "" {
+				return "", "", false
+			}
+			return m.SpaceID, m.LinkID, true
+		},
 		// Approvals and forms too complex for the chat open in the Mini App; without its host there is no button.
 		AppURL: c.telegramActionURL,
 		// A page of the Mini App (the /settings command); without its host there is none.
