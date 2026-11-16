@@ -100,7 +100,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   exhausted 16 GB runners; the job takes about 14 minutes at the lower cap, measured on a hosted runner.
 - Test flakes under heavy node load (test-only; no behavior change). The 100 ms write-lock guard (HP-DB-004) now stretches
   by `1 + load/CPUs` (at most 8x) when more threads are runnable than CPUs, for the default and for
-  `SM_TEST_TX_MAX`; an idle machine and `SM_TEST_TX_STRICT=1` are unchanged (ADR-0062, update 2026-11-16). The S3 trickle test
+  `SM_TEST_TX_MAX`; an idle machine and `SM_TEST_TX_STRICT=1` are unchanged, and every CI and release job that runs the guard sets `SM_TEST_TX_STRICT=1` (ADR-0062, update 2026-11-16). The S3 trickle test
   uses a 600 ms stall window. The large-recording catch-up test waits
   for progress instead of a fixed 20 s, the StopFailure scan test waits 30 s instead of 5 s for an event-driven report,
   the notifier budget test allows one more timed mapping write per elapsed second, the hello-reapply test applies 120
