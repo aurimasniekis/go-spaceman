@@ -261,7 +261,7 @@ Set the limit to 0 to turn the notice off for a space.
 A space's **Accounts** page holds everything about its pool:
 
 - **Pool order**: the space's accounts per harness in failover order, and a **role pool** per role (add, remove, move;
-  a role with a pool uses those accounts only). Saving needs the space's admin; `spaceman pool` and the API
+  a role with a pool uses those accounts only). Saving needs an installation admin (`account:write`); `spaceman pool` and the API
   (`put-space-role-pool`) do the same.
 - **Account switching** settings: usage-limit failover, how close a reset must be for a run to wait instead of
   moving, moves per day, and the launch headroom gate. They are the space limits listed under Settings, edited in
