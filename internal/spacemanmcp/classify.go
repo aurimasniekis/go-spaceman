@@ -463,6 +463,11 @@ var Table = map[string]Entry{
 	// Usage.
 	"get-run-usage":   {Read, rRead},
 	"get-space-usage": {Read, rRead},
+	// The usage ledger (ADR-0090): numbers and IDs only.
+	"get-space-usage-series":     {Read, rRead},
+	"get-account-usage":          {Read, rRead},
+	"get-account-windows":        {Read, rRead},
+	"list-space-account-windows": {Read, rRead},
 
 	// Users. The step-up writes are excluded by their rule; these entries are what they fall back to.
 	"get-user":             {Excluded, rUsers},

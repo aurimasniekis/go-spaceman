@@ -18,7 +18,9 @@ Aliases: `accounts`.
 | [`spaceman account pool`](#spaceman-account-pool) | A space's role pools: the accounts one role's runs use instead of the space's bindings (usage-limit failover) |
 | [`spaceman account set-space`](#spaceman-account-set-space) | Replace the accounts a space's runs may use (at most one default per harness) |
 | [`spaceman account space`](#spaceman-account-space) | Accounts a space's runs may use |
+| [`spaceman account space-windows`](#spaceman-account-space-windows) | The latest rate-limit windows of the accounts a space's runs may use |
 | [`spaceman account update`](#spaceman-account-update) | Edit an account; give --secret-file or --secret-stdin to rotate the secret |
+| [`spaceman account windows`](#spaceman-account-windows) | An account's latest 5-hour and 7-day rate-limit windows (needs an account bound to a space you can read) |
 
 ## spaceman account clear-holds
 
@@ -204,6 +206,20 @@ API: `list-space-accounts` ([HTTP API](../api)).
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman account space-windows
+
+The latest rate-limit windows of the accounts a space's runs may use.
+
+```sh
+spaceman account space-windows [flags]
+```
+
+API: `list-space-account-windows` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman account update
 
 Edit an account; give --secret-file or --secret-stdin to rotate the secret.
@@ -225,4 +241,14 @@ API: `get-account`, `update-account` ([HTTP API](../api)).
 | `--name` | string |  | name |
 | `--secret-file` | string |  | the credential (read from this file; never pass secrets as flag values) |
 | `--secret-stdin` | bool |  | read --secret-file's value from standard input instead |
+
+## spaceman account windows
+
+An account's latest 5-hour and 7-day rate-limit windows (needs an account bound to a space you can read).
+
+```sh
+spaceman account windows <account> [flags]
+```
+
+API: `get-account-windows` ([HTTP API](../api)).
 

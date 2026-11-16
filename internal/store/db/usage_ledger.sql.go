@@ -111,6 +111,89 @@ func (q *Queries) GetUsageLedgerMark(ctx context.Context, arg GetUsageLedgerMark
 	return i, err
 }
 
+const listAccountBindingSpaces = `-- name: ListAccountBindingSpaces :many
+SELECT space_id FROM space_accounts WHERE account_id = ? ORDER BY space_id
+`
+
+func (q *Queries) ListAccountBindingSpaces(ctx context.Context, accountID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listAccountBindingSpaces, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var space_id string
+		if err := rows.Scan(&space_id); err != nil {
+			return nil, err
+		}
+		items = append(items, space_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccountUsageBuckets = `-- name: ListAccountUsageBuckets :many
+SELECT space_id, account_id, role, harness, model, granularity, bucket_start, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, reasoning_tokens, requests, cost_usd FROM usage_buckets WHERE account_id = ? AND granularity = ? AND bucket_start >= ? AND bucket_start < ?
+ORDER BY bucket_start, space_id, role, harness, model
+`
+
+type ListAccountUsageBucketsParams struct {
+	AccountID     string
+	Granularity   string
+	BucketStart   int64
+	BucketStart_2 int64
+}
+
+// An account's buckets across spaces (the API keeps only the spaces the caller may read).
+func (q *Queries) ListAccountUsageBuckets(ctx context.Context, arg ListAccountUsageBucketsParams) ([]UsageBucket, error) {
+	rows, err := q.db.QueryContext(ctx, listAccountUsageBuckets,
+		arg.AccountID,
+		arg.Granularity,
+		arg.BucketStart,
+		arg.BucketStart_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageBucket{}
+	for rows.Next() {
+		var i UsageBucket
+		if err := rows.Scan(
+			&i.SpaceID,
+			&i.AccountID,
+			&i.Role,
+			&i.Harness,
+			&i.Model,
+			&i.Granularity,
+			&i.BucketStart,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheWriteTokens,
+			&i.CacheReadTokens,
+			&i.ReasoningTokens,
+			&i.Requests,
+			&i.CostUsd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAccountWindowSamples = `-- name: ListAccountWindowSamples :many
 SELECT account_id, kind, slot, used_pct, resets_at, observed_at, run_id FROM account_window_samples WHERE account_id = ? AND observed_at >= ? ORDER BY observed_at, kind
 `
@@ -172,6 +255,57 @@ func (q *Queries) ListAccountWindows(ctx context.Context, accountID string) ([]A
 			&i.ObservedAt,
 			&i.RunID,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpaceAccountWindows = `-- name: ListSpaceAccountWindows :many
+SELECT w.account_id, a.name AS account_name, sa.harness, w.kind, w.used_pct, w.resets_at, w.observed_at
+FROM space_accounts sa
+JOIN accounts a ON a.id = sa.account_id
+JOIN account_windows w ON w.account_id = sa.account_id
+WHERE sa.space_id = ?
+ORDER BY sa.harness, sa.created_at, w.account_id, w.kind
+`
+
+type ListSpaceAccountWindowsRow struct {
+	AccountID   string
+	AccountName string
+	Harness     string
+	Kind        string
+	UsedPct     float64
+	ResetsAt    sql.NullInt64
+	ObservedAt  int64
+}
+
+// The latest windows of the accounts bound to a space.
+func (q *Queries) ListSpaceAccountWindows(ctx context.Context, spaceID string) ([]ListSpaceAccountWindowsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceAccountWindows, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSpaceAccountWindowsRow{}
+	for rows.Next() {
+		var i ListSpaceAccountWindowsRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.AccountName,
+			&i.Harness,
+			&i.Kind,
+			&i.UsedPct,
+			&i.ResetsAt,
+			&i.ObservedAt,
 		); err != nil {
 			return nil, err
 		}

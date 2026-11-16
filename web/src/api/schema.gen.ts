@@ -64,6 +64,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An account's usage over time, in the spaces you can read
+         * @description Like a space's series, per space, role or model. Accounts are shared by spaces, so only the spaces the caller can read (run:read) are counted: the rows and the totals never include another space.
+         */
+        get: operations["get-account-usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{account_id}/usage-limits": {
         parameters: {
             query?: never;
@@ -95,6 +115,26 @@ export interface paths {
          * @description Clears every space's open hold on the account, of one kind or (without kind) of every kind, audited once. Each space whose hold was cleared has its control told once.
          */
         post: operations["clear-account-usage-limits"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An account's latest rate-limit windows
+         * @description The 5-hour and 7-day windows as the last run on the account reported them. Not found unless the account is bound to a space the caller can read (run:read).
+         */
+        get: operations["get-account-windows"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1960,6 +2000,23 @@ export interface paths {
          * @description Replaces the role's pool; an empty list removes it, so the role uses the space's bindings again. If-Match is the version of the space's account configuration.
          */
         put: operations["put-space-role-pool"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The latest rate-limit windows of the accounts bound to a space */
+        get: operations["list-space-account-windows"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -4098,6 +4155,26 @@ export interface paths {
          * @description Clears this space's own hold (audited); its control is told. Other spaces' holds on the same account are not touched, so launches here may still be refused: held_elsewhere says so. Clearing every space's hold on an account needs account:write (clear-account-usage-limits).
          */
         post: operations["clear-space-usage-limit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/usage/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's usage over time
+         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.
+         */
+        get: operations["get-space-usage-series"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -11780,6 +11857,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["OidcPublicProvider"][];
         };
+        SpaceAccountWindows: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceAccountWindows.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["UsageAccountWindows"][];
+        };
         SpaceAccounts: {
             /**
              * Format: uri
@@ -12419,6 +12505,18 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        UsageAccountWindows: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/UsageAccountWindows.json
+             */
+            readonly $schema?: string;
+            account_id: string;
+            harness?: string;
+            name: string;
+            windows: components["schemas"]["UsageWindow"][];
+        };
         UsageGatewayCost: {
             /** @description Decimal amount */
             amount: string;
@@ -12449,6 +12547,59 @@ export interface components {
              * @description Attempts whose token usage the provider did not report (not counted as zero)
              */
             unknown_usage_requests: number;
+        };
+        UsageRow: {
+            /**
+             * Format: date-time
+             * @description Start of the bucket, UTC
+             */
+            bucket_start?: string;
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** @description The value of the group_by field (an ID or name; empty when the usage had none, such as a run without an account) */
+            group: string;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: int64 */
+            reasoning_tokens: number;
+            /** Format: int64 */
+            requests: number;
+            /**
+             * Format: double
+             * @description The harness's own list-price estimate in USD, not a bill; tokens are the primary unit
+             */
+            total_cost_usd: number;
+            /**
+             * Format: int64
+             * @description Input, output, cache write and cache read tokens (reasoning tokens are reported separately)
+             */
+            total_tokens: number;
+        };
+        UsageSeriesPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/UsageSeriesPage.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            bucket: "hour" | "day";
+            /** @description What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit */
+            cost_note: string;
+            /** Format: date-time */
+            from: string;
+            group_by: string;
+            /** @description One row per bucket and group, oldest first */
+            items: components["schemas"]["UsageRow"][];
+            next_cursor?: string;
+            /** Format: date-time */
+            to: string;
+            /** @description Over the whole range, not only this page */
+            totals: components["schemas"]["UsageRow"];
         };
         UsageSummary: {
             /**
@@ -12495,6 +12646,22 @@ export interface components {
             state: "receiving" | "stored" | "failed" | "deleted";
             /** @description Only the start of a longer transcript was kept */
             truncated: boolean;
+        };
+        UsageWindow: {
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day";
+            /**
+             * Format: date-time
+             * @description When a run last reported it; an old observation may be out of date
+             */
+            observed_at: string;
+            /** Format: date-time */
+            resets_at?: string;
+            /**
+             * Format: double
+             * @description Percent of the window used when it was observed
+             */
+            used_pct: number;
         };
         XspaceInbound: {
             /** @description The peer may ask this space's control to do work (this space decides and runs it) */
@@ -12896,6 +13063,48 @@ export interface operations {
             };
         };
     };
+    "get-account-usage": {
+        parameters: {
+            query?: {
+                /** @description Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to */
+                from?: string;
+                /** @description End of the range, exclusive (RFC 3339). Default: now */
+                to?: string;
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days */
+                bucket?: "hour" | "day";
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                group_by?: "space" | "role" | "model";
+            };
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSeriesPage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-account-usage-limits": {
         parameters: {
             query?: never;
@@ -12949,6 +13158,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetUsageLimitClear"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageAccountWindows"];
                 };
             };
             /** @description Error */
@@ -17302,6 +17542,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpaceRolePools"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceAccountWindows"];
                 };
             };
             /** @description Error */
@@ -22294,6 +22565,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetUsageLimitClear"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-usage-series": {
+        parameters: {
+            query?: {
+                /** @description Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to */
+                from?: string;
+                /** @description End of the range, exclusive (RFC 3339). Default: now */
+                to?: string;
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a range is at most 31 days of hours or 800 days */
+                bucket?: "hour" | "day";
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                group_by?: "role" | "account" | "model" | "harness";
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSeriesPage"];
                 };
             };
             /** @description Error */
