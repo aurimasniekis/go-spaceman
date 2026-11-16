@@ -375,6 +375,32 @@ func TestHomeSummaryLeavesNoRowWhenTheLinkMovesMidSend(t *testing.T) {
 	}
 }
 
+// A link that moves while its summary is being pinned leaves no row for the chat it left: the pinned row isn't
+// recorded over the pending delete.
+func TestHomeSummaryLeavesNoRowWhenTheLinkMovesMidPin(t *testing.T) {
+	e, c := homeEnv(t, 1)
+	c.set(notify.SpaceCount{SpaceID: "spc_1", Name: "Alpha", N: 3})
+	wait, release := e.holdMethod("pinChatMessage")
+	stop := e.run(e.maps)
+	e.touch("hum_1", 1)
+	wait(1)
+	moved := linkFor(1)
+	moved.ChatID = 2001
+	e.links.Set([]notify.Link{moved})
+	e.touch("hum_1", 2) // the tick notes the move while the pin is still in flight
+	time.Sleep(200 * time.Millisecond)
+	release()
+	time.Sleep(200 * time.Millisecond)
+	stop() // flushes the rows
+	e.maps.mu.Lock()
+	defer e.maps.mu.Unlock()
+	for k, r := range e.maps.rows {
+		if r.Kind == notify.MappingHome && k[0] == 1001 {
+			t.Errorf("an orphan home row for the chat the link left: %+v", r)
+		}
+	}
+}
+
 // Nothing is read while no link's summary is due (the debounce wait), however many changes arrive.
 func TestHomeTickDoesNotReadCountsWhileNoLinkIsDue(t *testing.T) {
 	e, c := homeEnv(t, 1)
