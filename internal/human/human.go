@@ -402,6 +402,7 @@ func fromRow(r db.HumanAction) *Action {
 var reservedDedupPrefixes = []string{
 	"approval:",                // approvals.ask: the human action of an enforced approval
 	"usage-limit-human:",       // control: the people notice of a long usage-limit hold
+	"account-pool-exhausted:",  // control: the people notice of a pool whose accounts are all at their usage limit
 	"control-failing:",         // control supervisor: control keeps stopping
 	"control-autostart-limit:", // control supervisor: autostart limit reached
 	"control-autostart-refused:",

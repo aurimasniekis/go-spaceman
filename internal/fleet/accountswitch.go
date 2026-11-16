@@ -632,6 +632,7 @@ func (svc *Service) switchResumeCheckTx(ctx context.Context, tx *store.Tx, w *db
 	}
 	now := tx.NowMicros()
 	resumeAt := w.ResumeAt
+	var exhausted *PoolExhausted
 	if target == "" {
 		var hold *db.UsageLimit
 		if w.UsageLimitID != "" {
@@ -641,7 +642,12 @@ func (svc *Service) switchResumeCheckTx(ctx context.Context, tx *store.Tx, w *db
 				return false, err
 			}
 		}
-		resumeAt = waitResumeAt(tx.Now, storedLimit(old), hold, w.Attempts, ul.KeepAliveMax).UnixMicro()
+		at := waitResumeAt(tx.Now, storedLimit(old), hold, w.Attempts, ul.KeepAliveMax)
+		// No eligible account left: the whole pool is limited, and the wait ends at its earliest reset.
+		if at, exhausted, err = svc.poolWaitTx(ctx, tx, ul, w.SpaceID, w.Harness, w.Role, at); err != nil {
+			return false, err
+		}
+		resumeAt = at.UnixMicro()
 	}
 	n, err := tx.Q.SetLimitWaitSwitch(ctx, db.SetLimitWaitSwitchParams{SwitchToAccountID: target, ResumeAt: resumeAt, Now: now, ID: w.ID, Version: w.Version})
 	if err != nil || n == 0 {
@@ -672,7 +678,7 @@ func (svc *Service) switchResumeCheckTx(ctx context.Context, tx *store.Tx, w *db
 	}
 	// A fallback keeps ADR-0079's messages: control hears the run is parked until its reset.
 	if svc.opts.OnLimitWaitTx != nil && w.AccountSwitchID != "" {
-		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(*w), Change: LimitWaitParked}); err != nil {
+		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(*w), Change: LimitWaitParked, PoolExhausted: exhausted}); err != nil {
 			return false, err
 		}
 	}

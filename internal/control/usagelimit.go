@@ -5,10 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -83,6 +88,9 @@ func limitTask(ctx context.Context, tx *store.Tx, runID string) string {
 // told by its prompt, a fresh session's prompt included.
 func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.LimitWaitEvent) error {
 	w := ev.Wait
+	if ev.Change == fleet.LimitWaitParked && ev.PoolExhausted != nil {
+		sv.tellPoolExhaustedTx(ctx, tx, w, ev.PoolExhausted)
+	}
 	if w.RunKind == agenttools.KindControl {
 		return nil
 	}
@@ -98,6 +106,14 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 		// An account switch's park is told with its resume (one message per switch, ADR-0090).
 		if ev.Repark || ev.Switch != nil {
 			return nil
+		}
+		if p := ev.PoolExhausted; p != nil {
+			key, subject = "limit-wait:"+w.ID, fmt.Sprintf("%s run parked: every account of its pool is at its usage limit", w.Role)
+			body = fmt.Sprintf("Run %s (%s, %s) is parked at its usage limit, and so is every account of its pool (%s): none could take it over. "+
+				"Its process ended and its session is kept. SpaceMan resumes it as a new run of the same instance %s, choosing the account "+
+				"then from the pool.%s Don't relaunch or reassign it; you get one message when it resumes. Its wait is %s (spaceman limits waits).",
+				w.RunID, w.RunKind, w.Role, poolNames(ctx, tx, p.Accounts), resumeWhen(p, w.ResumeAt), task, w.ID)
+			break
 		}
 		release := ""
 		if w.ReleaseAt != nil {
@@ -171,4 +187,63 @@ func taskNow(task, runID string) string {
 		return ""
 	}
 	return task + " It now points at run " + runID + "."
+}
+
+// poolNames names a pool's accounts for a message (never a secret).
+func poolNames(ctx context.Context, tx *store.Tx, ids []string) string {
+	names := make([]string, 0, len(ids))
+	for _, id := range ids {
+		names = append(names, accountName(ctx, tx, id))
+	}
+	return strings.Join(names, ", ")
+}
+
+// resumeWhen words when a pool-exhausted wait resumes: the pool's earliest reset, or the probe time when none is known.
+func resumeWhen(p *fleet.PoolExhausted, at time.Time) string {
+	if p.ResetsAt != nil {
+		return fmt.Sprintf("at %s, the earliest reset in the pool", at.UTC().Format(time.RFC3339))
+	}
+	return fmt.Sprintf("at %s (no reset in the pool is known, so it tries again then)", at.UTC().Format(time.RFC3339))
+}
+
+// PoolExhaustedDedup is the dedup key of the people notice of a pool: one human action per space, harness and limit window (the pool's earliest reset; with none known, the day).
+func PoolExhaustedDedup(spaceID string, p *fleet.PoolExhausted, now time.Time) string {
+	window := "day-" + now.UTC().Format("20060102")
+	if p.ResetsAt != nil {
+		window = fmt.Sprintf("%d", p.ResetsAt.Unix())
+	}
+	return fmt.Sprintf("account-pool-exhausted:%s:%s:%s", spaceID, p.Harness, window)
+}
+
+// tellPoolExhaustedTx raises the people notice of a pool whose accounts are all at their usage limit, once the park's
+// transaction commits (a human action is written in a transaction of its own, never inside this one). It is one
+// informational action per space and window, deduplicated on its reserved key, so a second park in the same window
+// only finds it. People, and so Telegram, hear about the pool only here: a switch or a single limited account never
+// raises one. A failure is logged: control's own message of the park is already in the transaction.
+func (sv *Supervisor) tellPoolExhaustedTx(ctx context.Context, tx *store.Tx, w fleet.LimitWait, p *fleet.PoolExhausted) {
+	space := w.SpaceID
+	if sp, err := tx.Q.GetSpace(ctx, w.SpaceID); err == nil {
+		space = sp.Name
+	}
+	names := poolNames(ctx, tx, p.Accounts)
+	now := tx.Now
+	reset := "no known time"
+	if p.ResetsAt != nil {
+		reset = fmt.Sprintf("%s (in about %s)", p.ResetsAt.UTC().Format(time.RFC3339), approxDuration(p.ResetsAt.Sub(now)))
+	}
+	title := fmt.Sprintf("Every %s account of the pool is at its usage limit", p.Harness)
+	body := fmt.Sprintf("In %s, every account of a run's pool (%s) has reached its usage limit, so a run that hits a limit cannot move to another "+
+		"account. The earliest reset in the pool is at %s. Runs parked on it resume then, on the account that is free by that time.\n\nNothing "+
+		"is needed if the work can wait. To keep it going sooner, bind or enable another account for the pool. You get one such notice per space "+
+		"and limit window.", space, names, reset)
+	key, spaceID := PoolExhaustedDedup(w.SpaceID, p, now), w.SpaceID
+	tx.AfterCommit(func() {
+		bg := context.WithoutCancel(ctx)
+		_, _, err := sv.human.Create(bg, audit.System, spaceID, human.CreateInput{Type: human.TypeMessage, Priority: "normal", Title: title, Body: body,
+			Request: []byte(`{"requires_ack":false}`), Requester: human.Requester{Kind: "system", Label: "Usage limits"}, CorrelationID: w.ID,
+			DedupKey: key, Internal: true})
+		if err != nil {
+			sv.log.Info("pool exhausted people notice deferred", slog.String("limit_wait.id", w.ID), obs.Err(err))
+		}
+	})
 }

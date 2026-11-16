@@ -5457,6 +5457,35 @@
     the resume uses the target account either way.
   - New space limits are named as in decision 5, without a unit suffix: `usage_limit_wait_if_reset_within` (minutes)
     and `usage_limit_switch_max_per_day`. Metric `spaceman_account_switches_total{result}`.
+- **T10 implementation notes (2026-11-16):**
+  - With failover on, a pool is exhausted when every account of the run's pool (the role's pool when it has one, never
+    widened; otherwise the space's enabled accounts for the harness) has an open hold that hasn't reset. A wait parked
+    then, or a switch's wait that finds no eligible account at its resume, resumes at the pool's earliest reset (plus
+    ADR-0079's slack) instead of its own account's. An account frees up when its last hold resets; an account whose
+    hold has no known reset counts as limited and is left out of the earliest. When no reset in the pool is known the
+    wait keeps ADR-0079's time. No new state is stored: exhaustion is read when the wait is parked.
+  - The resume re-resolves through the launch path. With failover on and a role pool, a resume that is not a switch and whose
+    parked account has left the pool no longer names it: the role's pool picks, so an account outside the pool is never used.
+    The window of the people notice is the pool's earliest reset, so a reset that moves later raises another notice.
+  - Control gets its park message with the pool's accounts and the resume time. The people get one informational human
+    action per space, harness and window (the pool's earliest reset; the day when none is known) under the reserved
+    dedup prefix `account-pool-exhausted:`, and so Telegram, through the generic notifier. A single limited account,
+    or a pool with a free account, raises none. The action is created after the park's transaction commits, so a crash
+    in between loses it; the control message is in the transaction.
+- **Launch-time pool check (2026-11-16):**
+  - A resume or switch decides on its account in a claim transaction and launches in another, so an operator who took the
+    account out of the role's pool in between could still get it launched. The launch transaction now enforces the pool for
+    launches SpaceMan makes itself: `LaunchInput.RequirePoolMember` (not part of the API) is set by the limit-wait resume
+    (a switch, a pool-exhausted resume and ADR-0079's resume alike) and by the control supervisor's and autostart's
+    relaunch. Role pools apply only while failover is on (decision 3), so the check runs only then. When the role has a
+    pool of its own for the harness and the named account is not in it, the ref is dropped and the pool picks (priority,
+    holds), or refuses the launch when nothing in it is usable (the wait defers). A role without a pool of its own keeps
+    the named account. With failover off, role pools don't apply and the ref is kept: a run launched on the space's
+    default, outside the pool, stays on it across a resume or restart, so there is nothing to widen.
+  - Launches that an operator or the API make with a named account do not set the flag and keep today's behaviour: an
+    explicit ref names any enabled account bound to the space, inside the role's pool or not. `accounts.Resolve` itself is
+    unchanged. The claim-time check of T10 stays as an early decision; this one closes the window after it.
+  - Evidence: simulated (`internal/fleet/launchpool_test.go`), with a mutation check: removing the check fails the tests.
 - **Known limitation (T6 usage ledger):** a run's growth is booked when its report arrives, to the account the run was launched with. If the final report of run A is lost or arrives late, A's last tokens are booked with a later report of the session, which is the next run's (the account after a switch). The tokens are misattributed to that account, never counted twice: the per-session high-water marks (`usage_ledger_marks`) guarantee each token is booked once.
 - **Security-relevant because:**
   - it amends SM-ACCT-003 ("No automatic rotation or budget arbitration");
