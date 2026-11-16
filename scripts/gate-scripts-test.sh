@@ -6,7 +6,8 @@
 #   - CI=true disables the slots even when SM_GATE_SLOTS is set;
 #   - with SM_GATE_SLOTS=1 a second run prints a waiting line and runs after the first;
 #   - a holder killed with kill -9 releases its slot;
-#   - race.sh stopped with TERM exits at once and stops every go test invocation (a fake GO).
+#   - race.sh stopped with TERM exits at once and stops every go test invocation (a fake GO);
+#   - race.sh exiting normally with RACE_OUT_DIR leaves no sampler sleep behind (a fake GO and sleep).
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -80,6 +81,43 @@ if (( rc == 143 && SECONDS - start <= 3 && alive == 0 )) && [[ $(wc -l <"$FAKE_G
 else
   bad "race.sh on TERM: exit $rc after $(( SECONDS - start )) s, $alive of $(wc -l <"$FAKE_GO_PIDS") still running"
   while read -r p; do pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; done <"$FAKE_GO_PIDS" || true
+fi
+
+# race.sh with RACE_OUT_DIR (the mem.log sampler) exits normally: the sampler's sleep 20 must not outlive it, or a
+# caller that captures the output waits for it. A sleep wrapper records its pid (exec keeps it); the fake go waits
+# until the sampler has started a sleep, so the exit happens mid-sleep.
+export REAL_SLEEP SLEEP_PIDS="$tmp/sleep-pids"
+REAL_SLEEP=$(command -v sleep)
+mkdir "$tmp/sleepbin"
+cat >"$tmp/sleepbin/sleep" <<'EOF'
+#!/usr/bin/env bash
+echo $$ >>"$SLEEP_PIDS"
+exec "$REAL_SLEEP" "$@"
+EOF
+cat >"$tmp/go-quick" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  list) printf '%s\n' github.com/aurimasniekis/go-spaceman/internal/app github.com/aurimasniekis/go-spaceman/internal/x ;;
+  test) for _ in $(seq 100); do [[ -s "$SLEEP_PIDS" ]] && break; "$REAL_SLEEP" 0.1; done ;;
+esac
+EOF
+chmod +x "$tmp/sleepbin/sleep" "$tmp/go-quick"
+start=$SECONDS
+rc=0
+out=$(cd "$root" && PATH="$tmp/sleepbin:$PATH" GO="$tmp/go-quick" RACE_OUT_DIR="$tmp/out" RACE_APP_SPLIT=0 \
+  timeout 60 ./scripts/race.sh 2>&1) || rc=$?
+elapsed=$(( SECONDS - start ))
+sleeps=$(wc -l <"$SLEEP_PIDS")
+alive=0
+while read -r p; do
+  st=$(ps -o stat= -p "$p" 2>/dev/null || true)
+  [[ -n "$st" && "$st" != Z* ]] && alive=$((alive + 1))
+  kill "$p" 2>/dev/null || true
+done <"$SLEEP_PIDS"
+if (( rc == 0 && elapsed <= 5 && sleeps >= 1 && alive == 0 )) && [[ "$out" == *"race: other packages done"* ]]; then
+  ok "race.sh exits at once with RACE_OUT_DIR: no sampler sleep left behind"
+else
+  bad "race.sh normal exit: exit $rc after $elapsed s, $sleeps sampler sleep(s), $alive still running: $out"
 fi
 
 (( fails == 0 )) || { echo "$fails check(s) failed" >&2; exit 1; }
