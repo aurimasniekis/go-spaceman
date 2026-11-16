@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- A backup or verification that stops making progress no longer hangs with `busy` set until central restarts. A watchdog
+  fails it after 10 minutes without progress or 1 hour in total (new keys `backups.stall_timeout` and
+  `backups.max_duration`), records it as failed with an error naming the stage,
+  and the next backup can start. HTTP/2 connections to object storage now send health pings, so a silently dead
+  connection no longer blocks a transfer forever.
+
+### Added
+
+- The backup status shows where a running backup or verification is (`current`: stage, stage start, files done, last
+  progress; `stage` on the running item), and central logs every stage's start and end at Info.
+
 ## [0.1.7] - 2026-11-16
 
 Release on top of v0.1.6. It is a central-only release: the node agent is unchanged, so agents can stay on v0.1.6. It has

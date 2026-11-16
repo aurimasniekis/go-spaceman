@@ -250,11 +250,13 @@ func checkUnlisted(dir string, listed map[string]*File, rep *Report) {
 
 // checkPlaintext opens every sealed object and checks the database copy.
 func checkPlaintext(ctx context.Context, dir string, m *Manifest, o VerifyOptions, rep *Report) {
+	tr := trackerFrom(ctx)
 	for _, f := range m.Files {
 		if err := ctx.Err(); err != nil {
 			rep.problem("%v", err)
 			return
 		}
+		tr.file()
 		src := filepath.Join(dir, filepath.FromSlash(f.Object()))
 		want := sizeSum{f.Size, f.SHA256}
 		if f.Kind != KindDatabase {

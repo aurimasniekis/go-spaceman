@@ -182,11 +182,13 @@ func (t S3Target) Store(ctx context.Context, dir string) error {
 		if err != nil {
 			return err
 		}
-		err = t.Objects.Put(ctx, base+rel, io.LimitReader(f, got.size), got.size, got.sum)
+		tr := trackerFrom(ctx)
+		err = t.Objects.Put(ctx, base+rel, tr.reader(io.LimitReader(f, got.size)), got.size, got.sum)
 		_ = f.Close()
 		if err != nil {
 			return fmt.Errorf("upload %s: %w", rel, err)
 		}
+		tr.file()
 	}
 	return nil
 }
@@ -274,6 +276,7 @@ func (t S3Target) Fetch(ctx context.Context, id, tmpRoot string) (string, func()
 			cleanup()
 			return "", nil, err
 		}
+		trackerFrom(ctx).file()
 	}
 	return dir, cleanup, nil
 }
@@ -292,7 +295,7 @@ func (t S3Target) download(ctx context.Context, key, dst string) error {
 		return err
 	}
 	// Objects are bounded by the S3 single-PUT limit.
-	_, err = io.Copy(out, io.LimitReader(rc, s3client.MaxPutSize))
+	_, err = io.Copy(out, trackerFrom(ctx).reader(io.LimitReader(rc, s3client.MaxPutSize)))
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
