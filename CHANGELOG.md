@@ -75,6 +75,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Telegram notifications are no longer lost for changes made while central starts or while it is restarting: the
+  notifier reads its start position before the listener starts, and resumes from a saved position (up to 5 minutes
+  old) after a restart (ADR-0089 follow-up).
 - **Web, phones: pinch-zoom while a dialog is open, wide editor tables, input zoom.** Mantine's scroll lock cancelled
   every two-finger touch while a modal or drawer was open, so the page could not be zoomed (or zoomed back out); pinches
   now pass (`allowPinchZoom`) and one-finger scrolling stays locked. A table in the editor that was wider than its dialog
