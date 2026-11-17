@@ -366,7 +366,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	} else if real, err := filepath.EvalSymlinks(memDir); err == nil {
 		memDir = real
 	}
-	if memDir != "" && !p.Resume {
+	if memDir != "" && a.wantsMemoryNote(ctx, c.SpaceID, p.Role, p.Resume) {
 		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(memDir, p.Role))
 	}
 	// Claude Code's auto memory is kept outside the space folder, where no other run's file tools reach (ADR-0068).

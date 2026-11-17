@@ -855,3 +855,31 @@ func TestForgetSpaceMemoryDropsRenames(t *testing.T) {
 		t.Fatal("another space's rename was dropped")
 	}
 }
+
+// A resumed run keeps the old role folder in its history only when its role was renamed, so only then does a resume
+// get the memory note again; the claude resume re-passes the system text, so the note reaches the model (ADR-0093).
+func TestResumeAfterRenameGetsMemoryNote(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	if !a.wantsMemoryNote(ctx, rnSpace, "builder", false) || a.wantsMemoryNote(ctx, rnSpace, "builder", true) {
+		t.Fatal("a fresh start gets the note, a resume of a never-renamed role does not")
+	}
+	if err := a.j.insertRoleRename(ctx, renameRow{ID: rnID, SpaceID: rnSpace, From: "implementor", To: "builder", State: renameMoving}); err != nil {
+		t.Fatal(err)
+	}
+	if a.wantsMemoryNote(ctx, rnSpace, "builder", true) {
+		t.Fatal("an unfinished rename holds launches already")
+	}
+	if err := a.j.setRoleRenameResult(ctx, rnID, proto.MemoryRenameOK, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.j.setRoleRenameState(ctx, rnID, renameDone); err != nil {
+		t.Fatal(err)
+	}
+	if !a.wantsMemoryNote(ctx, rnSpace, "builder", true) {
+		t.Fatal("a resume after the rename must restate the memory folder")
+	}
+	if a.wantsMemoryNote(ctx, rnSpace, "implementor", true) {
+		t.Fatal("the old name was not renamed to")
+	}
+}

@@ -375,6 +375,21 @@ func (j *Journal) awaitRenameAck(ctx context.Context, spaceID, role string) {
 	}
 }
 
+// renamedTo reports whether the role's memory arrived under this name through a rename that finished: a session that
+// began under the old name still names the old folder in its history (ADR-0093).
+func (j *Journal) renamedTo(ctx context.Context, spaceID, role string) bool {
+	var n int
+	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND to_role = ? AND state = 'done' AND result = ?`,
+		spaceID, role, proto.MemoryRenameOK).Scan(&n)
+	return err == nil && n > 0
+}
+
+// wantsMemoryNote reports whether a launch's prompt carries the role-memory note: every fresh start, and a resume
+// only when the role was renamed, because the resumed history names the old folder.
+func (a *Agent) wantsMemoryNote(ctx context.Context, spaceID, role string, resume bool) bool {
+	return !resume || a.j.renamedTo(ctx, spaceID, role)
+}
+
 const renameCols = `rename_id, space_id, from_role, to_role, state, result, message, acked`
 
 func scanRename(sc interface{ Scan(...any) error }) (renameRow, error) {
