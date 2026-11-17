@@ -25,6 +25,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -47,6 +48,9 @@ type Options struct {
 	RecordingsDir string
 	// RecordingStore keeps finished recordings (ADR-0048). Nil: a local store rooted at RecordingsDir.
 	RecordingStore artifacts.Store
+	// RecordingCreate creates the segment files of central's recording copies; nil uses the filesystem (tests inject a
+	// failing disk).
+	RecordingCreate func(path string) (recording.File, error)
 	// ResolveAccount picks the account a launch uses inside the launch transaction (SM-ACCT-003); it returns the
 	// account ID stored with the run. Nil: launches carry no account. avoid, when set, names accounts to pass over for
 	// another usable one (usage-limit failover, ADR-0079 decision 8); when every account is to be avoided, the usual
@@ -206,6 +210,7 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	svc.lw.started = o.Clock.Now()
 	svc.hub = newHub(svc)
 	svc.rec = newRecordings(o.RecordingsDir, o.RecordingStore, obs.Component(o.Log, "recordings"), o.Clock.Now)
+	svc.rec.create = o.RecordingCreate
 	return svc
 }
 

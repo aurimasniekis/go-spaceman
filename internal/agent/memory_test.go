@@ -122,6 +122,29 @@ func TestMemoryInstancesShareAndPreserve(t *testing.T) {
 	if st := m.statusOf(ctx, "spc_a", "implementor-backend"); st.Uncheckpointed != 1 {
 		t.Fatalf("uncheckpointed: %+v", st)
 	}
+	// An instance folder in the bare layout (HEAD, objects/, refs/, commondir, no .git) is counted as an instance but
+	// nothing in it is counted and no git runs there, even with a commondir that leads to the shared history.
+	bare := filepath.Join(m.root, "spc_a", "implementor-backend", "instances", "ins_bare")
+	// HEAD is a commit the shared history does not have in main (a preserved conflict), so a Count there would show.
+	lost, err := m.git.Run(ctx, shared, nil, "rev-parse", "--verify", refs[:strings.Index(refs, "\n")]+"^{commit}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, bare, "HEAD", strings.TrimSpace(lost)+"\n")
+	write(t, bare, "commondir", shared+"\n")
+	for _, d := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(bare, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := st.LocalCommits
+	got := m.statusOf(ctx, "spc_a", "implementor-backend")
+	if got.Instances != 3 || got.Uncheckpointed != 1 || got.LocalCommits != before {
+		t.Fatalf("bare-layout instance was counted: before %d, %+v", before, got)
+	}
+	if err := os.RemoveAll(bare); err != nil {
+		t.Fatal(err)
+	}
 	if len(m.collections()) != 2 {
 		t.Fatalf("collections: %v", m.collections())
 	}
@@ -172,6 +195,111 @@ func TestMemoryAcks(t *testing.T) {
 		t.Stop()
 	}
 	m.mu.Unlock()
+}
+
+// A committed conflicts -> /elsewhere symlink must not make preserve write outside the instance.
+func TestPreserveRefusesSymlinkedConflicts(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	const sp, role = "spc_a", "implementor-backend"
+	one, err := m.prepare(ctx, sp, role, "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "decisions.md", "base\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	two, err := m.prepare(ctx, sp, role, "ins_two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(one, "conflicts")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "decisions.md", "one\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	write(t, two, "decisions.md", "two\n")
+	if err := m.checkpointErr(ctx, sp, role, "ins_two", "idle"); err == nil {
+		t.Fatal("preserve wrote through a symlinked conflicts/")
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Fatalf("the symlink target was written to: %v", ents)
+	}
+}
+
+func conflictRoot(t *testing.T) (string, *os.Root) {
+	t.Helper()
+	inst := t.TempDir()
+	if err := os.Mkdir(filepath.Join(inst, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	return inst, root
+}
+
+func requireEmptyDir(t *testing.T, dir string) {
+	t.Helper()
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Fatalf("%s was written to: %v", dir, ents)
+	}
+}
+
+// Layer (a), os.Root alone: with the guards out of the way, a symlink to outside the instance is not followed.
+func TestConflictWritesStayInsideRoot(t *testing.T) {
+	inst, root := conflictRoot(t)
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(inst, "conflicts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(inst, "conflicts", "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeUnderRoot(root, filepath.Join("conflicts", "x"), map[string][]byte{"decisions.md": []byte("mine")}, "note"); err == nil {
+		t.Fatal("wrote through a symlink leaving the instance")
+	}
+	requireEmptyDir(t, outside)
+}
+
+// Layer (b), the guard alone: conflicts -> .git stays inside the instance, so os.Root would allow it.
+func TestPrepareRefusesConflictsSymlinkIntoGit(t *testing.T) {
+	inst, root := conflictRoot(t)
+	if err := os.Symlink(".git", filepath.Join(inst, "conflicts")); err != nil {
+		t.Fatal(err)
+	}
+	err := prepareConflictDir(root, filepath.Join("conflicts", "ins_one-1"))
+	if err == nil || !strings.Contains(err.Error(), "Recover by removing") {
+		t.Fatalf("conflicts -> .git accepted or error gives no recovery: %v", err)
+	}
+	requireEmptyDir(t, filepath.Join(inst, ".git"))
+}
+
+// Layer (c): a pre-committed conflicts/<inst>-<stamp>/ holding decisions.md -> ../../.git/description is refused.
+func TestWriteConflictCopiesRefusesPrecreatedFolder(t *testing.T) {
+	inst, root := conflictRoot(t)
+	desc := filepath.Join(inst, ".git", "description")
+	if err := os.WriteFile(desc, []byte("victim"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join("conflicts", "ins_one-1")
+	if err := os.MkdirAll(filepath.Join(inst, dir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../.git/description", filepath.Join(inst, dir, "decisions.md")); err != nil {
+		t.Fatal(err)
+	}
+	root.Close()
+	err := writeConflictCopies(inst, dir, map[string][]byte{"decisions.md": []byte("mine")}, "note")
+	if err == nil {
+		t.Fatal("a pre-created conflict folder was accepted")
+	}
+	if b, _ := os.ReadFile(desc); string(b) != "victim" {
+		t.Fatalf(".git/description was overwritten: %q", b)
+	}
 }
 
 // A checkout whose own configuration redirects the work tree (core.worktree) or declares it bare is refused by every
