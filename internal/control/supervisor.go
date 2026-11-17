@@ -43,6 +43,8 @@ type Supervisor struct {
 	base context.Context
 	// Async runs handlers in a goroutine (production; hooks are called on request paths). Tests call them directly.
 	Async bool
+	// Watchdog nudges a stalled control (ADR-0099); nil: none (NewWatchdog sets it).
+	Watchdog *Watchdog
 
 	lifecycle
 }
@@ -225,6 +227,10 @@ func (sv *Supervisor) OnRunEnded(runID string) {
 				fmt.Sprintf("Run %s (%s, %s) ended: %s.%s", r.ID, r.Kind, r.Role, detail, task))
 			return
 		}
+		if sv.Watchdog.takeRestart(r.ID) {
+			sv.restartStalled(ctx, r)
+			return
+		}
 		if r.Desired != "running" {
 			return // an operator (or control's own stop) ended it
 		}
@@ -275,9 +281,31 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		}
 		return
 	}
+	sv.relaunch(ctx, r, "SpaceMan restarted you after your previous session ended unexpectedly. Check spaceman_messages, the inbox and the queue, then continue.")
+}
+
+// restartStalled starts control again after the watchdog stopped it (ADR-0099), the way recovery does. The restart
+// budget was checked before the stop; a usage limit or a paused space still wins.
+func (sv *Supervisor) restartStalled(ctx context.Context, r *fleet.Run) {
+	if r.EndReason == fleet.EndUsageLimit {
+		return
+	}
+	if w, err := sv.fl.LimitWaitForRun(ctx, r.ID); err != nil || w != nil {
+		return
+	}
+	if sp, err := sv.fl.GetSpace(ctx, r.SpaceID); err != nil || sp.State != "active" {
+		return
+	}
+	sv.log.Info("watchdog: starting stalled control again", slog.String(obs.FieldRunID, r.ID))
+	sv.relaunch(ctx, r, watchdogRestartPrompt)
+}
+
+// relaunch starts a control run again as the supervisor (counted in its restart budget): same role, harness, instance,
+// model, settings, account and workspace, resuming the session when it finished a turn.
+func (sv *Supervisor) relaunch(ctx context.Context, r *fleet.Run, prompt string) {
 	li := fleet.LaunchInput{Kind: agenttools.KindControl, Role: r.Role, Harness: r.Harness, InstanceID: r.InstanceID, SessionID: resumable(r),
 		Model: r.Launch.Model, Settings: r.Launch.Settings, AccountRef: r.Launch.AccountRef, Workspace: r.Launch.Workspace, RequirePoolMember: true,
-		Prompt: "SpaceMan restarted you after your previous session ended unexpectedly. Check spaceman_messages, the inbox and the queue, then continue."}
+		Prompt: prompt}
 	if li.SessionID == "" {
 		li.Prompt = r.Launch.Prompt + "\n\n" + li.Prompt
 	}

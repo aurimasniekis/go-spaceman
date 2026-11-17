@@ -20,7 +20,7 @@ func TestReservedDedupNamespaces(t *testing.T) {
 	system := Requester{Kind: "system", Label: "test"}
 	operator := Requester{Kind: "operator", ID: op.ID}
 	// The services' own keys, spelled out so the list can't lose one unnoticed.
-	want := []string{"approval:", "usage-limit-human:", "account-pool-exhausted:", "control-failing:", "control-autostart-limit:", "control-autostart-refused:"}
+	want := []string{"approval:", "usage-limit-human:", "account-pool-exhausted:", "control-failing:", "control-autostart-limit:", "control-autostart-refused:", "control-watchdog:"}
 	if strings.Join(reservedDedupPrefixes, ",") != strings.Join(want, ",") {
 		t.Fatalf("reserved prefixes %v, want %v", reservedDedupPrefixes, want)
 	}
