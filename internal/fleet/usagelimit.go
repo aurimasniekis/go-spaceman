@@ -104,6 +104,7 @@ type LimitWait struct {
 	// SwitchToAccountID is the account the resume uses instead of the parked run's (an account switch, ADR-0090).
 	SwitchToAccountID string    `json:"switch_to_account_id,omitempty" doc:"The account the resume uses instead of the parked run's (an account switch)"`
 	AccountSwitchID   string    `json:"account_switch_id,omitempty" doc:"The account switch this wait belongs to"`
+	Cause             string    `json:"cause,omitempty" enum:"agent_restart" doc:"Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0096)"`
 	Version           int64     `json:"version"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
@@ -113,7 +114,7 @@ func limitWaitFromRow(r db.LimitWait) LimitWait {
 	return LimitWait{ID: r.ID, SpaceID: r.SpaceID, RunID: r.RunID, TaskID: r.TaskID, RunKind: r.RunKind, Role: r.Role, NodeID: r.NodeID,
 		InstanceID: r.InstanceID, Harness: r.Harness, UsageLimitID: r.UsageLimitID, ResumeAt: time.UnixMicro(r.ResumeAt).UTC(),
 		ReleaseAt: microsPtr(r.ReleaseAt), State: r.State, NewRunID: r.NewRunID, Attempts: r.Attempts, LastError: r.LastError, Version: r.Version,
-		SwitchToAccountID: r.SwitchToAccountID, AccountSwitchID: r.AccountSwitchID,
+		SwitchToAccountID: r.SwitchToAccountID, AccountSwitchID: r.AccountSwitchID, Cause: r.Cause,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC()}
 }
 

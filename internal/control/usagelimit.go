@@ -105,6 +105,32 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 		}
 	}
 	var key, subject, body string
+	if w.Cause == fleet.WaitCauseRestart {
+		// A run an agent restart stopped (ADR-0096): told once, when it resumes or when SpaceMan gives up.
+		switch ev.Change {
+		case fleet.LimitWaitResumed:
+			key, subject = "limit-wait-resumed:"+w.ID, fmt.Sprintf("%s run resumed after an agent restart", w.Role)
+			how := "with its session, in the same worktree"
+			if ev.Fresh {
+				how = "in a fresh session (the space moved to another node), with its original prompt"
+			}
+			body = fmt.Sprintf("Run %s (%s, %s) was stopped by an agent restart and resumed as run %s on the same instance, %s.%s Don't relaunch it.",
+				w.RunID, w.RunKind, w.Role, ev.NewRunID, how, taskNow(task, ev.NewRunID))
+		case fleet.LimitWaitReleased:
+			key, subject = "limit-wait-released:"+w.ID, fmt.Sprintf("%s run stopped by an agent restart; relaunch", w.Role)
+			body = fmt.Sprintf("Run %s of task %s was stopped by an agent restart; relaunch. SpaceMan did not resume it (%s).", w.RunID, w.TaskID, w.LastError)
+			switch ev.TaskStatus {
+			case "ready":
+				body += " The task is back in the queue, ready and unassigned: launch a worker for it."
+			case "review":
+				body += " The task stays in review, waiting for acceptance; only its assignee was cleared."
+			}
+		default:
+			return nil
+		}
+		_, err := sv.msgs.NotifyControlTx(ctx, tx, w.SpaceID, key, subject, body)
+		return err
+	}
 	switch ev.Change {
 	case fleet.LimitWaitParked:
 		// An account switch's park is told with its resume (one message per switch, ADR-0090).

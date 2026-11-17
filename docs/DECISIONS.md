@@ -6531,6 +6531,49 @@
   write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no
   prompt text, settings or credentials.
 
+### ADR-0096 — A run an agent restart stopped is resumed, within a cap
+
+- **Status:** Accepted by control (task request of 2026-11-17). Central migration `0063_limit_wait_cause` (one column;
+  0061/0062 are ADR-0093's), a read-only `cause` field on limit waits in the HTTP API. No protocol change and no node
+  change: herdr-core already ends a process the agent's restart stopped with the reason `stopped_by_restart`, which the
+  node reports as an ordinary exit. Not security-relevant: no requirement, guarantee or default is relaxed; the resume is
+  a launch through `LaunchRun` and so goes through every check of one (lease, space state, slots, budgets, accounts).
+- **Context:** after a node agent restart, six worker runs ended `stopped_by_restart` while their desired state was
+  `running`. Nothing brought them back: their tasks stayed `running` (or moved to `review` if the worker had already
+  finished) with no live run, and control had to notice and relaunch each one by hand.
+- **Decision:**
+  1. **Reuse the limit-wait machinery (ADR-0079), not a parallel one.** A worker or diagnostic run that ends with the
+     node reason `stopped_by_restart`, with desired `running`, gets a limit wait with `cause = agent_restart` in the report
+     transaction that records its end. The wait's job resumes it the way a usage-limit wait is resumed: a new run of the
+     same instance under the current lease, `--resume` of its session (Claude Code and Codex both support it), the same
+     worktree, the same account, the task pointed at the new run, the claim, deferral (node away, space paused or full)
+     and batching rules unchanged. The launch applies the same slot and budget limits as a normal launch. Only the
+     resume time differs: 15 s after the end, doubling per attempt (30 s, 60 s), so the agent is up again first.
+  2. **Session.** A run that finished no turn has no session worth resuming: it starts fresh with its original prompt, as
+     in ADR-0079. A resumed run is told, with the restart prompt, that the agent restarted and to continue from where it
+     left off.
+  3. **Restart loops: capped.** Each resume counts against `attempts`, and a run resumed because of a restart that is
+     stopped by one again carries the count forward. At most **3** automatic resumes are made per chain. The next end
+     writes the wait already `released` with the reason `restart_cap`, gives the task back (`ready` and unassigned) and
+     tells control: *"run X of task Y was stopped by an agent restart; relaunch"*. A resumed run that lived at least 30
+     minutes starts the count again, so an occasional restart never exhausts the cap. The chain also keeps the
+     `release_at` of ADR-0079 (the maximum wait, 7 days by default) after which a still-waiting task is released.
+  4. **Tasks in review.** A worker whose task is already in `review` has finished: its work waits for acceptance. It is
+     not resumed (that would restart an idle agent and burn budget for nothing); the task stays in `review` and the
+     ordinary run-ended notice tells control. A reviewer's feedback relaunches a worker as usual. A run without a task
+     (an ad hoc worker, a diagnostic) likewise gets only the run-ended notice.
+  5. **Not resumed, and why.** Runs somebody asked to stop (desired `stopped`: a stop, a lease revocation, a space
+     pause) are not wanted and are left ended. Control runs are not touched: the supervisor already relaunches them within
+     its own bounds. A usage limit wins over the restart: a run ended at its limit is parked by ADR-0079 as before.
+  6. **Control hears once.** One message when the run is resumed (the new run and the task now pointing at it), or the
+     relaunch notice above when SpaceMan gives up. No "parked" message is sent for a restart wait.
+- **Consequences:** a wait row exists per restart, visible with its cause among the space's limit waits; `limit_waits.cause` is `''`
+  for usage limits. Resumes after an agent restart now happen without control. A run whose resume itself fails before its
+  first turn is handled by ADR-0079's one fresh retry. Simulated evidence only (scripted node, fake clock): not verified
+  with a real agent restart.
+- **Evidence:** `internal/fleet` `TestRestartStoppedRunResumes`, `TestRestartResumeIsCapped`,
+  `TestRestartStableRunResetsCap`, `TestRestartNotResumed`.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

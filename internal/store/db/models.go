@@ -760,6 +760,7 @@ type LimitWait struct {
 	UpdatedAt         int64
 	SwitchToAccountID string
 	AccountSwitchID   string
+	Cause             string
 }
 
 type LoginThrottle struct {

@@ -973,6 +973,15 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				if err := svc.parkEndedTx(ctx, tx, pr, nextLimit, why); err != nil {
 					return err
 				}
+			} else if sweep == nil && r.Desired == "running" && nodeReason == EndStoppedByRestart && rep.State == proto.RunExited {
+				// An agent restart stopped a run that was still wanted: resume it, or give it up after the cap (ADR-0096).
+				sid := r.SessionID
+				if rep.SessionID != "" {
+					sid = rep.SessionID
+				}
+				if err := svc.restartEndedTx(ctx, tx, r, sid, max(r.Turn, int64(min(rep.Turn, math.MaxInt64)))); err != nil { //nolint:gosec // saturated
+					return err
+				}
 			} else if sweep == nil && r.Desired != "stopped" && r.Turn == 0 && rep.Turn == 0 && (rep.State == proto.RunFailed || rep.State == proto.RunExited) {
 				// A resumed run that ended before its first turn: its --resume may have failed (review S4).
 				if err := svc.resumeFailedTx(ctx, tx, r); err != nil {

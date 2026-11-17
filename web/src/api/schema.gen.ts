@@ -6840,6 +6840,11 @@ export interface components {
             account_switch_id?: string;
             /** Format: int64 */
             attempts: number;
+            /**
+             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0096)
+             * @enum {string}
+             */
+            cause?: "agent_restart";
             /** Format: date-time */
             created_at: string;
             /** @enum {string} */
