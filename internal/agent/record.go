@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -615,7 +616,7 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 		if clean {
 			continue
 		}
-		if err := a.catchUpRun(ctx, conn, gen, r, acked, served); err != nil {
+		if err := a.catchUpRun(ctx, conn, gen, r, acked, served, false); err != nil {
 			return err
 		}
 	}
@@ -683,7 +684,7 @@ func (a *Agent) catchUpWaiting(ctx context.Context, conn *websocket.Conn, gen ui
 				continue
 			}
 			a.restoreAck(id)
-			if err := a.catchUpRun(ctx, conn, gen, r, a.ackedSeq(id), served); err != nil {
+			if err := a.catchUpRun(ctx, conn, gen, r, a.ackedSeq(id), served, true); err != nil {
 				return err
 			}
 		}
@@ -701,11 +702,12 @@ var endedCatchUpRate int64 = 8 << 20
 // catchUpRun ships a run's local records above from in batches, then what live shipments kept back meanwhile, until
 // nothing more was kept back, and marks the run caught up (atomically with that check, under the lock shipLive decides
 // under). Between batches it serves the other runs whose live output waits (catchUpWaiting with served, which this run
-// joins), and an ended run's batches are paced by endedCatchUpRate.
-func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64, r runRow, from uint64, served map[string]bool) error {
+// joins), and an ended run's batches are paced by endedCatchUpRate, unless it is served nested inside another run's
+// catch-up (nested): pacing there would hold the outer run's waiting live output back at the pace of an ended run.
+func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64, r runRow, from uint64, served map[string]bool, nested bool) error {
 	served[r.RunID] = true
 	batch := 0
-	paced := ended(r.State)
+	paced := ended(r.State) && !nested
 	began, sentBytes := time.Now(), int64(0)
 	others := func() error { return a.catchUpWaiting(ctx, conn, gen, served) }
 	send := func(recs []recording.Record) error {
@@ -939,9 +941,17 @@ func (a *Agent) probeSeq(ctx context.Context, row runRow, g *seqGate) {
 // pass skips what central already stores instead of re-shipping every journaled recording (ADR-0097).
 const recordingAckedFile = "recording-acked"
 
+// ackMargin is how far above its local recording a stored acknowledgement may be and still be believed (restoreAck):
+// records central stored from before a local loss, plus the ones a failed disk never kept.
+const ackMargin = 1 << 20
+
 // saveAck stores a run's acknowledged sequence in its run directory (replaced whole, so a reader never sees half a
 // number). A failed write (a full disk) only leaves an older value: the catch-up then re-ships a little more.
 func (a *Agent) saveAck(runID string, seq uint64) {
+	// Serialised with removeRecording's cleanup: an acknowledgement written between its last file removal and the
+	// directory's removal would leave a run directory holding only this file.
+	a.ackFileMu.Lock()
+	defer a.ackFileMu.Unlock()
 	dir := a.runDir(runID)
 	if _, err := os.Stat(dir); err != nil {
 		return // pruned meanwhile: never recreate the directory
@@ -971,6 +981,14 @@ func (a *Agent) restoreAck(runID string) {
 	}
 	seq, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
 	if err != nil || seq == 0 {
+		return
+	}
+	// Central's sequence cannot be far above what this node ever numbered: a value near the top of the range or far
+	// above the local recording would make later records skip numbers or never ship, so it is not trusted.
+	if seq >= math.MaxUint64-ackMargin {
+		return
+	}
+	if last, err := recording.LastSeqIn(a.RecordingDir(runID)); err == nil && seq > last+ackMargin {
 		return
 	}
 	a.mu.Lock()

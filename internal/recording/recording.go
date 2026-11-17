@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -358,8 +359,11 @@ func (w *Writer) failLocked(now time.Time, err error) error {
 		_ = w.f.Close()
 		w.f = nil
 		if w.segBytes == 0 {
-			_ = os.Remove(filepath.Join(w.o.Dir, SegmentName(w.segIndex)))
-			w.segIndex--
+			// The index goes back only when the file is gone: a segment left behind keeps its number, and the next one
+			// must not reuse it.
+			if err := os.Remove(filepath.Join(w.o.Dir, SegmentName(w.segIndex))); err == nil || errors.Is(err, fs.ErrNotExist) {
+				w.segIndex--
+			}
 		}
 	}
 	if w.wait == 0 {

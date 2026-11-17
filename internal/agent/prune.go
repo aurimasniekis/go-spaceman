@@ -122,6 +122,8 @@ func (a *Agent) removeRecording(runID string) {
 		a.log.Warn("recording directory removal", slog.String(obs.FieldRunID, runID), obs.Err(err))
 		return
 	}
+	a.ackFileMu.Lock() // against saveAck writing the acknowledgement between the removals below
+	defer a.ackFileMu.Unlock()
 	run := a.runDir(runID)
 	left, err := os.ReadDir(run)
 	if err != nil {

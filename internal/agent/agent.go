@@ -115,6 +115,8 @@ type Agent struct {
 	// restored marks runs whose acked value was read from their run directory after a restart (restoreAck) and not yet
 	// compared with the local recording by a catch-up.
 	restored map[string]bool
+	// ackFileMu serialises writing a run's acknowledgement file with removing the run directory (prune).
+	ackFileMu sync.Mutex
 	// seqKnown marks runs whose recording sequence at central this process knows: it launched the run with an empty
 	// recording, or central acknowledged a recording message of it. Until then the run's recorder numbers nothing
 	// (seqGate): a process that ran before may have shipped records its failing disk never stored (ADR-0097).

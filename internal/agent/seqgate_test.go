@@ -24,6 +24,8 @@ type seqCentral struct {
 	drops int // records dropped as repeats
 	// mute, while set, loses every recording message (not stored, not acknowledged): central is out of reach.
 	mute bool
+	// muted counts the recording messages lost while mute was set (the recorder's probes among them).
+	muted int
 }
 
 // until applies the recording messages central receives until cond holds, or fails.
@@ -49,6 +51,7 @@ func (c *seqCentral) within(d time.Duration, cond func() bool) bool {
 				c.t.Fatal(err)
 			}
 			if c.mute {
+				c.muted++
 				continue
 			}
 			for _, raw := range ch.Records {
@@ -231,11 +234,14 @@ func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
 		defer a.mu.Unlock()
 		return a.recorders[runID] != nil
 	})
-	time.Sleep(300 * time.Millisecond)
+	// The recorder asks for central's sequence while it waits: once it has asked, it holds what follows back.
+	c.until("the recorder's first probe", func() bool { return c.muted >= 1 })
 	fake.Output(term, "last words\r\n")
-	time.Sleep(100 * time.Millisecond)
 	fake.Exit(term, 0, "exited")
-	c.within(time.Second, func() bool { return false })
+	// After the exit the recorder keeps asking (it has the close record to ship): the probes that follow came from
+	// the pump with the output and the exit already processed.
+	base := c.muted
+	c.until("probes after the exit", func() bool { return c.muted >= base+3 })
 	if recs := localAbove(t, a, runID, 100); len(recs) > 0 {
 		t.Fatalf("records numbered before central's sequence was known: %+v", recs)
 	}

@@ -311,3 +311,143 @@ func TestQuotaTruncationHandedOut(t *testing.T) {
 	}
 	must(t, w.Close())
 }
+
+// flakyFile is a segment file whose writes fail, writing nothing, while *fail is set.
+type flakyFile struct {
+	f      *os.File
+	fail   *bool
+	onFail func()
+}
+
+func (d *flakyFile) Write(p []byte) (int, error) {
+	if *d.fail {
+		if d.onFail != nil {
+			d.onFail()
+		}
+		return 0, syscall.ENOSPC
+	}
+	return d.f.Write(p)
+}
+func (d *flakyFile) Sync() error  { return d.f.Sync() }
+func (d *flakyFile) Close() error { return d.f.Close() }
+
+func flakyWriter(t *testing.T, dir string, fail *bool, now *time.Time, onFail func(path string)) *Writer {
+	t.Helper()
+	w, err := Open(Options{Dir: dir, Now: func() time.Time { return *now }, RetryAfter: time.Second, Create: func(path string) (File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		d := &flakyFile{f: f, fail: fail}
+		if onFail != nil {
+			d.onFail = func() { onFail(path) }
+		}
+		return d, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+// A segment that took no byte before the write failed is removed and its number is used again by the next one: no
+// empty segment stays behind and the numbering has no hole.
+func TestFailedFirstWriteLeavesNoEmptySegment(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, nil)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	if segs, _ := Segments(dir); len(segs) != 0 {
+		t.Fatalf("an empty segment stayed behind: %v", segs)
+	}
+	fail = false
+	now = now.Add(2 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Close())
+	segs, _ := Segments(dir)
+	if len(segs) != 1 || filepath.Base(segs[0]) != SegmentName(1) {
+		t.Fatalf("segments %v, want only %s", segs, SegmentName(1))
+	}
+}
+
+// When the empty segment cannot be removed it keeps its number: the next segment must not try to create it again.
+func TestFailedFirstWriteKeepsTheNumberOfASegmentLeftBehind(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, func(path string) {
+		// Make os.Remove fail: the path becomes a directory that is not empty.
+		_ = os.Remove(path)
+		_ = os.Mkdir(path, 0o700)
+		_ = os.WriteFile(filepath.Join(path, "keep"), []byte("x"), 0o600)
+	})
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	fail = false
+	now = now.Add(2 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Flush())
+	if w.Err() != nil {
+		t.Fatalf("the next segment failed: %v", w.Err())
+	}
+	if _, err := os.Stat(filepath.Join(dir, SegmentName(2))); err != nil {
+		t.Fatalf("the next segment is not number 2: %v", err)
+	}
+	must(t, w.Close())
+}
+
+// After a flush succeeded the backoff starts over: a later failure waits RetryAfter again, not the doubled wait of the
+// failures before.
+func TestBackoffStartsOverAfterASuccessfulFlush(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, nil)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	_ = w.Flush() // the first failure: waits 1 s, the next failure would wait 2 s
+	now = now.Add(time.Second)
+	fail = false
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Flush())
+	fail = true
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("c")}))
+	if err := w.Flush(); err == nil {
+		t.Fatal("the write did not fail")
+	}
+	now = now.Add(time.Second)
+	if _, err := w.AddRecord(Record{Kind: KindOut, Data: []byte("d")}); err != nil {
+		t.Fatalf("still backing off one RetryAfter after the failure: %v", err)
+	}
+}
+
+// A last segment that holds no decodable record (torn at its first frame) does not hide the records of the segment
+// before it, and a recording whose segments are all torn has sequence 0.
+func TestLastSeqInSkipsATornOnlyLastSegment(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		must(t, w.Add(Record{Kind: KindOut, Data: []byte("x")}))
+	}
+	must(t, w.Close())
+	if got, err := LastSeqIn(dir); err != nil || got != 3 {
+		t.Fatalf("LastSeqIn %d %v, want 3", got, err)
+	}
+	must(t, os.WriteFile(filepath.Join(dir, SegmentName(2)), []byte{0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x58, 0x99}, 0o600))
+	if got, err := LastSeqIn(dir); err != nil || got != 3 {
+		t.Fatalf("LastSeqIn with a torn last segment %d %v, want 3", got, err)
+	}
+	torn := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(torn, SegmentName(1)), []byte("not a frame"), 0o600))
+	if got, err := LastSeqIn(torn); err != nil || got != 0 {
+		t.Fatalf("LastSeqIn of only torn segments %d %v, want 0", got, err)
+	}
+}

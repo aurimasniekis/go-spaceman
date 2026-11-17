@@ -555,7 +555,7 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   output still reaches central's copy and the live view. The node tries the disk again with a backoff (5 s, up to a
   minute) and the local recording resumes in a new segment once space is freed; output while it was full is missing
   from the local copy only, and also from central's if it could not be shipped meanwhile (the node disconnected for
-  more than about 1 MiB of output). Recordings of nodes older than this release end with a `trunc` record (`disk`)
+  more than about 1 MiB of output, or the agent restarted while disconnected). Recordings of nodes older than this release end with a `trunc` record (`disk`)
   at the failure instead.
 - **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
   node keeps its local recording. Tested: node-side only (`make test-fault`).
