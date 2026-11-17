@@ -17,6 +17,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // Role rename on the node (ADR-0093 §3.3, T-H3): the memory.rename command, the move of the role's memory folder, the
@@ -793,18 +794,33 @@ func TestRoleRenameBusyCheckedUnderLocks(t *testing.T) {
 	stopTimers(a.mem)
 }
 
-// A resumed run keeps the old role folder in its history only when its role was renamed, so only then does a resume
-// get the memory note again; the claude resume re-passes the system text, so the note reaches the model (ADR-0093).
+// A resumed run names the old role folder in its history only when the role was renamed after its session began, so
+// only then does a resume get the note again; Claude's resume re-passes the system text (ADR-0093).
 func TestResumeAfterRenameGetsMemoryNote(t *testing.T) {
 	a := rnAgent(t)
 	ctx := context.Background()
-	if !a.wantsMemoryNote(ctx, rnSpace, "builder", false) || a.wantsMemoryNote(ctx, rnSpace, "builder", true) {
+	const sess, cur = "sess-1", "run-cur"
+	if !a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, false) || a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, true) {
 		t.Fatal("a fresh start gets the note, a resume of a never-renamed role does not")
+	}
+	// The session's first run began under the old name, then the role was renamed.
+	if err := a.j.insertRun(ctx, runRow{RunID: "run-old", SpaceID: rnSpace, Generation: 1, Kind: "ordinary", Role: "implementor", Harness: "claude",
+		InstanceID: "ins", TerminalName: "t-old", Desired: "running", State: proto.RunPending, SessionID: sess}); err != nil {
+		t.Fatal(err)
 	}
 	if err := a.j.insertRoleRename(ctx, renameRow{ID: rnID, SpaceID: rnSpace, From: "implementor", To: "builder", State: renameMoving}); err != nil {
 		t.Fatal(err)
 	}
-	if a.wantsMemoryNote(ctx, rnSpace, "builder", true) {
+	// The store's clock may stand still in tests: place the events apart explicitly (the run began at 1000, the rename at 2000).
+	setAt := func(q string, at int64, id string) {
+		t.Helper()
+		if err := a.j.s.W().Tx(ctx, func(tx *store.Tx) error { _, err := tx.SQL.ExecContext(ctx, q, at, id); return err }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setAt(`UPDATE runs SET created_at = ? WHERE run_id = ?`, 1000, "run-old")
+	setAt(`UPDATE role_renames SET created_at = ? WHERE rename_id = ?`, 2000, rnID)
+	if a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, true) {
 		t.Fatal("an unfinished rename holds launches already")
 	}
 	if err := a.j.setRoleRenameResult(ctx, rnID, proto.MemoryRenameOK, ""); err != nil {
@@ -813,10 +829,23 @@ func TestResumeAfterRenameGetsMemoryNote(t *testing.T) {
 	if err := a.j.setRoleRenameState(ctx, rnID, renameDone); err != nil {
 		t.Fatal(err)
 	}
-	if !a.wantsMemoryNote(ctx, rnSpace, "builder", true) {
-		t.Fatal("a resume after the rename must restate the memory folder")
+	if !a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, true) {
+		t.Fatal("a session older than the rename must restate the memory folder")
 	}
-	if a.wantsMemoryNote(ctx, rnSpace, "implementor", true) {
+	if a.wantsMemoryNote(ctx, rnSpace, "implementor", sess, cur, true) {
 		t.Fatal("the old name was not renamed to")
+	}
+	// A session that began after the rename never saw the old folder.
+	if err := a.j.insertRun(ctx, runRow{RunID: "run-new", SpaceID: rnSpace, Generation: 1, Kind: "ordinary", Role: "builder", Harness: "claude",
+		InstanceID: "ins", TerminalName: "t-new", Desired: "running", State: proto.RunPending, SessionID: "sess-2"}); err != nil {
+		t.Fatal(err)
+	}
+	setAt(`UPDATE runs SET created_at = ? WHERE run_id = ?`, 3000, "run-new")
+	if a.wantsMemoryNote(ctx, rnSpace, "builder", "sess-2", cur, true) {
+		t.Fatal("a session that began after the rename needs no note")
+	}
+	n := renamedNote("/m/builder/instances/ins", "builder")
+	if !strings.Contains(n, "/m/builder/instances/ins") || !strings.Contains(n, "is gone") {
+		t.Fatalf("the note must name the new folder and say the old one is gone: %s", n)
 	}
 }
