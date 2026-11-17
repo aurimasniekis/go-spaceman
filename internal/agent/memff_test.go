@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -762,6 +764,106 @@ func statusOf(t *testing.T, e *ffEnv, dir string) string {
 func readOr(dir, name string) string {
 	b, _ := os.ReadFile(filepath.Join(dir, name))
 	return string(b)
+}
+
+// A checkout whose git dir leads to another repository (a symlinked .git, a gitdir file, a commondir file; inside .git
+// a symlinked folder or file, or a hard link to the other repository's ref, which the fetch would rewrite in place) is
+// refused, and the other repository's refs, packed refs and index are not touched by the fast-forward.
+func TestFastForwardRefusesRedirectedGitDir(t *testing.T) {
+	for _, vec := range []string{"symlink", "gitdir file", "commondir", "refs and objects symlinks", "index symlink",
+		"packed-refs symlink", "FETCH_HEAD hard link"} {
+		t.Run(vec, func(t *testing.T) {
+			e := newFFEnv(t)
+			dir, other := e.checkout("ins_a"), e.checkout("ins_b")
+			e.idleRun("ins_a")
+			write(t, other, "notes.md", "from b\n")
+			e.checkpoint("ins_b", "idle")
+			write(t, other, "notes.md", "from b\nagain\n")
+			if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+				t.Fatal(err)
+			}
+			victim := t.TempDir()
+			e.git(victim, "init", "--quiet", ".")
+			write(t, victim, "v.md", "v\n")
+			e.git(victim, "add", "-A")
+			e.git(victim, "commit", "--quiet", "-m", "v")
+			e.git(victim, "branch", "packed")
+			e.git(victim, "pack-refs", "--all")
+			// Read with plain git: a hard link makes the guard refuse the victim as well.
+			rawHead := func() string {
+				out, _ := exec.Command("git", "-C", victim, "rev-parse", "HEAD").Output() //nolint:gosec // test
+				return string(out)
+			}
+			vhead := rawHead()
+			vgit, dgit := filepath.Join(victim, ".git"), filepath.Join(dir, ".git")
+			vfiles := map[string][]byte{}
+			for _, name := range []string{"index", "packed-refs", "refs/heads/main"} {
+				b, err := os.ReadFile(filepath.Join(vgit, name))
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				vfiles[name] = b
+			}
+			relink := func(name string) {
+				if err := os.RemoveAll(filepath.Join(dgit, name)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(vgit, name), filepath.Join(dgit, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch vec {
+			case "symlink":
+				if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(victim, ".git"), filepath.Join(dir, ".git")); err != nil {
+					t.Fatal(err)
+				}
+			case "gitdir file":
+				if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+					t.Fatal(err)
+				}
+				write(t, dir, ".git", "gitdir: "+filepath.Join(victim, ".git")+"\n")
+			case "commondir":
+				write(t, dir, ".git/commondir", filepath.Join(victim, ".git")+"\n")
+			case "refs and objects symlinks":
+				relink("refs")
+				relink("objects")
+			case "index symlink":
+				relink("index")
+			case "packed-refs symlink":
+				relink("packed-refs")
+			case "FETCH_HEAD hard link":
+				e.git(victim, "update-ref", "refs/heads/loose", "HEAD")
+				vfiles["refs/heads/loose"], _ = os.ReadFile(filepath.Join(vgit, "refs", "heads", "loose"))
+				if err := os.Remove(filepath.Join(dgit, "FETCH_HEAD")); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				if err := os.Link(filepath.Join(vgit, "refs", "heads", "loose"), filepath.Join(dgit, "FETCH_HEAD")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]
+			if got != ffNoCheckout && got != ffUnsafeConfig {
+				t.Fatalf("reason %q: the redirected checkout was not refused", got)
+			}
+			if _, reason := e.m.checkoutReason(e.ctx, e.m.shared(ffSpace, ffRole), dir); reason != got {
+				t.Fatalf("checkoutReason %q, want %q", reason, got)
+			}
+			if rawHead() != vhead {
+				t.Fatal("the other repository's HEAD moved")
+			}
+			for name, b := range vfiles {
+				if now, _ := os.ReadFile(filepath.Join(vgit, name)); !bytes.Equal(now, b) {
+					t.Fatalf("the other repository's %s changed", name)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(victim, "notes.md")); err == nil {
+				t.Fatal("the fast-forward wrote into the other repository")
+			}
+		})
+	}
 }
 
 // memory.fast_forward off restores the input path as it was before ADR-0094: two inputs to one instance are not

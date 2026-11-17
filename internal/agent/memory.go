@@ -32,6 +32,15 @@ const (
 	memoryRole         = "SpaceMan memory"
 )
 
+// The deadlines below bound work done under the collection lock: a git that never returns (a FIFO in a checkout)
+// would stall every instance of the collection. Variables so tests can shorten them.
+var (
+	// checkpointDeadline bounds a checkpoint, and each instance's fast-forward after it.
+	checkpointDeadline = 2 * time.Minute
+	// prepareDeadline bounds prepare (a run's launch) once it holds the collection lock.
+	prepareDeadline = 2 * time.Minute
+)
+
 type memManager struct {
 	a *Agent
 	// base is the agent's run context; timer callbacks run under it.
@@ -102,6 +111,8 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		return "", errors.New("invalid memory collection")
 	}
 	defer m.lock(colKey(spaceID, role))()
+	ctx, cancel := context.WithTimeout(ctx, prepareDeadline)
+	defer cancel()
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if err := m.git.InitBare(ctx, shared); err != nil {
 		return "", err
@@ -205,7 +216,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	}
 	log := m.a.log.With(slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.instance", instance))
 	unlock := m.lock(colKey(spaceID, role))
-	published, err := m.publish(ctx, spaceID, role, instance, reason)
+	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	published, err := m.publish(pctx, spaceID, role, instance, reason)
+	cancel()
 	unlock()
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	now := m.a.now()
