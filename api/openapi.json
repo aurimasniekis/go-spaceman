@@ -2877,6 +2877,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "description": {
+            "description": "What the role is for in this space, at most 2000 characters; empty uses the role template's description",
+            "type": "string"
+          },
           "instructions": {
             "description": "Space-specific text appended after the role's prompt",
             "type": "string"
@@ -13256,6 +13260,16 @@
             "additionalProperties": {},
             "type": "object"
           },
+          "description": {
+            "type": "string"
+          },
+          "description_origin": {
+            "enum": [
+              "space_role",
+              "template"
+            ],
+            "type": "string"
+          },
           "effective": {
             "additionalProperties": {
               "$ref": "#/components/schemas/CatalogField"
@@ -15281,6 +15295,10 @@
             ],
             "format": "uri",
             "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "description": "What the role is for in this space, at most 2000 characters; empty uses the role template's description",
             "type": "string"
           },
           "instructions": {
@@ -18295,6 +18313,11 @@
             ],
             "format": "uri",
             "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "description": "What the role is for in this space; empty uses the role template's description",
+            "maxLength": 2000,
             "type": "string"
           },
           "instructions": {

@@ -334,7 +334,7 @@ func (q *Queries) GetRoleTemplateBySlug(ctx context.Context, slug string) (RoleT
 }
 
 const getSpaceRole = `-- name: GetSpaceRole :one
-SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version, skills_json FROM space_roles WHERE space_id = ? AND name = ?
+SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version, skills_json, description FROM space_roles WHERE space_id = ? AND name = ?
 `
 
 type GetSpaceRoleParams struct {
@@ -361,6 +361,7 @@ func (q *Queries) GetSpaceRole(ctx context.Context, arg GetSpaceRoleParams) (Spa
 		&i.UpdatedAt,
 		&i.Version,
 		&i.SkillsJson,
+		&i.Description,
 	)
 	return i, err
 }
@@ -1036,7 +1037,7 @@ func (q *Queries) ListSpaceRoleRenamesTo(ctx context.Context, arg ListSpaceRoleR
 }
 
 const listSpaceRoles = `-- name: ListSpaceRoles :many
-SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version, skills_json FROM space_roles WHERE space_id = ? ORDER BY name
+SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version, skills_json, description FROM space_roles WHERE space_id = ? ORDER BY name
 `
 
 func (q *Queries) ListSpaceRoles(ctx context.Context, spaceID string) ([]SpaceRole, error) {
@@ -1064,6 +1065,7 @@ func (q *Queries) ListSpaceRoles(ctx context.Context, spaceID string) ([]SpaceRo
 			&i.UpdatedAt,
 			&i.Version,
 			&i.SkillsJson,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -2521,13 +2523,13 @@ func (q *Queries) UpdateRoleTemplate(ctx context.Context, arg UpdateRoleTemplate
 }
 
 const upsertSpaceRole = `-- name: UpsertSpaceRole :exec
-INSERT INTO space_roles (space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, skills_json, created_at,
+INSERT INTO space_roles (space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, skills_json, description, created_at,
   created_by, updated_at)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-  ?8, ?9, ?10, ?11, ?12, ?11)
+  ?8, ?9, ?10, ?11, ?12, ?13, ?12)
 ON CONFLICT (space_id, name) DO UPDATE SET template_id = excluded.template_id, profile_id = excluded.profile_id, prompt_id = excluded.prompt_id,
   prompt_pin = excluded.prompt_pin, model = excluded.model, settings_json = excluded.settings_json, instructions = excluded.instructions,
-  skills_json = excluded.skills_json,
+  skills_json = excluded.skills_json, description = excluded.description,
   revision = space_roles.revision + 1, version = space_roles.version + 1, updated_at = excluded.updated_at
 `
 
@@ -2542,6 +2544,7 @@ type UpsertSpaceRoleParams struct {
 	SettingsJson string
 	Instructions string
 	SkillsJson   string
+	Description  string
 	Now          int64
 	By           string
 }
@@ -2558,6 +2561,7 @@ func (q *Queries) UpsertSpaceRole(ctx context.Context, arg UpsertSpaceRoleParams
 		arg.SettingsJson,
 		arg.Instructions,
 		arg.SkillsJson,
+		arg.Description,
 		arg.Now,
 		arg.By,
 	)

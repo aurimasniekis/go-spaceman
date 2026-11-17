@@ -410,3 +410,14 @@ func TestUpdatePromptMeta(t *testing.T) {
 		t.Fatalf("%d prompt.updated rows, want 2", n)
 	}
 }
+
+// The description limit counts characters (runes), as UpdatePromptMeta and the API's maxLength do.
+func TestCreatePromptDescriptionCountsRunes(t *testing.T) {
+	f := newFx(t)
+	if _, err := f.svc.CreatePrompt(f.ctx, op, "multibyte", "Multibyte", "role", strings.Repeat("ž", 1200), "body"); err != nil {
+		t.Fatalf("1200 multibyte characters refused: %v", err)
+	}
+	if _, err := f.svc.CreatePrompt(f.ctx, op, "toolong", "Too long", "role", strings.Repeat("ž", 2001), "body"); err == nil {
+		t.Fatal("2001 characters accepted")
+	}
+}

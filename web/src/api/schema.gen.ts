@@ -6124,6 +6124,8 @@ export interface components {
              * @example /api/v1/schemas/CatalogSpaceRole.json
              */
             readonly $schema?: string;
+            /** @description What the role is for in this space, at most 2000 characters; empty uses the role template's description */
+            description?: string;
             /** @description Space-specific text appended after the role's prompt */
             instructions?: string;
             model?: string;
@@ -10152,6 +10154,9 @@ export interface components {
             claude_settings?: {
                 [key: string]: unknown;
             };
+            description?: string;
+            /** @enum {string} */
+            description_origin?: "space_role" | "template";
             effective: {
                 [key: string]: components["schemas"]["CatalogField"];
             };
@@ -10882,6 +10887,8 @@ export interface components {
              * @example /api/v1/schemas/RenamedSpaceRole.json
              */
             readonly $schema?: string;
+            /** @description What the role is for in this space, at most 2000 characters; empty uses the role template's description */
+            description?: string;
             /** @description Space-specific text appended after the role's prompt */
             instructions?: string;
             model?: string;
@@ -12194,6 +12201,8 @@ export interface components {
              * @example /api/v1/schemas/SpaceRoleInput.json
              */
             readonly $schema?: string;
+            /** @description What the role is for in this space; empty uses the role template's description */
+            description?: string;
             instructions?: string;
             model?: string;
             profile_id?: string;

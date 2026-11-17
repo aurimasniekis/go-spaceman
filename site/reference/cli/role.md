@@ -214,6 +214,7 @@ spaceman role set --space payments reviewer --template tpl_01... --skill skl_01.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--description` | string |  | what the role is for in this space, at most 2000 characters (empty uses the template's) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--instructions` | string |  | role instructions |
 | `--instructions-file` | string |  | read --instructions from a file (- reads standard input) |

@@ -92,6 +92,7 @@ type SpaceRoleInput struct {
 	Settings     map[string]string  `json:"settings,omitempty"`
 	Instructions string             `json:"instructions,omitempty" maxLength:"50000"`
 	Skills       []catalog.SkillRef `json:"skills,omitempty" maxItems:"20" doc:"Added to the template's skills; a pin here wins"`
+	Description  string             `json:"description,omitempty" maxLength:"2000" doc:"What the role is for in this space; empty uses the role template's description"`
 }
 
 // PromptPath identifies a prompt (ID or slug).
@@ -130,8 +131,11 @@ type Preview struct {
 	Settings   map[string]string        `json:"settings"`
 	SystemText string                   `json:"system_text"`
 	Effective  map[string]catalog.Field `json:"effective"`
-	Prompt     *catalog.PromptRef       `json:"prompt,omitempty"`
-	Skills     []catalog.ResolvedSkill  `json:"skills"`
+	// Description is the role's effective description: the space role's own, else the template's; absent when neither has one.
+	Description       string                  `json:"description,omitempty"`
+	DescriptionOrigin string                  `json:"description_origin,omitempty" enum:"space_role,template"`
+	Prompt            *catalog.PromptRef      `json:"prompt,omitempty"`
+	Skills            []catalog.ResolvedSkill `json:"skills"`
 	// ClaudeSettings are the settings.json keys the run gets from its profile, after policy (ADR-0059); absent when none.
 	ClaudeSettings proto.ClaudeSettings `json:"claude_settings,omitempty"`
 	// HarnessVersion is the profile's Claude Code version pin (ADR-0077); absent: the node's channel.
@@ -656,7 +660,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			}) (*struct{ Body *catalog.SpaceRole }, error) {
 				b := in.Body
 				r, err := svc.SaveSpaceRole(ctx, Actor(ctx), in.SpaceID, catalog.SpaceRole{Name: in.Name, TemplateID: b.TemplateID, ProfileID: b.ProfileID,
-					PromptID: b.PromptID, PromptPin: b.PromptPin, Model: b.Model, Settings: b.Settings, Instructions: b.Instructions, Skills: b.Skills})
+					PromptID: b.PromptID, PromptPin: b.PromptPin, Model: b.Model, Settings: b.Settings, Instructions: b.Instructions, Skills: b.Skills, Description: b.Description})
 				if err != nil {
 					return nil, d.fail(ctx, "roles.save", err)
 				}
@@ -798,7 +802,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 					return nil, d.fail(ctx, "roles.preview", err)
 				}
 				return &struct{ Body Preview }{Body: Preview{Kind: r.Kind, Harness: r.Harness, Model: r.Model, Settings: r.Settings, SystemText: r.SystemText,
-					Effective: r.Effective, Prompt: r.Prompt, Skills: append([]catalog.ResolvedSkill{}, r.Skills...), ClaudeSettings: r.ClaudeSettings,
+					Effective: r.Effective, Description: r.Description, DescriptionOrigin: r.DescriptionOrigin, Prompt: r.Prompt, Skills: append([]catalog.ResolvedSkill{}, r.Skills...), ClaudeSettings: r.ClaudeSettings,
 					HarnessVersion: r.HarnessVersion}}, nil
 			})
 	}

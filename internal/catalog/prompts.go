@@ -148,7 +148,7 @@ func (svc *Service) CreatePrompt(ctx context.Context, actor audit.Actor, slug, n
 	if !promptKinds[kind] {
 		v.Add("kind", "must be role, dream, kb, event or general")
 	}
-	if len(body) > maxBody || len(description) > 2000 {
+	if len(body) > maxBody || utf8.RuneCountInString(description) > 2000 {
 		v.Add("body", "body at most 200000 bytes, description 2000")
 	}
 	if err := v.Err(); err != nil {

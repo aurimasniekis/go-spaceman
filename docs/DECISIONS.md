@@ -6739,7 +6739,7 @@
 ### ADR-0095 — Role descriptions: prompt metadata edited in place, a per-space description, and a role list for control
 
 - **Status:** Proposed, 2026-11-17 (an operator feature request, items 1–3, from rolling out more worker roles of different
-  sizes). Central migration 0064 (`space_roles.description`). No node protocol change. New API op `update-prompt`, new
+  sizes). Central migration 0065 (`space_roles.description`). No node protocol change. New API op `update-prompt`, new
   agent tool `spaceman_roles_list`. Extends ADR-0051 (starter roles) and ADR-0063 (admin MCP).
 - **Context:** surveyed on next/v0.1.11 and the Terraform provider's main branch.
   1. **Descriptions.**
@@ -6778,7 +6778,7 @@
   2. **Role templates: no API change.** The way they work today already meets the request. The guide says it outright:
      changing a template's name or description creates no prompt version, and a run picks it up at its next launch.
   3. **A space role's own description.**
-     - Migration 0064: `ALTER TABLE space_roles ADD COLUMN description TEXT NOT NULL DEFAULT ''`. Existing rows stay
+     - Migration 0065: `ALTER TABLE space_roles ADD COLUMN description TEXT NOT NULL DEFAULT ''`. Existing rows stay
        empty, so they fall back to their template's description.
      - `catalog.SpaceRole` gets `description` (at most 2000 characters), with the same rule as the other override
        fields: empty means "use the template's".
@@ -6788,6 +6788,8 @@
        the placeholder.
      - The description is not part of the launched agent's prompt and doesn't change run manifests. It is routing
        guidance for whoever chooses a role.
+     - Role rename (ADR-0093) keeps it: the description is a column on the `space_roles` row, which a rename updates in
+       place.
   4. **`spaceman_roles_list` for control.**
      - A read-only agent tool, given to control runs only, like `spaceman_queue_next`.
      - It returns the run's own space's roles, sorted by name. For each role: `name`, `kind` (from the template),
@@ -6851,7 +6853,7 @@
   | # | Task | Depends on | Tier |
   |---|---|---|---|
   | T1 | `update-prompt`: `catalog.UpdatePromptMeta` (existing `UpdatePrompt` query, audit `prompt.updated`), the API op and rule, the admin MCP class, the Telegram entry (`TelegramExcluded`, like `create-prompt`), `make api`, `prompt update` CLI and `make cli-docs`, tests in `internal/catalog` (no version is created, If-Match, validation) and over HTTP in `internal/app`. | — | Sonnet |
-  | T2 | Migration 0064 and `space_roles.description`: sqlc queries, `catalog.SpaceRole`, save, list and get, preview origin, CLI `role set --description`, `make api`, an upgrade test (`embeddedUpTo(t, "0063")`), tests. Coordinate the number with memory fast-forward (0063). | — | Sonnet |
+  | T2 | Migration 0065 and `space_roles.description`: sqlc queries, `catalog.SpaceRole`, save, list and get, preview origin, CLI `role set --description`, `make api`, an upgrade test (`embeddedUpTo(t, "0063")`), tests. Coordinate the number with memory fast-forward (0063). | — | Sonnet |
   | T3 | `spaceman_roles_list` in `internal/control/tools.go` (control only, read-only), effective description, harness and model, the pointer in `spaceman_worker_launch` and `spaceman_queue_next`, tests: effective values and origins, another space's roles never visible, only for control. | T2 | Sonnet |
   | T4 | Web: an **Edit details** dialog on the prompt page and a description on the space role form, `make web-check`, screenshots if they change. | T1, T2 | Sonnet |
   | T5 | Docs: the guide's "Starter roles" section says the templates are global and explains per-space overrides, plus template description edits, `spaceman_roles_list` in the control docs, the starter `control.md` line, and GOAL, TRACEABILITY and PLAN entries. `make site-check`. | T1–T3 | Haiku |
