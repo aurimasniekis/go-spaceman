@@ -3407,7 +3407,7 @@ export interface paths {
         put?: never;
         /**
          * Give up a stuck role rename's memory move on the node (admins)
-         * @description For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and is never deleted or synced again. Not an open rename is 409 rename_not_open. Needs the admin-only role_rename:admin permission.
+         * @description For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and is never deleted or synced again. Until the node has journaled the rename, it still blocks other renames of both names (a later rename must not reach the node first); `forget_node` cancels the undelivered command and releases them, for a node that is not coming back. Not an open rename is 409 rename_not_open (with `forget_node`, a closed rename the node has not journaled is accepted). Needs the admin-only role_rename:admin permission.
          */
         post: operations["close-space-role-rename"];
         delete?: never;
@@ -6162,6 +6162,8 @@ export interface components {
              * @example /api/v1/schemas/CloseSpaceRoleRenameInput.json
              */
             readonly $schema?: string;
+            /** @description Also stop waiting for the node to journal the rename: its undelivered commands are cancelled and both names are released for other renames. If the node comes back it is told the rename is closed and keeps its old-name folder as an orphan (set aside, never moved, synced or inherited). Accepted on an open rename and on a closed one the node has not journaled yet */
+            forget_node?: boolean;
             /** @description Why the move is given up; kept as the rename's message */
             reason?: string;
         };

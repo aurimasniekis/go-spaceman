@@ -58,6 +58,11 @@ type MemoryRename struct {
 	SpaceID  string `json:"space_id"`
 	From     string `json:"from"`
 	To       string `json:"to"`
+	// Closed: an admin closed the rename and forgot the node (ADR-0093 addendum, forget). The node must not move the
+	// folder: it journals the rename as closed (dropped) when it has not journaled it yet, or drops it when it has not
+	// started moving, so the old-name folder is an orphan that a later role of that name never inherits. It needs no
+	// lease (nothing on disk changes) and is not reported.
+	Closed bool `json:"closed,omitempty"`
 }
 
 // Validate checks the payload before any side effect.

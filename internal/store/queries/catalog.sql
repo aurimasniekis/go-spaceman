@@ -169,11 +169,36 @@ WHERE id = sqlc.arg(id) AND node_state IN ('pending', 'failed');
 -- name: ReopenRoleRename :execrows
 UPDATE space_role_renames SET node_state = 'pending' WHERE id = ? AND node_state IN ('pending', 'failed');
 
--- The rename's memory.rename commands the node has not been sent yet are cancelled when the rename is closed.
+-- The rename's memory.rename commands the node has not journaled (pending, sent, or rejected, which the connect re-queue
+-- would send again) are cancelled when an admin forgets the node (close with forget_node): none is delivered again.
 -- name: CancelRoleRenameCommands :execrows
 UPDATE node_commands SET state = 'cancelled', reason = sqlc.arg(reason)
-WHERE node_id = sqlc.arg(node_id) AND kind = 'memory.rename' AND state = 'pending'
+WHERE node_id = sqlc.arg(node_id) AND kind = 'memory.rename' AND state IN ('pending', 'sent', 'rejected')
   AND idempotency_key >= sqlc.arg(key) AND idempotency_key < sqlc.arg(key_end);
+
+-- Closed renames of a space whose node has not journaled them yet: the newest memory.rename of the rename (keys
+-- role-rename:<id> and role-rename:<id>:<n>, as catalog.RenameCommandKey) is pending, sent, or rejected (queued again
+-- at the node's next connect). Until the node journals the move, a later rename of either name could reach the node
+-- first, so they keep blocking renames of both names (ADR-0093 addendum, ordering).
+-- name: ListUndeliveredClosedRoleRenames :many
+SELECT r.* FROM space_role_renames r
+WHERE r.space_id = sqlc.arg(space_id) AND r.node_state = 'abandoned'
+  AND (SELECT c.state FROM node_commands c
+       WHERE c.node_id = r.node_id AND c.kind = 'memory.rename'
+         AND c.idempotency_key >= 'role-rename:' || r.id AND c.idempotency_key < 'role-rename:' || r.id || ';'
+       ORDER BY c.created_at DESC, c.id DESC LIMIT 1) IN ('pending', 'sent', 'rejected')
+ORDER BY r.renamed_at, r.id;
+
+-- Closed renames of a node whose newest memory.rename the node refused: queued again at its next connect, like an
+-- open rename's, so the node still journals the rename (ADR-0093 addendum, ordering).
+-- name: ListRejectedClosedRoleRenamesByNode :many
+SELECT r.* FROM space_role_renames r
+WHERE r.node_id = sqlc.arg(node_id) AND r.node_state = 'abandoned'
+  AND (SELECT c.state FROM node_commands c
+       WHERE c.node_id = r.node_id AND c.kind = 'memory.rename'
+         AND c.idempotency_key >= 'role-rename:' || r.id AND c.idempotency_key < 'role-rename:' || r.id || ';'
+       ORDER BY c.created_at DESC, c.id DESC LIMIT 1) = 'rejected'
+ORDER BY r.renamed_at, r.id;
 
 -- name: SetRoleRenameNodeMessage :execrows
 UPDATE space_role_renames SET node_message = ? WHERE id = ? AND node_state IN ('pending', 'failed');

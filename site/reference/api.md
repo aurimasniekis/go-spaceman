@@ -479,6 +479,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/role-templates/{template_id}` | `save-role-template` | Create (template_id "new") or update a role template |
 | `GET` | `/spaces/{space_id}/role-options` | `list-role-options` | Templates, profiles and prompts a space role can use (names only) |
 | `GET` | `/spaces/{space_id}/role-renames` | `list-space-role-renames` | A space's role renames, newest first |
+| `POST` | `/spaces/{space_id}/role-renames/{rename_id}/close` | `close-space-role-rename` | Give up a stuck role rename's memory move on the node (admins) |
+| `POST` | `/spaces/{space_id}/role-renames/{rename_id}/retry` | `retry-space-role-rename` | Send a stuck role rename's memory move to the node again (admins) |
 | `GET` | `/spaces/{space_id}/roles` | `list-space-roles` | A space's roles |
 | `DELETE` | `/spaces/{space_id}/roles/{name}` | `delete-space-role` | Remove a role from the space |
 | `GET` | `/spaces/{space_id}/roles/{name}` | `get-space-role` | One of a space's roles |

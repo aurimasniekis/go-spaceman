@@ -220,6 +220,14 @@ the rename, leaves it `pending` or `failed` and the role held. Two admin-only op
   synced again (a later role with the old name starts a fresh collection and the node sets the orphan aside under
   `.retained/`). Anything the node wrote there that central never received stays only on the node. If the node has already
   moved its folder by the time it hears of the close, the folder simply ends under the new name, where central's copy is.
+  A close does not cancel a move the node has not received yet (it was offline, say): the node still gets it when it
+  connects, and until then **another rename of either name is refused** (`409 role_busy`, naming the closed rename), so a
+  later rename can never reach the node before the earlier one and strand or hand over the memory.
+- **Close with `--forget-node`** (`"forget_node": true`) is the way out for a node that is not coming back: it cancels the
+  move the node has not received and releases both names at once. It works on an open rename (closing it) and on a closed
+  one the node has not received yet. If the node does come back, it is told the rename is closed before anything newer:
+  it keeps the old-name folder as an orphan, never moves it, never syncs it, and sets it aside under `.retained/` when the
+  name is used again, so no later role or rename of that name inherits it. Audited as `role_rename.forgotten`.
 
 A rename that is not `pending` or `failed` is `409 rename_not_open` for both. Both are audited as `role_rename.retried` and
 `role_rename.closed` with the actor, and are in the administrator MCP (`retry_space_role_rename` and

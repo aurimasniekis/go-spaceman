@@ -54,12 +54,13 @@ API: `close-space-role-rename` ([HTTP API](../api)).
 Example:
 
 ```sh
-spaceman role close-rename rrn_01... --space payments --reason "node retired" --yes
+spaceman role close-rename rrn_01... --space payments --reason "node retired" --forget-node --yes
 ```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--forget-node` | bool |  | also stop waiting for the node to receive the rename: releases both names for other renames; a node that comes back keeps the old folder as an orphan |
 | `--reason` | string |  | why the move is given up |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--yes` | bool |  | confirm: give up the node's memory move (the old folder stays on the node, never synced again) |

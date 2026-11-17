@@ -336,7 +336,9 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   it (`spaceman role close-rename`, admins only), or a `source_unavailable` relocation (which closes the open rename as
   `not_needed`). A close is final: the rename is `abandoned`, and the node's old-name folder is left on the node as an
   orphan, never deleted and never synced again, so anything it held that central never received stays only there (a later
-  role of that name sets it aside under `.retained/`). Retry and close are not in the web UI or Telegram. A deleted role's
+  role of that name sets it aside under `.retained/`). A closed rename whose command the node has not received yet keeps
+  refusing renames of both names until the node connects, or until an admin closes it with `--forget-node`, which
+  gives up delivery (the node, if it returns, keeps the old folder as an orphan). Retry and close are not in the web UI or Telegram. A deleted role's
   leftover memory collection blocks reusing its name as a rename target. Deleting or archiving a role's memory and a web UI
   rename are follow-ups. A rename changes only its own space: the installation-wide default human policy keeps a successor
   role of the old name.

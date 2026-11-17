@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coder/websocket"
+
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
@@ -65,7 +67,7 @@ func TestRoleRenameCloseLiftsHoldsAndTellsNode(t *testing.T) {
 		t.Fatal("a failed rename does not hold launches")
 	}
 
-	got, err := e.c.Catalog.CloseRoleRename(e.ctx, admin, e.spaceID, rn.ID, "node retired")
+	got, err := e.c.Catalog.CloseRoleRename(e.ctx, admin, e.spaceID, rn.ID, "node retired", false)
 	if err != nil || got.NodeState != catalog.RenameNodeAbandoned {
 		t.Fatalf("close: %+v %v", got, err)
 	}
@@ -147,6 +149,7 @@ func TestRoleRenameRetryCloseOverHTTP(t *testing.T) {
 	for _, c := range []*client{viewer, op} {
 		expect(t, c.do("POST", base+id+"/retry", nil), 403)
 		expect(t, c.do("POST", base+id+"/close", map[string]any{}), 403)
+		expect(t, c.do("POST", base+id+"/close", map[string]any{"forget_node": true}), 403)
 	}
 	if state() != catalog.RenameNodePending {
 		t.Fatal("a refused call changed the rename")
@@ -184,9 +187,104 @@ func TestRoleRenameRetryCloseOverHTTP(t *testing.T) {
 			t.Fatalf("%s of a closed rename: %+v", path, p)
 		}
 	}
+	// The node never took the command: forget_node is still accepted on the closed rename, once.
+	expect(t, root.do("POST", base+id+"/close", map[string]any{"forget_node": true}), 200)
+	if p := root.do("POST", base+id+"/close", map[string]any{"forget_node": true}).problem(t); p.Status != 409 || p.Code != "rename_not_open" {
+		t.Fatalf("a second forget: %+v", p)
+	}
 	_, err = h.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "critic", Harness: "claude-code", Prompt: "go"})
 	var pe *fleet.RenamePendingError
 	if errors.As(err, &pe) {
 		t.Fatalf("still held after the close: %v", err)
+	}
+}
+
+// ADR-0093 addendum, ordering (simulated: a scripted node connection). A rename closed while the node is offline keeps
+// its command queued and keeps blocking renames of both names until the node journals it: a later rename of either
+// name must not reach the node first. The node's accept of the closed rename's command releases the names.
+func TestRoleRenameClosedOfflineBlocksUntilDelivered(t *testing.T) {
+	t.Parallel()
+	e := newRenameNodeEnv(t)
+	n, _ := e.connect(proto.MaxMinor) // records minor 14
+	_ = n.conn.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "node disconnected", func() bool { nd, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !nd.Connected })
+	rn, err := e.rename("reviewer", "critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Catalog.CloseRoleRename(e.ctx, admin, e.spaceID, rn.ID, "node offline", false); err != nil {
+		t.Fatal(err)
+	}
+	var rr *catalog.RenameRefused
+	if _, err := e.rename("critic", "judge"); !errors.As(err, &rr) || rr.Reason != catalog.RenameRoleBusy || !strings.Contains(err.Error(), rn.ID) {
+		t.Fatalf("a rename of the closed rename's new name before the node has it: %v", err)
+	}
+	n, _ = e.connect(proto.MaxMinor)
+	c, p := n.memoryRename(t, proto.AckAccepted)
+	if p.RenameID != rn.ID || p.Closed || c.IdempotencyKey != catalog.RenameCommandKey(rn.ID) {
+		t.Fatalf("delivered %+v %+v", c, p)
+	}
+	eventually(t, "names released", func() bool {
+		_, err := e.rename("critic", "judge")
+		return err == nil
+	})
+}
+
+// ADR-0093 addendum, forget (simulated). Close with forget_node of a rename whose node is offline cancels its command and
+// releases both names at once. When the node comes back it is sent the closed notice first (a memory.rename with closed
+// set, under its own key), then the later rename of the new name: never the cancelled move.
+func TestRoleRenameForgetNodeReleasesNames(t *testing.T) {
+	t.Parallel()
+	e := newRenameNodeEnv(t)
+	n, _ := e.connect(proto.MaxMinor)
+	_ = n.conn.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "node disconnected", func() bool { nd, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !nd.Connected })
+	rn, err := e.rename("reviewer", "critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.c.Catalog.CloseRoleRename(e.ctx, admin, e.spaceID, rn.ID, "node retired", true)
+	if err != nil || got.NodeState != catalog.RenameNodeAbandoned {
+		t.Fatalf("forget: %+v %v", got, err)
+	}
+	later, err := e.rename("critic", "judge")
+	if err != nil {
+		t.Fatalf("a rename of the new name after the forget: %v", err)
+	}
+	n, _ = e.connect(proto.MaxMinor)
+	c, p := n.memoryRename(t, proto.AckAccepted)
+	if !p.Closed || p.RenameID != rn.ID || c.IdempotencyKey != catalog.RenameClosedKey(rn.ID) {
+		t.Fatalf("first command %+v %+v, want the closed notice", c, p)
+	}
+	c, p = n.memoryRename(t, proto.AckAccepted)
+	if p.Closed || p.RenameID != later.ID || p.From != "critic" || p.To != "judge" {
+		t.Fatalf("second command %+v %+v, want the later rename", c, p)
+	}
+}
+
+// A closed rename whose command the node refused (no valid lease at that moment) is queued again at the node's next
+// connect, like an open one, so the node still journals it; until then it blocks both names.
+func TestRoleRenameClosedRejectedIsRequeued(t *testing.T) {
+	t.Parallel()
+	e := newRenameNodeEnv(t)
+	n, _ := e.connect(proto.MaxMinor)
+	rn, err := e.rename("reviewer", "critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.memoryRename(t, proto.AckRejected)
+	eventually(t, "command rejected", func() bool { return strings.Contains(e.state(rn.ID).NodeMessage, "refused") })
+	_ = n.conn.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "node disconnected", func() bool { nd, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !nd.Connected })
+	if _, err := e.c.Catalog.CloseRoleRename(e.ctx, admin, e.spaceID, rn.ID, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.rename("critic", "judge"); err == nil {
+		t.Fatal("a closed rename the node refused does not block its names")
+	}
+	n, _ = e.connect(proto.MaxMinor)
+	c, p := n.memoryRename(t, proto.AckAccepted)
+	if p.RenameID != rn.ID || p.Closed || c.IdempotencyKey != catalog.RenameCommandKey(rn.ID)+":1" {
+		t.Fatalf("re-queued %+v %+v", c, p)
 	}
 }

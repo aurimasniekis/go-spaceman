@@ -107,8 +107,12 @@ func TestRoleRetryAndCloseRename(t *testing.T) {
 	if r.code != 0 || !strings.Contains(r.err, "Rename closed") {
 		t.Fatalf("close: exit %d, stderr %q", r.code, r.err)
 	}
-	if req := f.last("POST", base+"/close"); req.body["reason"] != "node retired" {
+	if req := f.last("POST", base+"/close"); req.body["reason"] != "node retired" || req.body["forget_node"] != nil {
 		t.Fatalf("close body %v", req.body)
+	}
+	r = e.run(t, "role", "close-rename", rid, "--space", spaceID, "--forget-node", "--yes")
+	if req := f.last("POST", base+"/close"); r.code != 0 || req.body["forget_node"] != true {
+		t.Fatalf("close --forget-node: exit %d, body %v", r.code, req.body)
 	}
 }
 

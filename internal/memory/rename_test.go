@@ -376,7 +376,7 @@ func TestCloseRenameKeepsMemoryUnderNewName(t *testing.T) {
 		t.Fatalf("sync under the new name while the rename is open: %+v", ack)
 	}
 
-	if _, err := e.cat.CloseRoleRename(e.ctx, audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}, "spc_a", rn.ID, "node retired"); err != nil {
+	if _, err := e.cat.CloseRoleRename(e.ctx, audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}, "spc_a", rn.ID, "node retired", false); err != nil {
 		t.Fatal(err)
 	}
 	if !e.repoExists(newRole) || e.repoExists(oldRole) {

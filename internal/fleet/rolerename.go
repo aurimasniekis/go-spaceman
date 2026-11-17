@@ -114,12 +114,20 @@ func memoryRenameRejected(ctx context.Context, tx *store.Tx, cmd db.NodeCommand,
 // requeueRoleRenames queues a memory.rename again, inside the node's connect transaction, for every open rename of the
 // node whose last command the node refused or that has none left to deliver. A command that is pending, sent or accepted
 // needs nothing: it is delivered again, or the node has it and reports its outcome until central acknowledges it.
+//
+// A closed rename whose last command the node refused is queued again too: until the node journals it, it blocks
+// renames of both names on central, and the node must learn it to orphan the old folder (ADR-0093 addendum, ordering).
+// A forgotten one (its commands cancelled) is not.
 func (svc *Service) requeueRoleRenames(ctx context.Context, tx *store.Tx, nodeID string) error {
 	open, err := tx.Q.ListOpenRoleRenamesByNode(ctx, nodeID)
 	if err != nil {
 		return err
 	}
-	for _, r := range open {
+	closed, err := tx.Q.ListRejectedClosedRoleRenamesByNode(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	for _, r := range append(open, closed...) {
 		key := catalog.RenameCommandKey(r.ID)
 		cmds, err := tx.Q.ListRoleRenameCommands(ctx, db.ListRoleRenameCommandsParams{NodeID: nodeID, Key: key, KeyEnd: key + ";"})
 		if err != nil {

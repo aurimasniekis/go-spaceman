@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -109,7 +110,7 @@ func TestRenameOpsRefusals(t *testing.T) {
 		f.exec(`UPDATE space_role_renames SET node_state = ? WHERE id = ?`, state, id)
 		for name, call := range map[string]func() error{
 			"retry": func() error { _, err := f.svc.RetryRoleRename(f.ctx, admin, "spc_a", id); return err },
-			"close": func() error { _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, ""); return err },
+			"close": func() error { _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "", false); return err },
 		} {
 			err := call()
 			var rr *RenameRefused
@@ -127,7 +128,7 @@ func TestRenameOpsRefusals(t *testing.T) {
 			_, err := f.svc.RetryRoleRename(f.ctx, admin, "spc_a", "rrn_00000000000000000000000000")
 			return err
 		},
-		"close other": func() error { _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_b", id, ""); return err },
+		"close other": func() error { _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_b", id, "", false); return err },
 		"retry other": func() error { _, err := f.svc.RetryRoleRename(f.ctx, admin, "spc_b", id); return err },
 	} {
 		if err := call(); apperr.CodeOf(err) != apperr.CodeNotFound {
@@ -137,7 +138,7 @@ func TestRenameOpsRefusals(t *testing.T) {
 	if f.auditCount("role_rename.retried")+f.auditCount("role_rename.closed") != 0 || f.renameRow(id).NodeState != RenameNodePending {
 		t.Error("a refused call audited or changed the rename")
 	}
-	if _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, strings.Repeat("x", MaxRenameCloseReason+1)); apperr.CodeOf(err) != apperr.CodeInvalid {
+	if _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, strings.Repeat("x", MaxRenameCloseReason+1), false); apperr.CodeOf(err) != apperr.CodeInvalid {
 		t.Errorf("a long reason: %v", err)
 	}
 }
@@ -167,7 +168,7 @@ func TestCloseRoleRename(t *testing.T) {
 				t.Fatalf("an open rename holds nothing: %v", err)
 			}
 
-			got, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "node retired")
+			got, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "node retired", false)
 			must(t, err)
 			if got.NodeState != RenameNodeAbandoned || got.NodeDoneAt == nil || !strings.Contains(got.NodeMessage, "node retired") ||
 				!strings.Contains(got.NodeMessage, "orphaned: a") {
@@ -199,11 +200,16 @@ func TestCloseRoleRename(t *testing.T) {
 			if cur, err := f.svc.CurrentRoleName(f.ctx, "spc_a", "a"); err != nil || cur != "z" {
 				t.Errorf("a resolves to %q, %v", cur, err)
 			}
-			if _, _, err := f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "z", "y", 0); err != nil && !strings.Contains(err.Error(), "node") {
-				t.Errorf("rename after the close: %v", err)
+			_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "z", "y", 0)
+			var rr *RenameRefused
+			switch {
+			case c.cmd == "accepted" && err != nil: // the node journaled it: its own order holds
+				t.Errorf("rename after the close of a rename the node holds: %v", err)
+			case c.cmd == "pending" && (!errors.As(err, &rr) || rr.Reason != RenameRoleBusy || !strings.Contains(err.Error(), "closed rename "+id)):
+				t.Errorf("rename after the close of an undelivered rename: %v, want role_busy naming the closed rename", err)
 			}
 			// A second close and a retry are refused.
-			if _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, ""); apperr.CodeOf(err) != apperr.CodePrecondition {
+			if _, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "", false); apperr.CodeOf(err) != apperr.CodePrecondition {
 				t.Errorf("second close: %v", err)
 			}
 			if _, err := f.svc.RetryRoleRename(f.ctx, admin, "spc_a", id); apperr.CodeOf(err) != apperr.CodePrecondition {
@@ -211,4 +217,116 @@ func TestCloseRoleRename(t *testing.T) {
 			}
 		})
 	}
+}
+
+// renameErr asserts a rename's outcome: nil, or a refusal with the given reason whose message names want.
+func renameErr(t *testing.T, err error, reason, want string) {
+	t.Helper()
+	var rr *RenameRefused
+	switch {
+	case reason == "" && err != nil:
+		t.Fatalf("rename refused: %v", err)
+	case reason != "" && (!errors.As(err, &rr) || rr.Reason != reason || !strings.Contains(err.Error(), want)):
+		t.Fatalf("rename: %v, want %s naming %q", err, reason, want)
+	}
+}
+
+// ADR-0093 addendum, ordering: a closed rename a->z whose command the node has not journaled (pending, sent, or
+// rejected and queued again at connect) keeps blocking renames of either name, the old one (a new role a renamed) and
+// the new one (z->y), so a later move never reaches the node first. Once the node journals the command (accepted), the
+// names are free.
+func TestClosedUndeliveredRenameBlocksBothNames(t *testing.T) {
+	for _, state := range []string{"pending", "sent", "rejected"} {
+		t.Run(state, func(t *testing.T) {
+			f := newRenameFx(t)
+			id := f.stuck(RenameNodePending, state)
+			_, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "node offline", false)
+			must(t, err)
+			_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "z", "y", 0)
+			renameErr(t, err, RenameRoleBusy, "closed rename "+id)
+			f.exec(`INSERT INTO space_roles (space_id, name, template_id, created_at, created_by, updated_at) VALUES ('spc_a', 'a', 'rtp_1', 1, 't', 1)`)
+			_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "a", "x", 0)
+			renameErr(t, err, RenameRoleBusy, "closed rename "+id)
+			// Another role's rename is not held.
+			_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "c", "d", 0)
+			renameErr(t, err, "", "")
+
+			// A re-queued command that is pending again still blocks; once the node accepts the newest one, nothing does.
+			f.exec(`UPDATE node_commands SET state = 'accepted' WHERE idempotency_key = ?`, RenameCommandKey(id))
+			_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "z", "y", 0)
+			renameErr(t, err, "", "")
+		})
+	}
+}
+
+// ADR-0093 addendum, forget: close with forget_node cancels the rename's undelivered commands, which releases both
+// names, and queues the closed notice for the node (a memory.rename with closed set, outside the move-command keys).
+// It works on an open rename (closing it) and on a closed one the node has not journaled; a second forget, or one of a
+// rename the node holds, is 409 rename_not_open.
+func TestCloseForgetNode(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		closeFirst bool
+		cmd        string
+	}{{"open, pending", false, "pending"}, {"open, sent", false, "sent"}, {"closed, pending", true, "pending"}, {"closed, rejected", true, "rejected"}} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newRenameFx(t)
+			var told []RoleRename
+			f.svc.AfterRenameClose = func(_ context.Context, r RoleRename) { told = append(told, r) }
+			id := f.stuck(RenameNodePending, c.cmd)
+			if c.closeFirst {
+				_, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "", false)
+				must(t, err)
+			}
+			got, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "node retired", true)
+			must(t, err)
+			if got.NodeState != RenameNodeAbandoned || !strings.Contains(got.NodeMessage, "orphaned: a") {
+				t.Fatalf("forgotten rename: %+v", got)
+			}
+			want := RenameCommandKey(id) + "=cancelled" // a rejected one too: the connect re-queue must not send it again
+			if got := strings.Join(commandStates(f.fx), ","); got != want+","+RenameClosedKey(id)+"=pending" {
+				t.Fatalf("commands %s, want the move %s and the closed notice pending", got, want)
+			}
+			var payload string
+			must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT payload_json FROM node_commands WHERE idempotency_key = ?`, RenameClosedKey(id)).Scan(&payload))
+			var p proto.MemoryRename
+			must(t, json.Unmarshal([]byte(payload), &p))
+			if !p.Closed || p.RenameID != id || p.From != "a" || p.To != "z" {
+				t.Fatalf("closed notice %+v", p)
+			}
+			if f.auditCount("role_rename.forgotten") != 1 || len(told) != map[bool]int{true: 2, false: 1}[c.closeFirst] {
+				t.Errorf("audit %d, hook %d", f.auditCount("role_rename.forgotten"), len(told))
+			}
+			// The names are released.
+			_, _, err = f.svc.RenameSpaceRole(f.ctx, op, "spc_a", "z", "y", 0)
+			renameErr(t, err, "", "")
+			// A second forget has nothing to do.
+			_, err = f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "", true)
+			var rr *RenameRefused
+			if apperr.CodeOf(err) != apperr.CodePrecondition || !errors.As(err, &rr) || rr.Reason != RenameNotOpen {
+				t.Errorf("second forget: %v", err)
+			}
+		})
+	}
+	t.Run("node holds it", func(t *testing.T) {
+		f := newRenameFx(t)
+		id := f.stuck(RenameNodePending, "accepted")
+		_, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "", false)
+		must(t, err)
+		_, err = f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "", true)
+		if apperr.CodeOf(err) != apperr.CodePrecondition || len(commandStates(f.fx)) != 1 {
+			t.Errorf("forget of a rename the node journaled: %v %v", err, commandStates(f.fx))
+		}
+	})
+	t.Run("space left the node", func(t *testing.T) {
+		f := newRenameFx(t)
+		id := f.stuck(RenameNodePending, "pending")
+		f.exec(`INSERT INTO nodes (id, name, state, protocol_minor, created_at, created_by, updated_at) VALUES ('nod_2', 'n2', 'active', 14, 0, 't', 0)`)
+		f.exec(`UPDATE spaces SET node_id = 'nod_2' WHERE id = 'spc_a'`)
+		_, err := f.svc.CloseRoleRename(f.ctx, admin, "spc_a", id, "", true)
+		must(t, err)
+		if got := strings.Join(commandStates(f.fx), ","); got != RenameCommandKey(id)+"=cancelled" {
+			t.Errorf("commands %s: no notice for a node the space left", got)
+		}
+	})
 }

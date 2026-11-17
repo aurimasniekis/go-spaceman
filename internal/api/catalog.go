@@ -727,12 +727,15 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			Summary: "Give up a stuck role rename's memory move on the node (admins)", Tags: tags,
 			Description: "For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream " +
 				"launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and " +
-				"is never deleted or synced again. Not an open rename is 409 rename_not_open. Needs the admin-only role_rename:admin permission."},
+				"is never deleted or synced again. Until the node has journaled the rename, it still blocks other renames of both names (a later rename " +
+				"must not reach the node first); `forget_node` cancels the undelivered command and releases them, for a node that is not coming back. " +
+				"Not an open rename is 409 rename_not_open (with `forget_node`, a closed rename the node has not journaled is accepted). " +
+				"Needs the admin-only role_rename:admin permission."},
 			func(ctx context.Context, in *struct {
 				RenamePath
 				Body CloseSpaceRoleRenameInput
 			}) (*struct{ Body *catalog.RoleRename }, error) {
-				out, err := svc.CloseRoleRename(ctx, Actor(ctx), in.SpaceID, in.RenameID, in.Body.Reason)
+				out, err := svc.CloseRoleRename(ctx, Actor(ctx), in.SpaceID, in.RenameID, in.Body.Reason, in.Body.ForgetNode)
 				if err != nil {
 					return nil, d.fail(ctx, "roles.rename_close", renameProblem(err))
 				}
@@ -786,9 +789,10 @@ type RenamePath struct {
 	RenameID string `path:"rename_id" pattern:"^rrn_[0-9a-z]{26}$"`
 }
 
-// CloseSpaceRoleRenameInput is the optional reason an admin gives for closing a rename.
+// CloseSpaceRoleRenameInput is the optional reason an admin gives for closing a rename, and whether to forget the node.
 type CloseSpaceRoleRenameInput struct {
-	Reason string `json:"reason,omitempty" maxLength:"500" doc:"Why the move is given up; kept as the rename's message"`
+	Reason     string `json:"reason,omitempty" maxLength:"500" doc:"Why the move is given up; kept as the rename's message"`
+	ForgetNode bool   `json:"forget_node,omitempty" doc:"Also stop waiting for the node to journal the rename: its undelivered commands are cancelled and both names are released for other renames. If the node comes back it is told the rename is closed and keeps its old-name folder as an orphan (set aside, never moved, synced or inherited). Accepted on an open rename and on a closed one the node has not journaled yet"`
 }
 
 // RenamedSpaceRole is the renamed role and the record of its rename.

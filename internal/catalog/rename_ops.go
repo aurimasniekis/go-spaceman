@@ -115,10 +115,21 @@ func (svc *Service) RetryRoleRename(ctx context.Context, actor audit.Actor, spac
 	return out, nil
 }
 
+// RenameClosedKey is the idempotency key of the closed notice a forget queues for the node: a memory.rename with Closed
+// set. It is outside the range of RenameCommandKey's keys, so it is never counted as the rename's move command.
+func RenameClosedKey(renameID string) string { return "role-rename-closed:" + renameID }
+
 // CloseRoleRename gives up an open rename's node move: the rename becomes abandoned and the holds on launches lift. Its
-// undelivered commands stay queued, so a node that never journaled the rename still learns of it. Central's memory stays under the new name; the node's old-name folder is
-// left where it is (orphaned) and never deleted or synced again.
-func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spaceID, id, reason string) (*RoleRename, error) {
+// undelivered commands stay queued, so a node that never journaled the rename still learns of it, and until it has,
+// the rename keeps blocking renames of either name (renameBlockers). Central's memory stays under the new name; the
+// node's old-name folder is left where it is (orphaned) and never deleted or synced again.
+//
+// forgetNode also gives up delivering the rename to the node (ADR-0093 addendum, forget): its pending and sent
+// commands are cancelled, which releases both names, and, while the space is still on that node, a closed notice is
+// queued in their place, so a node that comes back journals the rename as closed and sets the old folder aside instead
+// of moving it. It is accepted on an open rename (which it also closes) and on a closed one whose command the node has
+// not journaled yet; on anything else it is a 409 rename_not_open.
+func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spaceID, id, reason string, forgetNode bool) (*RoleRename, error) {
 	reason = strings.TrimSpace(reason)
 	if len([]rune(reason)) > MaxRenameCloseReason {
 		v := &apperr.Validation{}
@@ -127,25 +138,48 @@ func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spac
 	}
 	err := svc.s.W().TxNamed(ctx, "catalog.role_rename_close", func(tx *store.Tx) error {
 		r, err := openRename(ctx, tx.Q, spaceID, id)
+		var refused *RenameRefused
+		closed := false
+		if forgetNode && errors.As(err, &refused) && r.NodeState == RenameNodeAbandoned {
+			// Already closed: a forget still applies while the node has not journaled the rename.
+			if closed, err = undeliveredClosed(ctx, tx.Q, r); err == nil && !closed {
+				err = apperr.Wrap(apperr.CodePrecondition, &RenameRefused{Reason: RenameNotOpen},
+					"the rename of %s to %s is closed and node %s already has it (or it was forgotten): nothing to forget (%s)", r.FromName, r.ToName, r.NodeID, RenameNotOpen)
+			}
+		}
 		if err != nil {
 			return err
 		}
-		msg := fmt.Sprintf("closed by an admin; orphaned: %s on node %s", r.FromName, r.NodeID)
-		if reason != "" {
-			msg += ": " + reason
+		action := "role_rename.closed"
+		if !closed {
+			msg := fmt.Sprintf("closed by an admin; orphaned: %s on node %s", r.FromName, r.NodeID)
+			if reason != "" {
+				msg += ": " + reason
+			}
+			if n, err := tx.Q.CloseRoleRename(ctx, db.CloseRoleRenameParams{NodeMessage: msg, NodeDoneAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: r.ID}); err != nil {
+				return err
+			} else if n != 1 {
+				return apperr.New(apperr.CodeConflict, "the rename changed concurrently")
+			}
 		}
-		if n, err := tx.Q.CloseRoleRename(ctx, db.CloseRoleRenameParams{NodeMessage: msg, NodeDoneAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: r.ID}); err != nil {
-			return err
-		} else if n != 1 {
-			return apperr.New(apperr.CodeConflict, "the rename changed concurrently")
+		// Without forgetNode the rename's undelivered commands stay queued: a node that was offline or below minor 14 has
+		// no journal row yet, and must journal the rename when it connects, so it can move the folder or learn of the
+		// close (ADR-0093 addendum 3).
+		var cancelled int64
+		if forgetNode {
+			action = "role_rename.forgotten"
+			if cancelled, err = svc.forgetRenameNode(ctx, tx, r); err != nil {
+				return err
+			}
 		}
-		// The rename's undelivered commands stay queued: a node that was offline or below minor 14 has no journal row yet,
-		// and must journal the rename when it connects, so it can move the folder or learn of the close (ADR-0093 addendum 3).
 		if err := svc.changes.Record(ctx, tx, spaceID, "space", spaceID, "updated", 0); err != nil {
 			return err
 		}
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "role_rename.closed", Target: audit.Target{Type: "space", ID: spaceID},
-			Details: map[string]any{"rename_id": r.ID, "from": r.FromName, "to": r.ToName, "node_id": r.NodeID, "previous_state": r.NodeState, "reason": reason}})
+		details := map[string]any{"rename_id": r.ID, "from": r.FromName, "to": r.ToName, "node_id": r.NodeID, "previous_state": r.NodeState, "reason": reason}
+		if forgetNode {
+			details["cancelled_commands"] = cancelled
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "space", ID: spaceID}, Details: details})
 		return err
 	})
 	if err != nil {
@@ -160,4 +194,39 @@ func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spac
 		svc.AfterRenameClose(ctx, *out)
 	}
 	return out, nil
+}
+
+// undeliveredClosed reports whether a closed rename's command has not been journaled by the node yet (it still blocks
+// both names).
+func undeliveredClosed(ctx context.Context, q *db.Queries, r db.SpaceRoleRename) (bool, error) {
+	l, err := q.ListUndeliveredClosedRoleRenames(ctx, r.SpaceID)
+	if err != nil {
+		return false, err
+	}
+	for _, x := range l {
+		if x.ID == r.ID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// forgetRenameNode cancels a rename's memory.rename commands the node has not acknowledged and, while the space is
+// still on the rename's node, queues the closed notice (RenameClosedKey) for it. It returns how many it cancelled.
+func (svc *Service) forgetRenameNode(ctx context.Context, tx *store.Tx, r db.SpaceRoleRename) (int64, error) {
+	key := RenameCommandKey(r.ID)
+	n, err := tx.Q.CancelRoleRenameCommands(ctx, db.CancelRoleRenameCommandsParams{Reason: "the rename was closed and the node forgotten",
+		NodeID: r.NodeID, Key: key, KeyEnd: key + ";"})
+	if err != nil {
+		return 0, err
+	}
+	sp, err := tx.Q.GetSpace(ctx, r.SpaceID)
+	if err != nil {
+		return 0, err
+	}
+	if sp.NodeID == "" || sp.NodeID != r.NodeID {
+		return n, nil // the space left the node: nothing of it runs there again
+	}
+	return n, queueMemoryRename(ctx, tx, sp, proto.MemoryRename{RenameID: r.ID, SpaceID: sp.ID, From: r.FromName, To: r.ToName, Closed: true},
+		RenameClosedKey(r.ID))
 }

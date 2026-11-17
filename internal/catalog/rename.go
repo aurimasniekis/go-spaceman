@@ -20,7 +20,8 @@ import (
 // Rename refusal reasons (ADR-0093): stable codes carried by a *RenameRefused cause.
 const (
 	// RenameRoleBusy: the role has live work (runs, waits, switches, queued launches), the space has an unfinished
-	// dream or relocation, or an earlier rename of these names has not been moved on the node yet.
+	// dream or relocation, or an earlier rename of these names has not been moved on the node yet (or, closed, has not
+	// reached the node yet).
 	RenameRoleBusy = "role_busy"
 	// RenameNameTaken: the target name is a role, has a memory collection, or leftovers of a deleted role of that name
 	// would collide with the role's grants or pool.
@@ -289,7 +290,8 @@ type change struct {
 
 // renameBlockers lists what keeps a rename from going ahead (ADR-0093 decision 2): live runs of the role, its open
 // limit waits and account switches, launches of it the node has not accepted, unfinished dreams and pending dream
-// commits in the space, a relocation, and an earlier rename of either name whose node move is still pending.
+// commits in the space, a relocation, an earlier rename of either name whose node move is still pending, and a closed
+// rename of either name whose memory.rename the node has not journaled yet.
 func renameBlockers(ctx context.Context, q *db.Queries, sp db.Space, from, to string) ([]string, error) {
 	var out []string
 	runs, err := q.RoleRenameLiveRuns(ctx, db.RoleRenameLiveRunsParams{SpaceID: sp.ID, Role: from})
@@ -350,6 +352,18 @@ func renameBlockers(ctx context.Context, q *db.Queries, sp db.Space, from, to st
 			out = append(out, fmt.Sprintf("rename %s (%s to %s) waiting for node %s to move its memory (%s)", p.ID, p.FromName, p.ToName, p.NodeID, p.NodeState))
 		}
 	}
+	// A closed rename whose command the node has not journaled yet still blocks both names: the node would get this
+	// rename's move and the closed one's in any order (ADR-0093 addendum, ordering). Close with forget_node releases them.
+	closed, err := q.ListUndeliveredClosedRoleRenames(ctx, sp.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range closed {
+		if p.FromName == from || p.ToName == from || p.FromName == to || p.ToName == to {
+			out = append(out, fmt.Sprintf("closed rename %s (%s to %s) not yet delivered to node %s (close it with forget_node to release the names)",
+				p.ID, p.FromName, p.ToName, p.NodeID))
+		}
+	}
 	return out, nil
 }
 
@@ -377,13 +391,17 @@ func renameNodeReady(ctx context.Context, q *db.Queries, sp db.Space) error {
 // hub sends it at the space's lease generation at the time it is delivered (a lease granted again after the node was
 // away has a newer one), so the stored generation only orders it.
 func QueueMemoryRename(ctx context.Context, tx *store.Tx, sp db.Space, renameID, key, from, to string) error {
+	return queueMemoryRename(ctx, tx, sp, proto.MemoryRename{RenameID: renameID, SpaceID: sp.ID, From: from, To: to}, key)
+}
+
+func queueMemoryRename(ctx context.Context, tx *store.Tx, sp db.Space, p proto.MemoryRename, key string) error {
 	gen := int64(1)
 	if l, err := tx.Q.GetLease(ctx, sp.ID); err == nil {
 		gen = l.Generation
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	b, err := json.Marshal(proto.MemoryRename{RenameID: renameID, SpaceID: sp.ID, From: from, To: to})
+	b, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
