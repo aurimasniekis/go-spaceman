@@ -32,6 +32,15 @@ const (
 	memoryRole         = "SpaceMan memory"
 )
 
+// The deadlines below bound work done under the collection lock: a git that never returns (a FIFO in a checkout)
+// would stall every instance of the collection. Variables so tests can shorten them.
+var (
+	// checkpointDeadline bounds a checkpoint, and each instance's fast-forward after it.
+	checkpointDeadline = 2 * time.Minute
+	// prepareDeadline bounds prepare (a run's launch) once it holds the collection lock.
+	prepareDeadline = 2 * time.Minute
+)
+
 type memManager struct {
 	a *Agent
 	// base is the agent's run context; timer callbacks run under it.
@@ -102,6 +111,8 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		return "", errors.New("invalid memory collection")
 	}
 	defer m.lock(colKey(spaceID, role))()
+	ctx, cancel := context.WithTimeout(ctx, prepareDeadline)
+	defer cancel()
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if err := m.git.InitBare(ctx, shared); err != nil {
 		return "", err
@@ -111,6 +122,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 			return "", err
 		}
 		if _, err := m.git.Run(ctx, inst, nil, "init", "--quiet", "--initial-branch=main", "."); err != nil {
+			return "", err
+		}
+		if err := m.guard(ctx, inst); err != nil {
 			return "", err
 		}
 		if m.git.RevParse(ctx, shared, "refs/heads/main") == "" {
@@ -137,6 +151,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 			}
 		}
 		return inst, nil
+	}
+	if err := m.guard(ctx, inst); err != nil {
+		return "", err
 	}
 	m.refreshAtStart(ctx, spaceID, role, instance)
 	return inst, nil
@@ -199,7 +216,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	}
 	log := m.a.log.With(slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.instance", instance))
 	unlock := m.lock(colKey(spaceID, role))
-	published, err := m.publish(ctx, spaceID, role, instance, reason)
+	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	published, err := m.publish(pctx, spaceID, role, instance, reason)
+	cancel()
 	unlock()
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	now := m.a.now()
@@ -221,6 +240,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reason string) (bool, error) {
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	g, id := m.git, ident(instance)
+	if err := m.guard(ctx, inst); err != nil {
+		return false, err
+	}
 	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
 		return false, err
 	}
@@ -273,6 +295,9 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	}
 	saved := map[string][]byte{}
 	for _, f := range files {
+		if isHarnessPath(f) {
+			continue // never materialised: harness configuration does not travel through memory
+		}
 		if b, err := g.Run(ctx, inst, nil, "show", head+":"+f); err == nil {
 			saved[f] = []byte(b)
 		}
