@@ -281,21 +281,12 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 		return false, err
 	}
 	dir := filepath.Join("conflicts", instance+"-"+stamp)
-	for f, b := range saved {
-		p := filepath.Join(inst, dir, filepath.Clean("/"+f))
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			return false, err
-		}
-		if err := os.WriteFile(p, b, 0o600); err != nil {
-			return false, err
-		}
-	}
 	note := fmt.Sprintf("# Conflicting memory from %s\n\nThese files changed in this instance and in another one at the same time. The shared version was kept; "+
 		"this instance's version is below and in %s. Merge what still matters into the shared files, then delete this folder.\n\nFiles:\n", instance, ref)
 	for _, f := range files {
 		note += "- " + f + "\n"
 	}
-	if err := os.WriteFile(filepath.Join(inst, dir, "README.md"), []byte(note), 0o600); err != nil {
+	if err := writeConflictCopies(inst, dir, saved, note); err != nil {
 		return false, err
 	}
 	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
@@ -317,6 +308,32 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	m.a.log.Warn("memory conflict preserved", slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.ref", ref),
 		slog.Int("files", len(files)))
 	return true, nil
+}
+
+// writeConflictCopies writes the conflict copies and the README under dir inside the instance checkout. Any instance can
+// commit a symlink (for example conflicts -> /elsewhere) into the shared history, which the checkout then contains, so
+// the writes go through an os.Root of the instance (never leaving it) and are refused when conflicts/ or dir is a symlink.
+func writeConflictCopies(inst, dir string, saved map[string][]byte, note string) error {
+	root, err := os.OpenRoot(inst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	for _, c := range []string{"conflicts", dir} {
+		if fi, err := root.Lstat(c); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("memory: %s is a symlink; refusing to write conflict copies through it", c)
+		}
+	}
+	for f, b := range saved {
+		p := filepath.Join(dir, filepath.Clean("/"+f))
+		if err := root.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			return err
+		}
+		if err := root.WriteFile(p, b, 0o600); err != nil {
+			return err
+		}
+	}
+	return root.WriteFile(filepath.Join(dir, "README.md"), []byte(note), 0o600)
 }
 
 // scheduleSync offers the collection to central after delay (replacing a later schedule).

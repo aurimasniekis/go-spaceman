@@ -173,3 +173,34 @@ func TestMemoryAcks(t *testing.T) {
 	}
 	m.mu.Unlock()
 }
+
+// A committed conflicts -> /elsewhere symlink must not make preserve write outside the instance.
+func TestPreserveRefusesSymlinkedConflicts(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	const sp, role = "spc_a", "implementor-backend"
+	one, err := m.prepare(ctx, sp, role, "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "decisions.md", "base\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	two, err := m.prepare(ctx, sp, role, "ins_two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(one, "conflicts")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "decisions.md", "one\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	write(t, two, "decisions.md", "two\n")
+	if err := m.checkpointErr(ctx, sp, role, "ins_two", "idle"); err == nil {
+		t.Fatal("preserve wrote through a symlinked conflicts/")
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Fatalf("the symlink target was written to: %v", ents)
+	}
+}
