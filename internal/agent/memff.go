@@ -129,7 +129,7 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 		return "", ffNoCheckout
 	}
 	list, err := g.Run(ctx, inst, nil, "config", "--list", "--name-only", "--show-scope")
-	if err != nil || memory.UnsafeConfig(list, true) != nil || g.CheckoutIdentity(ctx, inst) != nil {
+	if err != nil || memory.UnsafeConfig(list, true) != nil || g.CheckoutIdentity(ctx, inst) != nil || g.Gitlinks(ctx, inst) != nil {
 		return "", ffUnsafeConfig
 	}
 	for _, p := range inProgress {

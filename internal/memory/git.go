@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -39,7 +41,15 @@ type Identity struct{ Name, Email string }
 var safeOpts = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always",
 	"-c", "transfer.fsckObjects=true", "-c", "commit.gpgSign=false", "-c", "core.autocrlf=false", "-c", "init.defaultBranch=main",
 	"-c", "advice.detachedHead=false", "-c", "merge.conflictStyle=merge",
-	"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false"}
+	"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false",
+	"-c", "submodule.recurse=false", "-c", "diff.ignoreSubmodules=all", "-c", "status.submoduleSummary=false",
+	"-c", "fetch.recurseSubmodules=false", "-c", "push.recurseSubmodules=no"}
+
+// The submodule options above keep git from stepping into a nested repository of a checkout: git runs a child git in
+// a populated submodule (status, and the diff behind add and commit), with that repository's own configuration,
+// which UnsafeConfig never saw, so its filter drivers would run as the daemon, and its git dir may be another
+// repository whose index the child would refresh. `add` ignores diff.ignoreSubmodules, so gitlinks are also refused
+// outright before any command that reads the work tree (Gitlinks).
 
 // Run executes git in dir and returns stdout.
 func (g *Git) Run(ctx context.Context, dir string, id *Identity, args ...string) (string, error) {
@@ -61,6 +71,11 @@ func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []by
 			if err := g.CheckoutIdentity(ctx, dir); err != nil {
 				return "", err
 			}
+			if !treeless[args[0]] {
+				if err := g.Gitlinks(ctx, dir); err != nil {
+					return "", err
+				}
+			}
 		}
 	}
 	return g.run(ctx, dir, id, stdin, args...)
@@ -70,6 +85,11 @@ func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []by
 // the checkout including .git, so .git could be a symlink or a `gitdir:` file, or carry a commondir file, pointing
 // at another repository whose refs and index git would then move; core.bare and core.worktree move the work tree.
 // The checkout's .git must be a real directory that is both its git dir and its common dir, and its work tree the folder.
+// Inside it, nothing may lead elsewhere either (ownGitDir).
+//
+// Residual risk (time of check to time of use): the checks run before git starts, and the agent can still write
+// the checkout while git runs, so a link planted in that window is followed. ADR-0094 (checkout guard) records it
+// and the structural fixes (run only while no process of the instance is alive, or in a daemon-owned copy).
 func (g *Git) CheckoutIdentity(ctx context.Context, dir string) error {
 	dotGit := filepath.Join(dir, ".git")
 	fi, err := os.Lstat(dotGit)
@@ -78,6 +98,9 @@ func (g *Git) CheckoutIdentity(ctx context.Context, dir string) error {
 	}
 	if !fi.IsDir() {
 		return errors.New("checkout refused: .git is not a plain directory (symlink or gitdir file)")
+	}
+	if err := ownGitDir(dotGit); err != nil {
+		return err
 	}
 	out, err := g.run(ctx, dir, nil, nil, "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--show-toplevel")
 	if err != nil {
@@ -104,11 +127,119 @@ func (g *Git) CheckoutIdentity(ctx context.Context, dir string) error {
 	return nil
 }
 
+// reFanout matches a loose-object fan-out folder (objects/ab).
+var reFanout = regexp.MustCompile(`^[0-9a-f]{2}$`)
+
+// ownGitDir walks a checkout's .git and refuses anything that makes git read or write outside it:
+//
+//   - a symlink anywhere (refs, objects, index, packed-refs, logs, config, …): git follows it, and its lockfiles
+//     too, so a symlinked index or refs folder moves another repository's index or branches;
+//   - a FIFO or device, which would block or redirect git's reads;
+//   - a regular file with more than one hard link outside the object store: git rewrites some files in place
+//     (COMMIT_EDITMSG, FETCH_HEAD, MERGE_MSG, reflogs appended to), so a hard link to another repository's ref or
+//     reflog, made by an agent running as the same user as that repository's owner, would be overwritten there.
+//     Object files are exempt: `git clone --local` hard-links them, and git never writes an existing object;
+//   - objects/info/alternates (and http-alternates): objects borrowed from another repository, which a push would
+//     copy into the shared memory;
+//   - info/grafts, which rewrites history as git sees it (replace refs are off: GIT_NO_REPLACE_OBJECTS).
+//
+// The loose-object fan-out folders are checked themselves but not listed, so the walk costs a few hundred entries
+// whatever the size of the object store: a symlinked object file inside one is only read, and its content is named
+// by its hash. Linked worktrees' and submodules' git dirs (worktrees/, modules/) are walked like the rest.
+func ownGitDir(dotGit string) error {
+	refuse := func(rel, why string) error {
+		return fmt.Errorf("checkout refused: .git/%s %s", filepath.ToSlash(rel), why)
+	}
+	return filepath.WalkDir(dotGit, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("checkout refused: %w", err)
+		}
+		if path == dotGit {
+			return nil
+		}
+		rel, err := filepath.Rel(dotGit, path)
+		if err != nil {
+			return err
+		}
+		slash := filepath.ToSlash(rel)
+		t := d.Type()
+		switch {
+		case t&fs.ModeSymlink != 0:
+			return refuse(rel, "is a symlink")
+		case t.IsDir():
+			if inObjects(slash) && reFanout.MatchString(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		case !t.IsRegular() && t&fs.ModeSocket == 0:
+			return refuse(rel, "is not a regular file")
+		}
+		switch slash {
+		case "objects/info/alternates", "objects/info/http-alternates":
+			return refuse(rel, "borrows objects from another repository")
+		case "info/grafts":
+			return refuse(rel, "rewrites the history git sees")
+		}
+		if t.IsRegular() && !inObjects(slash) {
+			fi, err := d.Info()
+			if err != nil {
+				return fmt.Errorf("checkout refused: %w", err)
+			}
+			if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
+				return refuse(rel, "has another hard link (it may be another repository's file)")
+			}
+		}
+		return nil
+	})
+}
+
+// inObjects reports whether a path relative to .git is inside an object store: the checkout's own, or one of a
+// linked worktree's or submodule's git dir.
+func inObjects(rel string) bool {
+	if strings.HasPrefix(rel, "objects/") {
+		return true
+	}
+	return (strings.HasPrefix(rel, "modules/") || strings.HasPrefix(rel, "worktrees/")) && strings.Contains(rel, "/objects/")
+}
+
+// treeless lists the subcommands SpaceMan runs that never read the work tree, so a gitlink there cannot make git
+// step into a nested repository; every other guarded subcommand is checked by Gitlinks first. The KB acceptance runs
+// only these in project repositories, which may have submodules.
+var treeless = map[string]bool{
+	"rev-parse": true, "merge-base": true, "merge-tree": true, "commit-tree": true, "update-ref": true, "rev-list": true,
+	"ls-tree": true, "ls-files": true, "cat-file": true, "show": true, "log": true, "bundle": true, "fetch": true,
+	"push": true, "worktree": true, "for-each-ref": true, "symbolic-ref": true,
+}
+
+// Gitlinks refuses a checkout whose index records a gitlink (a submodule or an embedded repository). For a gitlink
+// whose folder holds a .git, git runs a child git in that folder to see whether it is modified, with that
+// repository's configuration (filter drivers run as the daemon) and in whatever git dir its .git names (another
+// repository's index is refreshed). `git add` does this whatever diff.ignoreSubmodules says. Memory has no use for
+// submodules, so an index with a gitlink is refused before any command that reads the work tree.
+func (g *Git) Gitlinks(ctx context.Context, dir string) error {
+	out, err := g.run(ctx, dir, nil, nil, "ls-files", "--stage", "-z")
+	if err != nil {
+		return fmt.Errorf("checkout refused: %w", err)
+	}
+	for e := range strings.SplitSeq(out, "\x00") {
+		if strings.HasPrefix(e, "160000 ") {
+			_, path, _ := strings.Cut(e, "\t")
+			return fmt.Errorf("checkout refused: %s is a submodule or an embedded git repository; remove it from the index (git rm --cached)", path)
+		}
+	}
+	return nil
+}
+
 func (g *Git) run(ctx context.Context, dir string, id *Identity, stdin []byte, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, g.Bin, append(append([]string{}, safeOpts...), args...)...) //nolint:gosec // fixed git subcommands; arguments are validated by callers
 	cmd.Dir = dir
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}
+		"GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_NO_REPLACE_OBJECTS=1"}
+	// git looks for a repository in dir and never above it: a checkout whose .git is missing must not make git find
+	// a repository in a parent folder and work there.
+	if abs, err := filepath.Abs(dir); err == nil {
+		env = append(env, "GIT_CEILING_DIRECTORIES="+filepath.Dir(abs))
+	}
 	if id != nil {
 		env = append(env, "GIT_AUTHOR_NAME="+id.Name, "GIT_AUTHOR_EMAIL="+id.Email, "GIT_COMMITTER_NAME="+id.Name, "GIT_COMMITTER_EMAIL="+id.Email)
 	}
