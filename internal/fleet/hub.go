@@ -841,8 +841,14 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if svc.opts.RecordingsDir == "" {
 			return nil
 		}
-		seq, err := svc.rec.apply(c)
+		seq, err := svc.rec.apply(s.seq, c)
 		_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
+		if err != nil {
+			// Central did not store the chunk. The node acknowledges only what central acked, but it re-ships records
+			// above that only on a new connection (its catch-up): closing this one makes it do so, and records already
+			// on their way here behind the lost ones are never read (SM-REC-003, ADR-0010 addendum).
+			s.close(websocket.StatusTryAgainLater, "recording not stored")
+		}
 		return err
 	default:
 		return apperr.New(apperr.CodeInvalid, "unexpected message type %q", env.Type)

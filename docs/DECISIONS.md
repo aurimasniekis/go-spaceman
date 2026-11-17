@@ -129,6 +129,37 @@
   - **Gaps.** A reattach after `missed` or a restart emits a `gap` record.
   - **Upload.** Closed segments are uploaded to central storage.
   - **Fallback.** If the frames cannot be decoded reliably, a PTY tee shim inside the terminal records instead. A decision update would record that switch.
+- **Addendum (2026-11-17): central acknowledges only a durable, contiguous prefix (SM-REC-003).** Central acks a node's
+  recording chunk with `recording.Writer.Stored()`, and the node prunes every record at or below its highest ack. So
+  `Stored()` = N means *every record at or below N that the recording will ever hold is synced to disk and none is
+  missing below N*, apart from jumps the node itself made (records it never had: `SkipTo`, its own lost disk). Three
+  rules keep that true when central's disk fails:
+  - **Unsynced tails are cut.** A failed write or sync closes the segment and truncates it to its size at the last
+    successful sync (tracked per segment). A frame written after that may still decode from the page cache without
+    being on disk, so a writer reopened later would otherwise ack it. If the cut fails, central does not reopen the
+    recording (every chunk fails) until a retry of the cut succeeds.
+  - **No storing past the hole.** A failed writer is dropped and reopened from disk on the next chunk, and the run is
+    marked with the connection the failure happened on. On that connection, a chunk whose first new record is above
+    `Stored()+1` (records the node sent behind the lost ones) is not stored and is acked `Stored()`. A chunk that starts
+    at or below `Stored()+1` ends the mark. So does any chunk on a later connection, because the node's catch-up
+    re-ships from its acknowledgement first, and a jump there is one the node made itself. Refusing it would stall the
+    recording for good.
+  - **The node re-ships because central closes the connection.** Any chunk central could not store (open, write or
+    sync failure) is acked with what is stored, and then the hub closes the node connection (1013, try again later).
+    Messages queued behind the chunk are never read. The node re-ships records above its acknowledgement only in the
+    catch-up pass of a new connection, and that pass runs before the run's live output (`shipLive`). So the close is
+    what makes the node fill the hole. We chose this over a node-side rule ("an ack below what was sent starts a
+    catch-up") for three reasons. First, an ack below the sent sequence is also the normal state while chunks are in
+    flight, so the node could not tell a lost chunk from a slow one without per-chunk correlation or a protocol
+    change. Second, the close needs no protocol change and works with every node version. Third, it leaves the
+    node's ack and catch-up handling (`internal/agent/record.go`, including the persisted acknowledgements of
+    ADR-0097) unchanged.
+  - **Consequence.** A store failure costs the node a reconnect, and on a central disk that keeps failing, every
+    recording chunk costs one. The node's reconnect backoff bounds the rate. A reopen backoff on central (later work)
+    may refuse chunks without reopening, but it must still close the connection, or the node never re-ships.
+  - **Limitation.** A process restart right after a failed sync can still find that frame in the page cache. Linux
+    reports a writeback error only to file descriptors that were open when it happened, so the new process cannot
+    detect it. The cut covers failures within one central process.
 
 ### ADR-0011 — Pulse ingestion: one durable consumer per subscription generation
 - **Status:** accepted; contract details in `docs/contracts/pulse.md`

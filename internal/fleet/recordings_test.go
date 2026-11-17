@@ -67,13 +67,13 @@ func TestRecordingsArchiveToS3(t *testing.T) {
 	r := newRecordings(dir, artifacts.NewS3(cl, "rec", ""), nil, time.Now)
 	defer r.Close()
 	ctx := context.Background()
-	if seq, err := r.apply(chunk(t, recording.Record{Seq: 1, Kind: recording.KindOpen, Cols: 80, Rows: 24}, out(2, "hello "))); err != nil || seq != 2 {
+	if seq, err := r.apply(1, chunk(t, recording.Record{Seq: 1, Kind: recording.KindOpen, Cols: 80, Rows: 24}, out(2, "hello "))); err != nil || seq != 2 {
 		t.Fatalf("apply %d %v", seq, err)
 	}
 	if got := text(t, r); got != "hello " {
 		t.Fatalf("spooled recording reads %q", got)
 	}
-	if _, err := r.apply(chunk(t, out(3, "world"), recording.Record{Seq: 4, Kind: recording.KindClose})); err != nil {
+	if _, err := r.apply(1, chunk(t, out(3, "world"), recording.Record{Seq: 4, Kind: recording.KindClose})); err != nil {
 		t.Fatal(err)
 	}
 	r.wg.Wait()
@@ -100,10 +100,10 @@ func TestRecordingsArchiveToS3(t *testing.T) {
 	_ = seg.Close()
 
 	// The node re-ships its tail (it never saw the acknowledgement) and then more output.
-	if seq, err := r.apply(chunk(t, out(3, "world"), recording.Record{Seq: 4, Kind: recording.KindClose})); err != nil || seq != 4 {
+	if seq, err := r.apply(1, chunk(t, out(3, "world"), recording.Record{Seq: 4, Kind: recording.KindClose})); err != nil || seq != 4 {
 		t.Fatalf("re-shipped tail: %d %v", seq, err)
 	}
-	if seq, err := r.apply(chunk(t, out(5, "!"))); err != nil || seq != 5 {
+	if seq, err := r.apply(1, chunk(t, out(5, "!"))); err != nil || seq != 5 {
 		t.Fatalf("after the archive: %d %v", seq, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, recRun, recording.SegmentName(2))); err != nil {
@@ -163,7 +163,7 @@ func TestRecordingsLocalStoreStaysInPlace(t *testing.T) {
 	if r.archive {
 		t.Fatal("the local store archives")
 	}
-	if _, err := r.apply(chunk(t, out(1, "local"), recording.Record{Seq: 2, Kind: recording.KindClose})); err != nil {
+	if _, err := r.apply(1, chunk(t, out(1, "local"), recording.Record{Seq: 2, Kind: recording.KindClose})); err != nil {
 		t.Fatal(err)
 	}
 	r.RunEnded(recRun)
@@ -204,12 +204,12 @@ func TestRecordingsViewersAreScopedByRun(t *testing.T) {
 	va, vb := r.Subscribe(recRun), r.Subscribe(runB)
 	defer r.Unsubscribe(va)
 	defer r.Unsubscribe(vb)
-	if _, err := r.apply(chunk(t, out(1, "secret of A"))); err != nil {
+	if _, err := r.apply(1, chunk(t, out(1, "secret of A"))); err != nil {
 		t.Fatal(err)
 	}
 	cb := chunk(t, out(1, "output of B"))
 	cb.RunID = runB
-	if _, err := r.apply(cb); err != nil {
+	if _, err := r.apply(1, cb); err != nil {
 		t.Fatal(err)
 	}
 	got := func(v *Viewer) []string {
@@ -232,7 +232,7 @@ func TestRecordingsViewersAreScopedByRun(t *testing.T) {
 	}
 	// Unsubscribing one run's last viewer leaves the other run's viewers in place.
 	r.Unsubscribe(va)
-	if _, err := r.apply(chunk(t, out(2, "more of A"))); err != nil {
+	if _, err := r.apply(1, chunk(t, out(2, "more of A"))); err != nil {
 		t.Fatal(err)
 	}
 	if b := got(vb); len(b) != 0 {
@@ -250,7 +250,7 @@ func TestRecordingsViewerLaggedNoRace(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		for seq := uint64(1); seq <= 600; seq++ {
-			if _, err := r.apply(chunk(t, out(seq, "x"))); err != nil {
+			if _, err := r.apply(1, chunk(t, out(seq, "x"))); err != nil {
 				done <- err
 				return
 			}
@@ -316,7 +316,7 @@ func TestRecordingsLaggedViewerCatchesUpOnce(t *testing.T) {
 	// Overflow the viewer's queue: records past its capacity are dropped and the viewer is marked lagged.
 	const overflow = 600
 	for seq := uint64(1); seq <= overflow; seq++ {
-		if _, err := r.apply(chunk(t, out(seq, "x"))); err != nil {
+		if _, err := r.apply(1, chunk(t, out(seq, "x"))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -329,7 +329,7 @@ func TestRecordingsLaggedViewerCatchesUpOnce(t *testing.T) {
 	}
 	// Live again: each new record is delivered in order with no further catch-up.
 	for seq := uint64(overflow + 1); seq <= overflow+50; seq++ {
-		if _, err := r.apply(chunk(t, out(seq, "y"))); err != nil {
+		if _, err := r.apply(1, chunk(t, out(seq, "y"))); err != nil {
 			t.Fatal(err)
 		}
 		consume()
@@ -365,11 +365,11 @@ func TestRecordingsAckOnlyStoredAndReopenAfterFailure(t *testing.T) {
 		}
 		return syncFailFile{File: f, fail: &fail}, nil
 	}
-	if seq, err := r.apply(chunk(t, out(1, "a"), out(2, "b"))); err != nil || seq != 2 {
+	if seq, err := r.apply(1, chunk(t, out(1, "a"), out(2, "b"))); err != nil || seq != 2 {
 		t.Fatalf("first chunk acked %d %v", seq, err)
 	}
 	fail.Store(true)
-	seq, err := r.apply(chunk(t, out(3, "c")))
+	seq, err := r.apply(1, chunk(t, out(3, "c")))
 	if err == nil {
 		t.Fatal("failing flush returned no error")
 	}
@@ -381,11 +381,163 @@ func TestRecordingsAckOnlyStoredAndReopenAfterFailure(t *testing.T) {
 	}
 	// The disk recovers: the node re-ships from its ack, and everything is stored.
 	fail.Store(false)
-	seq, err = r.apply(chunk(t, out(3, "c"), out(4, "d")))
+	seq, err = r.apply(1, chunk(t, out(3, "c"), out(4, "d")))
 	if err != nil || seq != 4 {
 		t.Fatalf("after recovery acked %d %v, want 4", seq, err)
 	}
 	if got := text(t, r); got != "abcd" {
 		t.Fatalf("recording %q, want abcd", got)
+	}
+}
+
+// failingRecordings is central's recordings whose segment files fail Sync while fail is set.
+func failingRecordings(t *testing.T) (*Recordings, *atomic.Bool) {
+	t.Helper()
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	t.Cleanup(r.Close)
+	var fail atomic.Bool
+	r.create = func(path string) (recording.File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // test path
+		if err != nil {
+			return nil, err
+		}
+		return syncFailFile{File: f, fail: &fail}, nil
+	}
+	return r, &fail
+}
+
+// SM-REC-003 (ADR-0010 addendum): after central failed to store a chunk, the next live chunk on the same connection
+// (sent behind the lost one) is not stored past the hole and is acked only up to it, so the node keeps the hole's
+// records; once the node re-ships on its next connection, central holds the whole recording, contiguous.
+func TestRecordingsStoreNothingPastTheGapAfterAFailure(t *testing.T) {
+	r, fail := failingRecordings(t)
+	if seq, err := r.apply(1, chunk(t, out(1, "a"), out(2, "b"))); err != nil || seq != 2 {
+		t.Fatalf("first chunk acked %d %v", seq, err)
+	}
+	fail.Store(true)
+	if seq, err := r.apply(1, chunk(t, out(3, "c"))); err == nil || seq != 2 {
+		t.Fatalf("failed chunk acked %d %v, want 2 and an error", seq, err)
+	}
+	fail.Store(false)
+	// The next live chunk, already on its way on the same connection.
+	for range 2 {
+		seq, err := r.apply(1, chunk(t, out(4, "d"), out(5, "e")))
+		if err != nil || seq != 2 {
+			t.Fatalf("live chunk past the hole acked %d %v, want 2", seq, err)
+		}
+		if got := text(t, r); got != "ab" {
+			t.Fatalf("central stored %q past the hole, want ab", got)
+		}
+	}
+	// The node's catch-up on its next connection re-ships from its acknowledgement.
+	seq, err := r.apply(2, chunk(t, out(3, "c"), out(4, "d"), out(5, "e")))
+	if err != nil || seq != 5 {
+		t.Fatalf("re-ship acked %d %v, want 5", seq, err)
+	}
+	res, err := r.Read(context.Background(), recRun, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := text(t, r); got != "abcde" || res.Gaps != 0 {
+		t.Fatalf("central holds %q with %d gaps, want abcde and none", got, res.Gaps)
+	}
+	if len(r.resync) != 0 {
+		t.Fatalf("resync marks left: %v", r.resync)
+	}
+}
+
+// A chunk on the failed connection that starts right after what is stored fills the hole and ends the resync; on a
+// new connection a jump is the node's own (records it never had) and is kept, as for any recording.
+func TestRecordingsResyncEndsOnAContiguousChunkOrANewConnection(t *testing.T) {
+	r, fail := failingRecordings(t)
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	fail.Store(true)
+	if _, err := r.apply(1, chunk(t, out(2, "b"))); err == nil {
+		t.Fatal("failing chunk stored")
+	}
+	fail.Store(false)
+	if seq, err := r.apply(1, chunk(t, out(1, "a"))); err != nil || seq != 1 {
+		t.Fatalf("repeat acked %d %v", seq, err)
+	}
+	if seq, err := r.apply(1, chunk(t, out(2, "b"), out(3, "c"))); err != nil || seq != 3 {
+		t.Fatalf("contiguous chunk acked %d %v, want 3", seq, err)
+	}
+	if seq, err := r.apply(1, chunk(t, out(5, "e"))); err != nil || seq != 5 {
+		t.Fatalf("after the resync a jump acked %d %v, want 5 (kept as a gap)", seq, err)
+	}
+
+	fail.Store(true)
+	if _, err := r.apply(1, chunk(t, out(6, "f"))); err == nil {
+		t.Fatal("failing chunk stored")
+	}
+	fail.Store(false)
+	// The node's own recording lacks 6 (its disk failed too): its catch-up on the new connection starts at 7.
+	if seq, err := r.apply(2, chunk(t, out(7, "g"))); err != nil || seq != 7 {
+		t.Fatalf("catch-up on a new connection acked %d %v, want 7", seq, err)
+	}
+	if got := text(t, r); got != "abceg" {
+		t.Fatalf("central holds %q, want abceg", got)
+	}
+}
+
+// SM-REC-003: a chunk whose sync failed is not acked by the writer reopened after the failure, although its frame
+// may still decode from the page cache: the failure cut it off, so the next chunk is not acked past it either.
+func TestRecordingsReopenedWriterDoesNotTrustAnUnsyncedTail(t *testing.T) {
+	r, fail := failingRecordings(t)
+	if seq, err := r.apply(1, chunk(t, out(1, "a"))); err != nil || seq != 1 {
+		t.Fatalf("first chunk acked %d %v", seq, err)
+	}
+	fail.Store(true)
+	if seq, err := r.apply(1, chunk(t, out(2, "b"))); err == nil || seq != 1 {
+		t.Fatalf("chunk with a failed sync acked %d %v, want 1 and an error", seq, err)
+	}
+	fail.Store(false)
+	if seq, err := r.apply(1, chunk(t, out(3, "c"))); err != nil || seq != 1 {
+		t.Fatalf("next chunk acked %d %v, want 1: the unsynced record 2 is not stored", seq, err)
+	}
+	if got := text(t, r); got != "a" {
+		t.Fatalf("central holds %q, want a", got)
+	}
+	if seq, err := r.apply(2, chunk(t, out(2, "b"), out(3, "c"))); err != nil || seq != 3 {
+		t.Fatalf("re-ship acked %d %v, want 3", seq, err)
+	}
+	if got := text(t, r); got != "abc" {
+		t.Fatalf("central holds %q, want abc", got)
+	}
+}
+
+// When the unsynced tail of a failed segment cannot be cut off, central does not reopen the recording (it would read
+// that tail as stored): every chunk fails until the cut succeeds.
+func TestRecordingsDoNotReopenUntilTheUnsyncedTailIsCut(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	r, fail := failingRecordings(t)
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := r.Dir(recRun)
+	seg := filepath.Join(dir, recording.SegmentName(1))
+	fail.Store(true)
+	if err := os.Chmod(seg, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.apply(1, chunk(t, out(2, "b"))); err == nil {
+		t.Fatal("failing chunk stored")
+	}
+	fail.Store(false)
+	if seq, err := r.apply(2, chunk(t, out(2, "b"))); err == nil || seq != 0 {
+		t.Fatalf("chunk while the tail could not be cut acked %d %v, want an error", seq, err)
+	}
+	if err := os.Chmod(seg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if seq, err := r.apply(2, chunk(t, out(2, "b"))); err != nil || seq != 2 {
+		t.Fatalf("after the cut acked %d %v, want 2", seq, err)
+	}
+	if got := text(t, r); got != "ab" {
+		t.Fatalf("central holds %q, want ab", got)
 	}
 }

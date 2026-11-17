@@ -39,6 +39,13 @@ type Recordings struct {
 	log     *slog.Logger
 	mu      sync.Mutex
 	w       map[string]*recording.Writer
+	// resync holds, per run whose writer failed, the node connection the failure happened on (SM-REC-003, ADR-0010
+	// addendum): on that connection nothing is stored past the gap the failure left (records already on their way
+	// there must not overtake the records central lost); the node's re-ship on its next connection clears it.
+	resync map[string]uint64
+	// unsynced holds failed writers whose unsynced segment tail could not be cut off yet: the run's recording is not
+	// opened again until it is (recording.Writer.DropUnsynced).
+	unsynced map[string]*recording.Writer
 	// subs are live viewers per run.
 	subs map[string]map[*Viewer]struct{}
 	// archiving marks runs whose segments are being uploaded; the channel closes when that ends.
@@ -82,7 +89,7 @@ func newRecordings(dir string, store artifacts.Store, log *slog.Logger, now func
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Recordings{dir: dir, store: store, archive: archive, log: log, w: map[string]*recording.Writer{}, subs: map[string]map[*Viewer]struct{}{},
-		archiving: map[string]chan struct{}{}, now: now, ctx: ctx, cancel: cancel}
+		resync: map[string]uint64{}, unsynced: map[string]*recording.Writer{}, archiving: map[string]chan struct{}{}, now: now, ctx: ctx, cancel: cancel}
 }
 
 // Dir returns a run's spool folder.
@@ -110,6 +117,13 @@ func (r *Recordings) writer(runID string) (*recording.Writer, error) {
 	r.waitArchiveLocked(runID)
 	if w := r.w[runID]; w != nil {
 		return w, nil
+	}
+	if f := r.unsynced[runID]; f != nil {
+		// What a failure wrote after the last sync must be gone before the recording is read back as stored.
+		if err := f.DropUnsynced(); err != nil {
+			return nil, err
+		}
+		delete(r.unsynced, runID)
 	}
 	dir, err := r.Dir(runID)
 	if err != nil {
@@ -149,25 +163,47 @@ func (r *Recordings) archivedTail(ctx context.Context, runID string) (int, uint6
 	return n, recording.LastSeq(o), nil
 }
 
-// apply stores a chunk and returns the highest durably stored sequence, the only value the node may be acked. A
-// write or flush failure closes the writer and drops it, so the next chunk reopens the recording from what is on
-// disk and the node's re-ship fills the gap.
-func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
+// apply stores a chunk that arrived on node connection conn (the hub's connection number) and returns the highest
+// durably stored sequence, the only value the node may be acked (recording.Writer.Stored). Any error means central did
+// not store the chunk: the hub then closes the connection, so the node re-ships everything above its acknowledgement
+// on the next one (SM-REC-003, ADR-0010 addendum). A write or flush failure also closes the writer and drops it, so
+// the next chunk reopens the recording from what is durably on disk, and until the node re-ships, a chunk on the same
+// connection that starts past Stored()+1 (records sent behind the failed ones) is not stored: it is acked Stored().
+func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	w, err := r.writer(c.RunID)
 	if err != nil {
 		return 0, err
 	}
-	closed := false
+	recs := make([]recording.Record, 0, len(c.Records))
 	for _, raw := range c.Records {
 		var rec recording.Record
 		if json.Unmarshal(raw, &rec) != nil || rec.Seq == 0 {
 			continue
 		}
+		recs = append(recs, rec)
+	}
+	if failedOn, ok := r.resync[c.RunID]; ok {
+		stored := w.Stored()
+		switch first := firstAbove(recs, stored); {
+		case failedOn != conn:
+			// A new connection: the node's catch-up re-ships from its acknowledgement first, so a jump here is one
+			// the node made itself (records it never had), which a recording keeps as a gap.
+			delete(r.resync, c.RunID)
+		case first == 0:
+			// Only repeats: nothing to store.
+		case first > stored+1:
+			return stored, nil
+		default:
+			delete(r.resync, c.RunID)
+		}
+	}
+	closed := false
+	for _, rec := range recs {
 		stored, err := w.Append(rec)
 		if err != nil {
-			return r.dropFailedLocked(c.RunID, w), err
+			return r.dropFailedLocked(conn, c.RunID, w), err
 		}
 		if !stored {
 			continue
@@ -184,7 +220,7 @@ func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 		}
 	}
 	if err := w.Flush(); err != nil {
-		return r.dropFailedLocked(c.RunID, w), err
+		return r.dropFailedLocked(conn, c.RunID, w), err
 	}
 	seq := w.Stored()
 	if closed {
@@ -195,11 +231,27 @@ func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 	return seq, nil
 }
 
-// dropFailedLocked closes a writer that failed and forgets it, returning what it had durably stored.
-func (r *Recordings) dropFailedLocked(runID string, w *recording.Writer) uint64 {
+// firstAbove returns the sequence of the first record above seq (0 when there is none).
+func firstAbove(recs []recording.Record, seq uint64) uint64 {
+	for _, r := range recs {
+		if r.Seq > seq {
+			return r.Seq
+		}
+	}
+	return 0
+}
+
+// dropFailedLocked closes a writer that failed on connection conn and forgets it, returning what it had durably
+// stored. The run is marked for a resync on that connection; a writer whose unsynced tail is still on disk is kept
+// until it can be cut off.
+func (r *Recordings) dropFailedLocked(conn uint64, runID string, w *recording.Writer) uint64 {
 	_ = w.Close()
 	if r.w[runID] == w {
 		delete(r.w, runID)
+	}
+	r.resync[runID] = conn
+	if w.DropUnsynced() != nil {
+		r.unsynced[runID] = w
 	}
 	return w.Stored()
 }
