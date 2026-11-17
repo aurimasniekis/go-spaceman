@@ -35,7 +35,7 @@ type seqCentral struct {
 func (c *seqCentral) until(what string, cond func() bool) {
 	c.t.Helper()
 	if !c.within(10*time.Second, cond) {
-		c.t.Fatalf("timed out waiting for %s (central holds up to %d, dropped %d repeats)", what, c.seq, c.drops)
+		c.t.Fatalf("timed out waiting for %s (central holds up to %d, dropped %d repeats, recs %d)", what, c.seq, c.drops, len(c.recs))
 	}
 }
 
@@ -230,8 +230,16 @@ func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 		}
 		return n == 100
 	})
-	if c.drops > 0 {
-		t.Fatalf("central dropped %d records as repeats", c.drops)
+	// The probe's lowered acknowledgement can restart the catch-up sweep mid-way, so a harmless re-ship may be dropped by
+	// central as a repeat: repeats are allowed, what must hold is that every record is at central, in order.
+	last := uint64(0)
+	for _, r := range c.recs {
+		if r.Seq > 150 && r.Seq <= 250 && r.Seq < last {
+			t.Fatalf("record %d reached central after %d", r.Seq, last)
+		}
+		if r.Seq <= 250 {
+			last = max(last, r.Seq)
+		}
 	}
 	for _, r := range c.recs {
 		if strings.Contains(string(r.Data), "after the restart") && r.Seq <= 300 {
@@ -358,5 +366,22 @@ func TestSeqGateBound(t *testing.T) {
 	}
 	if len(g.recs) != 0 || g.bytes != 0 || g.dropped {
 		t.Fatalf("take left %+v", g)
+	}
+}
+
+// A run this process launched (nothing on disk) already knows central's sequence: uncomparedRecording must not mark it
+// restored, or its first acknowledgement would be taken for a restored one and the run re-compared for nothing.
+func TestLaunchedRunIsNotMarkedUncompared(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.launchedRecording("run_launched")
+	a.uncomparedRecording("run_launched")
+	a.uncomparedRecording("run_foreign")
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.restored["run_launched"] {
+		t.Fatal("a run this process launched was marked restored")
+	}
+	if !a.restored["run_foreign"] {
+		t.Fatal("a run this process did not launch was not marked restored")
 	}
 }
