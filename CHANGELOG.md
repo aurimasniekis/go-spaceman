@@ -118,7 +118,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a rename line, only for sessions older than the rename.
 - **Role rename follow-ups:** a closed rename keeps its move command queued and orders later renames of either name
   behind it; launches wait for a pending rename; a rename onto a name clears the orphan marker; a relocation with an
-  unavailable source closes the space's open renames.
+  unavailable source closes the space's open renames, and a node that prepares a relocated space drops its stale role
+  renames (the rename delete is taken under the rename lock, closed rows included).
 - **Roles with no profile or a broken profile** are listed by `spaceman_roles_list` instead of dropped, and a role's
   description stays out of run manifests.
 - **Starter roles are shared** (documentation): editing a starter template changes it for every space; a space role
