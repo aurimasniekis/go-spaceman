@@ -128,7 +128,7 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 	if fi, err := os.Lstat(gitDir); err != nil || !fi.IsDir() {
 		return "", ffNoCheckout
 	}
-	list, err := g.Run(ctx, inst, nil, "config", "--list", "--name-only", "--show-scope")
+	list, err := g.Run(ctx, inst, nil, memory.ConfigListArgs...)
 	if err != nil || memory.UnsafeConfig(list, true) != nil || g.CheckoutIdentity(ctx, inst) != nil || g.Gitlinks(ctx, inst) != nil {
 		return "", ffUnsafeConfig
 	}
@@ -345,7 +345,10 @@ func (m *memManager) fastForwardIdle(ctx context.Context, spaceID, role, except 
 	out := map[string]string{}
 	defer m.lock(colKey(spaceID, role))()
 	for _, instance := range insts {
-		out[instance] = m.fastForwardIdleOne(ctx, spaceID, role, instance)
+		// Each instance has its own deadline: one whose git hangs must not use up the others' time.
+		ictx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+		out[instance] = m.fastForwardIdleOne(ictx, spaceID, role, instance)
+		cancel()
 	}
 	return out
 }

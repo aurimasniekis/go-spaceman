@@ -43,13 +43,27 @@ var safeOpts = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=
 	"-c", "advice.detachedHead=false", "-c", "merge.conflictStyle=merge",
 	"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false",
 	"-c", "submodule.recurse=false", "-c", "diff.ignoreSubmodules=all", "-c", "status.submoduleSummary=false",
-	"-c", "fetch.recurseSubmodules=false", "-c", "push.recurseSubmodules=no"}
+	"-c", "fetch.recurseSubmodules=false", "-c", "push.recurseSubmodules=no",
+	// The node's own ignore and attributes files are not read: a FIFO or a program-bearing path named there would
+	// apply to every checkout (the repository's own .gitignore, .gitattributes and info/ files are checked by the walks).
+	"-c", "core.excludesFile=/dev/null", "-c", "core.attributesFile=/dev/null"}
 
 // The submodule options above keep git from stepping into a nested repository of a checkout: git runs a child git in
 // a populated submodule (status, and the diff behind add and commit), with that repository's own configuration,
 // which UnsafeConfig never saw, so its filter drivers would run as the daemon, and its git dir may be another
 // repository whose index the child would refresh. `add` ignores diff.ignoreSubmodules, so gitlinks are also refused
 // outright before any command that reads the work tree (Gitlinks).
+
+// KillDelay is how long a git that was sent SIGTERM (its context ended) gets to exit before SIGKILL; it also bounds
+// how long a grandchild holding the output pipes can block Wait. A variable so tests can shorten it.
+var KillDelay = 5 * time.Second
+
+// TermFirst makes a command that outlives its context stop with SIGTERM first and SIGKILL after KillDelay. git removes
+// its lock files (index.lock) on SIGTERM; SIGKILL leaves them behind and the next git in the checkout fails.
+func TermFirst(cmd *exec.Cmd) {
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = KillDelay
+}
 
 // Run executes git in dir and returns stdout.
 func (g *Git) Run(ctx context.Context, dir string, id *Identity, args ...string) (string, error) {
@@ -68,10 +82,15 @@ func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []by
 			if err := checkoutFiles(dir); err != nil {
 				return "", err
 			}
+			if !treeless[args[0]] {
+				if err := workTreeFiles(dir); err != nil {
+					return "", err
+				}
+			}
 		}
 		gctx, cancel := context.WithTimeout(ctx, GuardTimeout)
 		defer cancel()
-		list, err := g.run(gctx, dir, nil, nil, "config", "--list", "--name-only", "--show-scope")
+		list, err := g.run(gctx, dir, nil, nil, ConfigListArgs...)
 		if err != nil {
 			return "", err
 		}
@@ -126,6 +145,31 @@ func checkoutFiles(dir string) error {
 		return errors.New("checkout refused: .git is not a plain directory (symlink or gitdir file)")
 	}
 	return ownGitDir(dotGit)
+}
+
+// workTreeFiles refuses a FIFO or a device anywhere in the work tree (.git excluded): git opens every file it adds
+// and reads every .gitignore and .gitattributes, and a FIFO there blocks it for ever while it holds index.lock. The
+// type comes with the directory listing, so the walk costs no stat per file. Memory checkouts are small.
+func workTreeFiles(dir string) error {
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type()&(fs.ModeNamedPipe|fs.ModeDevice|fs.ModeCharDevice) != 0 {
+			rel, _ := filepath.Rel(dir, path)
+			return fmt.Errorf("checkout refused: %s is a FIFO or a device file, which would block git", filepath.ToSlash(rel))
+		}
+		return nil
+	})
 }
 
 // checkoutGit asks git where it thinks the git dir, common dir and work tree are.
@@ -204,7 +248,7 @@ func ownGitDir(dotGit string) error {
 			if inObjects(slash) && reFanout.MatchString(d.Name()) {
 				return filepath.SkipDir
 			}
-			if slash == "hooks" || slash == "lfs/objects" {
+			if skipGitDir(slash) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -228,6 +272,15 @@ func ownGitDir(dotGit string) error {
 		}
 		return nil
 	})
+}
+
+// skipGitDir names the folders the walk does not enter: hooks and the LFS object store, of the checkout and of each
+// submodule's git dir (modules/<name>/…).
+func skipGitDir(rel string) bool {
+	if strings.HasPrefix(rel, "modules/") {
+		return strings.HasSuffix(rel, "/hooks") || strings.HasSuffix(rel, "/lfs/objects")
+	}
+	return rel == "hooks" || rel == "lfs/objects"
 }
 
 // inObjects reports whether a path relative to .git is inside an object store: the checkout's own, or one of a
@@ -273,7 +326,7 @@ func (g *Git) run(ctx context.Context, dir string, id *Identity, stdin []byte, a
 	cmd := exec.CommandContext(ctx, g.Bin, append(append([]string{}, safeOpts...), args...)...) //nolint:gosec // fixed git subcommands; arguments are validated by callers
 	cmd.Dir = dir
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_NO_REPLACE_OBJECTS=1"}
+		"GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1"}
 	// git looks for a repository in dir and never above it: a checkout whose .git is missing must not make git find
 	// a repository in a parent folder and work there.
 	if abs, err := filepath.Abs(dir); err == nil {
@@ -283,8 +336,8 @@ func (g *Git) run(ctx context.Context, dir string, id *Identity, stdin []byte, a
 		env = append(env, "GIT_AUTHOR_NAME="+id.Name, "GIT_AUTHOR_EMAIL="+id.Email, "GIT_COMMITTER_NAME="+id.Name, "GIT_COMMITTER_EMAIL="+id.Email)
 	}
 	cmd.Env = env
-	// A grandchild holding the pipes open must not block Wait after the kill.
-	cmd.WaitDelay = 5 * time.Second
+	// SIGTERM first so git removes its lock files; a grandchild holding the pipes open must not block Wait.
+	TermFirst(cmd)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

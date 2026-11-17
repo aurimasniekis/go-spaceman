@@ -27,12 +27,18 @@ import (
 
 const (
 	checkpointDebounce = 15 * time.Second
-	// checkpointDeadline bounds a checkpoint and the fast-forward after it: the checkpoint holds the collection lock,
-	// so a git that never returns (a FIFO in a checkout) would stall every instance of the collection.
-	checkpointDeadline = 2 * time.Minute
 	syncDelay          = 5 * time.Second // bounded: a published change is offered to central within this delay
 	maxSyncBackoff     = 10 * time.Minute
 	memoryRole         = "SpaceMan memory"
+)
+
+// The deadlines below bound work done under the collection lock: a git that never returns (a FIFO in a checkout)
+// would stall every instance of the collection. Variables so tests can shorten them.
+var (
+	// checkpointDeadline bounds a checkpoint, and each instance's fast-forward after it.
+	checkpointDeadline = 2 * time.Minute
+	// prepareDeadline bounds prepare (a run's launch) once it holds the collection lock.
+	prepareDeadline = 2 * time.Minute
 )
 
 type memManager struct {
@@ -105,6 +111,8 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		return "", errors.New("invalid memory collection")
 	}
 	defer m.lock(colKey(spaceID, role))()
+	ctx, cancel := context.WithTimeout(ctx, prepareDeadline)
+	defer cancel()
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if err := m.git.InitBare(ctx, shared); err != nil {
 		return "", err
@@ -216,9 +224,7 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	_ = m.a.j.putMemory(ctx, st)
 	if published {
 		m.scheduleSync(spaceID, role, syncDelay)
-		fctx, fcancel := context.WithTimeout(ctx, checkpointDeadline)
-		m.fastForwardIdle(fctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
-		fcancel()
+		m.fastForwardIdle(ctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
 	}
 	m.sendStatus(ctx)
 	return err

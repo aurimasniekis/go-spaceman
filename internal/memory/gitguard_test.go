@@ -12,36 +12,104 @@ import (
 	"time"
 )
 
+// cfg is one entry of `git config --list --show-scope -z`: the scope and a NUL, then the name, a newline and the value,
+// and a NUL. A valueless entry has no newline.
+func cfg(scope, name string, value ...string) string {
+	if len(value) > 0 {
+		return scope + "\x00" + name + "\n" + value[0] + "\x00"
+	}
+	return scope + "\x00" + name + "\x00"
+}
+
 // Security review SR-M04: repository configuration that makes git run a program or reach an unchosen transport is
 // refused; the node's own (global, system) and SpaceMan's command-line configuration are not.
 func TestUnsafeConfig(t *testing.T) {
 	for _, bad := range []string{"filter.lfs.clean", "filter.X.Smudge", "filter.x.process", "merge.ours.driver", "diff.pdf.textconv",
 		"diff.x.command", "diff.external", "core.sshCommand", "core.gitProxy", "core.pager", "include.path", "includeIf.gitdir:/x.path",
 		"credential.helper", "credential.https://example.test.helper", "protocol.ext.allow", "protocol.allow", "url.ext::sh.insteadOf",
-		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "sequence.editor", "core.editor", "core.worktree", "core.WorkTree", "gc.recentObjectsHook", "hook.x.command", "hook.x.event", "Hook.pre.Command", "pager.log", "trailer.x.cmd", "interactive.diffFilter"} {
-		if err := UnsafeConfig("local\t"+bad+"\n", true); err == nil {
+		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "gpg.ssh.defaultKeyCommand", "sequence.editor", "core.editor", "core.worktree", "core.WorkTree", "gc.recentObjectsHook", "hook.x.command", "hook.x.event", "Hook.pre.Command", "trailer.x.cmd", "interactive.diffFilter",
+		"difftool.x.cmd", "difftool.x.path", "mergetool.x.cmd", "mergetool.x.path", "browser.x.cmd", "browser.x.path", "man.x.cmd", "man.x.path", "web.browser"} {
+		if err := UnsafeConfig(cfg("local", bad, "x"), true); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
-		if err := UnsafeConfig("worktree\t"+bad, true); err == nil {
+		if err := UnsafeConfig(cfg("worktree", bad), true); err == nil {
 			t.Errorf("worktree %s accepted", bad)
 		}
-		if err := UnsafeConfig("global\t"+bad+"\nsystem\t"+bad+"\ncommand\t"+bad, true); err != nil {
+		if err := UnsafeConfig(cfg("global", bad, "x")+cfg("system", bad, "x")+cfg("command", bad, "x"), true); err != nil {
 			t.Errorf("%s outside the repository refused: %v", bad, err)
 		}
 	}
 	for _, ok := range []string{"core.bare", "remote.origin.url", "remote.origin.fetch", "branch.main.remote", "user.name", "core.hookspath",
 		"filter.lfs.required", "merge.conflictstyle", "diff.renames"} {
-		if err := UnsafeConfig("local\t"+ok, true); err != nil {
+		if err := UnsafeConfig(cfg("local", ok, "x"), true); err != nil {
 			t.Errorf("%s refused: %v", ok, err)
 		}
 	}
-	if err := UnsafeConfig("filter.x.clean\n", false); err == nil {
+	if err := UnsafeConfig("filter.x.clean\x00", false); err == nil {
 		t.Error("unscoped list not checked")
 	}
 	for sub, want := range map[string]bool{"init": false, "clone": false, "config": false, "add": true, "merge-tree": true, "worktree": true} {
 		if Guarded(sub) != want {
 			t.Errorf("Guarded(%s) = %v", sub, !want)
 		}
+	}
+}
+
+// submodule.<n>.update and pager.<cmd> are judged by value: `git submodule init` writes the first with a plain mode,
+// and the second is a boolean unless it names a program.
+func TestUnsafeConfigByValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		bad         bool
+	}{
+		{"submodule.x.update", "rebase", false}, {"submodule.x.update", "merge", false}, {"submodule.x.update", "checkout", false},
+		{"submodule.x.update", "none", false}, {"submodule.x.update", "", false},
+		{"submodule.x.update", "!touch /tmp/x", true}, {"submodule.x.update", "  !touch /tmp/x", true}, {"submodule.a/b.update", "!x", true},
+		{"pager.log", "true", false}, {"pager.log", "false", false}, {"pager.log", "yes", false}, {"pager.log", "OFF", false},
+		{"pager.log", "0", false}, {"pager.log", "1", false}, {"pager.log", "", false},
+		{"pager.log", "less -R", true}, {"pager.log", "touch /tmp/x", true}, {"pager.diff", "!x", true}, {"pager.log", "truee", true},
+	} {
+		for _, scope := range []string{"local", "worktree"} {
+			if err := UnsafeConfig(cfg(scope, tc.name, tc.value), true); (err != nil) != tc.bad {
+				t.Errorf("%s %s = %q: refused=%v, want %v (%v)", scope, tc.name, tc.value, err != nil, tc.bad, err)
+			}
+		}
+		if err := UnsafeConfig(cfg("global", tc.name, tc.value), true); err != nil {
+			t.Errorf("global %s = %q refused: %v", tc.name, tc.value, err)
+		}
+	}
+	// A valueless key is a boolean true.
+	for _, name := range []string{"pager.log", "submodule.x.update"} {
+		if err := UnsafeConfig(cfg("local", name), true); err != nil {
+			t.Errorf("valueless %s refused: %v", name, err)
+		}
+	}
+}
+
+// What `git submodule init` writes works in a checkout, and a command value still does not.
+func TestRunAllowsSubmoduleInitConfig(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := t.Context()
+	dir := t.TempDir()
+	if _, err := g.Run(ctx, dir, nil, "init", "--quiet", "."); err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range [][2]string{{"submodule.x.update", "rebase"}, {"submodule.x.url", "https://example.test/x.git"}, {"submodule.x.active", "true"}, {"pager.log", "false"}} {
+		if _, err := g.Run(ctx, dir, nil, "config", kv[0], kv[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := g.Run(ctx, dir, nil, "status", "--porcelain"); err != nil {
+		t.Fatalf("legitimate configuration refused: %v", err)
+	}
+	if _, err := g.Run(ctx, dir, nil, "config", "submodule.x.update", "!touch "+dir+"/ran"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Run(ctx, dir, nil, "status", "--porcelain"); err == nil {
+		t.Fatal("a command-valued submodule.x.update was accepted")
 	}
 }
 
