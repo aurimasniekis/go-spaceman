@@ -85,8 +85,9 @@ func TestRoleRenameCloseLiftsHoldsAndTellsNode(t *testing.T) {
 	}
 	// A late ok (the node moved after all) is answered closed and changes nothing; so does a repeated error.
 	n.send(t, proto.TypeMemoryRenamed, proto.MemoryRenamed{RenameID: rn.ID, SpaceID: e.spaceID, Result: proto.MemoryRenameOK})
-	if err := n.next(t, proto.TypeMemoryRenamedAck).Decode(&ack); err != nil || ack.Error != proto.MemoryRenameClosed || ack.Result != proto.MemoryRenameOK {
-		t.Fatalf("late ok answered %+v %v", ack, err)
+	var late proto.MemoryRenamedAck // a fresh value: omitted fields would keep the earlier ack's
+	if err := n.next(t, proto.TypeMemoryRenamedAck).Decode(&late); err != nil || late.Error != proto.MemoryRenameClosed || late.Result != proto.MemoryRenameOK {
+		t.Fatalf("late ok answered %+v %v", late, err)
 	}
 	if s := e.state(rn.ID); s.NodeState != catalog.RenameNodeAbandoned || s.NodeDoneAt == nil || !strings.Contains(s.NodeMessage, "node retired") {
 		t.Fatalf("after the late ok: %+v", s)
