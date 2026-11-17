@@ -484,9 +484,11 @@ func (m *memManager) statusOf(ctx context.Context, spaceID, role string) proto.M
 	for _, i := range insts {
 		c.Instances++
 		inst := filepath.Join(m.root, spaceID, role, "instances", i.Name())
-		if out, err := m.git.RunCheckout(ctx, inst, nil, "status", "--porcelain"); err == nil {
-			c.Uncheckpointed += len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
+		out, err := m.git.RunCheckout(ctx, inst, nil, "status", "--porcelain")
+		if err != nil {
+			continue // not a checkout of its own: nothing is counted, and no git runs there
 		}
+		c.Uncheckpointed += len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
 		// Commits an instance has not published (it diverged and is waiting for its next checkpoint).
 		if head != "" {
 			c.LocalCommits += m.git.Count(ctx, inst, head, "HEAD")

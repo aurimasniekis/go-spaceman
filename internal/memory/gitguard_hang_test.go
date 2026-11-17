@@ -295,3 +295,11 @@ func TestRunCheckoutRequiresDotGit(t *testing.T) {
 		t.Fatalf("a real checkout refused: %v", err)
 	}
 }
+
+// config and version are not Guarded, but a checkout still needs its .git for them.
+func TestRunCheckoutRequiresDotGitForConfig(t *testing.T) {
+	g, _ := newCheckout(t)
+	if _, err := g.RunCheckout(context.Background(), t.TempDir(), nil, "config", "--list"); err == nil {
+		t.Fatal("config accepted a folder without .git")
+	}
+}

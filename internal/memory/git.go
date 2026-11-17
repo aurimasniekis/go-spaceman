@@ -85,6 +85,12 @@ func (g *Git) RunCheckout(ctx context.Context, dir string, id *Identity, args ..
 }
 
 func (g *Git) runInput(ctx context.Context, dir string, id *Identity, stdin []byte, checkout bool, args ...string) (string, error) {
+	if checkout && len(args) > 0 && args[0] != "init" && args[0] != "clone" {
+		// Required for every command (config and version are not Guarded) but init and clone.
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err != nil {
+			return "", fmt.Errorf("checkout refused: %w", err)
+		}
+	}
 	if len(args) > 0 && Guarded(args[0]) {
 		// The files come first: git reads .git/config (and anything it includes) for any command, and a FIFO there
 		// would block it, so nothing runs before the walk has refused links and special files.
