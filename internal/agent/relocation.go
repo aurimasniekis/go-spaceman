@@ -277,7 +277,7 @@ func (a *Agent) spaceMemory(ctx context.Context, spaceID string) []proto.MemoryC
 	if a.mem.git == nil {
 		return out
 	}
-	for _, k := range a.mem.collections() {
+	for _, k := range a.mem.collections(ctx) {
 		if k[0] == spaceID {
 			out = append(out, a.mem.statusOf(ctx, k[0], k[1]))
 		}
@@ -828,7 +828,13 @@ func (j *Journal) workdir(ctx context.Context, spaceID string) string {
 
 func (j *Journal) forgetSpaceMemory(ctx context.Context, spaceID string) error {
 	return j.s.W().TxNamed(ctx, "journal.forget_memory", func(tx *store.Tx) error {
-		_, err := tx.SQL.ExecContext(ctx, `DELETE FROM memory_sync WHERE space_id = ?`, spaceID)
+		if _, err := tx.SQL.ExecContext(ctx, `DELETE FROM memory_sync WHERE space_id = ?`, spaceID); err != nil {
+			return err
+		}
+		// A rename of the space still open here (central closed it when it relocated the space from its own copy, source
+		// unavailable) is moot once the node released the space's memory; left behind it would hold the names against a
+		// later return of the space and report a move of a folder that is no longer this node's.
+		_, err := tx.SQL.ExecContext(ctx, `DELETE FROM role_renames WHERE space_id = ?`, spaceID)
 		return err
 	})
 }

@@ -76,3 +76,123 @@ func TestSkills(t *testing.T) {
 		t.Fatal("skills missing from the manifest")
 	}
 }
+
+// SM-MCP-010 (ADR-0095): a skill's name and description change in place under its version (If-Match). No skill version is
+// created, the files stay as they are, and the audit row names the fields and never their text.
+func TestUpdateSkillMeta(t *testing.T) {
+	f := newFx(t)
+	sk, err := f.svc.CreateSkill(f.ctx, op, "review", "Review", "old text", map[string]string{"SKILL.md": reviewMD})
+	must(t, err)
+	sk, err = f.svc.PublishSkill(f.ctx, op, sk.ID, sk.Versions[0].Version)
+	must(t, err)
+	_, err = f.svc.SaveSkillDraft(f.ctx, op, sk.ID, 0, map[string]string{"SKILL.md": reviewMD + "\nMore.\n"}, "draft")
+	must(t, err)
+	sk, _ = f.svc.GetSkill(f.ctx, sk.ID)
+	if sk.Version != 1 {
+		t.Fatalf("a new skill is version %d, want 1", sk.Version)
+	}
+	countVersions := func() (n int, maxVer int64) {
+		must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*), coalesce(max(version),0) FROM skill_versions WHERE skill_id = ?`, sk.ID).Scan(&n, &maxVer))
+		return
+	}
+	nBefore, vBefore := countVersions()
+	filesBefore := sk.Versions[0].Files["SKILL.md"]
+
+	name, desc := "Review v2", "Reviews pull requests."
+	got, err := f.svc.UpdateSkillMeta(f.ctx, op, "review", sk.Version, &name, &desc) // by slug
+	must(t, err)
+	if got.Name != name || got.Description != desc || got.Slug != "review" || got.Version != sk.Version+1 || got.Latest != 1 {
+		t.Fatalf("updated %+v", got)
+	}
+	if n, v := countVersions(); n != nBefore || v != vBefore {
+		t.Fatalf("skill_versions changed: %d/%d -> %d/%d", nBefore, vBefore, n, v)
+	}
+	if got.Versions[0].Files["SKILL.md"] != filesBefore || len(got.Versions) != len(sk.Versions) {
+		t.Fatalf("files or versions changed: %+v", got.Versions)
+	}
+
+	// A field left out keeps its value; by ID.
+	d2 := "Only the description."
+	got, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, nil, &d2)
+	must(t, err)
+	if got.Name != name || got.Description != d2 || got.Version != sk.Version+2 {
+		t.Fatalf("partial %+v", got)
+	}
+
+	// A name only: the description keeps its value (a nil description is not an empty one).
+	n3 := "Review v3"
+	got, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, &n3, nil)
+	must(t, err)
+	if got.Name != n3 || got.Description != d2 || got.Version != sk.Version+3 {
+		t.Fatalf("name only %+v", got)
+	}
+
+	// Clearing the description is allowed.
+	empty := ""
+	got, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, nil, &empty)
+	must(t, err)
+	if got.Description != "" {
+		t.Fatalf("cleared description %q", got.Description)
+	}
+
+	// A stale version is refused and changes nothing, also when the values match (nothing to write).
+	other := "Stale"
+	_, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, sk.Version, &other, nil)
+	code(t, err, apperr.CodePrecondition)
+	_, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, sk.Version, &n3, nil)
+	code(t, err, apperr.CodePrecondition)
+	if cur, _ := f.svc.GetSkill(f.ctx, sk.ID); cur.Name != n3 {
+		t.Fatalf("stale update applied: %+v", cur)
+	}
+	// Unknown skill.
+	_, err = f.svc.UpdateSkillMeta(f.ctx, op, "nope", 1, &other, nil)
+	code(t, err, apperr.CodeNotFound)
+
+	// Validation counts runes, not bytes (create does too): 120 multi-byte characters are fine, 121 are not.
+	empty2, long, longDesc := "  ", strings.Repeat("x", 121), strings.Repeat("d", 2001)
+	for _, bad := range [][2]*string{{&empty2, nil}, {&long, nil}, {nil, &longDesc}} {
+		_, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, bad[0], bad[1])
+		code(t, err, apperr.CodeInvalid)
+	}
+	ok120 := strings.Repeat("ž", 120)
+	if got, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, &ok120, nil); err != nil || got.Name != ok120 {
+		t.Fatalf("120 runes refused: %v", err)
+	}
+
+	// Audit: field names only, never their text.
+	var details string
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT details_json FROM audit_events WHERE action = 'skill.updated' ORDER BY seq ASC LIMIT 1`).Scan(&details))
+	if !strings.Contains(details, `"name"`) || !strings.Contains(details, `"description"`) || strings.Contains(details, "Review v2") || strings.Contains(details, "Reviews pull") {
+		t.Fatalf("audit details %s", details)
+	}
+	var n int
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM audit_events WHERE action = 'skill.updated'`).Scan(&n))
+	if n != 5 {
+		t.Fatalf("%d skill.updated rows, want 5", n)
+	}
+}
+
+// create counts runes too, like update, and reports a long description under description, not name.
+func TestCreateSkillRuneLimits(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	files := func(slug string) map[string]string { // SKILL.md's name must be the slug
+		return map[string]string{"SKILL.md": strings.Replace(reviewMD, "name: review", "name: "+slug, 1)}
+	}
+	if _, err := f.svc.CreateSkill(f.ctx, op, "rune-ok", strings.Repeat("ž", 120), "", files("rune-ok")); err != nil {
+		t.Fatalf("120 multi-byte runes refused: %v", err)
+	}
+	_, err := f.svc.CreateSkill(f.ctx, op, "rune-long", strings.Repeat("ž", 121), "", files("rune-long"))
+	code(t, err, apperr.CodeInvalid)
+	if !strings.HasPrefix(err.Error(), "name:") {
+		t.Fatalf("121 runes: %v, want a name error", err)
+	}
+	_, err = f.svc.CreateSkill(f.ctx, op, "desc-long", "Review", strings.Repeat("d", 2001), files("desc-long"))
+	code(t, err, apperr.CodeInvalid)
+	if !strings.HasPrefix(err.Error(), "description:") {
+		t.Fatalf("2001-character description: %v, want a description error", err)
+	}
+	if _, err := f.svc.CreateSkill(f.ctx, op, "desc-ok", "Review", strings.Repeat("ž", 2000), files("desc-ok")); err != nil {
+		t.Fatalf("2000 multi-byte runes of description refused: %v", err)
+	}
+}

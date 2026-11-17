@@ -28,11 +28,22 @@ func dialRawNode(t *testing.T, e *fleetEnv, maxMinor int) *rawNode {
 // dialRawNodeHello is dialRawNode with the given hello.
 func dialRawNodeHello(t *testing.T, e *fleetEnv, hello proto.Hello) *rawNode {
 	t.Helper()
+	return dialRawNodeAs(t, e, e.cred, hello)
+}
+
+// dialRawNodeCred dials as the node holding cred (another node than the environment's enrolled one).
+func dialRawNodeCred(t *testing.T, e *fleetEnv, cred string, maxMinor int) *rawNode {
+	t.Helper()
+	return dialRawNodeAs(t, e, cred, proto.Hello{AgentVersion: "test", MinMinor: proto.MinMinor, MaxMinor: maxMinor, Runs: []proto.RunReport{}, Leases: []proto.LeaseState{}})
+}
+
+func dialRawNodeAs(t *testing.T, e *fleetEnv, cred string, hello proto.Hello) *rawNode {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	u := "ws" + strings.TrimPrefix(e.srv.URL, "http") + proto.ConnectPath
 	conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol},
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + e.cred}}})
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + cred}}})
 	if err != nil {
 		t.Fatal(err)
 	}

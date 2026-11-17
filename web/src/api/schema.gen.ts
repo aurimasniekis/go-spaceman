@@ -1894,7 +1894,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change a skill's name or description
+         * @description Changes the skill in place and creates no version: its files stay as they are. A field left out keeps its value; the slug never changes. If-Match is the skill's version.
+         */
+        patch: operations["update-skill"];
         trace?: never;
     };
     "/skills/{skill_id}/draft": {
@@ -3380,6 +3384,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/role-renames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's role renames, newest first
+         * @description Each rename with the state of the node's memory move (pending, failed, done or not_needed). A former role name can be followed to the role that carries it now.
+         */
+        get: operations["list-space-role-renames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/role-renames/{rename_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give up a stuck role rename's memory move on the node (admins)
+         * @description For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and is never deleted or synced again. Until the node has journaled the rename, it still blocks other renames of both names (a later rename must not reach the node first); `forget_node` cancels the undelivered command and releases them, for a node that is not coming back. Not an open rename is 409 rename_not_open (with `forget_node`, a closed rename the node has not journaled is accepted). Needs the admin-only role_rename:admin permission.
+         */
+        post: operations["close-space-role-rename"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/role-renames/{rename_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a stuck role rename's memory move to the node again (admins)
+         * @description For a rename whose node move is pending or failed: queues a new memory.rename for the space's node (unless one is still waiting for it) and makes a failed rename pending. The node tries again and reports; the rename's holds lift when it reports the move done. Not an open rename (done, not_needed or abandoned) is 409 rename_not_open. `node_too_old` is true when the node last spoke a protocol below 1.14: the command waits until it connects at 1.14 or more. Needs the admin-only role_rename:admin permission.
+         */
+        post: operations["retry-space-role-rename"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/roles": {
         parameters: {
             query?: never;
@@ -3430,6 +3494,26 @@ export interface paths {
         get: operations["preview-space-role"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/roles/{name}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a role in place
+         * @description Renames the role and every live reference to it in the space (MCP grants, knowledge-base and dream configuration, schedules, the human policy successor, human type permissions, the role's account pool, its memory, open tasks, unacknowledged messages, open knowledge-base requests and pending human notifications). Records of what happened (runs, usage, approvals, audit) keep the name they were written with. A role with live work is refused with 409 role_busy, listing what to stop or finish first; a target name already used by a role or a memory collection is 409 name_taken. An invalid or unchanged name is 422 validation_failed. `If-Match` is optional: with it, the role's revision must match (409 precondition_failed otherwise). A space whose node last spoke a node protocol below 1.14 (or never connected) is 409 node_too_old. `rename.node_state` is pending while the space's node has not yet moved the role's memory, and failed when it reported that it could not; launches of the role are held until it is done.
+         */
+        post: operations["rename-space-role"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5911,6 +5995,17 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        CatalogRenameRetried: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogRenameRetried.json
+             */
+            readonly $schema?: string;
+            node_too_old: boolean;
+            queued: boolean;
+            rename: components["schemas"]["CatalogRoleRename"];
+        };
         CatalogResolvedSkill: {
             /** Format: int64 */
             number: number;
@@ -5919,6 +6014,29 @@ export interface components {
             sha256: string;
             slug: string;
             version_id: string;
+        };
+        CatalogRoleRename: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogRoleRename.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            central_moved_at?: string;
+            from: string;
+            id: string;
+            /** Format: date-time */
+            node_done_at?: string;
+            node_id?: string;
+            node_message?: string;
+            /** @enum {string} */
+            node_state: "pending" | "failed" | "done" | "not_needed" | "abandoned";
+            /** Format: date-time */
+            renamed_at: string;
+            renamed_by: string;
+            space_id: string;
+            to: string;
         };
         CatalogRoleTemplate: {
             /**
@@ -5968,6 +6086,11 @@ export interface components {
             source: "custom" | "builtin";
             /** @description Where a built-in skill comes from */
             source_ref?: string;
+            /**
+             * Format: int64
+             * @description The skill's own version (If-Match for update-skill); it moves only when the name or description changes
+             */
+            version: number;
             versions?: components["schemas"]["CatalogSkillVersion"][];
         };
         CatalogSkillRef: {
@@ -6046,6 +6169,18 @@ export interface components {
              * @enum {string}
              */
             kind?: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "unknown";
+        };
+        CloseSpaceRoleRenameInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CloseSpaceRoleRenameInput.json
+             */
+            readonly $schema?: string;
+            /** @description Also stop waiting for the node to journal the rename: its undelivered commands are cancelled and both names are released for other renames. If the node comes back it is told the rename is closed and keeps its old-name folder as an orphan (set aside, never moved, synced or inherited). Accepted on an open rename and on a closed one the node has not journaled yet */
+            forget_node?: boolean;
+            /** @description Why the move is given up; kept as the rename's message */
+            reason?: string;
         };
         CodeInBody: {
             /**
@@ -6842,6 +6977,11 @@ export interface components {
             account_switch_id?: string;
             /** Format: int64 */
             attempts: number;
+            /**
+             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098)
+             * @enum {string}
+             */
+            cause?: "agent_restart";
             /** Format: date-time */
             created_at: string;
             /** @enum {string} */
@@ -10730,6 +10870,46 @@ export interface components {
             readonly $schema?: string;
             reason?: string;
         };
+        RenameSpaceRoleInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RenameSpaceRoleInput.json
+             */
+            readonly $schema?: string;
+            /** @description The role's new name: a lowercase name such as implementor-hard, not used by a role or a memory collection of the space */
+            new_name: string;
+        };
+        RenamedSpaceRole: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RenamedSpaceRole.json
+             */
+            readonly $schema?: string;
+            /** @description Space-specific text appended after the role's prompt */
+            instructions?: string;
+            model?: string;
+            name: string;
+            profile_id?: string;
+            prompt_id?: string;
+            prompt_pin?: string;
+            /** @description The rename; node_state is pending until the space's node has moved the role's memory */
+            rename: components["schemas"]["CatalogRoleRename"];
+            /** Format: int64 */
+            revision: number;
+            settings: {
+                [key: string]: string;
+            };
+            /** @description Added to the template's skills; a pin here wins */
+            skills: components["schemas"]["CatalogSkillRef"][];
+            space_id: string;
+            template_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
         "Reply-messageRequest": {
             /**
              * Format: uri
@@ -11089,6 +11269,15 @@ export interface components {
             prompts: components["schemas"]["RoleOption"][];
             skills: components["schemas"]["RoleOption"][];
             templates: components["schemas"]["RoleOption"][];
+        };
+        RoleRenamesOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RoleRenamesOut.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["CatalogRoleRename"][];
         };
         "Rollback-promptRequest": {
             /**
@@ -12595,6 +12784,16 @@ export interface components {
              * Format: uri
              * @description A URL to the JSON Schema for this object.
              * @example /api/v1/schemas/Update-promptRequest.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            name?: string;
+        };
+        "Update-skillRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Update-skillRequest.json
              */
             readonly $schema?: string;
             description?: string;
@@ -17422,6 +17621,44 @@ export interface operations {
             };
         };
     };
+    "update-skill": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Update-skillRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSkill"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "save-skill-draft": {
         parameters: {
             query?: never;
@@ -20859,6 +21096,105 @@ export interface operations {
             };
         };
     };
+    "list-space-role-renames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleRenamesOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "close-space-role-rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                rename_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseSpaceRoleRenameInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRoleRename"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "retry-space-role-rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                rename_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRenameRetried"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-space-roles": {
         parameters: {
             query?: never;
@@ -21007,6 +21343,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Preview"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "rename-space-role": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (optional: without it the resource is created or overwritten) [optional] */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSpaceRoleInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RenamedSpaceRole"];
                 };
             };
             /** @description Error */

@@ -22,7 +22,7 @@ func (a *Agent) flushSpaceMemory(ctx context.Context, spaceID, reason string) in
 		return 0
 	}
 	n := 0
-	for _, k := range m.collections() {
+	for _, k := range m.collections(ctx) {
 		if k[0] != spaceID {
 			continue
 		}

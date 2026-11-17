@@ -281,7 +281,7 @@ func TestSchemasAreValidObjects(t *testing.T) {
 // header is a 428) and must require it. Keep this list in step with the handlers (api.OptionalIfMatch).
 var optionalIfMatchTools = []string{
 	"ack_message", "delete_space_repository", "generate_repository_ssh_key", "move_task", "put_space_harbor_pilot",
-	"put_xspace_peer", "remove_repository_ssh_key", "resolve_message", "rotate_git_ssh_key", "save_harness_profile",
+	"put_xspace_peer", "remove_repository_ssh_key", "rename_space_role", "resolve_message", "rotate_git_ssh_key", "save_harness_profile",
 	"save_human_type_draft", "save_prompt_draft", "save_role_template", "save_skill_draft", "set_human_policy",
 	"set_human_type_permission", "set_space_accounts", "set_space_human_policy", "set_space_limits", "update_xspace_settings",
 }

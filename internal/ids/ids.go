@@ -87,6 +87,7 @@ const (
 	UsageLimit     = "ulm" // an account hold at a usage limit (ADR-0079)
 	LimitWait      = "lwt" // a parked run's wait for its usage limit to reset (ADR-0079)
 	AccountSwitch  = "asw" // a run moved to another account of its pool at a usage limit (ADR-0090)
+	RoleRename     = "rrn" // a space role's rename (ADR-0093)
 )
 
 const encoding = "0123456789abcdefghjkmnpqrstvwxyz"

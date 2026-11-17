@@ -760,6 +760,7 @@ type LimitWait struct {
 	UpdatedAt         int64
 	SwitchToAccountID string
 	AccountSwitchID   string
+	Cause             string
 }
 
 type LoginThrottle struct {
@@ -1469,6 +1470,20 @@ type SpaceRoleAccount struct {
 	Priority  int64
 	CreatedAt int64
 	CreatedBy string
+}
+
+type SpaceRoleRename struct {
+	ID             string
+	SpaceID        string
+	FromName       string
+	ToName         string
+	RenamedAt      int64
+	RenamedBy      string
+	NodeID         string
+	NodeState      string
+	NodeMessage    string
+	NodeDoneAt     sql.NullInt64
+	CentralMovedAt sql.NullInt64
 }
 
 type SpaceSchedule struct {

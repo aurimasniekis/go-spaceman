@@ -649,6 +649,14 @@ func TestUpdateReadsVersion(t *testing.T) {
 	if h := f.last("POST", "/skills/skl_1/publish").header.Get("If-Match"); h != `"2"` {
 		t.Fatalf("skill If-Match %s", h)
 	}
+	// SM-MCP-010: skill update reads the skill, sends its version as If-Match and only the flags given change.
+	f.json("GET /skills/s2", 200, map[string]any{"id": "skl_2", "slug": "s2", "name": "Old", "description": "d0", "version": 4})
+	f.on("PATCH /skills/skl_2", func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) })
+	e.ok(t, "skill", "update", "s2", "--description", "d1")
+	pa := f.last("PATCH", "/skills/skl_2")
+	if h := pa.header.Get("If-Match"); h != `"4"` || pa.body["description"] != "d1" || pa.body["name"] != "Old" || len(pa.body) != 2 {
+		t.Fatalf("skill update If-Match %s body %v", h, pa.body)
+	}
 }
 
 // Relocation: the unavailable-source flow needs an explicit acknowledgement, --wait polls until a final state, and a
@@ -867,5 +875,28 @@ func TestSpecParsing(t *testing.T) {
 	}
 	if _, err := (&App{}).loadSpec(); err == nil {
 		t.Fatal("no source")
+	}
+}
+
+// hintFor: a 409 whose detail says the object changed gets the re-read hint; other 409s and other statuses do not.
+func TestHintFor(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		ae   *APIError
+		want string
+	}{
+		{"changed", &APIError{Status: http.StatusConflict, Detail: "the space changed since version 3"}, "read it again"},
+		{"changed, capitalised", &APIError{Status: http.StatusConflict, Detail: "Object CHANGED"}, "read it again"},
+		{"conflict without changed", &APIError{Status: http.StatusConflict, Detail: "name taken"}, ""},
+		{"409 without detail", &APIError{Status: http.StatusConflict}, ""},
+		{"401", &APIError{Status: http.StatusUnauthorized}, "expired or revoked"},
+		{"428", &APIError{Status: http.StatusPreconditionRequired}, "--if-match"},
+		{"422 saying changed", &APIError{Status: http.StatusUnprocessableEntity, Detail: "changed"}, ""},
+		{"200", &APIError{Status: http.StatusOK, Detail: "changed"}, ""},
+	} {
+		if got := hintFor(c.ae); (c.want == "") != (got == "") || (c.want != "" && !strings.Contains(got, c.want)) {
+			t.Errorf("%s: hint %q, want it to contain %q", c.name, got, c.want)
+		}
 	}
 }

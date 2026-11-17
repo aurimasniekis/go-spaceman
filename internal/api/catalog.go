@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -15,37 +16,42 @@ import (
 
 // CatalogRules are the authorization rules of the prompt, profile, role template and space role operations.
 var CatalogRules = map[string]Rule{
-	"list-prompts":           Global(authz.PromptRead),
-	"get-prompt":             Global(authz.PromptRead),
-	"create-prompt":          Global(authz.PromptWrite),
-	"update-prompt":          Global(authz.PromptWrite),
-	"save-prompt-draft":      Global(authz.PromptWrite),
-	"publish-prompt":         Global(authz.PromptWrite),
-	"discard-prompt-draft":   Global(authz.PromptWrite),
-	"rollback-prompt":        Global(authz.PromptWrite),
-	"fork-prompt":            Global(authz.PromptWrite),
-	"diff-prompt-versions":   Global(authz.PromptRead),
-	"list-harness-profiles":  Global(authz.PromptRead),
-	"get-harness-profile":    Global(authz.PromptRead),
-	"save-harness-profile":   Global(authz.PromptWrite),
-	"delete-harness-profile": Global(authz.PromptWrite),
-	"list-role-templates":    Global(authz.PromptRead),
-	"get-role-template":      Global(authz.PromptRead),
-	"save-role-template":     Global(authz.PromptWrite),
-	"delete-role-template":   Global(authz.PromptWrite),
-	"list-starter-roles":     Global(authz.PromptRead),
-	"list-role-options":      InSpace(authz.SpaceConfigRead),
-	"list-space-roles":       InSpace(authz.SpaceConfigRead),
-	"get-space-role":         InSpace(authz.SpaceConfigRead),
-	"save-space-role":        InSpace(authz.SpaceConfigWrite),
-	"delete-space-role":      InSpace(authz.SpaceConfigWrite),
-	"add-starter-roles":      InSpace(authz.SpaceConfigWrite),
-	"preview-space-role":     InSpace(authz.SpaceConfigRead),
-	"list-skills":            Global(authz.SkillRead),
-	"get-skill":              Global(authz.SkillRead),
-	"create-skill":           Global(authz.SkillWrite),
-	"save-skill-draft":       Global(authz.SkillWrite),
-	"publish-skill":          Global(authz.SkillWrite),
+	"list-prompts":            Global(authz.PromptRead),
+	"get-prompt":              Global(authz.PromptRead),
+	"create-prompt":           Global(authz.PromptWrite),
+	"update-prompt":           Global(authz.PromptWrite),
+	"save-prompt-draft":       Global(authz.PromptWrite),
+	"publish-prompt":          Global(authz.PromptWrite),
+	"discard-prompt-draft":    Global(authz.PromptWrite),
+	"rollback-prompt":         Global(authz.PromptWrite),
+	"fork-prompt":             Global(authz.PromptWrite),
+	"diff-prompt-versions":    Global(authz.PromptRead),
+	"list-harness-profiles":   Global(authz.PromptRead),
+	"get-harness-profile":     Global(authz.PromptRead),
+	"save-harness-profile":    Global(authz.PromptWrite),
+	"delete-harness-profile":  Global(authz.PromptWrite),
+	"list-role-templates":     Global(authz.PromptRead),
+	"get-role-template":       Global(authz.PromptRead),
+	"save-role-template":      Global(authz.PromptWrite),
+	"delete-role-template":    Global(authz.PromptWrite),
+	"list-starter-roles":      Global(authz.PromptRead),
+	"list-role-options":       InSpace(authz.SpaceConfigRead),
+	"list-space-roles":        InSpace(authz.SpaceConfigRead),
+	"get-space-role":          InSpace(authz.SpaceConfigRead),
+	"save-space-role":         InSpace(authz.SpaceConfigWrite),
+	"delete-space-role":       InSpace(authz.SpaceConfigWrite),
+	"rename-space-role":       InSpace(authz.SpaceConfigWrite),
+	"list-space-role-renames": InSpace(authz.SpaceConfigRead),
+	"retry-space-role-rename": InSpace(authz.RoleRenameAdmin),
+	"close-space-role-rename": InSpace(authz.RoleRenameAdmin),
+	"add-starter-roles":       InSpace(authz.SpaceConfigWrite),
+	"preview-space-role":      InSpace(authz.SpaceConfigRead),
+	"list-skills":             Global(authz.SkillRead),
+	"get-skill":               Global(authz.SkillRead),
+	"create-skill":            Global(authz.SkillWrite),
+	"update-skill":            Global(authz.SkillWrite),
+	"save-skill-draft":        Global(authz.SkillWrite),
+	"publish-skill":           Global(authz.SkillWrite),
 }
 
 // ProfileInput creates or edits a harness profile (slug and harness are fixed after creation).
@@ -350,6 +356,26 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 				return &struct{ Body *catalog.Skill }{Body: sk}, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "update-skill", Method: http.MethodPatch, Path: "/skills/{skill_id}", Summary: "Change a skill's name or description",
+			Description: "Changes the skill in place and creates no version: its files stay as they are. A field left out keeps its value; the slug never changes. If-Match is the skill's version.", Tags: stags},
+			func(ctx context.Context, in *struct {
+				SkillID string `path:"skill_id" maxLength:"64"`
+				IfMatch
+				Body struct {
+					Name        *string `json:"name,omitempty" maxLength:"120"`
+					Description *string `json:"description,omitempty" maxLength:"2000"`
+				}
+			}) (*struct{ Body *catalog.Skill }, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "skills.update", err)
+				}
+				sk, err := svc.UpdateSkillMeta(ctx, Actor(ctx), in.SkillID, v, in.Body.Name, in.Body.Description)
+				if err != nil {
+					return nil, d.fail(ctx, "skills.update", err)
+				}
+				return &struct{ Body *catalog.Skill }{Body: sk}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "save-skill-draft", Method: http.MethodPut, Path: "/skills/{skill_id}/draft",
 			Summary: "Create or update the skill's draft", Description: "Without If-Match a new draft is started; with it, the draft at that version is updated.", Tags: stags},
 			func(ctx context.Context, in *struct {
@@ -620,6 +646,9 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 						return &struct{ Body *catalog.SpaceRole }{Body: r}, nil
 					}
 				}
+				if cur, err := svc.CurrentRoleName(ctx, in.SpaceID, in.Name); err == nil && cur != in.Name {
+					return nil, d.fail(ctx, "roles.get", apperr.New(apperr.CodeNotFound, "role not found in this space; it was renamed to %s", cur))
+				}
 				return nil, d.fail(ctx, "roles.get", apperr.New(apperr.CodeNotFound, "role not found in this space"))
 			})
 		huma.Register(api, huma.Operation{OperationID: "save-space-role", Method: http.MethodPut, Path: "/spaces/{space_id}/roles/{name}",
@@ -690,6 +719,74 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 				return &struct{}{}, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "rename-space-role", Method: http.MethodPost, Path: "/spaces/{space_id}/roles/{name}/rename",
+			Summary: "Rename a role in place", Tags: tags,
+			Description: "Renames the role and every live reference to it in the space (MCP grants, knowledge-base and dream configuration, schedules, " +
+				"the human policy successor, human type permissions, the role's account pool, its memory, open tasks, unacknowledged messages, open " +
+				"knowledge-base requests and pending human notifications). Records of what happened (runs, usage, approvals, audit) keep the name they " +
+				"were written with. A role with live work is refused with 409 role_busy, listing what to stop or finish first; a target name already " +
+				"used by a role or a memory collection is 409 name_taken. An invalid or unchanged name is 422 validation_failed. `If-Match` is optional: with it, the role's revision must match (409 precondition_failed otherwise). " +
+				"A space whose node last spoke a node protocol below 1.14 (or never connected) is 409 node_too_old. " +
+				"`rename.node_state` is pending while the space's node has not yet moved the role's memory, and failed when it reported that it could not; " +
+				"launches of the role are held until it is done."},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				OptionalIfMatch
+				Name string `path:"name" maxLength:"48"`
+				Body RenameSpaceRoleInput
+			}) (*struct{ Body RenamedSpaceRole }, error) {
+				rev, err := optionalVersion(in.OptionalIfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.rename", err)
+				}
+				r, rn, err := svc.RenameSpaceRole(ctx, Actor(ctx), in.SpaceID, in.Name, in.Body.NewName, rev)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.rename", renameProblem(err))
+				}
+				return &struct{ Body RenamedSpaceRole }{Body: RenamedSpaceRole{SpaceRole: *r, Rename: rn}}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-role-renames", Method: http.MethodGet, Path: "/spaces/{space_id}/role-renames",
+			Summary: "A space's role renames, newest first", Tags: tags,
+			Description: "Each rename with the state of the node's memory move (pending, failed, done or not_needed). A former role name can be followed to " +
+				"the role that carries it now."},
+			func(ctx context.Context, in *SpacePath) (*struct{ Body RoleRenamesOut }, error) {
+				l, err := svc.ListRoleRenames(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.renames", err)
+				}
+				return &struct{ Body RoleRenamesOut }{Body: RoleRenamesOut{Items: l}}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "retry-space-role-rename", Method: http.MethodPost, Path: "/spaces/{space_id}/role-renames/{rename_id}/retry",
+			Summary: "Send a stuck role rename's memory move to the node again (admins)", Tags: tags,
+			Description: "For a rename whose node move is pending or failed: queues a new memory.rename for the space's node (unless one is still waiting for it) " +
+				"and makes a failed rename pending. The node tries again and reports; the rename's holds lift when it reports the move done. Not an open rename " +
+				"(done, not_needed or abandoned) is 409 rename_not_open. `node_too_old` is true when the node last spoke a protocol below 1.14: the command waits " +
+				"until it connects at 1.14 or more. Needs the admin-only role_rename:admin permission."},
+			func(ctx context.Context, in *RenamePath) (*struct{ Body *catalog.RenameRetried }, error) {
+				out, err := svc.RetryRoleRename(ctx, Actor(ctx), in.SpaceID, in.RenameID)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.rename_retry", renameProblem(err))
+				}
+				return &struct{ Body *catalog.RenameRetried }{Body: out}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "close-space-role-rename", Method: http.MethodPost, Path: "/spaces/{space_id}/role-renames/{rename_id}/close",
+			Summary: "Give up a stuck role rename's memory move on the node (admins)", Tags: tags,
+			Description: "For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream " +
+				"launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and " +
+				"is never deleted or synced again. Until the node has journaled the rename, it still blocks other renames of both names (a later rename " +
+				"must not reach the node first); `forget_node` cancels the undelivered command and releases them, for a node that is not coming back. " +
+				"Not an open rename is 409 rename_not_open (with `forget_node`, a closed rename the node has not journaled is accepted). " +
+				"Needs the admin-only role_rename:admin permission."},
+			func(ctx context.Context, in *struct {
+				RenamePath
+				Body CloseSpaceRoleRenameInput
+			}) (*struct{ Body *catalog.RoleRename }, error) {
+				out, err := svc.CloseRoleRename(ctx, Actor(ctx), in.SpaceID, in.RenameID, in.Body.Reason, in.Body.ForgetNode)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.rename_close", renameProblem(err))
+				}
+				return &struct{ Body *catalog.RoleRename }{Body: out}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "preview-space-role", Method: http.MethodGet, Path: "/spaces/{space_id}/roles/{name}/preview",
 			Summary: "A role's effective configuration and where each value comes from", Tags: tags},
 			func(ctx context.Context, in *struct {
@@ -725,4 +822,47 @@ type StarterRolesOut struct {
 // AddedRolesOut names the space roles a request added.
 type AddedRolesOut struct {
 	Added []string `json:"added" doc:"The roles added; empty when the space had them all or their templates were deleted"`
+}
+
+// RenameSpaceRoleInput is the new name of a role.
+type RenameSpaceRoleInput struct {
+	NewName string `json:"new_name" minLength:"1" maxLength:"48" doc:"The role's new name: a lowercase name such as implementor-hard, not used by a role or a memory collection of the space"`
+}
+
+// RenamePath is the {space_id} and {rename_id} parameters of an operation on one role rename.
+type RenamePath struct {
+	SpacePath
+	RenameID string `path:"rename_id" pattern:"^rrn_[0-9a-z]{26}$"`
+}
+
+// CloseSpaceRoleRenameInput is the optional reason an admin gives for closing a rename, and whether to forget the node.
+type CloseSpaceRoleRenameInput struct {
+	Reason     string `json:"reason,omitempty" maxLength:"500" doc:"Why the move is given up; kept as the rename's message"`
+	ForgetNode bool   `json:"forget_node,omitempty" doc:"Also stop waiting for the node to journal the rename: its undelivered commands are cancelled and both names are released for other renames. If the node comes back it is told the rename is closed and keeps its old-name folder as an orphan (set aside, never moved, synced or inherited). Accepted on an open rename and on a closed one the node has not journaled yet"`
+}
+
+// RenamedSpaceRole is the renamed role and the record of its rename.
+type RenamedSpaceRole struct {
+	catalog.SpaceRole
+	Rename *catalog.RoleRename `json:"rename" doc:"The rename; node_state is pending until the space's node has moved the role's memory"`
+}
+
+// RoleRenamesOut lists a space's role renames, newest first.
+type RoleRenamesOut struct {
+	Items []*catalog.RoleRename `json:"items"`
+}
+
+// renameProblem maps a busy role, a taken name or a node that cannot move the memory to 409 with the refusal's own code.
+// Everything else (an invalid name, a stale revision, a missing role) keeps its code and takes the usual mapping: 422
+// validation_failed, 409 precondition_failed, 404.
+func renameProblem(err error) error {
+	var ae *apperr.Error
+	if !errors.As(err, &ae) {
+		return err
+	}
+	var rr *catalog.RenameRefused
+	if errors.As(err, &rr) {
+		return newProblem(http.StatusConflict, apperr.Code(rr.Reason), ae.Message, nil)
+	}
+	return err
 }
