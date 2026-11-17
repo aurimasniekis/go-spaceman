@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Claude Code runs stopped at "Adding a new directory".** From Claude Code 2.1.326, a directory passed with `--add-dir`
+  must be trusted like the working directory, or the session asks "This session hasn't worked here before. Is this a
+  directory you created or one you trust?" and an unattended run waits there forever. The run's memory folder is passed
+  that way, so every Claude Code run with memory on 2.1.326 or later stopped before its first turn. The node agent now
+  trusts the memory folder too, exactly that folder, in the run's own `.claude.json` (ADR-0021). Only the node agent
+  needs the update.
+
 ## [0.1.9] - 2026-11-16
 
 **v0.1.8 was tagged but never released** (its release build produced no images), so its changes ship in v0.1.9.

@@ -485,12 +485,13 @@ func (Claude) Build(c Context) (Launch, error) {
 		Env:   env,
 		Files: map[string][]byte{mcpPath: mcp},
 		// A fresh CLAUDE_CONFIG_DIR stops at the first-run theme picker and then at the folder-trust prompt, which would
-		// leave an unattended run waiting forever. SpaceMan provisions the run's working directory, so it marks first-run
-		// as done and trusts exactly that directory, nothing else (ADR-0021, verified with Claude Code 2.1.316).
+		// leave an unattended run waiting forever. SpaceMan provisions the run's working directory and its memory folder,
+		// so it marks first-run as done and trusts exactly those two directories, nothing else (ADR-0021, verified with
+		// Claude Code 2.1.316; from 2.1.326 a directory passed with --add-dir asks "Adding a new directory" unless trusted).
 		MergeJSON: map[string]map[string]any{filepath.Join(cfg, ".claude.json"): {
 			"hasCompletedOnboarding": true,
 			"theme":                  "dark",
-			"projects":               map[string]any{c.WorkDir: map[string]any{"hasTrustDialogAccepted": true}},
+			"projects":               trustedProjects(c),
 		}},
 		OwnJSON:   map[string]map[string]any{filepath.Join(cfg, "settings.json"): own},
 		StripJSON: map[string][]string{filepath.Join(cfg, "settings.json"): ClaudeUnsafeSettingsKeys},
@@ -500,4 +501,14 @@ func (Claude) Build(c Context) (Launch, error) {
 		RemoveFiles: remove,
 		SessionID:   session,
 	}, nil
+}
+
+// trustedProjects is the .claude.json projects entry that trusts the run's working directory and, when it has one, the
+// memory folder passed with --add-dir: exactly the directories SpaceMan provisions for the run (ADR-0021).
+func trustedProjects(c Context) map[string]any {
+	projects := map[string]any{c.WorkDir: map[string]any{"hasTrustDialogAccepted": true}}
+	if c.MemoryDir != "" {
+		projects[c.MemoryDir] = map[string]any{"hasTrustDialogAccepted": true}
+	}
+	return projects
 }
