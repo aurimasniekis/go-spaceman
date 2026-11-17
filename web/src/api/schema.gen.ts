@@ -1718,7 +1718,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change a prompt's name or description
+         * @description Changes the prompt in place and creates no version. A field left out keeps its value; the slug and kind never change. If-Match is the prompt's version.
+         */
+        patch: operations["update-prompt"];
         trace?: never;
     };
     "/prompts/{prompt_id}/draft": {
@@ -12579,6 +12583,16 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["AuthAPIToken"][];
         };
+        "Update-promptRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Update-promptRequest.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            name?: string;
+        };
         "Update-taskRequest": {
             /**
              * Format: uri
@@ -16928,6 +16942,44 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPrompt"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-prompt": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                prompt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Update-promptRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

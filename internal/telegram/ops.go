@@ -97,6 +97,7 @@ var Ops = map[string]api.TelegramClass{
 	"create-kb":                     api.TelegramExcluded,
 	"create-mcp-server":             api.TelegramExcluded,
 	"create-prompt":                 api.TelegramExcluded,
+	"update-prompt":                 api.TelegramExcluded,
 	"create-schedule":               api.TelegramExcluded,
 	"create-skill":                  api.TelegramExcluded,
 	"create-space":                  api.TelegramExcluded,

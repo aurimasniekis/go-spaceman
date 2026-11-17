@@ -345,3 +345,68 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("lists %d %d", len(ts), len(ps))
 	}
 }
+
+// SM-PROMPT-010: a prompt's name and description change in place; no version is created and slug and kind stay fixed (ADR-0095).
+func TestUpdatePromptMeta(t *testing.T) {
+	f := newFx(t)
+	p, err := f.svc.CreatePrompt(f.ctx, op, "ctl", "Control", "role", "old text", "body one")
+	must(t, err)
+	f.publish(p.ID)
+	p, _ = f.svc.GetPrompt(f.ctx, p.ID)
+	countVersions := func() (n int, maxVer int64) {
+		must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*), coalesce(max(version),0) FROM prompt_versions WHERE prompt_id = ?`, p.ID).Scan(&n, &maxVer))
+		return
+	}
+	nBefore, vBefore := countVersions()
+
+	name, desc := "Control v2", "Routes work to the right roles."
+	got, err := f.svc.UpdatePromptMeta(f.ctx, op, "ctl", p.Version, &name, &desc) // by slug
+	must(t, err)
+	if got.Name != name || got.Description != desc || got.Slug != "ctl" || got.Kind != "role" || got.Version != p.Version+1 || got.Latest != 1 {
+		t.Fatalf("updated %+v", got)
+	}
+	if n, v := countVersions(); n != nBefore || v != vBefore {
+		t.Fatalf("prompt_versions changed: %d/%d -> %d/%d", nBefore, vBefore, n, v)
+	}
+
+	// A field left out keeps its value.
+	d2 := "Only the description."
+	got, err = f.svc.UpdatePromptMeta(f.ctx, op, p.ID, got.Version, nil, &d2)
+	must(t, err)
+	if got.Name != name || got.Description != d2 {
+		t.Fatalf("partial %+v", got)
+	}
+
+	// A stale version is refused and changes nothing.
+	other := "Stale"
+	_, err = f.svc.UpdatePromptMeta(f.ctx, op, p.ID, p.Version, &other, nil)
+	code(t, err, apperr.CodePrecondition)
+	if cur, _ := f.svc.GetPrompt(f.ctx, p.ID); cur.Name != name {
+		t.Fatalf("stale update applied: %+v", cur)
+	}
+	// A stale version is refused even when the values match (nothing to write).
+	_, err = f.svc.UpdatePromptMeta(f.ctx, op, p.ID, p.Version, &name, nil)
+	code(t, err, apperr.CodePrecondition)
+	// Unknown prompt.
+	_, err = f.svc.UpdatePromptMeta(f.ctx, op, "nope", 1, &other, nil)
+	code(t, err, apperr.CodeNotFound)
+
+	// Validation as for create.
+	empty, long, longDesc := "  ", strings.Repeat("x", 121), strings.Repeat("d", 2001)
+	for _, bad := range [][2]*string{{&empty, nil}, {&long, nil}, {nil, &longDesc}} {
+		_, err = f.svc.UpdatePromptMeta(f.ctx, op, p.ID, got.Version, bad[0], bad[1])
+		code(t, err, apperr.CodeInvalid)
+	}
+
+	// Audit: field names only, never their text.
+	var details string
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT details_json FROM audit_events WHERE action = 'prompt.updated' ORDER BY seq ASC LIMIT 1`).Scan(&details))
+	if !strings.Contains(details, `"name"`) || !strings.Contains(details, `"description"`) || strings.Contains(details, "Control v2") || strings.Contains(details, "Routes work") {
+		t.Fatalf("audit details %s", details)
+	}
+	var n int
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM audit_events WHERE action = 'prompt.updated'`).Scan(&n))
+	if n != 2 {
+		t.Fatalf("%d prompt.updated rows, want 2", n)
+	}
+}
