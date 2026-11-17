@@ -842,7 +842,12 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			return nil
 		}
 		seq, err := svc.rec.apply(c)
-		_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
+		// A message that could not be applied at all (the recording could not be opened) says nothing about what
+		// central holds: no acknowledgement, which a node that probes for central's sequence would take for one
+		// (ADR-0097, addendum). It asks again.
+		if err == nil || seq > 0 {
+			_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
+		}
 		return err
 	default:
 		return apperr.New(apperr.CodeInvalid, "unexpected message type %q", env.Type)

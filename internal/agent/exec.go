@@ -515,6 +515,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	a.notePin(p.HarnessVersion) // only a started run protects its pin from GC (claudePinned)
+	a.launchedRecording(c.RunID)
 	a.observe(ctx, row, *proc, false)
 }
 

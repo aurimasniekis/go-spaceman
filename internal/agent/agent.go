@@ -115,6 +115,13 @@ type Agent struct {
 	// restored marks runs whose acked value was read from their run directory after a restart (restoreAck) and not yet
 	// compared with the local recording by a catch-up.
 	restored map[string]bool
+	// seqKnown marks runs whose recording sequence at central this process knows: it launched the run with an empty
+	// recording, or central acknowledged a recording message of it. Until then the run's recorder numbers nothing
+	// (seqGate): a process that ran before may have shipped records its failing disk never stored (ADR-0097).
+	// seqFloor is, for a run whose first acknowledgement in this process was below its restored one, that restored
+	// value: new records are still numbered above it.
+	seqKnown map[string]bool
+	seqFloor map[string]uint64
 	// Recording shipping (record.go). sentSeq is the last sequence a send of each run went out for (above acked: on
 	// its way, or lost with a connection). held are records a live shipment kept back while it waited for a catch-up.
 	// catching is set while the catch-up pass runs, on catchUpConn with catchUpCtx (the newest connection's);
