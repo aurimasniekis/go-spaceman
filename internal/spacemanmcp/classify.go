@@ -309,6 +309,7 @@ var Table = map[string]Entry{
 
 	// Prompts and harness profiles.
 	"create-prompt":          {Write, rDraft},
+	"update-prompt":          {Write, rDraft},
 	"diff-prompt-versions":   {Read, rRead},
 	"discard-prompt-draft":   {Write, rDraft},
 	"fork-prompt":            {Write, rDraft},
@@ -432,6 +433,7 @@ var Table = map[string]Entry{
 	"list-skills":      {Read, rRead},
 	"publish-skill":    {Dangerous, rPublish},
 	"save-skill-draft": {Write, rDraft},
+	"update-skill":     {Write, rDraft},
 
 	// Spaces.
 	"create-space":     {Write, "creates a space"},

@@ -95,7 +95,9 @@ func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config
 	e.srv.Start()
 	onTimeout(t, e.dump)
 	onProgress(t, e.progress)
-	t.Cleanup(func() {
+	// Released once it ran (cleanupReleased), and it clears what e holds: closures elsewhere that still hold e must not
+	// keep the central, its handler, the agent's journal or the fake runner alive after the test.
+	cleanupReleased(t, func() {
 		e.stopAgent()
 		e.srv.Close()
 		if e.c != nil {
@@ -104,6 +106,9 @@ func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config
 		if err := removeAllRetry(e.agentDir); err != nil {
 			t.Logf("the agent directory did not empty before cleanup: %v", err)
 		}
+		e.srv.Config.Handler = nil
+		e.c, e.srv, e.run, e.agentJ = nil, nil, nil, nil
+		e.handler.Store(nil)
 	})
 	return e
 }

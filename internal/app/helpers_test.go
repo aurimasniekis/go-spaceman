@@ -13,6 +13,22 @@ import (
 
 func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
+// cleanupReleased registers f with t.Cleanup and lets go of f once it has run. The testing package keeps a finished
+// parallel test's *testing.T reachable until every parallel test of the run is done, and its cleanup list keeps the
+// closures that already ran (runCleanup pops them by reslicing, which leaves them in the backing array). A cleanup
+// holding a central therefore kept that test's whole central (store, services, the API's OpenAPI schemas) alive until
+// the end of the parallel phase: about 5 GB of live heap across this package's parallel tests, and with the race
+// detector's shadow memory 13 GB resident, which ran a 16 GB CI runner out of memory. Cleanups that reach a central
+// or its HTTP server go through here, and drop the references they hold when they are done.
+func cleanupReleased(t testing.TB, f func()) {
+	t.Helper()
+	t.Cleanup(func() {
+		g := f
+		f = nil
+		g()
+	})
+}
+
 func testLog() *slog.Logger {
 	if os.Getenv("SM_TEST_LOG") == "" {
 		return discard()

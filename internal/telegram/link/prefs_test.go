@@ -216,7 +216,7 @@ func TestLinkPrefsTopicsState(t *testing.T) {
 	t.Parallel()
 	svc, s := prefsEnv(t)
 	if err := s.W().TxNamed(context.Background(), "seed", func(tx *store.Tx) error {
-		_, err := tx.SQL.ExecContext(context.Background(), `UPDATE telegram_links SET topics_json = '{"spc_01m6pepsjyef08vppza1z94q8b":3,"spc_01m6pepsjyef08vppza1z94q8a":2,"spc_01m6pepsjyef08vppza1z94q8h":4,"needs":9,"home":8}' WHERE id = 'tgl_a1'`)
+		_, err := tx.SQL.ExecContext(context.Background(), `UPDATE telegram_links SET topics_json = '{"spc_01aaaaaaaaaaaaaaaaaaaaaaab":3,"spc_01aaaaaaaaaaaaaaaaaaaaaaaa":2,"spc_01aaaaaaaaaaaaaaaaaaaaaaah":4,"needs":9,"home":8}' WHERE id = 'tgl_a1'`)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -224,11 +224,11 @@ func TestLinkPrefsTopicsState(t *testing.T) {
 	refused := false
 	svc.o.TopicsRefused = func(chat int64) bool { return refused && chat == 11 }
 	svc.o.TopicsEnabled = func(mode string, chat int64) bool { return mode != settings.ThreadsOff && (!refused || chat != 11) }
-	svc.o.CanRead = func(_ []string, id string) bool { return id != "spc_01m6pepsjyef08vppza1z94q8h" }
+	svc.o.CanRead = func(_ []string, id string) bool { return id != "spc_01aaaaaaaaaaaaaaaaaaaaaaah" }
 	ctx := context.Background()
 	p, err := svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1"))
 	if err != nil || !p.Topics.Available || p.Topics.Mode != settings.ThreadsAuto || p.Topics.Override != nil || !p.Topics.Active ||
-		!slices.Equal(p.Topics.Spaces, []string{"spc_01m6pepsjyef08vppza1z94q8a", "spc_01m6pepsjyef08vppza1z94q8b"}) || p.Topics.Refused {
+		!slices.Equal(p.Topics.Spaces, []string{"spc_01aaaaaaaaaaaaaaaaaaaaaaaa", "spc_01aaaaaaaaaaaaaaaaaaaaaaab"}) || p.Topics.Refused {
 		t.Fatalf("topics %+v, %v", p.Topics, err)
 	}
 	refused = true
@@ -239,8 +239,8 @@ func TestLinkPrefsTopicsState(t *testing.T) {
 		t.Fatalf("another chat: %+v, %v", p.Topics, err)
 	}
 	// A space hidden from Telegram is not listed even when the link may read it.
-	svc.o.VisibleSpaces = func() []string { return []string{"spc_01m6pepsjyef08vppza1z94q8a"} }
-	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || !slices.Equal(p.Topics.Spaces, []string{"spc_01m6pepsjyef08vppza1z94q8a"}) {
+	svc.o.VisibleSpaces = func() []string { return []string{"spc_01aaaaaaaaaaaaaaaaaaaaaaaa"} }
+	if p, err = svc.GetPrefs(ctx, tgPrincipal("usr_a", "tgl_a1")); err != nil || !slices.Equal(p.Topics.Spaces, []string{"spc_01aaaaaaaaaaaaaaaaaaaaaaaa"}) {
 		t.Fatalf("hidden space listed: %+v, %v", p.Topics, err)
 	}
 	svc.o.VisibleSpaces = nil

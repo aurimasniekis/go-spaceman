@@ -409,6 +409,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/prompts` | `list-prompts` | The prompt catalog |
 | `POST` | `/prompts` | `create-prompt` | Add a prompt (with a first draft) |
 | `GET` | `/prompts/{prompt_id}` | `get-prompt` | A prompt with its draft and versions |
+| `PATCH` | `/prompts/{prompt_id}` | `update-prompt` | Change a prompt's name or description |
 | `DELETE` | `/prompts/{prompt_id}/draft` | `discard-prompt-draft` | Discard the draft |
 | `PUT` | `/prompts/{prompt_id}/draft` | `save-prompt-draft` | Create or update the prompt's draft |
 | `POST` | `/prompts/{prompt_id}/publish` | `publish-prompt` | Publish the draft as the next immutable version |
@@ -522,6 +523,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/skills` | `list-skills` | The skill catalog |
 | `POST` | `/skills` | `create-skill` | Add a skill (with a first draft) |
 | `GET` | `/skills/{skill_id}` | `get-skill` | A skill with its versions and files |
+| `PATCH` | `/skills/{skill_id}` | `update-skill` | Change a skill's name or description |
 | `PUT` | `/skills/{skill_id}/draft` | `save-skill-draft` | Create or update the skill's draft |
 | `POST` | `/skills/{skill_id}/publish` | `publish-skill` | Publish the draft as the next immutable version |
 

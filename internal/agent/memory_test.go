@@ -173,3 +173,50 @@ func TestMemoryAcks(t *testing.T) {
 	}
 	m.mu.Unlock()
 }
+
+// A checkout whose own configuration redirects the work tree (core.worktree) or declares it bare is refused by every
+// memory git operation, preserve and its reset --hard included, and nothing outside the checkout is touched.
+func TestPreserveRefusesRedirectedWorktree(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{{"core.worktree", ""}, {"core.bare", "true"}} {
+		t.Run(tc.key, func(t *testing.T) {
+			a := memAgent(t)
+			ctx := context.Background()
+			m := a.mem
+			inst, err := m.prepare(ctx, "spc_a", "role", "ins_one")
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := m.git.RevParse(ctx, inst, "HEAD")
+			outside := t.TempDir()
+			write(t, outside, "victim.md", "keep\n")
+			value := tc.value
+			if value == "" {
+				value = outside
+			}
+			if _, err := m.git.Run(ctx, inst, nil, "config", tc.key, value); err != nil {
+				// the guard may already refuse "config"? it must not: config is how the key got there in this test
+				t.Fatal(err)
+			}
+			if _, err := m.preserve(ctx, "spc_a", "role", "ins_one", head, head, []string{"README.md"}); err == nil {
+				t.Fatal("preserve ran in a checkout whose work tree is redirected")
+			}
+			if got := read(t, outside, "victim.md"); got != "keep\n" {
+				t.Fatalf("the folder outside was changed: %q", got)
+			}
+			entries, _ := os.ReadDir(outside)
+			if len(entries) != 1 {
+				t.Fatalf("files appeared outside the checkout: %v", entries)
+			}
+			if _, err := os.Stat(filepath.Join(inst, "conflicts")); err == nil {
+				t.Fatal("preserve wrote into the checkout")
+			}
+			// Without the key it works again, so the refusal is the guard's.
+			if _, err := m.git.Run(ctx, inst, nil, "config", "--unset", tc.key); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.git.Run(ctx, inst, nil, "status", "--porcelain"); err != nil {
+				t.Fatalf("a clean checkout refused: %v", err)
+			}
+		})
+	}
+}

@@ -204,7 +204,33 @@ func TestCLIAgainstCentral(t *testing.T) {
 	e.code(t, ExitUsage, "prompt", "publish", "reviewer")
 	e.ok(t, "prompt", "list")
 	e.ok(t, "prompt", "get", "reviewer")
+	// SM-PROMPT-010: update changes name/description in place (only the flags given), no new version.
+	if u := e.obj(t, "prompt", "update", "reviewer", "--description", "checks work"); str(u, "description") != "checks work" || str(u, "name") != str(pr, "name") || len(items(t, u, "versions")) != len(items(t, pr, "versions")) {
+		t.Fatalf("prompt update %v", u)
+	}
+	if u := e.obj(t, "prompt", "update", "reviewer", "--name", "Reviewer 2"); str(u, "name") != "Reviewer 2" || str(u, "description") != "checks work" || str(u, "slug") != "reviewer" {
+		t.Fatalf("prompt update name %v", u)
+	}
+	e.code(t, ExitConflict, "prompt", "update", "reviewer", "--name", "x", "--if-match", "1")
+	e.code(t, ExitAPI, "prompt", "update", "reviewer", "--name", "")
 	e.ok(t, "skill", "list")
+	// SM-MCP-010: skill update changes name and description in place (only the flags given), no new version.
+	skillDir := t.TempDir()
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\ndescription: Use when reviewing.\n---\n# Review\n"), 0o644))
+	sk := e.obj(t, "skill", "create", "review", "--name", "Review", "--dir", skillDir)
+	if u := e.obj(t, "skill", "update", "review", "--description", "Reviews work."); str(u, "description") != "Reviews work." || str(u, "name") != "Review" || len(items(t, u, "versions")) != len(items(t, sk, "versions")) {
+		t.Fatalf("skill update %v", u)
+	}
+	if u := e.obj(t, "skill", "update", "review", "--name", "Review 2"); str(u, "name") != "Review 2" || str(u, "description") != "Reviews work." || str(u, "slug") != "review" {
+		t.Fatalf("skill update name %v", u)
+	}
+	e.code(t, ExitConflict, "skill", "update", "review", "--name", "x", "--if-match", "1")
+	e.code(t, ExitAPI, "skill", "update", "review", "--name", "")
 
 	// Profiles, role templates and space roles (the GET operations added for the CLI).
 	prof := e.obj(t, "profile", "create", "fast", "--name", "Fast", "--harness", "claude-code", "--model", "haiku")

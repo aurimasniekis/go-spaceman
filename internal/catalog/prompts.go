@@ -170,6 +170,63 @@ func (svc *Service) CreatePrompt(ctx context.Context, actor audit.Actor, slug, n
 	return svc.GetPrompt(ctx, id)
 }
 
+// UpdatePromptMeta changes a prompt's name and/or description in place (ADR-0095). A nil field keeps its value. Slug and kind never change and
+// prompt_versions is never touched, so no version is created. version is the prompt's own version (If-Match).
+func (svc *Service) UpdatePromptMeta(ctx context.Context, actor audit.Actor, idOrSlug string, version int64, name, description *string) (*Prompt, error) {
+	v := &apperr.Validation{}
+	if name != nil && (strings.TrimSpace(*name) == "" || utf8.RuneCountInString(*name) > 120) {
+		v.Add("name", "is required (at most 120 characters)")
+	}
+	if description != nil && utf8.RuneCountInString(*description) > 2000 {
+		v.Add("description", "at most 2000 characters")
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+	var id string
+	err := svc.s.W().TxNamed(ctx, "catalog.prompt_update", func(tx *store.Tx) error {
+		p, err := tx.Q.GetPrompt(ctx, idOrSlug)
+		if errors.Is(err, sql.ErrNoRows) {
+			p, err = tx.Q.GetPromptBySlug(ctx, idOrSlug)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNotFound
+		} else if err != nil {
+			return err
+		}
+		id = p.ID
+		newName, newDesc := p.Name, p.Description
+		changed := []string{}
+		if name != nil && *name != p.Name {
+			newName = *name
+			changed = append(changed, "name")
+		}
+		if description != nil && *description != p.Description {
+			newDesc = *description
+			changed = append(changed, "description")
+		}
+		if len(changed) == 0 {
+			if p.Version != version { // nothing to write, but a stale If-Match is still refused
+				return apperr.New(apperr.CodePrecondition, "the prompt changed since version %d (now %d)", version, p.Version)
+			}
+			return nil
+		}
+		// The version guard is in the UPDATE itself: a stale version matches no row.
+		n, err := tx.Q.UpdatePrompt(ctx, db.UpdatePromptParams{Name: newName, Description: newDesc, UpdatedAt: tx.NowMicros(), ID: p.ID, Version: version})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodePrecondition, "the prompt changed since version %d (now %d)", version, p.Version)
+		}
+		return svc.log(ctx, tx, actor, "prompt.updated", "prompt", p.ID, map[string]any{"fields": changed})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return svc.GetPrompt(ctx, id)
+}
+
 func (svc *Service) log(ctx context.Context, tx *store.Tx, actor audit.Actor, action, typ, id string, details map[string]any) error {
 	if err := svc.changes.Record(ctx, tx, "", typ, id, "updated", 0); err != nil {
 		return err

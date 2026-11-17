@@ -33,6 +33,15 @@ const (
 	memoryRole         = "SpaceMan memory"
 )
 
+// The deadlines below bound work done under the collection lock: a git that never returns (a FIFO in a checkout)
+// would stall every instance of the collection. Variables so tests can shorten them.
+var (
+	// checkpointDeadline bounds a checkpoint, and each instance's fast-forward after it.
+	checkpointDeadline = 2 * time.Minute
+	// prepareDeadline bounds prepare (a run's launch) once it holds the collection lock.
+	prepareDeadline = 2 * time.Minute
+)
+
 type memManager struct {
 	a *Agent
 	// base is the agent's run context; timer callbacks run under it.
@@ -45,6 +54,12 @@ type memManager struct {
 	timers  map[string]*time.Timer // checkpoint debounce per instance
 	syncs   map[string]*time.Timer // sync schedule per collection
 	waiting map[string]string      // collection → sync ID in flight
+	gates   map[string]*sync.Mutex // input gate per instance (memff.go, ADR-0094)
+	inputs  map[string]inputMark   // input delivered per instance, until its turn is reported (memff.go)
+	// ffHook, when set (tests), runs right before a fast-forward of an idle checkout merges, with the locks held.
+	ffHook func(instance string)
+	// ffGated, when set (tests), runs right after a fast-forward took the instance's input gate, before its last checks.
+	ffGated func(instance string)
 }
 
 func newMemManager(a *Agent) *memManager {
@@ -101,6 +116,8 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 	if m.a.j.renameFrom(ctx, spaceID, role) {
 		return "", fmt.Errorf("role %s is being renamed; its memory moves to the new name", role)
 	}
+	ctx, cancel := context.WithTimeout(ctx, prepareDeadline)
+	defer cancel()
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if err := m.git.InitBare(ctx, shared); err != nil {
 		return "", err
@@ -110,6 +127,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 			return "", err
 		}
 		if _, err := m.git.Run(ctx, inst, nil, "init", "--quiet", "--initial-branch=main", "."); err != nil {
+			return "", err
+		}
+		if err := m.guard(ctx, inst); err != nil {
 			return "", err
 		}
 		if m.git.RevParse(ctx, shared, "refs/heads/main") == "" {
@@ -137,12 +157,16 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		}
 		return inst, nil
 	}
-	m.refresh(ctx, shared, inst)
+	if err := m.guard(ctx, inst); err != nil {
+		return "", err
+	}
+	m.refreshAtStart(ctx, spaceID, role, instance)
 	return inst, nil
 }
 
 // refresh fast-forwards a clean checkout to the shared history. A checkout with changes or its own commits is left for
-// the next checkpoint, which merges.
+// the next checkpoint, which merges. It is run start's refresh when memory.fast_forward is off; otherwise
+// refreshAtStart applies ADR-0094's checks.
 func (m *memManager) refresh(ctx context.Context, shared, inst string) {
 	if st, err := m.git.Run(ctx, inst, nil, "status", "--porcelain"); err != nil || strings.TrimSpace(st) != "" {
 		return
@@ -201,7 +225,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 		unlock()
 		return nil // the collection was renamed meanwhile (ADR-0093): its checkouts moved with it
 	}
-	published, err := m.publish(ctx, spaceID, role, instance, reason)
+	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	published, err := m.publish(pctx, spaceID, role, instance, reason)
+	cancel()
 	unlock()
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	now := m.a.now()
@@ -213,6 +239,7 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	_ = m.a.j.putMemory(ctx, st)
 	if published {
 		m.scheduleSync(spaceID, role, syncDelay)
+		m.fastForwardIdle(ctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
 	}
 	m.sendStatus(ctx)
 	return err
@@ -222,6 +249,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reason string) (bool, error) {
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	g, id := m.git, ident(instance)
+	if err := m.guard(ctx, inst); err != nil {
+		return false, err
+	}
 	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
 		return false, err
 	}
@@ -274,6 +304,9 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	}
 	saved := map[string][]byte{}
 	for _, f := range files {
+		if isHarnessPath(f) {
+			continue // never materialised: harness configuration does not travel through memory
+		}
 		if b, err := g.Run(ctx, inst, nil, "show", head+":"+f); err == nil {
 			saved[f] = []byte(b)
 		}

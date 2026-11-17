@@ -283,8 +283,9 @@
     there when they launched the run.
 - **Decision:**
   - Before a launch, the node agent merges into `$CLAUDE_CONFIG_DIR/.claude.json`: `hasCompletedOnboarding: true`, a
-    theme, and `hasTrustDialogAccepted: true` for exactly the run's working directory (symlinks resolved). Nothing else in
-    the file is changed, and no other directory is trusted.
+    theme, and `hasTrustDialogAccepted: true` for exactly the run's working directory and, when the run has one, the
+    memory folder it adds with `--add-dir` (symlinks resolved). Nothing else in the file is changed, and no other directory
+    is trusted. (The memory folder is trusted since Claude Code 2.1.326 started asking about `--add-dir` directories.)
   - The launcher shim removes inherited Claude Code and Codex session markers and node-level provider credentials
     (`ANTHROPIC_*`, `CLAUDE_CODE_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`) before applying the run's
     own secrets, so a run uses only its SpaceMan account (SM-ACCT-004).
@@ -395,6 +396,32 @@
   - Central needs `git` to store memory; without it, syncs are refused and the UI says so.
   - Changes newer than the last acknowledgement exist only on the node.
   - Rewritten history (e.g. after a restore) is preserved but not applied; reconciling it is a person's decision.
+
+- **Addendum, 2026-11-17 — harness configuration never travels through role memory (security-relevant change).**
+  - Context: the checkout is passed to Claude Code with `--add-dir`, which loads `.claude/skills` and `.claude/commands`
+    from it as project skills and commands (seen on Claude Code 2.1.325, and on 2.1.326 with folder trust; its prompt also
+    mentions the folder's git settings). Role memory is shared by every instance of a role, so a skill or command one
+    instance wrote would become active in all of them. Two options: (a) the node refuses harness-config paths, (b) memory
+    is documented as trusted like code. (a) is chosen: memory stays notes, never a channel that carries behaviour, in line
+    with the memory hardening of ADR-0094 and the node's Git hardening above.
+  - Decision: the node writes two files into each checkout's `.git` before it creates, moves or stages one:
+    `info/exclude`, so `.claude/`, `.codex/` and `.agents/` (at any depth) and a top-level `.mcp.json` are never staged,
+    and `info/sparse-checkout` (non-cone, `core.sparseCheckout`), so those paths are never written to the working tree
+    when a checkout is reset to, fast-forwarded onto or merged with history that already holds them (pushed by an older
+    agent). `prepare` applies it to an existing checkout too (`sparse-checkout reapply`), which removes such files from
+    its working tree. A conflict preserve skips such paths. `CLAUDE.md` and `AGENTS.md` notes stay allowed: they are text.
+  - Why on the node and not at central: the node is the only place memory is materialised and loaded by a harness, a
+    sparse checkout keeps the tree clean (no dirty status, so fast-forward is not blocked), and rejecting a bundle at
+    central would stall a whole collection's sync over one bad commit. Central keeps the history it was given, old
+    commits included; history is not rewritten. Central's file listing may therefore still show such paths.
+  - Limits: the agent can edit its own `.git` (see above), so this is a guard against accident and against content
+    arriving from other instances, not a sandbox; the guard is rewritten on every checkpoint and prepare. A harness-config
+    file an instance writes into its own checkout is never staged or shared. It is removed from that checkout's working
+    tree only by `sparse-checkout reapply`, which `prepare` runs when `core.sparseCheckout` was not already true (a
+    checkout created before this filter); later files stay local until the operator removes them. Memory content is
+    still untrusted text (AGENTS.md): it is never an authority source.
+  - Evidence: `TestMemoryHarnessConfigDoesNotTravel`, `TestMemoryHarnessConfigInOldHistoryIsNotMaterialised`,
+    `TestMemoryHarnessConfigRemovedFromExistingCheckout` (`internal/agent`); with the guard disabled they fail.
 
 ### ADR-0026 — KB support runs as per-requester kb sessions; KB changes are proposals accepted on the node
 - **Status:** Accepted, 2026-11-02.
@@ -5552,6 +5579,30 @@
   - v0.1.7's Open-in-app link on long cards (#162) is this ADR's per-item `ItemURL`: a human action's Mini App page, and
     no button on other cards. The notifier keeps one link option (`ItemURL`, central's `cardAppURL`) instead of v0.1.7's
     `AppURL func(Resource)`.
+- **Follow-up (2026-11-16): the notifier's start position (not security-relevant).** The notifier used to start at the
+  newest change when `Run` began, with the position in memory only. A change made while central was starting (agents
+  reconnecting, the recover passes, the deadline loop) or around a restart never got a card or alert; the web UI still
+  showed it.
+  - `Serve` calls `Notifier.Prime` before the listener and the recover passes. It reads the start position there, and
+    `Run` follows from it and processes what changed in between. A failed `Prime` keeps the old lazy start.
+  - The position is saved in the `settings` table (`telegram.notifier_cursor`, value `<seq>:<saved at>`; no migration),
+    on the mapping flush when it moved, once a minute when it did not (the save time is what measures an outage), and
+    at shutdown. A start resumes from it when it is not beyond the newest change (a restore from backup) and was
+    saved at most **5 minutes** ago (`DefaultMaxReplay`); otherwise it starts at the newest change, so a long outage does
+    not flood a chat. A burst above `MaxKeys` is still one "many changes" notice per chat.
+  - Shutdown does not process the window being collected: the sender drops its queue when the same context ends, so
+    those sends would be lost with the position already advanced. The position is saved behind that window and the next
+    start delivers it, within the bound. Delivery stays at most once per change for what was already queued: a card
+    queued but not sent at a crash is lost, as before.
+  - The window waits for the bot's sender. `Serve` starts the bot and the notifier side by side, and the sender is
+    nil until the bot's start has run (or for good after a failed start). While it is nil the notifier neither reads
+    nor advances the position and looks again every `RetryAfter`; after the replay bound it gives the window up and
+    follows the newest change. The position is not saved meanwhile, so a restart can't take a stale position for a
+    fresh one.
+  - A replayed window loads the stored card mappings even for items it saw created, so a crash can't send a second
+    card for one that was sent in the last seconds before it.
+  - `Central.Close` waits (at most 5 s) for the notifier's shutdown writes (mappings first, position second) before it
+    closes the store.
 
 ### ADR-0090 — A usage limit moves a run to another account of its pool; usage is logged per run, account, role and space (security-relevant change)
 - **Status:** Accepted, 2026-11-15, with the operator's answers to the plan's Q1–Q12 (Q4 and Q5 changed from the
@@ -6357,6 +6408,289 @@
     new key) is acknowledged and answered from the journal: `ok` again for a done rename, another attempt for an open
     one. A rename ID reused for other names is refused. A first delivery without a valid lease at the command's
     generation is refused and journals nothing, so central's re-queue retries it.
+
+### ADR-0094 — The node fast-forwards idle instance checkouts to the collection head
+
+- **Status:** Accepted by control, 2026-11-17 ("live idle runs", with a kill switch). Node agent only: one node
+  configuration key, `memory.fast_forward` (default `true`). No central migration, no agent journal migration, no
+  protocol change (minor stays as it is) and no HTTP API change. If a later step needs numbers, it takes central migration
+  0063+, agent migration 0011+ and protocol minor 15 (0061/0062, 0010 and 14 are ADR-0093's). Implements ADR-0092's
+  "item 3" proposal, with one deliberate change to it (see *Which instances*). Refines SM-MEM-006 ("instances refresh
+  at safe boundaries").
+- **Context:** an instance's checkout (`<data>/memory/<space>/<role>/instances/<instance>`) moves onto the collection
+  head (the node's shared `refs/heads/main`) only at its own checkpoint and when a run starts (`prepare`). A run that
+  stays alive between turns keeps the head of its last idle checkpoint while other instances and the dreamer publish.
+  Its next edit is then made on an old base, and when another instance changed the same place (two notes appended at
+  the end of one file is the common case) the checkpoint merge conflicts and the instance's version is preserved under
+  `conflicts/`, although the agent had nothing against the newer text: it never saw it. The preserved conflicts examined on
+  one installation were of this kind.
+- **Decision:**
+  1. **Who does it.** The node only. It never changes the shared repository: it moves an instance checkout onto history
+     the shared repository already has, so what the node offers central, its acknowledged head, its sync and central's
+     acceptance rules are unchanged. Central does nothing new.
+  2. **When.** Right after a checkpoint moved the shared head (any instance's checkpoint, a dream's checkpoint, a
+     preserved conflict), for the other instances of that collection; and, as before, when a run starts (`prepare`),
+     which now uses the same checks.
+  3. **Which instances ("idle").** An instance is idle when all of these hold, read under the locks of 5:
+     - it has a run on the node that has not ended, and **every** such run of the instance (of any role: a dreamer's
+       checkout of another role counts) is `running` with the harness status `idle` or `done` (its turn ended).
+       `pending`, `starting`, `stopping`, and the statuses `working`, `blocked`, `error` or none are not idle;
+     - no idle checkpoint is pending for it (its own debounced checkpoint already ran since the turn ended; the timer
+       of each run is keyed by that run's own role, so a dreamer run's counts too);
+     - no operator has taken over the terminal of any of its runs;
+     - no input the node delivered to one of its runs is still waiting for its turn: after a `run.input` was sent, the
+       instance stays busy until that run reports a later turn, because its status can still say `idle` while the
+       turn the input started begins.
+     An instance with **no** live run is not touched here: its next run's `prepare` fast-forwards it with the same
+     checks, so touching it earlier gains nothing. (ADR-0092 proposed the opposite, "only when the instance has no
+     run"; that is what `prepare` already does, and it does not remove the conflicts above, which come from live runs
+     between turns.)
+  4. **Content and ancestry checks** (all required; each refusal is logged with a fixed reason and leaves the folder
+     exactly as it was):
+     - the checkout exists (`.git` is a directory), its git configuration is safe (the existing `UnsafeConfig`
+       guard), and git works on the checkout folder itself and on no other repository (the checkout guard below);
+     - no merge, rebase, cherry-pick, revert or bisect in progress, and no `index.lock`;
+     - `git status --porcelain --untracked-files=all --ignored=matching` is empty: no modified, staged, deleted, untracked or
+       ignored file (an ignored file is local-only data that a fast-forward could overwrite);
+     - the shared head exists, differs from the instance's `HEAD`, and the instance's `HEAD` is an ancestor of it
+       (`merge-base --is-ancestor`). An instance with commits the shared head lacks (diverged) is left to its next
+       checkpoint, which merges or preserves as before;
+     - then `git merge --ff-only --no-overwrite-ignore <shared head>`. Never `reset --hard`, never a merge commit,
+       never a force. Git itself refuses the merge if a tracked file it would update changed after the status check,
+       or if an untracked or (with `--no-overwrite-ignore`) ignored file appeared at a path the new history adds.
+     - At run start, the checkout is left alone while the instance has another live run besides the one starting
+       (`other_live_run`): that run may be writing in it.
+  5. **Locks and the start of a run or a turn.**
+     - Everything runs under the collection lock that checkpoints, `prepare` and (ADR-0093) renames take, so it never
+       interleaves with them. A sync only reads the shared repository.
+     - **A run that starts during a fast-forward:** the launch journals the run (`pending`) before `prepare`, and
+       `prepare` takes the collection lock before the harness starts. Either the fast-forward finishes first and
+       `prepare` finds nothing to do, or the run is journaled first and the instance is not idle, so it is skipped.
+     - **A turn that starts during a fast-forward:** input the node delivers (`run.input`: messages, nudges) waits on a
+       per-instance gate that the fast-forward holds from its final idle check to the end of the merge, and a
+       fast-forward skips an instance whose input is being delivered or whose delivered input has not had its turn
+       reported (3). A takeover that starts is registered first and then waits for the gate, so an operator never types
+       during a merge. Not fenced: a turn the harness starts on its own (a background task finishing). For those, the idle check is repeated immediately before the merge, git
+       refuses to overwrite a file that changed since the status check, and the remaining window is git's own, between
+       its per-file check and its write, only for files the fast-forward changes.
+       The input gate covers only input the node delivers. For the other turns (a queued message the harness starts,
+       a turn it starts on its own), what mostly covers them is the checkpoint-debounce condition of (3) together with
+       the harness status: a turn that has started is reported `working`, which is not idle, and an instance whose turn
+       just ended stays out of the merge until its own checkpoint has run. The repeated idle check and git's refusals
+       cover what is left.
+  6. **No change to what an agent sees mid-turn.** Only between turns. A Claude Code agent whose context holds an
+     older version of a file is refused by its own Edit and Write tools until it reads the file again.
+  7. **Kill switch.** The node setting `memory.fast_forward` (`SPACEMAN_AGENT_MEMORY_FAST_FORWARD`, default `true`).
+     Off, the node fast-forwards no idle checkout and run start refreshes exactly as before this decision (a clean
+     checkout whose `HEAD` is an ancestor of the shared head is fast-forwarded, ignored files are not checked).
+  8. **Logs.** Every fast-forward that moves a checkout is logged at info ("memory checkout fast-forwarded": space,
+     role, instance, old and new head, number of files changed, and whether at run start or between turns), so each
+     can be audited. Every refusal is logged with its fixed reason: at debug when the instance is busy or already up
+     to date, at info when the checkout itself is in the way (local content, an unfinished operation, a configuration,
+     divergence, a failed merge), since that keeps the instance from following the head until someone looks. The
+     reasons: `unsafe_config`, `merge_in_progress`,
+     `rebase_in_progress`, `cherry_pick_in_progress`, `revert_in_progress`, `bisect_in_progress`, `index_locked`,
+     `status_failed`, `staged_changes`, `modified_files`, `untracked_files`, `ignored_files`, `no_head`,
+     `no_shared_head`, `up_to_date`, `diverged`, `merge_failed`, `no_live_run`, `run_not_running`, `turn_not_ended`,
+     `checkpoint_pending`, `taken_over`, `input_in_delivery`, `input_pending`, `other_live_run`, `journal_failed`. No file name or content is logged.
+- **Alternatives:**
+  - ADR-0092's "no live run only": safe, but adds nothing over `prepare` (3).
+  - `reset --hard` to the head when the content looks equal: rejected, it discards whatever was written since the
+    check.
+  - A union merge driver for notes appended at the end of a file: it would hide real conflicts and needs a configured
+    driver, which the git guard forbids.
+  - Fast-forward at every idle report: the instance's own idle checkpoint already does it; the head moving is what
+    makes another instance stale.
+- **Consequences:**
+  - A role's live instances see other instances' and the dreamer's notes at their next turn instead of at their next
+    run; same-place edits made between turns stop conflicting.
+  - Edits made during a turn while another instance publishes still merge or conflict as before.
+  - Residual risks (5), each needing a write the node did not start, in a file the fast-forward changes:
+    - a write the harness makes on its own between git's per-file check and its write of that file is replaced by the
+      head's version;
+    - git replaces an updated file by a new one, so a background process that kept such a file open across turns
+      keeps writing into the old, unlinked file after the fast-forward, and those writes are lost. The status check
+      cannot see it when the idle checkpoint had already committed the earlier writes.
+  - One lasting ignored or untracked file in a checkout keeps that instance from fast-forwarding, at run start too
+    (logged at info).
+  - **Checkout guard.** The checkout, `.git` included, is writable by the agent, and the node runs git in it
+    (checkpoint `add -A` and `commit`, preserve `reset --hard`, this fast-forward). Those commands must read and write
+    only that checkout's own `.git` and run no code the agent chose. `memory.Git` checks before every command that
+    works in an existing repository (`Git.RunInput`; the fast-forward calls the same checks and refuses with
+    `unsafe_config`):
+    - configuration: `UnsafeConfig` (programs, transports, includes, `core.worktree`); `core.bare` and a git dir,
+      common dir or work tree that is not the checkout's own (a symlinked `.git`, a `gitdir:` file, `.git/commondir`)
+      are refused by `CheckoutIdentity`;
+    - inside `.git` (`ownGitDir`, a walk that does not list the loose-object fan-out folders): any symlink (git follows
+      it and its lockfiles, so a symlinked `refs`, `objects`, `index` or `packed-refs` moves another repository); a
+      FIFO or device; a regular file with more than one hard link outside the object store (git rewrites
+      `COMMIT_EDITMSG`, `FETCH_HEAD` and `MERGE_MSG` in place and appends to reflogs, so a hard link to another
+      checkout's ref, which an agent running as the same user as the daemon can make, would be overwritten);
+      `objects/info/alternates` (a push would copy borrowed objects into the shared history) and `info/grafts`
+      (replace refs are off: `GIT_NO_REPLACE_OBJECTS`);
+    - gitlinks (`Gitlinks`): an index entry for a submodule or embedded repository is refused before any command that
+      reads the work tree. Git runs a child git in such a folder, with that repository's own configuration, so its
+      filter drivers would run as the daemon, and in whatever git dir its `.git` names. `add` does so whatever
+      `diff.ignoreSubmodules` says; `submodule.recurse`, `diff.ignoreSubmodules`, `fetch`/`push.recurseSubmodules`
+      are also forced off on the command line. Commands that never read the work tree (the KB acceptance's, in
+      project repositories that may have submodules) are not checked for gitlinks;
+    - `GIT_CEILING_DIRECTORIES` is the checkout's parent, so a checkout without `.git` is not a repository rather than
+      part of one found above it.
+  - **Residual risk (time of check to time of use).** The checks run before git starts; the agent can write the
+    checkout while git runs, so a link planted in that window is followed. A live agent process can race the node's
+    git command; hitting the window needs no more than a loop that replaces `.git/refs` with a symlink. Not built,
+    proposed as structural fixes: (1) run the checkpoint and the fast-forward only when no process of the instance
+    is alive (at run end and at `prepare`), which this ADR's live fast-forward and the idle checkpoint give up; or
+    (2) let the node work in a daemon-owned copy (its own git dir, `GIT_DIR` and `GIT_WORK_TREE` set explicitly,
+    with the agent's work tree read into it by `git add` and written back by plain file copies that refuse links),
+    so no agent-writable file decides where git writes. Option 2 keeps the live behaviour and is the one recommended.
+  - The per-instance input gates live in memory for the life of the agent process: one small lock per instance seen.
+  - A stale-context overwrite by a shell command (not Claude Code's file tools) after a fast-forward now replaces the
+    head's text in a plain fast-forward publish, where before it could have become a preserved conflict. History keeps
+    both versions.
+- **Evidence:** `internal/agent` (`memff.go`): `TestFastForwardIdleCheckout` (only the idle instance moves; the shared
+  history is untouched), `TestFastForwardRefusals` (one case per refusal: unsafe configuration, each unfinished git
+  operation, `index.lock`, staged, modified, deleted, untracked, ignored, diverged, no live run, starting, stopping, a
+  second run pending, working, blocked, no status, the instance's dreamer run in a turn, checkpoint pending, taken over,
+  input in delivery, input sent whose turn is not reported, `core.worktree`, `core.bare`, a dreamer run's pending
+  checkpoint; each leaves the checkout as it was), `TestFastForwardUpToDateAndDisabled` (the kill switch, and
+  run start as before with it off), `TestRefreshAtStartChecks`, `TestDreamThenIdenticalEditDoesNotConflict` (the
+  original symptom: no preserved conflict; the same test with the switch off, the earlier behaviour, conflicts, and its
+  base variant fails on the base branch), `TestIdleAppendAfterOtherAppendMerges`, `TestInputWaitsForFastForward`
+  (`run.input` through the command handler waits for the merge), `TestRunStartDuringFastForward` (both orders),
+  `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestBusyInstanceNotTouched`
+  (no git command, not even a fetch, in a busy checkout), `TestInputPendingUntilTurnReported`,
+  `TestIgnoredFileAfterChecksNotOverwritten`, `TestRefreshAtStartWithAnotherLiveRun`, `TestTakeoverWaitsForFastForward`, `TestStartTakeoverWaitsForGate`,
+  `TestStatusReason`, `TestFastForwardRefusesRedirectedGitDir`; `internal/memory`: `TestRunRefusesRedirectedGitDir`
+  (each redirection outside and inside `.git`, the other repository's files unchanged), `TestRunRefusesGitlinks` (the
+  embedded repository's filter does not run), `TestRunStopsAtTheCheckout`. Each
+  guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
+
+### ADR-0095 — Role descriptions: prompt metadata edited in place, a per-space description, and a role list for control
+
+- **Status:** Proposed, 2026-11-17 (an operator feature request, items 1–3, from rolling out more worker roles of different
+  sizes). Central migration 0064 (`space_roles.description`). No node protocol change. New API op `update-prompt`, new
+  agent tool `spaceman_roles_list`. Extends ADR-0051 (starter roles) and ADR-0063 (admin MCP).
+- **Context:** surveyed on next/v0.1.11 and the Terraform provider's main branch.
+  1. **Descriptions.**
+     - A role template's name and description can already be changed in place: `PUT /role-templates/{id}`,
+       `spaceman template update --description`, and the provider's `spaceman_role_template.description`. The change
+       bumps the template's `revision`, which only run manifests record. It creates no prompt version.
+     - A prompt's name and description cannot be changed at all. The store has an `UpdatePrompt` query (name and
+       description, guarded by `prompts.version`), but no API operation or CLI command calls it. So the provider marks
+       both attributes "fixed after creation" and refuses a change. The only way to change a prompt's description is to
+       create a new prompt and re-point every template at it. Skills have the same gap.
+  2. **Control can't see what a role is for.** The control tools (`spaceman_queue_next`, `spaceman_worker_launch`,
+     `spaceman_runs_list`) say nothing about the space's roles. `spaceman_worker_launch` describes `role` as "e.g.
+     implementor-backend or reviewer". Only the opt-in admin MCP (ADR-0063) can list space roles and templates. Even
+     there a space role has no description, only a template ID, so control has to join the two lists itself. As a
+     result, every space repeats its routing guidance ("Opus for hard work, medium/light for smaller work, the reviewer
+     checks them") in its control instructions.
+  3. **Starter templates are global.** ADR-0051 seeds them once per installation as ordinary catalog entries, so
+     editing `starter-implementor` changes it for every space, demo spaces included. A space role can already override
+     a template per space: profile, prompt and pin, model, settings, skills and appended instructions. It can't
+     override the description. The operator guide doesn't say the templates are shared.
+- **Decision:**
+  1. **Prompt metadata in place.**
+     - A new operation `update-prompt`, `PATCH /prompts/{prompt_id}`, takes an ID or slug and a body
+       `{name?, description?}`. If-Match is required and is the prompt's `version`. The response is the prompt.
+     - Rule: `Global(authz.PromptWrite)`, the same rule as `create-prompt`. Admin MCP class: `Write` (rDraft). Audit
+       action: `prompt.updated`, with the names of the fields that changed, never their text.
+     - Validation matches `create-prompt`: a non-empty name of at most 120 characters, a description of at most 2000
+       characters. A field left out keeps its value.
+     - Slug and kind stay fixed. The slug is the prompt's identity in Terraform and in configuration. Changing the kind
+       would change which roles may use the prompt.
+     - It never touches `prompt_versions`, so no new version is created, and runs that follow the latest version see
+       no change.
+     - CLI: `spaceman prompt update <prompt> [--name] [--description]`, built with the `merge` helper like
+       `template update`.
+     - Web: the prompt page gets an **Edit details** dialog for the name and description.
+  2. **Role templates: no API change.** The way they work today already meets the request. The guide says it outright:
+     changing a template's name or description creates no prompt version, and a run picks it up at its next launch.
+  3. **A space role's own description.**
+     - Migration 0064: `ALTER TABLE space_roles ADD COLUMN description TEXT NOT NULL DEFAULT ''`. Existing rows stay
+       empty, so they fall back to their template's description.
+     - `catalog.SpaceRole` gets `description` (at most 2000 characters), with the same rule as the other override
+       fields: empty means "use the template's".
+     - The field is carried by `save-space-role`, `list-space-roles`, `get-space-role` and the role preview (as an
+       effective value with its origin).
+     - CLI `role set --description`. Web: a field on the space role form, with the template's description shown as
+       the placeholder.
+     - The description is not part of the launched agent's prompt and doesn't change run manifests. It is routing
+       guidance for whoever chooses a role.
+  4. **`spaceman_roles_list` for control.**
+     - A read-only agent tool, given to control runs only, like `spaceman_queue_next`.
+     - It returns the run's own space's roles, sorted by name. For each role: `name`, `kind` (from the template),
+       `description` (the space role's own if set, else the template's), `description_origin` (`space_role` or
+       `template`), `template` (slug), and the effective `harness` and `model` (the space role's override, else the
+       profile's).
+     - It shows no prompt text, settings, skills or account references. The descriptions are configuration operators
+       wrote, and they grant nothing (SM-SEC-001).
+     - `spaceman_worker_launch`'s `role` argument and `spaceman_queue_next`'s description point to the tool ("choose
+       the role with spaceman_roles_list"). Existing control prompts don't need to change.
+     - The starter control prompt (`builtin/starter/control.md`) mentions the tool. As ADR-0051 says, already-seeded
+       prompts are not rewritten.
+  5. **Starter templates stay global, documented.**
+     - The guide's "Starter roles" section says the starter templates, prompts and profiles are shared by every space
+       of the installation.
+     - To change a role in one space, override it on the space role: profile, model, prompt, instructions, skills and
+       now description.
+     - To change it for a group of spaces, copy the template (`spaceman template create` from `template get`), or fork
+       the prompt and point those spaces' roles at the copy.
+     - There is no per-space template layer and no automatic fork.
+  6. **Terraform provider (terraform-provider-spaceman).**
+     - `spaceman_prompt`:
+       - `name` and `description` lose `fixedAfterCreate` and become ordinary in-place attributes.
+       - `Update` calls `update-prompt` when only they changed. It saves a draft and publishes only when `body`,
+         `extends` or `notes` changed. A metadata-only change no longer publishes a version.
+       - `slug` and `kind` stay fixed.
+       - The client gets `UpdatePrompt(ctx, id, version, in)`.
+     - `spaceman_space_role`: a new optional attribute, `description` (Optional+Computed, default `""`, updated in
+       place).
+     - `spaceman_role_template`: no schema change. Its `description` documentation says a change creates no prompt
+       version.
+     - Against a central without `update-prompt` (a 404 or 405 on the PATCH), the provider reports "requires SpaceMan
+       0.1.11 or later" instead of a raw error.
+- **Alternatives:**
+  - *Store the description on the prompt version:* a description would then need a new version, which is what the
+    request asks to avoid. Rejected.
+  - *Put the role list in control's built-in orientation (system prompt):* it would be stale as soon as an operator
+    changed a role, and it would grow every control prompt. A tool is current on every call. Rejected.
+  - *Add the role descriptions to `spaceman_queue_next`'s result:* this mixes queue state with configuration and
+    repeats the list on every poll. A pointer to one tool is enough. Rejected.
+  - *Per-space role templates (`space_id` on `role_templates`) or a "fork template into space" operation:* this adds a
+    second layer of templates that every resolver, UI page and the provider would need to understand. Space-role
+    overrides already cover everything except the description, which this ADR adds. Rejected for now; it can be
+    revisited if overrides are not enough in practice.
+  - *Per-space memory conventions override:* not part of the request. Left as a follow-up.
+- **Consequences:**
+  - Operators can fix a prompt's or template's description from Terraform without creating versions or new prompts.
+    An existing prompt resource that tried to change its description gets an in-place update instead of an error.
+  - Routing guidance lives in the role descriptions, which control reads with one call. Control instructions only need
+    to say "pick the role whose description fits".
+  - The descriptions are visible to the control agent, so they must not contain secrets. They are already visible to
+    every operator who can read the catalog.
+  - Skills: follow-up F1 (RD-F1) is implemented as `update-skill` (`PATCH /skills/{skill_id}`, see the table below). Skills
+    are installation-wide, so a rename shows in every space that uses the skill. The provider's `spaceman_skill` metadata
+    (name and description in place) remains a follow-up.
+- **Requirements:** the implementation adds SM-PROMPT-010 (prompt name and description edited in place without a new
+  version), SM-PROMPT-011 (a space role's own description) and SM-CTRL-007 (control lists the space's roles with their
+  effective descriptions) to GOAL.md and TRACEABILITY.md, as `todo` until their tests land.
+- **Implementation split** (tiers suggested for control, each a separate draft PR into next/v0.1.11 unless noted):
+
+  | # | Task | Depends on | Tier |
+  |---|---|---|---|
+  | T1 | `update-prompt`: `catalog.UpdatePromptMeta` (existing `UpdatePrompt` query, audit `prompt.updated`), the API op and rule, the admin MCP class, the Telegram entry (`TelegramExcluded`, like `create-prompt`), `make api`, `prompt update` CLI and `make cli-docs`, tests in `internal/catalog` (no version is created, If-Match, validation) and over HTTP in `internal/app`. | — | Sonnet |
+  | T2 | Migration 0064 and `space_roles.description`: sqlc queries, `catalog.SpaceRole`, save, list and get, preview origin, CLI `role set --description`, `make api`, an upgrade test (`embeddedUpTo(t, "0063")`), tests. Coordinate the number with memory fast-forward (0063). | — | Sonnet |
+  | T3 | `spaceman_roles_list` in `internal/control/tools.go` (control only, read-only), effective description, harness and model, the pointer in `spaceman_worker_launch` and `spaceman_queue_next`, tests: effective values and origins, another space's roles never visible, only for control. | T2 | Sonnet |
+  | T4 | Web: an **Edit details** dialog on the prompt page and a description on the space role form, `make web-check`, screenshots if they change. | T1, T2 | Sonnet |
+  | T5 | Docs: the guide's "Starter roles" section says the templates are global and explains per-space overrides, plus template description edits, `spaceman_roles_list` in the control docs, the starter `control.md` line, and GOAL, TRACEABILITY and PLAN entries. `make site-check`. | T1–T3 | Haiku |
+  | P1 | Provider: in-place `spaceman_prompt` `name` and `description` through `UpdatePrompt`, publishing only on content changes, `spaceman_space_role.description`, a clear error from an older central, unit and acceptance tests, regenerated docs. A PR into the provider's main. | T1, T2 merged | Sonnet |
+  | F1 | Follow-up: `update-skill` (the same pattern for skills), implemented (RD-F1; skills are installation-wide, so a rename shows in every space). The provider's `spaceman_skill` metadata remains a follow-up. | — | Haiku |
+
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. `update-prompt` uses the existing prompt
+  write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no
+  prompt text, settings or credentials.
 
 ## 2. Open items and unresolved contracts
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,4 +351,108 @@ func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
 		t.Fatal("no report after the welcome")
 	}
 	wantOpen(t, "after welcome", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+}
+
+// A run end reported between the hello snapshot and the connection being set is not in the hello and has no
+// connection to go out on: it is held and sent after the welcome, or central keeps the run live until the next reconnect.
+func TestRunEndBetweenHelloSnapshotAndConnIsSentAfterWelcome(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	fc := newWSCentral(t, proto.MinorUsageLimit)
+	var once sync.Once
+	a.helloStage = func() {
+		once.Do(func() {
+			ccLaunch(a, "run_gap")
+			row := getRun(t, a, "run_gap")
+			row.State = proto.RunExited
+			if err := a.j.updateRun(context.Background(), row); err != nil {
+				t.Error(err)
+			}
+			a.report(context.Background(), getRun(t, a, "run_gap"))
+		})
+	}
+	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
+	fc.next(t, proto.TypeHello)
+	rs := fc.collect(t, "run_gap", 500*time.Millisecond)
+	if len(rs) == 0 || rs[len(rs)-1].State != proto.RunExited {
+		t.Fatalf("run end not reported after the welcome: %d reports", len(rs))
+	}
+}
+
+// A limit the scan finds in the same window (before the connection is set) is held too, not dropped.
+func TestUsageLimitScannedBeforeConnIsHeld(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.mu.Lock()
+	a.preConn = true
+	a.mu.Unlock()
+	if !a.holdingReports() {
+		t.Fatal("the pre-connection window does not hold reports")
+	}
+}
+
+// A limit the scan finds after the hello snapshot and before the connection is set, on a first connect (the minor is not
+// negotiated yet), is held and sent after the welcome, not dropped.
+func TestUsageLimitScannedInPreConnWindowIsSentAfterWelcome(t *testing.T) {
+	old := limitSettle
+	limitSettle = 10 * time.Millisecond
+	t.Cleanup(func() { limitSettle = old })
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	fc := newWSCentral(t, proto.MinorUsageLimit)
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	at := clk.Now().Add(-time.Minute)
+	reset := at.Add(5 * time.Hour).Truncate(time.Second)
+	var once sync.Once
+	a.helloStage = func() {
+		once.Do(func() {
+			if a.protocolAtLeast(proto.MinorUsageLimit) {
+				t.Error("the minor is already negotiated: not the first-connect case")
+			}
+			ccLaunch(a, "run_pre")
+			// The launch's own held report would read the limit from the journal: forget it, so only the scan can send it.
+			a.mu.Lock()
+			delete(a.heldReports, "run_pre")
+			a.mu.Unlock()
+			row := getRun(t, a, "run_pre")
+			transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
+			if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
+				t.Error(err)
+			}
+			if err := rt.AppendTranscript(transcript, rt.TypedRecord(at), rt.LimitRecord(proto.LimitFiveHour, reset, at), rt.NoticeRecord(at)); err != nil {
+				t.Error(err)
+			}
+			a.limitScan(context.Background(), "run_pre", false)
+			if j := getRun(t, a, "run_pre").Limit; j.Kind != proto.LimitFiveHour {
+				t.Errorf("limit not journaled: %+v", j)
+			}
+		})
+	}
+	startAgent(t, a, fc, clk)
+	fc.next(t, proto.TypeHello)
+	rs := fc.collect(t, "run_pre", 500*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the welcome")
+	}
+	wantOpen(t, "after welcome", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+}
+
+// A failed hello snapshot must not leave the pre-connection hold set: a later report would be held forever.
+func TestPreConnHoldClearedWhenHelloRunsFails(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	fc := newWSCentral(t, proto.MinorUsageLimit)
+	a.o.Clock, a.o.CentralURL, a.o.Credential = clock.NewFake(time.Now().UTC()), fc.srv.URL, "spaceman_nd_test"
+	a.o.BridgeSocket = filepath.Join(t.TempDir(), "b.sock")
+	if err := a.j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.session(context.Background()); err == nil {
+		t.Fatal("session succeeded with a closed journal: helloRuns did not fail")
+	}
+	if a.holdingReports() {
+		t.Fatal("a failed hello snapshot left the pre-connection hold set")
+	}
 }

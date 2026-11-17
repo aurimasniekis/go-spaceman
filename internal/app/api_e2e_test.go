@@ -78,14 +78,20 @@ func newHarnessFull(t *testing.T, log *slog.Logger, mod func(*config.Config), pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
 	h.c = c
+	// One cleanup, released once it ran (cleanupReleased), that also clears the harness: closures elsewhere that still
+	// hold h must not keep the central or the server's handler (the whole API) alive after the test.
+	cleanupReleased(t, func() {
+		h.srv.Close()
+		_ = c.Close()
+		h.srv.Config.Handler = nil
+		h.c, h.srv = nil, nil
+	})
 	if pre != nil {
 		pre(c)
 	}
 	h.srv.Config.Handler = c.Handler(c.APIDeps())
 	h.srv.Start()
-	t.Cleanup(h.srv.Close)
 	return h
 }
 
