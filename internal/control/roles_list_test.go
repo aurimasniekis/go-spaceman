@@ -38,6 +38,20 @@ func TestRolesList(t *testing.T) {
 	save("spc_a", catalog.SpaceRole{Name: "impl-b", TemplateID: tpl.ID})
 	save("spc_a", catalog.SpaceRole{Name: "impl-a", TemplateID: tpl.ID, Description: "Hard backend work.", Model: "opus", Instructions: "SECRET-INSTRUCTIONS",
 		Settings: map[string]string{"role_setting": "SECRET-ROLE-SETTING"}})
+	// A template with no profile: the role lists with an empty harness (a launch defaults it to the caller's).
+	bare, err := cat.SaveTemplate(e.ctx, op, "", 0, catalog.RoleTemplate{Slug: "bare", Name: "Bare", Kind: "worker", Description: "No profile."})
+	must(err)
+	save("spc_a", catalog.SpaceRole{Name: "impl-c", TemplateID: bare.ID, Model: "haiku"})
+	// A role whose profile is gone: listed with an error, not dropped.
+	gone, err := cat.SaveProfile(e.ctx, op, "", 0, catalog.Profile{Slug: "gone", Name: "Gone", Harness: "claude-code"})
+	must(err)
+	save("spc_a", catalog.SpaceRole{Name: "impl-d", TemplateID: tpl.ID, ProfileID: gone.ID})
+	if err := cat.DeleteProfile(e.ctx, op, gone.ID); err != nil {
+		// Deleting an in-use profile is refused, so remove the row beneath the catalog.
+		if err := e.s.W().Exec(e.ctx, "DELETE FROM harness_profiles WHERE id = ?", gone.ID); err != nil {
+			t.Fatalf("cannot break the role: %v", err)
+		}
+	}
 	save("spc_c", catalog.SpaceRole{Name: "other-space-role", TemplateID: tpl.ID, Description: "Never visible in space A."})
 
 	reg := agenttools.New(agenttools.Deps{Extra: []func(*agenttools.Registry){Tools(nil, nil, cat)}})
@@ -54,6 +68,8 @@ func TestRolesList(t *testing.T) {
 	want := []map[string]string{
 		{"name": "impl-a", "kind": "worker", "description": "Hard backend work.", "description_origin": "space_role", "template": "implementor", "harness": "claude-code", "model": "opus"},
 		{"name": "impl-b", "kind": "worker", "description": "Template text.", "description_origin": "template", "template": "implementor", "harness": "claude-code", "model": "sonnet"},
+		{"name": "impl-c", "kind": "worker", "description": "No profile.", "description_origin": "template", "template": "bare", "model": "haiku"},
+		{"name": "impl-d", "kind": "worker", "template": "implementor", "error": "role \"impl-d\" refers to a missing harness profile"},
 	}
 	if len(out.Roles) != len(want) {
 		t.Fatalf("roles %v, want %v", out.Roles, want)
