@@ -536,7 +536,11 @@ func (a *Agent) relocPrepare(ctx context.Context, g *projectGit, spaceID string,
 	// Central's copy is what arrives, so a rename journaled here from an earlier stay is moot. A node that lost the space
 	// while unreachable never got the release that drops it, and central cancelled that rename's closed notice when it
 	// relocated the space: left behind it would hold the names again with nothing to close it.
-	if err := a.j.forgetSpaceRenames(ctx, spaceID); err != nil {
+	// renameMu keeps the delete from landing inside a startup retry's moveRoleMemory of one of these renames.
+	a.renameMu.Lock()
+	err := a.j.forgetSpaceRenames(ctx, spaceID)
+	a.renameMu.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	space := a.spaceDir(p.Workdir)
