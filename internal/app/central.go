@@ -334,6 +334,15 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Human.Kick() // a response held for the run's instance goes to it (SM-HUM-009)
 			}
 		},
+		OnRoleRenameDone: func(string) {
+			// The rename's launch hold is lifted (ADR-0093): control waiting for work and held dreams start again.
+			if c.Notifier != nil {
+				c.Notifier.Kick()
+			}
+			if c.Dreams != nil {
+				c.Dreams.Kick()
+			}
+		},
 		OnRunEnded: func(runID string) {
 			if c.Fleet != nil {
 				c.Fleet.Recordings().RunEnded(runID) // archived to the artifact store (S3) once the run ended
@@ -496,6 +505,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	// Control lifecycle (ADR-0056): started for waiting work, stopped after its idle time.
 	c.Supervisor.Limit = func(ctx context.Context, spaceID, key string) int64 { return c.Limits.Value(ctx, nil, spaceID, key) }
 	c.Supervisor.ControlRole = c.Catalog.ControlRole
+	c.Supervisor.RoleName = c.Catalog.CurrentRoleName
 	c.Watchdog = control.NewWatchdog(c.Supervisor)
 	c.Notifier.ControlWanted = c.Supervisor.ControlWanted
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
@@ -516,6 +526,18 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Memory = memory.New(st, c.Audit, c.Changes, st.Path("memory"), gitBin, obs.Component(log, "memory"))
 	c.Memory.Outbox = c.Outbox
+	// A rename's central repository move that a crash interrupted is finished before any node connects (ADR-0093).
+	if err := c.Memory.FinishAllRenames(ctx); err != nil {
+		log.Warn("finish role renames' memory moves; each is retried when its space's memory is next used", obs.Err(err))
+	}
+	c.Catalog.AfterRename = func(ctx context.Context, r catalog.RoleRename) {
+		c.Memory.RenameCommitted(ctx, r.SpaceID)
+		if r.NodeID != "" {
+			c.Fleet.Hub().Kick(r.NodeID)
+		}
+	}
+	c.Catalog.AfterRenameRetry = func(_ context.Context, r catalog.RoleRename) { c.Fleet.Hub().Kick(r.NodeID) }
+	c.Catalog.AfterRenameClose = func(_ context.Context, r catalog.RoleRename) { c.Fleet.Hub().RoleRenameClosed(r.NodeID, r.ID) }
 	c.Fleet.Hub().Memory = c.Memory
 	c.Fleet.MemoryExport = c.Memory
 	c.Fleet.Grants = c.Auth
@@ -549,8 +571,10 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return nil, err
 	}
 	bc := cfg.Backups
+	sources := backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts)
+	sources.HoldMemory = c.Memory.HoldMoves
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
-		Sources: backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
+		Sources: sources, Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
 		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(),
 		StallTimeout: bc.StallTimeout.D(), MaxDuration: bc.MaxDuration.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
 		PrepareMemory: c.prepareBackupMemory})

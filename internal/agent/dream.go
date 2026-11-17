@@ -46,7 +46,7 @@ func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instanc
 	roles := d.MemoryRoles
 	if slices.Contains(roles, "*") {
 		roles = nil
-		for _, k := range a.mem.collections() {
+		for _, k := range a.mem.collections(ctx) {
 			if k[0] == spaceID {
 				roles = append(roles, k[1])
 			}

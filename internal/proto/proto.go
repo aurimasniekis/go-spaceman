@@ -35,8 +35,9 @@ const (
 	// (terminal.sizes, ADR-0075); 11: harness versions (the profile's pin on launches, the launched version on run
 	// reports and node-managed harness details in capabilities, ADR-0077); 12: usage limits (the limit a node detected
 	// in a run's transcript on run reports, ADR-0079); 13: account usage (a run's StopFailure class and the source of a
-	// limit's reset time on run reports, account-switching plan §3.9)
-	MaxMinor = 13
+	// limit's reset time on run reports, account-switching plan §3.9); 14: role rename (the memory.rename command,
+	// memory.renamed reports and memory.renamed.ack, ADR-0093)
+	MaxMinor = 14
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -64,6 +65,7 @@ const (
 	TypeMemoryFlushed    = "memory.flushed"    // minor ≥ 5: the outcome of a memory.flush
 	TypeTakeoverEnded    = "takeover.ended"    // minor ≥ 6: the node could not hold a takeover (attach failed, terminal closed)
 	TypeNodeCapabilities = "node.capabilities" // minor ≥ 11: the node's current capabilities, re-reported between hellos
+	TypeMemoryRenamed    = "memory.renamed"    // minor ≥ 14: the outcome of a memory.rename command
 
 	// central → node
 	TypeWelcome             = "welcome"
@@ -80,6 +82,7 @@ const (
 	TypeMemoryFlush         = "memory.flush"          // minor ≥ 5: checkpoint and sync spaces' role memory now (backup prep)
 	TypeTakeoverState       = "takeover.state"        // minor ≥ 6: every active takeover of the node's runs (the whole set)
 	TypeTakeoverInput       = "takeover.input"        // minor ≥ 6: an operator's keystrokes for a taken-over terminal
+	TypeMemoryRenamedAck    = "memory.renamed.ack"    // minor ≥ 14: central recorded a memory.renamed report
 	TypeError               = "error"
 )
 
@@ -236,14 +239,15 @@ type Heartbeat struct {
 
 // Command kinds.
 const (
-	CmdLaunch    = "run.launch"
-	CmdStop      = "run.stop"
-	CmdInterrupt = "run.interrupt"
-	CmdInput     = "run.input"
-	CmdPrepare   = "space.prepare"
-	CmdKBAccept  = "kb.accept"        // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
-	CmdDreamDone = "dream.commit"     // minor ≥ 2: checkpoint a dream's memory, then advance its evidence positions
-	CmdReposSync = "space.repos.sync" // minor ≥ 4: clone and fetch configured repositories, then report their state
+	CmdLaunch       = "run.launch"
+	CmdStop         = "run.stop"
+	CmdInterrupt    = "run.interrupt"
+	CmdInput        = "run.input"
+	CmdPrepare      = "space.prepare"
+	CmdKBAccept     = "kb.accept"        // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
+	CmdDreamDone    = "dream.commit"     // minor ≥ 2: checkpoint a dream's memory, then advance its evidence positions
+	CmdReposSync    = "space.repos.sync" // minor ≥ 4: clone and fetch configured repositories, then report their state
+	CmdMemoryRename = "memory.rename"    // minor ≥ 14: move a renamed role's memory folder (ADR-0093)
 	// minor ≥ 3: relocation steps (ADR-0037). They are not execution: the node accepts them without a valid lease (the
 	// source's lease is revoked while it relocates; the destination has none yet). Central is the only sender.
 	CmdRelocateCheck   = "space.relocate.check"   // source: flush memory and uploads, then inspect the space folder
@@ -516,7 +520,7 @@ func (c Command) Validate() error {
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")
 		}
-	case CmdPrepare, CmdKBAccept, CmdReposSync, CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
+	case CmdPrepare, CmdKBAccept, CmdReposSync, CmdMemoryRename, CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
 	case CmdDreamDone:
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")

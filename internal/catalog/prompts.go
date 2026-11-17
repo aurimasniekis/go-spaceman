@@ -61,6 +61,16 @@ type Service struct {
 	audit   *audit.Writer
 	changes *changefeed.Recorder
 	opts    Options
+
+	// AfterRename runs after a role rename commits, before RenameSpaceRole returns (ADR-0093): it moves central's memory
+	// repository and wakes the delivery of the node's memory.rename. Nil: nothing runs (memory.Service finishes the move
+	// on the next access).
+	AfterRename func(ctx context.Context, r RoleRename)
+	// AfterRenameRetry runs after an admin's retry committed and queued a command: it wakes the node's delivery.
+	AfterRenameRetry func(ctx context.Context, r RoleRename)
+	// AfterRenameClose runs after an admin closed a rename: it tells a connected node (memory.renamed.ack with error
+	// closed) so it drops the rename and lifts its own sync hold.
+	AfterRenameClose func(ctx context.Context, r RoleRename)
 }
 
 // Options configure the service.

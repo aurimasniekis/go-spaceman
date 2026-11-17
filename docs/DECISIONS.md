@@ -6309,8 +6309,8 @@
 
 ### ADR-0093 — A space role can be renamed in place; live references follow, history stays
 
-- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0010 (rename results),
-  protocol minor 14 (`memory.rename`, `memory.renamed`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
+- **Status:** Proposed, 2026-11-16. Central migrations 0061 (`space_role_renames`) and 0062 (the `failed` node state),
+  agent migration 0010 (rename results), protocol minor 14 (`memory.rename`, `memory.renamed`, `memory.renamed.ack`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
 - **Context:** a space role's name is its identity: the primary key of `space_roles`. It is also copied as text into
   grants, pools, KB and dream configuration, schedules, human policies and permissions, open tasks, messages and
   requests, memory collections (including the directory names of the central and node Git repositories) and the history
@@ -6336,6 +6336,7 @@
      - a node below the new protocol minor makes the rename fail rather than risk unsynced memory.
   5. Old names resolve to the current name only where SpaceMan relaunches from a history row (control restart and
      autostart) and for the dream transcript filter. A name that is a live role is never redirected.
+     Every resume restates the memory note (Claude Code does not keep the appended system text in a session; a Codex resume puts it before the first input), and a resume after a finished rename adds that the old folder is gone and names the new one.
   6. The rename is exposed as `POST /spaces/{space_id}/roles/{name}/rename` with the same permission as saving a role.
      It is also in the CLI (`spaceman role rename`) and the admin MCP (classified dangerous). The Terraform provider
      treats a name change as an in-place update that calls it, never as a replace.
@@ -6362,6 +6363,221 @@
   - A test classifies every role-name column as live or history, so a new column cannot be missed.
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The operation uses the existing role
   write permission, and every rename is audited.
+- **Implementation notes (T-H1, 2026-11-16):** `catalog.RenameSpaceRole` and `catalog.CurrentRoleName` live in
+  `internal/catalog/rename.go`. Where the code differs from the plan, or adds to it:
+  - A **live run** is one whose `observed` is `pending`, `starting`, `running`, `stopping` or `unknown`. The plan
+    also counted `desired = 'running'`, but a run that ends on its own keeps that value
+    (`ListActiveRunsBySpace`), so that test would block a rename forever after any crash.
+  - **An extra blocker:** a rename whose node move is still pending and that involves either name. A second rename of
+    the same names waits until the node has moved the first one, so the node never receives two moves of one
+    directory out of order.
+  - **`name_taken` also covers leftovers of a deleted role with the target name that would collide**: an MCP grant on
+    the same server or a pool entry for the same account. Leftovers that don't collide are adopted, as they would be
+    by creating a role with that name.
+  - The **reasons** (`role_busy`, `name_taken`) travel as a `*catalog.RenameRefused` cause:
+    - `role_busy` uses `apperr.CodePrecondition`;
+    - `name_taken` uses `CodeAlreadyExists`;
+    - an `If-Match` revision mismatch uses `CodePrecondition`, like every other `If-Match` in the service (HTTP 409
+      today). T-M1 maps these codes to the HTTP statuses in §3.4.
+  - The **launch hold** is `fleet.RenamePendingError` under `CodePrecondition` (`role_rename_pending`). It also holds
+    launches of the **old** name: otherwise a new role with that name would start in the node directory that is still
+    to move. The control supervisor treats a held restart or autostart as a quiet deferral. It logs and asks no one,
+    and the next sweep for waiting work starts control once the node has reported.
+  - **`CurrentRoleName` follows the chain in time order.** It takes the latest rename away from the name, then each
+    later rename of the name it reached. So `a→b`, `b→c` and then a new role `b` still resolves `a` to `c`.
+    `FormerRoleNames` walks through a reused name rather than stopping at it.
+  - **`cross-space` is reserved.** Knowledge-base requests from other spaces carry it as their requester role.
+    Renaming to it is refused, and the rewrite skips open requests that came from another space.
+  - Migration 0061 adds **`node_message`** for the node's last deferral or error message, which T-H2 writes.
+  - The **dream's excluded own role** also gets its former names, as its transcript roles do.
+  - The **change feed** also records the rewritten messages and the memory collection.
+  - The control supervisor gets the resolver through a hook, `Supervisor.RoleName`, which central wires to
+    `Catalog.CurrentRoleName`. This follows the existing `ControlRole` hook.
+- **Implementation notes (T-H2, 2026-11-16):** central's memory move and the central half of protocol minor 14
+  (`internal/memory/rename.go`, `internal/proto/rolerename.go`, `internal/fleet/rolerename.go`). Where the code differs
+  from the plan, or adds to it:
+  - **The node move's state machine.** Central migration **0062** adds `failed` to `node_state`. The node's
+    `memory.renamed` report moves an open rename: `ok` → `done` (sets `node_done_at`; final), `error` → `failed`,
+    `deferred` → `pending`; each stores the node's message. A failed rename becomes done on a later `ok` (the node
+    retries at its next start, T-H3). A report on a done rename changes nothing. Pending and failed renames are **open**:
+    both hold launches of either name and dream launches in the space, block another rename of either name, refuse a
+    clean relocation of the space, and make central refuse memory under both names. A `source_unavailable` relocation is
+    not refused: its finalize transaction closes the space's open renames as `not_needed` ("node lost; relocated from
+    central"), which ends the hold and the re-queue; central's copy already moved, so the memory carries over under the
+    new name. `node_too_old` is not a state: it is
+    refused at rename time, before anything is written, for a node whose stored `protocol_minor` is below 14 (also one
+    that never connected).
+  - **`memory.renamed.ack`** carries `error` for a rename that is unknown or not this node's, so the node stops sending
+    it. A report central could not store (a database error) gets no ack, so the node sends it again.
+  - **The command's generation.** `memory.rename` needs the space's lease like every non-stop command, but a rename can
+    commit while the node is away, and a lease granted after a revocation has a newer generation. So the hub sends it at
+    the space's **current** lease generation, and only on a connection that negotiated minor 14 and holds the lease;
+    otherwise it stays undelivered. A command the node refuses (`rejected`) is noted on the rename (`node_message`) and
+    queued again, with key `role-rename:<id>:<n>`, in the node's next connect transaction.
+  - **The resurrection guard also covers a reused name while the move is open.** The plan accepted the old name again
+    once `space_roles` had it. But while the node has not moved its folder, a sync under that name is still the renamed
+    role's history and would start the new role's collection with it. So memory under a former name is refused while
+    any rename away from it is open, and afterwards only while no role has the name. **The new name is refused too while
+    the move is open**: until the node has moved its folders, a folder of the new name on the node is a leftover it will
+    set aside, and its history must not reach the renamed collection. The hub records `memory.renamed` in the read loop,
+    in order, so the node's sync under the new name right after its `ok` finds the rename done.
+  - **Backups hold the moves** (`memory.Service.HoldMoves`, wired as `backup.Sources.HoldMemory`) from before the
+    database snapshot until the memory is bundled, so each bundle sits under the name its snapshot gives the collection.
+    The backup walks the disk, not the database, so without the hold a move between the listing and the bundling would
+    fail the backup or carry the repository under the wrong name. A rename that commits meanwhile records no
+    `central_moved_at`: the move runs when the backup releases the hold (or on the next access to the space's memory,
+    which waits for the release). A backup with the rename but not the move restores consistently, because the
+    start-up reconciler finishes the move on the restored disk. A memory sync (or any `ensureMoved` caller) in a space
+    whose rename committed during a backup can stall until the backup has bundled and released the hold.
+  - **`ensureMoved` is per space**, not per role: it finishes the space's unmoved renames in time order, so a chain
+    `a→b→c` interrupted before both moves ends with `c`. It runs before `Apply`, `Report`, `Files`, `File`, `History`
+    and `ExportBundles`; the start-up reconciler (`FinishAllRenames`) runs while central is built, before it serves
+    nodes. An error leaves the space's memory untouched by the caller.
+  - **`.retained` repositories are not in backups** (the bundler takes only `<space>/<role>.git`). They are leftovers
+    without a collection, kept on central's disk for an operator to look at.
+  - **The agent advertised minor 13 until T-H3**: a node that claimed 14 without moving its folder would hold a renamed
+    role forever, while one at 13 makes central refuse the rename. T-H3 raised it to 14.
+- **Implementation notes (T-H3, 2026-11-16):** the node's move (`internal/agent/rolerename.go`, node journal migration
+  **0010** `role_renames`). Where the code differs from the plan, or adds to it:
+  - **Journal states.** A rename is `pending`, then `moving` (journaled before the folder is renamed), then `done` (in the
+    same journal transaction that moves the `memory_sync` row, drops one the new name had, and resets retries and the
+    last error). A `moving` rename found at start is finished: the old folder is renamed if it is still there, otherwise
+    the rename happened before the crash. Because of that marker a folder under the new name is set aside only while the
+    rename has not started moving, so a crash after `os.Rename` never sets the moved folder aside. `dropped` is a rename
+    central answered with an ack error (unknown, or not this node's) before it moved: it is never tried again.
+  - **The busy check** covers an active run of **either** name in the space (central holds launches of both) and an active
+    dream run in the space. It reads the node's journal, so a run central no longer counts as live still defers the move.
+    A pending dream commit does not defer it: central's blockers cover it, and a commit whose run is gone would otherwise
+    defer the move forever.
+  - **Retries.** A deferred move is tried again when a run of the space ends (after that run's memory flush); every open
+    rename (deferred, failed or interrupted) is tried again at agent start, after the runner reconcile. A failed move is
+    not retried at a run's end. An unchanged outcome central already acknowledged is not reported again.
+  - **Unsynced edits.** Before the move every instance checkout of the old name is checkpointed, so edits a run left in
+    a checkout become history that syncs under the new name; a checkout that cannot be checkpointed keeps its changes in
+    its files, which move with the folder. A checkpoint of the old name that was waiting for the collection's lock during
+    the move finds no checkout and writes nothing.
+  - **Sync after the ack.** The node sends no `memory.sync` for either name from the rename until
+    central has acknowledged its `ok`, then syncs the new name at once. The sync bundles from the moved `acked`, so
+    central applies the node's newer history as a fast-forward of the renamed collection.
+  - **A repeat.** A `memory.rename` the journal already holds (a repeated delivery, or central's re-queued command with a
+    new key) is acknowledged and answered from the journal: `ok` again for a done rename, another attempt for an open
+    one. A rename ID reused for other names is refused. A first delivery without a valid lease at the command's
+    generation is refused and journals nothing, so central's re-queue retries it.
+- **Addendum: retry and close a stuck rename (T-H4, 2026-11-17, Proposed; operator chose to build both).** A rename stays
+  open while its node state is `pending` or `failed`, which holds the role's launches and every dream launch in the space.
+  A node that keeps answering `error`, or was downgraded below minor 14 after the rename was accepted (a rename is refused unless the node last spoke minor 14 or higher), never ends it. Two admin-only operations end the
+  wait. Neither deletes anything.
+  1. **API.** `POST /spaces/{space_id}/role-renames/{rename_id}/retry` and `.../close` (`retry-space-role-rename`,
+     `close-space-role-rename`), body `{reason?}` (close: optional, up to 500 characters, stored as the node message).
+     A rename has no revision, so there is no `If-Match`: the state check inside the write transaction is the guard, so a
+     double click gets the second call a 409. Errors: rename not open (`done`, `not_needed`, `abandoned`) → 409
+     `rename_not_open`; unknown id or other space → 404; not an admin → 403. The permission is a new
+     `space_role_rename:admin`, which only the admin role holds (through `*`); the operator role, which may rename, may
+     not retry or close. Also `spaceman role retry-rename|close-rename <rename-id>` (a `rename` leaf cannot also have
+     subcommands; close needs `--yes`) and two admin MCP tools (classified dangerous). Not in Telegram. Both audit
+     (`role_rename.retried`, `role_rename.closed`, with the actor,
+     rename id, names, previous state, the reason) and record a change-feed update of the space.
+  2. **Retry** is accepted in `pending` and `failed`. It queues a new `memory.rename` with the next key
+     (`role-rename:<id>:<n>`, as the connect-time re-queue does) unless a command is still pending or sent (not yet acknowledged by the node; an
+     accepted one is exactly the failed case: the node holds it and retries only at its start), in which case it only wakes delivery. A `failed` rename becomes `pending` with the old message kept until the node
+     reports. It never ends the hold itself. For a node whose stored minor is below 14 the command is queued anyway and
+     waits for a connection at 14 or more (the hub already leaves it undelivered); the response says
+     `node_too_old: true` so the operator knows to upgrade the node or close. It is idempotent and safe: the node answers a
+     repeated command from its journal.
+  3. **Close** is accepted in `pending` and `failed`. It sets a new terminal state **`abandoned`**, with `node_done_at`
+     as the close time and the reason as `node_message`. A new state, not `not_needed` with a reason, because
+     `not_needed` means "no node holds memory", which is false here (an old-name folder is left on the node), and tools
+     that read the table (the UI, the list API, the backup of an old name) should be able to tell the two apart. It costs
+     migration **0063** (rebuild of `space_role_renames` to widen the CHECK, the same shape as 0062); no data change. The
+     open-rename indexes already filter on `pending`/`failed`, so `abandoned` is closed everywhere without a code path
+     change: holds lift at once, another rename of either name and a clean relocation are no longer refused. Central's
+     memory stays under the new name (its move is independent of the node state and already happened or is finished by
+     `ensureMoved`); the former name stays resolvable by history lookups. A close leaves the rename's undelivered
+     commands queued (review of #230): a node that was offline (or downgraded below minor 14) has no journal row, so cancelling would leave
+     its old-name folder unmarked and a later role of that name would inherit the renamed role's memory. The node journals the
+     command when it connects at 14 or more, moves the folder, and its `ok` is answered `closed` (harmless, see 4); a
+     rename that stays unmoved is reported and dropped. The node's old-name folder is **orphaned**: reported in the response and in `node_message`
+     (`orphaned: <from> on node <id>`), never deleted and never synced again.
+     **Ordering (review of #230, round 3).** Lifting the either-name blocker at close would let central accept `b→c`, or a
+     new `a` then `a→x`, while the closed `a→b` is still undelivered, and the node could then run them in any order
+     (`a→x` first hands the old role's memory to `x`; `b→c` first strands it under `b`). So a closed rename **keeps
+     blocking renames of either name while its newest move command is `pending`, `sent` or `rejected`** (not yet journaled
+     by the node; a rejected one is queued again at the node's next connect, like an open rename's). `renameBlockers` adds
+     those (`ListUndeliveredClosedRoleRenames`, refusal `role_busy` naming "closed rename … not yet delivered"). Once the
+     node has accepted it, the node orders the moves itself (see 4). Launch holds still lift at close.
+     **Escape: `forget_node`.** A node that never returns must not block the names forever. Close takes
+     `{"forget_node": true}` (CLI `close-rename --forget-node`; same op, same admin-only `space_role_rename:admin`, so the
+     MCP tool and its classification are unchanged), accepted on an open rename (which it also closes) and on a closed one
+     the node has not journaled yet (a second forget, or one of a rename the node holds, is 409 `rename_not_open`). It
+     cancels the rename's `pending`, `sent` and `rejected` move commands (`CancelRoleRenameCommands`), which releases both
+     names, and, while the space is still on that node, queues a **closed notice** in their place: a `memory.rename` with
+     `closed: true` under its own key `role-rename-closed:<id>` (outside the move keys' range, so it never counts as a move
+     command or blocks anything). Audited as `role_rename.forgotten` with the number of cancelled commands. The warning
+     (API description, CLI help and note, guide): the node's old folder becomes an orphan, and whatever it holds that
+     central never received stays only on the node.
+  4. **The node side** (the closed notice and the ordering below were added in round 3; the rest needs no protocol change). The node learns of a plain close only through the existing
+     `memory.renamed.ack`: central sends it with `error: "closed"` (a new reason value in the existing field) at the
+     node's next report, and also at once to a connected node (an unsolicited ack for the close). The node's handler is
+     widened: an ack with an error now drops an open (`pending`, not yet `moving`) journal rename whatever result it
+     carried; today it requires a matching result and only before the move. A dropped rename lifts the node's own hold
+     on syncs of both names, never retries, and is the node-side marker: **orphaned = a `dropped` journal rename whose
+     old folder still exists**. A `moving` rename the node finishes anyway; its later `ok` is answered with a plain ack
+     (the state is `abandoned`, nothing changes), and it syncs the new name, which matches central's moved copy: an unlucky
+     close does no harm. An old-name folder is never synced under the old name (central refuses it while no role has the
+     name). If a role with the old name is created later, the node's prepare sets the orphaned folder aside to
+     `.retained`, as it does for a leftover under a target name; it is never merged into the new role. A node that never
+     reconnects keeps its journal rename until it does; central stays closed regardless.
+     **The closed notice** (forget): a `memory.rename` with `closed` is never a move. A rename the journal does not hold is
+     journaled `dropped` with result `closed` (the orphan marker) and nothing to report; a `pending` one is dropped; a
+     `moving` or `done` one is left. It needs no lease (nothing on disk changes), is acknowledged like any command, and is
+     not reported. Central delivers a node's commands in creation order and only with the space's lease, and the node
+     journals each `memory.rename` synchronously in its read loop, so the notice is journaled before any later rename of
+     those names.
+     **Every plain close queues the notice too** (round 4), while the space is on the rename's node, because the ack
+     is not enough: a node that journaled a rename that fails the same way each time never reports again, so it would
+     never learn of the close and would defer a later rename behind it forever (central releases the names once the move
+     command is `accepted`). The notice is idempotent on the node (a rename the node holds is answered from its journal)
+     and keeps its own key, so forget on the same rename queues no second one. A closed rename whose newest command was
+     `rejected` stops blocking the names once the space has left its node (the relocation cancels only `pending` and
+     `sent` commands, and nothing is delivered to the old node again).
+     **Ordering on the node (defence in depth).** Moves run on their own goroutines, so before moving a `pending` rename
+     the node defers it (`deferred`, naming the earlier one) while a rename of the same space journaled before it is still
+     `pending` or `moving` and shares a name with it (either old or new name). Journal order is central's order: central
+     queues a rename of either name only after the earlier one is done, or closed and journaled by the node, or forgotten.
+     When a rename ends `done`, or is dropped (closed ack or notice), the space's deferred renames are tried again at once.
+     **The orphan is never inherited by a rename either.** Before moving a `pending` rename whose old name is an unsettled
+     orphan (a closed rename dropped it and no role of that name has run here since), the node sets the orphan aside to
+     `.retained` and moves nothing: the reused name's role had no folder here, so `a→x` after a forgotten `a→b` gives `x`
+     nothing of the old role.
+  5. **With T-H3's retry at start and #220's ack wait.** After a close, a restarting node retries its journaled `pending`
+     rename, reports, and receives the `closed` ack, which drops it. If it moves the folder first (fault fixed, rename
+     still `pending` in its journal), its `ok` is harmless as in 4: the folder ends under the new name, where central's
+     copy is. #220's ack
+     wait covers only a done rename's `ok`, so it does not wait for a closed one. A retry that arrives after the close is a
+     409 for the operator, and a late `memory.rename` command for a closed rename is still delivered (see 3), before any
+     later rename of its names, which central refuses until the node has journaled it. After a forget, a returning node
+     gets the closed notice instead, again before any later command of the space; a rename deferred behind a dropped one
+     moves as soon as it is dropped.
+  6. **Migration and protocol.** Migration **0063** only. The `closed` ack reason is a string in an existing field (an
+     older node already ends a not-yet-moved rename on an ack error, but only when the result matches, so the widened
+     handler ships with this change). Round 3 adds the optional `closed` field to the `memory.rename` payload inside minor
+     14: minor 14 has not been released, so no node speaks it without this change, and no new minor is needed.
+  7. **Alternatives.** *Close as `not_needed` + reason:* no migration, but conflates two meanings. *Close that deletes or
+     moves the node folder:* needs a new command and risks lost edits; rejected, nothing is deleted. *Merging retry into
+     close:* a retry that just works is the common case and is cheap; close is the give-up. *Retry in `error` only:*
+     a downgraded node's `pending` rename is exactly where retry after the upgrade helps.
+  8. **Implementation notes (T-H4):** the CLI commands are `role retry-rename` and `role close-rename` (close needs `--yes`)
+     and the audit actions are `role_rename.retried`, `role_rename.closed` and (round 3) `role_rename.forgotten`. The only proto addition besides round 3's `MemoryRename.Closed` is the constant
+     `MemoryRenameClosed` (the ack's `error` value). On the node, `abandoned` is a journal `dropped` rename with result
+     `closed` (no agent migration); prepare of the old name sets the orphan aside and marks it `retained` (a rename finishing onto the old name marks it `retained`
+     too: the moved role owns that folder), and
+     `collections()` and `sync` skip an orphaned folder. A node that never connected a second time after the close is told
+     at its next report. Retry is refused with `rename_not_open` when the space has moved off the rename's node.
+  9. **Not security-relevant:** no guarantee is relaxed; the actions are admin-only and audited, and neither deletes data.
+     A close can leave unsynced edits in the node's old-name folder out of central's memory: they are kept on the node,
+     and listed as orphaned. A forget does the same for a node that has not received the rename; it releases names, never
+     data. Residual: a clean relocation is not blocked by a closed rename the node has not received (it was not before
+     either); the source node is connected for a clean relocation, so the command is normally delivered first.
 
 ### ADR-0094 — The node fast-forwards idle instance checkouts to the collection head
 

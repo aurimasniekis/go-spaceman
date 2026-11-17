@@ -81,6 +81,9 @@ type Options struct {
 	OnRunLaunched func(runID string)
 	// OnRunEnded is called after a run was recorded as ended (exited, failed or lost).
 	OnRunEnded func(runID string)
+	// OnRoleRenameDone is called after a node reported a role rename's memory move done, which lifts the rename's launch
+	// hold (ADR-0093).
+	OnRoleRenameDone func(spaceID string)
 	// OnRunIdle is called after a run's program reported idle or done (turn finished), or a usage limit cleared while it
 	// was idle: pending deliveries can go out.
 	OnRunIdle func(runID string)

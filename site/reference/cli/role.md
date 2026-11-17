@@ -9,11 +9,15 @@ Aliases: `roles`.
 | Subcommand | Description |
 |---|---|
 | [`spaceman role add-starters`](#spaceman-role-add-starters) | Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer) |
+| [`spaceman role close-rename`](#spaceman-role-close-rename) | Give up a stuck role rename's memory move: holds lift, the node's old folder stays as an orphan (admins) |
 | [`spaceman role delete`](#spaceman-role-delete) | Remove a role from a space |
 | [`spaceman role get`](#spaceman-role-get) | Show one of a space's roles |
 | [`spaceman role list`](#spaceman-role-list) | A space's roles |
 | [`spaceman role options`](#spaceman-role-options) | Templates, profiles, prompts and skills a space role can use |
 | [`spaceman role preview`](#spaceman-role-preview) | A role's effective configuration and where each value comes from |
+| [`spaceman role rename`](#spaceman-role-rename) | Rename a role in place: its configuration, pending work and memory follow |
+| [`spaceman role renames`](#spaceman-role-renames) | A space's role renames, newest first, and the state of each memory move |
+| [`spaceman role retry-rename`](#spaceman-role-retry-rename) | Send a stuck role rename's memory move to the node again (admins) |
 | [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration, skills included) |
 | [`spaceman role template`](#spaceman-role-template) | Role templates: list, show, create, update, delete and the starter set |
 
@@ -36,6 +40,30 @@ spaceman role add-starters --space payments
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman role close-rename
+
+Give up a stuck role rename's memory move: holds lift, the node's old folder stays as an orphan (admins).
+
+```sh
+spaceman role close-rename <rename-id> [flags]
+```
+
+API: `close-space-role-rename` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman role close-rename rrn_01... --space payments --reason "node retired" --forget-node --yes
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--forget-node` | bool |  | also stop waiting for the node to receive the rename: releases both names for other renames; a node that comes back keeps the old folder as an orphan |
+| `--reason` | string |  | why the move is given up |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--yes` | bool |  | confirm: give up the node's memory move (the old folder stays on the node, never synced again) |
 
 ## spaceman role delete
 
@@ -104,6 +132,63 @@ spaceman role preview <name> [flags]
 ```
 
 API: `preview-space-role` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman role rename
+
+Rename a role in place: its configuration, pending work and memory follow.
+
+```sh
+spaceman role rename <name> [flags]
+```
+
+API: `get-space-role`, `rename-space-role` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman role rename implementor --to implementor-hard --space payments
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--to` | string |  | the new name (required) |
+
+## spaceman role renames
+
+A space's role renames, newest first, and the state of each memory move.
+
+```sh
+spaceman role renames [flags]
+```
+
+API: `list-space-role-renames` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman role retry-rename
+
+Send a stuck role rename's memory move to the node again (admins).
+
+```sh
+spaceman role retry-rename <rename-id> [flags]
+```
+
+API: `retry-space-role-rename` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman role retry-rename rrn_01... --space payments
+```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

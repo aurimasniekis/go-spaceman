@@ -145,8 +145,8 @@ func TestMemoryInstancesShareAndPreserve(t *testing.T) {
 	if err := os.RemoveAll(bare); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.collections()) != 2 {
-		t.Fatalf("collections: %v", m.collections())
+	if len(m.collections(ctx)) != 2 {
+		t.Fatalf("collections: %v", m.collections(ctx))
 	}
 	// Invalid keys never reach git.
 	if _, err := m.prepare(ctx, "spc_a", "../etc", "ins_one"); err == nil {

@@ -715,6 +715,12 @@ func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) err
 		lost := int64(0)
 		lostRuns = nil
 		if r.Mode == RelocSourceUnavailable {
+			// Central's copy of the memory already moved with the rename, so it carries over under the new name; the lost
+			// node's rename is closed, which ends the launch hold and the re-queue.
+			if _, err := tx.Q.CloseOpenSpaceRoleRenames(ctx, db.CloseOpenSpaceRoleRenamesParams{NodeMessage: "node lost; relocated from central",
+				NodeDoneAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, SpaceID: r.SpaceID}); err != nil {
+				return err
+			}
 			// The source's runs end here, like runs a node reports ended: counted, run_ended published and OnRunEnded
 			// called after the commit (it used to mark them lost silently).
 			if lostRuns, err = tx.Q.ListRunsLostForRelocation(ctx, db.ListRunsLostForRelocationParams{SpaceID: r.SpaceID, NodeID: r.SourceNodeID}); err != nil {

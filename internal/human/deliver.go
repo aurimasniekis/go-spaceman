@@ -9,6 +9,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -73,17 +74,27 @@ func (svc *Service) firstRoute(ctx context.Context, tx *store.Tx, a db.HumanActi
 // requesterEnded applies the requester_ended policy: keep it for the next run of the requester's instance, or route it on.
 func (svc *Service) requesterEnded(ctx context.Context, tx *store.Tx, a db.HumanAction, p PolicyFields, ended string) (route, error) {
 	if p.RequesterEnded == EndedNextLaunch && ids.Valid(ids.Instance, a.RequesterID) {
+		role, err := requesterRole(ctx, tx, a)
+		if err != nil {
+			return route{}, err
+		}
 		id, err := tx.Q.LiveRunOfInstance(ctx, db.LiveRunOfInstanceParams{SpaceID: a.SpaceID, InstanceID: a.RequesterID})
 		switch {
 		case err == nil && id != ended:
-			return route{kind: TargetRun, run: id, role: a.RequesterRole}, nil
+			return route{kind: TargetRun, run: id, role: role}, nil
 		case err != nil && !errors.Is(err, sql.ErrNoRows):
 			return route{}, err
 		}
 		hold := tx.Now.Add(time.Duration(p.HoldMinutes) * time.Minute).UnixMicro()
-		return route{kind: TargetInstance, instance: a.RequesterID, role: a.RequesterRole, hold: sql.NullInt64{Int64: hold, Valid: true}}, nil
+		return route{kind: TargetInstance, instance: a.RequesterID, role: role, hold: sql.NullInt64{Int64: hold, Valid: true}}, nil
 	}
 	return svc.fallback(ctx, tx, a, p, ended)
+}
+
+// requesterRole is the requester's role under its current name: the action records the name the requester had, and the
+// role may have been renamed since (ADR-0093).
+func requesterRole(ctx context.Context, tx *store.Tx, a db.HumanAction) (string, error) {
+	return catalog.CurrentRoleName(ctx, tx.Q, a.SpaceID, a.RequesterRole)
 }
 
 // fallback is where a response goes when its run is gone: a live run of the successor role, else the space's control
@@ -126,7 +137,9 @@ func (svc *Service) notify(ctx context.Context, tx *store.Tx, a db.HumanAction, 
 	nid := ids.New("hnt")
 	role := rt.role
 	if role == "" {
-		role = a.RequesterRole
+		if role, err = requesterRole(ctx, tx, a); err != nil {
+			return err
+		}
 	}
 	in := db.InsertHumanNotificationParams{ID: nid, ActionID: a.ID, SpaceID: a.SpaceID, TargetRun: rt.run, TargetSession: a.RequesterSession, TargetRole: role,
 		Kind: kind, CreatedAt: tx.NowMicros(), TargetKind: rt.kind, TargetInstance: rt.instance, HoldUntil: rt.hold, Wake: b2i(p.WakeIdle), OriginalRun: a.RequesterRun}

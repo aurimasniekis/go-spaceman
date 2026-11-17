@@ -296,3 +296,20 @@ func TestCap(t *testing.T) {
 		t.Fatalf("a global admin capped to operator: %v", got)
 	}
 }
+
+// ADR-0093 addendum: retrying or closing a stuck role rename is admin-only; an operator may rename a role but may not give
+// up the node's move.
+func TestRoleRenameAdminIsAdminOnly(t *testing.T) {
+	t.Parallel()
+	if !RoleHas(RoleAdmin, RoleRenameAdmin) {
+		t.Error("admin lacks role rename admin")
+	}
+	for _, r := range []Role{RoleViewer, RoleOperator} {
+		if RoleHas(r, RoleRenameAdmin) {
+			t.Errorf("%s holds role rename admin", r)
+		}
+	}
+	if !RoleHas(RoleOperator, SpaceConfigWrite) {
+		t.Error("an operator can no longer rename a role")
+	}
+}
