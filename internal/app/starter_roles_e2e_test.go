@@ -135,12 +135,17 @@ func TestSpaceRoleDescriptionOverHTTP(t *testing.T) {
 
 	preview := func() (string, string) {
 		var p struct {
-			Effective map[string]struct{ Value, Origin string }
+			Description       string
+			DescriptionOrigin string `json:"description_origin"`
+			Effective         map[string]any
 		}
 		r := root.do("GET", "/spaces/"+sp.ID+"/roles/reviewer/preview", nil)
 		expect(t, r, 200)
 		r.json(t, &p)
-		return p.Effective["description"].Value, p.Effective["description"].Origin
+		if _, ok := p.Effective["description"]; ok {
+			t.Error("the description is in the preview's effective map (and so in run manifests)")
+		}
+		return p.Description, p.DescriptionOrigin
 	}
 	if v, o := preview(); v != tpl.Description || o != "template" {
 		t.Fatalf("starter role preview description %q (%s), want the template's %q", v, o, tpl.Description)
