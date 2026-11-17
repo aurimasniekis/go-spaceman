@@ -10887,6 +10887,8 @@ export interface components {
              * @example /api/v1/schemas/RenamedSpaceRole.json
              */
             readonly $schema?: string;
+            /** @description What the role is for in this space, at most 2000 characters; empty uses the role template's description */
+            description?: string;
             /** @description Space-specific text appended after the role's prompt */
             instructions?: string;
             model?: string;
