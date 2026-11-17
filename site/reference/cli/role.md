@@ -14,7 +14,7 @@ Aliases: `roles`.
 | [`spaceman role list`](#spaceman-role-list) | A space's roles |
 | [`spaceman role options`](#spaceman-role-options) | Templates, profiles, prompts and skills a space role can use |
 | [`spaceman role preview`](#spaceman-role-preview) | A role's effective configuration and where each value comes from |
-| [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration) |
+| [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration, skills included) |
 | [`spaceman role template`](#spaceman-role-template) | Role templates: list, show, create, update, delete and the starter set |
 
 ## spaceman role add-starters
@@ -111,13 +111,21 @@ API: `preview-space-role` ([HTTP API](../api)).
 
 ## spaceman role set
 
-Configure a role in a space (creates it, or replaces its configuration).
+Configure a role in a space (creates it, or replaces its configuration, skills included).
+
+Creates the role, or replaces its whole configuration: every field not given is cleared, and so are the role's skills unless --skill is repeated for each one to keep.
 
 ```sh
 spaceman role set <name> [flags]
 ```
 
 API: `save-space-role` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman role set --space payments reviewer --template tpl_01... --skill skl_01... --skill skl_02...@skv_01...
+```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -129,6 +137,7 @@ API: `save-space-role` ([HTTP API](../api)).
 | `--prompt` | string |  | prompt ID |
 | `--prompt-pin` | string |  | published prompt version to pin (empty follows the latest) |
 | `--setting` | string, repeatable |  | harness setting (key=value, repeatable) |
+| `--skill` | string, repeatable |  | skill ID to keep on the role (replaces the role's skills), optionally pinned as &lt;id&gt;@&lt;published-version-id&gt; (empty pin follows the latest) (repeatable or comma-separated) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--template` | string |  | role template ID (required for a new role) |
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -196,11 +197,35 @@ func (a *App) profileCmd() *cobra.Command {
 	)
 }
 
+// skillRefs turns the repeated --skill <id>[@<version>] values into the API's skills list.
+func skillRefs(_ context.Context, _ *cobra.Command, _ *call, body map[string]any) error {
+	raw, ok := body["skill"].([]any)
+	if !ok {
+		return nil
+	}
+	delete(body, "skill")
+	refs := []any{}
+	for _, r := range raw {
+		id, pin, _ := strings.Cut(r.(string), "@")
+		if id == "" {
+			return usageErrorf("--skill takes <id> or <id>@<version>, got %q", r)
+		}
+		ref := map[string]any{"skill_id": id}
+		if pin != "" {
+			ref["pin"] = pin
+		}
+		refs = append(refs, ref)
+	}
+	body["skills"] = refs
+	return nil
+}
+
 func (a *App) roleCmd() *cobra.Command {
 	role := func(f *form) {
 		f.str("template", "template_id", "role template ID (required for a new role)").str("profile", "profile_id", "harness profile ID").
 			str("prompt", "prompt_id", "prompt ID").str("prompt-pin", "prompt_pin", "published prompt version to pin (empty follows the latest)").
-			str("model", "model", "model").kv("setting", "settings", "harness setting").text("instructions", "instructions", "role instructions")
+			str("model", "model", "model").kv("setting", "settings", "harness setting").text("instructions", "instructions", "role instructions").
+			list("skill", "skill", "skill ID to keep on the role (replaces the role's skills), optionally pinned as <id>@<published-version-id> (empty pin follows the latest)")
 	}
 	tplForm := func(f *form) {
 		f.str("name", "name", "name").str("description", "description", "description").str("profile", "profile_id", "harness profile ID").
@@ -231,8 +256,11 @@ func (a *App) roleCmd() *cobra.Command {
 		a.cmd(opts{use: "list", short: "A space's roles", op: "list-space-roles", alias: []string{"ls"}, scoped: true,
 			view: view{items: "items", cols: roleCols, empty: "No roles."}}),
 		a.cmd(opts{use: "get", short: "Show one of a space's roles", op: "get-space-role", scoped: true, args: pos("name")}),
-		a.cmd(opts{use: "set", short: "Configure a role in a space (creates it, or replaces its configuration)", op: "save-space-role", scoped: true,
-			args: pos("name"), form: role}),
+		a.cmd(opts{use: "set", short: "Configure a role in a space (creates it, or replaces its configuration, skills included)", op: "save-space-role", scoped: true,
+			long: "Creates the role, or replaces its whole configuration: every field not given is cleared, and so are the role's skills unless\n" +
+				"--skill is repeated for each one to keep.",
+			example: "spaceman role set --space payments reviewer --template tpl_01... --skill skl_01... --skill skl_02...@skv_01...",
+			args:    pos("name"), form: role, prepare: skillRefs}),
 		a.cmd(opts{use: "preview", short: "A role's effective configuration and where each value comes from", op: "preview-space-role", scoped: true,
 			args: pos("name")}),
 		a.cmd(opts{use: "delete", short: "Remove a role from a space", op: "delete-space-role", scoped: true, args: pos("name"), done: "Role removed."}),
