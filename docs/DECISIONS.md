@@ -6533,7 +6533,7 @@
 
 ### ADR-0098 — A run an agent restart stopped is resumed, within a cap
 
-- **Status:** Accepted by control (task request of 2026-11-17). Central migration `0063_limit_wait_cause` (one column;
+- **Status:** Accepted by control (task request of 2026-11-17). Central migration `0064_limit_wait_cause` (one column;
   0061/0062 are ADR-0093's), a read-only `cause` field on limit waits in the HTTP API. No protocol change and no node
   change: herdr-core already ends a process the agent's restart stopped with the reason `stopped_by_restart`, which the
   node reports as an ordinary exit. Not security-relevant: no requirement, guarantee or default is relaxed; the resume is
