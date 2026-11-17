@@ -45,6 +45,35 @@ as possibly stale ([Backups](../operators/backup.md#role-memory-is-flushed-first
 
 <Shot name="memory-files" alt="Memory of implementor-backend: central and node heads match, no unsaved files, sync ok, and decisions.md rendered from the acknowledged history" caption="A role's memory files" />
 
+## Staying current between turns
+
+A run that stays alive between turns would otherwise keep the memory it started with while other instances and dreams
+publish, and then write on an old base. The node therefore moves the checkout of a live run that is **between turns**
+onto the newest shared memory right after another checkpoint, and does the same when a run starts. It only does so when
+the checkout is clean (no changed, staged, untracked or ignored files), nothing is in progress in it, nobody has taken
+over the run's terminal, no input is still waiting for its turn, and the checkout's history is an ancestor of the
+shared one. It is a fast-forward: never a reset, never a merge commit. A checkout that does not qualify is left as it
+is and is handled at its next checkpoint, as before. The node setting `memory.fast_forward` (default on) turns this
+off ([configuration](../reference/configuration.md)).
+
+## What never travels through memory
+
+Memory is notes, never a channel that carries behaviour. The node enforces this on every checkout:
+
+- **Harness configuration is not shared.** `.claude/`, `.codex/` and `.agents/` (at any depth) and a top-level
+  `.mcp.json` are never staged and never written to a checkout, including from history an older agent pushed. Claude
+  Code loads skills and commands from a directory passed with `--add-dir`, so without this a skill written by one
+  instance would become active in every instance of the role. `CLAUDE.md` and `AGENTS.md` notes are text and stay
+  allowed.
+- **Git is only run on the checkout itself.** The node refuses a checkout whose `.git` is not a real directory of its
+  own, that redirects git elsewhere (a symlink, a `gitdir` file, `commondir`, `core.worktree`), that configures hooks,
+  or that holds links into `.git`, gitlinks, a nested repository or a FIFO. A refused checkout is reported in the node's
+  log and its run cannot use memory until the operator removes or recreates that checkout
+  ([troubleshooting](../operators/troubleshooting.md#memory-checkout-refused)).
+
+This guards against accident and against content arriving from other instances. It is not a sandbox: an agent can still
+edit its own checkout's `.git`, and memory content is still untrusted text.
+
 ## Conflicts
 
 When two instances change the same lines at the same time, nothing is overwritten and nothing is force-pushed:

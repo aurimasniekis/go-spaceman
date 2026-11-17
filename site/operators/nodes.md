@@ -72,5 +72,7 @@ outside herdr-core. See [known limitations](/reference/limitations).
 
 Run terminals are named after the run and labelled with it. On start, the agent reconciles its journal with
 herdr-core and adopts every run it finds; central re-sends unacknowledged commands after its own restart, and the agent
-answers a repeated launch by adopting the existing terminal. Tests cover an agent killed between starting a program and
-recording it, a program that exits while the agent is down, and central and the agent restarting together.
+answers a repeated launch by adopting the existing terminal. Runs the restart stopped (`stopped_by_restart`) are resumed
+by central within a cap; see [after a node agent restart](./troubleshooting#after-a-node-agent-restart). Tests cover an
+agent killed between starting a program and recording it, a program that exits while the agent is down, and central and
+the agent restarting together.

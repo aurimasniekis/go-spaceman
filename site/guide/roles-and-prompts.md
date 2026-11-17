@@ -41,7 +41,10 @@ that a space role uses can't be deleted until nothing uses it. A space never has
 Changing a template's or a prompt's **name or description** creates no prompt version. A template change creates a new
 [revision](#harness-profiles-and-role-templates), and a run picks it up at its next launch. A prompt's name and
 description can be changed in place (`spaceman prompt update`, `PATCH /prompts/{prompt_id}`). Its slug and kind stay
-fixed: the slug identifies the prompt in configuration, and the kind decides which roles may use it.
+fixed: the slug identifies the prompt in configuration, and the kind decides which roles may use it. In the web UI,
+**Edit details** on the prompt page does the same.
+
+<Shot name="prompt-edit-details" alt="The Edit details dialog of the control prompt: name and description fields, with a note that no version is created and the slug and kind never change" caption="Edit a prompt's details in place" />
 
 ### Overriding a starter in one space
 
@@ -55,11 +58,11 @@ can set:
 - its **description**, which says what the role is for in this space. Empty uses the template's description. Control
   reads it to choose a role (see [Control and workers](./control#choosing-a-role)).
 
-Set an override on the space's role in the web UI, or with `spaceman role set <name> --space <space>`. The description
-is set with `spaceman role set <name> --space <space> --description "…"` or through the API for now; the web form follows
-in a later change. Skills are set in the web UI or through the API: `role set` has no skills flag, and because it
-replaces the role's whole configuration, running it clears the role's skills. Pass every field you want to keep (read the
-role first with `spaceman role get`). The override lasts only in that space, and the run's manifest records each effective
+Set an override on the space's role in the web UI (the **Description** field of the role form, with the template's
+description shown as the placeholder), or with `spaceman role set <name> --space <space>`. The description is set with
+`--description "…"`. Skills are set in the web UI or with `--skill` (a slug, `slug@number` or an ID); `role set`
+replaces the role's whole configuration, so pass every field you want to keep (read the role first with
+`spaceman role get`). `--skill` replaces only the space role's own skills, never the template's. The override lasts only in that space, and the run's manifest records each effective
 value (except the description, which is not part of the manifest) with where it came from.
 
 ### Copying a template for a group of spaces
@@ -198,6 +201,8 @@ A space configures the roles it uses from these templates on its **Overview**. A
 the prompt (or its version), the model and settings, add skills and instructions that apply only in this space, and give
 the role its own description. **Effective configuration** shows what a launch of the role gets now and where each value
 comes from. The [starter roles](#starter-roles) section explains how this works for the shared starters.
+
+<Shot name="space-role-edit" alt="The role form of the reviewer role with its own description, which says what the role is for in this space" caption="A space role's description" />
 
 <Shot name="space-role-preview" alt="Effective configuration of the control role: harness from the profile, kind from the template, permission mode from the profile, and the composed system text" caption="A role's effective configuration" />
 

@@ -7420,7 +7420,7 @@
 
 ### ADR-0099 — A control watchdog nudges a stalled control and escalates when the nudges go unanswered
 
-- **Status:** Proposed, 2026-11-17 (operator request for v0.1.11, after an incident). New requirement SM-CTRL-008. No
+- **Status:** Accepted, 2026-11-17 (operator request for v0.1.11, after an incident); implemented in #247 and #249. New requirement SM-CTRL-008. No
   migration, no node protocol change, no new API operation in this step (the read-only state follows as
   `get-space-watchdog`, `spaceman space watchdog` and a badge on the control row): the settings are three new space
   limits, and watchdog state is kept in central's memory. Extends ADR-0056 (control auto-start and idle stop) and SM-COMM-003
@@ -7563,7 +7563,7 @@
   | ID | Work | Depends on | Size |
   |---|---|---|---|
   | W1 | This ADR; the detector (`internal/control/watchdog.go`), the loop in central, tool-call activity tracking, the nudge with its audit event, backoff, escalation (human action, optional restart), the three limits and their config, unit tests for every signal and false-positive guard. | — | Opus |
-  | W2 | API and CLI: a read-only `get-control-watchdog` per space (state, counts, last nudge, next nudge, escalated) and `spaceman space watchdog`. | W1 | Sonnet |
+  | W2 | API and CLI: a read-only `get-space-watchdog` per space (state, counts, last nudge, next nudge, escalated) and `spaceman space watchdog`. | W1 | Sonnet |
   | W3 | Terraform provider: nothing new for the three limits beyond the generic space limits resource; check and document them. | W1 | Haiku |
   | W4 | Web: a badge on the space's control card when control is being nudged or was escalated, from W2's state. | W2 | Sonnet |
   | W5 | Docs site: a "Watchdog" section in the control guide, the three limits in the limits guide, TRACEABILITY evidence for SM-CTRL-008. | W1 | Haiku |
