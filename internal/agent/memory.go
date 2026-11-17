@@ -95,6 +95,7 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 	if !validMemoryKey(spaceID, role, instance) {
 		return "", errors.New("invalid memory collection")
 	}
+	m.a.j.awaitRenameAck(ctx, spaceID, role)
 	defer m.lock(colKey(spaceID, role))()
 	if m.a.j.renameFrom(ctx, spaceID, role) {
 		return "", fmt.Errorf("role %s is being renamed; its memory moves to the new name", role)
