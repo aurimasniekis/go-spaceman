@@ -116,6 +116,8 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   const [busy, setBusy] = useState(false)
   const path = { space_id: spaceId, run_id: run.id }
   const reasonId = useId()
+  const trigger = useRef<HTMLButtonElement>(null)
+  const colsInput = useRef<HTMLInputElement>(null)
   const current = useRef(run.terminal_size)
   useEffect(() => {
     current.current = run.terminal_size
@@ -213,8 +215,15 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   // An out-of-range number is shown as it is, with the field marked (not clamped silently).
   const colsBad = typeof cols === 'number' && (cols < BOUNDS.minCols || cols > BOUNDS.maxCols)
   const rowsBad = typeof rows === 'number' && (rows < BOUNDS.minRows || rows > BOUNDS.maxRows)
+  // The menu closes and returns focus to its trigger after the popover has opened, which beats the popover's own focus
+  // trap, so Esc would never reach the popover. Move focus into the form once that has settled.
+  useEffect(() => {
+    if (!custom) return
+    const t = setTimeout(() => colsInput.current?.focus(), 50)
+    return () => clearTimeout(t)
+  }, [custom])
   const button = (
-    <Button size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
+    <Button ref={trigger} size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
       loading={busy} aria-label={`Terminal size: ${sizeLabel(run)}`} data-testid="terminal-size">
       {sizeLabel(run)}{fitting ? ' · fit' : ''}
     </Button>
@@ -237,7 +246,7 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   // withRoles is off: the popover's target is a plain span around the menu, whose button carries the menu's own ARIA;
   // Popover.Target would add aria-haspopup/aria-expanded to a span with no role (axe aria-allowed-attr).
   return (
-    <Popover opened={custom} onChange={setCustom} position="bottom-start" withinPortal trapFocus withRoles={false}>
+    <Popover opened={custom} onChange={(o) => { setCustom(o); if (!o) trigger.current?.focus() }} position="bottom-start" withinPortal trapFocus withRoles={false}>
       <Popover.Target>
         <span>
           {/* No initial-focus placeholder: it is a bare div[tabindex] inside role="menu", which axe rejects
@@ -259,19 +268,19 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
           </Menu>
         </span>
       </Popover.Target>
-      <Popover.Dropdown>
+      <Popover.Dropdown role="dialog" aria-label="Custom terminal size">
         <form onSubmit={(e) => { e.preventDefault(); if (customValid) void apply({ kind: 'fixed', cols: cols, rows: rows }) }}>
           <Stack gap="xs">
             <Group gap="xs" wrap="nowrap" align="flex-end">
               <NumberInput label="Columns" w={96} min={BOUNDS.minCols} max={BOUNDS.maxCols} clampBehavior="none" allowDecimal={false} allowNegative={false}
-                value={cols} onChange={setCols} error={colsBad} data-testid="terminal-size-cols" />
+                ref={colsInput} data-autofocus value={cols} onChange={setCols} error={colsBad} data-testid="terminal-size-cols" />
               <Text pb={6}>×</Text>
               <NumberInput label="Rows" w={88} min={BOUNDS.minRows} max={BOUNDS.maxRows} clampBehavior="none" allowDecimal={false} allowNegative={false}
                 value={rows} onChange={setRows} error={rowsBad} data-testid="terminal-size-rows" />
             </Group>
             <Text size="xs" c="dimmed">{BOUNDS.minCols}–{BOUNDS.maxCols} columns, {BOUNDS.minRows}–{BOUNDS.maxRows} rows</Text>
             <Group justify="flex-end" gap="xs">
-              <Button size="xs" variant="default" onClick={() => setCustom(false)}>Cancel</Button>
+              <Button size="xs" variant="default" onClick={() => { setCustom(false); trigger.current?.focus() }}>Cancel</Button>
               <Button size="xs" type="submit" disabled={!customValid} data-testid="terminal-size-apply">Apply</Button>
             </Group>
           </Stack>

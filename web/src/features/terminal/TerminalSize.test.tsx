@@ -149,4 +149,28 @@ describe('TerminalSizeControl', () => {
     const r = await axe.run(document.body, { runOnly: ['aria-allowed-attr', 'aria-required-children', 'aria-valid-attr-value'] })
     expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.failureSummary).join(' ')}`)).toEqual([])
   })
+
+  it('has a named dialog and no ARIA violations with Custom… open', async () => {
+    wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+    fireEvent.click(screen.getByTestId('terminal-size'))
+    fireEvent.click(await screen.findByTestId('terminal-size-custom'))
+    const dialog = await screen.findByRole('dialog', { name: 'Custom terminal size' })
+    expect(dialog).toBeInTheDocument()
+    const r = await axe.run(document.body, { runOnly: ['aria-allowed-attr', 'aria-required-children', 'aria-valid-attr-value', 'aria-dialog-name'] })
+    expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.failureSummary).join(' ')}`)).toEqual([])
+  })
+
+  it('moves focus to Columns when Custom… opens, and Esc closes it and returns focus to the trigger', async () => {
+    wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+    const trigger = screen.getByTestId('terminal-size')
+    fireEvent.click(trigger)
+    fireEvent.click(await screen.findByTestId('terminal-size-custom'))
+    const cols = await screen.findByTestId('terminal-size-cols')
+    const dialog = cols.closest<HTMLElement>('[role=dialog]')!
+    dialog.style.display = 'block' // jsdom has no transition end, and a display:none field cannot take focus
+    await waitFor(() => expect(cols).toHaveFocus())
+    fireEvent.keyDown(cols, { key: 'Escape' })
+    await waitFor(() => expect(cols.isConnected).toBe(false))
+    expect(trigger).toHaveFocus()
+  })
 })
