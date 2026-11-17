@@ -4,9 +4,10 @@ import { useForm, useSelector } from '@tanstack/react-form'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, unwrap, type SpaceRole } from '@/api/client'
-import { keys, useMe, useRoleOptions, useSpaceRoles } from '@/api/queries'
+import { keys, useMe, useRoleOptions, useRoleTemplates, useSpaceRoles } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { atLeast, roleIn } from '@/lib/access'
+import { useNarrow } from '@/lib/media'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { claudeSettingsKeys } from './claudeSettings'
 import { SettingsEditor } from './SettingsEditor'
@@ -87,6 +88,10 @@ function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
   const p = q.data
   return (
     <Stack gap="sm">
+      {p.description && (
+        <Text size="sm">{p.description}{' '}
+          {p.description_origin && <Badge size="xs" variant="light" color={originColor[p.description_origin]}>{p.description_origin.replace('_', ' ')}</Badge>}</Text>
+      )}
       <Text size="sm" c="dimmed">What a launch of this role gets now, and where each value comes from. Later layers override earlier ones; policy ceilings apply last.</Text>
       <Table.ScrollContainer minWidth={520}>
         <Table>
@@ -118,19 +123,21 @@ function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
   )
 }
 
-function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRole; onClose: () => void }) {
+export function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRole; onClose: () => void }) {
   const qc = useQueryClient()
   const options = useRoleOptions(spaceId)
+  const narrow = useNarrow()
+  const templates = useRoleTemplates()
   const [error, setError] = useState('')
   const form = useForm({
-    defaultValues: { name: role?.name ?? '', template_id: role?.template_id ?? '', profile_id: role?.profile_id ?? '', prompt_id: role?.prompt_id ?? '',
+    defaultValues: { name: role?.name ?? '', description: role?.description ?? '', template_id: role?.template_id ?? '', profile_id: role?.profile_id ?? '', prompt_id: role?.prompt_id ?? '',
       prompt_pin: role?.prompt_pin ?? '', model: role?.model ?? '', instructions: role?.instructions ?? '', settings: (role?.settings ?? {}) as Record<string, string>,
       skills: role?.skills ?? [] },
     onSubmit: async ({ value: v }) => {
       setError('')
       try {
         unwrap(await api.PUT('/spaces/{space_id}/roles/{name}', { params: { path: { space_id: spaceId, name: v.name } },
-          body: { template_id: v.template_id, profile_id: v.profile_id, prompt_id: v.prompt_id, prompt_pin: v.prompt_pin, model: v.model, settings: v.settings,
+          body: { description: v.description, template_id: v.template_id, profile_id: v.profile_id, prompt_id: v.prompt_id, prompt_pin: v.prompt_pin, model: v.model, settings: v.settings,
             instructions: v.instructions, skills: v.skills } }))
         void qc.invalidateQueries({ queryKey: keys.spaceRoles(spaceId) })
         onClose()
@@ -140,6 +147,8 @@ function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRo
     },
   })
   const promptId = useSelector(form.store, (st) => st.values.prompt_id)
+  const templateId = useSelector(form.store, (st) => st.values.template_id)
+  const templateDescription = templates.data?.find((t) => t.id === templateId)?.description ?? ''
   const versions = options.data?.prompts.find((p) => p.id === promptId)?.versions ?? []
   const remove = async () => {
     try {
@@ -152,7 +161,7 @@ function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRo
     }
   }
   return (
-    <Modal opened onClose={onClose} title={role ? `Role ${role.name}` : 'Add a role'} size="lg">
+    <Modal opened onClose={onClose} title={role ? `Role ${role.name}` : 'Add a role'} size="lg" fullScreen={narrow}>
       <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
         <Stack gap="sm">
           <Group grow>
@@ -165,6 +174,10 @@ function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRo
                 data={(options.data?.templates ?? []).map((t) => ({ value: t.id, label: `${t.name} (${t.kind})` }))} />}
             </form.Field>
           </Group>
+          <form.Field name="description">
+            {(f) => <Textarea label="Description" description="What this role is for in this space. Empty uses the template's description." placeholder={templateDescription}
+              autosize minRows={2} maxLength={2000} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
           <Text size="xs" c="dimmed">Leave the fields below empty to use the template's values.</Text>
           <Group grow>
             <form.Field name="profile_id">
