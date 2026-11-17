@@ -147,7 +147,7 @@ func checkoutFiles(dir string) error {
 	return ownGitDir(dotGit)
 }
 
-// workTreeFiles refuses a FIFO or a device anywhere in the work tree (.git excluded): git opens every file it adds
+// workTreeFiles refuses a FIFO or a device anywhere in the work tree (the top-level .git excluded, a nested one refused): git opens every file it adds
 // and reads every .gitignore and .gitattributes, and a FIFO there blocks it for ever while it holds index.lock. The
 // type comes with the directory listing, so the walk costs no stat per file. Memory checkouts are small.
 func workTreeFiles(dir string) error {
@@ -158,10 +158,19 @@ func workTreeFiles(dir string) error {
 			}
 			return nil
 		}
-		if d.IsDir() {
-			if d.Name() == ".git" {
-				return filepath.SkipDir
+		if d.Name() == ".git" {
+			if path == filepath.Join(dir, ".git") {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
+			// git reads a nested repository's HEAD for status and add, so a FIFO there (or a gitdir: file
+			// pointing at one) would block it. Memory has no use for embedded repositories.
+			rel, _ := filepath.Rel(dir, path)
+			return fmt.Errorf("checkout refused: %s is a nested .git, and memory holds no embedded repositories", filepath.ToSlash(rel))
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if d.Type()&(fs.ModeNamedPipe|fs.ModeDevice|fs.ModeCharDevice) != 0 {

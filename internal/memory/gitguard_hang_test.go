@@ -72,6 +72,45 @@ func TestRunRefusesFifoInWorkTree(t *testing.T) {
 	}
 }
 
+// A nested .git is refused whatever it is: git reads a nested repository's HEAD for status and add, so a FIFO HEAD in
+// sub/.git, or a gitdir: file pointing at one, would block it. Only the top-level .git is skipped by the walk.
+func TestRunRefusesNestedDotGit(t *testing.T) {
+	for _, form := range []string{"fifo-head", "gitdir-file", "empty-dir", "plain-file"} {
+		t.Run(form, func(t *testing.T) {
+			g, dir := newCheckout(t)
+			sub := filepath.Join(dir, "sub")
+			must(t, os.MkdirAll(sub, 0o700))
+			switch form {
+			case "fifo-head":
+				must(t, os.MkdirAll(filepath.Join(sub, ".git"), 0o700))
+				must(t, syscall.Mkfifo(filepath.Join(sub, ".git", "HEAD"), 0o600))
+			case "gitdir-file":
+				elsewhere := filepath.Join(t.TempDir(), "else")
+				must(t, os.MkdirAll(elsewhere, 0o700))
+				must(t, syscall.Mkfifo(filepath.Join(elsewhere, "HEAD"), 0o600))
+				must(t, os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: "+elsewhere+"\n"), 0o600))
+			case "empty-dir":
+				must(t, os.MkdirAll(filepath.Join(sub, ".git"), 0o700))
+			case "plain-file":
+				must(t, os.WriteFile(filepath.Join(sub, ".git"), []byte("x\n"), 0o600))
+			}
+			for _, sub := range []string{"add", "status"} {
+				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+				start := time.Now()
+				_, err := g.Run(ctx, dir, &Identity{Name: "t", Email: "t@example.com"}, sub, "-A")
+				cancel()
+				if err == nil || !strings.Contains(err.Error(), "nested .git") {
+					t.Errorf("git %s: not refused as a nested .git: %v", sub, err)
+				}
+				if time.Since(start) > 5*time.Second {
+					t.Errorf("git %s took %v", sub, time.Since(start))
+				}
+			}
+			noLock(t, dir)
+		})
+	}
+}
+
 // A git whose context ends while it holds index.lock gets SIGTERM first and removes the lock; SIGKILL would leave it
 // and every later git in the checkout would fail. The FIFO is placed past the guard (g.run) to make git hang.
 func TestRunCancelLeavesNoIndexLock(t *testing.T) {

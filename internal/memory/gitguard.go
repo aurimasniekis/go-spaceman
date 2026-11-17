@@ -54,13 +54,16 @@ func UnsafeConfig(list string, scoped bool) error {
 		}
 		name, value, _ := strings.Cut(entry, "\n")
 		name = strings.ToLower(strings.TrimSpace(name))
-		value = strings.ToLower(strings.TrimSpace(value))
+		// git does not trim a quoted value, so pager.<cmd> = "true " names a program: judge it untrimmed. The
+		// submodule update check trims, which errs safe.
+		raw := strings.ToLower(value)
+		value = strings.TrimSpace(raw)
 		switch {
 		case name == "":
 			continue
 		case unsafeConfig.MatchString(name),
 			reSubmoduleUpdate.MatchString(name) && strings.HasPrefix(value, "!"),
-			rePagerKey.MatchString(name) && !reBool.MatchString(value):
+			rePagerKey.MatchString(name) && !reBool.MatchString(raw):
 			return fmt.Errorf("the repository's git configuration sets %s, which would run a program for SpaceMan; remove it from .git/config", name)
 		}
 	}

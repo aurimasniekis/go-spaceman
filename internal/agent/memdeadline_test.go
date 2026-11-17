@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/memory"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // returnsWithin runs f and fails the test, without waiting for f, when it has not returned after d.
@@ -167,5 +169,28 @@ func TestProjectGitCancelSendsSigterm(t *testing.T) {
 	returnsWithin(t, 20*time.Second, "rawEnv", func() { _, _ = g.rawEnv(t.Context(), dir, 300*time.Millisecond, nil, "status") })
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatal("the git was not sent SIGTERM")
+	}
+}
+
+// The worktree runner ends a git that outlives its context with SIGTERM too, so git can remove its lock files.
+func TestPrepareWorktreeCancelSendsSigterm(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "term")
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ntrap 'touch " + marker + "; exit 0' TERM\nsleep 30 &\nwait\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	returnsWithin(t, 20*time.Second, "prepareWorktree", func() {
+		_, _ = prepareWorktree(ctx, dir, proto.Worktree{Repo: "api", Branch: "b"})
+	})
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("the worktree git was not sent SIGTERM")
 	}
 }

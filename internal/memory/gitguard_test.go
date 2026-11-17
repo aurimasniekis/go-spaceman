@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -68,6 +69,9 @@ func TestUnsafeConfigByValue(t *testing.T) {
 		{"pager.log", "true", false}, {"pager.log", "false", false}, {"pager.log", "yes", false}, {"pager.log", "OFF", false},
 		{"pager.log", "0", false}, {"pager.log", "1", false}, {"pager.log", "", false},
 		{"pager.log", "less -R", true}, {"pager.log", "touch /tmp/x", true}, {"pager.diff", "!x", true}, {"pager.log", "truee", true},
+		// git does not trim a quoted value: "true " names a program. The submodule check trims, which errs safe.
+		{"pager.log", "true ", true}, {"pager.log", " true", true}, {"pager.log", "true\t", true},
+		{"submodule.x.update", "rebase ", false},
 	} {
 		for _, scope := range []string{"local", "worktree"} {
 			if err := UnsafeConfig(cfg(scope, tc.name, tc.value), true); (err != nil) != tc.bad {
@@ -309,15 +313,26 @@ func TestRunRefusesGitlinks(t *testing.T) {
 		}
 	}
 	// Adding the embedded repository records a gitlink; it runs nothing in it yet.
-	if _, err := g.Run(ctx, dir, nil, "add", "-A"); err != nil {
-		t.Fatal(err)
+	// (The walk refuses a nested .git, so the index is written by git itself.)
+	hidden := filepath.Join(t.TempDir(), "dotgit")
+	if out, err := exec.Command("git", "-C", dir, "add", "-A").CombinedOutput(); err != nil { //nolint:gosec // test fixture
+		t.Fatalf("%v: %s", err, out)
 	}
 	// Set after the sub's own commits: the guard would refuse them.
 	if _, err := g.Run(ctx, sub, nil, "config", "filter.x.clean", "sh -c 'touch "+marker+"; cat'"); err != nil {
 		t.Fatal(err)
 	}
 	must(t, os.WriteFile(filepath.Join(sub, "s"), []byte("changed\n"), 0o600))
-	for _, args := range [][]string{{"status", "--porcelain"}, {"add", "-A"}, {"commit", "-q", "-m", "x"}, {"diff", "--name-only"}, {"reset", "--hard"}} {
+	cmds := [][]string{{"status", "--porcelain"}, {"add", "-A"}, {"commit", "-q", "-m", "x"}, {"diff", "--name-only"}, {"reset", "--hard"}}
+	// Populated: the walk refuses the nested .git before git runs.
+	for _, args := range cmds {
+		if _, err := g.Run(ctx, dir, id, args...); err == nil || !strings.Contains(err.Error(), "nested .git") {
+			t.Errorf("git %s: not refused as a nested .git: %v", args[0], err)
+		}
+	}
+	// Unpopulated (the index still records the gitlink): the gitlink check refuses.
+	must(t, os.Rename(filepath.Join(sub, ".git"), hidden))
+	for _, args := range cmds {
 		if _, err := g.Run(ctx, dir, id, args...); err == nil || !strings.Contains(err.Error(), "submodule or an embedded git repository") {
 			t.Errorf("git %s: not refused: %v", args[0], err)
 		}
