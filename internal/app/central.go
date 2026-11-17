@@ -58,6 +58,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
+	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/repos"
 	"github.com/aurimasniekis/go-spaceman/internal/retention"
 	"github.com/aurimasniekis/go-spaceman/internal/schedule"
@@ -213,6 +214,9 @@ type Options struct {
 	StoreReaders int
 	// StaleRunGrace overrides the stale-run sweeper's grace period (tests; 0 keeps the default, ADR-0074).
 	StaleRunGrace time.Duration
+	// RecordingCreate creates the segment files of central's recording copies (tests inject a failing disk; nil uses
+	// the filesystem).
+	RecordingCreate func(path string) (recording.File, error)
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -281,7 +285,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock, WakeDeadlines: wakeDeadlines, StaleRunGrace: o.StaleRunGrace,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve, AccountHeadroom: usage.AccountHeadroomFunc(o.Clock.Now),
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RecordingCreate: o.RecordingCreate, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve, AccountHeadroom: usage.AccountHeadroomFunc(o.Clock.Now),
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
 			if err != nil {

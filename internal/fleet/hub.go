@@ -841,17 +841,31 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if svc.opts.RecordingsDir == "" {
 			return nil
 		}
-		seq, err := svc.rec.apply(c)
-		// A message that could not be applied at all (the recording could not be opened) says nothing about what
-		// central holds: no acknowledgement, which a node that probes for central's sequence would take for one
-		// (ADR-0097, addendum). It asks again.
+		seq, err := svc.rec.apply(s.seq, c)
+		// A message that could not be applied at all and leaves nothing known of what central holds (the recording
+		// could not be opened, nothing stored before) is not acknowledged: a node that probes for central's sequence
+		// would take an ack of 0 for one (ADR-0097, addendum). It asks again. Any other outcome is acked with what is
+		// durably stored (Recordings.apply), before a storage failure closes the connection.
 		if err == nil || seq > 0 {
 			_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
 		}
-		return err
+		return svc.rec.refused(s, err)
 	default:
 		return apperr.New(apperr.CodeInvalid, "unexpected message type %q", env.Type)
 	}
+}
+
+// refused is the hub's reaction to an error from Recordings.apply: a storage failure closes the connection (central lost
+// a chunk that only a re-ship on a new one brings back, SM-REC-003, ADR-0010 addendum; once per run and connection,
+// since a close marks every live run of the node unknown) and is returned; any other error was logged by apply and the
+// chunk acked with what is stored, so the connection and the node's other runs are left alone.
+func (r *Recordings) refused(s *session, err error) error {
+	var cc *closeConn
+	if !errors.As(err, &cc) {
+		return nil //nolint:nilerr // not a storage failure: logged by apply, acked with what is stored
+	}
+	s.close(websocket.StatusTryAgainLater, "recording not stored")
+	return err
 }
 
 // syncLeases grants or renews the lease of every space pinned to the node that may run (not archived, not relocating
@@ -1157,6 +1171,9 @@ func (h *Hub) onDisconnect(ctx context.Context, s *session) {
 		delete(h.sessions, s.nodeID)
 	}
 	h.mu.Unlock()
+	if h.svc.rec != nil {
+		h.svc.rec.ConnEnded(s.seq)
+	}
 	if s.counted {
 		h.svc.opts.Metrics.NodeConnected(-1)
 	}

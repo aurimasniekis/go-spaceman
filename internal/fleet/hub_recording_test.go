@@ -9,8 +9,10 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
-// A recording message central could not apply at all (the recording cannot be opened) gets no acknowledgement: a node
-// that probes for central's sequence would take it for central's answer. One that was applied is acknowledged.
+// A recording message central could not apply at all (the recording cannot be opened, nothing stored before) gets no
+// acknowledgement: a node that probes for central's sequence would take an ack of 0 for central's answer (ADR-0097
+// addendum). Not being a storage failure, it is logged and leaves the connection open (ADR-0010 addendum); the node
+// asks again. One that was applied is acknowledged.
 func TestHubRecordingAckOnlyWhenApplied(t *testing.T) {
 	e := newStaleEnv(t)
 	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
@@ -37,11 +39,18 @@ func TestHubRecordingAckOnlyWhenApplied(t *testing.T) {
 	}
 	e.svc.opts.RecordingsDir = filepath.Join(blocker, "rec")
 	e.svc.rec = newRecordings(e.svc.opts.RecordingsDir, nil, nil, e.clk.Now)
-	if err := send(); err == nil {
-		t.Fatal("a recording that cannot be opened was applied")
-	}
-	if len(s.out) != 0 {
-		t.Fatal("central acknowledged a message it could not apply")
+	for range 2 { // the open itself, then a refusal in its backoff window
+		if err := send(); err != nil {
+			t.Fatalf("an open failure ended the connection: %v", err)
+		}
+		if len(s.out) != 0 {
+			t.Fatal("central acknowledged a message it could not apply")
+		}
+		select {
+		case <-s.done:
+			t.Fatal("an open failure closed the connection")
+		default:
+		}
 	}
 	good := t.TempDir()
 	e.svc.opts.RecordingsDir = good

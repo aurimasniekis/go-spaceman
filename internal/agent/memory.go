@@ -32,6 +32,15 @@ const (
 	memoryRole         = "SpaceMan memory"
 )
 
+// The deadlines below bound work done under the collection lock: a git that never returns (a FIFO in a checkout)
+// would stall every instance of the collection. Variables so tests can shorten them.
+var (
+	// checkpointDeadline bounds a checkpoint, and each instance's fast-forward after it.
+	checkpointDeadline = 2 * time.Minute
+	// prepareDeadline bounds prepare (a run's launch) once it holds the collection lock.
+	prepareDeadline = 2 * time.Minute
+)
+
 type memManager struct {
 	a *Agent
 	// base is the agent's run context; timer callbacks run under it.
@@ -102,6 +111,8 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		return "", errors.New("invalid memory collection")
 	}
 	defer m.lock(colKey(spaceID, role))()
+	ctx, cancel := context.WithTimeout(ctx, prepareDeadline)
+	defer cancel()
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if err := m.git.InitBare(ctx, shared); err != nil {
 		return "", err
@@ -111,6 +122,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 			return "", err
 		}
 		if _, err := m.git.Run(ctx, inst, nil, "init", "--quiet", "--initial-branch=main", "."); err != nil {
+			return "", err
+		}
+		if err := m.guard(ctx, inst); err != nil {
 			return "", err
 		}
 		if m.git.RevParse(ctx, shared, "refs/heads/main") == "" {
@@ -137,6 +151,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 			}
 		}
 		return inst, nil
+	}
+	if err := m.guard(ctx, inst); err != nil {
+		return "", err
 	}
 	m.refreshAtStart(ctx, spaceID, role, instance)
 	return inst, nil
@@ -199,7 +216,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	}
 	log := m.a.log.With(slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.instance", instance))
 	unlock := m.lock(colKey(spaceID, role))
-	published, err := m.publish(ctx, spaceID, role, instance, reason)
+	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	published, err := m.publish(pctx, spaceID, role, instance, reason)
+	cancel()
 	unlock()
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	now := m.a.now()
@@ -221,6 +240,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reason string) (bool, error) {
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	g, id := m.git, ident(instance)
+	if err := m.guard(ctx, inst); err != nil {
+		return false, err
+	}
 	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
 		return false, err
 	}
@@ -273,6 +295,9 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	}
 	saved := map[string][]byte{}
 	for _, f := range files {
+		if isHarnessPath(f) {
+			continue // never materialised: harness configuration does not travel through memory
+		}
 		if b, err := g.Run(ctx, inst, nil, "show", head+":"+f); err == nil {
 			saved[f] = []byte(b)
 		}
@@ -281,21 +306,12 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 		return false, err
 	}
 	dir := filepath.Join("conflicts", instance+"-"+stamp)
-	for f, b := range saved {
-		p := filepath.Join(inst, dir, filepath.Clean("/"+f))
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			return false, err
-		}
-		if err := os.WriteFile(p, b, 0o600); err != nil {
-			return false, err
-		}
-	}
 	note := fmt.Sprintf("# Conflicting memory from %s\n\nThese files changed in this instance and in another one at the same time. The shared version was kept; "+
 		"this instance's version is below and in %s. Merge what still matters into the shared files, then delete this folder.\n\nFiles:\n", instance, ref)
 	for _, f := range files {
 		note += "- " + f + "\n"
 	}
-	if err := os.WriteFile(filepath.Join(inst, dir, "README.md"), []byte(note), 0o600); err != nil {
+	if err := writeConflictCopies(inst, dir, saved, note); err != nil {
 		return false, err
 	}
 	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
@@ -317,6 +333,54 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	m.a.log.Warn("memory conflict preserved", slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.ref", ref),
 		slog.Int("files", len(files)))
 	return true, nil
+}
+
+// writeConflictCopies writes the conflict copies and the README under dir inside the instance checkout. Any instance can
+// commit a symlink (for example conflicts -> .git) or a ready-made conflicts/<name>/ folder full of symlinks into the
+// shared history, which the checkout then contains. Two layers defend: prepareConflictDir refuses a symlinked
+// conflicts/ and a conflict folder that already exists (then creates it, so every path under it is made here), and
+// writeUnderRoot writes through an os.Root of the instance, which never leaves it.
+func writeConflictCopies(inst, dir string, saved map[string][]byte, note string) error {
+	root, err := os.OpenRoot(inst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := prepareConflictDir(root, dir); err != nil {
+		return err
+	}
+	return writeUnderRoot(root, dir, saved, note)
+}
+
+// prepareConflictDir refuses a symlinked conflicts/ (in-root, so os.Root alone would allow conflicts -> .git) and a
+// conflict folder that already exists (its name is predictable, so another instance can pre-commit it with symlinks
+// inside), then creates the folder itself.
+func prepareConflictDir(root *os.Root, dir string) error {
+	if fi, err := root.Lstat("conflicts"); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("memory: conflicts is a symlink in the shared history; refusing to write conflict copies through it. " +
+			"Recover by removing the committed conflicts entry from the shared history (this instance's version is kept in refs/conflicts/)")
+	}
+	if _, err := root.Lstat(dir); err == nil {
+		return fmt.Errorf("memory: %s already exists in the shared history; refusing to write conflict copies into it. "+
+			"Recover by removing the committed conflicts entry from the shared history (this instance's version is kept in refs/conflicts/)", dir)
+	}
+	if err := root.MkdirAll("conflicts", 0o700); err != nil {
+		return err
+	}
+	return root.Mkdir(dir, 0o700)
+}
+
+func writeUnderRoot(root *os.Root, dir string, saved map[string][]byte, note string) error {
+	for f, b := range saved {
+		p := filepath.Join(dir, filepath.Clean("/"+f))
+		if err := root.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			return err
+		}
+		if err := root.WriteFile(p, b, 0o600); err != nil {
+			return err
+		}
+	}
+	return root.WriteFile(filepath.Join(dir, "README.md"), []byte(note), 0o600)
 }
 
 // scheduleSync offers the collection to central after delay (replacing a later schedule).

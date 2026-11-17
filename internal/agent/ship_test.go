@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
@@ -949,5 +951,52 @@ func TestCatchUpPacesEndedRuns(t *testing.T) {
 	e.whole("run_0", 1, 1024)
 	if d := time.Since(start); d < time.Second {
 		t.Fatalf("200 KiB of ended history went out in %s at 100 KiB/s", d)
+	}
+}
+
+// SM-REC-003 (ADR-0010 addendum): central fails to store a chunk, acks only what it stored before it and closes the
+// connection; the next live chunk, already sent behind the lost one, is not stored past the hole either. The node is
+// never acked past the hole, so the run's recording stays pending (not prunable), and after the reconnect its
+// catch-up re-ships from the acknowledgement: central ends up with the whole recording, contiguous.
+func TestStoreFailureAtCentralIsReshippedAfterTheConnectionCloses(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_r")
+	e.add("run_r", 2)
+	e.connect()
+	e.whole("run_r", 1, 2)
+	e.idle()
+
+	// Central's disk fails on the chunk holding 3; the live chunk 4-5 follows on the same connection.
+	e.live("run_r", e.add("run_r", 1))
+	e.live("run_r", e.add("run_r", 2))
+	for got := 0; got < 2; {
+		select {
+		case env := <-e.fc.msgs:
+			if env.Type != proto.TypeRecording {
+				continue
+			}
+			got++
+			// Stored nothing: central acks what it held before the hole.
+			e.a.recordingAck(proto.RecordingAck{RunID: "run_r", Seq: 2})
+		case <-time.After(10 * time.Second):
+			t.Fatalf("central received %d of the 2 live chunks", got)
+		}
+	}
+	if acked := e.a.ackedSeq("run_r"); acked != 2 {
+		t.Fatalf("node acked at %d, want 2 (the hole is at 3)", acked)
+	}
+	if !e.a.recordingPending("run_r") {
+		t.Fatal("the run's recording counts as shipped while central lacks 3-5: it could be pruned")
+	}
+
+	// Central closes the connection after the failure; the node reconnects and catches up.
+	e.a.mu.Lock()
+	conn := e.a.conn
+	e.a.mu.Unlock()
+	_ = conn.Close(websocket.StatusTryAgainLater, "recording not stored")
+	e.whole("run_r", 1, 5)
+	e.idle()
+	if e.a.recordingPending("run_r") {
+		t.Fatal("the run's recording is still pending after central acknowledged all of it")
 	}
 }

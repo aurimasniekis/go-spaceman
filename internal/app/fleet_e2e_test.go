@@ -26,6 +26,7 @@ import (
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -52,6 +53,10 @@ type fleetEnv struct {
 	staleGrace time.Duration
 	// clk is central's clock (nil: the system clock); newFleetEnvClock sets a fake one.
 	clk clock.Clock
+	// recCreate creates central's recording segment files on the next startCentral (nil: the filesystem).
+	recCreate func(path string) (recording.File, error)
+	// agent is the running agent (startAgent), for tests that look at what it has sent.
+	agent *agent.Agent
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
@@ -144,7 +149,8 @@ func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
 	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
 	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace, Clock: e.clk})
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace, Clock: e.clk,
+		RecordingCreate: e.recCreate})
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -209,7 +215,7 @@ func (e *fleetEnv) startAgent() {
 	a := agent.New(j, agent.Options{DataDir: e.agentDir, CentralURL: e.srv.URL, Credential: e.cred, Runner: e.run,
 		RunnerInfo: proto.RunnerInfo{Kind: "fake", CoreID: "fakecore"}, HarnessBinaries: map[string]string{hns.KindClaude: "/usr/bin/true", hns.KindCodex: "/usr/bin/true"},
 		AgentBinary: "/usr/bin/true", BridgeSocket: e.bridge, ReconnectMax: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
-	e.agentFn, e.agentJ, e.done = cancel, j, make(chan struct{})
+	e.agent, e.agentFn, e.agentJ, e.done = a, cancel, j, make(chan struct{})
 	go func() { _ = a.Run(ctx); close(e.done) }()
 }
 

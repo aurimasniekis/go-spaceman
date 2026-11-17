@@ -173,3 +173,155 @@ func TestMemoryAcks(t *testing.T) {
 	}
 	m.mu.Unlock()
 }
+
+// A committed conflicts -> /elsewhere symlink must not make preserve write outside the instance.
+func TestPreserveRefusesSymlinkedConflicts(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	const sp, role = "spc_a", "implementor-backend"
+	one, err := m.prepare(ctx, sp, role, "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "decisions.md", "base\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	two, err := m.prepare(ctx, sp, role, "ins_two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(one, "conflicts")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "decisions.md", "one\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	write(t, two, "decisions.md", "two\n")
+	if err := m.checkpointErr(ctx, sp, role, "ins_two", "idle"); err == nil {
+		t.Fatal("preserve wrote through a symlinked conflicts/")
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Fatalf("the symlink target was written to: %v", ents)
+	}
+}
+
+func conflictRoot(t *testing.T) (string, *os.Root) {
+	t.Helper()
+	inst := t.TempDir()
+	if err := os.Mkdir(filepath.Join(inst, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	return inst, root
+}
+
+func requireEmptyDir(t *testing.T, dir string) {
+	t.Helper()
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Fatalf("%s was written to: %v", dir, ents)
+	}
+}
+
+// Layer (a), os.Root alone: with the guards out of the way, a symlink to outside the instance is not followed.
+func TestConflictWritesStayInsideRoot(t *testing.T) {
+	inst, root := conflictRoot(t)
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(inst, "conflicts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(inst, "conflicts", "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeUnderRoot(root, filepath.Join("conflicts", "x"), map[string][]byte{"decisions.md": []byte("mine")}, "note"); err == nil {
+		t.Fatal("wrote through a symlink leaving the instance")
+	}
+	requireEmptyDir(t, outside)
+}
+
+// Layer (b), the guard alone: conflicts -> .git stays inside the instance, so os.Root would allow it.
+func TestPrepareRefusesConflictsSymlinkIntoGit(t *testing.T) {
+	inst, root := conflictRoot(t)
+	if err := os.Symlink(".git", filepath.Join(inst, "conflicts")); err != nil {
+		t.Fatal(err)
+	}
+	err := prepareConflictDir(root, filepath.Join("conflicts", "ins_one-1"))
+	if err == nil || !strings.Contains(err.Error(), "Recover by removing") {
+		t.Fatalf("conflicts -> .git accepted or error gives no recovery: %v", err)
+	}
+	requireEmptyDir(t, filepath.Join(inst, ".git"))
+}
+
+// Layer (c): a pre-committed conflicts/<inst>-<stamp>/ holding decisions.md -> ../../.git/description is refused.
+func TestWriteConflictCopiesRefusesPrecreatedFolder(t *testing.T) {
+	inst, root := conflictRoot(t)
+	desc := filepath.Join(inst, ".git", "description")
+	if err := os.WriteFile(desc, []byte("victim"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join("conflicts", "ins_one-1")
+	if err := os.MkdirAll(filepath.Join(inst, dir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../.git/description", filepath.Join(inst, dir, "decisions.md")); err != nil {
+		t.Fatal(err)
+	}
+	root.Close()
+	err := writeConflictCopies(inst, dir, map[string][]byte{"decisions.md": []byte("mine")}, "note")
+	if err == nil {
+		t.Fatal("a pre-created conflict folder was accepted")
+	}
+	if b, _ := os.ReadFile(desc); string(b) != "victim" {
+		t.Fatalf(".git/description was overwritten: %q", b)
+	}
+}
+
+// A checkout whose own configuration redirects the work tree (core.worktree) or declares it bare is refused by every
+// memory git operation, preserve and its reset --hard included, and nothing outside the checkout is touched.
+func TestPreserveRefusesRedirectedWorktree(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{{"core.worktree", ""}, {"core.bare", "true"}} {
+		t.Run(tc.key, func(t *testing.T) {
+			a := memAgent(t)
+			ctx := context.Background()
+			m := a.mem
+			inst, err := m.prepare(ctx, "spc_a", "role", "ins_one")
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := m.git.RevParse(ctx, inst, "HEAD")
+			outside := t.TempDir()
+			write(t, outside, "victim.md", "keep\n")
+			value := tc.value
+			if value == "" {
+				value = outside
+			}
+			if _, err := m.git.Run(ctx, inst, nil, "config", tc.key, value); err != nil {
+				// the guard may already refuse "config"? it must not: config is how the key got there in this test
+				t.Fatal(err)
+			}
+			if _, err := m.preserve(ctx, "spc_a", "role", "ins_one", head, head, []string{"README.md"}); err == nil {
+				t.Fatal("preserve ran in a checkout whose work tree is redirected")
+			}
+			if got := read(t, outside, "victim.md"); got != "keep\n" {
+				t.Fatalf("the folder outside was changed: %q", got)
+			}
+			entries, _ := os.ReadDir(outside)
+			if len(entries) != 1 {
+				t.Fatalf("files appeared outside the checkout: %v", entries)
+			}
+			if _, err := os.Stat(filepath.Join(inst, "conflicts")); err == nil {
+				t.Fatal("preserve wrote into the checkout")
+			}
+			// Without the key it works again, so the refusal is the guard's.
+			if _, err := m.git.Run(ctx, inst, nil, "config", "--unset", tc.key); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.git.Run(ctx, inst, nil, "status", "--porcelain"); err != nil {
+				t.Fatalf("a clean checkout refused: %v", err)
+			}
+		})
+	}
+}

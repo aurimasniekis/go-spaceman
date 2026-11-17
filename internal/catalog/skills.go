@@ -31,6 +31,7 @@ type Skill struct {
 	Latest      int64           `json:"latest"`
 	Versions    []*SkillVersion `json:"versions,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
+	Version     int64           `json:"version" doc:"The skill's own version (If-Match for update-skill); it moves only when the name or description changes"`
 }
 
 // SkillVersion is a draft or an immutable published set of files.
@@ -148,8 +149,11 @@ func (svc *Service) createSkill(ctx context.Context, actor audit.Actor, slug, na
 	if !reSlug.MatchString(slug) {
 		v.Add("slug", "must be 1-63 lowercase letters, digits or dashes")
 	}
-	if strings.TrimSpace(name) == "" || len(name) > 120 || len(description) > 2000 {
+	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 120 {
 		v.Add("name", "is required (at most 120 characters)")
+	}
+	if utf8.RuneCountInString(description) > 2000 {
+		v.Add("description", "at most 2000 characters")
 	}
 	if err := v.Err(); err != nil {
 		return nil, err
@@ -221,6 +225,64 @@ func (svc *Service) SaveSkillDraft(ctx context.Context, actor audit.Actor, skill
 	return svc.GetSkill(ctx, skillID)
 }
 
+// UpdateSkillMeta changes a skill's name and/or description in place (ADR-0095). A nil field keeps its value. The slug never
+// changes and skill_versions is never touched, so no version is created and the files stay as they are. version is the
+// skill's own version (If-Match).
+func (svc *Service) UpdateSkillMeta(ctx context.Context, actor audit.Actor, idOrSlug string, version int64, name, description *string) (*Skill, error) {
+	v := &apperr.Validation{}
+	if name != nil && (strings.TrimSpace(*name) == "" || utf8.RuneCountInString(*name) > 120) {
+		v.Add("name", "is required (at most 120 characters)")
+	}
+	if description != nil && utf8.RuneCountInString(*description) > 2000 {
+		v.Add("description", "at most 2000 characters")
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+	var id string
+	err := svc.s.W().TxNamed(ctx, "catalog.skill_update", func(tx *store.Tx) error {
+		sk, err := tx.Q.GetSkill(ctx, idOrSlug)
+		if errors.Is(err, sql.ErrNoRows) {
+			sk, err = tx.Q.GetSkillBySlug(ctx, idOrSlug)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperr.New(apperr.CodeNotFound, "skill not found")
+		} else if err != nil {
+			return err
+		}
+		id = sk.ID
+		newName, newDesc := sk.Name, sk.Description
+		changed := []string{}
+		if name != nil && *name != sk.Name {
+			newName = *name
+			changed = append(changed, "name")
+		}
+		if description != nil && *description != sk.Description {
+			newDesc = *description
+			changed = append(changed, "description")
+		}
+		if len(changed) == 0 {
+			if sk.Version != version { // nothing to write, but a stale If-Match is still refused
+				return apperr.New(apperr.CodePrecondition, "the skill changed since version %d (now %d)", version, sk.Version)
+			}
+			return nil
+		}
+		// The version guard is in the UPDATE itself: a stale version matches no row.
+		n, err := tx.Q.UpdateSkillMeta(ctx, db.UpdateSkillMetaParams{Name: newName, Description: newDesc, UpdatedAt: tx.NowMicros(), ID: sk.ID, Version: version})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodePrecondition, "the skill changed since version %d (now %d)", version, sk.Version)
+		}
+		return svc.log(ctx, tx, actor, "skill.updated", "skill", sk.ID, map[string]any{"fields": changed})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return svc.GetSkill(ctx, id)
+}
+
 // PublishSkill publishes the draft as the next immutable version.
 func (svc *Service) PublishSkill(ctx context.Context, actor audit.Actor, skillID string, version int64) (*Skill, error) {
 	err := svc.s.W().TxNamed(ctx, "catalog.skill_publish", func(tx *store.Tx) error {
@@ -260,7 +322,7 @@ func (svc *Service) GetSkill(ctx context.Context, id string) (*Skill, error) {
 		return nil, err
 	}
 	out := &Skill{ID: r.ID, Slug: r.Slug, Name: r.Name, Description: r.Description, Source: r.Source, SourceRef: r.SourceRef,
-		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), Versions: []*SkillVersion{}}
+		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), Versions: []*SkillVersion{}, Version: r.Version}
 	vs, err := q.ListSkillVersions(ctx, r.ID)
 	if err != nil {
 		return nil, err

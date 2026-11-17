@@ -44,6 +44,7 @@ var CatalogRules = map[string]Rule{
 	"list-skills":            Global(authz.SkillRead),
 	"get-skill":              Global(authz.SkillRead),
 	"create-skill":           Global(authz.SkillWrite),
+	"update-skill":           Global(authz.SkillWrite),
 	"save-skill-draft":       Global(authz.SkillWrite),
 	"publish-skill":          Global(authz.SkillWrite),
 }
@@ -343,6 +344,26 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				sk, err := svc.CreateSkill(ctx, Actor(ctx), in.Body.Slug, in.Body.Name, in.Body.Description, in.Body.Files)
 				if err != nil {
 					return nil, d.fail(ctx, "skills.create", err)
+				}
+				return &struct{ Body *catalog.Skill }{Body: sk}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "update-skill", Method: http.MethodPatch, Path: "/skills/{skill_id}", Summary: "Change a skill's name or description",
+			Description: "Changes the skill in place and creates no version: its files stay as they are. A field left out keeps its value; the slug never changes. If-Match is the skill's version.", Tags: stags},
+			func(ctx context.Context, in *struct {
+				SkillID string `path:"skill_id" maxLength:"64"`
+				IfMatch
+				Body struct {
+					Name        *string `json:"name,omitempty" maxLength:"120"`
+					Description *string `json:"description,omitempty" maxLength:"2000"`
+				}
+			}) (*struct{ Body *catalog.Skill }, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "skills.update", err)
+				}
+				sk, err := svc.UpdateSkillMeta(ctx, Actor(ctx), in.SkillID, v, in.Body.Name, in.Body.Description)
+				if err != nil {
+					return nil, d.fail(ctx, "skills.update", err)
 				}
 				return &struct{ Body *catalog.Skill }{Body: sk}, nil
 			})

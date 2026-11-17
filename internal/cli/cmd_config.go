@@ -170,6 +170,9 @@ func (a *App) skillCmd() *cobra.Command {
 	return group("skill", "Skill catalog: list, show, create, draft and publish", []string{"skills"},
 		a.cmd(opts{use: "list", short: "The skill catalog", op: "list-skills", alias: []string{"ls"}, view: view{items: "items", cols: skillCols, empty: "No skills."}}),
 		a.cmd(opts{use: "get", short: "A skill with its versions and files", op: "get-skill", args: pos("skill")}),
+		a.cmd(opts{use: "update", short: "Change a skill's name or description in place (only the flags given change; no new version)", op: "update-skill", get: "get-skill",
+			canonical: "skill_id", merge: true, args: pos("skill"),
+			form: func(f *form) { f.str("name", "name", "name").str("description", "description", "description") }}),
 		a.cmd(opts{use: "publish", short: "Publish the skill's draft", op: "publish-skill", get: "get-skill", canonical: "skill_id", args: pos("skill"), version: draftVersion,
 			prepare: needVersion("the skill has no draft to publish")}),
 	)

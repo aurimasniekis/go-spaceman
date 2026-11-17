@@ -26,6 +26,13 @@ import (
 // RecordingDir is a run's local recording directory.
 func (a *Agent) RecordingDir(runID string) string { return filepath.Join(a.runDir(runID), "recording") }
 
+// SentRecordingSeq returns the highest sequence of the run's recording this agent has handed to a connection (tests).
+func (a *Agent) SentRecordingSeq(runID string) uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sentSeq[runID]
+}
+
 // recordingQuotaFile keeps the recording bound central sent at launch, so a recorder restarted after an agent restart
 // applies the same bound.
 const recordingQuotaFile = "recording-quota"
