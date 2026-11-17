@@ -6359,7 +6359,7 @@
     generation is refused and journals nothing, so central's re-queue retries it.
 - **Addendum: retry and close a stuck rename (T-H4, 2026-11-17, Proposed; operator chose to build both).** A rename stays
   open while its node state is `pending` or `failed`, which holds the role's launches and every dream launch in the space.
-  A node that keeps answering `error`, or was downgraded below minor 14, never ends it. Two admin-only operations end the
+  A node that keeps answering `error`, or was downgraded below minor 14 after the rename was accepted (a rename is refused unless the node last spoke minor 14 or higher), never ends it. Two admin-only operations end the
   wait. Neither deletes anything.
   1. **API.** `POST /spaces/{space_id}/role-renames/{rename_id}/retry` and `.../close` (`retry-space-role-rename`,
      `close-space-role-rename`), body `{reason?}` (close: optional, up to 500 characters, stored as the node message).
@@ -6387,7 +6387,7 @@
      change: holds lift at once, another rename of either name and a clean relocation are no longer refused. Central's
      memory stays under the new name (its move is independent of the node state and already happened or is finished by
      `ensureMoved`); the former name stays resolvable by history lookups. A close leaves the rename's undelivered
-     commands queued (review of #230): a node that was offline or below minor 14 has no journal row, so cancelling would leave
+     commands queued (review of #230): a node that was offline (or downgraded below minor 14) has no journal row, so cancelling would leave
      its old-name folder unmarked and a later role of that name would inherit the renamed role's memory. The node journals the
      command when it connects at 14 or more, moves the folder, and its `ok` is answered `closed` (harmless, see 4); a
      rename that stays unmoved is reported and dropped. The node's old-name folder is **orphaned**: reported in the response and in `node_message`

@@ -162,8 +162,8 @@ func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spac
 				return apperr.New(apperr.CodeConflict, "the rename changed concurrently")
 			}
 		}
-		// Without forgetNode the rename's undelivered commands stay queued: a node that was offline or below minor 14 has
-		// no journal row yet, and must journal the rename when it connects, so it can move the folder or learn of the
+		// Without forgetNode the rename's undelivered commands stay queued: a node that was offline (or downgraded below
+		// minor 14) has no journal row yet, and must journal the rename when it connects, so it can move the folder or learn of the
 		// close (ADR-0093 addendum 3).
 		var cancelled int64
 		if forgetNode {

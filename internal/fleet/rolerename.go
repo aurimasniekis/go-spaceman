@@ -187,7 +187,7 @@ func renameOpenForRelocation(ctx context.Context, q *db.Queries, spaceID string)
 }
 
 // RoleRenameClosed tells a connected node that an admin closed a rename (memory.renamed.ack with error closed), so it
-// drops the rename and lifts its own sync hold at once. A node that is away, or below minor 14, learns it from the ack to
+// drops the rename and lifts its own sync hold at once. A node that is away, or was downgraded below minor 14, learns it from the ack to
 // its next report instead (roleRenamed), and central stays closed either way.
 func (h *Hub) RoleRenameClosed(nodeID, renameID string) {
 	h.mu.Lock()

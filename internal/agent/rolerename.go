@@ -424,14 +424,16 @@ func (j *Journal) renameFrom(ctx context.Context, spaceID, role string) bool {
 // of a new role reusing the old name can arrive first (ADR-0093).
 var renameAckWait = 5 * time.Second
 
-// awaitRenameAck waits (bounded) while the only thing keeping role's name held is a done rename whose ack is on its way.
-// A pending or moving rename is not waited for: central holds those launches itself. prepare runs once per role, so a
-// multi-role dream waits up to renameAckWait (5s) for each role that has a done, unacked rename.
+// awaitRenameAck waits (bounded) while role's name is held by a rename the node has not finished: a done one whose ack is
+// on its way, or a pending or moving one. Central holds launches of an open rename itself, but a closed rename (admin
+// close) lifts that hold while the node may still be journaling or moving the old folder, so a launch of the old name
+// can arrive in that window; it waits here, and renameFrom refuses it if the wait ends first. prepare runs once per role,
+// so a multi-role dream waits up to renameAckWait (5s) for each role that has such a rename.
 func (j *Journal) awaitRenameAck(ctx context.Context, spaceID, role string) {
 	deadline := time.Now().Add(renameAckWait)
 	for time.Now().Before(deadline) {
 		var n int
-		err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ? AND state = 'done' AND acked = 0`,
+		err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ? AND (state IN ('pending', 'moving') OR (state = 'done' AND acked = 0))`,
 			spaceID, role).Scan(&n)
 		if err != nil || n == 0 {
 			return

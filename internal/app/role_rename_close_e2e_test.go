@@ -288,3 +288,36 @@ func TestRoleRenameClosedRejectedIsRequeued(t *testing.T) {
 		t.Fatalf("re-queued %+v %+v", c, p)
 	}
 }
+
+// ADR-0093 addendum 3 (simulated): a rename closed while the node is offline is still delivered when the node connects;
+// the node moves the folder and reports ok, and central answers that report with the closed reason (harmless: it drops the
+// node's rename and sync hold) while the rename stays abandoned.
+func TestRoleRenameClosedOfflineOkIsAnsweredClosed(t *testing.T) {
+	t.Parallel()
+	e := newRenameNodeEnv(t)
+	n, _ := e.connect(proto.MaxMinor)
+	_ = n.conn.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "node disconnected", func() bool { nd, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !nd.Connected })
+	rn, err := e.rename("reviewer", "critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Catalog.CloseRoleRename(e.ctx, admin, e.spaceID, rn.ID, "node offline", false); err != nil {
+		t.Fatal(err)
+	}
+	n, _ = e.connect(proto.MaxMinor)
+	if _, p := n.memoryRename(t, proto.AckAccepted); p.RenameID != rn.ID || p.Closed {
+		t.Fatalf("delivered %+v", p)
+	}
+	n.send(t, proto.TypeMemoryRenamed, proto.MemoryRenamed{RenameID: rn.ID, SpaceID: e.spaceID, Result: proto.MemoryRenameOK})
+	var ack proto.MemoryRenamedAck
+	if err := n.next(t, proto.TypeMemoryRenamedAck).Decode(&ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.RenameID != rn.ID || ack.Error != "closed" {
+		t.Fatalf("ack %+v, want the closed reason", ack)
+	}
+	if s := e.state(rn.ID); s.NodeState != catalog.RenameNodeAbandoned {
+		t.Fatalf("the rename left abandoned: %+v", s)
+	}
+}

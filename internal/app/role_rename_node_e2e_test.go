@@ -220,8 +220,8 @@ func TestRoleRenameNodeMoveStateMachine(t *testing.T) {
 }
 
 // A memory.rename the node refused is recorded on the rename and queued again on the node's next connection (with a new
-// key); a connection below minor 14 is never sent one, and the rename waits for a connection that can take it. A
-// rename on a space whose node last connected below minor 14 is refused (node_too_old).
+// key); a connection below minor 14 (only a downgraded node, since a rename is refused unless the node last spoke minor 14 or
+// higher: node_too_old) is never sent one, and the rename waits for a connection that can take it.
 func TestRoleRenameCommandRedeliveryAndMinor(t *testing.T) {
 	t.Parallel()
 	e := newRenameNodeEnv(t)

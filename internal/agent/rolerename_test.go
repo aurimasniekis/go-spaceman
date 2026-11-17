@@ -716,6 +716,26 @@ func TestPrepareRefusesRenamedFrom(t *testing.T) {
 	stopTimers(a.mem)
 }
 
+// A launch of a name held by a pending rename waits for the rename to be dropped (an admin close reaching the node)
+// instead of failing at once.
+func TestPrepareWaitsForPendingRename(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	defer func(w time.Duration) { renameAckWait = w }(renameAckWait)
+	renameAckWait = 5 * time.Second
+	if err := a.j.insertRoleRename(ctx, renameRow{ID: "rrn_wait", SpaceID: rnSpace, From: "from-w", To: "to-w", State: renamePending}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = a.j.closeRoleRename(ctx, "rrn_wait")
+	}()
+	if _, err := a.mem.prepare(ctx, rnSpace, "from-w", "ins_x"); err != nil {
+		t.Fatalf("prepare did not wait for the drop: %v", err)
+	}
+	stopTimers(a.mem)
+}
+
 // rnMove journals a rename, moves it and takes central's ok acknowledgement.
 func rnMove(t *testing.T, a *Agent, id, from, to string) {
 	t.Helper()
