@@ -21,8 +21,8 @@ cannot stop itself or another control run; operators do that.
 ### Choosing a role
 
 `spaceman_worker_launch` takes the role's name. Control finds the right one with `spaceman_roles_list`, one call that
-returns every role of the space with what it is for. It picks the role whose description fits the task, then launches
-it. Descriptions come from the space role, or the template when the space role has none, so an operator who changes a
+returns every role of the space with what it is for. A role that can't be resolved is still listed, with an `error`
+in place of its harness and model. It picks the role whose description fits the task, then launches it. Descriptions come from the space role, or the template when the space role has none, so an operator who changes a
 role changes what control sees on its next call. Nothing is cached in control's instructions.
 
 The list shows no prompt text, settings, skills or account references, and the descriptions grant nothing: a role

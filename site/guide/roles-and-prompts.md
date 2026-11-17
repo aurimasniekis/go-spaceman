@@ -55,9 +55,12 @@ can set:
 - its **description**, which says what the role is for in this space. Empty uses the template's description. Control
   reads it to choose a role (see [Control and workers](./control#choosing-a-role)).
 
-Set an override on the space's role in the web UI, or with `spaceman role set <name> --space <space>`. Note that `role set`
-replaces the role's whole configuration, so pass every field you want to keep (read it first with `spaceman role get`).
-The override lasts only in that space, and the run's manifest records each effective value with where it came from.
+Set an override on the space's role in the web UI, or with `spaceman role set <name> --space <space>`. The description
+is set with `spaceman role set <name> --space <space> --description "…"` or through the API for now; the web form follows
+in a later change. Skills are set in the web UI or through the API: `role set` has no skills flag, and because it
+replaces the role's whole configuration, running it clears the role's skills. Pass every field you want to keep (read the
+role first with `spaceman role get`). The override lasts only in that space, and the run's manifest records each effective
+value (except the description, which is not part of the manifest) with where it came from.
 
 ### Copying a template for a group of spaces
 
@@ -66,7 +69,8 @@ space role one by one. There is no per-space template layer and no automatic for
 
 1. Read the template with `spaceman role template get <template>`.
 2. Add a new template with the same kind, profile, prompt and settings, and a new slug:
-   `spaceman role template create <new-slug> --kind <kind> --profile <profile> --prompt <prompt> --name "…" --description "…"`.
+   `spaceman role template create <new-slug> --kind <kind> --profile <profile-id> --prompt <prompt-id> --name "…" --description "…" --memory-conventions "…" --prompt-pin <version>`.
+   `--profile` and `--prompt` take IDs; `--memory-conventions` and `--prompt-pin` are optional.
 3. Point each space's role at the copy: `spaceman role set <name> --space <space> --template <template-id>`, using the
    ID the create step returned.
 
