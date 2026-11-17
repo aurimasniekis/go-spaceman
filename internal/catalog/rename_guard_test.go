@@ -11,7 +11,10 @@ import (
 
 // isRoleNameColumn matches the columns that may name a space role (ADR-0093 T-L1): role, any *_role (assignee_role,
 // requester_role, successor_role, target_role, space_role, and a dummy foo_role) and any *_roles_json. The match is
-// deliberately wide: a column that matches but holds something else is classified roleNameNotASpaceRole.
+// deliberately wide: a column that matches but holds something else is classified roleNameNotASpaceRole. The match sees
+// only column names, so a role name stored under another column is invisible to it: messages.to_id (with to_kind='role'),
+// node_commands.payload_json, limit_waits.launch_json, runs.manifest_json and inbox_items.dedup_key hold role names
+// without matching, and are reviewed by hand against the rename instead of by this guard.
 func isRoleNameColumn(column string) bool {
 	return column == "role" || strings.HasSuffix(column, "_role") || strings.HasSuffix(column, "_roles_json")
 }
