@@ -303,3 +303,32 @@ func TestRunCheckoutRequiresDotGitForConfig(t *testing.T) {
 		t.Fatal("config accepted a folder without .git")
 	}
 }
+
+// .git as a gitdir: file or a symlink to another repository is not the checkout's own: no command, config included,
+// may run through it (config would write the other repository's configuration).
+func TestRunCheckoutRefusesLinkedDotGit(t *testing.T) {
+	g, other := newCheckout(t)
+	ctx := context.Background()
+	for name, link := range map[string]func(inst string) error{
+		"gitdir file": func(inst string) error {
+			return os.WriteFile(filepath.Join(inst, ".git"), []byte("gitdir: "+filepath.Join(other, ".git")+"\n"), 0o600)
+		},
+		"symlink": func(inst string) error { return os.Symlink(filepath.Join(other, ".git"), filepath.Join(inst, ".git")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			inst := t.TempDir()
+			if err := link(inst); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := g.RunCheckout(ctx, inst, nil, "config", "memtest.key", "v"); err == nil {
+				t.Fatal("config ran through a linked .git")
+			}
+			if out, err := os.ReadFile(filepath.Join(other, ".git", "config")); err != nil || strings.Contains(string(out), "memtest") {
+				t.Fatalf("the other repository's config was written: %q %v", out, err)
+			}
+			if _, err := g.RunCheckout(ctx, inst, nil, "status"); err == nil {
+				t.Fatal("status ran through a linked .git")
+			}
+		})
+	}
+}
