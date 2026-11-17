@@ -115,7 +115,10 @@ type roleNameEntry struct {
 
 // roleNameColumns classifies every column that names a space role (the names the schema guard matches, see
 // isRoleNameColumn), keyed "table.column". A column added by a migration fails TestRoleNameColumnsAreClassified until it
-// is listed here with its class and a reason. Keep this next to RenameSpaceRole, which must honour the classes.
+// is listed here with its class and a reason. Keep this next to RenameSpaceRole, which must honour the classes. This map
+// only checks the classification is complete; what actually enforces the live and history classes is the table-driven
+// TestRenameSpaceRoleRewritesLiveRows, which seeds a row of each kind and asserts the live ones are rewritten and the
+// history ones are left as written.
 var roleNameColumns = map[string]roleNameEntry{
 	"account_switches.role":                         {roleNameLive, "open switches block the rename (role_busy); closed ones are history"},
 	"approvals.requester_role":                      {roleNameHistory, "who asked, as recorded"},

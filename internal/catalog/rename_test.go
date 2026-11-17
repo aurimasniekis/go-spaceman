@@ -486,12 +486,26 @@ func TestRenameSpaceRoleBlockers(t *testing.T) {
 			s.ins("runs", map[string]any{"id": "run_park", "space_id": "spc_a", "node_id": "nod_1", "kind": "worker", "role": "a", "observed": "exited"})
 			s.ins("limit_waits", map[string]any{"id": "lwt_open", "space_id": "spc_a", "run_id": "run_park", "role": "a", "state": "waiting"})
 		}},
+		{"resuming limit wait", "limit wait lwt_open (resuming)", func(s *seeder) {
+			s.ins("runs", map[string]any{"id": "run_park", "space_id": "spc_a", "node_id": "nod_1", "kind": "worker", "role": "a", "observed": "exited"})
+			s.ins("limit_waits", map[string]any{"id": "lwt_open", "space_id": "spc_a", "run_id": "run_park", "role": "a", "state": "resuming"})
+		}},
 		{"account switch", "account switch asw_open (parked)", func(s *seeder) {
 			s.ins("account_switches", map[string]any{"id": "asw_open", "space_id": "spc_a", "role": "a", "state": "parked"})
+		}},
+		{"pending account switch", "account switch asw_open (pending)", func(s *seeder) {
+			s.ins("account_switches", map[string]any{"id": "asw_open", "space_id": "spc_a", "role": "a", "state": "pending"})
+		}},
+		{"resumed account switch", "account switch asw_open (resumed)", func(s *seeder) {
+			s.ins("account_switches", map[string]any{"id": "asw_open", "space_id": "spc_a", "role": "a", "state": "resumed"})
 		}},
 		{"queued launch", "queued launch cmd_launch (sent)", func(s *seeder) {
 			s.ins("node_commands", map[string]any{"id": "cmd_launch", "node_id": "nod_1", "space_id": "spc_a", "kind": "run.launch", "payload_json": `{"role":"a"}`,
 				"state": "sent"})
+		}},
+		{"pending queued launch", "queued launch cmd_launch (pending)", func(s *seeder) {
+			s.ins("node_commands", map[string]any{"id": "cmd_launch", "node_id": "nod_1", "space_id": "spc_a", "kind": "run.launch", "payload_json": `{"role":"a"}`,
+				"state": "pending"})
 		}},
 		{"dream run", "dream run drr_open (reported)", func(s *seeder) {
 			s.ins("dream_configs", map[string]any{"id": "drm_x", "space_id": "spc_a", "slug": "x", "space_role": "other"})
