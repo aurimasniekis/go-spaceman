@@ -60,19 +60,30 @@ func (g *Git) Run(ctx context.Context, dir string, id *Identity, args ...string)
 // is not run when it would execute a configured program (UnsafeConfig).
 func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []byte, args ...string) (string, error) {
 	if len(args) > 0 && Guarded(args[0]) {
-		list, err := g.run(ctx, dir, nil, nil, "config", "--list", "--name-only", "--show-scope")
+		// The files come first: git reads .git/config (and anything it includes) for any command, and a FIFO there
+		// would block it, so nothing runs before the walk has refused links and special files.
+		_, statErr := os.Lstat(filepath.Join(dir, ".git"))
+		inCheckout := statErr == nil
+		if inCheckout {
+			if err := checkoutFiles(dir); err != nil {
+				return "", err
+			}
+		}
+		gctx, cancel := context.WithTimeout(ctx, GuardTimeout)
+		defer cancel()
+		list, err := g.run(gctx, dir, nil, nil, "config", "--list", "--name-only", "--show-scope")
 		if err != nil {
 			return "", err
 		}
 		if err := UnsafeConfig(list, true); err != nil {
 			return "", err
 		}
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			if err := g.CheckoutIdentity(ctx, dir); err != nil {
+		if inCheckout {
+			if err := g.checkoutGit(gctx, dir); err != nil {
 				return "", err
 			}
 			if !treeless[args[0]] {
-				if err := g.Gitlinks(ctx, dir); err != nil {
+				if err := g.Gitlinks(gctx, dir); err != nil {
 					return "", err
 				}
 			}
@@ -91,6 +102,21 @@ func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []by
 // the checkout while git runs, so a link planted in that window is followed. ADR-0094 (checkout guard) records it
 // and the structural fixes (run only while no process of the instance is alive, or in a daemon-owned copy).
 func (g *Git) CheckoutIdentity(ctx context.Context, dir string) error {
+	if err := checkoutFiles(dir); err != nil {
+		return err
+	}
+	gctx, cancel := context.WithTimeout(ctx, GuardTimeout)
+	defer cancel()
+	return g.checkoutGit(gctx, dir)
+}
+
+// GuardTimeout bounds the guard's own git calls: a FIFO that an include.path (or a file git reads) names outside
+// .git would block git for ever. A variable so tests can shorten it.
+var GuardTimeout = 30 * time.Second
+
+// checkoutFiles is the part of CheckoutIdentity that never runs git: .git is a plain directory and nothing in it
+// leads elsewhere.
+func checkoutFiles(dir string) error {
 	dotGit := filepath.Join(dir, ".git")
 	fi, err := os.Lstat(dotGit)
 	if err != nil {
@@ -99,9 +125,12 @@ func (g *Git) CheckoutIdentity(ctx context.Context, dir string) error {
 	if !fi.IsDir() {
 		return errors.New("checkout refused: .git is not a plain directory (symlink or gitdir file)")
 	}
-	if err := ownGitDir(dotGit); err != nil {
-		return err
-	}
+	return ownGitDir(dotGit)
+}
+
+// checkoutGit asks git where it thinks the git dir, common dir and work tree are.
+func (g *Git) checkoutGit(ctx context.Context, dir string) error {
+	dotGit := filepath.Join(dir, ".git")
 	out, err := g.run(ctx, dir, nil, nil, "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--show-toplevel")
 	if err != nil {
 		return fmt.Errorf("checkout refused: git does not see a work tree here (core.bare?): %w", err)
@@ -143,6 +172,11 @@ var reFanout = regexp.MustCompile(`^[0-9a-f]{2}$`)
 //     copy into the shared memory;
 //   - info/grafts, which rewrites history as git sees it (replace refs are off: GIT_NO_REPLACE_OBJECTS).
 //
+// hooks/ is not walked: hooks never run (core.hooksPath is forced, hook.* config is refused), and a project
+// repository may legitimately symlink them (.git/hooks/pre-commit -> ../../scripts/hook). lfs/objects is skipped
+// like the object fan-out: git never reads through it for the commands SpaceMan runs, and it can hold tens of
+// thousands of files.
+//
 // The loose-object fan-out folders are checked themselves but not listed, so the walk costs a few hundred entries
 // whatever the size of the object store: a symlinked object file inside one is only read, and its content is named
 // by its hash. Linked worktrees' and submodules' git dirs (worktrees/, modules/) are walked like the rest.
@@ -168,6 +202,9 @@ func ownGitDir(dotGit string) error {
 			return refuse(rel, "is a symlink")
 		case t.IsDir():
 			if inObjects(slash) && reFanout.MatchString(d.Name()) {
+				return filepath.SkipDir
+			}
+			if slash == "hooks" || slash == "lfs/objects" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -217,6 +254,8 @@ var treeless = map[string]bool{
 // repository's index is refreshed). `git add` does this whatever diff.ignoreSubmodules says. Memory has no use for
 // submodules, so an index with a gitlink is refused before any command that reads the work tree.
 func (g *Git) Gitlinks(ctx context.Context, dir string) error {
+	ctx, cancel := context.WithTimeout(ctx, GuardTimeout)
+	defer cancel()
 	out, err := g.run(ctx, dir, nil, nil, "ls-files", "--stage", "-z")
 	if err != nil {
 		return fmt.Errorf("checkout refused: %w", err)

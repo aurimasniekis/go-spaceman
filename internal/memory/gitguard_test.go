@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"io/fs"
 	"maps"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // Security review SR-M04: repository configuration that makes git run a program or reach an unchosen transport is
@@ -16,7 +18,7 @@ func TestUnsafeConfig(t *testing.T) {
 	for _, bad := range []string{"filter.lfs.clean", "filter.X.Smudge", "filter.x.process", "merge.ours.driver", "diff.pdf.textconv",
 		"diff.x.command", "diff.external", "core.sshCommand", "core.gitProxy", "core.pager", "include.path", "includeIf.gitdir:/x.path",
 		"credential.helper", "credential.https://example.test.helper", "protocol.ext.allow", "protocol.allow", "url.ext::sh.insteadOf",
-		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "sequence.editor", "core.editor", "core.worktree", "core.WorkTree", "gc.recentObjectsHook"} {
+		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "sequence.editor", "core.editor", "core.worktree", "core.WorkTree", "gc.recentObjectsHook", "hook.x.command", "hook.x.event", "Hook.pre.Command", "pager.log", "trailer.x.cmd", "interactive.diffFilter"} {
 		if err := UnsafeConfig("local\t"+bad+"\n", true); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
@@ -162,12 +164,16 @@ func TestRunRefusesRedirectedGitDir(t *testing.T) {
 				must(t, os.MkdirAll(filepath.Join(dgit, "info"), 0o700))
 				must(t, os.WriteFile(filepath.Join(dgit, "info", "grafts"), nil, 0o600))
 			case "fifo":
-				must(t, syscall.Mkfifo(filepath.Join(dgit, "MERGE_MSG"), 0o600))
+				// git reads .git/config for every command: a FIFO there would block it.
+				must(t, os.Remove(filepath.Join(dgit, "config")))
+				must(t, syscall.Mkfifo(filepath.Join(dgit, "config"), 0o600))
 			}
 			must(t, os.WriteFile(filepath.Join(dir, "evil.md"), []byte("evil\n"), 0o600))
 			for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "x", "--allow-empty"}, {"reset", "--hard"},
 				{"merge", "--ff-only", "HEAD"}, {"update-ref", "refs/heads/packed", "HEAD"}} {
-				_, err := g.Run(ctx, dir, id, args...)
+				rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				_, err := g.Run(rctx, dir, id, args...)
+				cancel()
 				if err == nil || !strings.Contains(err.Error(), "checkout refused") {
 					t.Errorf("git %s: not refused by the guard: %v", args[0], err)
 				}
@@ -279,4 +285,161 @@ func TestRunStopsAtTheCheckout(t *testing.T) {
 	if out, err := g.Run(ctx, parent, nil, "ls-files"); err != nil || out != "" {
 		t.Fatalf("the parent repository's index changed: %q %v", out, err)
 	}
+}
+
+// git 2.54+ runs hook.<name>.command for hook.<name>.event from .git/config even with core.hooksPath=/dev/null
+// (reference-transaction fires on every ref update): the guard refuses such a checkout and the program never runs.
+func TestRunRefusesConfigHooks(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := t.Context()
+	id := &Identity{Name: "t", Email: "t@example.com"}
+	dir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	if _, err := g.Run(ctx, dir, nil, "init", "--quiet", "."); err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range [][2]string{{"hook.x.command", "touch " + marker}, {"hook.x.event", "reference-transaction"}} {
+		if _, err := g.Run(ctx, dir, nil, "config", kv[0], kv[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("a\n"), 0o600))
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "x"}, {"update-ref", "refs/heads/y", "HEAD"}} {
+		if _, err := g.Run(ctx, dir, id, args...); err == nil || !strings.Contains(err.Error(), "hook.x.") {
+			t.Errorf("git %s: not refused: %v", args[0], err)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a configured hook ran")
+	}
+}
+
+// An include.path naming a FIFO outside .git must not hang the guard: git blocks reading it, and the guard's own
+// timeout ends the call.
+func TestRunGuardTimesOutOnIncludedFifo(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	old := GuardTimeout
+	GuardTimeout = time.Second
+	t.Cleanup(func() { GuardTimeout = old })
+	ctx := t.Context()
+	dir := t.TempDir()
+	if _, err := g.Run(ctx, dir, nil, "init", "--quiet", "."); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	must(t, syscall.Mkfifo(fifo, 0o600))
+	cfg := filepath.Join(dir, ".git", "config")
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	must(t, err)
+	_, err = f.WriteString("[include]\n\tpath = " + fifo + "\n")
+	must(t, err)
+	must(t, f.Close())
+	start := time.Now()
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := g.Run(rctx, dir, nil, "status", "--porcelain"); err == nil {
+		t.Fatal("git ran with a FIFO include")
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("the guard took %v", d)
+	}
+}
+
+// Hooks are never run (core.hooksPath is forced), so a project repository's symlinked hooks are not a refusal.
+func TestRunAllowsSymlinkedHooks(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := t.Context()
+	dir := t.TempDir()
+	if _, err := g.Run(ctx, dir, nil, "init", "--quiet", "."); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.MkdirAll(filepath.Join(dir, "scripts"), 0o700))
+	must(t, os.WriteFile(filepath.Join(dir, "scripts", "hook"), []byte("#!/bin/sh\n"), 0o700))
+	must(t, os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o700))
+	must(t, os.Symlink("../../scripts/hook", filepath.Join(dir, ".git", "hooks", "pre-commit")))
+	if _, err := g.Run(ctx, dir, nil, "status", "--porcelain"); err != nil {
+		t.Fatalf("symlinked hook refused: %v", err)
+	}
+}
+
+// `git clone --local` hard-links object files: the hard-link check must allow them.
+func TestRunAllowsLocalCloneObjects(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := t.Context()
+	id := &Identity{Name: "t", Email: "t@example.com"}
+	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "clone")
+	if _, err := g.Run(ctx, src, nil, "init", "--quiet", "."); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.WriteFile(filepath.Join(src, "a.md"), []byte("a\n"), 0o600))
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "a"}} {
+		if _, err := g.Run(ctx, src, id, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := g.Run(ctx, src, nil, "clone", "--quiet", "--local", src, dst); err != nil {
+		t.Fatal(err)
+	}
+	linked := false
+	must(t, filepath.WalkDir(filepath.Join(dst, ".git", "objects"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() {
+			if fi, e := d.Info(); e == nil && fi.Sys().(*syscall.Stat_t).Nlink > 1 {
+				linked = true
+			}
+		}
+		return err
+	}))
+	if !linked {
+		t.Skip("this git did not hard-link objects")
+	}
+	if _, err := g.Run(ctx, dst, id, "status", "--porcelain"); err != nil {
+		t.Fatalf("a local clone refused: %v", err)
+	}
+}
+
+// Replace refs are off (GIT_NO_REPLACE_OBJECTS): an agent's refs/replace entry does not change what git reads.
+func TestRunIgnoresReplaceRefs(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := t.Context()
+	id := &Identity{Name: "t", Email: "t@example.com"}
+	dir := t.TempDir()
+	if _, err := g.Run(ctx, dir, nil, "init", "--quiet", "."); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"first", "second"} {
+		if _, err := g.Run(ctx, dir, id, "commit", "-q", "--allow-empty", "-m", m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := strings.TrimSpace(mustOut(t, g, dir, "rev-parse", "HEAD~1"))
+	second := strings.TrimSpace(mustOut(t, g, dir, "rev-parse", "HEAD"))
+	must(t, os.MkdirAll(filepath.Join(dir, ".git", "refs", "replace"), 0o700))
+	must(t, os.WriteFile(filepath.Join(dir, ".git", "refs", "replace", first), []byte(second+"\n"), 0o600))
+	if out := mustOut(t, g, dir, "cat-file", "-p", first); !strings.Contains(out, "first") {
+		t.Fatalf("a replace ref changed what git reads: %q", out)
+	}
+}
+
+func mustOut(t *testing.T, g *Git, dir string, args ...string) string {
+	t.Helper()
+	out, err := g.Run(t.Context(), dir, nil, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

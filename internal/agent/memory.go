@@ -27,6 +27,9 @@ import (
 
 const (
 	checkpointDebounce = 15 * time.Second
+	// checkpointDeadline bounds a checkpoint and the fast-forward after it: the checkpoint holds the collection lock,
+	// so a git that never returns (a FIFO in a checkout) would stall every instance of the collection.
+	checkpointDeadline = 2 * time.Minute
 	syncDelay          = 5 * time.Second // bounded: a published change is offered to central within this delay
 	maxSyncBackoff     = 10 * time.Minute
 	memoryRole         = "SpaceMan memory"
@@ -199,7 +202,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	}
 	log := m.a.log.With(slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.instance", instance))
 	unlock := m.lock(colKey(spaceID, role))
-	published, err := m.publish(ctx, spaceID, role, instance, reason)
+	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	published, err := m.publish(pctx, spaceID, role, instance, reason)
+	cancel()
 	unlock()
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	now := m.a.now()
@@ -211,7 +216,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	_ = m.a.j.putMemory(ctx, st)
 	if published {
 		m.scheduleSync(spaceID, role, syncDelay)
-		m.fastForwardIdle(ctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
+		fctx, fcancel := context.WithTimeout(ctx, checkpointDeadline)
+		m.fastForwardIdle(fctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
+		fcancel()
 	}
 	m.sendStatus(ctx)
 	return err

@@ -15,7 +15,9 @@ import (
 var unsafeConfig = regexp.MustCompile(`^(filter\..+\.(clean|smudge|process)|merge\..+\.driver|diff\..+\.(command|textconv)|diff\.external|` +
 	`core\.(sshcommand|gitproxy|askpass|pager|editor|alternaterefscommand)|sequence\.editor|include\.path|includeif\..+\.path|` +
 	`credential\..*|uploadpack\.packobjectshook|gc\..*hook|remote\..+\.(uploadpack|receivepack|vcs)|gpg\..*program|protocol\..*allow|` +
-	`url\..+\.(insteadof|pushinsteadof)|ssh\.variant|core\.worktree)$`)
+	`url\..+\.(insteadof|pushinsteadof)|ssh\.variant|core\.worktree|` +
+	`hook\..+|pager\..+|trailer\..+\.(cmd|command)|interactive\.difffilter|submodule\..+\.update|(difftool|mergetool)\..+\.(cmd|path)|` +
+	`(browser|man)\..+\.(cmd|path)|web\.browser)$`)
 
 // core.worktree is in the list above for another reason: it points git's work tree at any folder, so `reset --hard`,
 // `checkout` or `merge` would write there instead of in the checkout. core.bare = true does the same from the other
