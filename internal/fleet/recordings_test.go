@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -334,5 +336,56 @@ func TestRecordingsLaggedViewerCatchesUpOnce(t *testing.T) {
 	}
 	if catchUps != 1 || after != overflow+50 {
 		t.Fatalf("live records after the catch-up: %d catch-ups (want 1), at seq %d (want %d)", catchUps, after, overflow+50)
+	}
+}
+
+type syncFailFile struct {
+	recording.File
+	fail *atomic.Bool
+}
+
+func (f syncFailFile) Sync() error {
+	if f.fail.Load() {
+		return syscall.EIO
+	}
+	return f.File.Sync()
+}
+
+// A failed flush is never acked: the ack carries only what is durably stored, so the node keeps (and re-ships) the
+// rest. The failed writer is dropped, the next chunk reopens the recording, and the re-shipped records fill the gap.
+func TestRecordingsAckOnlyStoredAndReopenAfterFailure(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, time.Now)
+	defer r.Close()
+	var fail atomic.Bool
+	r.create = func(path string) (recording.File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return syncFailFile{File: f, fail: &fail}, nil
+	}
+	if seq, err := r.apply(chunk(t, out(1, "a"), out(2, "b"))); err != nil || seq != 2 {
+		t.Fatalf("first chunk acked %d %v", seq, err)
+	}
+	fail.Store(true)
+	seq, err := r.apply(chunk(t, out(3, "c")))
+	if err == nil {
+		t.Fatal("failing flush returned no error")
+	}
+	if seq != 2 {
+		t.Fatalf("ack %d covers the failed chunk, want 2", seq)
+	}
+	if r.w[recRun] != nil {
+		t.Fatal("failed writer kept")
+	}
+	// The disk recovers: the node re-ships from its ack, and everything is stored.
+	fail.Store(false)
+	seq, err = r.apply(chunk(t, out(3, "c"), out(4, "d")))
+	if err != nil || seq != 4 {
+		t.Fatalf("after recovery acked %d %v, want 4", seq, err)
+	}
+	if got := text(t, r); got != "abcd" {
+		t.Fatalf("recording %q, want abcd", got)
 	}
 }

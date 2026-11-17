@@ -44,9 +44,11 @@ type Recordings struct {
 	// archiving marks runs whose segments are being uploaded; the channel closes when that ends.
 	archiving map[string]chan struct{}
 	now       func() time.Time
-	ctx       context.Context // cancelled by Close: ends archive uploads
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	// create overrides how segment files are created (fault tests); nil uses the filesystem.
+	create func(path string) (recording.File, error)
+	ctx    context.Context // cancelled by Close: ends archive uploads
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // Viewer is one live subscription.
@@ -113,7 +115,7 @@ func (r *Recordings) writer(runID string) (*recording.Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	o := recording.Options{Dir: dir, Now: r.now}
+	o := recording.Options{Dir: dir, Now: r.now, Create: r.create}
 	if r.archive {
 		if local, _ := recording.Segments(dir); len(local) == 0 {
 			// Continue an archived recording rather than renumber it (records at or below its last sequence are
@@ -147,7 +149,9 @@ func (r *Recordings) archivedTail(ctx context.Context, runID string) (int, uint6
 	return n, recording.LastSeq(o), nil
 }
 
-// apply stores a chunk and returns the highest stored sequence.
+// apply stores a chunk and returns the highest durably stored sequence, the only value the node may be acked. A
+// write or flush failure closes the writer and drops it, so the next chunk reopens the recording from what is on
+// disk and the node's re-ship fills the gap.
 func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -163,7 +167,7 @@ func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 		}
 		stored, err := w.Append(rec)
 		if err != nil {
-			return w.Seq(), err
+			return r.dropFailedLocked(c.RunID, w), err
 		}
 		if !stored {
 			continue
@@ -180,15 +184,24 @@ func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 		}
 	}
 	if err := w.Flush(); err != nil {
-		return w.Seq(), err
+		return r.dropFailedLocked(c.RunID, w), err
 	}
-	seq := w.Seq()
+	seq := w.Stored()
 	if closed {
 		_ = w.Close()
 		delete(r.w, c.RunID)
 		r.archiveLater(c.RunID)
 	}
 	return seq, nil
+}
+
+// dropFailedLocked closes a writer that failed and forgets it, returning what it had durably stored.
+func (r *Recordings) dropFailedLocked(runID string, w *recording.Writer) uint64 {
+	_ = w.Close()
+	if r.w[runID] == w {
+		delete(r.w, runID)
+	}
+	return w.Stored()
 }
 
 // archiveLater archives a run's recording in the background (nothing to do with the local store).

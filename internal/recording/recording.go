@@ -105,6 +105,7 @@ type Writer struct {
 	segStart time.Time
 	total    int64
 	seq      uint64
+	stored   uint64
 	buf      bytes.Buffer
 	stopped  bool
 	err      error
@@ -166,7 +167,7 @@ func Open(o Options) (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Writer{o: o, enc: enc, segIndex: o.ResumeSegment, seq: o.ResumeSeq}
+	w := &Writer{o: o, enc: enc, segIndex: o.ResumeSegment, seq: o.ResumeSeq, stored: o.ResumeSeq}
 	segs, err := Segments(o.Dir)
 	if err != nil {
 		return nil, err
@@ -185,6 +186,9 @@ func Open(o Options) (*Writer, error) {
 		if len(res.Records) > 0 && res.Records[len(res.Records)-1].Seq > w.seq {
 			w.seq = res.Records[len(res.Records)-1].Seq
 		}
+		if w.seq > w.stored {
+			w.stored = w.seq
+		}
 	}
 	return w, nil
 }
@@ -198,6 +202,15 @@ func (w *Writer) Seq() uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.seq
+}
+
+// Stored returns the highest sequence number whose records were written and synced to disk (or were already stored
+// when the writer was opened). Unlike Seq it never counts buffered records, a failed flush, the trunc record of a
+// failure, or a close that could not be stored: it is the only value a receiver may acknowledge.
+func (w *Writer) Stored() uint64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stored
 }
 
 // Add appends one record (assigning seq and time) and flushes when the buffer is large.
@@ -333,6 +346,7 @@ func (w *Writer) flushLocked() error {
 	if err := w.f.Sync(); err != nil {
 		return w.failLocked(now, fmt.Errorf("recording sync: %w", err))
 	}
+	w.stored = w.seq
 	return nil
 }
 

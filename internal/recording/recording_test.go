@@ -239,3 +239,70 @@ func TestQuotaTruncationHandedOut(t *testing.T) {
 	}
 	must(t, w.Close())
 }
+
+// failSync is a segment file whose Sync fails while fail is set.
+type failSync struct {
+	File
+	fail *bool
+}
+
+func (f failSync) Sync() error {
+	if *f.fail {
+		return syscall.EIO
+	}
+	return f.File.Sync()
+}
+
+// Stored is the highest sequence that was synced: it never counts buffered records, a failed flush, or the trunc
+// record a failure adds, while Seq does (the hub acks Stored, so a node never prunes records central lacks).
+func TestStoredDoesNotAdvanceOnFailedFlush(t *testing.T) {
+	dir := t.TempDir()
+	fail := false
+	w, err := Open(Options{Dir: dir, Create: func(path string) (File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return failSync{File: f, fail: &fail}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := uint64(1); i <= 2; i++ {
+		if _, err := w.Append(Record{Seq: i, Kind: KindOut, Data: []byte("a")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if w.Stored() != 0 {
+		t.Fatalf("stored %d before any flush", w.Stored())
+	}
+	must(t, w.Flush())
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after flush, want 2", w.Stored())
+	}
+	fail = true
+	if _, err := w.Append(Record{Seq: 3, Kind: KindOut, Data: []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err == nil {
+		t.Fatal("flush succeeded")
+	}
+	if _, err := w.Append(Record{Seq: 4, Kind: KindOut}); err == nil {
+		t.Fatal("append after failure succeeded")
+	}
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after a failed flush, want 2", w.Stored())
+	}
+	if w.Seq() <= 2 {
+		t.Fatalf("seq %d should be above stored", w.Seq())
+	}
+	_ = w.Close()
+	// A reopened writer starts from what is on disk.
+	w2, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w2.Stored() < 2 || w2.Stored() != w2.Seq() {
+		t.Fatalf("reopened stored %d seq %d", w2.Stored(), w2.Seq())
+	}
+}
