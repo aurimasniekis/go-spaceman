@@ -592,9 +592,13 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   at the failure instead.
 - **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
   node keeps its local recording. Tested: node-side only (`make test-fault`).
-- **Retention deletes central's copy only.** `retention_recordings_days` deletes central's copy of an ended run's
-  recording; the node's local recordings are never pruned by SpaceMan (remove old `runs/<id>/recording` folders on the
-  node yourself). The recording size limit (`recording_quota_bytes`) reaches nodes at launch: an agent older than this
+- **Central's retention deletes central's copy only.** `retention_recordings_days` deletes central's copy of an ended
+  run's recording and nothing on the node. The node prunes its own copy with its journal: once `journal_retention` has passed
+  for an ended run, central has acknowledged the run's final state and the recording is fully shipped, the run's
+  recording directory is removed with its journal row. A recording directory from an earlier release that has segments
+  but no journal row is kept, because a lost journal looks the same; those folders are for the operator to remove
+  (`runs/<id>/recording` on the node, once the run is over). Reclaiming them with central's confirmation is designed in
+  ADR-0096 and not implemented. Empty leftovers are swept after 24 hours. The recording size limit (`recording_quota_bytes`) reaches nodes at launch: an agent older than this
   release ignores it and keeps 512 MiB, and a run keeps the size it started with (SM-REC-003).
 - **Old recording directories with no journal row are still kept** (ADR-0096, design only). Since the acknowledgement
   fix, central acknowledges only records it synced to disk, so a node no longer deletes the only copy of a record
