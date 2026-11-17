@@ -6734,6 +6734,17 @@
   node's own, which is exactly why the node must learn the prefix before it numbers anything (decision 1). #242's hub
   acknowledges before it closes a connection after a store failure. Decision 3 keeps that acknowledgement from being a
   bogus 0. The merged hub keeps both changes: the guarded acknowledgement, then the close (`Recordings.refused`).
+- **A run without a usable acknowledgement file is compared too (review fix).** The recorder of a run this process
+  did not launch marks the run as not compared with central's acknowledgement at its start, whether or not a file was
+  restored. Without that, for a run with no file (an older agent, a failed first save), a stored 0, an unreadable
+  file or one `ackMargin` rejected, the probe's answer became the run's first acknowledgement and the sweep took the
+  run for clean, so the local records above central's sequence were never re-shipped. The run's catch-up compares
+  with the local recording and clears the mark. `TestSweepReshipsWithoutASavedAck*` (agent).
+- **Limitation of `ackMargin`.** The margin is measured against the local recording's last sequence, which after a
+  long ship-through on a full disk can be far below what central stores, and is 0 for an empty recording directory.
+  A believable file can then be rejected. The cost is only a catch-up that compares with the local recording and
+  re-ships what central already holds (dropped there as repeats); numbering is unaffected, because it waits for
+  central's answer (decision 1).
 - **With close-on-error (after the merge):** a probe for a run whose recording central cannot open, with nothing
   stored before, is logged and leaves the connection open, as #242 handles any open failure, and gets no
   acknowledgement (decision 3); the node probes again. Only a store failure that knows a stored sequence is acked with

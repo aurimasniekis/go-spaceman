@@ -101,6 +101,7 @@ func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 	// catch-up sweep, and an acknowledgement that was not restored by then is not marked restored, so the sweep would
 	// take the run for clean and never re-ship the local records above it.
 	a.restoreAck(row.RunID)
+	a.uncomparedRecording(row.RunID)
 	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: a.recordingQuota(row.RunID), Now: a.o.Clock.Now, Create: a.o.RecordingCreate,
 		RetryAfter: a.o.RecordingRetryAfter})
 	if err != nil {
@@ -903,6 +904,23 @@ func (a *Agent) recordingAck(ack proto.RecordingAck) {
 	if start {
 		go a.catchUpRecordings()
 	}
+}
+
+// uncomparedRecording marks the recording of a run this process did not launch (its sequence at central is not known
+// yet) as not compared with central's acknowledgement, whether or not an acknowledgement was restored: without a usable
+// file (none, written by an older agent, a failed save, 0, or not believed) the probe's answer would otherwise be the
+// run's first acknowledgement and the sweep would take the run for clean, never re-shipping the local records above
+// it. The catch-up of the run compares (catchUpRun) and clears the mark.
+func (a *Agent) uncomparedRecording(runID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.seqKnown[runID] {
+		return
+	}
+	if a.restored == nil {
+		a.restored = map[string]bool{}
+	}
+	a.restored[runID] = true
 }
 
 // recordingBase is the sequence a run's new records are numbered above (central's acknowledgement, or the restored

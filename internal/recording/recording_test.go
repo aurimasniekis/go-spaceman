@@ -484,6 +484,28 @@ func TestFailedFirstWriteKeepsTheNumberOfASegmentLeftBehind(t *testing.T) {
 	must(t, w.Close())
 }
 
+// A failed segment that is already gone when the writer removes it (someone else removed it) counts as removed: its
+// number is used again and nothing is left to cut.
+func TestFailedSegmentAlreadyGoneGivesItsNumberBack(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, func(path string) { _ = os.Remove(path) })
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	must(t, w.DropUnsynced()) // nothing left to cut
+	fail = false
+	now = now.Add(2 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Close())
+	segs, _ := Segments(dir)
+	if len(segs) != 1 || filepath.Base(segs[0]) != SegmentName(1) {
+		t.Fatalf("segments %v, want only %s", segs, SegmentName(1))
+	}
+}
+
 // A segment that could not be removed at the failure is removed when the writer retries, and only then gives its
 // number back: the next segment takes it.
 func TestRetryRemovesASegmentLeftBehindAndReusesItsNumber(t *testing.T) {

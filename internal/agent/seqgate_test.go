@@ -293,8 +293,10 @@ func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
 // The catch-up sweep must re-ship what the local recording holds above central's sequence for a run whose probe answer
 // arrived before the sweep reached it. run_aaa's catch-up is held until run_zzz's recorder has central's answer: the
 // acknowledgement (200) is then known when the sweep gets to run_zzz, and only the acknowledgement saved at the last
-// process (200 as well, restored at the recorder's start) says that records 201..250 are local only.
-func testProbeAckBeforeTheSweepReachesTheRun(t *testing.T, block bool) {
+// process (200 as well, restored at the recorder's start) says that records 201..250 are local only. With saved 0 no
+// acknowledgement file is restored (an older agent, a failed save): the run must still be compared with its local
+// recording.
+func testProbeAckBeforeTheSweepReachesTheRun(t *testing.T, block bool, saved uint64) {
 	var ag atomic.Pointer[Agent]
 	sendRecordingHook = func(id string) error {
 		if !block || id != "run_aaa" {
@@ -313,7 +315,7 @@ func testProbeAckBeforeTheSweepReachesTheRun(t *testing.T, block bool) {
 		return nil
 	}
 	t.Cleanup(func() { sendRecordingHook = nil })
-	_, c, _ := restartedRecorderEnvWith(t, "run_zzz", 250, 200, 200, []string{"run_aaa"}, func(a *Agent) { ag.Store(a) })
+	_, c, _ := restartedRecorderEnvWith(t, "run_zzz", 250, saved, 200, []string{"run_aaa"}, func(a *Agent) { ag.Store(a) })
 	c.until("run_zzz's records 201..250 at central", func() bool { return c.seq >= 250 })
 	for i, r := range c.recs[200:250] {
 		if r.Seq != uint64(201+i) {
@@ -323,11 +325,19 @@ func testProbeAckBeforeTheSweepReachesTheRun(t *testing.T, block bool) {
 }
 
 func TestSweepReshipsAboveTheAckWhenTheProbeAckComesFirst(t *testing.T) {
-	testProbeAckBeforeTheSweepReachesTheRun(t, true)
+	testProbeAckBeforeTheSweepReachesTheRun(t, true, 200)
 }
 
 func TestSweepReshipsAboveTheAckWithoutTheProbeAckFirst(t *testing.T) {
-	testProbeAckBeforeTheSweepReachesTheRun(t, false)
+	testProbeAckBeforeTheSweepReachesTheRun(t, false, 200)
+}
+
+func TestSweepReshipsWithoutASavedAckWhenTheProbeAckComesFirst(t *testing.T) {
+	testProbeAckBeforeTheSweepReachesTheRun(t, true, 0)
+}
+
+func TestSweepReshipsWithoutASavedAckWithoutTheProbeAckFirst(t *testing.T) {
+	testProbeAckBeforeTheSweepReachesTheRun(t, false, 0)
 }
 
 // The gate keeps output within seqGateMaxBytes and marks what it dropped with one gap record; other records are kept.
