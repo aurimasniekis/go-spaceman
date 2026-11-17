@@ -236,7 +236,7 @@ func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, i
 		if f == "" || isHarnessPath(f) {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(inst, filepath.FromSlash(f))); err == nil {
+		if ffBlocked(inst, f) {
 			m.ffSkipped(ctx, spaceID, role, instance, ffMergeFailed)
 			return ffMergeFailed
 		}
@@ -257,6 +257,20 @@ func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, i
 		slog.String("memory.instance", instance), slog.String("memory.from", old), slog.String("memory.to", theirs), slog.Int("files", files),
 		slog.String("memory.when", why))
 	return ""
+}
+
+// ffBlocked reports whether something already stands where the new history adds the path f: the path itself, or a
+// parent that exists but is not a directory (git would replace it).
+func ffBlocked(inst, f string) bool {
+	parts := strings.Split(f, "/")
+	for i := 1; i < len(parts); i++ {
+		fi, err := os.Lstat(filepath.Join(inst, filepath.FromSlash(strings.Join(parts[:i], "/"))))
+		if err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	_, err := os.Lstat(filepath.Join(inst, filepath.FromSlash(f)))
+	return err == nil
 }
 
 // ffSkipped logs a refusal. A busy instance is ordinary (debug); a checkout of an idle instance, or one at run start,

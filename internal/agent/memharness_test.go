@@ -170,3 +170,202 @@ func TestMemoryHarnessConfigRemovedFromExistingCheckout(t *testing.T) {
 		t.Fatal(".claude stayed in the working tree")
 	}
 }
+
+// A symlink named like a harness directory is staged by `add -A` and materialised elsewhere unless the patterns also
+// match non-directories.
+func TestMemoryHarnessSymlinkedDirDoesNotTravel(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	one, err := m.prepare(ctx, "spc_a", "implementor-backend", "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "cfg/skills/x/SKILL.md", "evil")
+	for _, n := range []string{".claude", ".codex", ".agents"} {
+		if err := os.Symlink("cfg", filepath.Join(one, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.checkpoint(ctx, "spc_a", "implementor-backend", "ins_one", "idle")
+	shared := m.shared("spc_a", "implementor-backend")
+	for _, p := range []string{".claude", ".codex", ".agents"} {
+		if shown(t, m, shared, p) {
+			t.Fatalf("symlink %s reached the shared history", p)
+		}
+	}
+	two, err := m.prepare(ctx, "spc_a", "implementor-backend", "ins_two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{".claude", ".codex", ".agents"} {
+		if _, err := os.Lstat(filepath.Join(two, p)); err == nil {
+			t.Fatalf("symlink %s was materialised in another instance", p)
+		}
+	}
+}
+
+// A conflict preserve does not copy harness configuration under conflicts/.
+func TestMemoryHarnessConfigSkippedByPreserve(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	one, err := m.prepare(ctx, "spc_a", "implementor-backend", "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := m.prepare(ctx, "spc_a", "implementor-backend", "ins_two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "decisions.md", "one\n")
+	m.checkpoint(ctx, "spc_a", "implementor-backend", "ins_one", "idle")
+	write(t, two, "decisions.md", "two\n")
+	write(t, two, ".claude/skills/x/SKILL.md", "evil")
+	if _, err := m.git.Run(ctx, two, nil, "add", "-f", "--sparse", "-A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.git.Run(ctx, two, ident("ins_two"), "commit", "--quiet", "-m", "local"); err != nil {
+		t.Fatal(err)
+	}
+	shared := m.shared("spc_a", "implementor-backend")
+	if _, err := m.git.Run(ctx, two, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil {
+		t.Fatal(err)
+	}
+	head, theirs := m.git.RevParse(ctx, two, "HEAD"), m.git.RevParse(ctx, two, "FETCH_HEAD")
+	if _, err := m.preserve(ctx, "spc_a", "implementor-backend", "ins_two", head, theirs, []string{"decisions.md", ".claude/skills/x/SKILL.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(two, "conflicts", "ins_two-*", "decisions.md")); len(m) != 1 {
+		t.Fatal("the ordinary file was not preserved")
+	}
+	if m, _ := filepath.Glob(filepath.Join(two, "conflicts", "ins_two-*", ".claude")); len(m) != 0 {
+		t.Fatalf("harness configuration was preserved: %v", m)
+	}
+}
+
+// The sparse-checkout file is SpaceMan's: a changed one is rewritten.
+func TestMemoryHarnessSparseFileRewritten(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	one, err := a.mem.prepare(ctx, "spc_a", "implementor-backend", "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := filepath.Join(one, ".git", "info", "sparse-checkout")
+	if err := os.WriteFile(sp, []byte("/*\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.mem.prepare(ctx, "spc_a", "implementor-backend", "ins_one"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(sp); string(b) != harnessSparse() {
+		t.Fatalf("sparse-checkout not rewritten: %q", b)
+	}
+}
+
+// guard writes only real files inside the checkout's .git: a link there must not carry the write to a file outside,
+// and a hard link must not be appended to.
+func TestMemoryGuardRefusesLinks(t *testing.T) {
+	setup := func(t *testing.T) (m *memManager, inst, outside string) {
+		t.Helper()
+		a := memAgent(t)
+		m = a.mem
+		inst, err := m.prepare(context.Background(), "spc_a", "implementor-backend", "ins_one")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m, inst, filepath.Join(t.TempDir(), "outside")
+	}
+	unchanged := func(t *testing.T, p string) {
+		t.Helper()
+		if b, err := os.ReadFile(p); err != nil || string(b) != "precious\n" {
+			t.Fatalf("outside file changed: %q %v", b, err)
+		}
+	}
+	mk := func(t *testing.T, p string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte("precious\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("symlinked sparse-checkout", func(t *testing.T) {
+		m, inst, outside := setup(t)
+		mk(t, outside)
+		sp := filepath.Join(inst, ".git", "info", "sparse-checkout")
+		_ = os.Remove(sp)
+		if err := os.Symlink(outside, sp); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.guard(context.Background(), inst); err == nil {
+			t.Fatal("guard accepted a symlinked sparse-checkout")
+		}
+		unchanged(t, outside)
+	})
+	t.Run("sparse-checkout symlinked to another file in .git", func(t *testing.T) {
+		m, inst, _ := setup(t)
+		cfg := filepath.Join(inst, ".git", "config")
+		before, _ := os.ReadFile(cfg)
+		sp := filepath.Join(inst, ".git", "info", "sparse-checkout")
+		_ = os.Remove(sp)
+		if err := os.Symlink(filepath.Join("..", "config"), sp); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.guard(context.Background(), inst); err == nil {
+			t.Fatal("guard accepted a symlinked sparse-checkout")
+		}
+		if after, _ := os.ReadFile(cfg); string(after) != string(before) {
+			t.Fatal("guard wrote through the link")
+		}
+	})
+	t.Run("symlinked info", func(t *testing.T) {
+		m, inst, outside := setup(t)
+		if err := os.MkdirAll(outside, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		mk(t, filepath.Join(outside, "sparse-checkout"))
+		mk(t, filepath.Join(outside, "exclude"))
+		info := filepath.Join(inst, ".git", "info")
+		if err := os.RemoveAll(info); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, info); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.guard(context.Background(), inst); err == nil {
+			t.Fatal("guard accepted a symlinked info")
+		}
+		unchanged(t, filepath.Join(outside, "sparse-checkout"))
+		unchanged(t, filepath.Join(outside, "exclude"))
+	})
+	t.Run("symlinked .git", func(t *testing.T) {
+		m, inst, outside := setup(t)
+		real := outside + "-git"
+		if err := os.Rename(filepath.Join(inst, ".git"), real); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(real, filepath.Join(inst, ".git")); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Remove(filepath.Join(real, "info", "exclude"))
+		if err := m.guard(context.Background(), inst); err == nil {
+			t.Fatal("guard accepted a symlinked .git")
+		}
+		if _, err := os.Stat(filepath.Join(real, "info", "exclude")); err == nil {
+			t.Fatal("guard wrote through a symlinked .git")
+		}
+	})
+	t.Run("hard-linked exclude", func(t *testing.T) {
+		m, inst, outside := setup(t)
+		mk(t, outside)
+		ex := filepath.Join(inst, ".git", "info", "exclude")
+		_ = os.Remove(ex)
+		if err := os.Link(outside, ex); err != nil {
+			t.Skipf("no hard links: %v", err)
+		}
+		if err := m.guard(context.Background(), inst); err == nil {
+			t.Fatal("guard accepted a hard-linked exclude")
+		}
+		unchanged(t, outside)
+	})
+}

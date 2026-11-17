@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -55,7 +58,7 @@ func harnessExclude() string {
 	var b strings.Builder
 	b.WriteString("# written by SpaceMan: harness configuration never travels through role memory\n")
 	for _, d := range harnessDirs {
-		b.WriteString(d + "/\n")
+		b.WriteString(d + "\n")
 	}
 	for _, f := range harnessFiles {
 		b.WriteString("/" + f + "\n")
@@ -67,7 +70,7 @@ func harnessSparse() string {
 	var b strings.Builder
 	b.WriteString("/*\n")
 	for _, d := range harnessDirs {
-		b.WriteString("!" + d + "/\n")
+		b.WriteString("!" + d + "\n")
 	}
 	for _, f := range harnessFiles {
 		b.WriteString("!/" + f + "\n")
@@ -76,26 +79,44 @@ func harnessSparse() string {
 }
 
 // guard (re)writes the checkout's exclude and sparse-checkout files and applies them to the working tree. It is run
-// before a checkout is created from, moved onto, or staged for shared history.
+// before a checkout is created from, moved onto, or staged for shared history. The files are written through an
+// os.Root on the checkout's .git, and every component is looked at first: a symlinked .git, info or file, or a
+// hard-linked file, would otherwise let the write reach a file outside the checkout.
 func (m *memManager) guard(ctx context.Context, inst string) error {
-	info := filepath.Join(inst, ".git", "info")
-	if err := os.MkdirAll(info, 0o700); err != nil {
+	gitDir := filepath.Join(inst, ".git")
+	if fi, err := os.Lstat(gitDir); err != nil || !fi.IsDir() {
+		return errors.New("memory checkout: .git is not a directory")
+	}
+	root, err := os.OpenRoot(gitDir)
+	if err != nil {
 		return err
 	}
+	defer func() { _ = root.Close() }()
+	if fi, err := root.Lstat("info"); errors.Is(err, fs.ErrNotExist) {
+		if err := root.Mkdir("info", 0o700); err != nil {
+			return err
+		}
+	} else if err != nil || !fi.IsDir() {
+		return errors.New("memory checkout: .git/info is not a directory")
+	}
 	// The exclude file keeps whatever else it holds; the sparse-checkout file is SpaceMan's alone.
-	ex := filepath.Join(info, "exclude")
-	cur, _ := os.ReadFile(ex) //nolint:gosec // the checkout's own .git
-	if !strings.Contains(string(cur), harnessExclude()) {
-		body := string(cur)
+	cur, err := guardRead(root, "info/exclude")
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(cur, harnessExclude()) {
+		body := cur
 		if body != "" && !strings.HasSuffix(body, "\n") {
 			body += "\n"
 		}
-		if err := os.WriteFile(ex, []byte(body+harnessExclude()), 0o600); err != nil { //nolint:gosec // the checkout's own .git
+		if err := guardWrite(root, "info/exclude", body+harnessExclude()); err != nil {
 			return err
 		}
 	}
-	if b, err := os.ReadFile(filepath.Join(info, "sparse-checkout")); err != nil || string(b) != harnessSparse() { //nolint:gosec // the checkout's own .git
-		if err := os.WriteFile(filepath.Join(info, "sparse-checkout"), []byte(harnessSparse()), 0o600); err != nil {
+	if cur, err := guardRead(root, "info/sparse-checkout"); err != nil {
+		return err
+	} else if cur != harnessSparse() {
+		if err := guardWrite(root, "info/sparse-checkout", harnessSparse()); err != nil {
 			return err
 		}
 	}
@@ -114,4 +135,35 @@ func (m *memManager) guard(ctx context.Context, inst string) error {
 		}
 	}
 	return nil
+}
+
+// guardFile looks at a file inside the root: it must be absent or a regular file nobody else links to.
+func guardFile(root *os.Root, name string) (exists bool, err error) {
+	fi, err := root.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !fi.Mode().IsRegular() || linkCount(fi) > 1 {
+		return true, fmt.Errorf("memory checkout: .git/%s is not a plain file", name)
+	}
+	return true, nil
+}
+
+func guardRead(root *os.Root, name string) (string, error) {
+	exists, err := guardFile(root, name)
+	if err != nil || !exists {
+		return "", err
+	}
+	b, err := root.ReadFile(name)
+	return string(b), err
+}
+
+func guardWrite(root *os.Root, name, body string) error {
+	if _, err := guardFile(root, name); err != nil {
+		return err
+	}
+	return root.WriteFile(name, []byte(body), 0o600)
 }

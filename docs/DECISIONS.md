@@ -416,8 +416,10 @@
     commits included; history is not rewritten. Central's file listing may therefore still show such paths.
   - Limits: the agent can edit its own `.git` (see above), so this is a guard against accident and against content
     arriving from other instances, not a sandbox; the guard is rewritten on every checkpoint and prepare. A harness-config
-    file an instance writes into its own checkout stays local to it until the next prepare removes nothing but tracked
-    ones, and it is never shared. Memory content is still untrusted text (AGENTS.md): it is never an authority source.
+    file an instance writes into its own checkout is never staged or shared. It is removed from that checkout's working
+    tree only by `sparse-checkout reapply`, which `prepare` runs when `core.sparseCheckout` was not already true (a
+    checkout created before this filter); later files stay local until the operator removes them. Memory content is
+    still untrusted text (AGENTS.md): it is never an authority source.
   - Evidence: `TestMemoryHarnessConfigDoesNotTravel`, `TestMemoryHarnessConfigInOldHistoryIsNotMaterialised`,
     `TestMemoryHarnessConfigRemovedFromExistingCheckout` (`internal/agent`); with the guard disabled they fail.
 
