@@ -183,6 +183,7 @@ WHERE node_id = sqlc.arg(node_id) AND kind = 'memory.rename' AND state IN ('pend
 -- name: ListUndeliveredClosedRoleRenames :many
 SELECT r.* FROM space_role_renames r
 WHERE r.space_id = sqlc.arg(space_id) AND r.node_state = 'abandoned'
+  AND r.node_id = (SELECT s.node_id FROM spaces s WHERE s.id = r.space_id)
   AND (SELECT c.state FROM node_commands c
        WHERE c.node_id = r.node_id AND c.kind = 'memory.rename'
          AND c.idempotency_key >= 'role-rename:' || r.id AND c.idempotency_key < 'role-rename:' || r.id || ';'

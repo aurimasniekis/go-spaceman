@@ -161,6 +161,13 @@ func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spac
 			} else if n != 1 {
 				return apperr.New(apperr.CodeConflict, "the rename changed concurrently")
 			}
+			// A node that journaled the rename may never report it again (a move that fails the same way each time), so
+			// it would not learn of the close from an ack: queue the closed notice, which it answers from its journal.
+			if !forgetNode {
+				if err := queueRenameClosedNotice(ctx, tx, r); err != nil {
+					return err
+				}
+			}
 		}
 		// Without forgetNode the rename's undelivered commands stay queued: a node that was offline (or downgraded below
 		// minor 14) has no journal row yet, and must journal the rename when it connects, so it can move the folder or learn of the
@@ -212,7 +219,7 @@ func undeliveredClosed(ctx context.Context, q *db.Queries, r db.SpaceRoleRename)
 }
 
 // forgetRenameNode cancels a rename's memory.rename commands the node has not acknowledged and, while the space is
-// still on the rename's node, queues the closed notice (RenameClosedKey) for it. It returns how many it cancelled.
+// still on the rename's node, queues the closed notice for it. It returns how many it cancelled.
 func (svc *Service) forgetRenameNode(ctx context.Context, tx *store.Tx, r db.SpaceRoleRename) (int64, error) {
 	key := RenameCommandKey(r.ID)
 	n, err := tx.Q.CancelRoleRenameCommands(ctx, db.CancelRoleRenameCommandsParams{Reason: "the rename was closed and the node forgotten",
@@ -220,13 +227,20 @@ func (svc *Service) forgetRenameNode(ctx context.Context, tx *store.Tx, r db.Spa
 	if err != nil {
 		return 0, err
 	}
+	return n, queueRenameClosedNotice(ctx, tx, r)
+}
+
+// queueRenameClosedNotice queues the closed notice (RenameClosedKey) of a rename for its node while the space is still
+// on it. The notice is durable: a node that journaled the rename (it may never report it again) or never did learns of
+// the close when it connects, and a node that already holds the rename in any state answers it from its journal.
+func queueRenameClosedNotice(ctx context.Context, tx *store.Tx, r db.SpaceRoleRename) error {
 	sp, err := tx.Q.GetSpace(ctx, r.SpaceID)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if sp.NodeID == "" || sp.NodeID != r.NodeID {
-		return n, nil // the space left the node: nothing of it runs there again
+		return nil // the space left the node: nothing of it runs there again
 	}
-	return n, queueMemoryRename(ctx, tx, sp, proto.MemoryRename{RenameID: r.ID, SpaceID: sp.ID, From: r.FromName, To: r.ToName, Closed: true},
+	return queueMemoryRename(ctx, tx, sp, proto.MemoryRename{RenameID: r.ID, SpaceID: sp.ID, From: r.FromName, To: r.ToName, Closed: true},
 		RenameClosedKey(r.ID))
 }

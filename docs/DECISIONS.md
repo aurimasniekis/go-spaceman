@@ -6427,6 +6427,13 @@
      not reported. Central delivers a node's commands in creation order and only with the space's lease, and the node
      journals each `memory.rename` synchronously in its read loop, so the notice is journaled before any later rename of
      those names.
+     **Every plain close queues the notice too** (round 4), while the space is on the rename's node, because the ack
+     is not enough: a node that journaled a rename that fails the same way each time never reports again, so it would
+     never learn of the close and would defer a later rename behind it forever (central releases the names once the move
+     command is `accepted`). The notice is idempotent on the node (a rename the node holds is answered from its journal)
+     and keeps its own key, so forget on the same rename queues no second one. A closed rename whose newest command was
+     `rejected` stops blocking the names once the space has left its node (the relocation cancels only `pending` and
+     `sent` commands, and nothing is delivered to the old node again).
      **Ordering on the node (defence in depth).** Moves run on their own goroutines, so before moving a `pending` rename
      the node defers it (`deferred`, naming the earlier one) while a rename of the same space journaled before it is still
      `pending` or `moving` and shares a name with it (either old or new name). Journal order is central's order: central

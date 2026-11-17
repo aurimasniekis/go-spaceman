@@ -1081,6 +1081,7 @@ func (q *Queries) ListSpaceRoles(ctx context.Context, spaceID string) ([]SpaceRo
 const listUndeliveredClosedRoleRenames = `-- name: ListUndeliveredClosedRoleRenames :many
 SELECT r.id, r.space_id, r.from_name, r.to_name, r.renamed_at, r.renamed_by, r.node_id, r.node_state, r.node_message, r.node_done_at, r.central_moved_at FROM space_role_renames r
 WHERE r.space_id = ?1 AND r.node_state = 'abandoned'
+  AND r.node_id = (SELECT s.node_id FROM spaces s WHERE s.id = r.space_id)
   AND (SELECT c.state FROM node_commands c
        WHERE c.node_id = r.node_id AND c.kind = 'memory.rename'
          AND c.idempotency_key >= 'role-rename:' || r.id AND c.idempotency_key < 'role-rename:' || r.id || ';'
