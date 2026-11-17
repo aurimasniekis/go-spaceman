@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -356,6 +357,7 @@ func (f syncFailFile) Sync() error {
 func TestRecordingsAckOnlyStoredAndReopenAfterFailure(t *testing.T) {
 	dir := t.TempDir()
 	r := newRecordings(dir, nil, nil, time.Now)
+	r.reopenBackoff = 0
 	defer r.Close()
 	var fail atomic.Bool
 	r.create = func(path string) (recording.File, error) {
@@ -394,6 +396,7 @@ func TestRecordingsAckOnlyStoredAndReopenAfterFailure(t *testing.T) {
 func failingRecordings(t *testing.T) (*Recordings, *atomic.Bool) {
 	t.Helper()
 	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	r.reopenBackoff = 0
 	t.Cleanup(r.Close)
 	var fail atomic.Bool
 	r.create = func(path string) (recording.File, error) {
@@ -528,7 +531,7 @@ func TestRecordingsDoNotReopenUntilTheUnsyncedTailIsCut(t *testing.T) {
 		t.Fatal("failing chunk stored")
 	}
 	fail.Store(false)
-	if seq, err := r.apply(2, chunk(t, out(2, "b"))); err == nil || seq != 0 {
+	if seq, err := r.apply(2, chunk(t, out(2, "b"))); err == nil || seq != 1 {
 		t.Fatalf("chunk while the tail could not be cut acked %d %v, want an error", seq, err)
 	}
 	if err := os.Chmod(seg, 0o600); err != nil {
@@ -539,5 +542,145 @@ func TestRecordingsDoNotReopenUntilTheUnsyncedTailIsCut(t *testing.T) {
 	}
 	if got := text(t, r); got != "ab" {
 		t.Fatalf("central holds %q, want ab", got)
+	}
+}
+
+// Finding 3 of the PR 242 review: on a disk that keeps failing, chunks are refused without reopening the recording (a
+// read of the whole recording under the global lock) until the backoff ends, no empty segment is left behind, and a
+// refused chunk is still acked with what is stored (the hub then closes the connection, or the node never re-ships).
+func TestRecordingsReopenBackoffOnAFailingDisk(t *testing.T) {
+	var clock atomic.Int64
+	base := time.Now()
+	now := func() time.Time { return base.Add(time.Duration(clock.Load())) }
+	r := newRecordings(t.TempDir(), nil, nil, now)
+	t.Cleanup(r.Close)
+	var fail atomic.Bool
+	var creates atomic.Int32
+	r.create = func(path string) (recording.File, error) {
+		creates.Add(1)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // test path
+		if err != nil {
+			return nil, err
+		}
+		return syncFailFile{File: f, fail: &fail}, nil
+	}
+	if seq, err := r.apply(1, chunk(t, out(1, "a"))); err != nil || seq != 1 {
+		t.Fatalf("first chunk acked %d %v", seq, err)
+	}
+	dir, _ := r.Dir(recRun)
+	segs := func() int {
+		s, _ := recording.Segments(dir)
+		return len(s)
+	}
+	fail.Store(true)
+	// The first failure and the 10 chunks inside the backoff window: each is refused with the stored sequence.
+	for i := range 11 {
+		seq, err := r.apply(1, chunk(t, out(uint64(2+i), "x")))
+		if err == nil || seq != 1 {
+			t.Fatalf("chunk %d acked %d %v, want 1 and an error", i, seq, err)
+		}
+	}
+	if n := creates.Load(); n != 1 { // only segment 1: the first failure hit its open file
+		t.Fatalf("%d segment files created, want 1: refused chunks reopened the recording", n)
+	}
+	if n := segs(); n != 1 {
+		t.Fatalf("%d segments after the failures, want 1 (no empty or partial one left)", n)
+	}
+	// After the window one reopen is tried per window.
+	for window := range 3 {
+		clock.Add(int64(r.reopenBackoff + time.Second))
+		before := creates.Load()
+		for i := range 10 {
+			if _, err := r.apply(uint64(window+2), chunk(t, out(uint64(2+i), "y"))); err == nil {
+				t.Fatal("failing chunk stored")
+			}
+		}
+		if got := creates.Load() - before; got != 1 {
+			t.Fatalf("window %d: %d reopens (segment creations), want 1", window, got)
+		}
+		if n := segs(); n != 1 {
+			t.Fatalf("window %d: %d segments, want 1", window, n)
+		}
+	}
+	// The disk recovers; after the window the node's re-ship is stored and the backoff is gone.
+	fail.Store(false)
+	clock.Add(int64(r.reopenBackoff + time.Second))
+	if seq, err := r.apply(2, chunk(t, out(2, "b"))); err != nil || seq != 2 {
+		t.Fatalf("after recovery acked %d %v, want 2", seq, err)
+	}
+	if len(r.failed) != 0 {
+		t.Fatalf("failure marks left: %v", r.failed)
+	}
+}
+
+// A failed segment that never held a synced frame is removed, not left empty.
+func TestRecordingsFailedFirstSegmentIsRemoved(t *testing.T) {
+	r, fail := failingRecordings(t)
+	fail.Store(true)
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err == nil {
+		t.Fatal("failing chunk stored")
+	}
+	dir, _ := r.Dir(recRun)
+	if segs, _ := recording.Segments(dir); len(segs) != 0 {
+		t.Fatalf("segments left: %v", segs)
+	}
+}
+
+// SM-REC-003 (M8): a record that fills the writer's buffer is flushed inside Append; when that flush fails, apply
+// drops the writer, acks only what was stored, marks the run for a resync and starts the reopen backoff.
+func TestRecordingsAppendFlushFailureIsHandled(t *testing.T) {
+	r, fail := failingRecordings(t)
+	r.reopenBackoff = time.Hour
+	if seq, err := r.apply(1, chunk(t, out(1, "a"))); err != nil || seq != 1 {
+		t.Fatalf("first chunk acked %d %v", seq, err)
+	}
+	fail.Store(true)
+	big := out(2, strings.Repeat("x", 80<<10)) // above the 64 KiB flush threshold: Append itself flushes
+	seq, err := r.apply(1, chunk(t, big, out(3, "c")))
+	if err == nil || seq != 1 {
+		t.Fatalf("failing Append acked %d %v, want 1 and an error", seq, err)
+	}
+	if r.w[recRun] != nil {
+		t.Fatal("failed writer kept")
+	}
+	if r.resync[recRun] != 1 {
+		t.Fatalf("resync marks %v, want the run marked on connection 1", r.resync)
+	}
+	if f, ok := r.failed[recRun]; !ok || f.stored != 1 {
+		t.Fatalf("failure marks %v, want the run with stored 1", r.failed)
+	}
+	if seq, err := r.apply(1, chunk(t, out(4, "d"))); !errors.Is(err, errReopenBackoff) || seq != 1 {
+		t.Fatalf("chunk in the backoff acked %d %v, want 1 and errReopenBackoff", seq, err)
+	}
+}
+
+// Resuming an archived recording: with no local spool, the writer continues from the archived tail, and a chunk that
+// only repeats archived records is acked with that tail (not 0, which would make the node re-ship everything).
+func TestRecordingsArchiveResumeAcksTheArchivedTail(t *testing.T) {
+	srv := s3test.New(t, "AKIDTEST")
+	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "rec", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",
+		CABundlePEM: srv.CAPEM(), AllowPrivateNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	r := newRecordings(dir, artifacts.NewS3(cl, "rec", ""), nil, time.Now)
+	defer r.Close()
+	if seq, err := r.apply(1, chunk(t, out(1, "a"), out(2, "b"), out(3, "c"))); err != nil || seq != 3 {
+		t.Fatalf("apply %d %v", seq, err)
+	}
+	r.RunEnded(recRun)
+	r.wg.Wait()
+	if _, err := os.Stat(filepath.Join(dir, recRun)); !os.IsNotExist(err) {
+		t.Fatalf("spool left after the archive: %v", err)
+	}
+	if seq, err := r.apply(2, chunk(t, out(2, "b"), out(3, "c"))); err != nil || seq != 3 {
+		t.Fatalf("repeats of archived records acked %d %v, want 3", seq, err)
+	}
+	if seq, err := r.apply(2, chunk(t, out(4, "d"))); err != nil || seq != 4 {
+		t.Fatalf("continuation acked %d %v, want 4", seq, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, recRun, recording.SegmentName(2))); err != nil {
+		t.Fatalf("records did not continue in segment 2: %v", err)
 	}
 }

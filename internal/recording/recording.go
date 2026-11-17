@@ -377,7 +377,7 @@ func (w *Writer) failLocked(now time.Time, err error) error {
 	if w.f != nil {
 		_ = w.f.Close()
 		w.f = nil
-		if w.segBytes > w.synced {
+		if w.segBytes > w.synced || w.synced == 0 {
 			w.unsynced = &tailCut{path: filepath.Join(w.o.Dir, SegmentName(w.segIndex)), size: w.synced}
 			_ = w.dropUnsyncedLocked()
 		}
@@ -419,7 +419,13 @@ func (w *Writer) dropUnsyncedLocked() error {
 	if w.unsynced == nil {
 		return nil
 	}
-	if err := os.Truncate(w.unsynced.path, w.unsynced.size); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if w.unsynced.size == 0 {
+		// Nothing of the segment is synced: an empty or partial file is no segment. Removing it also keeps a disk that
+		// keeps failing from leaving one behind per attempt.
+		if err := os.Remove(w.unsynced.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("recording: remove the unsynced segment: %w", err)
+		}
+	} else if err := os.Truncate(w.unsynced.path, w.unsynced.size); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("recording: cut the unsynced tail: %w", err)
 	}
 	w.unsynced = nil

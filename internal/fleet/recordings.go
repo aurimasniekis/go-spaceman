@@ -46,6 +46,12 @@ type Recordings struct {
 	// unsynced holds failed writers whose unsynced segment tail could not be cut off yet: the run's recording is not
 	// opened again until it is (recording.Writer.DropUnsynced).
 	unsynced map[string]*recording.Writer
+	// failed holds, per run whose writer failed (or could not be opened), when the recording may be opened again and what
+	// was durably stored then. Until then chunks are refused without touching the disk (reopenBackoff).
+	failed map[string]failure
+	// reopenBackoff is how long a failed recording is not reopened. A disk that keeps failing would otherwise cost every
+	// chunk a read of the whole recording under mu, which blocks every run and viewer.
+	reopenBackoff time.Duration
 	// subs are live viewers per run.
 	subs map[string]map[*Viewer]struct{}
 	// archiving marks runs whose segments are being uploaded; the channel closes when that ends.
@@ -89,7 +95,7 @@ func newRecordings(dir string, store artifacts.Store, log *slog.Logger, now func
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Recordings{dir: dir, store: store, archive: archive, log: log, w: map[string]*recording.Writer{}, subs: map[string]map[*Viewer]struct{}{},
-		resync: map[string]uint64{}, unsynced: map[string]*recording.Writer{}, archiving: map[string]chan struct{}{}, now: now, ctx: ctx, cancel: cancel}
+		resync: map[string]uint64{}, failed: map[string]failure{}, reopenBackoff: defaultReopenBackoff, unsynced: map[string]*recording.Writer{}, archiving: map[string]chan struct{}{}, now: now, ctx: ctx, cancel: cancel}
 }
 
 // Dir returns a run's spool folder.
@@ -112,6 +118,19 @@ func (r *Recordings) waitArchiveLocked(runID string) {
 		r.mu.Lock()
 	}
 }
+
+// defaultReopenBackoff is how long central waits before it opens a recording again after a store failure.
+const defaultReopenBackoff = 5 * time.Second
+
+// failure is a recording that central could not store: it is not opened again before retry.
+type failure struct {
+	retry  time.Time
+	stored uint64
+}
+
+// errReopenBackoff is returned for a chunk refused while a failed recording waits to be reopened. Like any store
+// failure it is acked with the stored sequence and closes the node connection (the node re-ships on its next one).
+var errReopenBackoff = errors.New("recording store failed recently, not reopened yet")
 
 func (r *Recordings) writer(runID string) (*recording.Writer, error) {
 	r.waitArchiveLocked(runID)
@@ -172,9 +191,18 @@ func (r *Recordings) archivedTail(ctx context.Context, runID string) (int, uint6
 func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if f, ok := r.failed[c.RunID]; ok && r.w[c.RunID] == nil {
+		if r.now().Before(f.retry) {
+			// Refuse without reading the recording from disk. The hub still acks and closes the connection.
+			return f.stored, errReopenBackoff
+		}
+	}
 	w, err := r.writer(c.RunID)
 	if err != nil {
-		return 0, err
+		f := r.failed[c.RunID]
+		f.retry = r.now().Add(r.reopenBackoff)
+		r.failed[c.RunID] = f
+		return f.stored, err
 	}
 	recs := make([]recording.Record, 0, len(c.Records))
 	for _, raw := range c.Records {
@@ -223,6 +251,7 @@ func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) 
 		return r.dropFailedLocked(conn, c.RunID, w), err
 	}
 	seq := w.Stored()
+	delete(r.failed, c.RunID)
 	if closed {
 		_ = w.Close()
 		delete(r.w, c.RunID)
@@ -250,6 +279,7 @@ func (r *Recordings) dropFailedLocked(conn uint64, runID string, w *recording.Wr
 		delete(r.w, runID)
 	}
 	r.resync[runID] = conn
+	r.failed[runID] = failure{retry: r.now().Add(r.reopenBackoff), stored: w.Stored()}
 	if w.DropUnsynced() != nil {
 		r.unsynced[runID] = w
 	}
@@ -281,6 +311,7 @@ func (r *Recordings) RunEnded(runID string) {
 		_ = w.Close()
 		delete(r.w, runID)
 	}
+	delete(r.failed, runID)
 	r.mu.Unlock()
 	r.archiveLater(runID)
 }

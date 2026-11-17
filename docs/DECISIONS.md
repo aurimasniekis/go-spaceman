@@ -155,8 +155,13 @@
     node's ack and catch-up handling (`internal/agent/record.go`, including the persisted acknowledgements of
     ADR-0097) unchanged.
   - **Consequence.** A store failure costs the node a reconnect, and on a central disk that keeps failing, every
-    recording chunk costs one. The node's reconnect backoff bounds the rate. A reopen backoff on central (later work)
-    may refuse chunks without reopening, but it must still close the connection, or the node never re-ships.
+    recording chunk would cost one. The node's reconnect backoff bounds the rate.
+  - **Reopen backoff.** After a failure central does not open the run's recording again for a short while (5 s). Opening
+    reads the whole recording under the global lock, and a failed flush used to leave a new empty segment behind. A
+    chunk inside the window is refused without touching the disk: it is acked with what was stored when the writer
+    failed, and the hub still closes the connection, as for any chunk that is not stored (without the close the node
+    never re-ships). A failed segment with nothing synced is removed rather than truncated to zero bytes. A successful
+    chunk ends the backoff.
   - **Limitation.** A process restart right after a failed sync can still find that frame in the page cache. Linux
     reports a writeback error only to file descriptors that were open when it happened, so the new process cannot
     detect it. The cut covers failures within one central process.

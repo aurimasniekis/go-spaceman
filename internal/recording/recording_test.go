@@ -410,3 +410,15 @@ func TestDropUnsyncedRetriesUntilTheTailIsCut(t *testing.T) {
 		t.Fatalf("segment after the cut: %v %v, want %d bytes", fi, err, synced.Size())
 	}
 }
+
+// A writer resumed past archived records starts both its sequence and its stored sequence there.
+func TestOpenResumeSeqIsStored(t *testing.T) {
+	w, err := Open(Options{Dir: t.TempDir(), ResumeSegment: 2, ResumeSeq: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if w.Seq() != 7 || w.Stored() != 7 {
+		t.Fatalf("seq %d stored %d, want 7 and 7", w.Seq(), w.Stored())
+	}
+}
