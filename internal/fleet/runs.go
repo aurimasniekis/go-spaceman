@@ -508,6 +508,33 @@ func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text s
 	return svc.queueCommandID(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdInput, "notice:"+ids.New(ids.Message), proto.InputPayload{Text: text})
 }
 
+// NudgeRun types an idle-gated notice into a running run's terminal and audits it as action, in one transaction, then
+// wakes the run's node (the control watchdog, ADR-0099). It is refused like every notice: the run is not running, is
+// waiting for its usage limit to reset (ErrLimitWaiting) or an operator has taken over its terminal (ErrTakenOver).
+func (svc *Service) NudgeRun(ctx context.Context, actor audit.Actor, runID, text, action string, details map[string]any) error {
+	var nodeID string
+	err := svc.s.W().TxNamed(ctx, "fleet.nudge_run", func(tx *store.Tx) error {
+		r, err := tx.Q.GetRun(ctx, runID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errRunNotFound
+		} else if err != nil {
+			return err
+		}
+		nodeID = r.NodeID
+		if _, err := svc.QueueNotice(ctx, tx, runID, text); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "run", ID: runID},
+			Details: details})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	svc.hub.Kick(nodeID)
+	return nil
+}
+
 // MarkEndedRunStopped sets an ended run's desired state to stopped, so it no longer holds the space's single control
 // slot (SM-INV-006) and is not treated as wanted.
 func (svc *Service) MarkEndedRunStopped(ctx context.Context, runID string) error {

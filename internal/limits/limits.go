@@ -58,6 +58,11 @@ const (
 	// Control lifecycle (ADR-0056).
 	ControlAutostart = "control_autostart"
 	ControlIdleStop  = "control_idle_stop_minutes"
+	// Control watchdog (ADR-0099): the quiet minutes before a stalled control is nudged (0: off), the unanswered nudges
+	// before people are told (0: never), and whether control is also restarted then.
+	ControlWatchdog        = "control_watchdog_minutes"
+	ControlWatchdogNudges  = "control_watchdog_nudges"
+	ControlWatchdogRestart = "control_watchdog_restart"
 	// A new run's terminal size (ADR-0075).
 	TerminalCols = "terminal_cols"
 	TerminalRows = "terminal_rows"
@@ -168,6 +173,15 @@ var Defs = []Def{
 	{Key: ControlIdleStop, Label: "Stop idle control", Unit: "minutes",
 		Scope: "how long control may sit idle (turn finished, nothing waiting for it, no operator at its terminal) before SpaceMan stops it; with control started on new work, the next event starts it again", ZeroNone: true,
 		Enforced: "control supervisor (idle timer)", OnLower: "Applies from control's next idle point.", Overridable: true},
+	{Key: ControlWatchdog, Label: "Control watchdog", Unit: "minutes", ZeroNone: true,
+		Scope:    "how long work may wait for a live, idle control (unacknowledged messages, reviews with finished workers, ended runs, free slots with eligible tasks) while control does nothing before SpaceMan types a reminder into its terminal; reminders back off from 5 to 60 minutes (0: off)",
+		Enforced: "control watchdog (never while control is working, at a usage limit, waiting for a person, taken over or paused)", OnLower: "Applies from the watchdog's next pass.", Overridable: true},
+	{Key: ControlWatchdogNudges, Label: "Control watchdog escalation", Unit: "count", ZeroNone: true,
+		Scope:    "how many watchdog reminders in a row control may leave unanswered before the space's people get a human action (0: never)",
+		Enforced: "control watchdog", OnLower: "Applies from the watchdog's next pass.", Overridable: true},
+	{Key: ControlWatchdogRestart, Label: "Control watchdog restart", Unit: "switch",
+		Scope:    "when the watchdog escalates, also stop control and start it again, resuming its session, within the supervisor's restart budget (default off)",
+		Enforced: "control watchdog", OnLower: "Turning it off never stops a running control.", Overridable: true},
 	{Key: TerminalCols, Label: "Terminal columns", Unit: "columns",
 		Scope: "the width new runs' terminals are held at (40-400; 0: the node's default size); applies only with terminal rows set too", ZeroNone: true,
 		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},

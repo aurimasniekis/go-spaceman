@@ -81,6 +81,8 @@ func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config
 	cfg.Nodes.DisconnectGrace = config.Duration(time.Second)
 	// Control is not started or stopped on its own unless a test asks (TestControlAutostart): most tests count runs.
 	cfg.Limits.ControlAutostart, cfg.Limits.ControlIdleStopMinutes = 0, 0
+	// No watchdog reminders typed into control's terminal unless a test asks (ADR-0099).
+	cfg.Limits.ControlWatchdogMinutes = 0
 	for _, o := range opts {
 		o(cfg)
 	}

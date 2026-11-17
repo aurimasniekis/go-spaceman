@@ -112,6 +112,8 @@ type Central struct {
 	Notifier *messages.Notifier
 	// Supervisor wakes control on actionable events and restarts it within bounds (SM-CTRL-002).
 	Supervisor *control.Supervisor
+	// Watchdog nudges a live control that leaves waiting work alone, and escalates (SM-CTRL-008, ADR-0099).
+	Watchdog *control.Watchdog
 	// GitKeys holds shared Git SSH keys (ADR-0058).
 	GitKeys *gitkeys.Service
 	// HarborPilot holds the Harbor Pilot connection and space settings (ADR-0060).
@@ -504,6 +506,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Supervisor.Limit = func(ctx context.Context, spaceID, key string) int64 { return c.Limits.Value(ctx, nil, spaceID, key) }
 	c.Supervisor.ControlRole = c.Catalog.ControlRole
 	c.Supervisor.RoleName = c.Catalog.CurrentRoleName
+	c.Watchdog = control.NewWatchdog(c.Supervisor)
 	c.Notifier.ControlWanted = c.Supervisor.ControlWanted
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Human.Inbox = c.Inbox // routed responses become inbox items when the human policy says so (SM-INBOX-001)
@@ -608,7 +611,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
 		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory, c.Dreams.MemoryRolesOfRun), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
-	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
+	// Every agent tool call counts as its run's activity for the control watchdog (ADR-0099).
+	c.Fleet.Hub().Tools = c.Watchdog.Tools(c.Limits.ToolCalls(c.Tools.Dispatch))
 	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)
 	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), OnAccepted: c.gatewayQuotaKick, RateFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
@@ -972,6 +976,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		// The Telegram digest, at each linked user's own wall-clock time: it reads memory and only enqueues (ADR-0083).
 		human.Deadline{Name: "telegram.digest", Next: c.TelegramNotify.NextDigest, Due: c.TelegramNotify.DigestDue})
 	go c.Notifier.Run(ctx)
+	// The control watchdog: one pass a minute over the active spaces with a live control (ADR-0099).
+	go c.Watchdog.Run(ctx)
 	// Telegram links: the cache loads before the dispatcher's workers run, so the first update already sees them.
 	c.TelegramLinks.Start(ctx)
 	// Telegram updates: the dispatcher's workers (the webhook answers 503 until they run).

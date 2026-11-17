@@ -7253,6 +7253,155 @@
   Central answers `unknown` for other nodes' runs, the same as for runs that do not exist, so the query discloses
   nothing new. Central changes nothing in response to a query.
 
+### ADR-0099 — A control watchdog nudges a stalled control and escalates when the nudges go unanswered
+
+- **Status:** Proposed, 2026-11-17 (operator request for v0.1.11, after an incident). New requirement SM-CTRL-008. No
+  migration, no node protocol change, no new API operation in this step: the settings are three new space limits, and
+  watchdog state is kept in central's memory. Extends ADR-0056 (control auto-start and idle stop) and SM-COMM-003
+  (terminal notices).
+- **Context:** in a space with several workers, four workers finished and sent their results. Their messages and the
+  "task moved to review" notifications sat unacknowledged for about 90 minutes, and one worker launch had failed.
+  Control was alive and idle and never picked them up. Only the harness's own reminder, or the operator, woke it.
+  Nothing in SpaceMan noticed, by design of the parts it has today:
+  - The notifier (SM-COMM-003) types a one-line notice into an idle run's terminal for each *stored* item. Once the
+    node accepts the notice, the items become *available*. An available item is never noticed again: the notice was
+    typed, and from then on reading and acknowledging is the agent's job. If the agent's turn ends without acting on it
+    (it was interrupted, it misread the notice, the harness dropped the line, the model decided to wait), nothing
+    reminds it.
+  - Auto-start (ADR-0056) reacts only to items no control has seen (stored messages, unwoken human responses), and only
+    when no control run is live. A live, idle control is outside its scope.
+  - Idle stop (ADR-0056) keeps a control running while something waits for it, and stops one that is idle with nothing
+    waiting. Available but unacknowledged items do not count as waiting, so idle stop either stops control (and the next
+    control is told about them once) or, as in the incident, a newer stored item keeps control alive without anyone
+    acting on the older ones.
+  - Ended workers and tasks moved to review become notifications to control (SM-CTRL-002): the same messages, with the
+    same gap.
+- **Decision:**
+  1. **A watchdog per central, in the control package.** One loop in central (one minute tick, plus a kick when a
+     control run turns idle) looks at every active space that has a live control run. Its state (nudges sent, the
+     backoff, whether it escalated) lives in memory and starts over when central restarts, which can only delay a
+     nudge, never send an early one.
+  2. **What counts as backlog.** All of it is derived from existing state, per space. An item counts once it is older
+     than the space's threshold `N` (`control_watchdog_minutes`):
+     - **Unacknowledged messages:** messages to control (to control, to its role, or to its run) that are stored or
+       available, are due (a scheduled message counts only from its delivery time), were not sent by control itself,
+       and have been waiting for more than `N` minutes since they became available (or since they were created, for one
+       that was never noticed).
+     - **Reviews waiting:** tasks in `review` whose assigned run has ended or reports `done`, that nobody has changed
+       for `N` minutes, and that entered review (their last change) after control's last activity (below). Like an
+       ended run, a review is a notice to control, not a debt: once control has acted after it, a review may rightly
+       wait for hours (for a person to merge a pull request, say) without being backlog.
+     - **Ended runs:** worker and diagnostic runs of the space that ended on their own, with nobody asking them to stop
+       (`failed`, `exited` or `lost`; a failed launch is a `failed` run), more than `N` minutes ago, after the control run started, and after control's last activity
+       (below). A run parked at a usage limit is not counted: it comes back through its limit wait (ADR-0079).
+     - **Idle slots:** the space has fewer live worker and diagnostic runs than `max_concurrent_runs` while at least one
+       ready task is eligible now (no dependency, exclusion or policy holds it), has been ready for more than `N`
+       minutes, and some account would launch it: a task whose role's pool (ADR-0090; the harness from the role's
+       profile, or every harness the space has accounts for when that is unknown) has only accounts with an open usage
+       limit that has not reset waits for the reset, not for control. A pool with no usable account, or a space without
+       accounts, is not judged.
+  3. **When control counts as stalled.** Control is stalled when there is backlog *and* its last activity is older than
+     `N` minutes. Its activity is the latest of:
+     - its last SpaceMan or gateway tool call (every agent tool call passes through central's tool dispatcher, which
+       records the time per run; acknowledging a message is a tool call);
+     - the moment its turn counter last advanced, as the watchdog saw it;
+     - when the run started, and when this central started (so a restart never makes a quiet control look stalled
+       sooner than `N` minutes).
+  4. **False-positive guards.** No nudge is sent, and the backoff does not advance, while:
+     - **control is busy:** its program reports `working`, or one of its tool calls is still running (a call waiting
+       for an approval included); the notice would be refused by the node anyway (safe input is idle-gated);
+     - **control is at a usage limit:** the run has an open limit, a limit wait, or the space's control is parked
+       (ADR-0079). It is waiting for the reset, and typing into it would start a turn that fails at once;
+     - **control is waiting on a person:** its program reports `blocked` (a harness permission prompt), or a human
+       action its run asked is still open and control has taken no turn since asking: the turn that called
+       `spaceman_human_ask` may have gone on to other tool calls (telling a worker, setting a task's status) and
+       finished, but no later turn has. The dispatcher records the run's finished turns when the question is asked.
+       After a central restart, which loses that record, any open human action that control asked counts until
+       the watchdog sees a turn of control finish (a turn without tool calls ends it too);
+     - **the space is not active** (paused or archived), or an operator has taken over control's terminal;
+     - **the run is not control's live run:** no control run, or it is starting, stopping or ended (auto-start and
+       recovery own those cases).
+  5. **The nudge.** A one-line notice typed into control's terminal through the same idle-gated safe input as the
+     notifier's notices (`fleet.QueueNotice`), prefixed `SpaceMan watchdog:`, naming only counts of the backlog, for example:
+     "SpaceMan watchdog: 3 unacknowledged messages, 2 tasks in review with finished workers, 1 failed run are waiting
+     for you. Check spaceman_messages, the queue and spaceman_runs_list, acknowledge what you have handled, then act
+     on the rest." It carries no message content, titles or IDs: content is read through the tools as data, never as a
+     prompt. Each nudge writes an audit event `control.watchdog_nudged` (actor `system:control-watchdog`, target the
+     control run) with the counts and the nudge's number in the episode.
+  6. **Episodes and backoff.** An episode is the same backlog left waiting by one control run, and it is keyed on the
+     backlog, not on control's activity: a nudge typed into an idle program always starts a turn, so "control did
+     something" says nothing about whether the backlog was handled. The first nudge goes out when control is first
+     found stalled. The next one is due 5 minutes later, then the gap doubles (10, 20, 40) up to a 60-minute cap; a
+     nudge also waits until control has again been quiet for `N` minutes, so activity delays it but neither resets the
+     count nor the gap. The episode ends, and the count and the backoff start over, when:
+     - the backlog empties, whoever emptied it (control, or an operator acknowledging the messages), whether or not a
+       guard holds at the time;
+     - the backlog shrinks: fewer unacknowledged messages or startable tasks than the last pass saw, or the oldest of
+       them was handled (the oldest waiting item's time advanced). Reviews and ended runs count only until control's
+       next activity (decision 2), so their dropping out is not judged; when they were all that waited, the backlog
+       empties;
+     - control's live run is another run, or the watchdog is turned off for the space.
+
+     More backlog (a new message, another ready task) keeps the episode. A guard pauses an episode without advancing
+     it.
+  7. **Escalation.** When `control_watchdog_nudges` nudges of one episode left the backlog in place (the next one is
+     due, whether or not control took turns in between), the watchdog:
+     - raises one high-priority human action for the space's people, "Control is not responding in" followed by the
+       space name, naming the backlog counts and how long control has been quiet. It is deduplicated per episode and
+       reaches people the way every human action does: the space's inbox of human actions and, where the space has
+       Telegram linked, Telegram. Nudges continue at the capped interval;
+     - when `control_watchdog_restart` is on, also restarts control once per episode: it stops the run (interrupt,
+       then kill after the grace) as `system:control-watchdog`, and when the run has ended relaunches it the way
+       recovery does (same role, harness, instance, model, settings, account and workspace, resuming the session when it
+       finished a turn), with a prompt that says why. Restarts count against the supervisor's restart budget
+       (`MaxRestarts` per hour, SM-CTRL-002); past the budget the human action is all that happens.
+       The restart count lives in central's memory: if central restarts between the stop and the run ending, it is lost
+       and control stays stopped until the next autostart.
+
+     **Restart is off by default.** The incident's control was healthy and woke as soon as something typed into it, so a
+     nudge is the fix for that failure; a restart interrupts work in flight, loses the turn's context when the session
+     cannot be resumed, and costs a new run. An operator who prefers it turns it on per space or per installation.
+  8. **Settings.** Three space limits in the one limits model (ADR-0036), so they get installation defaults, per-space
+     overrides, audit, the API, the CLI, the Limits page and Terraform without a new resource:
+     - `control_watchdog_minutes` (minutes, default 15, 0 turns the watchdog off, at most 1,440): the threshold `N`;
+     - `control_watchdog_nudges` (count, default 3, 0 never escalates, at most 20): unanswered nudges before escalating;
+     - `control_watchdog_restart` (switch, default off): also restart control on escalation.
+
+     The in-process test environment defaults the watchdog to off so existing tests see no extra terminal input.
+- **Consequences:**
+  - A live control that stops acting on its backlog is reminded within `N` minutes of the oldest item being due, and
+    people are told after a bounded number of reminders, instead of the backlog waiting for someone to look.
+  - The watchdog adds no new terminal input to a busy, limited, paused, taken-over or human-waiting control. Its only
+    input is the one-line, content-free notice that the notifier already uses.
+  - The watchdog only reads state that already exists, plus one in-memory timestamp per run's tool calls (and the run's
+    turn when it asks a person). Its cost is one pass over the active spaces with a live control each minute, with
+    one read of the account holds per role of the eligible ready tasks.
+  - Watchdog state is not persisted. After a central restart an episode starts over: the first nudge comes `N` minutes
+    after the restart at the earliest, and an escalation already raised is not raised again for the same episode
+    (its human action is deduplicated).
+  - A notice the node refuses because control turned busy in the meantime still counts as sent; control is active then,
+    and the episode goes on only if the backlog is still there once control is quiet again.
+  - A control that answers every nudge with a turn but leaves the backlog is reminded at a growing interval and its
+    people are told after `control_watchdog_nudges` reminders; a control that handles any part of the backlog starts
+    a new episode, so steady progress is never escalated.
+  - A backlog made only of reviews and ended runs gets a single nudge: they count only until control's next activity,
+    and the nudge's own turn is that activity, so they drop out and the episode ends. The same happens at a central
+    restart, which also forgets control's last activity.
+  - Fetching messages without acknowledging them (`spaceman_messages`) is a tool call, so each gives control a fresh `N`
+    minute window; the episode and its count carry on.
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. The nudge is safe input with no untrusted
+  content, refused during takeovers and limits like every notice. The restart is off by default, goes through the same
+  launch resolution, admission and audit as recovery, and is bounded by the same restart budget.
+- **Implementation split:**
+
+  | ID | Work | Depends on | Size |
+  |---|---|---|---|
+  | W1 | This ADR; the detector (`internal/control/watchdog.go`), the loop in central, tool-call activity tracking, the nudge with its audit event, backoff, escalation (human action, optional restart), the three limits and their config, unit tests for every signal and false-positive guard. | — | Opus |
+  | W2 | API and CLI: a read-only `get-control-watchdog` per space (state, counts, last nudge, next nudge, escalated) and `spaceman space watchdog`. | W1 | Sonnet |
+  | W3 | Terraform provider: nothing new for the three limits beyond the generic space limits resource; check and document them. | W1 | Haiku |
+  | W4 | Web: a badge on the space's control card when control is being nudged or was escalated, from W2's state. | W2 | Sonnet |
+  | W5 | Docs site: a "Watchdog" section in the control guide, the three limits in the limits guide, TRACEABILITY evidence for SM-CTRL-008. | W1 | Haiku |
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
