@@ -397,6 +397,32 @@
   - Changes newer than the last acknowledgement exist only on the node.
   - Rewritten history (e.g. after a restore) is preserved but not applied; reconciling it is a person's decision.
 
+- **Addendum, 2026-11-17 — harness configuration never travels through role memory (security-relevant change).**
+  - Context: the checkout is passed to Claude Code with `--add-dir`, which loads `.claude/skills` and `.claude/commands`
+    from it as project skills and commands (seen on Claude Code 2.1.325, and on 2.1.326 with folder trust; its prompt also
+    mentions the folder's git settings). Role memory is shared by every instance of a role, so a skill or command one
+    instance wrote would become active in all of them. Two options: (a) the node refuses harness-config paths, (b) memory
+    is documented as trusted like code. (a) is chosen: memory stays notes, never a channel that carries behaviour, in line
+    with the memory hardening of ADR-0094 and the node's Git hardening above.
+  - Decision: the node writes two files into each checkout's `.git` before it creates, moves or stages one:
+    `info/exclude`, so `.claude/`, `.codex/` and `.agents/` (at any depth) and a top-level `.mcp.json` are never staged,
+    and `info/sparse-checkout` (non-cone, `core.sparseCheckout`), so those paths are never written to the working tree
+    when a checkout is reset to, fast-forwarded onto or merged with history that already holds them (pushed by an older
+    agent). `prepare` applies it to an existing checkout too (`sparse-checkout reapply`), which removes such files from
+    its working tree. A conflict preserve skips such paths. `CLAUDE.md` and `AGENTS.md` notes stay allowed: they are text.
+  - Why on the node and not at central: the node is the only place memory is materialised and loaded by a harness, a
+    sparse checkout keeps the tree clean (no dirty status, so fast-forward is not blocked), and rejecting a bundle at
+    central would stall a whole collection's sync over one bad commit. Central keeps the history it was given, old
+    commits included; history is not rewritten. Central's file listing may therefore still show such paths.
+  - Limits: the agent can edit its own `.git` (see above), so this is a guard against accident and against content
+    arriving from other instances, not a sandbox; the guard is rewritten on every checkpoint and prepare. A harness-config
+    file an instance writes into its own checkout is never staged or shared. It is removed from that checkout's working
+    tree only by `sparse-checkout reapply`, which `prepare` runs when `core.sparseCheckout` was not already true (a
+    checkout created before this filter); later files stay local until the operator removes them. Memory content is
+    still untrusted text (AGENTS.md): it is never an authority source.
+  - Evidence: `TestMemoryHarnessConfigDoesNotTravel`, `TestMemoryHarnessConfigInOldHistoryIsNotMaterialised`,
+    `TestMemoryHarnessConfigRemovedFromExistingCheckout` (`internal/agent`); with the guard disabled they fail.
+
 ### ADR-0026 — KB support runs as per-requester kb sessions; KB changes are proposals accepted on the node
 - **Status:** Accepted, 2026-11-02.
 - **Context:** SM-KB-001…007 and SM-CTRL-005: optional KB repositories; any permitted agent asks; one support session

@@ -841,3 +841,23 @@ func TestKillSwitchTakeoverDoesNotWaitForGate(t *testing.T) {
 		tk.cancel()
 	}
 }
+
+// A file standing where the new history needs a directory is not replaced by the fast-forward.
+func TestFileWhereDirectoryNeededNotOverwritten(t *testing.T) {
+	e := newFFEnv(t)
+	dir, other := e.checkout("ins_a"), e.checkout("ins_b")
+	e.idleRun("ins_a")
+	head := e.head(dir)
+	// Created after the idle checks, the way a running agent could: a plain file at "notes", ignored so status is clean.
+	e.m.ffHook = func(string) { write(t, dir, "notes", "local file\n") }
+	write(t, other, "notes/a.md", "from b\n")
+	if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != ffMergeFailed {
+		t.Fatalf("reason %q, want %q", got, ffMergeFailed)
+	}
+	if read(t, dir, "notes") != "local file\n" || e.head(dir) != head {
+		t.Fatal("a file was replaced by the fast-forward")
+	}
+}

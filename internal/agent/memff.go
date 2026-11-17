@@ -225,7 +225,22 @@ func statusReason(out string) string {
 func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, inst, theirs, why string) string {
 	g := m.git
 	old := g.RevParse(ctx, inst, "HEAD")
-	// --no-overwrite-ignore: git otherwise replaces an ignored file at a path the new history adds.
+	// --no-overwrite-ignore: git otherwise replaces an ignored file at a path the new history adds. The checkout's
+	// sparse-checkout patterns (memharness.go) make git skip that check, so the paths are looked at here as well.
+	added, err := g.Run(ctx, inst, nil, "diff", "--name-only", "-z", "--diff-filter=ACR", old, theirs)
+	if err != nil {
+		m.ffSkipped(ctx, spaceID, role, instance, ffMergeFailed)
+		return ffMergeFailed
+	}
+	for _, f := range strings.Split(added, "\x00") {
+		if f == "" || isHarnessPath(f) {
+			continue
+		}
+		if ffBlocked(inst, f) {
+			m.ffSkipped(ctx, spaceID, role, instance, ffMergeFailed)
+			return ffMergeFailed
+		}
+	}
 	if _, err := g.Run(ctx, inst, nil, "merge", "--quiet", "--ff-only", "--no-overwrite-ignore", theirs); err != nil {
 		m.ffSkipped(ctx, spaceID, role, instance, ffMergeFailed)
 		return ffMergeFailed
@@ -242,6 +257,20 @@ func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, i
 		slog.String("memory.instance", instance), slog.String("memory.from", old), slog.String("memory.to", theirs), slog.Int("files", files),
 		slog.String("memory.when", why))
 	return ""
+}
+
+// ffBlocked reports whether something already stands where the new history adds the path f: the path itself, or a
+// parent that exists but is not a directory (git would replace it).
+func ffBlocked(inst, f string) bool {
+	parts := strings.Split(f, "/")
+	for i := 1; i < len(parts); i++ {
+		fi, err := os.Lstat(filepath.Join(inst, filepath.FromSlash(strings.Join(parts[:i], "/"))))
+		if err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	_, err := os.Lstat(filepath.Join(inst, filepath.FromSlash(f)))
+	return err == nil
 }
 
 // ffSkipped logs a refusal. A busy instance is ordinary (debug); a checkout of an idle instance, or one at run start,

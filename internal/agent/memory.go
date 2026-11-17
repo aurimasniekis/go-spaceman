@@ -113,6 +113,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		if _, err := m.git.Run(ctx, inst, nil, "init", "--quiet", "--initial-branch=main", "."); err != nil {
 			return "", err
 		}
+		if err := m.guard(ctx, inst); err != nil {
+			return "", err
+		}
 		if m.git.RevParse(ctx, shared, "refs/heads/main") == "" {
 			readme := fmt.Sprintf("# %s memory\n\nShared by every instance of the %s role in this space. Files here are checkpointed and kept by SpaceMan.\n", role, role)
 			if err := os.WriteFile(filepath.Join(inst, "README.md"), []byte(readme), 0o600); err != nil {
@@ -137,6 +140,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 			}
 		}
 		return inst, nil
+	}
+	if err := m.guard(ctx, inst); err != nil {
+		return "", err
 	}
 	m.refreshAtStart(ctx, spaceID, role, instance)
 	return inst, nil
@@ -221,6 +227,9 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reason string) (bool, error) {
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	g, id := m.git, ident(instance)
+	if err := m.guard(ctx, inst); err != nil {
+		return false, err
+	}
 	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
 		return false, err
 	}
@@ -273,6 +282,9 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	}
 	saved := map[string][]byte{}
 	for _, f := range files {
+		if isHarnessPath(f) {
+			continue // never materialised: harness configuration does not travel through memory
+		}
 		if b, err := g.Run(ctx, inst, nil, "show", head+":"+f); err == nil {
 			saved[f] = []byte(b)
 		}
