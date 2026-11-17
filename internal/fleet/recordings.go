@@ -328,7 +328,22 @@ func (r *Recordings) pruneLocked(now time.Time) {
 	}
 }
 
-// forgetLocked drops every mark of a run. An unsynced tail that cannot be cut yet keeps its entry (and the run its
+// ConnEnded drops the resync marks of node connection conn, which has ended: a resync mark guards a live connection
+// (chunks on it already on their way must not overtake the lost records) and nothing else, so it lives exactly as long
+// as the connection and is never aged out while it is open (pruneLocked would let the next chunk be stored and acked
+// past the gap).
+func (r *Recordings) ConnEnded(conn uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, c := range r.resync {
+		if c == conn {
+			delete(r.resync, id)
+		}
+	}
+}
+
+// forgetLocked drops the age-based marks of a run (failed, closedOn, touched), not resync: that one belongs to a live
+// connection and ends with it (ConnEnded), or with the run (RunEnded, the recording's close). An unsynced tail that cannot be cut yet keeps its entry (and the run its
 // failure mark): reading the recording back would take that tail for stored.
 func (r *Recordings) forgetLocked(runID string) {
 	if f := r.unsynced[runID]; f != nil {
@@ -337,7 +352,6 @@ func (r *Recordings) forgetLocked(runID string) {
 		}
 		delete(r.unsynced, runID)
 	}
-	delete(r.resync, runID)
 	delete(r.failed, runID)
 	delete(r.closedOn, runID)
 	delete(r.touched, runID)
@@ -396,6 +410,7 @@ func (r *Recordings) RunEnded(runID string) {
 		delete(r.w, runID)
 	}
 	r.forgetLocked(runID)
+	delete(r.resync, runID)
 	r.mu.Unlock()
 	r.archiveLater(runID)
 }

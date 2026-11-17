@@ -842,7 +842,129 @@ func TestRecordingsMarksArePruned(t *testing.T) {
 	if _, err := r.apply(1, c); err != nil {
 		t.Fatal(err)
 	}
+	// The resync marks stay: they guard a live connection and end with it.
+	if len(r.failed)+len(r.closedOn)+len(r.touched)+len(r.unsynced) != 0 || len(r.resync) != 1 {
+		t.Fatalf("marks left: resync %v failed %v closed %v touched %v unsynced %v", r.resync, r.failed, r.closedOn, r.touched, r.unsynced)
+	}
+	r.ConnEnded(2) // another connection: nothing to drop
+	if len(r.resync) != 1 {
+		t.Fatal("another connection's end dropped the mark")
+	}
+	r.ConnEnded(1)
 	if !empty() {
 		t.Fatalf("marks left: resync %v failed %v closed %v touched %v unsynced %v", r.resync, r.failed, r.closedOn, r.touched, r.unsynced)
+	}
+}
+
+// Round 4, HIGH: an open failure's resync mark must outlive the age-based prune while its connection is open, or the
+// next chunk on that connection is stored and acked past the gap (the record is lost for good).
+func TestRecordingsResyncSurvivesThePruneOnALiveConnection(t *testing.T) {
+	var clock atomic.Int64
+	base := time.Now()
+	r := newRecordings(t.TempDir(), nil, nil, func() time.Time { return base.Add(time.Duration(clock.Load())) })
+	r.reopenBackoff = 0
+	t.Cleanup(r.Close)
+	dir, _ := r.Dir(recRun)
+	if err := os.WriteFile(dir, []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err == nil {
+		t.Fatal("open failure stored")
+	}
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	clock.Add(int64(61 * time.Minute))
+	r.mu.Lock()
+	r.pruneLocked(r.now())
+	r.mu.Unlock()
+	if seq, err := r.apply(1, chunk(t, out(2, "b"))); err != nil || seq != 0 {
+		t.Fatalf("chunk past the gap acked %d %v, want 0", seq, err)
+	}
+	if got := text(t, r); got != "" {
+		t.Fatalf("central stored %q past the gap", got)
+	}
+	// The connection ends; the node's re-ship on the next one is stored.
+	r.ConnEnded(1)
+	if seq, err := r.apply(2, chunk(t, out(1, "a"), out(2, "b"))); err != nil || seq != 2 {
+		t.Fatalf("re-ship acked %d %v, want 2", seq, err)
+	}
+}
+
+// M7: a forget whose unsynced tail cannot be cut keeps every mark (reading the recording back would take the tail for
+// stored).
+func TestRecordingsForgetKeepsTheMarksWhileTheTailCannotBeCut(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	r, fail := failingRecordings(t)
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := r.Dir(recRun)
+	seg := filepath.Join(dir, recording.SegmentName(1))
+	fail.Store(true)
+	if err := os.Chmod(seg, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.apply(1, chunk(t, out(2, "b"))); err == nil {
+		t.Fatal("failing chunk stored")
+	}
+	r.mu.Lock()
+	r.forgetLocked(recRun)
+	kept := r.unsynced[recRun] != nil && len(r.failed) == 1 && len(r.touched) == 1
+	r.mu.Unlock()
+	if !kept {
+		t.Fatalf("forget dropped the marks of an uncut tail: unsynced %v failed %v touched %v", r.unsynced, r.failed, r.touched)
+	}
+	if err := os.Chmod(seg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.forgetLocked(recRun)
+	r.mu.Unlock()
+	if len(r.unsynced)+len(r.failed)+len(r.touched)+len(r.closedOn) != 0 {
+		t.Fatal("forget kept marks after the cut")
+	}
+}
+
+// M6: the prune keeps the marks of a run with an open writer, however old.
+func TestRecordingsPruneKeepsTheMarksOfAnOpenWriter(t *testing.T) {
+	var clock atomic.Int64
+	base := time.Now()
+	r := newRecordings(t.TempDir(), nil, nil, func() time.Time { return base.Add(time.Duration(clock.Load())) })
+	t.Cleanup(r.Close)
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.touched[recRun] = r.now()
+	r.failed[recRun] = failure{stored: 1}
+	r.closedOn[recRun] = 1
+	r.mu.Unlock()
+	clock.Add(int64(2 * markMaxAge))
+	r.mu.Lock()
+	r.pruneLocked(r.now())
+	n := len(r.touched) + len(r.failed) + len(r.closedOn)
+	r.mu.Unlock()
+	if n != 3 {
+		t.Fatalf("prune dropped marks of a run with an open writer: %d left", n)
+	}
+}
+
+// M10: a refusal in the backoff window counts as the run being in use, so its marks are not pruned meanwhile.
+func TestRecordingsBackoffRefusalRefreshesTouched(t *testing.T) {
+	var clock atomic.Int64
+	base := time.Now()
+	r, fail := failingRecordings(t)
+	r.now = func() time.Time { return base.Add(time.Duration(clock.Load())) }
+	r.reopenBackoff = 3 * markMaxAge
+	fail.Store(true)
+	_, _ = r.apply(1, chunk(t, out(1, "a")))
+	clock.Add(int64(markMaxAge - time.Minute))
+	_, _ = r.apply(1, chunk(t, out(1, "a"))) // refused in the backoff
+	at := r.touched[recRun]
+	if !at.Equal(base.Add(markMaxAge - time.Minute)) {
+		t.Fatalf("touched %v, not refreshed by the refusal", at.Sub(base))
 	}
 }

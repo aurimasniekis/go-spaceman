@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -40,5 +41,34 @@ func TestReplacedSessionDisconnect(t *testing.T) {
 	}
 	if h.Connected("nod_1") {
 		t.Fatal("the newest connection is still registered")
+	}
+}
+
+// M11: an open failure (not a storage failure) leaves the node connection open: refused neither closes nor returns it.
+func TestRecordingsRefusedLeavesTheConnectionOpenOnAnOpenFailure(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	t.Cleanup(r.Close)
+	s := &session{nodeID: "nod_1", seq: 1, done: make(chan struct{})}
+	if err := r.refused(s, errors.New("open failed")); err != nil {
+		t.Fatalf("refused returned %v for an open failure", err)
+	}
+	select {
+	case <-s.done:
+		t.Fatal("an open failure closed the connection")
+	default:
+	}
+}
+
+// The hub drops a connection's resync marks when it ends.
+func TestHubDisconnectEndsTheConnectionsResyncMarks(t *testing.T) {
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
+	h := e.svc.hub
+	e.svc.rec = newRecordings(t.TempDir(), nil, nil, time.Now)
+	t.Cleanup(e.svc.rec.Close)
+	e.svc.rec.resync[recRun] = 7
+	h.onDisconnect(e.ctx, &session{nodeID: "nod_1", seq: 7})
+	if len(e.svc.rec.resync) != 0 {
+		t.Fatal("the hub left the ended connection's resync mark")
 	}
 }

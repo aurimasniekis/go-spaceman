@@ -1165,6 +1165,9 @@ func (h *Hub) onDisconnect(ctx context.Context, s *session) {
 		delete(h.sessions, s.nodeID)
 	}
 	h.mu.Unlock()
+	if h.svc.rec != nil {
+		h.svc.rec.ConnEnded(s.seq)
+	}
 	if s.counted {
 		h.svc.opts.Metrics.NodeConnected(-1)
 	}

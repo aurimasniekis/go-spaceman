@@ -161,17 +161,20 @@
     only when a re-ship can help, and at most once per run and connection. A write or sync failure closes (once;
     chunks already on their way behind it are refused in the backoff without closing again, and a refusal on a *new*
     connection, which needs a re-ship, closes it once more). A recording that cannot be opened (permissions, the
-    object store, a cut that keeps failing) does not: central logs it, acks the chunk with what is stored and stores
+    object store) does not: central logs it, acks the chunk with what is stored and stores
     nothing past that hole on the connection, so the node keeps the records and re-ships them on its next
     connection, whenever that is. Such a recording can stall until then; the alternative, a reconnect per failing run
-    every few seconds, would flap every other run of the node.
+    every few seconds, would flap every other run of the node. A storage failure that persists (a cut that keeps
+    failing, a disk that stays broken) closes each new connection once while it holds, so at the node's reconnect
+    backoff rate (about once per 30 s at its cap), and every such close marks the node's live runs unknown.
   - **Older nodes.** Agents before v0.1.4 ship live output *before* the catch-up on a connection (`proto.MinMinor` is
     0, so they are accepted). On a new connection their first live chunk can jump past the hole, end the resync mark
     and be acked over it, so for them the close does not guarantee a gap-free copy: the hole can stay as a
     gap in central's recording. The mark is not kept across connections for them (the node's
     catch-up on that connection cannot be told apart from its own jumps).
   - **Marks are pruned.** The marks above are dropped when the run ends and when the run has not been shipped to for
-    an hour (swept every minute), except a failed segment tail that cannot be cut yet.
+    an hour (swept every minute), except a failed segment tail that cannot be cut yet. The resync mark is not aged: it
+    guards a live connection, so it ends with that connection (the hub's disconnect) or with the run.
   - **Reopen backoff.** After a failure central does not open the run's recording again for a short while (5 s). Opening
     reads the whole recording under the global lock, and a failed flush used to leave a new empty segment behind. A
     chunk inside the window is refused without touching the disk: it is acked with what was stored when the writer
