@@ -6549,18 +6549,25 @@
 
   Facts this design relies on (checked on `next/v0.1.11` at f57e828d):
   - Central stores a recording's records in strictly increasing sequence order. `recording.Writer.Append` drops any
-    record whose sequence is at or below the highest one it stored. `recording.ack` carries that highest stored
-    sequence. Once central's sequence is at or above every local record, re-shipping the local copy can add nothing
-    to central's copy. The journaled path already relies on this: it removes a directory when
-    `recording.Read(dir, acked)` returns no records.
+    record whose sequence is at or below the highest one it accepted. Once central's stored sequence is at or above
+    every record the node can decode locally, re-shipping the local copy can add nothing central would accept. The
+    journaled path already relies on this: it removes a directory when `recording.Read(dir, acked)` returns no records.
+    (`recording.ack` carries the writer's `Seq()`, which counts a record from `Append` before its flush; after a failed
+    flush, `failLocked` drops the buffer and advances the sequence, so that ack can overstate what was stored. This ADR
+    does not rely on the ack, and does not change it.)
+  - `recording.Read` returns an error only when the directory cannot be listed or a segment file cannot be opened. A
+    torn or corrupt frame sets `Truncated` and skips the rest of that segment; later segments are still read. What
+    `Read` returns is exactly what the node's catch-up could still ship.
   - Central has no database column for a recording's sequence. The sequence lives in the stored segments: the open
-    writer's `Seq()`, else the last record of the last segment (spool and artifact store merged by segment name, as
-    `Recordings.Segments` does; `recording.LastSeq`).
+    writer's buffer flushed to its segment, then the last record of the last segment (spool and artifact store merged
+    by segment name, as `Recordings.Segments` and `stored` do; `recording.LastSeq`).
   - `runs.recording_deleted_at` is set when central's copy was deleted, by retention or by an operator
     (`recording:delete`). Run rows are deleted only by `PurgeSpace`. A run row keeps the `node_id` it ran on, also after
     a relocation.
-  - Central answers a message type it does not know with an `invalid` protocol error, which closes the connection. A
-    node therefore must not send a new message type to a central that did not negotiate the minor that introduced it.
+  - Central logs a message type it does not know (`handle` returns an `invalid` error, the read loop logs it) and
+    sends nothing back, and it does no per-minor gating of node → central types today. A node therefore must not send
+    a new message type to a central that did not negotiate the minor that introduced it: it would wait for an answer
+    that never comes.
 
 - **Decision:**
   1. **Protocol (minor 15).** One node → central query and one central → node answer, in `internal/proto`:
@@ -6588,7 +6595,7 @@
      }
 
      const (
-         RecordingComplete   = "complete"   // the run ended; Seq is everything central will ever store of it
+         RecordingComplete   = "complete"   // the run ended; Seq is the highest sequence central holds now
          RecordingIncomplete = "incomplete" // the run has not ended in central's records
          RecordingDeleted    = "deleted"    // the run ended and central deleted its copy (retention or an operator)
          RecordingUnknown    = "unknown"    // anything else: central cannot or will not vouch for the recording
@@ -6597,22 +6604,24 @@
      ```
 
      `MaxMinor` becomes 15, and the minor comment names this ADR. The node sends the query only on a connection whose
-     negotiated minor (the welcome's `Minor`) is at least 15. Central handles the query only from such a session,
-     and treats it as an unexpected message type below 15, as it does today. An answer whose `QueryID` the node is not
+     negotiated minor (the welcome's `Minor`) is at least 15. T1 adds an explicit check on central: a query from a
+     session below minor 15 is logged and not answered (no per-minor gating exists today). An answer whose `QueryID` the node is not
      waiting for is ignored.
 
   2. **What central answers** (`internal/fleet`, per run ID, in this order; the first match wins):
      - `unknown` when the ID is malformed (`ids.Valid(ids.Run, …)`), has no run row, or its row's `node_id` is not the
        asking node. Central answers the same for "not yours" as for "no such run", so a node learns nothing about
        other nodes' runs. Also `unknown` when central keeps no recordings (`RecordingsDir == ""`: the node's copy is
-       the only one), and when reading the stored sequence fails or the query's time budget (decision 4) ran out.
+       the only one), when listing or opening the stored segments fails, when the run's open writer has failed
+       (`Err() != nil`), and when the query's time budget (decision 4) ran out.
      - `incomplete` when the run's observed state is not ended (`exited`, `failed`, `lost`). No storage is read.
      - `deleted` when the run ended and `recording_deleted_at` is set.
      - `complete` with `Seq` otherwise: the run ended and `Seq` is central's highest stored sequence, from a new
-       `Recordings.LastSeq(ctx, runID)`. That is the open writer's `Seq()` when there is one. Otherwise it is the last
-       record of the last segment that holds any record, spool and store merged, read under the same archive wait
-       `Delete` uses. `Seq` may be 0 (central stored nothing). The node then deletes only a directory with no
-       decodable record.
+       `Recordings.LastSeq(ctx, runID)`. It never uses the writer's `Seq()` (see Context): it flushes an open writer
+       (a failed flush or a failed writer is `unknown`), then reads the last record of the last segment that holds
+       any decodable record, spool and store merged, under the same archive wait `Delete` uses. `recording.LastSeq`
+       cannot report a corrupt frame; it returns what it decoded, which can only make `Seq` lower, the safe direction.
+       `Seq` may be 0 (central stored nothing). The node then deletes only a directory with no decodable record.
 
      Central decides from its own store only, never from anything the node says about the run, and it changes nothing:
      the query is read-only on central.
@@ -6624,8 +6633,13 @@
      After central answers:
      - `deleted`: removed.
      - `complete` with `Seq = S`: the node reads its copy with `recording.Read(dir, S)`. The directory is removed only
-       when that read succeeds and returns **no** record: the local maximum sequence is at most central's (decision 7).
-       A read error keeps it. Any record above `S` keeps it, logged as `local_newer`.
+       when that read succeeds and returns **no** record: no locally decodable record has a sequence above central's
+       (decision 7). A read error (a segment that cannot be listed or opened) keeps it, logged as `unreadable`. Any
+       record above `S` keeps it, logged as `local_newer`. A torn or corrupt frame (`Truncated`) does not by itself keep
+       the directory: the bytes after it cannot be decoded by any SpaceMan reader, so the catch-up could never ship
+       them either; such removals are counted as `torn` in the log line. This matches the journaled path, which also
+       ignores `Truncated`. (The stricter alternative, keeping every `Truncated` directory, would keep most recordings
+       of runs whose node agent was killed mid-write, which are the bulk of the legacy directories.)
      - `incomplete`, `unknown`, any other status string, an ID missing from the answer, no answer before the timeout
        (60 s), or a connection that ended or changed before the answer arrived: kept, and nothing is cached for the
        next sweep.
@@ -6634,7 +6648,7 @@
      marks, nothing modified for 24 h. It then removes the directory with the existing `removeRecording`, which also
      removes the quota file and the empty run directory. Each sweep logs one line with the number of directories removed,
      the bytes freed, and a count of kept candidates per reason (`unknown`, `incomplete`, `local_newer`, `unreadable`,
-     `no_answer`). It logs no run IDs.
+     `no_answer`) and of removed ones that were `torn`. It logs no run IDs.
 
   4. **Batching and bounds.**
      - At most `RecordingStatusMaxRuns` (100) run IDs per query, and one query in flight per connection. The node
@@ -6690,9 +6704,12 @@
        row names another node). Nothing is deleted.
      - **How the node proves its maximum is at most central's:** it does not trust a remembered or partial number. It
        decodes every local segment with `recording.Read(dir, S)` and requires that no decodable record has a sequence
-       above `S`. A segment it cannot read keeps the directory. The read sees exactly the records the catch-up would
-       ship, so "nothing above `S`" means "nothing central lacks". The proof holds only for the answer it was checked
-       against, and answers are not reused across sweeps or connections.
+       above `S`. A segment it cannot list or open keeps the directory. The read sees exactly the records the catch-up
+       would ship, so "nothing above `S`" means "nothing the catch-up could still get central to accept": the same
+       condition the journaled path deletes on, not a stronger one. (After a local disk loss and a restart, a recorder
+       can number records at or below sequences central already holds, before its first ack lets it `SkipTo` above
+       them; central drops those as repeats today, with or without this ADR.) The proof holds only for the answer it
+       was checked against, and answers are not reused across sweeps or connections.
 
   8. **Not in scope.** The node does not ship the missing tail of an `incomplete` or `local_newer` unjournaled
      recording: the catch-up covers journaled runs only, and an unjournaled run's chunk needs its space ID, which only
@@ -6724,11 +6741,13 @@
       recording archived to a fake artifact store, and with records continued in a new local segment after the
       archive (the merged maximum); C6 an ended run with no stored segment is `complete` with `Seq` 0;
     - C7 `recording_deleted_at` set on an ended run is `deleted`, and on a live run is `incomplete`;
-    - C8 `RecordingsDir == ""` is `unknown` for every ID; C9 a store read error is `unknown`;
+    - C8 `RecordingsDir == ""` is `unknown` for every ID; C9 a failure to list or open the stored segments is
+      `unknown`, and so is a run whose open writer failed (a flush error injected through the writer's file), even
+      though the writer's `Seq()` is higher;
     - C10 more than 100 IDs: only the first 100 are answered; C11 a budget exhausted midway (fake clock or a
       blocking fake store) answers the rest `unknown`; C12 a second concurrent query from the same session is all
       `unknown`;
-    - C13 a session that negotiated minor 14 gets the existing unexpected-type error.
+    - C13 a query from a session that negotiated minor 14 is not answered (the new explicit check).
   - Node (`internal/agent`, with the existing fake central of `prune_test.go`/`prune_review_test.go`; each case uses an
     aged directory with segments and no journal row unless it says otherwise):
     - A1 **old central:** welcome minor 14, so no query is sent and the directory is kept
@@ -6740,7 +6759,9 @@
       (`local_newer`);
     - A8 `incomplete`, `unknown`, an unrecognized status string, and an ID missing from the answer: each kept;
     - A9 `deleted`: removed;
-    - A10 a corrupt or unreadable segment with `complete` and a high `Seq`: kept (`unreadable`);
+    - A10 a segment file that cannot be opened (mode 000), with `complete` and a high `Seq`: kept (`unreadable`); a
+      segment with a corrupt frame in the middle and decodable records after `S` in a later segment: kept
+      (`local_newer`); a torn final frame and every decodable record at or below `S`: removed and counted `torn`;
     - A11 never queried: a journaled run, a live recorder, an unshipped or held mark, a directory modified within
       24 h, a symlink, a malformed ID, a directory without segments (that one is still handled by the segment-less
       pass);
@@ -6758,14 +6779,15 @@
     missing its last records is kept.
   - Mutation check (recorded in the PR): each of these mutants must fail at least one test: treat `unknown` as
     `complete`; skip the local `recording.Read`; use `<` instead of "no record above `S`" (off by one); send the query
-    at minor 14; answer `complete` for a run of another node; drop the re-check before removal.
+    at minor 14; answer `complete` for a run of another node; answer from the writer's `Seq()` instead of the stored
+    segments; drop the re-check before removal.
 
 - **Implementation tasks** (medium implementors; T1 and T2 can run in parallel once T1's proto types are pushed):
 
   | Task | Scope | Acceptance criteria | Depends on |
   |---|---|---|---|
   | T1 | **Proto and central.** The `internal/proto` types and constants (decision 1), `MaxMinor` 15, the hub handler (decision 2), `Recordings.LastSeq`, and the bounds of decision 4 on central. | Tests P and C1–C13 pass. The query is read-only on central (no write transaction). `make check` passes. A draft PR into the release branch. | ADR-0093's minor 14 merged into the target branch |
-  | T2 | **Node.** The confirmed pass of `sweepOrphanRecordings` (decisions 3–5 and 7): candidate selection, gating on the negotiated minor, the query and answer plumbing with timeout and `query_id`, the local proof, the re-check, the batch and read budgets, and the log line. If the agent advertises its own maximum minor (`agentMaxMinor`), raise it to 15 in this task. | Tests A1–A15 pass. Nothing is removed without a `complete` (with the local proof) or `deleted` answer. A central at minor 14 removes nothing. `make check` passes. | T1's proto types |
+  | T2 | **Node.** The confirmed pass of `sweepOrphanRecordings` (decisions 3–5 and 7): candidate selection, gating on the negotiated minor, the query and answer plumbing with timeout and `query_id`, the local proof, the re-check, the batch and read budgets, and the log line. (The agent's hello advertises `proto.MaxMinor`, so T1's bump already makes the node offer 15; until T2 lands the node just never sends the query.) | Tests A1–A15 pass. Nothing is removed without a `complete` (with the local proof) or `deleted` answer. A central at minor 14 removes nothing. `make check` passes. | T1's proto types |
   | T3 | **End to end, mutation check and docs.** The `internal/app` test, the mutation run of the test plan, the node operations docs (what is reclaimed and what is kept), and the TRACEABILITY and PLAN entries. The release manager writes the CHANGELOG line. | The e2e test passes. Every listed mutant fails a test (the run is recorded in the PR). `make site-check` passes. An Opus review of T1–T3. | T1, T2 |
 
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The node deletes only on central's
