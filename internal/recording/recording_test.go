@@ -3,6 +3,7 @@ package recording
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -420,5 +421,57 @@ func TestOpenResumeSeqIsStored(t *testing.T) {
 	defer w.Close()
 	if w.Seq() != 7 || w.Stored() != 7 {
 		t.Fatalf("seq %d stored %d, want 7 and 7", w.Seq(), w.Stored())
+	}
+}
+
+// M9: a failed sync on a segment that has just been rotated cuts the new segment to nothing (it is removed) and
+// Stored stays at the last record of the previous one: nothing of the new segment counts as stored.
+func TestStoredAfterRotationAndFailedSync(t *testing.T) {
+	dir := t.TempDir()
+	fail := false
+	now := time.Unix(1_700_000_000, 0)
+	w, err := Open(Options{Dir: dir, Now: func() time.Time { return now }, Create: failSyncCreate(&fail)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first segment is much larger than what the second will hold, so a synced size left over from it would be
+	// above the new segment's size.
+	big := make([]byte, 4096)
+	for i := range big {
+		big[i] = byte(i*131 + i>>3)
+	}
+	for seq := uint64(1); seq <= 2; seq++ {
+		if _, err := w.Append(Record{Seq: seq, Kind: KindOut, Data: big}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(t, w.Flush())
+	now = now.Add(SegmentMaxAge + time.Second) // the next flush rotates
+	fail = true
+	if _, err := w.Append(Record{Seq: 3, Kind: KindOut, Data: []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err == nil {
+		t.Fatal("flush with a failing sync succeeded")
+	}
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after the failed rotation sync, want 2", w.Stored())
+	}
+	if _, err := os.Stat(filepath.Join(dir, SegmentName(2))); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the new segment was not cut to nothing: %v", err)
+	}
+	segs, _ := Segments(dir)
+	res, _ := Read(dir, 0)
+	if len(segs) != 1 || len(res.Records) != 2 {
+		t.Fatalf("recording holds %d segments, %d records, want 1 and 2", len(segs), len(res.Records))
+	}
+	_ = w.Close()
+	w2, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w2.Close() }()
+	if w2.Stored() != 2 {
+		t.Fatalf("reopened stored %d, want 2", w2.Stored())
 	}
 }

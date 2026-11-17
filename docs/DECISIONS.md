@@ -151,11 +151,27 @@
     what makes the node fill the hole. We chose this over a node-side rule ("an ack below what was sent starts a
     catch-up") for three reasons. First, an ack below the sent sequence is also the normal state while chunks are in
     flight, so the node could not tell a lost chunk from a slow one without per-chunk correlation or a protocol
-    change. Second, the close needs no protocol change and works with every node version. Third, it leaves the
+    change. Second, the close needs no protocol change. Third, it leaves the
     node's ack and catch-up handling (`internal/agent/record.go`, including the persisted acknowledgements of
     ADR-0097) unchanged.
-  - **Consequence.** A store failure costs the node a reconnect, and on a central disk that keeps failing, every
-    recording chunk would cost one. The node's reconnect backoff bounds the rate.
+  - **Consequence: what a close costs, and when central closes.** Closing the connection runs the node's disconnect
+    handling: every live run of the node is marked `unknown` and its live terminals are cut, until the node reconnects
+    (its backoff is 1 s, doubling to a 30 s cap) and reports them. A space's lease is not revoked by it, but the
+    reconnect has to land within the lease TTL margin or the node's spaces lose their lease. Central therefore closes
+    only when a re-ship can help, and at most once per run and connection. A write or sync failure closes (once;
+    chunks already on their way behind it are refused in the backoff without closing again, and a refusal on a *new*
+    connection, which needs a re-ship, closes it once more). A recording that cannot be opened (permissions, the
+    object store, a cut that keeps failing) does not: central logs it, acks the chunk with what is stored and stores
+    nothing past that hole on the connection, so the node keeps the records and re-ships them on its next
+    connection, whenever that is. Such a recording can stall until then; the alternative, a reconnect per failing run
+    every few seconds, would flap every other run of the node.
+  - **Older nodes.** Agents before v0.1.4 ship live output *before* the catch-up on a connection (`proto.MinMinor` is
+    0, so they are accepted). On a new connection their first live chunk can jump past the hole, end the resync mark
+    and be acked over it, so for them the close does not guarantee a gap-free copy: the hole can stay as a
+    gap in central's recording. The mark is not kept across connections for them (the node's
+    catch-up on that connection cannot be told apart from its own jumps).
+  - **Marks are pruned.** The marks above are dropped when the run ends and when the run has not been shipped to for
+    an hour (swept every minute), except a failed segment tail that cannot be cut yet.
   - **Reopen backoff.** After a failure central does not open the run's recording again for a short while (5 s). Opening
     reads the whole recording under the global lock, and a failed flush used to leave a new empty segment behind. A
     chunk inside the window is refused without touching the disk: it is acked with what was stored when the writer

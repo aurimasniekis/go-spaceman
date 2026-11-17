@@ -55,6 +55,8 @@ type fleetEnv struct {
 	clk clock.Clock
 	// recCreate creates central's recording segment files on the next startCentral (nil: the filesystem).
 	recCreate func(path string) (recording.File, error)
+	// agent is the running agent (startAgent), for tests that look at what it has sent.
+	agent *agent.Agent
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
@@ -213,7 +215,7 @@ func (e *fleetEnv) startAgent() {
 	a := agent.New(j, agent.Options{DataDir: e.agentDir, CentralURL: e.srv.URL, Credential: e.cred, Runner: e.run,
 		RunnerInfo: proto.RunnerInfo{Kind: "fake", CoreID: "fakecore"}, HarnessBinaries: map[string]string{hns.KindClaude: "/usr/bin/true", hns.KindCodex: "/usr/bin/true"},
 		AgentBinary: "/usr/bin/true", BridgeSocket: e.bridge, ReconnectMax: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
-	e.agentFn, e.agentJ, e.done = cancel, j, make(chan struct{})
+	e.agent, e.agentFn, e.agentJ, e.done = a, cancel, j, make(chan struct{})
 	go func() { _ = a.Run(ctx); close(e.done) }()
 }
 

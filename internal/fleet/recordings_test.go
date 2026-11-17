@@ -684,3 +684,165 @@ func TestRecordingsArchiveResumeAcksTheArchivedTail(t *testing.T) {
 		t.Fatalf("records did not continue in segment 2: %v", err)
 	}
 }
+
+func isClose(err error) bool {
+	var cc *closeConn
+	return errors.As(err, &cc)
+}
+
+// ADR-0010 addendum: a close of the node connection marks every live run of the node unknown, so central asks for one
+// only when a re-ship can help (a storage failure) and at most once per (run, connection): the chunks already on
+// their way behind the failed one, refused in the reopen backoff, do not close it again. On a new connection the
+// refusal of a chunk that needs a re-ship closes it once more.
+func TestRecordingsStorageFailureClosesTheConnectionOncePerRunAndConnection(t *testing.T) {
+	var clock atomic.Int64
+	base := time.Now()
+	r, fail := failingRecordings(t)
+	r.now = func() time.Time { return base.Add(time.Duration(clock.Load())) }
+	r.reopenBackoff = time.Hour
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	fail.Store(true)
+	closes := 0
+	for i := range 5 {
+		_, err := r.apply(1, chunk(t, out(uint64(2+i), "x")))
+		if err == nil {
+			t.Fatal("failing chunk stored")
+		}
+		if isClose(err) {
+			closes++
+		}
+	}
+	if closes != 1 {
+		t.Fatalf("%d closes on one connection, want 1", closes)
+	}
+	// The node reconnects and re-ships while central is still in the backoff: refused, so closed once more.
+	closes = 0
+	for i := range 3 {
+		_, err := r.apply(2, chunk(t, out(2, "b")))
+		if !errors.Is(err, errReopenBackoff) {
+			t.Fatalf("chunk %d: %v, want errReopenBackoff", i, err)
+		}
+		if isClose(err) {
+			closes++
+		}
+	}
+	if closes != 1 {
+		t.Fatalf("%d closes on the new connection, want 1", closes)
+	}
+	// Another run is closed independently.
+	if !isClose(r.closeLocked(2, "run_aaaaaaaaaaaaaaaaaaaaaaaaaa", errors.New("x"))) {
+		t.Fatal("another run's failure did not close")
+	}
+}
+
+// A recording that cannot be opened (not a storage failure of a chunk) does not close the connection: the chunk is
+// acked with what is stored, the node keeps it, and on that connection nothing is stored past the hole.
+func TestRecordingsOpenFailureDoesNotCloseTheConnection(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	r.reopenBackoff = 0
+	t.Cleanup(r.Close)
+	dir, _ := r.Dir(recRun)
+	if err := os.WriteFile(dir, []byte("not a folder"), 0o600); err != nil { // MkdirAll fails
+		t.Fatal(err)
+	}
+	for i := range 4 {
+		seq, err := r.apply(1, chunk(t, out(uint64(1+i), "a")))
+		if err == nil || isClose(err) || seq != 0 {
+			t.Fatalf("chunk %d: acked %d, %v (close %v), want 0 and a plain error", i, seq, err, isClose(err))
+		}
+	}
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	// The disk is fine again, but the chunks above 1 sent behind the refused ones must not be stored past the hole.
+	if seq, err := r.apply(1, chunk(t, out(3, "c"))); err != nil || seq != 0 {
+		t.Fatalf("chunk past the hole acked %d %v, want 0", seq, err)
+	}
+	if seq, err := r.apply(1, chunk(t, out(1, "a"), out(2, "b"), out(3, "c"))); err != nil || seq != 3 {
+		t.Fatalf("contiguous chunk acked %d %v, want 3", seq, err)
+	}
+}
+
+// An open failure alone never closes the connection, not even for the chunks refused in its backoff window.
+func TestRecordingsBackoffRefusalOfAnOpenFailureDoesNotClose(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	r.reopenBackoff = time.Hour
+	t.Cleanup(r.Close)
+	dir, _ := r.Dir(recRun)
+	if err := os.WriteFile(dir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		if _, err := r.apply(1, chunk(t, out(1, "a"))); err == nil || isClose(err) {
+			t.Fatalf("chunk %d: %v", i, err)
+		}
+	}
+}
+
+// M4: after a failure, a chunk of only repeats does not end the resync: a jumping chunk behind it on the same
+// connection is still not stored past the hole.
+func TestRecordingsRepeatsDoNotEndTheResync(t *testing.T) {
+	r, fail := failingRecordings(t)
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	fail.Store(true)
+	if _, err := r.apply(1, chunk(t, out(2, "b"))); err == nil {
+		t.Fatal("failing chunk stored")
+	}
+	fail.Store(false)
+	if seq, err := r.apply(1, chunk(t, out(1, "a"))); err != nil || seq != 1 {
+		t.Fatalf("repeat acked %d %v", seq, err)
+	}
+	if seq, err := r.apply(1, chunk(t, out(4, "d"))); err != nil || seq != 1 {
+		t.Fatalf("jump after the repeats acked %d %v, want 1 (not stored past the hole)", seq, err)
+	}
+	if got := text(t, r); got != "a" {
+		t.Fatalf("central holds %q, want a", got)
+	}
+	if _, ok := r.resync[recRun]; !ok {
+		t.Fatal("repeats ended the resync")
+	}
+}
+
+// The marks of a run that ended, or that nobody shipped to for an hour, are dropped; a run with an unsynced tail that
+// cannot be cut keeps its entry.
+func TestRecordingsMarksArePruned(t *testing.T) {
+	var clock atomic.Int64
+	base := time.Now()
+	r, fail := failingRecordings(t)
+	r.now = func() time.Time { return base.Add(time.Duration(clock.Load())) }
+	other := "run_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+	fail.Store(true)
+	for _, run := range []string{recRun, other} {
+		c := chunk(t, out(1, "a"))
+		c.RunID = run
+		if _, err := r.apply(1, c); err == nil {
+			t.Fatal("failing chunk stored")
+		}
+	}
+	empty := func() bool {
+		return len(r.resync)+len(r.failed)+len(r.closedOn)+len(r.touched)+len(r.unsynced) == 0
+	}
+	if empty() {
+		t.Fatal("no marks after failures")
+	}
+	r.RunEnded(recRun)
+	if _, ok := r.resync[recRun]; ok || len(r.failed) != 1 {
+		t.Fatalf("an ended run keeps marks: %v %v", r.resync, r.failed)
+	}
+	// An hour later another run's chunk sweeps the idle run's marks.
+	clock.Add(int64(markMaxAge + markPruneEvery))
+	fail.Store(false)
+	third := "run_cccccccccccccccccccccccccc"
+	c := chunk(t, out(1, "a"))
+	c.RunID = third
+	if _, err := r.apply(1, c); err != nil {
+		t.Fatal(err)
+	}
+	if !empty() {
+		t.Fatalf("marks left: resync %v failed %v closed %v touched %v unsynced %v", r.resync, r.failed, r.closedOn, r.touched, r.unsynced)
+	}
+}

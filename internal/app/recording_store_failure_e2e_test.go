@@ -94,16 +94,20 @@ func TestRecordingStoreFailureIsReshippedWithoutAHole(t *testing.T) {
 	// The next live chunk: the node records and ships it while central is still on the failing one.
 	e.run.Output(term, "[mark-3]\r\n")
 	local := filepath.Join(e.agentDir, "runs", r.ID, "recording")
+	var markSeq uint64
 	eventually(t, "next output recorded on the node", func() bool {
 		res, _ := recording.Read(local, 0)
 		for _, rec := range res.Records {
 			if strings.Contains(string(rec.Data), "[mark-3]") {
+				markSeq = rec.Seq
 				return true
 			}
 		}
 		return false
 	})
-	time.Sleep(300 * time.Millisecond) // shipped right after the node's flush
+	// Wait until the node has handed that record to the connection (central is blocked in its sync, so it is queued
+	// behind the failing chunk), instead of sleeping.
+	eventually(t, "next output shipped by the node", func() bool { return e.agent.SentRecordingSeq(r.ID) >= markSeq })
 	close(g.release)
 
 	eventually(t, "central holds the whole recording", func() bool {
