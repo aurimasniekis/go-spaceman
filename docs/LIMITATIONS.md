@@ -327,15 +327,21 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   protocol minor 5, does not answer in time or has history central did not acknowledge is backed up with the history
   central acknowledged, and the manifest and the Backups page name it as possibly stale. Offline backups
   (`spaceman backup create` with central stopped) cannot flush (SM-MEM-005).
-- **A role rename can stay open** (ADR-0093). A busy role is refused: a rename waits while a run of either name (or a
-  dream run in the space) is active on the node, and the move happens when it ends. There is no "abandon the node move"
-  action yet. A node that keeps reporting `error` leaves the rename `failed` (central does not queue the command again on
-  an `error`), and the node retries an `error` only at its next agent start, not periodically. A node downgraded below
-  protocol minor 14 after a rename never receives it. Until it is done the rename holds launches of both names and
-  refuses a clean relocation; the exits are fixing or upgrading the node, or a `source_unavailable` relocation (which
-  closes the open rename). A deleted role's leftover memory collection blocks reusing its name as a rename target.
-  Deleting or archiving a role's memory and a web UI rename are follow-ups. A rename changes only its own space: the
-  installation-wide default human policy keeps a successor role of the old name.
+- **A role rename can stay open until an admin acts** (ADR-0093, addendum T-H4). A busy role is refused: a rename waits
+  while a run of either name (or a dream run in the space) is active on the node, and the move happens when it ends. A
+  node that keeps reporting `error` leaves the rename `failed` (central does not queue the command again on an `error`),
+  and the node retries an `error` only at its next agent start, not periodically. A node downgraded below protocol minor 14
+  after a rename never receives it. Until it is done the rename holds launches of both names and dream launches and
+  refuses a clean relocation. The exits: fix or upgrade the node and **retry** (`spaceman role retry-rename`), **close**
+  it (`spaceman role close-rename`, admins only), or a `source_unavailable` relocation (which closes the open rename as
+  `not_needed`). A close is final: the rename is `abandoned`, and the node's old-name folder is left on the node as an
+  orphan, never deleted and never synced again, so anything it held that central never received stays only there (a later
+  role of that name sets it aside under `.retained/`). A closed rename whose command the node has not received yet keeps
+  refusing renames of both names until the node connects, or until an admin closes it with `--forget-node`, which
+  gives up delivery (the node, if it returns, keeps the old folder as an orphan). Retry and close are not in the web UI or Telegram. A deleted role's
+  leftover memory collection blocks reusing its name as a rename target. Deleting or archiving a role's memory and a web UI
+  rename are follow-ups. A rename changes only its own space: the installation-wide default human policy keeps a successor
+  role of the old name.
 
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.

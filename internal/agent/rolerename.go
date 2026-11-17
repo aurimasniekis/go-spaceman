@@ -82,6 +82,10 @@ func (a *Agent) handleMemoryRename(ctx context.Context, c proto.Command, fresh b
 		reject("the rename id names other roles than the journaled rename")
 		return
 	}
+	if p.Closed {
+		a.closedMemoryRename(ctx, c, p, fresh)
+		return
+	}
 	if !found {
 		if _, ok := a.lease(c.SpaceID, c.Generation); !ok {
 			reject("no valid lease for this space and generation")
@@ -99,7 +103,46 @@ func (a *Agent) handleMemoryRename(ctx context.Context, c proto.Command, fresh b
 	}
 	a.j.commandDone(ctx, c.CommandID, "done", "")
 	bctx := context.WithoutCancel(ctx)
-	a.goTrack(func() { a.renameMemory(bctx, p.RenameID, true) })
+	a.goTrack(func() {
+		a.renameMemory(bctx, p.RenameID, true)
+		a.renameSettled(bctx, p.RenameID)
+	})
+}
+
+// closedMemoryRename handles central's closed notice for a rename an admin closed and whose node it forgot (ADR-0093
+// addendum, forget): the folder is never moved. A rename the journal does not hold is journaled closed (dropped), one
+// that has not started moving is dropped; either way the old-name folder is an orphan, set aside when the name is used
+// again. A moving or done rename is left: its folder is (or ends) under the new name. It needs no lease, since nothing on
+// disk changes, and it is not reported. Renames of the space that waited for this one are tried again.
+func (a *Agent) closedMemoryRename(ctx context.Context, c proto.Command, p proto.MemoryRename, fresh bool) {
+	a.renameMu.Lock()
+	err := a.j.insertClosedRoleRename(ctx, renameRow{ID: p.RenameID, SpaceID: p.SpaceID, From: p.From, To: p.To})
+	if err == nil {
+		_, err = a.j.closeRoleRename(ctx, p.RenameID)
+	}
+	a.renameMu.Unlock()
+	if err != nil {
+		a.log.Warn("journal closed role rename", obs.Err(err))
+		return // no ack: central sends it again after a reconnect
+	}
+	if fresh {
+		a.ack(ctx, c, proto.AckAccepted, "")
+	} else {
+		a.ack(ctx, c, proto.AckDuplicate, "")
+	}
+	a.j.commandDone(ctx, c.CommandID, "done", "")
+	a.log.Info("central closed a role rename and forgot this node's move; the old folder stays as an orphan",
+		slog.String(obs.FieldSpaceID, p.SpaceID), slog.String("rename.id", p.RenameID), slog.String("rename.from", p.From))
+	bctx := context.WithoutCancel(ctx)
+	a.goTrack(func() { a.retryRoleRenames(bctx, p.SpaceID) })
+}
+
+// renameSettled tries the space's deferred renames again once a rename is done or dropped: a later rename of either
+// name waits for it (renameOrder), and nothing else would wake it before the next run end or agent start.
+func (a *Agent) renameSettled(ctx context.Context, id string) {
+	if r, found, err := a.j.roleRename(ctx, id); err == nil && found && (r.State == renameDone || r.State == renameDropped) {
+		a.retryRoleRenames(ctx, r.SpaceID)
+	}
 }
 
 // renameMemory tries a journaled rename and reports its outcome. resend reports a done rename's ok again even when central
@@ -152,6 +195,16 @@ func (a *Agent) renameMemory(ctx context.Context, id string, resend bool) {
 // moveRoleMemory moves the rename's role folder (ADR-0093 §3.3 steps 2-7) and returns the outcome to report. The memory
 // locks of both names are held throughout, so no checkpoint, preparation or sync of either name runs meanwhile.
 func (a *Agent) moveRoleMemory(ctx context.Context, r renameRow) (result, msg string) {
+	if r.State == renamePending {
+		// Moves happen in the order the node journaled them, which is central's order: a later rename of either name
+		// waits for an earlier open one (ADR-0093 addendum, ordering). A moving rename already started and finishes.
+		if prior, err := a.j.earlierOpenRename(ctx, r); err != nil {
+			return proto.MemoryRenameError, "read the node's journal: " + err.Error()
+		} else if prior.ID != "" {
+			return proto.MemoryRenameDeferred, fmt.Sprintf("the earlier rename %s of %s to %s has not moved on the node yet; this one moves after it",
+				prior.ID, prior.From, prior.To)
+		}
+	}
 	m := a.mem
 	keys := []string{colKey(r.SpaceID, r.From), colKey(r.SpaceID, r.To)}
 	slices.Sort(keys)
@@ -169,6 +222,11 @@ func (a *Agent) moveRoleMemory(ctx context.Context, r renameRow) (result, msg st
 	dir := filepath.Join(m.root, r.SpaceID)
 	from, to := filepath.Join(dir, r.From), filepath.Join(dir, r.To)
 	if r.State == renamePending {
+		// The old name's folder may be the orphan of a closed rename (a role of that name never ran here since): it is
+		// not this role's memory, so it is set aside and nothing moves.
+		if err := a.j.retainOrphan(ctx, m.root, r.SpaceID, r.From); err != nil {
+			return proto.MemoryRenameError, "set the orphaned " + r.From + " folder aside: " + err.Error()
+		}
 		if m.git != nil && exists(filepath.Join(from, "shared.git")) {
 			m.checkpointAll(ctx, r.SpaceID, r.From)
 		}
@@ -283,7 +341,14 @@ func (a *Agent) roleRenamedAck(ctx context.Context, ack proto.MemoryRenamedAck) 
 	a.renameMu.Lock()
 	r, found, err := a.j.roleRename(ctx, ack.RenameID)
 	if err == nil && found {
-		err = a.j.ackRoleRename(ctx, r.ID, ack.Result, ack.Error != "")
+		if ack.Error == proto.MemoryRenameClosed {
+			// An admin closed the rename: whatever it reported last, a folder that has not moved stays where it is.
+			if _, err = a.j.closeRoleRename(ctx, r.ID); err == nil {
+				err = a.j.ackRoleRename(ctx, r.ID, ack.Result, false)
+			}
+		} else {
+			err = a.j.ackRoleRename(ctx, r.ID, ack.Result, ack.Error != "")
+		}
 	}
 	a.renameMu.Unlock()
 	if err != nil || !found {
@@ -291,6 +356,9 @@ func (a *Agent) roleRenamedAck(ctx context.Context, ack proto.MemoryRenamedAck) 
 	}
 	if ack.Error != "" {
 		a.log.Warn("central did not record the role rename's outcome", slog.String("rename.id", r.ID), slog.String("reason", ack.Error))
+		// A dropped rename no longer orders the space's later renames: try the ones that waited for it.
+		bctx := context.WithoutCancel(ctx)
+		a.goTrack(func() { a.renameSettled(bctx, r.ID) })
 	}
 	if r.State == renameDone && ack.Result == proto.MemoryRenameOK && a.mem.git != nil {
 		a.mem.scheduleSync(r.SpaceID, r.To, 0)
@@ -359,14 +427,16 @@ func (j *Journal) renameFrom(ctx context.Context, spaceID, role string) bool {
 // of a new role reusing the old name can arrive first (ADR-0093).
 var renameAckWait = 5 * time.Second
 
-// awaitRenameAck waits (bounded) while the only thing keeping role's name held is a done rename whose ack is on its way.
-// A pending or moving rename is not waited for: central holds those launches itself. prepare runs once per role, so a
-// multi-role dream waits up to renameAckWait (5s) for each role that has a done, unacked rename.
+// awaitRenameAck waits (bounded) while role's name is held by a rename the node has not finished: a done one whose ack is
+// on its way, or a pending or moving one. Central holds launches of an open rename itself, but a closed rename (admin
+// close) lifts that hold while the node may still be journaling or moving the old folder, so a launch of the old name
+// can arrive in that window; it waits here, and renameFrom refuses it if the wait ends first. prepare runs once per role,
+// so a multi-role dream waits up to renameAckWait (5s) for each role that has such a rename.
 func (j *Journal) awaitRenameAck(ctx context.Context, spaceID, role string) {
 	deadline := time.Now().Add(renameAckWait)
 	for time.Now().Before(deadline) {
 		var n int
-		err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ? AND state = 'done' AND acked = 0`,
+		err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ? AND (state IN ('pending', 'moving') OR (state = 'done' AND acked = 0))`,
 			spaceID, role).Scan(&n)
 		if err != nil || n == 0 {
 			return
@@ -443,6 +513,32 @@ func (j *Journal) insertRoleRename(ctx context.Context, r renameRow) error {
 	})
 }
 
+// insertClosedRoleRename journals a rename central closed before this node journaled it (the closed notice): dropped,
+// with result closed and nothing to report, so its old name is an orphan (orphanedRole). A rename already journaled is
+// left as it is.
+func (j *Journal) insertClosedRoleRename(ctx context.Context, r renameRow) error {
+	return j.s.W().TxNamed(ctx, "journal.role_rename_closed", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO role_renames (rename_id, space_id, from_role, to_role, state, result, message, acked, created_at, updated_at)
+			VALUES (?, ?, ?, ?, 'dropped', ?, 'closed by central', 1, ?, ?) ON CONFLICT (rename_id) DO NOTHING`,
+			r.ID, r.SpaceID, r.From, r.To, proto.MemoryRenameClosed, tx.NowMicros(), tx.NowMicros())
+		return err
+	})
+}
+
+// earlierOpenRename returns the first rename journaled before r in its space that is still open (pending or moving) and
+// shares a name with it, or a zero row when there is none.
+func (j *Journal) earlierOpenRename(ctx context.Context, r renameRow) (renameRow, error) {
+	prior, err := scanRename(j.s.ReadDB().QueryRowContext(ctx, `SELECT `+renameCols+` FROM role_renames p
+		WHERE p.space_id = ? AND p.rename_id <> ? AND p.state IN ('pending', 'moving')
+		  AND (p.from_role IN (?, ?) OR p.to_role IN (?, ?))
+		  AND (p.created_at, p.rename_id) < (SELECT created_at, rename_id FROM role_renames WHERE rename_id = ?)
+		ORDER BY p.created_at, p.rename_id LIMIT 1`, r.SpaceID, r.ID, r.From, r.To, r.From, r.To, r.ID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return renameRow{}, nil
+	}
+	return prior, err
+}
+
 func (j *Journal) setRoleRenameState(ctx context.Context, id, state string) error {
 	return j.s.W().TxNamed(ctx, "journal.role_rename_state", func(tx *store.Tx) error {
 		_, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET state = ?, updated_at = ? WHERE rename_id = ?`, state, tx.NowMicros(), id)
@@ -471,6 +567,11 @@ func (j *Journal) finishRoleRename(ctx context.Context, r renameRow) error {
 			r.To, tx.NowMicros(), r.SpaceID, r.From); err != nil {
 			return err
 		}
+		// A role moved onto a closed rename's old name owns that folder now: the name is no longer an orphan.
+		if _, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET result = 'retained' WHERE space_id = ? AND from_role = ? AND state = 'dropped' AND result = ?`,
+			r.SpaceID, r.To, proto.MemoryRenameClosed); err != nil {
+			return err
+		}
 		_, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET state = 'done', result = 'ok', message = '', acked = 0, updated_at = ? WHERE rename_id = ?`,
 			tx.NowMicros(), r.ID)
 		return err
@@ -495,6 +596,60 @@ func (j *Journal) ackRoleRename(ctx context.Context, id, result string, refused 
 		if n, _ := res.RowsAffected(); n == 1 && refused {
 			_, err = tx.SQL.ExecContext(ctx, `UPDATE role_renames SET state = 'dropped' WHERE rename_id = ? AND state = 'pending'`, id)
 		}
+		return err
+	})
+}
+
+// closeRoleRename ends a rename an admin closed (ADR-0093 addendum): a rename that has not moved the folder is dropped
+// and marked closed, whatever outcome it last reported, so it never retries and no longer holds syncs; its old-name
+// folder stays on disk, orphaned (orphanedRole). A rename that is moving or done is left: the folder is (or ends) under
+// the new name, which is where central's copy is. It reports whether the rename was dropped.
+func (j *Journal) closeRoleRename(ctx context.Context, id string) (bool, error) {
+	var dropped bool
+	err := j.s.W().TxNamed(ctx, "journal.role_rename_close", func(tx *store.Tx) error {
+		res, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET state = 'dropped', result = ?, message = 'closed by central', acked = 1, updated_at = ?
+			WHERE rename_id = ? AND state = 'pending'`, proto.MemoryRenameClosed, tx.NowMicros(), id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		dropped = n == 1
+		return nil
+	})
+	return dropped, err
+}
+
+// orphanedRole reports whether role is the old name of a rename central closed before the node moved its folder: the
+// folder under that name is an orphan, never synced and never merged into a later role of that name (prepare sets it
+// aside).
+func (j *Journal) orphanedRole(ctx context.Context, spaceID, role string) bool {
+	var n int
+	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ? AND state = 'dropped' AND result = ?`,
+		spaceID, role, proto.MemoryRenameClosed).Scan(&n)
+	return err == nil && n > 0
+}
+
+// retainOrphan sets an orphaned old-name folder aside to <space>/.retained/ when a role of that name starts again (it is
+// never deleted or merged), and marks the closed rename settled so the name is a normal collection again. The caller
+// holds the collection's lock.
+func (j *Journal) retainOrphan(ctx context.Context, root, spaceID, role string) error {
+	var id string
+	if err := j.s.ReadDB().QueryRowContext(ctx, `SELECT rename_id FROM role_renames WHERE space_id = ? AND from_role = ? AND state = 'dropped' AND result = ?
+		ORDER BY created_at DESC, rename_id DESC LIMIT 1`, spaceID, role, proto.MemoryRenameClosed).Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // no closed rename: nothing is orphaned
+		}
+		return err
+	}
+	dir := filepath.Join(root, spaceID)
+	if folder := filepath.Join(dir, role); exists(folder) {
+		if err := retainRenamed(dir, folder, renameRow{ID: id, To: role}); err != nil {
+			return err
+		}
+	}
+	return j.s.W().TxNamed(ctx, "journal.role_rename_settle", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET result = 'retained' WHERE space_id = ? AND from_role = ? AND state = 'dropped' AND result = ?`,
+			spaceID, role, proto.MemoryRenameClosed)
 		return err
 	})
 }

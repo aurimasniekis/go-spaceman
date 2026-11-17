@@ -47,6 +47,10 @@ func (svc *Service) roleRenamed(ctx context.Context, nodeID string, rep proto.Me
 			ack.Error = "not this node's rename"
 			return nil
 		}
+		if r.NodeState == catalog.RenameNodeAbandoned {
+			ack.Error = proto.MemoryRenameClosed // an admin closed it: the node drops it (or, if it already moved, just syncs the new name)
+			return nil
+		}
 		next, at := renameNodeNext(r.NodeState, rep.Result)
 		if next == "" {
 			return nil // already done (a repeated report) or not the node's to end: nothing changes
@@ -79,7 +83,7 @@ func (svc *Service) roleRenamed(ctx context.Context, nodeID string, rep proto.Me
 }
 
 // renameNodeNext is the node state a report moves an open rename to ("" when nothing changes) and whether the move ends
-// it (node_done_at is set). Only pending and failed renames are open; done and not_needed never change.
+// it (node_done_at is set). Only pending and failed renames are open; done, not_needed and abandoned never change.
 func renameNodeNext(state, result string) (string, bool) {
 	if state != catalog.RenameNodePending && state != catalog.RenameNodeFailed {
 		return "", false
@@ -110,12 +114,20 @@ func memoryRenameRejected(ctx context.Context, tx *store.Tx, cmd db.NodeCommand,
 // requeueRoleRenames queues a memory.rename again, inside the node's connect transaction, for every open rename of the
 // node whose last command the node refused or that has none left to deliver. A command that is pending, sent or accepted
 // needs nothing: it is delivered again, or the node has it and reports its outcome until central acknowledges it.
+//
+// A closed rename whose last command the node refused is queued again too: until the node journals it, it blocks
+// renames of both names on central, and the node must learn it to orphan the old folder (ADR-0093 addendum, ordering).
+// A forgotten one (its commands cancelled) is not.
 func (svc *Service) requeueRoleRenames(ctx context.Context, tx *store.Tx, nodeID string) error {
 	open, err := tx.Q.ListOpenRoleRenamesByNode(ctx, nodeID)
 	if err != nil {
 		return err
 	}
-	for _, r := range open {
+	closed, err := tx.Q.ListRejectedClosedRoleRenamesByNode(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	for _, r := range append(open, closed...) {
 		key := catalog.RenameCommandKey(r.ID)
 		cmds, err := tx.Q.ListRoleRenameCommands(ctx, db.ListRoleRenameCommandsParams{NodeID: nodeID, Key: key, KeyEnd: key + ";"})
 		if err != nil {
@@ -172,4 +184,17 @@ func renameOpenForRelocation(ctx context.Context, q *db.Queries, spaceID string)
 	r := open[0]
 	return apperr.New(apperr.CodePrecondition, "the role %s was renamed to %s and node %s has not moved its memory yet (%s, rename %s); "+
 		"relocate the space once the rename is done", r.FromName, r.ToName, r.NodeID, r.NodeState, r.ID)
+}
+
+// RoleRenameClosed tells a connected node that an admin closed a rename (memory.renamed.ack with error closed), so it
+// drops the rename and lifts its own sync hold at once. A node that is away, or was downgraded below minor 14, learns it from the ack to
+// its next report instead (roleRenamed), and central stays closed either way.
+func (h *Hub) RoleRenameClosed(nodeID, renameID string) {
+	h.mu.Lock()
+	s := h.sessions[nodeID]
+	h.mu.Unlock()
+	if s == nil || s.minor < proto.MinorRoleRename {
+		return
+	}
+	_ = s.send(proto.TypeMemoryRenamedAck, h.svc.now(), proto.MemoryRenamedAck{RenameID: renameID, Result: proto.MemoryRenameError, Error: proto.MemoryRenameClosed})
 }

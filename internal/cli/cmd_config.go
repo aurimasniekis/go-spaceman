@@ -344,6 +344,18 @@ func (a *App) roleCmd() *cobra.Command {
 			get: "get-space-role", optionalIfMatch: true, version: roleRevision,
 			args: pos("name"), form: func(f *form) { f.str("to", "new_name", "the new name (required)") }, note: renameNote,
 			example: "spaceman role rename implementor --to implementor-hard --space payments"}),
+		a.cmd(opts{use: "retry-rename", short: "Send a stuck role rename's memory move to the node again (admins)", op: "retry-space-role-rename", scoped: true,
+			args: pos("rename-id"), note: retryRenameNote,
+			example: "spaceman role retry-rename rrn_01... --space payments"}),
+		a.cmd(opts{use: "close-rename", short: "Give up a stuck role rename's memory move: holds lift, the node's old folder stays as an orphan (admins)",
+			op: "close-space-role-rename", scoped: true, args: pos("rename-id"), form: func(f *form) {
+				f.str("reason", "reason", "why the move is given up").
+					boolean("forget-node", "forget_node", "also stop waiting for the node to receive the rename: releases both names for other renames; "+
+						"a node that comes back keeps the old folder as an orphan")
+			},
+			confirm: "give up the node's memory move (the old folder stays on the node, never synced again)",
+			note:    closeRenameNote,
+			example: "spaceman role close-rename rrn_01... --space payments --reason \"node retired\" --forget-node --yes"}),
 		a.cmd(opts{use: "renames", short: "A space's role renames, newest first, and the state of each memory move", op: "list-space-role-renames", scoped: true,
 			view: view{items: "items", cols: renameCols, empty: "No role renames."}}),
 		a.cmd(opts{use: "add-starters", short: "Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer)",
@@ -552,6 +564,23 @@ func (a *App) approvalPolicyCmd() *cobra.Command {
 		a.cmd(opts{use: "delete", short: "Remove a policy (approvals it produced stay usable until they expire)", op: "delete-approval-policy",
 			args: pos("policy"), done: "Approval policy removed."}),
 	)
+}
+
+// closeRenameNote says what a close did and left behind.
+func closeRenameNote(map[string]any) string {
+	return "Rename closed. Launches are no longer held; central's memory stays under the new name and the node's old folder is orphaned, not deleted. " +
+		"Until the node has received the rename, other renames of either name stay blocked; --forget-node releases them."
+}
+
+// retryRenameNote says what a retry left to do.
+func retryRenameNote(m map[string]any) string {
+	if m["node_too_old"] == true {
+		return "Queued, but the node last spoke a protocol below 1.14: the move is sent when it connects at 1.14 or more. Upgrade it, or close the rename."
+	}
+	if m["queued"] == true {
+		return "The move was queued again; launches stay held until the node reports it done."
+	}
+	return "A move is still waiting for the node; woke its delivery."
 }
 
 // roleRevision is the version a role rename checks with If-Match: the role's revision, which the API compares, not the

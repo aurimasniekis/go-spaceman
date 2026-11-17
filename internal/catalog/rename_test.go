@@ -416,7 +416,7 @@ func TestRenameSpaceRoleBodyIsRerunnable(t *testing.T) {
 			if err := f.svc.renameTx(f.ctx, tx, op, "rrn_fixed", "spc_a", "a", "z", 0); err != nil {
 				return err
 			}
-			out = f.renameState(tx.SQL)
+			out = f.renameState(tx.SQL, true)
 			if !commit {
 				return rollback
 			}
@@ -429,25 +429,34 @@ func TestRenameSpaceRoleBodyIsRerunnable(t *testing.T) {
 		}
 		return out
 	}
+	before := f.renameState(f.s.ReadDB(), false)
 	first := run(false)
 	if f.role("spc_a", "a").Name != "a" {
 		t.Fatal("the rolled back attempt left the rename")
+	}
+	if after := f.renameState(f.s.ReadDB(), false); !reflect.DeepEqual(before, after) {
+		t.Fatal("the rolled back attempt left changes")
 	}
 	second := run(true)
 	if !reflect.DeepEqual(first, second) {
 		t.Errorf("the second attempt differs:\n%v\n%v", first, second)
 	}
-	if committed := f.renameState(f.s.ReadDB()); !reflect.DeepEqual(committed, second) {
+	if committed := f.renameState(f.s.ReadDB(), true); !reflect.DeepEqual(committed, second) {
 		t.Errorf("committed state differs from the attempt:\n%v\n%v", committed, second)
 	}
 }
 
-// renameState is every seeded row plus the role and rename rows, as one comparable value.
+// renameState is the seeded rows plus the role and rename rows, as one comparable value. changedOnly keeps just the rows
+// a rename of a rewrites (want set), so the dump is cheap enough to run inside the write transaction; the rest are
+// compared outside it.
 func (f *renameFx) renameState(q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}) []map[string]any {
+}, changedOnly bool) []map[string]any {
 	out := []map[string]any{}
 	for _, r := range f.rows {
+		if changedOnly && r.want == nil {
+			continue
+		}
 		out = append(out, snapshot(f.t, f.ctx, q, r))
 	}
 	for _, n := range []string{"a", "z"} {

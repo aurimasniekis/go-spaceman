@@ -116,6 +116,10 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 	if m.a.j.renameFrom(ctx, spaceID, role) {
 		return "", fmt.Errorf("role %s is being renamed; its memory moves to the new name", role)
 	}
+	// A closed rename left the old-name folder orphaned: a role of that name starting again must not inherit it.
+	if err := m.a.j.retainOrphan(ctx, m.root, spaceID, role); err != nil {
+		return "", fmt.Errorf("set the orphaned %s folder aside: %w", role, err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, prepareDeadline)
 	defer cancel()
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
@@ -376,6 +380,9 @@ func (m *memManager) sync(ctx context.Context, spaceID, role string) {
 	if !ok {
 		return // offered again on reconnect
 	}
+	if m.a.j.orphanedRole(ctx, spaceID, role) {
+		return // the folder is an orphan of a closed rename (ADR-0093 addendum): never synced
+	}
 	if m.a.j.renameHeld(ctx, spaceID, role) {
 		return // central refuses both names until it has the node's move (ADR-0093); synced once it acknowledged it
 	}
@@ -456,20 +463,20 @@ func (m *memManager) resume(ctx context.Context) {
 	if m.git == nil {
 		return
 	}
-	for _, k := range m.collections() {
+	for _, k := range m.collections(ctx) {
 		m.scheduleSync(k[0], k[1], 0)
 	}
 	m.sendStatus(ctx)
 }
 
 // collections lists the (space, role) collections on disk.
-func (m *memManager) collections() [][2]string {
+func (m *memManager) collections(ctx context.Context) [][2]string {
 	var out [][2]string
 	spaces, _ := os.ReadDir(m.root)
 	for _, s := range spaces {
 		roles, _ := os.ReadDir(filepath.Join(m.root, s.Name()))
 		for _, r := range roles {
-			if _, err := os.Stat(filepath.Join(m.root, s.Name(), r.Name(), "shared.git", "HEAD")); err == nil {
+			if _, err := os.Stat(filepath.Join(m.root, s.Name(), r.Name(), "shared.git", "HEAD")); err == nil && !m.a.j.orphanedRole(ctx, s.Name(), r.Name()) {
 				out = append(out, [2]string{s.Name(), r.Name()})
 			}
 		}
@@ -526,7 +533,7 @@ func (m *memManager) sendStatus(ctx context.Context) {
 		return
 	}
 	st := proto.MemoryStatus{Collections: []proto.MemoryCollectionStatus{}}
-	for _, k := range m.collections() {
+	for _, k := range m.collections(ctx) {
 		st.Collections = append(st.Collections, m.statusOf(ctx, k[0], k[1]))
 	}
 	_ = m.a.send(ctx, proto.TypeMemoryStatus, st)

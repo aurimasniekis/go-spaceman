@@ -66,6 +66,11 @@ type Service struct {
 	// repository and wakes the delivery of the node's memory.rename. Nil: nothing runs (memory.Service finishes the move
 	// on the next access).
 	AfterRename func(ctx context.Context, r RoleRename)
+	// AfterRenameRetry runs after an admin's retry committed and queued a command: it wakes the node's delivery.
+	AfterRenameRetry func(ctx context.Context, r RoleRename)
+	// AfterRenameClose runs after an admin closed a rename: it tells a connected node (memory.renamed.ack with error
+	// closed) so it drops the rename and lifts its own sync hold.
+	AfterRenameClose func(ctx context.Context, r RoleRename)
 }
 
 // Options configure the service.

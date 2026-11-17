@@ -39,6 +39,10 @@ const (
 	MemoryRenameError    = "error"
 )
 
+// MemoryRenameClosed is the Error of a memory.renamed.ack for a rename an admin closed (ADR-0093 addendum): central gave up
+// the node's move, so the node drops the rename if it has not moved the folder yet and leaves the old folder in place.
+const MemoryRenameClosed = "closed"
+
 // MemoryRenameMaxMessage bounds MemoryRenamed.Message; central truncates a longer one.
 const MemoryRenameMaxMessage = 500
 
@@ -54,6 +58,11 @@ type MemoryRename struct {
 	SpaceID  string `json:"space_id"`
 	From     string `json:"from"`
 	To       string `json:"to"`
+	// Closed: an admin closed the rename and forgot the node (ADR-0093 addendum, forget). The node must not move the
+	// folder: it journals the rename as closed (dropped) when it has not journaled it yet, or drops it when it has not
+	// started moving, so the old-name folder is an orphan that a later role of that name never inherits. It needs no
+	// lease (nothing on disk changes) and is not reported.
+	Closed bool `json:"closed,omitempty"`
 }
 
 // Validate checks the payload before any side effect.

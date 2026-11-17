@@ -140,7 +140,7 @@ func TestRoleRenameMovesMemory(t *testing.T) {
 			t.Fatalf("%s under the new name: %q", f, got)
 		}
 	}
-	if c := m.collections(); !slices.Equal(c, [][2]string{{rnSpace, "builder"}}) {
+	if c := m.collections(ctx); !slices.Equal(c, [][2]string{{rnSpace, "builder"}}) {
 		t.Fatalf("collections %v", c)
 	}
 	st, _ := a.j.memory(ctx, rnSpace, "builder")
@@ -394,7 +394,7 @@ func TestRoleRenameRetainsLeftover(t *testing.T) {
 					t.Fatal("the leftover was merged into the renamed role")
 				}
 			}
-			if c := m.collections(); !slices.Equal(c, want) {
+			if c := m.collections(ctx); !slices.Equal(c, want) {
 				t.Fatalf("collections %v, want %v (.retained is not one)", c, want)
 			}
 			if validMemoryKey(rnSpace, ".retained", "ins_x") {
@@ -712,6 +712,26 @@ func TestPrepareRefusesRenamedFrom(t *testing.T) {
 		if exists(a.mem.shared(rnSpace, "from-"+st)) {
 			t.Fatalf("%s: a collection was created under the old name", st)
 		}
+	}
+	stopTimers(a.mem)
+}
+
+// A launch of a name held by a pending rename waits for the rename to be dropped (an admin close reaching the node)
+// instead of failing at once.
+func TestPrepareWaitsForPendingRename(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	defer func(w time.Duration) { renameAckWait = w }(renameAckWait)
+	renameAckWait = 5 * time.Second
+	if err := a.j.insertRoleRename(ctx, renameRow{ID: "rrn_wait", SpaceID: rnSpace, From: "from-w", To: "to-w", State: renamePending}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = a.j.closeRoleRename(ctx, "rrn_wait")
+	}()
+	if _, err := a.mem.prepare(ctx, rnSpace, "from-w", "ins_x"); err != nil {
+		t.Fatalf("prepare did not wait for the drop: %v", err)
 	}
 	stopTimers(a.mem)
 }

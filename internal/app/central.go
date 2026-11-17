@@ -529,6 +529,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			c.Fleet.Hub().Kick(r.NodeID)
 		}
 	}
+	c.Catalog.AfterRenameRetry = func(_ context.Context, r catalog.RoleRename) { c.Fleet.Hub().Kick(r.NodeID) }
+	c.Catalog.AfterRenameClose = func(_ context.Context, r catalog.RoleRename) { c.Fleet.Hub().RoleRenameClosed(r.NodeID, r.ID) }
 	c.Fleet.Hub().Memory = c.Memory
 	c.Fleet.MemoryExport = c.Memory
 	c.Fleet.Grants = c.Auth

@@ -17,6 +17,8 @@ func TestRoleRenameClasses(t *testing.T) {
 	}{
 		{"rename-space-role", spacemanmcp.Dangerous},
 		{"list-space-role-renames", spacemanmcp.Read},
+		{"retry-space-role-rename", spacemanmcp.Dangerous},
+		{"close-space-role-rename", spacemanmcp.Dangerous},
 	} {
 		r, ok := d.RuleFor(c.op)
 		if !ok {
