@@ -36,6 +36,7 @@ func prepareWorktree(ctx context.Context, space string, w proto.Worktree) (strin
 		defer cancel()
 		cmd := exec.CommandContext(ctx, git, append(append(append([]string{}, safeGitOpts...), "-C", repo), args...)...) //nolint:gosec // fixed git subcommands; validated names
 		cmd.Env = gitEnv()
+		memory.TermFirst(cmd)
 		var out, errb bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errb
 		if err := cmd.Run(); err != nil {
@@ -48,7 +49,7 @@ func prepareWorktree(ctx context.Context, space string, w proto.Worktree) (strin
 		return out.String(), nil
 	}
 	guard := func() error {
-		list, err := raw("config", "--list", "--name-only", "--show-scope")
+		list, err := raw(memory.ConfigListArgs...)
 		if err != nil {
 			return err
 		}

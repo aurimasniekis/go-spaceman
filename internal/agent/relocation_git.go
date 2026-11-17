@@ -62,14 +62,14 @@ func gitEnv(extra ...string) []string {
 		}
 		env = append(env, kv)
 	}
-	return append(env, append([]string{"GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}, extra...)...)
+	return append(env, append([]string{"GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_NO_LAZY_FETCH=1"}, extra...)...)
 }
 
 // runEnv runs git in dir; inside an existing repository it first refuses repository configuration that would run a
 // program (memory.UnsafeConfig), because agents can write the repositories' .git.
 func (g *projectGit) runEnv(ctx context.Context, dir string, timeout time.Duration, env []string, args ...string) (string, error) {
 	if len(args) > 0 && memory.Guarded(args[0]) {
-		list, err := g.rawEnv(ctx, dir, timeout, nil, "config", "--list", "--name-only", "--show-scope")
+		list, err := g.rawEnv(ctx, dir, timeout, nil, memory.ConfigListArgs...)
 		if err != nil {
 			return "", err
 		}
@@ -86,6 +86,7 @@ func (g *projectGit) rawEnv(ctx context.Context, dir string, timeout time.Durati
 	cmd := exec.CommandContext(ctx, g.bin, append(append([]string{}, safeGitOpts...), args...)...) //nolint:gosec // fixed git subcommands; validated arguments
 	cmd.Dir = dir
 	cmd.Env = gitEnv(env...)
+	memory.TermFirst(cmd)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {

@@ -186,6 +186,9 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.export_max_bytes` | `2147483648` | `SPACEMAN_LIMITS_EXPORT_MAX_BYTES` | Bounds one space export archive (1 MiB-64 GiB, default 2 GiB): a larger export is refused. |
 | `limits.control_autostart` | `1` | `SPACEMAN_LIMITS_CONTROL_AUTOSTART` | Starts a space's control role when work arrives for control and no control run is live (1: on, the default; 0: off). It is skipped while the space is paused and when the launch is refused (no control role, account or budget); at most 6 starts an hour per space (ADR-0056). |
 | `limits.control_idle_stop_minutes` | `30` | `SPACEMAN_LIMITS_CONTROL_IDLE_STOP_MINUTES` | Stops a control run that has been idle this long (finished its turn, nothing waiting for it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at most 10080). |
+| `limits.control_watchdog_minutes` | `15` | `SPACEMAN_LIMITS_CONTROL_WATCHDOG_MINUTES` | How long work may wait for a live, idle control that does nothing before SpaceMan types a reminder into its terminal (ADR-0099; 0: off; default 15; at most 1440). |
+| `limits.control_watchdog_nudges` | `3` | `SPACEMAN_LIMITS_CONTROL_WATCHDOG_NUDGES` | How many reminders in a row control may leave unanswered before the space's people get a human action (0: never; default 3; at most 20). |
+| `limits.control_watchdog_restart` | `0` | `SPACEMAN_LIMITS_CONTROL_WATCHDOG_RESTART` | Also restarts control when the watchdog escalates (1: on; 0: off, the default). |
 | `limits.terminal_cols` | `0` | `SPACEMAN_LIMITS_TERMINAL_COLS` | The width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_rows is set too. |
 | `limits.terminal_rows` | `0` | `SPACEMAN_LIMITS_TERMINAL_ROWS` | The height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_cols is set too. |
 | `limits.usage_limit_failover` | `0` | `SPACEMAN_LIMITS_USAGE_LIMIT_FAILOVER` | Lets a launch or resume whose account is held at a usage limit use another account bound to the space for the same harness that is not held (1: on; 0: off, the default). A space routed through an LLM gateway never falls back to a direct account (ADR-0079 decision 8). |
@@ -280,4 +283,12 @@ Selects the log level (debug, info, warn, error) and format (json, text).
 |---|---|---|---|
 | `log.level` | `info` | `SPACEMAN_AGENT_LOG_LEVEL` | One of debug, info, warn or error. |
 | `log.format` | `json` | `SPACEMAN_AGENT_LOG_FORMAT` | One of json (ECS-aligned) or text. Logs go to stderr (the journal under systemd). |
+
+### `memory`
+
+Configures role memory on the node (ADR-0025).
+
+| Key | Default | Environment | Description |
+|---|---|---|---|
+| `memory.fast_forward` | `true` | `SPACEMAN_AGENT_MEMORY_FAST_FORWARD` | Moves the memory checkouts of live runs that are between turns onto the role's newest shared memory after another instance or a dream published, and refreshes a checkout at run start under the same checks (ADR-0094). Off: neither, and run start refreshes as before. Default on. |
 

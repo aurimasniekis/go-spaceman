@@ -19,6 +19,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
@@ -361,6 +362,26 @@ func (svc *Service) Start(ctx context.Context, actor audit.Actor, spaceID, id st
 	return svc.start(ctx, actor, c, "manual")
 }
 
+// withFormerNames adds every former name of each listed role ("*" stays as it is).
+func withFormerNames(ctx context.Context, q catalog.RoleNameReader, spaceID string, roles []string) ([]string, error) {
+	out := append([]string{}, roles...)
+	for _, r := range roles {
+		if r == "*" {
+			continue
+		}
+		former, err := catalog.FormerRoleNames(ctx, q, spaceID, r)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range former {
+			if !slices.Contains(out, f) {
+				out = append(out, f)
+			}
+		}
+	}
+	return out, nil
+}
+
 // prompt is the dream's task: sources, budgets and how to report. The method lives in the dreamer role's prompt.
 func prompt(c db.DreamConfig) string {
 	var b strings.Builder
@@ -390,7 +411,16 @@ func (svc *Service) start(ctx context.Context, actor audit.Actor, c db.DreamConf
 	if c.IncludeOwn != 1 {
 		exclude = append(exclude, c.SpaceRole)
 	}
-	spec := &proto.DreamSpec{ConfigID: c.ID, MemoryRoles: parseList(c.MemoryRolesJson), TranscriptRoles: parseList(c.TranscriptRolesJson), ExcludeRoles: exclude,
+	// The node filters transcripts by the role its runs had: a renamed role's transcripts from before the rename carry
+	// a former name, which is listed with the current one (ADR-0093).
+	transcripts, err := withFormerNames(ctx, svc.s.R(), c.SpaceID, parseList(c.TranscriptRolesJson))
+	if err != nil {
+		return nil, err
+	}
+	if exclude, err = withFormerNames(ctx, svc.s.R(), c.SpaceID, exclude); err != nil {
+		return nil, err
+	}
+	spec := &proto.DreamSpec{ConfigID: c.ID, MemoryRoles: parseList(c.MemoryRolesJson), TranscriptRoles: transcripts, ExcludeRoles: exclude,
 		MaxFiles: int(c.MaxFiles), MaxBytes: c.MaxBytes}
 	// The space role decides the kind: anything but dreamer is refused before a run exists (the check after launch
 	// below stays for a launcher without the hook).

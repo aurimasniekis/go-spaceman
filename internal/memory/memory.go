@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
@@ -79,6 +80,11 @@ type Service struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
+
+	// moves serializes role renames' repository moves (write) against a backup's view of the repositories (read,
+	// HoldMoves); deferred records a move a backup held back, for its release to finish.
+	moves    sync.RWMutex
+	deferred atomic.Bool
 
 	// Outbox records sync events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
 	Outbox *outbox.Outbox
@@ -156,6 +162,16 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 	}
 	if svc.git == nil {
 		return fail("central cannot store memory: git is not installed", nil)
+	}
+	if err := svc.ensureMoved(ctx, m.SpaceID); err != nil {
+		return fail("internal error", err)
+	}
+	if away, err := svc.renamedAway(ctx, m.SpaceID, m.Role); err != nil {
+		return fail("internal error", err)
+	} else if away {
+		// The node sends this history again under the new name once it has moved the role's folder and reported it
+		// (ADR-0093).
+		return fail(ErrRoleRenamed, nil)
 	}
 	defer svc.lock(m.SpaceID + "/" + m.Role)()
 	col, err := svc.collection(ctx, m.SpaceID, m.Role)
@@ -265,8 +281,21 @@ func (svc *Service) conflict(ctx context.Context, col db.MemoryCollection, sourc
 
 // Report stores the node's view of its collections, and records conflicts the node preserved.
 func (svc *Service) Report(ctx context.Context, nodeID string, st proto.MemoryStatus) {
+	moved := map[string]error{}
 	for _, c := range st.Collections {
 		if !ReRole.MatchString(c.Role) || svc.ownedBy(ctx, nodeID, c.SpaceID) != nil {
+			continue
+		}
+		err, ok := moved[c.SpaceID]
+		if !ok {
+			err = svc.ensureMoved(ctx, c.SpaceID)
+			moved[c.SpaceID] = err
+		}
+		if err != nil {
+			continue
+		}
+		// A folder under a name that was renamed away is reported under its new name once the node has moved it.
+		if away, err := svc.renamedAway(ctx, c.SpaceID, c.Role); err != nil || away {
 			continue
 		}
 		col, err := svc.collection(ctx, c.SpaceID, c.Role)
@@ -359,6 +388,9 @@ func (svc *Service) Get(ctx context.Context, spaceID, role string) (*Collection,
 }
 
 func (svc *Service) readable(ctx context.Context, spaceID, role string) (string, string, error) {
+	if err := svc.ensureMoved(ctx, spaceID); err != nil {
+		return "", "", err
+	}
 	c, err := svc.Get(ctx, spaceID, role)
 	if err != nil {
 		return "", "", err
@@ -545,6 +577,9 @@ func (svc *Service) ResolveConflict(ctx context.Context, actor audit.Actor, spac
 // collection of the space that has one, as memory-<role>.bundle in dir, for a relocation's destination (ADR-0037).
 // The destination starts from exactly what central acknowledged; history central never received is not in it.
 func (svc *Service) ExportBundles(ctx context.Context, spaceID, dir string) ([]proto.RelocateMemory, error) {
+	if err := svc.ensureMoved(ctx, spaceID); err != nil {
+		return nil, err
+	}
 	rows, err := svc.s.R().ListMemoryCollections(ctx, spaceID)
 	if err != nil {
 		return nil, err

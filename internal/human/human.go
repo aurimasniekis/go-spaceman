@@ -406,6 +406,7 @@ var reservedDedupPrefixes = []string{
 	"control-failing:",         // control supervisor: control keeps stopping
 	"control-autostart-limit:", // control supervisor: autostart limit reached
 	"control-autostart-refused:",
+	"control-watchdog:", // control watchdog: control does not answer its reminders (ADR-0099)
 }
 
 // ReservedDedup reports whether key is in a namespace only SpaceMan's own services may use.
@@ -609,6 +610,11 @@ func b2i(b bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// PendingByRun counts the open (or in-progress) human actions an agent run asked (the control watchdog, ADR-0099).
+func (svc *Service) PendingByRun(ctx context.Context, runID string) (int64, error) {
+	return svc.s.R().CountPendingHumanByRun(ctx, runID)
 }
 
 // Get returns an action of a space with its comments and notifications.
