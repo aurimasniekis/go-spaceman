@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -163,6 +164,118 @@ func TestFaultRecordingDiskFull(t *testing.T) {
 	}
 	if l := local(); !strings.Contains(l, "before the disk filled") || strings.Contains(l, "while the disk is full t") {
 		t.Fatalf("local recording after the disk recovered: %q", l)
+	}
+}
+
+// Fault: the agent restarts while the node's disk is full (ADR-0097 addendum). Before the restart the writer numbered
+// and shipped records it could not store, so central holds more than the local recording, and the acknowledgement
+// file, written to the same full disk, is stale. The output printed after the restart must still reach central: the
+// restarted agent learns central's sequence before it numbers anything, so no number central holds is used again.
+// The agent restarts with the disk still full, or after it recovered with nothing written since. In the second case a
+// reused number would also be written to the local recording, which the last check catches.
+func TestFaultRecordingDiskFullRestart(t *testing.T) {
+	for _, recovered := range []bool{false, true} {
+		name := "still-full"
+		if recovered {
+			name = "recovered"
+		}
+		t.Run(name, func(t *testing.T) { diskFullRestart(t, recovered) })
+	}
+}
+
+func diskFullRestart(t *testing.T, recovered bool) {
+	e := apptest.New(t)
+	var full atomic.Bool
+	e.AgentOptions = func(o *agent.Options) {
+		o.RecordingRetryAfter = 3 * time.Second
+		o.RecordingCreate = func(path string) (recording.File, error) {
+			if full.Load() {
+				return nil, syscall.ENOSPC
+			}
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // test path
+			if err != nil {
+				return nil, err
+			}
+			return diskFile{f: f, full: &full}, nil
+		}
+	}
+	e.Enroll()
+	e.StartAgent()
+	e.Connected()
+	sp := e.Space("diskfullrestart", fleet.CreateSpaceInput{})
+	r := e.Launch(sp.ID, "implementor", hns.KindClaude)
+	term := e.Terminal(r.ID)
+	e.Runner.Output(term, "before the disk filled\r\n")
+	eventually(t, "output recorded centrally", func() bool {
+		out, _ := centralRecording(e, r.ID)
+		return strings.Contains(out, "before the disk filled")
+	})
+	full.Store(true)
+	e.Runner.Output(term, "the disk is full now\r\n")
+	time.Sleep(recording.FlushInterval + 200*time.Millisecond)
+	for i := range 20 {
+		e.Runner.Output(term, "while the disk is full "+string(rune('a'+i))+"\r\n")
+		time.Sleep(20 * time.Millisecond)
+	}
+	eventually(t, "output during the full disk at central", func() bool {
+		out, _ := centralRecording(e, r.ID)
+		return strings.Contains(out, "while the disk is full t")
+	})
+	e.StopAgent()
+	_, before := centralRecording(e, r.ID)
+	held := before[len(before)-1].Seq
+	localDir := filepath.Join(e.AgentDir, "runs", r.ID, "recording")
+	res, err := recording.Read(localDir, 0)
+	if err != nil || len(res.Records) == 0 {
+		t.Fatalf("local recording: %v", err)
+	}
+	localMax := res.Records[len(res.Records)-1].Seq
+	if localMax >= held {
+		t.Fatalf("the local recording reaches %d, central %d: the disk did not lose anything", localMax, held)
+	}
+	// The acknowledgements central sent during the failure could not be saved on the full disk either.
+	if err := os.WriteFile(filepath.Join(e.AgentDir, "runs", r.ID, "recording-acked"), []byte(strconv.FormatUint(localMax, 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	full.Store(!recovered)
+	e.StartAgent()
+	e.Connected()
+	for i := 0; ; i++ {
+		out, _ := centralRecording(e, r.ID)
+		if strings.Contains(out, "after the restart") {
+			break
+		}
+		if i > 100 {
+			t.Fatalf("the output after the restart never reached central (central holds up to %d)", held)
+		}
+		e.Runner.Output(term, "after the restart\r\n")
+		time.Sleep(100 * time.Millisecond)
+	}
+	full.Store(false)
+	e.Runner.Exit(term, 0, "exited")
+	eventually(t, "close record at central", func() bool {
+		_, recs := centralRecording(e, r.ID)
+		return len(recs) > 0 && recs[len(recs)-1].Kind == recording.KindClose
+	})
+	_, recs := centralRecording(e, r.ID)
+	increasing(t, recs)
+	for i, rec := range before {
+		if recs[i].Seq != rec.Seq || string(recs[i].Data) != string(rec.Data) {
+			t.Fatalf("central's record %d changed across the restart", rec.Seq)
+		}
+	}
+	for _, rec := range recs[len(before):] {
+		if rec.Seq <= held {
+			t.Fatalf("record %d after the restart reuses a number central held", rec.Seq)
+		}
+	}
+	// Nothing in the local recording carries a number central used for other content.
+	res, _ = recording.Read(localDir, localMax)
+	for _, rec := range res.Records {
+		if rec.Seq <= held {
+			t.Fatalf("local record %d (%s) reuses a number central holds", rec.Seq, rec.Kind)
+		}
 	}
 }
 

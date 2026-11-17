@@ -6577,6 +6577,57 @@
   `TestCatchUpAfterRestartSkipsAcknowledged`, `TestCatchUpPacesEndedRuns` (agent); `test/fault`
   `TestFaultRecordingDiskFull` (a full disk, then space freed). Each fails without its part of the change.
 
+#### ADR-0097 addendum — a restarted agent learns central's sequence before it numbers a run's records (2026-11-17)
+
+- **Problem (review of decision 4):** while the disk is full, the writer numbers and ships records it cannot store,
+  so central can hold up to 200 while the local recording ends at 100. The acknowledgement file is written to the
+  same full disk, so it can also stay near 100. A restarted agent resumed numbering from the local recording (101…).
+  Central drops records at or below what it holds as repeats, so the output after the restart was lost until
+  central's first acknowledgement arrived, and the two copies held different content under the same numbers. An idle
+  run that stores nothing locally between the disk recovering and the restart keeps the stale state.
+- **Decision:**
+  1. **Records wait for central's sequence.** A run's sequence at central counts as *known* to an agent process
+     once central acknowledged any recording message of the run in that process, or once the process launched the
+     run itself with no recording on disk and no acknowledgement file. Until then the recorder numbers nothing and
+     stores nothing locally. It keeps the records back in memory, with their output time: output up to 4 MiB
+     (counting a per-record overhead), and every other record (sizes, the close). Output past the bound is dropped
+     and one `gap` record (`why: sequence-unknown`) marks where. Once the sequence is known, the writer moves above
+     it (`SkipTo`) and the kept records are numbered there. A kept `open` record becomes a `size` record when central
+     already holds records. A recorder whose program ended keeps waiting for the answer. If it is stopped first (the
+     agent shuts down), the kept records are dropped, never numbered without central's sequence.
+  2. **Asking for it.** The waiting recorder sends an empty `recording` message at most every 2 s while connected.
+     Central applies it like any chunk, stores nothing and acknowledges what it holds. There is no new message type
+     and no protocol minor: every central version answers. A probe or answer lost with a connection is asked again.
+  3. **Central does not acknowledge a message it could not apply at all.** If the run's recording could not even be
+     opened, the acknowledgement is skipped when it would be 0, which a probing node would take for "nothing
+     stored". A store failure that still knows a stored sequence is acknowledged as before.
+  4. **Finding 2 (an acknowledgement below the saved one).** The first acknowledgement a process receives for a run
+     is authoritative. When it is below the value restored from the run directory, central lost records it had
+     acknowledged (a restored central or disk), or an older central acknowledged more than it stored. The node then
+     lowers its acknowledgement and rewrites the file. It marks the run for a catch-up, which re-ships the local
+     records above the lowered value; live records wait behind that catch-up as usual. New records are still numbered
+     above the old, higher value. A jump is a gap, but numbering below it could reuse a number central once
+     acknowledged and may still hold. Later acknowledgements only ever raise the value, as before.
+- **Interplay with #242 (central acknowledges `Stored()`):** after #242, an acknowledgement is the contiguous
+  durable prefix: every record up to N is stored, apart from jumps the node made itself. The answer to an empty probe
+  is that prefix, so the node never reuses a number central holds. It never skips a record central lacks: the
+  catch-up still sends every local record above the acknowledgement. #242 accepts a jump on a new connection as the
+  node's own, which is exactly why the node must learn the prefix before it numbers anything (decision 1). #242's hub
+  acknowledges before it closes a connection after a store failure. Decision 3 keeps that acknowledgement from being a
+  bogus 0. When the branches merge, the hub keeps both changes: the guarded acknowledgement, then the close.
+- **Consequences:** after an agent restart, an adopted run's output reaches central one round trip later, and is
+  written locally only from then on. If central stays out of reach across the restart, at most 4 MiB of output per run
+  survives in memory until it answers. A run launched by the restarted process never waits. A central older than
+  decision 3 that cannot open a run's recording still answers 0: the node then numbers above the larger of its
+  local recording and its saved acknowledgement, and can reuse numbers only if that central later recovers more than
+  both. Centrals without a recordings directory never answer, and adopted runs then record nothing locally (central
+  stores no recording there either).
+- **Evidence:** `TestRestartedRecorderNumbersAboveCentral` (central holds 200, the disk and the file 100: the output
+  after the restart is numbered above 200, and nothing is dropped as a repeat),
+  `TestRestartedRecorderBelowTheSavedAcknowledgement` (finding 2),
+  `TestRestartedRecorderKeepsTheCloseUntilCentralAnswers`, `TestSeqGateBound` (agent); `test/fault`
+  `TestFaultRecordingDiskFullRestart`. Without the gate, the first test fails with records dropped as repeats.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
