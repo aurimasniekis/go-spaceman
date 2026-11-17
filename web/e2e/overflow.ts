@@ -296,6 +296,27 @@ export async function phoneProblems(page: Page): Promise<string[]> {
   })
 }
 
+/**
+ * Text controls in an open dialog have a computed font size of at least 16 px on a touch screen. iOS Safari zooms the page
+ * in when a field under 16 px is focused, and the zoom stays after it loses focus. The `@media (pointer: coarse)` rule in
+ * web/src/theme/global.css raises the size; this checks the computed result, so removing the rule fails it.
+ */
+export const TOUCH_TEXT_SELECTOR = 'input:not([type=checkbox],[type=radio],[type=file],[type=hidden]), textarea, [contenteditable=true]'
+
+export async function smallTouchText(page: Page): Promise<string[]> {
+  return page.evaluate((selector) => {
+    const out: string[] = []
+    for (const c of Array.from(document.querySelectorAll<HTMLElement>('.mantine-Modal-content, .mantine-Drawer-content'))) {
+      for (const e of Array.from(c.querySelectorAll<HTMLElement>(selector))) {
+        if (e.getClientRects().length === 0) continue
+        const px = parseFloat(getComputedStyle(e).fontSize)
+        if (px < 16) out.push(`${e.tagName.toLowerCase()}${e.getAttribute('name') ? `[name=${e.getAttribute('name')}]` : ''} ${px}px`)
+      }
+    }
+    return out.slice(0, 8)
+  }, TOUCH_TEXT_SELECTOR)
+}
+
 /** Pinch-zoom must stay possible: the viewport meta does not forbid it and no element on the page turns it off. */
 export async function zoomBlockers(page: Page): Promise<string[]> {
   return page.evaluate(() => {
