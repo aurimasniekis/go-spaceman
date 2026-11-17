@@ -232,6 +232,57 @@ func TestRoleRenameAgentMovesMemory(t *testing.T) {
 	}
 }
 
+// ADR-0093 T-L3 (simulated: in-process central and node agent, fake runner): the node is disconnected when its role is
+// renamed. The rename commits at once and stays pending: a launch of the new name is held, and the node writes more memory
+// under the old name while it is away. When the node reconnects it moves the folder, the late write with it, and central
+// ends with one collection under the new name whose history holds the commit from before the disconnect and the one
+// after it. The online rename is TestRoleRenameAgentMovesMemory.
+func TestRoleRenameAgentMemoryMoveWithNodeOffline(t *testing.T) {
+	t.Parallel()
+	e := newAgentRenameEnv(t)
+	r := e.runWithMemory("implementor", "decisions.md", "- settle in batches of 500\n")
+	e.stopRun(r.ID)
+	e.synced("implementor", "decisions.md")
+	before, err := e.c.Memory.History(e.ctx, e.spaceID, "implementor", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.stopAgent()
+	eventually(t, "node disconnected", func() bool { n, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !n.Connected })
+	rn := e.rename("implementor", "builder")
+	if !e.launchHeld("builder") {
+		t.Fatal("a launch of the new name is not held while the node is away")
+	}
+	if st := e.renameState(rn.ID); st.NodeState != catalog.RenameNodePending {
+		t.Fatalf("while the node is away: %+v", st)
+	}
+	// Written on the node while it is away: the folder is still under the old name.
+	inst := filepath.Join(e.memDir("implementor"), "instances", r.InstanceID)
+	if err := os.WriteFile(filepath.Join(inst, "late.md"), []byte("written while the node was away\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	e.startAgent()
+	e.done(rn, map[string]string{"decisions.md": "- settle in batches of 500\n", "late.md": "written while the node was away\n"}, len(before)+1)
+	if got := e.nodeResults(rn.ID); !slices.Equal(got, []string{proto.MemoryRenameOK}) {
+		t.Fatalf("node reports %v", got)
+	}
+	cols, err := e.c.Memory.List(e.ctx, e.spaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toCols int
+	for _, c := range cols {
+		if c.Role == rn.To {
+			toCols++
+		}
+	}
+	if toCols != 1 {
+		t.Fatalf("%d collections under %s, want 1", toCols, rn.To)
+	}
+}
+
 // A run of the role central does not know is live (its row says it ended) defers the move: the node reports deferred
 // and the rename stays pending and held. When the run ends on the node, the node moves the folder and reports ok.
 func TestRoleRenameAgentDeferredWhileRunActive(t *testing.T) {
