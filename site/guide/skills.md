@@ -25,6 +25,13 @@ tools, accounts and approvals.
 SpaceMan ships one built-in skill, **HallPass gateway** (`hallpass`). It is a copy of the skill from go-hallpass, for
 agents that reach servers through a HallPass SSH gateway. HallPass itself still enforces who may connect.
 
+## Editing a skill's name and description
+
+A skill's **name and description** can be changed without publishing a version: use `spaceman skill update <skill>
+--name … --description …` or `PATCH /skills/{skill_id}` (`update-skill`, `If-Match` required). Only the fields you give
+change. No version is created, so runs see no change in the skill's files; the slug stays fixed because it is the
+skill's identity in configuration. See [`spaceman skill update`](../reference/cli/skill.md#spaceman-skill-update).
+
 ## Giving skills to runs
 
 - A **role template** lists its skills. Each one follows the skill's latest published version.

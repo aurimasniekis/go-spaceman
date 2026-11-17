@@ -78,6 +78,7 @@
 | `prompts-diff` | Prompts | Line diff between two published versions of a prompt | current |
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
 | `prompt-detail` | Prompts | A prompt's draft editor (with extends) and published versions | current |
+| `prompt-edit-details` | Prompts | The Edit details dialog of a prompt: name and description in place, no new version | current |
 | `roles` | Roles and profiles | Role templates with prompt binding and profile, including the starter set | current |
 | `claude-settings` | Roles and profiles | A Claude Code profile's settings.json editors: permission rules, auto mode environment and allowed actions with the defaults switch, environment variables and other settings | current |
 | `skills` | Skills | Skill catalog with the built-in HallPass skill and a custom skill | current |
@@ -98,6 +99,7 @@
 | `mcp-servers` | MCP servers | Registered MCP servers with header names (never values), grants and limits | current |
 | `mcp-server-detail` | MCP servers | A server's connection check with its namespaced tools, and its grants to space roles | current |
 | `skill-detail` | Skills | A skill's files, published versions and draft editor | current |
+| `space-role-edit` | Roles and profiles | A space role's form with its own description (the template's shown as the placeholder when empty) | current |
 | `space-role-preview` | Roles and profiles | A space role's effective configuration with origins and system text | current |
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
 | `space-relocate` | Relocating a space | Relocate dialog: destination (a never-connected node is named as not available), dirty-state policy, stop runs, source folder retention | current |

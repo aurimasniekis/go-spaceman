@@ -8,13 +8,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Upgrade notes
 
+- **Upgrade central first, then the node agents.** v0.1.11 speaks node protocol **minor 14** (v0.1.10: 13). A node agent
+  of an older release keeps working with everything except renaming a role's memory (see the next note). An upgraded
+  node agent needs an upgraded central.
+- **Schema migrations 0061–0065** are applied on start, need no action and are forward-only: `0061_space_role_renames`,
+  `0062_role_rename_failed`, `0063_role_rename_abandoned` (role rename, ADR-0093), `0064_limit_wait_cause` (a read-only
+  `cause` on limit waits, ADR-0098) and `0065_space_role_description` (a space role's own description, ADR-0095).
+  Take a backup before upgrading, as always. The node agent's journal gets migration `0010_role_renames`.
+- **New settings, all optional.** Three space limits, `control_watchdog_minutes` (default 15, 0 turns the watchdog
+  off), `control_watchdog_nudges` (default 3) and `control_watchdog_restart` (default off); and the node agent key
+  `memory.fast_forward` (default on). The watchdog is therefore **on by default** in every space with a control. See the control guide.
+- **Memory checkouts are stricter.** The node agent now refuses to run git in a memory checkout whose `.git` is not a
+  real directory of its own, whose git configuration redirects or hooks git, or that holds links inside `.git`, a nested
+  repository or a FIFO, and it never stages or materialises harness configuration (`.claude/`, `.codex/`, `.agents/`,
+  a top-level `.mcp.json`) from role memory. An existing checkout is cleaned up when its next run starts. Memory notes
+  stay as they are; only such files stop travelling.
 - **Renaming a role needs nodes on node protocol minor 14.** The rename moves the role's memory folder on the space's
   node (`memory.rename`), so a space whose node last connected with an older agent, or never connected, is refused
   (`409 node_too_old`) until the node agent is upgraded and has connected. Upgrade central first.
-- **Schema migration `0062_role_rename_failed`**: rebuilds `space_role_renames` to add the `failed` node state. It is
-  applied on start, needs no action and is forward-only.
-- **Schema migration `0063_role_rename_abandoned`**: rebuilds `space_role_renames` to add the `abandoned` node state
-  (closing a stuck rename). It is applied on start, needs no action and is forward-only.
 
 ### Added
 
@@ -37,6 +48,72 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   state, and reports `ok` (or `deferred` while a run of either name or a dream run is still active on it, moving when it
   ends; or `error`, tried again at its next start) until central acknowledges it; then it syncs the role under the new
   name, from where the old name stopped. Node journal migration `0010_role_renames` (applied on start, forward-only).
+
+- **Control watchdog** (ADR-0099, SM-CTRL-008). A live, idle control that leaves work waiting (unacknowledged
+  messages, reviews whose worker finished, ended runs, free worker slots while tasks are ready) for longer than
+  `control_watchdog_minutes` gets a one-line reminder typed into its terminal, naming only counts. Reminders back off
+  (5, 10, 20, 40 minutes, up to an hour). After `control_watchdog_nudges` unanswered reminders the space's people get a
+  human action, and with `control_watchdog_restart` control is also restarted, resuming its session. A working,
+  blocked, taken-over or usage-limited control, and a paused space, are left alone. Read-only state:
+  `GET /spaces/{space_id}/watchdog` (`get-space-watchdog`), `spaceman space watchdog <space>` and a badge on the
+  control row of the space overview.
+- **Runs an agent restart stopped are resumed** (ADR-0098). A worker or diagnostic run that ends because the node agent
+  restarted (`stopped_by_restart`) is resumed by the limit-wait machinery: a new run of the same instance, the same
+  worktree and account, `--resume` of its session, after 15, 30 and 60 seconds. At most 3 automatic resumes per chain
+  (a resumed run that lived 30 minutes starts the count again); then the task goes back to `ready` and control is told.
+  A task already in review, a run somebody asked to stop and control runs are not resumed. Limit waits carry a
+  read-only `cause` (`agent_restart`) in the API.
+- **A space role has its own description, and control can list roles** (ADR-0095). `spaceman role set --description`,
+  `description` on the role API and a field on the web role form; empty falls back to the template's description. The
+  role preview shows the effective description with its origin. Control runs get a read-only `spaceman_roles_list`
+  tool (SM-CTRL-007): the space's roles with kind, description, template, harness and model, and no prompt text,
+  settings, skills or accounts. The description is routing guidance only: it is not in the run's prompt or manifest.
+- **Edit a prompt's or skill's name and description in place** (ADR-0095). `PATCH /prompts/{prompt_id}`
+  (`update-prompt`) and `PATCH /skills/{skill_id}` (`update-skill`), `spaceman prompt update` and
+  `spaceman skill update`, and an **Edit details** dialog on the prompt page. `If-Match` is required. No new prompt or
+  skill version is made, so runs see no change in their instructions; the slug and kind stay fixed.
+- **Retry or close a stuck role rename** (ADR-0093 addendum). `spaceman role retry-rename` and
+  `spaceman role close-rename` (administrators; `--forget-node` gives up delivering a move to a node that is away),
+  and `POST /spaces/{space_id}/role-renames/{rename_id}/retry` and `/close`. A closed rename is `abandoned` and leaves
+  the node's old folder as an orphan; it is never deleted. A move the node cannot do ends `failed` with its reason.
+- **Idle memory checkouts follow the role's shared memory** (ADR-0094). The node fast-forwards the checkout of a live
+  run that is between turns, and refreshes a checkout at run start under the same checks, so an instance that waited
+  between turns no longer writes on an old base and produces needless `conflicts/` folders. Only an idle, clean
+  checkout whose history is an ancestor of the shared head is touched, never with a reset or a merge commit.
+  `memory.fast_forward: false` turns it off.
+
+### Changed
+
+- `spaceman role set` replaces only what its flags name. `--skill` accepts a slug, `slug@number` or an ID, and the
+  help states that only the space role's own skills are cleared.
+
+### Fixed
+
+- **A recording is acknowledged only once central has stored it** (#242, ADR-0096). Central acknowledged the highest
+  sequence it had accepted, so a failed write could let the node delete the only copy of records central never stored.
+  Central now acknowledges what it synced to disk, closes and reopens a failed writer so the node ships the gap again,
+  backs off 5 seconds before reopening a recording that failed, removes an unsynced segment and never ages out a
+  resync mark on a live connection. Reclaiming old recording directories that have no journal row remains a design
+  (ADR-0096, not implemented): those directories are still kept.
+- **Memory git guard** (security-relevant, ADR-0025 and ADR-0094). The node refuses a memory checkout whose git dir is
+  redirected (a symlink, a `gitdir` file, `commondir`, `core.worktree`, a bare checkout), that holds config-based hooks,
+  links inside `.git`, gitlinks, a parent repository, a nested `.git` or a FIFO in its work tree, or that lacks its own
+  `.git` directory. The checks run first and with timeouts, and cancellation sends SIGTERM first. `memory preserve`
+  refuses a symlinked conflicts path.
+- **Harness configuration never travels through role memory** (security-relevant, ADR-0025 addendum). Because Claude
+  Code loads `.claude/skills` and `.claude/commands` from a directory passed with `--add-dir`, a skill one instance
+  wrote into shared memory became active in every instance of the role. The node now excludes and sparse-checks-out
+  `.claude/`, `.codex/`, `.agents/` and a top-level `.mcp.json`, also from history an older agent pushed, and hardens
+  this against symlinks and hard links. Central keeps history it was already given.
+- **A resumed run is told where its memory is after a role rename**, restating the memory folder (also for Codex) with
+  a rename line, only for sessions older than the rename.
+- **Role rename follow-ups:** a closed rename keeps its move command queued and orders later renames of either name
+  behind it; launches wait for a pending rename; a rename onto a name clears the orphan marker; a relocation with an
+  unavailable source closes the space's open renames.
+- **Roles with no profile or a broken profile** are listed by `spaceman_roles_list` instead of dropped, and a role's
+  description stays out of run manifests.
+- **Starter roles are shared** (documentation): editing a starter template changes it for every space; a space role
+  overrides per space.
 
 ## [0.1.10] - 2026-11-17
 

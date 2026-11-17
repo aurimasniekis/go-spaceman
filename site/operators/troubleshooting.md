@@ -85,12 +85,49 @@ The agent logs `central connection lost` on every disconnect and retries with ba
   account was deleted, disabled or unbound in the meantime fails with a message saying so.
 - A launch waits while the space is paused, relocating, or at its run limit ([limits](/guide/limits)).
 
+## After a node agent restart
+
+A restart of the node agent ends runs that it could not keep: herdr-core reports the exit as `stopped_by_restart`.
+
+- **Worker and diagnostic runs are resumed by central**, after 15, 30 and 60 seconds, as a new run of the same instance
+  in the same worktree with the same account, continuing the session. Look at the space's limit waits: the wait has the
+  cause `agent_restart` (`cause` in the API). At most 3 resumes happen in a row; a run that lived 30 minutes starts the
+  count again. After that the task is `ready` again and control is told to relaunch it.
+- **Not resumed:** a task already in review, a run somebody stopped, a control run (the supervisor restarts it), and
+  any run whose node was gone so long that the stale-run sweeper ended it. Control hears the ordinary run-ended notice
+  and relaunches.
+- **Recordings** show a gap where the agent was down; see below.
+- **Role renames** with a memory move still open continue at the node's next start.
+
+## The node's disk is full
+
+A full disk on the node does not stop the run itself, but the node can no longer write what it keeps: the local
+recording ends and is not resumed when space frees up, only when a new attachment starts (after an agent restart, which
+leaves a gap). Central's copy keeps everything shipped before the failure and ends with a `trunc` record (`disk`) and the
+run's close record ([known limitations](/reference/limitations)). Free space on the node (old `runs/<id>/recording`
+folders and worktrees are the usual cause), then
+restart the agent so recordings can attach again. On central, a full data disk shows as `disk_full` or `disk_reserve` in
+the readiness codes above. Central acknowledges a recording only up to what it has durably stored, so a write failure
+there makes the node ship the missing records again instead of deleting them.
+
+## Memory checkout refused
+
+The node refuses to use a memory checkout whose git state is unsafe (see
+[what never travels through memory](../guide/memory.md#what-never-travels-through-memory)). The error starts with
+`checkout refused:` and names the reason: `.git` is not a plain directory, the git dir, common dir or work tree is not
+the checkout's own, `.git/config` or hooks would run a program, a nested `.git`, a submodule or gitlink, or a FIFO in the
+work tree. The checkout lives under `<data dir>/memory/<space>/<role>/instances/<instance>`. Fix what the message names,
+or delete that instance's checkout (its unsynced changes are lost; the shared history is not) so the next run creates a
+clean one. Harness files such as `.claude/skills` in a memory checkout are removed by the node on purpose: that is not
+a fault.
+
 ## Recordings have gaps
 
 The recorder attaches to a terminal as an observer. When it has to re-attach (for example after an agent restart),
 herdr-core cannot replay what was written meanwhile, so SpaceMan records an explicit **gap** and the repaint that
 follows; that output is not recoverable. A **truncated** badge means the recording reached its size limit. A node that
-lost central uploads its local copy when it reconnects. See [terminals and recordings](./terminals).
+lost central uploads its local copy when it reconnects. Central acknowledges a recording only up to what it has durably
+stored, so a storage failure on central leads the node to send the missing records again instead of deleting them. See [terminals and recordings](./terminals).
 
 ## Sign-in problems
 
