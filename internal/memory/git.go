@@ -73,11 +73,23 @@ func (g *Git) Run(ctx context.Context, dir string, id *Identity, args ...string)
 // RunInput is Run with stdin. Inside an existing repository the repository's configuration is checked first and git
 // is not run when it would execute a configured program (UnsafeConfig).
 func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []byte, args ...string) (string, error) {
+	return g.runInput(ctx, dir, id, stdin, false, args...)
+}
+
+// RunCheckout is Run for an instance or memory checkout: dir must be a checkout with its own .git directory, and a
+// folder without one is refused. Without the requirement a folder holding HEAD, objects/, refs/ and a commondir file
+// (no .git) is a bare repository to git, one that can point at another repository, and nothing would have checked it.
+// git init and clone are exempt: they create the .git.
+func (g *Git) RunCheckout(ctx context.Context, dir string, id *Identity, args ...string) (string, error) {
+	return g.runInput(ctx, dir, id, nil, true, args...)
+}
+
+func (g *Git) runInput(ctx context.Context, dir string, id *Identity, stdin []byte, checkout bool, args ...string) (string, error) {
 	if len(args) > 0 && Guarded(args[0]) {
 		// The files come first: git reads .git/config (and anything it includes) for any command, and a FIFO there
 		// would block it, so nothing runs before the walk has refused links and special files.
 		_, statErr := os.Lstat(filepath.Join(dir, ".git"))
-		inCheckout := statErr == nil
+		inCheckout := statErr == nil || checkout
 		if inCheckout {
 			if err := checkoutFiles(dir); err != nil {
 				return "", err

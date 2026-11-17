@@ -266,3 +266,32 @@ func TestRunSetsNoLazyFetch(t *testing.T) {
 		t.Fatalf("GIT_NO_LAZY_FETCH is not set: %q", out)
 	}
 }
+
+// A folder without .git that holds HEAD, objects/, refs/ and a commondir file is a bare repository to git, one that can
+// point at another repository. RunCheckout requires the checkout's own .git; plain Run has no such requirement.
+func TestRunCheckoutRequiresDotGit(t *testing.T) {
+	g, other := newCheckout(t)
+	inst := t.TempDir()
+	for _, d := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(inst, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(inst, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inst, "commondir"), []byte(filepath.Join(other, ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if out, err := g.RunCheckout(ctx, inst, nil, "rev-parse", "--git-dir"); err == nil {
+		t.Fatalf("a folder without .git was accepted as a checkout: %q", out)
+	}
+	if _, err := g.RunCheckout(ctx, inst, nil, "status"); err == nil {
+		t.Fatal("status accepted a folder without .git")
+	}
+	// The same folder with a real checkout's .git is fine.
+	if _, err := g.RunCheckout(ctx, other, nil, "status", "--porcelain"); err != nil {
+		t.Fatalf("a real checkout refused: %v", err)
+	}
+}

@@ -130,16 +130,16 @@ func (m *memManager) guard(ctx context.Context, inst string) error {
 	if _, err := guardFile(root, "config"); err != nil {
 		return err
 	}
-	if out, _ := m.git.Run(ctx, inst, nil, "config", "--local", "--get", "core.sparseCheckout"); strings.TrimSpace(out) != "true" {
-		if _, err := m.git.Run(ctx, inst, nil, "config", "--local", "core.sparseCheckout", "true"); err != nil {
+	if out, _ := m.git.RunCheckout(ctx, inst, nil, "config", "--local", "--get", "core.sparseCheckout"); strings.TrimSpace(out) != "true" {
+		if _, err := m.git.RunCheckout(ctx, inst, nil, "config", "--local", "core.sparseCheckout", "true"); err != nil {
 			return err
 		}
-		if _, err := m.git.Run(ctx, inst, nil, "config", "--local", "core.sparseCheckoutCone", "false"); err != nil {
+		if _, err := m.git.RunCheckout(ctx, inst, nil, "config", "--local", "core.sparseCheckoutCone", "false"); err != nil {
 			return err
 		}
 		if m.git.RevParse(ctx, inst, "HEAD") != "" {
 			// An existing checkout that already holds such paths loses them from the working tree now.
-			if _, err := m.git.Run(ctx, inst, nil, "sparse-checkout", "reapply"); err != nil {
+			if _, err := m.git.RunCheckout(ctx, inst, nil, "sparse-checkout", "reapply"); err != nil {
 				return err
 			}
 		}
