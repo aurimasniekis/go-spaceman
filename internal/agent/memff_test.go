@@ -303,11 +303,15 @@ func TestRefreshAtStartChecks(t *testing.T) {
 	}
 	write(t, dir, ".git/info/exclude", "notes.md\n")
 	write(t, dir, "notes.md", "local, ignored\n")
+	head := e.head(dir)
+	if _, err := e.m.prepare(e.ctx, ffSpace, ffRole, "ins_a"); err != nil { // run start
+		t.Fatal(err)
+	}
+	if read(t, dir, "notes.md") != "local, ignored\n" || e.head(dir) != head {
+		t.Fatal("run start overwrote an ignored file")
+	}
 	if got := e.m.refreshAtStart(e.ctx, ffSpace, ffRole, "ins_a"); got != ffIgnored {
 		t.Fatalf("reason %q, want %q", got, ffIgnored)
-	}
-	if read(t, dir, "notes.md") != "local, ignored\n" {
-		t.Fatal("an ignored file was overwritten")
 	}
 	if err := os.Remove(filepath.Join(dir, "notes.md")); err != nil {
 		t.Fatal(err)
@@ -506,6 +510,32 @@ func TestTurnStartBetweenChecks(t *testing.T) {
 	e.m.ffGated = func(string) { write(t, dir, "late.md", "late\n") }
 	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != ffUntracked || e.head(dir) != head {
 		t.Fatalf("reason %q, moved %v", got, e.head(dir) != head)
+	}
+}
+
+// A busy instance's checkout is not even read: the idle check comes before any git command, so no fetch lands in it,
+// and its reason is the turn, not the input being delivered to it.
+func TestBusyInstanceNotTouched(t *testing.T) {
+	e := newFFEnv(t)
+	other, dir := e.checkout("ins_b"), e.checkout("ins_a") // ins_a starts from shared history: it has a FETCH_HEAD
+	e.run("ins_a", ffRole, proto.RunRunning, "working")
+	fetchHead := filepath.Join(dir, ".git", "FETCH_HEAD")
+	before, err := os.ReadFile(fetchHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := e.m.inputGate("ins_a")
+	g.Lock() // input is being delivered: it started the turn
+	defer g.Unlock()
+	write(t, other, "notes.md", "from b\n")
+	if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != ffTurnNotEnded {
+		t.Fatalf("reason %q, want %q", got, ffTurnNotEnded)
+	}
+	if after, _ := os.ReadFile(fetchHead); string(after) != string(before) {
+		t.Fatal("the busy checkout was fetched into")
 	}
 }
 

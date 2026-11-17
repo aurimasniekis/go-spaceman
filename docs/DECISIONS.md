@@ -6376,7 +6376,8 @@
   original symptom: no preserved conflict; the same test with the switch off, the earlier behaviour, conflicts, and its
   base variant fails on the base branch), `TestIdleAppendAfterOtherAppendMerges`, `TestInputWaitsForFastForward`
   (`run.input` through the command handler waits for the merge), `TestRunStartDuringFastForward` (both orders),
-  `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestStatusReason`. Each
+  `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestBusyInstanceNotTouched`
+  (no git command, not even a fetch, in a busy checkout), `TestStatusReason`. Each
   guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
 
 ## 2. Open items and unresolved contracts
