@@ -13,6 +13,7 @@ Aliases: `skills`.
 | [`spaceman skill get`](#spaceman-skill-get) | A skill with its versions and files |
 | [`spaceman skill list`](#spaceman-skill-list) | The skill catalog |
 | [`spaceman skill publish`](#spaceman-skill-publish) | Publish the skill's draft |
+| [`spaceman skill update`](#spaceman-skill-update) | Change a skill's name or description in place (only the flags given change; no new version) |
 
 ## spaceman skill create
 
@@ -91,4 +92,21 @@ API: `get-skill`, `publish-skill` ([HTTP API](../api)).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+
+## spaceman skill update
+
+Change a skill's name or description in place (only the flags given change; no new version).
+
+```sh
+spaceman skill update <skill> [flags]
+```
+
+API: `get-skill`, `update-skill` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--description` | string |  | description |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--name` | string |  | name |
 
