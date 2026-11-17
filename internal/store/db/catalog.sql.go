@@ -10,6 +10,33 @@ import (
 	"database/sql"
 )
 
+const cancelRoleRenameCommands = `-- name: CancelRoleRenameCommands :execrows
+UPDATE node_commands SET state = 'cancelled', reason = ?1
+WHERE node_id = ?2 AND kind = 'memory.rename' AND state = 'pending'
+  AND idempotency_key >= ?3 AND idempotency_key < ?4
+`
+
+type CancelRoleRenameCommandsParams struct {
+	Reason string
+	NodeID string
+	Key    string
+	KeyEnd string
+}
+
+// The rename's memory.rename commands the node has not been sent yet are cancelled when the rename is closed.
+func (q *Queries) CancelRoleRenameCommands(ctx context.Context, arg CancelRoleRenameCommandsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelRoleRenameCommands,
+		arg.Reason,
+		arg.NodeID,
+		arg.Key,
+		arg.KeyEnd,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const closeOpenSpaceRoleRenames = `-- name: CloseOpenSpaceRoleRenames :execrows
 UPDATE space_role_renames SET node_state = 'not_needed', node_message = ?1, node_done_at = ?2
 WHERE space_id = ?3 AND node_state IN ('pending', 'failed')
@@ -24,6 +51,26 @@ type CloseOpenSpaceRoleRenamesParams struct {
 // Closes a space's open renames without the node's report (a source_unavailable relocation: the node is gone).
 func (q *Queries) CloseOpenSpaceRoleRenames(ctx context.Context, arg CloseOpenSpaceRoleRenamesParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, closeOpenSpaceRoleRenames, arg.NodeMessage, arg.NodeDoneAt, arg.SpaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const closeRoleRename = `-- name: CloseRoleRename :execrows
+UPDATE space_role_renames SET node_state = 'abandoned', node_message = ?1, node_done_at = ?2
+WHERE id = ?3 AND node_state IN ('pending', 'failed')
+`
+
+type CloseRoleRenameParams struct {
+	NodeMessage string
+	NodeDoneAt  sql.NullInt64
+	ID          string
+}
+
+// An admin closes an open rename: the node move is given up (ADR-0093 addendum). The close time goes in node_done_at.
+func (q *Queries) CloseRoleRename(ctx context.Context, arg CloseRoleRenameParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeRoleRename, arg.NodeMessage, arg.NodeDoneAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -1595,6 +1642,19 @@ func (q *Queries) RenameSpaceRoleRow(ctx context.Context, arg RenameSpaceRoleRow
 		arg.SpaceID,
 		arg.FromName,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reopenRoleRename = `-- name: ReopenRoleRename :execrows
+UPDATE space_role_renames SET node_state = 'pending' WHERE id = ? AND node_state IN ('pending', 'failed')
+`
+
+// An admin retries an open rename: a failed one is pending again (its message stays until the node reports).
+func (q *Queries) ReopenRoleRename(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reopenRoleRename, id)
 	if err != nil {
 		return 0, err
 	}

@@ -11,7 +11,7 @@ import (
 // the role's delete and save), whatever the rule says.
 func TestRoleRenameIsExcludedFromTelegram(t *testing.T) {
 	t.Parallel()
-	for _, op := range []string{"rename-space-role", "list-space-role-renames"} {
+	for _, op := range []string{"rename-space-role", "list-space-role-renames", "retry-space-role-rename", "close-space-role-rename"} {
 		if c, ok := Classify(op, api.InSpace(authz.SpaceConfigWrite)); !ok || c != api.TelegramExcluded {
 			t.Errorf("%s: %q (classified %v), want %q", op, c, ok, api.TelegramExcluded)
 		}

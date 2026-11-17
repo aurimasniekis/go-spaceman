@@ -65,6 +65,7 @@ const (
 	rPublish         = "publishes or rolls back what every space's runs execute or render"
 	rPolicy          = "changes who is asked and how for human actions"
 	rRecording       = "reads terminal recordings, which may contain anything a run printed"
+	rRenameAdmin     = "retries or gives up a role rename's memory move on the node (admins only): a close lifts the launch holds and leaves the node's old folder orphaned"
 	rSelf            = "SpaceMan MCP servers hand an administrator's authority to agents: managed by people only"
 	// rSpaceRole: a space role decides what a launch by role runs (its template's kind, profile, permission mode and
 	// settings), so saving one can make a role diagnostic or widen its runs' access without any later launch saying so.
@@ -375,6 +376,8 @@ var Table = map[string]Entry{
 	"list-role-options":       {Read, rRead},
 	"list-role-templates":     {Read, rRead},
 	"list-space-role-renames": {Read, rRead},
+	"close-space-role-rename": {Dangerous, rRenameAdmin},
+	"retry-space-role-rename": {Dangerous, rRenameAdmin},
 	"list-space-roles":        {Read, rRead},
 	"list-starter-roles":      {Read, rRead},
 	"preview-space-role":      {Read, rRead},

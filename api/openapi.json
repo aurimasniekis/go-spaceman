@@ -2513,6 +2513,35 @@
         ],
         "type": "object"
       },
+      "CatalogRenameRetried": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CatalogRenameRetried.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "node_too_old": {
+            "type": "boolean"
+          },
+          "queued": {
+            "type": "boolean"
+          },
+          "rename": {
+            "$ref": "#/components/schemas/CatalogRoleRename"
+          }
+        },
+        "required": [
+          "rename",
+          "queued",
+          "node_too_old"
+        ],
+        "type": "object"
+      },
       "CatalogResolvedSkill": {
         "additionalProperties": false,
         "properties": {
@@ -2549,6 +2578,15 @@
       "CatalogRoleRename": {
         "additionalProperties": false,
         "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CatalogRoleRename.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
           "central_moved_at": {
             "format": "date-time",
             "type": "string"
@@ -2574,7 +2612,8 @@
               "pending",
               "failed",
               "done",
-              "not_needed"
+              "not_needed",
+              "abandoned"
             ],
             "type": "string"
           },
@@ -2945,6 +2984,26 @@
               "overage",
               "unknown"
             ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "CloseSpaceRoleRenameInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CloseSpaceRoleRenameInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the move is given up; kept as the rename's message",
+            "maxLength": 500,
             "type": "string"
           }
         },
@@ -32668,6 +32727,120 @@
           }
         },
         "summary": "A space's role renames, newest first",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/spaces/{space_id}/role-renames/{rename_id}/close": {
+      "post": {
+        "description": "For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and is never deleted or synced again. Not an open rename is 409 rename_not_open. Needs the admin-only role_rename:admin permission.",
+        "operationId": "close-space-role-rename",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "rename_id",
+            "required": true,
+            "schema": {
+              "pattern": "^rrn_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseSpaceRoleRenameInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogRoleRename"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Give up a stuck role rename's memory move on the node (admins)",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/spaces/{space_id}/role-renames/{rename_id}/retry": {
+      "post": {
+        "description": "For a rename whose node move is pending or failed: queues a new memory.rename for the space's node (unless one is still waiting for it) and makes a failed rename pending. The node tries again and reports; the rename's holds lift when it reports the move done. Not an open rename (done, not_needed or abandoned) is 409 rename_not_open. `node_too_old` is true when the node last spoke a protocol below 1.14: the command waits until it connects at 1.14 or more. Needs the admin-only role_rename:admin permission.",
+        "operationId": "retry-space-role-rename",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "rename_id",
+            "required": true,
+            "schema": {
+              "pattern": "^rrn_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogRenameRetried"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Send a stuck role rename's memory move to the node again (admins)",
         "tags": [
           "roles"
         ]

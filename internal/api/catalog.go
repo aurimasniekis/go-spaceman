@@ -41,6 +41,8 @@ var CatalogRules = map[string]Rule{
 	"delete-space-role":       InSpace(authz.SpaceConfigWrite),
 	"rename-space-role":       InSpace(authz.SpaceConfigWrite),
 	"list-space-role-renames": InSpace(authz.SpaceConfigRead),
+	"retry-space-role-rename": InSpace(authz.RoleRenameAdmin),
+	"close-space-role-rename": InSpace(authz.RoleRenameAdmin),
 	"add-starter-roles":       InSpace(authz.SpaceConfigWrite),
 	"preview-space-role":      InSpace(authz.SpaceConfigRead),
 	"list-skills":             Global(authz.SkillRead),
@@ -708,6 +710,34 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 				return &struct{ Body RoleRenamesOut }{Body: RoleRenamesOut{Items: l}}, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "retry-space-role-rename", Method: http.MethodPost, Path: "/spaces/{space_id}/role-renames/{rename_id}/retry",
+			Summary: "Send a stuck role rename's memory move to the node again (admins)", Tags: tags,
+			Description: "For a rename whose node move is pending or failed: queues a new memory.rename for the space's node (unless one is still waiting for it) " +
+				"and makes a failed rename pending. The node tries again and reports; the rename's holds lift when it reports the move done. Not an open rename " +
+				"(done, not_needed or abandoned) is 409 rename_not_open. `node_too_old` is true when the node last spoke a protocol below 1.14: the command waits " +
+				"until it connects at 1.14 or more. Needs the admin-only role_rename:admin permission."},
+			func(ctx context.Context, in *RenamePath) (*struct{ Body *catalog.RenameRetried }, error) {
+				out, err := svc.RetryRoleRename(ctx, Actor(ctx), in.SpaceID, in.RenameID)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.rename_retry", renameProblem(err))
+				}
+				return &struct{ Body *catalog.RenameRetried }{Body: out}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "close-space-role-rename", Method: http.MethodPost, Path: "/spaces/{space_id}/role-renames/{rename_id}/close",
+			Summary: "Give up a stuck role rename's memory move on the node (admins)", Tags: tags,
+			Description: "For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream " +
+				"launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and " +
+				"is never deleted or synced again. Not an open rename is 409 rename_not_open. Needs the admin-only role_rename:admin permission."},
+			func(ctx context.Context, in *struct {
+				RenamePath
+				Body CloseSpaceRoleRenameInput
+			}) (*struct{ Body *catalog.RoleRename }, error) {
+				out, err := svc.CloseRoleRename(ctx, Actor(ctx), in.SpaceID, in.RenameID, in.Body.Reason)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.rename_close", renameProblem(err))
+				}
+				return &struct{ Body *catalog.RoleRename }{Body: out}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "preview-space-role", Method: http.MethodGet, Path: "/spaces/{space_id}/roles/{name}/preview",
 			Summary: "A role's effective configuration and where each value comes from", Tags: tags},
 			func(ctx context.Context, in *struct {
@@ -748,6 +778,17 @@ type AddedRolesOut struct {
 // RenameSpaceRoleInput is the new name of a role.
 type RenameSpaceRoleInput struct {
 	NewName string `json:"new_name" minLength:"1" maxLength:"48" doc:"The role's new name: a lowercase name such as implementor-hard, not used by a role or a memory collection of the space"`
+}
+
+// RenamePath is the {space_id} and {rename_id} parameters of an operation on one role rename.
+type RenamePath struct {
+	SpacePath
+	RenameID string `path:"rename_id" pattern:"^rrn_[0-9a-z]{26}$"`
+}
+
+// CloseSpaceRoleRenameInput is the optional reason an admin gives for closing a rename.
+type CloseSpaceRoleRenameInput struct {
+	Reason string `json:"reason,omitempty" maxLength:"500" doc:"Why the move is given up; kept as the rename's message"`
 }
 
 // RenamedSpaceRole is the renamed role and the record of its rename.

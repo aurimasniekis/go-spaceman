@@ -41,6 +41,8 @@ const (
 	RenameNodeFailed    = "failed"
 	RenameNodeDone      = "done"
 	RenameNodeNotNeeded = "not_needed"
+	// RenameNodeAbandoned: an admin closed the rename (CloseRoleRename); the node's old folder is orphaned.
+	RenameNodeAbandoned = "abandoned"
 )
 
 // RenameCommandKey is the idempotency key of a rename's first memory.rename command; a command queued again after the
@@ -76,7 +78,7 @@ type RoleRename struct {
 	RenamedAt      time.Time  `json:"renamed_at"`
 	RenamedBy      string     `json:"renamed_by"`
 	NodeID         string     `json:"node_id,omitempty"`
-	NodeState      string     `json:"node_state" enum:"pending,failed,done,not_needed"`
+	NodeState      string     `json:"node_state" enum:"pending,failed,done,not_needed,abandoned"`
 	NodeMessage    string     `json:"node_message,omitempty"`
 	NodeDoneAt     *time.Time `json:"node_done_at,omitempty"`
 	CentralMovedAt *time.Time `json:"central_moved_at,omitempty"`

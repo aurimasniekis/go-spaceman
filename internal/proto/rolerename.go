@@ -39,6 +39,10 @@ const (
 	MemoryRenameError    = "error"
 )
 
+// MemoryRenameClosed is the Error of a memory.renamed.ack for a rename an admin closed (ADR-0093 addendum): central gave up
+// the node's move, so the node drops the rename if it has not moved the folder yet and leaves the old folder in place.
+const MemoryRenameClosed = "closed"
+
 // MemoryRenameMaxMessage bounds MemoryRenamed.Message; central truncates a longer one.
 const MemoryRenameMaxMessage = 500
 

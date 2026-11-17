@@ -122,8 +122,8 @@ func TestMemoryInstancesShareAndPreserve(t *testing.T) {
 	if st := m.statusOf(ctx, "spc_a", "implementor-backend"); st.Uncheckpointed != 1 {
 		t.Fatalf("uncheckpointed: %+v", st)
 	}
-	if len(m.collections()) != 2 {
-		t.Fatalf("collections: %v", m.collections())
+	if len(m.collections(ctx)) != 2 {
+		t.Fatalf("collections: %v", m.collections(ctx))
 	}
 	// Invalid keys never reach git.
 	if _, err := m.prepare(ctx, "spc_a", "../etc", "ins_one"); err == nil {

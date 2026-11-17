@@ -160,6 +160,21 @@ WHERE id = sqlc.arg(id) AND node_state IN ('pending', 'failed');
 UPDATE space_role_renames SET node_state = 'not_needed', node_message = sqlc.arg(node_message), node_done_at = sqlc.arg(node_done_at)
 WHERE space_id = sqlc.arg(space_id) AND node_state IN ('pending', 'failed');
 
+-- An admin closes an open rename: the node move is given up (ADR-0093 addendum). The close time goes in node_done_at.
+-- name: CloseRoleRename :execrows
+UPDATE space_role_renames SET node_state = 'abandoned', node_message = sqlc.arg(node_message), node_done_at = sqlc.arg(node_done_at)
+WHERE id = sqlc.arg(id) AND node_state IN ('pending', 'failed');
+
+-- An admin retries an open rename: a failed one is pending again (its message stays until the node reports).
+-- name: ReopenRoleRename :execrows
+UPDATE space_role_renames SET node_state = 'pending' WHERE id = ? AND node_state IN ('pending', 'failed');
+
+-- The rename's memory.rename commands the node has not been sent yet are cancelled when the rename is closed.
+-- name: CancelRoleRenameCommands :execrows
+UPDATE node_commands SET state = 'cancelled', reason = sqlc.arg(reason)
+WHERE node_id = sqlc.arg(node_id) AND kind = 'memory.rename' AND state = 'pending'
+  AND idempotency_key >= sqlc.arg(key) AND idempotency_key < sqlc.arg(key_end);
+
 -- name: SetRoleRenameNodeMessage :execrows
 UPDATE space_role_renames SET node_message = ? WHERE id = ? AND node_state IN ('pending', 'failed');
 

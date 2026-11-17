@@ -277,7 +277,7 @@ func (a *Agent) spaceMemory(ctx context.Context, spaceID string) []proto.MemoryC
 	if a.mem.git == nil {
 		return out
 	}
-	for _, k := range a.mem.collections() {
+	for _, k := range a.mem.collections(ctx) {
 		if k[0] == spaceID {
 			out = append(out, a.mem.statusOf(ctx, k[0], k[1]))
 		}

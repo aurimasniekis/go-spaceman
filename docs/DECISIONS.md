@@ -6367,12 +6367,13 @@
      double click gets the second call a 409. Errors: rename not open (`done`, `not_needed`, `abandoned`) → 409
      `rename_not_open`; unknown id or other space → 404; not an admin → 403. The permission is a new
      `space_role_rename:admin`, which only the admin role holds (through `*`); the operator role, which may rename, may
-     not retry or close. Also `spaceman role rename retry|close <rename-id>` and two admin MCP tools (classified
-     dangerous). Not in Telegram. Both audit (`space.role_rename_retried`, `space.role_rename_closed`, with the actor,
+     not retry or close. Also `spaceman role retry-rename|close-rename <rename-id>` (a `rename` leaf cannot also have
+     subcommands; close needs `--yes`) and two admin MCP tools (classified dangerous). Not in Telegram. Both audit
+     (`role_rename.retried`, `role_rename.closed`, with the actor,
      rename id, names, previous state, the reason) and record a change-feed update of the space.
   2. **Retry** is accepted in `pending` and `failed`. It queues a new `memory.rename` with the next key
-     (`role-rename:<id>:<n>`, as the connect-time re-queue does) unless a command is still pending, sent or accepted, in
-     which case it only wakes delivery. A `failed` rename becomes `pending` with the old message kept until the node
+     (`role-rename:<id>:<n>`, as the connect-time re-queue does) unless a command is still pending or sent (not yet acknowledged by the node; an
+     accepted one is exactly the failed case: the node holds it and retries only at its start), in which case it only wakes delivery. A `failed` rename becomes `pending` with the old message kept until the node
      reports. It never ends the hold itself. For a node whose stored minor is below 14 the command is queued anyway and
      waits for a connection at 14 or more (the hub already leaves it undelivered); the response says
      `node_too_old: true` so the operator knows to upgrade the node or close. It is idempotent and safe: the node answers a
@@ -6413,7 +6414,13 @@
      moves the node folder:* needs a new command and risks lost edits; rejected, nothing is deleted. *Merging retry into
      close:* a retry that just works is the common case and is cheap; close is the give-up. *Retry in `error` only:*
      a downgraded node's `pending` rename is exactly where retry after the upgrade helps.
-  8. **Not security-relevant:** no guarantee is relaxed; the actions are admin-only and audited, and neither deletes data.
+  8. **Implementation notes (T-H4):** the CLI commands are `role retry-rename` and `role close-rename` (close needs `--yes`)
+     and the audit actions are `role_rename.retried` and `role_rename.closed`. The only proto addition is the constant
+     `MemoryRenameClosed` (the ack's `error` value). On the node, `abandoned` is a journal `dropped` rename with result
+     `closed` (no agent migration); prepare of the old name sets the orphan aside and marks it `retained`, and
+     `collections()` and `sync` skip an orphaned folder. A node that never connected a second time after the close is told
+     at its next report. Retry is refused with `rename_not_open` when the space has moved off the rename's node.
+  9. **Not security-relevant:** no guarantee is relaxed; the actions are admin-only and audited, and neither deletes data.
      A close can leave unsynced edits in the node's old-name folder out of central's memory: they are kept on the node,
      and listed as orphaned.
 

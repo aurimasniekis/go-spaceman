@@ -3396,6 +3396,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/role-renames/{rename_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give up a stuck role rename's memory move on the node (admins)
+         * @description For a rename whose node move is pending or failed: the rename becomes abandoned and its holds lift at once (launches of both names, dream launches, another rename, a relocation). Central's memory stays under the new name. The node's old-name folder is left on disk as an orphan and is never deleted or synced again. Not an open rename is 409 rename_not_open. Needs the admin-only role_rename:admin permission.
+         */
+        post: operations["close-space-role-rename"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/role-renames/{rename_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a stuck role rename's memory move to the node again (admins)
+         * @description For a rename whose node move is pending or failed: queues a new memory.rename for the space's node (unless one is still waiting for it) and makes a failed rename pending. The node tries again and reports; the rename's holds lift when it reports the move done. Not an open rename (done, not_needed or abandoned) is 409 rename_not_open. `node_too_old` is true when the node last spoke a protocol below 1.14: the command waits until it connects at 1.14 or more. Needs the admin-only role_rename:admin permission.
+         */
+        post: operations["retry-space-role-rename"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/roles": {
         parameters: {
             query?: never;
@@ -5947,6 +5987,17 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        CatalogRenameRetried: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogRenameRetried.json
+             */
+            readonly $schema?: string;
+            node_too_old: boolean;
+            queued: boolean;
+            rename: components["schemas"]["CatalogRoleRename"];
+        };
         CatalogResolvedSkill: {
             /** Format: int64 */
             number: number;
@@ -5957,6 +6008,12 @@ export interface components {
             version_id: string;
         };
         CatalogRoleRename: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogRoleRename.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             central_moved_at?: string;
             from: string;
@@ -5966,7 +6023,7 @@ export interface components {
             node_id?: string;
             node_message?: string;
             /** @enum {string} */
-            node_state: "pending" | "failed" | "done" | "not_needed";
+            node_state: "pending" | "failed" | "done" | "not_needed" | "abandoned";
             /** Format: date-time */
             renamed_at: string;
             renamed_by: string;
@@ -6097,6 +6154,16 @@ export interface components {
              * @enum {string}
              */
             kind?: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "unknown";
+        };
+        CloseSpaceRoleRenameInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CloseSpaceRoleRenameInput.json
+             */
+            readonly $schema?: string;
+            /** @description Why the move is given up; kept as the rename's message */
+            reason?: string;
         };
         CodeInBody: {
             /**
@@ -20924,6 +20991,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RoleRenamesOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "close-space-role-rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                rename_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseSpaceRoleRenameInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRoleRename"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "retry-space-role-rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                rename_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRenameRetried"];
                 };
             };
             /** @description Error */

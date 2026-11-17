@@ -140,7 +140,7 @@ func TestRoleRenameMovesMemory(t *testing.T) {
 			t.Fatalf("%s under the new name: %q", f, got)
 		}
 	}
-	if c := m.collections(); !slices.Equal(c, [][2]string{{rnSpace, "builder"}}) {
+	if c := m.collections(ctx); !slices.Equal(c, [][2]string{{rnSpace, "builder"}}) {
 		t.Fatalf("collections %v", c)
 	}
 	st, _ := a.j.memory(ctx, rnSpace, "builder")
@@ -394,7 +394,7 @@ func TestRoleRenameRetainsLeftover(t *testing.T) {
 					t.Fatal("the leftover was merged into the renamed role")
 				}
 			}
-			if c := m.collections(); !slices.Equal(c, want) {
+			if c := m.collections(ctx); !slices.Equal(c, want) {
 				t.Fatalf("collections %v, want %v (.retained is not one)", c, want)
 			}
 			if validMemoryKey(rnSpace, ".retained", "ins_x") {

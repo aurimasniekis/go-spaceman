@@ -79,3 +79,51 @@ func TestRenameNote(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0093 addendum: role retry-rename and close-rename call the admin operations; close asks for --yes and sends the
+// reason; the retry note says what is left to do (a too-old node, a queued move, a move still waiting).
+func TestRoleRetryAndCloseRename(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	const rid = "rrn_00000000000000000000000001"
+	base := "/spaces/" + spaceID + "/role-renames/" + rid
+	f.json("POST "+base+"/retry", 200, map[string]any{"queued": true, "node_too_old": false, "rename": map[string]any{"id": rid, "node_state": "pending"}})
+	f.json("POST "+base+"/close", 200, map[string]any{"id": rid, "node_state": "abandoned"})
+	e := f.env()
+
+	r := e.run(t, "role", "retry-rename", rid, "--space", spaceID)
+	if r.code != 0 || !strings.Contains(r.err, "queued again") {
+		t.Fatalf("retry: exit %d, stderr %q", r.code, r.err)
+	}
+	if f.count("POST", base+"/retry") != 1 {
+		t.Fatal("retry was not called")
+	}
+
+	// Close refuses without --yes, and sends the reason with it.
+	if r := e.run(t, "role", "close-rename", rid, "--space", spaceID); r.code == 0 || f.count("POST", base+"/close") != 0 {
+		t.Fatalf("close without --yes: exit %d, calls %d", r.code, f.count("POST", base+"/close"))
+	}
+	r = e.run(t, "role", "close-rename", rid, "--space", spaceID, "--reason", "node retired", "--yes")
+	if r.code != 0 || !strings.Contains(r.err, "Rename closed") {
+		t.Fatalf("close: exit %d, stderr %q", r.code, r.err)
+	}
+	if req := f.last("POST", base+"/close"); req.body["reason"] != "node retired" {
+		t.Fatalf("close body %v", req.body)
+	}
+}
+
+func TestRetryRenameNote(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		m    map[string]any
+		want string
+	}{
+		{map[string]any{"queued": true, "node_too_old": true}, "protocol below 1.14"},
+		{map[string]any{"queued": true}, "queued again"},
+		{map[string]any{"queued": false}, "still waiting"},
+	} {
+		if got := retryRenameNote(c.m); !strings.Contains(got, c.want) {
+			t.Errorf("%v: %q, want it to contain %q", c.m, got, c.want)
+		}
+	}
+}

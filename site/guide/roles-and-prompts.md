@@ -204,6 +204,27 @@ is offline keeps them held until it reconnects. Nothing the node wrote meanwhile
 name, which is the folder that moves, and central refuses that history under the old name (`role renamed`) without
 consuming it, so the node offers it again under the new name after its move. See [Memory](memory.md).
 
+**A rename that stays open.** A node that keeps reporting `error`, or that was downgraded below node protocol 1.14 after
+the rename, leaves it `pending` or `failed` and the role held. Two admin-only operations end the wait (they need the
+`space_role_rename:admin` permission, which only the admin role holds; an operator who may rename a role may not use them):
+
+- **Retry** sends the move to the node again, for when the fault is fixed:
+  `spaceman role retry-rename <rename-id> --space payments`, or `POST /spaces/{space_id}/role-renames/{rename_id}/retry`.
+  It works on a `pending` or `failed` rename and never ends the hold itself: the hold lifts when the node reports `done`.
+  For a node below protocol 1.14 the response says `node_too_old: true`: the command is queued and delivered once the node
+  connects at 1.14 or more.
+- **Close** gives up the node's move: `spaceman role close-rename <rename-id> --space payments --reason "node retired" --yes`,
+  or `POST /spaces/{space_id}/role-renames/{rename_id}/close` with an optional `{"reason": "…"}`. The rename becomes
+  `abandoned`, the holds lift at once (launches of both names, dream runs, another rename, a relocation), and central's
+  memory stays under the new name. **Nothing is deleted:** the node's old-name folder stays on disk, orphaned, and is never
+  synced again (a later role with the old name starts a fresh collection and the node sets the orphan aside under
+  `.retained/`). Anything the node wrote there that central never received stays only on the node. If the node has already
+  moved its folder by the time it hears of the close, the folder simply ends under the new name, where central's copy is.
+
+A rename that is not `pending` or `failed` is `409 rename_not_open` for both. Both are audited as `role_rename.retried` and
+`role_rename.closed` with the actor, and are in the administrator MCP (`retry_space_role_rename` and
+`close_space_role_rename`, classified dangerous). Telegram does not offer them.
+
 Role names also appear in other configuration you manage outside SpaceMan, for example in Terraform. Update those
 references to the new name.
 

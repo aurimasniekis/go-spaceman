@@ -358,3 +358,43 @@ func TestRenamedAwayIsPerSpace(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0093 addendum (T-H4): closing a stuck rename keeps central's moved memory under the new name intact, and lifts the
+// refusal of memory under the new name (the node's old folder is an orphan that is never synced: the old name stays
+// refused while no role has it).
+func TestCloseRenameKeepsMemoryUnderNewName(t *testing.T) {
+	t.Parallel()
+	e := newRenameEnv(t)
+	h1 := e.commit("a.md", "a")
+	if ack := e.syncAs(oldRole, "", h1); ack.Result != proto.MemoryOK {
+		t.Fatalf("sync: %+v", ack)
+	}
+	rn := e.rename(oldRole, newRole, true)
+	e.exec(`UPDATE space_role_renames SET node_state = 'failed' WHERE id = ?`, rn.ID)
+	h2 := e.commit("b.md", "b")
+	if ack := e.syncAs(newRole, h1, h2); ack.Result != proto.MemoryError || ack.Message != ErrRoleRenamed {
+		t.Fatalf("sync under the new name while the rename is open: %+v", ack)
+	}
+
+	if _, err := e.cat.CloseRoleRename(e.ctx, audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}, "spc_a", rn.ID, "node retired"); err != nil {
+		t.Fatal(err)
+	}
+	if !e.repoExists(newRole) || e.repoExists(oldRole) {
+		t.Fatalf("repositories after the close: new %v old %v", e.repoExists(newRole), e.repoExists(oldRole))
+	}
+	files, err := e.svc.Files(e.ctx, "spc_a", newRole)
+	if err != nil || len(files) != 1 || files[0] != "a.md" {
+		t.Fatalf("history under the new name after the close: %v %v", files, err)
+	}
+	if ack := e.syncAs(newRole, h1, h2); ack.Result != proto.MemoryOK || ack.Head != h2 {
+		t.Fatalf("sync under the new name after the close: %+v", ack)
+	}
+	if got := e.collections(); len(got) != 1 || got[newRole] != h2 {
+		t.Fatalf("collections %v", got)
+	}
+	// The orphan's name is still refused while no role has it.
+	h3 := e.commit("c.md", "c")
+	if ack := e.syncAs(oldRole, h1, h3); ack.Result != proto.MemoryError || ack.Message != ErrRoleRenamed {
+		t.Fatalf("sync under the orphaned old name: %+v", ack)
+	}
+}
