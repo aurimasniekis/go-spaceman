@@ -311,19 +311,41 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 }
 
 // writeConflictCopies writes the conflict copies and the README under dir inside the instance checkout. Any instance can
-// commit a symlink (for example conflicts -> /elsewhere) into the shared history, which the checkout then contains, so
-// the writes go through an os.Root of the instance (never leaving it) and are refused when conflicts/ or dir is a symlink.
+// commit a symlink (for example conflicts -> .git) or a ready-made conflicts/<name>/ folder full of symlinks into the
+// shared history, which the checkout then contains. Two layers defend: prepareConflictDir refuses a symlinked
+// conflicts/ and a conflict folder that already exists (then creates it, so every path under it is made here), and
+// writeUnderRoot writes through an os.Root of the instance, which never leaves it.
 func writeConflictCopies(inst, dir string, saved map[string][]byte, note string) error {
 	root, err := os.OpenRoot(inst)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	for _, c := range []string{"conflicts", dir} {
-		if fi, err := root.Lstat(c); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("memory: %s is a symlink; refusing to write conflict copies through it", c)
-		}
+	if err := prepareConflictDir(root, dir); err != nil {
+		return err
 	}
+	return writeUnderRoot(root, dir, saved, note)
+}
+
+// prepareConflictDir refuses a symlinked conflicts/ (in-root, so os.Root alone would allow conflicts -> .git) and a
+// conflict folder that already exists (its name is predictable, so another instance can pre-commit it with symlinks
+// inside), then creates the folder itself.
+func prepareConflictDir(root *os.Root, dir string) error {
+	if fi, err := root.Lstat("conflicts"); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("memory: conflicts is a symlink in the shared history; refusing to write conflict copies through it. " +
+			"Recover by removing the committed conflicts entry from the shared history (this instance's version is kept in refs/conflicts/)")
+	}
+	if _, err := root.Lstat(dir); err == nil {
+		return fmt.Errorf("memory: %s already exists in the shared history; refusing to write conflict copies into it. "+
+			"Recover by removing the committed conflicts entry from the shared history (this instance's version is kept in refs/conflicts/)", dir)
+	}
+	if err := root.MkdirAll("conflicts", 0o700); err != nil {
+		return err
+	}
+	return root.Mkdir(dir, 0o700)
+}
+
+func writeUnderRoot(root *os.Root, dir string, saved map[string][]byte, note string) error {
 	for f, b := range saved {
 		p := filepath.Join(dir, filepath.Clean("/"+f))
 		if err := root.MkdirAll(filepath.Dir(p), 0o700); err != nil {
