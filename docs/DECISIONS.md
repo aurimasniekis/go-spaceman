@@ -6347,6 +6347,11 @@
        during a merge. Not fenced: a turn the harness starts on its own (a background task finishing). For those, the idle check is repeated immediately before the merge, git
        refuses to overwrite a file that changed since the status check, and the remaining window is git's own, between
        its per-file check and its write, only for files the fast-forward changes.
+       The input gate covers only input the node delivers. For the other turns (a queued message the harness starts,
+       a turn it starts on its own), what mostly covers them is the checkpoint-debounce condition of (3) together with
+       the harness status: a turn that has started is reported `working`, which is not idle, and an instance whose turn
+       just ended stays out of the merge until its own checkpoint has run. The repeated idle check and git's refusals
+       cover what is left.
   6. **No change to what an agent sees mid-turn.** Only between turns. A Claude Code agent whose context holds an
      older version of a file is refused by its own Edit and Write tools until it reads the file again.
   7. **Kill switch.** The node setting `memory.fast_forward` (`SPACEMAN_AGENT_MEMORY_FAST_FORWARD`, default `true`).

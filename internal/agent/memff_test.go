@@ -763,3 +763,81 @@ func readOr(dir, name string) string {
 	b, _ := os.ReadFile(filepath.Join(dir, name))
 	return string(b)
 }
+
+// memory.fast_forward off restores the input path as it was before ADR-0094: two inputs to one instance are not
+// serialized by the instance's gate, and no input mark is recorded.
+func TestKillSwitchSkipsInputGate(t *testing.T) {
+	e := newFFEnv(t)
+	e.a.o.NoMemoryFastForward = true
+	r := e.idleRun("ins_a")
+	inSend, release := make(chan struct{}), make(chan struct{})
+	first := make(chan error, 1)
+	go func() {
+		first <- e.m.deliverInput(r, func() error { close(inSend); <-release; return nil })
+	}()
+	<-inSend
+	second := make(chan error, 1)
+	go func() { second <- e.m.deliverInput(r, func() error { return nil }) }()
+	select {
+	case err := <-second:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		if err := <-first; err != nil {
+			t.Log(err)
+		}
+		t.Fatal("with memory.fast_forward off, an input waited for another input's gate")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	e.m.mu.Lock()
+	marks := len(e.m.inputs)
+	e.m.mu.Unlock()
+	if marks != 0 {
+		t.Fatalf("%d input marks recorded with memory.fast_forward off", marks)
+	}
+}
+
+// With memory.fast_forward off, a takeover does not wait for a gate holder (no fast-forward exists to wait for).
+func TestKillSwitchTakeoverDoesNotWaitForGate(t *testing.T) {
+	e := newFFEnv(t)
+	e.a.o.NoMemoryFastForward = true
+	f := runnertest.New()
+	e.a.o.Runner = f
+	e.a.leases[ffSpace] = leaseRow{SpaceID: ffSpace, Generation: 1, ExpiresAt: time.Now().Add(time.Hour), Workdir: "ff"}
+	r := e.idleRun("ins_a")
+	p, err := f.Start(e.ctx, runner.Spec{Name: r.TerminalName, Argv: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.TerminalID = p.ID
+	if err := e.a.j.updateRun(e.ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	g := e.m.inputGate("ins_a")
+	g.Lock()
+	started := make(chan struct{})
+	go func() {
+		defer close(started)
+		e.a.startTakeover(e.ctx, proto.Takeover{TakeoverID: "tko_1", SpaceID: ffSpace, RunID: r.RunID, Generation: 1})
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		g.Unlock()
+		<-started
+		t.Fatal("with memory.fast_forward off, the takeover waited for the input gate")
+	}
+	g.Unlock()
+	e.a.mu.Lock()
+	tk := e.a.takeovers[r.RunID]
+	e.a.mu.Unlock()
+	if tk != nil {
+		<-tk.ready
+		tk.cancel()
+	}
+}
