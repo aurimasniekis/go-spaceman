@@ -282,6 +282,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-CTRL-005 KB support admission is preauthorized by control or an operator. Agents request their own KB session through a scoped operation
   that is not general worker-launch permission. Support counts toward capacity, and reserved capacity prevents worker/support deadlock.
 - SM-CTRL-006 Task outcomes, messages, human blockers and memory errors are tracked separately.
+- SM-CTRL-007 Control can list its own space's roles with each role's kind, effective description (and whether it is the space role's or the template's), template and effective harness and model, through a read-only tool only control runs have. The list never carries prompt text, settings, skills or account references (ADR-0095).
 - SM-CTRL-008 A live control that leaves waiting work alone (unacknowledged messages, reviews whose workers finished,
   ended runs, free worker slots with eligible tasks) is reminded through its terminal, with backoff, never while it is
   busy, at a usage limit, waiting for a person, taken over or paused. Unanswered reminders raise attention, and can
