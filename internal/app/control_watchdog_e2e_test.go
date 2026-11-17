@@ -15,9 +15,9 @@ import (
 )
 
 // SM-CTRL-008, ADR-0099: a live control that leaves a worker's message unacknowledged is reminded through its terminal
-// (through the node's idle-gated input, audited), never while it is busy; a tool call ends the episode; reminders that
-// go unanswered raise a human action and, with the restart switch on, control is stopped and started again, resuming
-// its session.
+// (through the node's idle-gated input, audited), never while it is busy; a tool call that leaves the message waiting
+// does not end the episode; reminders that leave the backlog in place raise a human action and, with the restart switch
+// on, control is stopped and started again, resuming its session.
 func TestControlWatchdog(t *testing.T) {
 	t.Parallel()
 	e := newFleetEnv(t)
@@ -88,22 +88,26 @@ func TestControlWatchdog(t *testing.T) {
 		t.Fatalf("%d nudge audit events", n)
 	}
 
-	// A tool call is activity: the episode ends, and the next reminder waits for the full quiet time again.
+	// A tool call is activity, so control gets the full quiet time again, but the message still waits: the episode and
+	// its count go on (ADR-0099 decision 6).
 	if res := e.bridgeCall(ctrl.ID, e.runToken(ctrl.ID), "spaceman_messages", nil); !res.OK {
 		t.Fatalf("messages: %+v", res)
 	}
 	e.c.Watchdog.Pass(ctx)
-	if s, _ := e.c.Watchdog.State(sp.ID); s.Guard != "recently_active" || s.Nudges != 0 {
+	if s, _ := e.c.Watchdog.State(sp.ID); s.Guard != "recently_active" || s.Nudges != 1 {
 		t.Fatalf("after a tool call: %+v", s)
 	}
 
-	// Unanswered reminders escalate: people are told, and with the restart on control starts again.
+	// Reminders that leave the backlog escalate: people are told, and with the restart on control starts again (no
+	// reminder goes into the terminal that is being stopped).
 	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 1, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 1,
 		limits.ControlWatchdogRestart: 1}}); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "second nudge", func() bool { e.c.Watchdog.Pass(ctx); return len(nudges()) == 2 })
 	eventually(t, "escalated", func() bool { e.c.Watchdog.Pass(ctx); s, _ := e.c.Watchdog.State(sp.ID); return s.Escalated })
+	if len(nudges()) != 1 {
+		t.Fatalf("nudged into a control being restarted: %q", nudges())
+	}
 	acts, err := e.c.Human.List(ctx, sp.ID, human.ListFilter{})
 	if err != nil {
 		t.Fatal(err)

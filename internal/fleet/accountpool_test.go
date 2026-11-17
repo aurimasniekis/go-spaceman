@@ -151,3 +151,50 @@ func TestPoolExhaustedRolePoolNeverWidens(t *testing.T) {
 		t.Fatalf("resume launched on %q, want acc_3 of the role's pool (never acc_1 or acc_2)", p.AccountRef)
 	}
 }
+
+// LaunchHeld (ADR-0099): a launch is held only when every account of the pool it would use is limited, the role's
+// harness comes from its profile, a role pool governs, and a limit that has reset frees its account.
+func TestLaunchHeld(t *testing.T) {
+	e := newHoldEnv(t) // spc_a binds acc_1 and acc_2 for claude-code
+	held := func(space, role string) bool {
+		t.Helper()
+		h, err := e.svc.LaunchHeld(e.ctx, space, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	if held("spc_a", "") || held("spc_a", "implementor") {
+		t.Fatal("held with every account free")
+	}
+	e.hold("ulm_1", "spc_a", "acc_1", "", proto.LimitFiveHour, dur(time.Hour), nil)
+	if held("spc_a", "") {
+		t.Fatal("held with acc_2 free")
+	}
+	// A role whose pool is acc_1 alone is held; the space's other roles are not.
+	e.exec(`INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES ('spc_a', 'reviewer', 'acc_1', 100, 0, 't')`)
+	if !held("spc_a", "reviewer") || held("spc_a", "implementor") {
+		t.Fatal("role pool")
+	}
+	e.hold("ulm_2", "spc_a", "acc_2", "", proto.LimitSevenDay, nil, nil) // reset unknown: held until cleared
+	if !held("spc_a", "") || !held("spc_a", "implementor") {
+		t.Fatal("not held with every account limited")
+	}
+	// A role whose profile names another harness launches from that harness's pool, which has no account here: not
+	// judged held.
+	e.exec(`INSERT INTO harness_profiles (id, slug, name, harness, created_at, created_by, updated_at) VALUES ('hpf_x', 'codex', 'Codex', 'codex', 0, 't', 0)`)
+	e.exec(`INSERT INTO role_templates (id, slug, name, kind, profile_id, created_at, created_by, updated_at) VALUES ('rtp_x', 'other', 'Other', 'worker', 'hpf_x', 0, 't', 0)`)
+	e.exec(`INSERT INTO space_roles (space_id, name, template_id, created_at, created_by, updated_at) VALUES ('spc_a', 'other', 'rtp_x', 0, 't', 0)`)
+	if held("spc_a", "other") {
+		t.Fatal("a codex role judged against claude-code accounts")
+	}
+	// A space without accounts is never held.
+	if held("spc_none", "") {
+		t.Fatal("no accounts")
+	}
+	// Once acc_1's limit has reset, acc_1 is free again.
+	e.clk.Advance(2 * time.Hour)
+	if held("spc_a", "") || held("spc_a", "reviewer") {
+		t.Fatal("still held after acc_1's reset")
+	}
+}

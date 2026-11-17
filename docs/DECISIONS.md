@@ -6625,14 +6625,19 @@
        available, are due (a scheduled message counts only from its delivery time), were not sent by control itself,
        and have been waiting for more than `N` minutes since they became available (or since they were created, for one
        that was never noticed).
-     - **Reviews waiting:** tasks in `review` whose assigned run has ended or reports `done`, and that nobody has
-       changed for `N` minutes.
+     - **Reviews waiting:** tasks in `review` whose assigned run has ended or reports `done`, that nobody has changed
+       for `N` minutes, and that entered review (their last change) after control's last activity (below). Like an
+       ended run, a review is a notice to control, not a debt: once control has acted after it, a review may rightly
+       wait for hours (for a person to merge a pull request, say) without being backlog.
      - **Ended runs:** worker and diagnostic runs of the space that ended on their own, with nobody asking them to stop
        (`failed`, `exited` or `lost`; a failed launch is a `failed` run), more than `N` minutes ago, after the control run started, and after control's last activity
        (below). A run parked at a usage limit is not counted: it comes back through its limit wait (ADR-0079).
      - **Idle slots:** the space has fewer live worker and diagnostic runs than `max_concurrent_runs` while at least one
-       ready task is eligible now (no dependency, exclusion or policy holds it) and has been ready for more than `N`
-       minutes.
+       ready task is eligible now (no dependency, exclusion or policy holds it), has been ready for more than `N`
+       minutes, and some account would launch it: a task whose role's pool (ADR-0090; the harness from the role's
+       profile, or every harness the space has accounts for when that is unknown) has only accounts with an open usage
+       limit that has not reset waits for the reset, not for control. A pool with no usable account, or a space without
+       accounts, is not judged.
   3. **When control counts as stalled.** Control is stalled when there is backlog *and* its last activity is older than
      `N` minutes. Its activity is the latest of:
      - its last SpaceMan or gateway tool call (every agent tool call passes through central's tool dispatcher, which
@@ -6645,9 +6650,12 @@
        for an approval included); the notice would be refused by the node anyway (safe input is idle-gated);
      - **control is at a usage limit:** the run has an open limit, a limit wait, or the space's control is parked
        (ADR-0079). It is waiting for the reset, and typing into it would start a turn that fails at once;
-     - **control is waiting on a person:** its program reports `blocked` (a harness permission prompt), or its last
-       tool call asked a person (`spaceman_human_ask`) and that action is still open. After a central restart, which
-       loses the last tool's name, any open human action that control asked counts;
+     - **control is waiting on a person:** its program reports `blocked` (a harness permission prompt), or a human
+       action its run asked is still open and control has taken no turn since asking: the turn that called
+       `spaceman_human_ask` may have gone on to other tool calls (telling a worker, setting a task's status) and
+       finished, but no later turn has. The dispatcher records the run's finished turns when the question is asked.
+       After a central restart, which loses that record, any open human action that control asked counts until
+       control's next tool call;
      - **the space is not active** (paused or archived), or an operator has taken over control's terminal;
      - **the run is not control's live run:** no control run, or it is starting, stopping or ended (auto-start and
        recovery own those cases).
@@ -6658,12 +6666,24 @@
      on the rest." It carries no message content, titles or IDs: content is read through the tools as data, never as a
      prompt. Each nudge writes an audit event `control.watchdog_nudged` (actor `system:control-watchdog`, target the
      control run) with the counts and the nudge's number in the episode.
-  6. **Backoff.** The first nudge goes out when control is first found stalled. The next one is due 5 minutes later,
-     then the gap doubles (10, 20, 40) up to a 60-minute cap. Any activity by control after a nudge (a tool call or a
-     new turn) ends the episode: the count and the backoff start over, and control again gets `N` quiet minutes before
-     the next nudge.
-  7. **Escalation.** When `control_watchdog_nudges` nudges in a row went unanswered (the next one is due and control
-     has done nothing since the first), the watchdog:
+  6. **Episodes and backoff.** An episode is the same backlog left waiting by one control run, and it is keyed on the
+     backlog, not on control's activity: a nudge typed into an idle program always starts a turn, so "control did
+     something" says nothing about whether the backlog was handled. The first nudge goes out when control is first
+     found stalled. The next one is due 5 minutes later, then the gap doubles (10, 20, 40) up to a 60-minute cap; a
+     nudge also waits until control has again been quiet for `N` minutes, so activity delays it but neither resets the
+     count nor the gap. The episode ends, and the count and the backoff start over, when:
+     - the backlog empties, whoever emptied it (control, or an operator acknowledging the messages), whether or not a
+       guard holds at the time;
+     - the backlog shrinks: fewer unacknowledged messages or startable tasks than the last pass saw, or the oldest of
+       them was handled (the oldest waiting item's time advanced). Reviews and ended runs count only until control's
+       next activity (decision 2), so their dropping out is not judged; when they were all that waited, the backlog
+       empties;
+     - control's live run is another run, or the watchdog is turned off for the space.
+
+     More backlog (a new message, another ready task) keeps the episode. A guard pauses an episode without advancing
+     it.
+  7. **Escalation.** When `control_watchdog_nudges` nudges of one episode left the backlog in place (the next one is
+     due, whether or not control took turns in between), the watchdog:
      - raises one high-priority human action for the space's people, "Control is not responding in" followed by the
        space name, naming the backlog counts and how long control has been quiet. It is deduplicated per episode and
        reaches people the way every human action does: the space's inbox of human actions and, where the space has
@@ -6689,13 +6709,17 @@
     people are told after a bounded number of reminders, instead of the backlog waiting for someone to look.
   - The watchdog adds no new terminal input to a busy, limited, paused, taken-over or human-waiting control. Its only
     input is the one-line, content-free notice that the notifier already uses.
-  - The watchdog only reads state that already exists, plus one in-memory timestamp per run's tool calls. Its cost is
-    one pass over the active spaces with a live control each minute.
+  - The watchdog only reads state that already exists, plus one in-memory timestamp per run's tool calls (and the run's
+    turn when it asks a person). Its cost is one pass over the active spaces with a live control each minute, with
+    one read of the account holds per role of the eligible ready tasks.
   - Watchdog state is not persisted. After a central restart an episode starts over: the first nudge comes `N` minutes
     after the restart at the earliest, and an escalation already raised is not raised again for the same episode
     (its human action is deduplicated).
   - A notice the node refuses because control turned busy in the meantime still counts as sent; control is active then,
-    so its next activity ends the episode.
+    and the episode goes on only if the backlog is still there once control is quiet again.
+  - A control that answers every nudge with a turn but leaves the backlog is reminded at a growing interval and its
+    people are told after `control_watchdog_nudges` reminders; a control that handles any part of the backlog starts
+    a new episode, so steady progress is never escalated.
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The nudge is safe input with no untrusted
   content, refused during takeovers and limits like every notice. The restart is off by default, goes through the same
   launch resolution, admission and audit as recovery, and is bounded by the same restart budget.

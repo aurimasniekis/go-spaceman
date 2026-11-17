@@ -97,6 +97,9 @@ type activity struct {
 	turn     int64     // the run's turn when the watchdog last looked
 	seen     bool      // turn was read at least once
 	turnAt   time.Time // when the watchdog saw the turn advance
+	looked   time.Time // when a pass last read the turn (keeps the record of a run without tool calls)
+	asked    bool      // the run asked a person (spaceman_human_ask) since central started
+	askTurn  int64     // the run's finished turns when it last asked: the asking turn finishes as askTurn+1
 }
 
 // observation is one space's state as a watchdog pass reads it.
@@ -109,15 +112,23 @@ type observation struct {
 	HumanOpen  int64       // open human actions control's run asked
 	Unacked    []time.Time // when each unacknowledged message to control started waiting
 	Tasks      []*queue.Task
-	Runs       []*fleet.Run // the space's recent runs, live ones always included
-	MaxRuns    int64        // the space's max_concurrent_runs
+	Runs       []*fleet.Run    // the space's recent runs, live ones always included
+	MaxRuns    int64           // the space's max_concurrent_runs
+	Held       map[string]bool // roles (of eligible ready tasks) no account would launch now: every one is limited
 }
 
 // verdict is a pass's judgement of one space.
 type verdict struct {
 	Guard   string    // non-empty: no nudge, and why
 	Backlog Backlog   // what waits (also filled when a guard holds)
+	Oldest  time.Time // when the oldest unacknowledged message or startable task started waiting (zero: none)
 	Last    time.Time // control's last activity
+}
+
+// counted reports whether the backlog was read: a pass that stops at the space, the control run or the switch leaves
+// it empty without anything having been handled.
+func (v verdict) counted() bool {
+	return v.Guard != guardOff && v.Guard != guardPaused && v.Guard != guardNoControl
 }
 
 // assess decides whether control is stalled: there is backlog older than n and control has done nothing for n, and no
@@ -137,15 +148,14 @@ func assess(o observation, n time.Duration, now time.Time) verdict {
 	if c.StartedAt != nil {
 		last = latest(last, *c.StartedAt)
 	}
-	v := verdict{Last: last, Backlog: backlog(o, last, now.Add(-n))}
+	v := verdict{Last: last}
+	v.Backlog, v.Oldest = backlog(o, last, now.Add(-n))
 	switch {
 	case c.Takeover != nil:
 		v.Guard = guardTakeover
 	case c.Limit != nil || o.Parked:
 		v.Guard = guardLimit
-	case c.Status == "blocked" || o.HumanOpen > 0 && (o.Act.tool == humanAskTool || o.Act.tool == ""):
-		// A harness prompt, or its last call asked a person who has not answered: control waits on people. With the
-		// last tool unknown (central restarted), any open question control asked counts.
+	case c.Status == "blocked" || o.HumanOpen > 0 && waitsOnAsk(o):
 		v.Guard = guardHuman
 	case o.Act.inflight > 0 || c.Status != "idle" && c.Status != "done":
 		v.Guard = guardBusy
@@ -157,12 +167,31 @@ func assess(o observation, n time.Duration, now time.Time) verdict {
 	return v
 }
 
-// backlog counts what waits for control longer than cutoff.
-func backlog(o observation, last, cutoff time.Time) Backlog {
+// waitsOnAsk reports whether control, with a question of its run still open, is waiting for the answer: it asked in
+// its latest turn (the asking turn may have finished since, but no turn after it has; other tool calls in that turn,
+// such as telling a worker, do not count). With nothing known of its tool calls (central restarted), any open question
+// control asked counts.
+func waitsOnAsk(o observation) bool {
+	if o.Act.asked {
+		return o.Control.Turn <= o.Act.askTurn+1
+	}
+	return o.Act.tool == ""
+}
+
+// backlog counts what waits for control longer than cutoff, and returns when the oldest of what only control's handling
+// clears (an unacknowledged message, a startable task) started waiting.
+func backlog(o observation, last, cutoff time.Time) (Backlog, time.Time) {
 	var b Backlog
+	var oldest time.Time
+	older := func(t time.Time) {
+		if oldest.IsZero() || t.Before(oldest) {
+			oldest = t
+		}
+	}
 	for _, t := range o.Unacked {
 		if !t.After(cutoff) {
 			b.Messages++
+			older(t)
 		}
 	}
 	runs := make(map[string]*fleet.Run, len(o.Runs))
@@ -197,25 +226,36 @@ func backlog(o observation, last, cutoff time.Time) Backlog {
 		}
 	}
 	startable := 0
+	var readySince time.Time
 	for _, t := range o.Tasks {
 		if t.UpdatedAt.After(cutoff) {
 			continue
 		}
 		switch t.Status {
 		case queue.Review:
+			// Like an ended run, a review counts until control's first activity after it entered review (its last
+			// change): control was told, and a review may rightly wait for a long time (a person merging, say).
+			if !t.UpdatedAt.After(last) {
+				continue
+			}
 			if r := runs[t.AssigneeRun]; r == nil || !fleet.Live(r.Observed) || r.Status == "done" {
 				b.Reviews++
 			}
 		case queue.Ready:
-			if len(t.Waiting) == 0 {
+			// Eligible now, and some account would launch it (a task whose every account is limited waits for a reset).
+			if len(t.Waiting) == 0 && !o.Held[t.AssigneeRole] {
 				startable++
+				if readySince.IsZero() || t.UpdatedAt.Before(readySince) {
+					readySince = t.UpdatedAt
+				}
 			}
 		}
 	}
 	if free := o.MaxRuns - live; startable > 0 && free > 0 {
 		b.Startable, b.FreeSlots = startable, int(free)
+		older(readySince)
 	}
-	return b
+	return b, oldest
 }
 
 func latest(ts ...time.Time) time.Time {
@@ -238,9 +278,12 @@ func nudgeGap(k int, minute time.Duration) time.Duration {
 	return time.Duration(int64(min(d, nudgeMaxGap)/time.Minute)) * minute
 }
 
-// episode is one stretch of a stalled control being nudged, ended by any activity of control.
+// episode is one stretch of the same backlog left waiting by one control run. It ends when that backlog empties or
+// shrinks (decision 6), not when control merely takes a turn: a nudge into an idle program always starts one.
 type episode struct {
 	runID     string
+	seen      Backlog   // the backlog at the last pass that read it
+	oldest    time.Time // its oldest waiting item then
 	nudges    int
 	first     time.Time
 	last      time.Time
@@ -275,6 +318,7 @@ type Watchdog struct {
 	restarts map[string]bool // control runs the watchdog stopped to restart
 
 	// Seams for tests; NewWatchdog points them at the supervisor's services.
+	turnOf   func(ctx context.Context, runID string) (int64, bool)
 	spaces   func(ctx context.Context) ([]string, error)
 	observe  func(ctx context.Context, spaceID string) (observation, error)
 	nudge    func(ctx context.Context, r *fleet.Run, text string, details map[string]any) error
@@ -285,7 +329,7 @@ type Watchdog struct {
 func NewWatchdog(sv *Supervisor) *Watchdog {
 	w := &Watchdog{sv: sv, wake: make(chan struct{}, 1), started: sv.clock.Now(), acts: map[string]*activity{}, eps: map[string]*episode{},
 		state: map[string]WatchState{}, restarts: map[string]bool{}}
-	w.spaces, w.observe, w.nudge, w.escalate = w.activeSpaces, w.read, w.deliver, w.raise
+	w.turnOf, w.spaces, w.observe, w.nudge, w.escalate = w.runTurn, w.activeSpaces, w.read, w.deliver, w.raise
 	sv.Watchdog = w
 	return w
 }
@@ -299,7 +343,11 @@ func (w *Watchdog) Tools(next fleet.ToolDispatcher) fleet.ToolDispatcher {
 		}
 		w.toolStarted(p.RunID, tool)
 		defer w.toolFinished(p.RunID)
-		return next(ctx, p, tool, args)
+		out, err := next(ctx, p, tool, args)
+		if tool == humanAskTool && err == nil {
+			w.asked(ctx, p.RunID)
+		}
+		return out, err
 	}
 }
 
@@ -319,6 +367,28 @@ func (w *Watchdog) toolFinished(runID string) {
 	if a.inflight > 0 {
 		a.inflight--
 	}
+}
+
+// asked records that a run asked a person, with its finished turns now (the asking turn is still running).
+func (w *Watchdog) asked(ctx context.Context, runID string) {
+	turn, ok := w.turnOf(ctx, runID)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	a := w.act(runID)
+	if !ok {
+		turn = a.turn // the turn the last pass saw: at worst the guard ends a turn early
+	}
+	a.asked, a.askTurn = true, turn
+}
+
+// runTurn reads a run's finished turns.
+func (w *Watchdog) runTurn(ctx context.Context, runID string) (int64, bool) {
+	r, err := w.sv.fl.GetRun(ctx, runID)
+	if err != nil {
+		w.sv.log.Warn("watchdog: read the asking run", slog.String(obs.FieldRunID, runID), obs.Err(err))
+		return 0, false
+	}
+	return r.Turn, true
 }
 
 // act returns a run's activity record; callers hold mu.
@@ -384,7 +454,7 @@ func (w *Watchdog) prune() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for id, a := range w.acts {
-		if a.inflight == 0 && now.Sub(latest(a.at, a.turnAt)) > activityExpiry {
+		if a.inflight == 0 && now.Sub(latest(a.at, a.turnAt, a.looked)) > activityExpiry {
 			delete(w.acts, id)
 		}
 	}
@@ -417,7 +487,7 @@ func (w *Watchdog) check(ctx context.Context, spaceID string) {
 		if a.seen && o.Control.Turn != a.turn {
 			a.turnAt = now
 		}
-		a.turn, a.seen = o.Control.Turn, true
+		a.turn, a.seen, a.looked = o.Control.Turn, true, now
 		o.Act = *a
 		w.mu.Unlock()
 	}
@@ -427,21 +497,27 @@ func (w *Watchdog) check(ctx context.Context, spaceID string) {
 	if o.Control != nil {
 		st.ControlRun = o.Control.ID
 	}
+	w.mu.Lock()
+	ep := w.eps[spaceID]
+	if ep != nil && (o.Control == nil || ep.runID != o.Control.ID || v.counted() && ep.progress(v)) {
+		// Another control run, or the backlog emptied or shrank (whoever handled it): the episode is over.
+		delete(w.eps, spaceID)
+		ep = nil
+	}
+	if ep != nil && v.counted() {
+		ep.seen, ep.oldest = v.Backlog, v.Oldest
+	}
+	w.mu.Unlock()
 	if v.Guard != "" {
-		// Control acted, has nothing waiting, or a guard holds: a running episode ends when control did anything since
-		// its last nudge; otherwise it is kept (a guard only pauses it).
-		w.mu.Lock()
-		if ep := w.eps[spaceID]; ep != nil && (o.Control == nil || ep.runID != o.Control.ID || v.Last.After(ep.last) || v.Guard == guardNoBacklog) {
-			delete(w.eps, spaceID)
-		}
-		w.mu.Unlock()
-		w.settle(spaceID, st, nil)
+		// A guard (control busy, waiting on a person, recently active, …) only pauses a running episode: it keeps its
+		// count and its backoff, so a control that answers each nudge with a turn but leaves the backlog is still
+		// reminded less and less often, and escalated.
+		w.settle(spaceID, st, ep)
 		return
 	}
 	w.mu.Lock()
-	ep := w.eps[spaceID]
-	if ep == nil || ep.runID != o.Control.ID || v.Last.After(ep.last) {
-		ep = &episode{runID: o.Control.ID}
+	if ep == nil {
+		ep = &episode{runID: o.Control.ID, seen: v.Backlog, oldest: v.Oldest}
 		w.eps[spaceID] = ep
 	}
 	due := ep.nudges == 0 || !now.Before(ep.next)
@@ -476,6 +552,14 @@ func (w *Watchdog) check(ctx context.Context, spaceID string) {
 	w.mu.Unlock()
 	w.sv.log.Info("watchdog: control nudged", slog.String("space.id", spaceID), slog.String(obs.FieldRunID, o.Control.ID), slog.Int("nudge", ep.nudges))
 	w.settle(spaceID, st, ep)
+}
+
+// progress reports whether the backlog emptied or shrank since the episode last saw it: fewer unacknowledged messages
+// or startable tasks, or the oldest of them handled. Reviews and ended runs count only until control's next activity,
+// so their dropping out is no sign of handling and is not judged; when they were all that waited, the backlog empties.
+func (ep *episode) progress(v verdict) bool {
+	b := v.Backlog
+	return b.Empty() || b.Messages < ep.seen.Messages || b.Startable < ep.seen.Startable || v.Oldest.After(ep.oldest)
 }
 
 // settle records a space's state after a pass.
@@ -552,6 +636,24 @@ func (w *Watchdog) read(ctx context.Context, spaceID string) (observation, error
 		return o, err
 	}
 	o.MaxRuns = w.limit(ctx, spaceID, limits.ConcurrentRuns)
+	// Ready tasks no account would launch now (every account of their role's pool is limited) are not waiting on
+	// control: they start after a reset. Read once per role.
+	for _, t := range o.Tasks {
+		if t.Status != queue.Ready || len(t.Waiting) > 0 {
+			continue
+		}
+		if _, done := o.Held[t.AssigneeRole]; done {
+			continue
+		}
+		held, err := w.sv.fl.LaunchHeld(ctx, spaceID, t.AssigneeRole)
+		if err != nil {
+			return o, err
+		}
+		if o.Held == nil {
+			o.Held = map[string]bool{}
+		}
+		o.Held[t.AssigneeRole] = held
+	}
 	return o, nil
 }
 

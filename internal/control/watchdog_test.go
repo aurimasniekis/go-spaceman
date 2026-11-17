@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +77,13 @@ func TestWatchdogGuards(t *testing.T) {
 		{"at a usage limit", wdN, func(o *observation) { o.Control.Limit = &fleet.RunLimit{} }, guardLimit},
 		{"parked at a usage limit", wdN, func(o *observation) { o.Parked = true }, guardLimit},
 		{"harness prompt", wdN, func(o *observation) { o.Control.Status = "blocked" }, guardHuman},
-		{"asked a person last", wdN, func(o *observation) { o.HumanOpen, o.Act.tool = 1, humanAskTool }, guardHuman},
+		{"asked a person last", wdN, func(o *observation) { o.HumanOpen, o.Act.tool, o.Act.asked, o.Act.askTurn = 1, humanAskTool, true, 7 }, guardHuman},
+		{"asked, then told a worker in the same turn", wdN, func(o *observation) {
+			o.HumanOpen, o.Act.tool, o.Act.asked, o.Act.askTurn = 1, "spaceman_message_send", true, 7
+		}, guardHuman},
+		{"asked, and the asking turn finished", wdN, func(o *observation) {
+			o.HumanOpen, o.Act.tool, o.Act.asked, o.Act.askTurn, o.Control.Turn = 1, "spaceman_task_set_status", true, 6, 7
+		}, guardHuman},
 		{"asked a person, last tool unknown", wdN, func(o *observation) { o.HumanOpen, o.Act = 1, activity{} }, guardHuman},
 		{"mid-turn", wdN, func(o *observation) { o.Control.Status = "working" }, guardBusy},
 		{"no status reported", wdN, func(o *observation) { o.Control.Status = "" }, guardBusy},
@@ -97,11 +104,21 @@ func TestWatchdogGuards(t *testing.T) {
 			}
 		})
 	}
-	// An open question control asked earlier does not hide a stall when control went on to do other things.
+	// An open question control asked earlier does not hide a stall when control went on to do other things: one asked
+	// before central started (last tool known, no ask seen), and one asked two turns ago.
 	o := stalled()
 	o.HumanOpen = 1
 	if v := assess(o, wdN, wdNow); v.Guard != "" {
 		t.Fatalf("an older open question guarded: %+v", v)
+	}
+	o.Act.asked, o.Act.askTurn, o.Control.Turn = true, 5, 7
+	if v := assess(o, wdN, wdNow); v.Guard != "" {
+		t.Fatalf("a question asked before control's latest turn guarded: %+v", v)
+	}
+	// Answered: nothing open, no guard, even in the asking turn.
+	o.HumanOpen, o.Act.askTurn = 0, 7
+	if v := assess(o, wdN, wdNow); v.Guard != "" {
+		t.Fatalf("an answered question guarded: %+v", v)
 	}
 }
 
@@ -135,6 +152,7 @@ func TestWatchdogSignals(t *testing.T) {
 	limited.EndReason = fleet.EndUsageLimit // parked: it comes back through its limit wait
 	o.Runs = append(o.Runs, limited)
 	o.Tasks = []*queue.Task{
+		task("tsk_0", queue.Review, "run_rev_exited", ago(90*time.Minute)), // control acted after it entered review
 		task("tsk_1", queue.Review, "run_rev_exited", old),
 		task("tsk_2", queue.Review, "run_rev_done", old),
 		task("tsk_3", queue.Review, "run_rev_working", old), // its worker is still at it
@@ -148,6 +166,28 @@ func TestWatchdogSignals(t *testing.T) {
 	}
 	if got := v.Backlog.String(); got != "2 unacknowledged messages, 3 tasks in review with finished workers, 2 failed runs, 2 ended runs" {
 		t.Fatalf("text %q", got)
+	}
+	// The oldest item is the oldest message (reviews and ended runs are not judged for it).
+	if !v.Oldest.Equal(ago(2 * time.Hour)) {
+		t.Fatalf("oldest %v", v.Oldest)
+	}
+}
+
+// A review counts only until control's first activity after it entered review: a review that waits for a person's
+// merge for hours is no backlog once control has acted since (ADR-0099 decision 2).
+func TestWatchdogReviewWaitingForPeople(t *testing.T) {
+	o := stalled()
+	o.Unacked = nil
+	o.Runs = []*fleet.Run{run("run_w", "worker", "running", "exited", "done", tp(ago(8*time.Hour)))}
+	o.Tasks = []*queue.Task{task("tsk_pr", queue.Review, "run_w", ago(8*time.Hour))}
+	if v := assess(o, wdN, wdNow); v.Guard != guardNoBacklog || v.Backlog.Reviews != 0 {
+		t.Fatalf("a review waiting for a merge counted: %+v", v)
+	}
+	// Control has done nothing since the task entered review: it counts.
+	o.Act = activity{at: ago(9 * time.Hour)}
+	o.Started, o.Control.StartedAt = ago(10*time.Hour), tp(ago(10*time.Hour))
+	if v := assess(o, wdN, wdNow); v.Guard != "" || v.Backlog.Reviews != 1 {
+		t.Fatalf("a review control never saw: %+v", v)
 	}
 }
 
@@ -178,6 +218,18 @@ func TestWatchdogFreeSlots(t *testing.T) {
 	if v := assess(o, wdN, wdNow); v.Backlog.Startable != 1 || v.Backlog.FreeSlots != 1 {
 		t.Fatalf("a limited run frees its slot: %+v", v)
 	}
+	// A task whose role no account would launch now (all at a usage limit) waits for a reset, not for control.
+	o = base()
+	o.Tasks = []*queue.Task{task("tsk_r", queue.Ready, "", old), task("tsk_i", queue.Ready, "", old)}
+	o.Tasks[1].AssigneeRole = "implementor"
+	o.Held = map[string]bool{"": true, "implementor": false}
+	if v := assess(o, wdN, wdNow); v.Guard != "" || v.Backlog.Startable != 1 {
+		t.Fatalf("a held task counted: %+v", v)
+	}
+	o.Held["implementor"] = true
+	if v := assess(o, wdN, wdNow); v.Guard != guardNoBacklog {
+		t.Fatalf("every account limited: %+v", v)
+	}
 	o = base()
 	o.Tasks = []*queue.Task{task("tsk_w", queue.Ready, "", old, "depends on tsk_x"), task("tsk_y", queue.Ready, "", ago(time.Minute)),
 		task("tsk_b", queue.Backlog, "", old)}
@@ -207,8 +259,10 @@ type wdEnv struct {
 	w         *Watchdog
 	o         observation
 	nudges    []string
+	at        []time.Time // when each nudge was sent
 	refuse    error
 	escalated int
+	escAt     []int // the nudge count at each escalation
 	lim       map[string]int64
 }
 
@@ -221,6 +275,7 @@ func newWDEnv(t *testing.T) *wdEnv {
 	e.o = stalled()
 	e.o.Act = activity{}
 	e.w.spaces = func(context.Context) ([]string, error) { return []string{"spc_a"}, nil }
+	e.w.turnOf = func(context.Context, string) (int64, bool) { return e.o.Control.Turn, true }
 	e.w.observe = func(context.Context, string) (observation, error) {
 		o := e.o
 		c := *e.o.Control
@@ -232,10 +287,12 @@ func newWDEnv(t *testing.T) *wdEnv {
 			return e.refuse
 		}
 		e.nudges = append(e.nudges, text)
+		e.at = append(e.at, e.clk.Now())
 		return nil
 	}
 	e.w.escalate = func(_ context.Context, _ string, _ *fleet.Run, ep *episode, _ Backlog, _ time.Duration) {
 		e.escalated++
+		e.escAt = append(e.escAt, ep.nudges)
 	}
 	return e
 }
@@ -277,37 +334,131 @@ func TestWatchdogBackoffAndEscalation(t *testing.T) {
 	}
 }
 
-// Any activity of control ends the episode: the count starts over and control gets the full quiet time again.
-func TestWatchdogActivityEndsEpisode(t *testing.T) {
+// A nudge into an idle program always starts a turn. Control answering every nudge with a turn while the backlog stays
+// keeps one episode: the gaps grow and people are told after the configured number (ADR-0099 decision 6).
+func TestWatchdogTurnsWithoutHandlingEscalate(t *testing.T) {
 	e := newWDEnv(t)
+	e.lim[limits.ControlWatchdog] = 2                                                       // quiet time shorter than the gaps, so the backoff shows
+	e.o.Tasks = []*queue.Task{task("tsk_r", queue.Review, "run_gone", ago(30*time.Minute))} // a review as well
+	e.pass(0)
+	var s WatchState
+	for range 4 * 60 {
+		if e.at[len(e.at)-1].Equal(e.clk.Now()) {
+			e.o.Control.Turn++ // control answers the nudge with a turn, and leaves the messages
+		}
+		s = e.pass(time.Minute)
+	}
+	var gaps []time.Duration
+	for i := 1; i < len(e.at); i++ {
+		gaps = append(gaps, e.at[i].Sub(e.at[i-1]))
+	}
+	want := []time.Duration{5 * time.Minute, 10 * time.Minute, 20 * time.Minute, 40 * time.Minute, time.Hour, time.Hour}
+	if !slices.Equal(gaps, want) {
+		t.Fatalf("gaps %v, want %v", gaps, want)
+	}
+	if !slices.Equal(e.escAt, []int{3}) || !s.Escalated || s.Nudges != 7 {
+		t.Fatalf("escalations after nudges %v, state %+v", e.escAt, s)
+	}
+}
+
+// The episode follows the backlog: tool calls and turns keep it, more waiting keeps it, and it ends when the backlog
+// shrinks, its oldest item is handled, or it empties, whoever handled it.
+func TestWatchdogEpisodeFollowsBacklog(t *testing.T) {
+	e := newWDEnv(t)
+	e.o.Unacked = []time.Time{ago(time.Hour), ago(30 * time.Minute)}
 	e.pass(0)
 	e.pass(5 * time.Minute)
 	if len(e.nudges) != 2 {
 		t.Fatalf("%d nudges", len(e.nudges))
 	}
-	// A tool call (through the dispatcher wrapper) right after the nudge.
+	// A tool call right after the nudge is activity, not handling: the episode keeps its count.
 	e.clk.Advance(time.Minute)
-	e.w.toolStarted("run_ctl", "spaceman_messages")
+	e.w.toolStarted("run_ctl", "spaceman_tasks_list")
 	e.w.toolFinished("run_ctl")
-	if s := e.pass(0); s.Guard != guardActive || s.Nudges != 0 {
+	if s := e.pass(0); s.Guard != guardActive || s.Nudges != 2 {
 		t.Fatalf("after a tool call: %+v", s)
 	}
-	e.pass(14 * time.Minute)
-	if len(e.nudges) != 2 {
-		t.Fatalf("nudged %d times within the quiet time", len(e.nudges))
+	// Another message arrives: the backlog grew, same episode; the next nudge is the third once control is quiet again.
+	e.o.Unacked = append(e.o.Unacked, ago(20*time.Minute))
+	if s := e.pass(15 * time.Minute); s.Nudges != 3 || len(e.nudges) != 3 {
+		t.Fatalf("grown backlog: %d nudges, state %+v", len(e.nudges), s)
 	}
-	if s := e.pass(time.Minute); len(e.nudges) != 3 || s.Nudges != 1 {
+	// Control acknowledges the newest message: the backlog shrank (from what the episode saw last), the episode ends,
+	// and the next nudge is the first again.
+	e.o.Unacked = e.o.Unacked[:2]
+	e.clk.Advance(time.Minute)
+	e.w.toolStarted("run_ctl", "spaceman_message_ack")
+	e.w.toolFinished("run_ctl")
+	if s := e.pass(0); s.Nudges != 0 {
+		t.Fatalf("after an acknowledgement: %+v", s)
+	}
+	if s := e.pass(15 * time.Minute); s.Nudges != 1 || len(e.nudges) != 4 {
 		t.Fatalf("new episode: %d nudges, state %+v", len(e.nudges), s)
 	}
-	// A new turn counts too, even without a tool call.
+	// The oldest message is handled and a new one takes its place: same count, but the oldest advanced.
+	e.o.Unacked = []time.Time{e.o.Unacked[1], ago(16 * time.Minute)}
+	if s := e.pass(time.Minute); s.Guard != "" || s.Nudges != 1 || len(e.nudges) != 5 {
+		t.Fatalf("oldest handled: %d nudges, state %+v", len(e.nudges), s)
+	}
+	// An operator acknowledges everything while control does nothing (and while it is busy): the episode ends.
+	e.pass(5 * time.Minute)
+	if len(e.nudges) != 6 {
+		t.Fatalf("%d nudges", len(e.nudges))
+	}
+	e.o.Control.Status = "working"
+	saved := e.o.Unacked
+	e.o.Unacked = nil
+	if s := e.pass(time.Minute); s.Guard != guardBusy || s.Nudges != 0 {
+		t.Fatalf("cleared while busy: %+v", s)
+	}
+	e.o.Control.Status = "idle"
+	e.o.Unacked = saved
+	if s := e.pass(time.Minute); s.Nudges != 1 {
+		t.Fatalf("a backlog after the cleared one starts a new episode: %+v", s)
+	}
+	e.o.Unacked = nil
+	if s := e.pass(time.Minute); s.Guard != guardNoBacklog || s.Nudges != 0 {
+		t.Fatalf("cleared: %+v", s)
+	}
+	e.o.Unacked = saved
+	if s := e.pass(time.Minute); s.Nudges != 1 || e.escalated != 0 {
+		t.Fatalf("after clearing: %+v, %d escalations", s, e.escalated)
+	}
+}
+
+// An episode of reviews only ends when control's next turn takes them out of the backlog: a message after that starts
+// a new episode.
+func TestWatchdogReviewEpisodeEnds(t *testing.T) {
+	e := newWDEnv(t)
+	e.o.Unacked = nil
+	e.o.Tasks = []*queue.Task{task("tsk_r", queue.Review, "run_gone", ago(30*time.Minute))}
+	e.pass(0)
+	e.pass(5 * time.Minute)
+	if len(e.nudges) != 2 {
+		t.Fatalf("%d nudges", len(e.nudges))
+	}
 	e.o.Control.Turn++
-	if s := e.pass(time.Minute); s.Guard != guardActive || s.Nudges != 0 {
+	if s := e.pass(time.Minute); s.Guard != guardNoBacklog || s.Nudges != 0 {
 		t.Fatalf("after a turn: %+v", s)
 	}
-	// Handling the backlog ends it as well.
-	e.o.Unacked = nil
-	if s := e.pass(time.Hour); s.Guard != guardNoBacklog || len(e.nudges) != 3 {
-		t.Fatalf("no backlog: %+v, %d nudges", s, len(e.nudges))
+	e.o.Unacked = []time.Time{ago(time.Hour)}
+	if s := e.pass(15 * time.Minute); s.Nudges != 1 || len(e.nudges) != 3 {
+		t.Fatalf("new episode: %d nudges, state %+v", len(e.nudges), s)
+	}
+}
+
+// Starting one of the ready tasks shrinks the backlog: the episode ends.
+func TestWatchdogStartedTaskEndsEpisode(t *testing.T) {
+	e := newWDEnv(t)
+	e.o.Tasks = []*queue.Task{task("tsk_a", queue.Ready, "", ago(20*time.Minute)), task("tsk_b", queue.Ready, "", ago(20*time.Minute))}
+	e.pass(0)
+	if s := e.pass(5 * time.Minute); s.Nudges != 2 || s.Backlog.Startable != 2 {
+		t.Fatalf("%+v", s)
+	}
+	e.o.Tasks = e.o.Tasks[:1]
+	e.o.Runs = []*fleet.Run{run("run_b", "worker", "running", "running", "working", nil)}
+	if s := e.pass(time.Minute); s.Nudges != 1 || len(e.nudges) != 3 {
+		t.Fatalf("after a start: %d nudges, state %+v", len(e.nudges), s)
 	}
 }
 
@@ -361,6 +512,7 @@ func TestWatchdogNoEscalationAndNewRun(t *testing.T) {
 // A tool call still running (an approval, say) marks control busy until it returns; the catalog call is not activity.
 func TestWatchdogToolsWrapper(t *testing.T) {
 	e := newWDEnv(t)
+	e.o.Control.Turn = 4 // the asking turn becomes the fifth
 	release := make(chan struct{})
 	started := make(chan struct{})
 	next := func(context.Context, *fleet.RunPrincipal, string, json.RawMessage) (json.RawMessage, error) {
@@ -385,7 +537,7 @@ func TestWatchdogToolsWrapper(t *testing.T) {
 	e.w.mu.Lock()
 	a := *e.w.acts["run_ctl"]
 	e.w.mu.Unlock()
-	if a.inflight != 0 || a.tool != "spaceman_human_ask" {
+	if a.inflight != 0 || a.tool != "spaceman_human_ask" || !a.asked || a.askTurn != 4 {
 		t.Fatalf("activity %+v", a)
 	}
 	if _, err := e.w.Tools(func(context.Context, *fleet.RunPrincipal, string, json.RawMessage) (json.RawMessage, error) {
