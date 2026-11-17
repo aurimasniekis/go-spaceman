@@ -96,6 +96,9 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		return "", errors.New("invalid memory collection")
 	}
 	defer m.lock(colKey(spaceID, role))()
+	if m.a.j.renameFrom(ctx, spaceID, role) {
+		return "", fmt.Errorf("role %s is being renamed; its memory moves to the new name", role)
+	}
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if err := m.git.InitBare(ctx, shared); err != nil {
 		return "", err
@@ -192,6 +195,10 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	}
 	log := m.a.log.With(slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.instance", instance))
 	unlock := m.lock(colKey(spaceID, role))
+	if !exists(filepath.Join(inst, ".git")) {
+		unlock()
+		return nil // the collection was renamed meanwhile (ADR-0093): its checkouts moved with it
+	}
 	published, err := m.publish(ctx, spaceID, role, instance, reason)
 	unlock()
 	st, _ := m.a.j.memory(ctx, spaceID, role)
@@ -333,6 +340,9 @@ func (m *memManager) sync(ctx context.Context, spaceID, role string) {
 	m.a.mu.Unlock()
 	if !ok {
 		return // offered again on reconnect
+	}
+	if m.a.j.renameHeld(ctx, spaceID, role) {
+		return // central refuses both names until it has the node's move (ADR-0093); synced once it acknowledged it
 	}
 	shared := m.shared(spaceID, role)
 	head := m.git.RevParse(ctx, shared, "refs/heads/main")

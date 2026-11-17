@@ -327,17 +327,15 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   protocol minor 5, does not answer in time or has history central did not acknowledge is backed up with the history
   central acknowledged, and the manifest and the Backups page name it as possibly stale. Offline backups
   (`spaceman backup create` with central stopped) cannot flush (SM-MEM-005).
-- **Planned: renaming a role (ADR-0093, not implemented).** When it lands: a busy role cannot be renamed, and a node
-  that never comes back keeps the renamed role held. There will be no "abandon the node move" action at first, and a
-  deleted role's leftover memory collection will block reusing its name as a rename target. Deleting or archiving a
-  role's memory, an abandon action and a web UI rename are follow-ups. A rename changes only its own space: the
-  installation-wide default human policy keeps a successor role of the old name.
-
-- **A role rename can stay open.** There is no "abandon the node move" action yet. A node that keeps reporting `error`
-  leaves the rename `failed` (central does not queue the command again on an `error`), and a node downgraded below
+- **A role rename can stay open** (ADR-0093). A busy role is refused: a rename waits while a run of either name (or a
+  dream run in the space) is active on the node, and the move happens when it ends. There is no "abandon the node move"
+  action yet. A node that keeps reporting `error` leaves the rename `failed` (central does not queue the command again on
+  an `error`), and the node retries an `error` only at its next agent start, not periodically. A node downgraded below
   protocol minor 14 after a rename never receives it. Until it is done the rename holds launches of both names and
   refuses a clean relocation; the exits are fixing or upgrading the node, or a `source_unavailable` relocation (which
-  closes the open rename; ADR-0093).
+  closes the open rename). A deleted role's leftover memory collection blocks reusing its name as a rename target.
+  Deleting or archiving a role's memory and a web UI rename are follow-ups. A rename changes only its own space: the
+  installation-wide default human policy keeps a successor role of the old name.
 
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.
