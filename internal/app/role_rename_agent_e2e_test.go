@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
@@ -40,7 +41,7 @@ func newAgentRenameEnv(t *testing.T) *agentRenameEnv {
 	e.startAgent()
 	ctx := context.Background()
 	nodes, _ := e.c.Fleet.ListNodes(ctx)
-	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	eventually(t, "node connected", func() bool { n, err := e.c.Fleet.GetNode(ctx, nodes[0].ID); return err == nil && n.Connected })
 	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "payments", Name: "Payments", NodeID: nodes[0].ID, StarterRoles: true})
 	if err != nil {
 		t.Fatal(err)
@@ -162,8 +163,10 @@ func (e *agentRenameEnv) launchHeld(role string) bool {
 	return false
 }
 
-// done waits for the rename to be done and checks the memory moved and synced under the new name with no loss.
-func (e *agentRenameEnv) done(rn *catalog.RoleRename, files map[string]string, subjects int) {
+// done waits for the rename to be done and checks the memory moved and synced under the new name with no loss. before are
+// the history commits the role had before the rename: each must still be in the new collection's history, and there must
+// be at least one commit more than that (the write after the rename).
+func (e *agentRenameEnv) done(rn *catalog.RoleRename, files map[string]string, before []memory.Commit) {
 	e.t.Helper()
 	eventually(e.t, "rename done", func() bool { return e.renameState(rn.ID).NodeState == catalog.RenameNodeDone })
 	if pathExists(e.memDir(rn.From)) || !pathExists(filepath.Join(e.memDir(rn.To), "shared.git")) {
@@ -181,8 +184,17 @@ func (e *agentRenameEnv) done(rn *catalog.RoleRename, files map[string]string, s
 		return err == nil && c.Node != nil && !c.Node.Pending && c.Node.Acked == c.Head
 	})
 	hist, err := e.c.Memory.History(e.ctx, e.spaceID, rn.To, 100)
-	if err != nil || len(hist) < subjects {
+	if err != nil || len(hist) < len(before)+1 {
 		e.t.Fatalf("history under %s: %d commits %v", rn.To, len(hist), err)
+	}
+	have := make(map[string]bool, len(hist))
+	for _, c := range hist {
+		have[c.ID] = true
+	}
+	for _, c := range before {
+		if !have[c.ID] {
+			e.t.Fatalf("commit %s from before the rename is not in the history under %s", c.ID, rn.To)
+		}
 	}
 	cols, err := e.c.Memory.List(e.ctx, e.spaceID)
 	if err != nil {
@@ -223,7 +235,7 @@ func TestRoleRenameAgentMovesMemory(t *testing.T) {
 	}
 
 	rn := e.rename("implementor", "builder")
-	e.done(rn, map[string]string{"decisions.md": "- settle in batches of 500\n", "late.md": "written after the sync\n"}, len(before)+1)
+	e.done(rn, map[string]string{"decisions.md": "- settle in batches of 500\n", "late.md": "written after the sync\n"}, before)
 	if got := e.nodeResults(rn.ID); !slices.Equal(got, []string{proto.MemoryRenameOK}) {
 		t.Fatalf("node reports %v", got)
 	}
@@ -249,7 +261,7 @@ func TestRoleRenameAgentMemoryMoveWithNodeOffline(t *testing.T) {
 	}
 
 	e.stopAgent()
-	eventually(t, "node disconnected", func() bool { n, _ := e.c.Fleet.GetNode(e.ctx, e.nodeID); return !n.Connected })
+	eventually(t, "node disconnected", func() bool { n, err := e.c.Fleet.GetNode(e.ctx, e.nodeID); return err == nil && !n.Connected })
 	rn := e.rename("implementor", "builder")
 	if !e.launchHeld("builder") {
 		t.Fatal("a launch of the new name is not held while the node is away")
@@ -264,7 +276,7 @@ func TestRoleRenameAgentMemoryMoveWithNodeOffline(t *testing.T) {
 	}
 
 	e.startAgent()
-	e.done(rn, map[string]string{"decisions.md": "- settle in batches of 500\n", "late.md": "written while the node was away\n"}, len(before)+1)
+	e.done(rn, map[string]string{"decisions.md": "- settle in batches of 500\n", "late.md": "written while the node was away\n"}, before)
 	if got := e.nodeResults(rn.ID); !slices.Equal(got, []string{proto.MemoryRenameOK}) {
 		t.Fatalf("node reports %v", got)
 	}
@@ -318,7 +330,7 @@ func TestRoleRenameAgentDeferredWhileRunActive(t *testing.T) {
 	} else {
 		e.run.Exit(procs[0].ID, 0, "")
 	}
-	e.done(rn, map[string]string{"decisions.md": "- keep\n"}, 1)
+	e.done(rn, map[string]string{"decisions.md": "- keep\n"}, nil)
 	if got := e.nodeResults(rn.ID); got[len(got)-1] != proto.MemoryRenameOK {
 		t.Fatalf("node reports %v", got)
 	}
@@ -353,7 +365,7 @@ func TestRoleRenameAgentErrorRetriedAtStart(t *testing.T) {
 	}
 	e.stopAgent()
 	e.startAgent()
-	e.done(rn, map[string]string{"decisions.md": "- retry\n"}, 1)
+	e.done(rn, map[string]string{"decisions.md": "- retry\n"}, nil)
 	if got := e.nodeResults(rn.ID); !slices.Equal(got, []string{proto.MemoryRenameError, proto.MemoryRenameOK}) {
 		t.Fatalf("node reports %v", got)
 	}

@@ -797,7 +797,9 @@ func TestRoleRenameBusyCheckedUnderLocks(t *testing.T) {
 
 // The hello advertises agentMaxMinor even when proto.MaxMinor is higher (a central-side bump this agent does not speak).
 func TestHelloAdvertisesAgentMaxMinor(t *testing.T) {
-	defer func(v int) { helloMaxMinor = v }(helloMaxMinor)
+	// Registered before runAgent2 so the restore runs after the agent has stopped (cleanups run last-in first-out).
+	prev := helloMaxMinor
+	t.Cleanup(func() { helloMaxMinor = prev })
 	helloMaxMinor = proto.MaxMinor + 7 // a value proto.MaxMinor can never equal, so the hello's field names its source
 	a := rnAgent(t)
 	a.o.Runner = runnertest.New()
@@ -821,14 +823,18 @@ func TestPrepareWaitsForRenameAck(t *testing.T) {
 	if err := a.j.setRoleRenameResult(ctx, rnID, proto.MemoryRenameOK, ""); err != nil {
 		t.Fatal(err)
 	}
+	acked := make(chan struct{})
 	go func() {
+		defer close(acked)
 		time.Sleep(150 * time.Millisecond)
 		a.roleRenamedAck(ctx, proto.MemoryRenamedAck{RenameID: rnID, Result: proto.MemoryRenameOK})
 	}()
-	if _, err := a.mem.prepare(ctx, rnSpace, "old", "ins_new"); err != nil {
+	_, err := a.mem.prepare(ctx, rnSpace, "old", "ins_new")
+	<-acked // the ack goroutine is done before the timers stop and the test returns
+	stopTimers(a.mem)
+	if err != nil {
 		t.Fatalf("prepare of the reused name did not wait for the ack: %v", err)
 	}
-	stopTimers(a.mem)
 }
 
 // Releasing a space drops its journaled renames too: central closes an open rename when it relocates the space from its

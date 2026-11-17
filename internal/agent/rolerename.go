@@ -357,7 +357,8 @@ func (j *Journal) renameFrom(ctx context.Context, spaceID, role string) bool {
 var renameAckWait = 5 * time.Second
 
 // awaitRenameAck waits (bounded) while the only thing keeping role's name held is a done rename whose ack is on its way.
-// A pending or moving rename is not waited for: central holds those launches itself.
+// A pending or moving rename is not waited for: central holds those launches itself. prepare runs once per role, so a
+// multi-role dream waits up to renameAckWait (5s) for each role that has a done, unacked rename.
 func (j *Journal) awaitRenameAck(ctx context.Context, spaceID, role string) {
 	deadline := time.Now().Add(renameAckWait)
 	for time.Now().Before(deadline) {
