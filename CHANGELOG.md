@@ -17,12 +17,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Take a backup before upgrading, as always. The node agent's journal gets migration `0010_role_renames`.
 - **New settings, all optional.** Three space limits, `control_watchdog_minutes` (default 15, 0 turns the watchdog
   off), `control_watchdog_nudges` (default 3) and `control_watchdog_restart` (default off); and the node agent key
-  `memory.fast_forward` (default on). The watchdog is therefore **on by default** in every space with a control. See the control guide.
+  `memory.fast_forward` (default on). The watchdog is therefore **on by default** in every space with a control.
+  See the control guide.
 - **Memory checkouts are stricter.** The node agent now refuses to run git in a memory checkout whose `.git` is not a
   real directory of its own, whose git configuration redirects or hooks git, or that holds links inside `.git`, a nested
-  repository or a FIFO, and it never stages or materialises harness configuration (`.claude/`, `.codex/`, `.agents/`,
-  a top-level `.mcp.json`) from role memory. An existing checkout is cleaned up when its next run starts. Memory notes
-  stay as they are; only such files stop travelling.
+  repository or a FIFO. The first time the node guards an existing checkout after the upgrade (its next run start or
+  checkpoint), it removes the harness files git tracks there from the working tree; harness files written later stay in
+  that checkout, unshared. Normal checkouts need nothing. A checkout the guard refuses (for example `.git` as a file or
+  symlink, `objects/info/alternates`, a nested `.git` or a FIFO in the work tree, a gitlink, or `.git/config` setting
+  `core.worktree`, hooks or a non-boolean `pager.*`) is not repaired: its runs start without memory and the node logs
+  `role memory unavailable for this run`. Fix what the reason names, or delete that instance's checkout under
+  `<data dir>/memory/<space>/<role>/instances/<instance>` (unpublished changes in it are lost, the shared history is
+  kept). See troubleshooting, "Memory checkout refused". It never stages or materialises harness configuration
+  (`.claude/`, `.codex/`, `.agents/`, a top-level `.mcp.json`) from role memory. An existing checkout is cleaned up the
+  first time the node guards it after the upgrade (a run start or a checkpoint). Memory notes stay as they are; only
+  such files stop travelling.
 - **Renaming a role needs nodes on node protocol minor 14.** The rename moves the role's memory folder on the space's
   node (`memory.rename`), so a space whose node last connected with an older agent, or never connected, is refused
   (`409 node_too_old`) until the node agent is upgraded and has connected. Upgrade central first.
@@ -92,18 +101,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **A recording is acknowledged only once central has stored it** (#242, ADR-0010 addendum). Central acknowledged the highest
   sequence it had accepted, so a failed write could let the node delete the only copy of records central never stored.
   Central now acknowledges what it synced to disk, closes and reopens a failed writer so the node ships the gap again,
-  backs off 5 seconds before reopening a recording that failed, removes an unsynced segment and never ages out a
-  resync mark on a live connection. Reclaiming old recording directories that have no journal row remains a design
-  (ADR-0096, not implemented): those directories are still kept.
+  backs off 5 seconds before reopening a recording that failed, cuts a failed segment back to its last sync (removing
+  it if nothing was synced) and never ages out a resync mark on a live connection. Reclaiming old recording directories
+  that have no journal row remains a design (ADR-0096, not implemented): those directories are still kept.
 - **Live terminals stayed empty after an agent restart, and a full disk froze them** (ADR-0097). A restarted agent
   re-shipped the whole recording of every journaled run, ended runs included, one at a time in run-ID order, and held
   back the live output of the runs it had not reached; and the recording writer latched its first write error, dropping
   all later output also for central's copy. Now live runs are caught up first and a waiting run is served between the
   batches of another, ended runs' history is paced at 8 MiB/s, the node persists what central acknowledged
-  (`recording-acked` in the run's folder, so a restart re-ships only the rest), learns central's sequence before it
-  numbers an adopted run's new output, and a full disk no longer stops recording: output keeps flowing to central and
-  the live view, the local recording resumes in a new segment after a 5 second backoff (up to a minute), and there is no
-  `disk` `trunc` record any more. Only the node agent needs the update.
+  (`recording-acked` in the run's folder, so a restart re-ships only the rest (the first restart after upgrading
+  re-ships everything once, paced)), learns central's sequence before it numbers an adopted run's new output, and a
+  full disk no longer stops recording: output keeps flowing to central and the live view, the local recording resumes
+  in a new segment after a 5 second backoff (up to a minute), and there is no `disk` `trunc` record any more. The node
+  agent needs the update for the full-disk and catch-up behaviour, and central for acknowledging only stored records,
+  which the node's saved acknowledgement relies on: upgrade central first, as above.
 - **Memory git guard** (security-relevant, ADR-0025 and ADR-0094). The node refuses a memory checkout whose git dir is
   redirected (a symlink, a `gitdir` file, `commondir`, `core.worktree`, a bare checkout), that holds config-based hooks,
   links inside `.git`, gitlinks, a nested `.git` or a FIFO in its work tree, or that lacks its own

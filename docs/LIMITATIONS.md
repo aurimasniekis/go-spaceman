@@ -606,8 +606,8 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   the node: the node cannot tell them from a run whose journal was lost, and reclaiming them waits for central to
   confirm what it holds (protocol minor 15, not implemented).
 - **A recording that failed on central is not reopened for 5 seconds.** Chunks in that window are refused and the node
-  re-ships them afterwards; a persistent storage failure keeps the connection closing and the run's recording
-  incomplete on central until the disk is fixed.
+  re-ships them after central closes the connection and it reconnects; a persistent storage failure keeps the connection
+  closing and the run's recording incomplete on central until the disk is fixed.
 
 ## Web UI
 - **The attention summary covers central, not node disks.** **Attention** (and each space overview's counters) gathers

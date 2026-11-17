@@ -120,7 +120,10 @@ held back the live output of runs it had not reached, so live terminals stayed e
 old runs. Now the agent persists what central acknowledged (`recording-acked` in each run's folder), catches up live runs
 first and serves a waiting run between the batches of another, and paces the history of ended runs at 8 MiB/s. After a
 restart, live terminals fill within moments. Central's old copy is unchanged, and a node first learns central's sequence
-before it numbers an adopted run's new output, so nothing is numbered twice.
+before it numbers an adopted run's new output, so nothing is numbered twice. The first restart after the upgrade still
+re-ships all history once, because there is no `recording-acked` yet; that re-shipping is paced and runs behind live
+output. Until central answers, a restarted agent holds a run's new output (up to 4 MiB) before numbering it, and drops
+output past that with a `gap` (`sequence-unknown`). So "fill within moments" holds once central is reachable.
 
 ## Memory checkout refused
 
@@ -130,8 +133,9 @@ The node refuses to use a memory checkout whose git state is unsafe (see
 the checkout's own, `.git/config` or hooks would run a program, a nested `.git`, a submodule or gitlink, or a FIFO in the
 work tree. The checkout lives under `<data dir>/memory/<space>/<role>/instances/<instance>`. Fix what the message names,
 or delete that instance's checkout (its unsynced changes are lost; the shared history is not) so the next run creates a
-clean one. Harness files such as `.claude/skills` in a memory checkout are removed once, at the first run start after the upgrade; later ones stay local and
-unshared. That is not a fault.
+clean one. The run itself still starts, without memory, and its checkpoints fail until then. Harness files such as
+`.claude/skills` in a memory checkout are removed once, the first time the node guards the checkout after the upgrade (a
+run start or a checkpoint); later ones stay local and unshared. That is not a fault.
 
 ## Recordings have gaps
 
