@@ -1,6 +1,12 @@
 package memory
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // Security review SR-M04: repository configuration that makes git run a program or reach an unchosen transport is
 // refused; the node's own (global, system) and SpaceMan's command-line configuration are not.
@@ -8,7 +14,7 @@ func TestUnsafeConfig(t *testing.T) {
 	for _, bad := range []string{"filter.lfs.clean", "filter.X.Smudge", "filter.x.process", "merge.ours.driver", "diff.pdf.textconv",
 		"diff.x.command", "diff.external", "core.sshCommand", "core.gitProxy", "core.pager", "include.path", "includeIf.gitdir:/x.path",
 		"credential.helper", "credential.https://example.test.helper", "protocol.ext.allow", "protocol.allow", "url.ext::sh.insteadOf",
-		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "sequence.editor", "core.editor", "core.worktree", "core.WorkTree"} {
+		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "sequence.editor", "core.editor", "core.worktree", "core.WorkTree", "gc.recentObjectsHook"} {
 		if err := UnsafeConfig("local\t"+bad+"\n", true); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
@@ -24,9 +30,6 @@ func TestUnsafeConfig(t *testing.T) {
 		if err := UnsafeConfig("local\t"+ok, true); err != nil {
 			t.Errorf("%s refused: %v", ok, err)
 		}
-	}
-	if CheckoutBare("true\n") == nil || CheckoutBare("false\n") != nil || CheckoutBare("") != nil {
-		t.Error("CheckoutBare")
 	}
 	if err := UnsafeConfig("filter.x.clean\n", false); err == nil {
 		t.Error("unscoped list not checked")
@@ -89,9 +92,67 @@ func TestRunRefusesRedirectedWorktree(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, sub := range [][]string{{"status"}, {"reset", "--hard"}, {"checkout", "-f", "HEAD"}} {
-			if _, err := g.Run(ctx, dir, nil, sub...); err == nil {
-				t.Errorf("%s: git %s ran", key, sub[0])
+			// The text proves the guard refused, not git itself (a bare repository fails these anyway).
+			if _, err := g.Run(ctx, dir, nil, sub...); err == nil || (key == "core.bare" && !strings.Contains(err.Error(), "checkout refused")) {
+				t.Errorf("%s: git %s ran or was refused by git: %v", key, sub[0], err)
 			}
 		}
+	}
+}
+
+// A checkout's git dir cannot be redirected to another repository: a symlinked .git, a gitdir file and a commondir
+// file are refused by the guard, and the other repository's ref and index stay as they were.
+func TestRunRefusesRedirectedGitDir(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := t.Context()
+	id := &Identity{Name: "t", Email: "t@example.com"}
+	for _, vec := range []string{"symlink", "gitdir file", "commondir"} {
+		t.Run(vec, func(t *testing.T) {
+			victim, dir := t.TempDir(), t.TempDir()
+			for _, d := range []string{victim, dir} {
+				if _, err := g.Run(ctx, d, nil, "init", "--quiet", "."); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(victim, "a.md"), []byte("a\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "v"}} {
+				if _, err := g.Run(ctx, victim, id, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			head := g.RevParse(ctx, victim, "HEAD")
+			index, err := os.ReadFile(filepath.Join(victim, ".git", "index"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch vec {
+			case "symlink":
+				must(t, os.RemoveAll(filepath.Join(dir, ".git")))
+				must(t, os.Symlink(filepath.Join(victim, ".git"), filepath.Join(dir, ".git")))
+			case "gitdir file":
+				must(t, os.RemoveAll(filepath.Join(dir, ".git")))
+				must(t, os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: "+filepath.Join(victim, ".git")+"\n"), 0o600))
+			case "commondir":
+				must(t, os.WriteFile(filepath.Join(dir, ".git", "commondir"), []byte(filepath.Join(victim, ".git")+"\n"), 0o600))
+			}
+			must(t, os.WriteFile(filepath.Join(dir, "evil.md"), []byte("evil\n"), 0o600))
+			for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "x", "--allow-empty"}, {"reset", "--hard"}} {
+				_, err := g.Run(ctx, dir, id, args...)
+				if err == nil || !strings.Contains(err.Error(), "checkout refused") {
+					t.Errorf("git %s: not refused by the guard: %v", args[0], err)
+				}
+			}
+			if got := g.RevParse(ctx, victim, "HEAD"); got != head {
+				t.Errorf("victim HEAD moved: %s -> %s", head, got)
+			}
+			if got, _ := os.ReadFile(filepath.Join(victim, ".git", "index")); !bytes.Equal(got, index) {
+				t.Error("victim index changed")
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -762,4 +763,64 @@ func statusOf(t *testing.T, e *ffEnv, dir string) string {
 func readOr(dir, name string) string {
 	b, _ := os.ReadFile(filepath.Join(dir, name))
 	return string(b)
+}
+
+// A checkout whose git dir is redirected to another repository (a symlinked .git, a gitdir file, a commondir file) is
+// refused, and the other repository's ref and index are not touched by the fast-forward.
+func TestFastForwardRefusesRedirectedGitDir(t *testing.T) {
+	for _, vec := range []string{"symlink", "gitdir file", "commondir"} {
+		t.Run(vec, func(t *testing.T) {
+			e := newFFEnv(t)
+			dir, other := e.checkout("ins_a"), e.checkout("ins_b")
+			e.idleRun("ins_a")
+			write(t, other, "notes.md", "from b\n")
+			e.checkpoint("ins_b", "idle")
+			write(t, other, "notes.md", "from b\nagain\n")
+			if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+				t.Fatal(err)
+			}
+			victim := t.TempDir()
+			e.git(victim, "init", "--quiet", ".")
+			write(t, victim, "v.md", "v\n")
+			e.git(victim, "add", "-A")
+			e.git(victim, "commit", "--quiet", "-m", "v")
+			vhead := e.head(victim)
+			vindex, err := os.ReadFile(filepath.Join(victim, ".git", "index"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch vec {
+			case "symlink":
+				if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(victim, ".git"), filepath.Join(dir, ".git")); err != nil {
+					t.Fatal(err)
+				}
+			case "gitdir file":
+				if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+					t.Fatal(err)
+				}
+				write(t, dir, ".git", "gitdir: "+filepath.Join(victim, ".git")+"\n")
+			case "commondir":
+				write(t, dir, ".git/commondir", filepath.Join(victim, ".git")+"\n")
+			}
+			got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]
+			if got != ffNoCheckout && got != ffUnsafeConfig {
+				t.Fatalf("reason %q: the redirected checkout was not refused", got)
+			}
+			if _, reason := e.m.checkoutReason(e.ctx, e.m.shared(ffSpace, ffRole), dir); reason != got {
+				t.Fatalf("checkoutReason %q, want %q", reason, got)
+			}
+			if e.head(victim) != vhead {
+				t.Fatal("the other repository's HEAD moved")
+			}
+			if now, _ := os.ReadFile(filepath.Join(victim, ".git", "index")); !bytes.Equal(now, vindex) {
+				t.Fatal("the other repository's index changed")
+			}
+			if _, err := os.Stat(filepath.Join(victim, "notes.md")); err == nil {
+				t.Fatal("the fast-forward wrote into the other repository")
+			}
+		})
+	}
 }

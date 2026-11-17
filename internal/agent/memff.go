@@ -129,7 +129,7 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 		return "", ffNoCheckout
 	}
 	list, err := g.Run(ctx, inst, nil, "config", "--list", "--name-only", "--show-scope")
-	if err != nil || memory.UnsafeConfig(list, true) != nil || !m.ownWorktree(ctx, inst) {
+	if err != nil || memory.UnsafeConfig(list, true) != nil || g.CheckoutIdentity(ctx, inst) != nil {
 		return "", ffUnsafeConfig
 	}
 	for _, p := range inProgress {
@@ -162,22 +162,6 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 		return "", ffDiverged
 	}
 	return theirs, ""
-}
-
-// ownWorktree reports whether git works on the checkout folder itself: a checkout's own configuration could point it
-// at another work tree (core.worktree) or declare it bare, and status and merge would then check and write a different
-// folder than the one checked.
-func (m *memManager) ownWorktree(ctx context.Context, inst string) bool {
-	out, err := m.git.Run(ctx, inst, nil, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return false
-	}
-	want, err := filepath.EvalSymlinks(inst)
-	if err != nil {
-		return false
-	}
-	got, err := filepath.EvalSymlinks(strings.TrimSpace(out))
-	return err == nil && got == want
 }
 
 // statusReason classifies `git status --porcelain=v1 -z` output: the first kind of local content found, or "" when

@@ -58,14 +58,50 @@ func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []by
 			return "", err
 		}
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			// A checkout (unlike the shared bare repository) must not declare itself bare.
-			bare, _ := g.run(ctx, dir, nil, nil, "config", "--type=bool", "--get", "core.bare") // exit 1: unset
-			if err := CheckoutBare(bare); err != nil {
+			if err := g.CheckoutIdentity(ctx, dir); err != nil {
 				return "", err
 			}
 		}
 	}
 	return g.run(ctx, dir, id, stdin, args...)
+}
+
+// CheckoutIdentity refuses a checkout whose git dir, common dir or work tree is not its own folder. Agents can write
+// the checkout including .git, so .git could be a symlink or a `gitdir:` file, or carry a commondir file, pointing
+// at another repository whose refs and index git would then move; core.bare and core.worktree move the work tree.
+// The checkout's .git must be a real directory that is both its git dir and its common dir, and its work tree the folder.
+func (g *Git) CheckoutIdentity(ctx context.Context, dir string) error {
+	dotGit := filepath.Join(dir, ".git")
+	fi, err := os.Lstat(dotGit)
+	if err != nil {
+		return fmt.Errorf("checkout refused: %w", err)
+	}
+	if !fi.IsDir() {
+		return errors.New("checkout refused: .git is not a plain directory (symlink or gitdir file)")
+	}
+	out, err := g.run(ctx, dir, nil, nil, "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("checkout refused: git does not see a work tree here (core.bare?): %w", err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		return errors.New("checkout refused: unexpected rev-parse output")
+	}
+	wantGit, err := filepath.EvalSymlinks(dotGit)
+	if err != nil {
+		return fmt.Errorf("checkout refused: %w", err)
+	}
+	wantTop, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("checkout refused: %w", err)
+	}
+	for i, want := range []string{wantGit, wantGit, wantTop} {
+		got, err := filepath.EvalSymlinks(lines[i])
+		if err != nil || got != want {
+			return fmt.Errorf("checkout refused: the %s is not the checkout's own", [...]string{"git dir", "common dir", "work tree"}[i])
+		}
+	}
+	return nil
 }
 
 func (g *Git) run(ctx context.Context, dir string, id *Identity, stdin []byte, args ...string) (string, error) {

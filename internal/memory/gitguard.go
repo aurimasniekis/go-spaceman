@@ -14,22 +14,13 @@ import (
 // SR-M04).
 var unsafeConfig = regexp.MustCompile(`^(filter\..+\.(clean|smudge|process)|merge\..+\.driver|diff\..+\.(command|textconv)|diff\.external|` +
 	`core\.(sshcommand|gitproxy|askpass|pager|editor|alternaterefscommand)|sequence\.editor|include\.path|includeif\..+\.path|` +
-	`credential\..*|uploadpack\.packobjectshook|remote\..+\.(uploadpack|receivepack|vcs)|gpg\..*program|protocol\..*allow|` +
+	`credential\..*|uploadpack\.packobjectshook|gc\..*hook|remote\..+\.(uploadpack|receivepack|vcs)|gpg\..*program|protocol\..*allow|` +
 	`url\..+\.(insteadof|pushinsteadof)|ssh\.variant|core\.worktree)$`)
 
 // core.worktree is in the list above for another reason: it points git's work tree at any folder, so `reset --hard`,
 // `checkout` or `merge` would write there instead of in the checkout. core.bare = true does the same from the other
 // side (it hides the work tree), but a bare repository legitimately sets it and `git init` writes core.bare = false
-// into every checkout, so it is judged by value and only in a checkout (CheckoutBare).
-
-// CheckoutBare refuses a checkout (a repository with a work tree) whose configuration declares it bare. value is the
-// output of `git config --type=bool --get core.bare`, which is empty when the key is unset.
-func CheckoutBare(value string) error {
-	if strings.TrimSpace(value) == "true" {
-		return fmt.Errorf("the checkout's git configuration sets core.bare, which would make git act on another folder; remove it from .git/config")
-	}
-	return nil
-}
+// into every checkout, so it is judged by what git reports for a checkout (Git.CheckoutIdentity).
 
 // UnsafeConfig checks `git config --list --name-only [--show-scope]` output. With scopes, only the repository's own
 // (local and worktree) entries are checked: command-line options are SpaceMan's, and the node's global and system
