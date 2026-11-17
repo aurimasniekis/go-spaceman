@@ -234,11 +234,15 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
       </>
     )
   }
+  // withRoles is off: the popover's target is a plain span around the menu, whose button carries the menu's own ARIA;
+  // Popover.Target would add aria-haspopup/aria-expanded to a span with no role (axe aria-allowed-attr).
   return (
-    <Popover opened={custom} onChange={setCustom} position="bottom-start" withinPortal trapFocus>
+    <Popover opened={custom} onChange={setCustom} position="bottom-start" withinPortal trapFocus withRoles={false}>
       <Popover.Target>
         <span>
-          <Menu position="bottom-start" withinPortal>
+          {/* No initial-focus placeholder: it is a bare div[tabindex] inside role="menu", which axe rejects
+              (aria-required-children). The menu moves focus to its items by keyboard on its own. */}
+          <Menu position="bottom-start" withinPortal withInitialFocusPlaceholder={false}>
             <Menu.Target>{button}</Menu.Target>
             <Menu.Dropdown>
               <Menu.Label>Size of the run’s terminal</Menu.Label>

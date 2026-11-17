@@ -1,6 +1,7 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import axe from 'axe-core'
 import { type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type Run } from '@/api/client'
@@ -138,5 +139,14 @@ describe('TerminalSizeControl', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('has no ARIA violations with the menu open (target attributes, menu children)', async () => {
+    wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+    fireEvent.click(screen.getByTestId('terminal-size'))
+    await screen.findByTestId('terminal-size-fit')
+    document.querySelectorAll<HTMLElement>('[role=menu]').forEach((e) => { e.style.display = 'block' }) // jsdom has no transition end
+    const r = await axe.run(document.body, { runOnly: ['aria-allowed-attr', 'aria-required-children', 'aria-valid-attr-value'] })
+    expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.failureSummary).join(' ')}`)).toEqual([])
   })
 })
