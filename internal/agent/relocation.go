@@ -533,6 +533,12 @@ func (a *Agent) relocPrepare(ctx context.Context, g *projectGit, spaceID string,
 	if holds {
 		return nil, errors.New("this node holds the space's lease; it cannot be a relocation destination for it")
 	}
+	// Central's copy is what arrives, so a rename journaled here from an earlier stay is moot. A node that lost the space
+	// while unreachable never got the release that drops it, and central cancelled that rename's closed notice when it
+	// relocated the space: left behind it would hold the names again with nothing to close it.
+	if err := a.j.forgetSpaceRenames(ctx, spaceID); err != nil {
+		return nil, err
+	}
 	space := a.spaceDir(p.Workdir)
 	memDir := filepath.Join(a.mem.root, spaceID)
 	res := &proto.PrepareResult{Repos: []proto.PreparedRepo{}, Memory: []proto.PreparedMemory{}}
@@ -834,6 +840,14 @@ func (j *Journal) forgetSpaceMemory(ctx context.Context, spaceID string) error {
 		// A rename of the space still open here (central closed it when it relocated the space from its own copy, source
 		// unavailable) is moot once the node released the space's memory; left behind it would hold the names against a
 		// later return of the space and report a move of a folder that is no longer this node's.
+		_, err := tx.SQL.ExecContext(ctx, `DELETE FROM role_renames WHERE space_id = ?`, spaceID)
+		return err
+	})
+}
+
+// forgetSpaceRenames drops the space's journaled renames only (see relocPrepare).
+func (j *Journal) forgetSpaceRenames(ctx context.Context, spaceID string) error {
+	return j.s.W().TxNamed(ctx, "journal.forget_renames", func(tx *store.Tx) error {
 		_, err := tx.SQL.ExecContext(ctx, `DELETE FROM role_renames WHERE space_id = ?`, spaceID)
 		return err
 	})
