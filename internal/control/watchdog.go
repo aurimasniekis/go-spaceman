@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -309,6 +311,7 @@ type WatchState struct {
 type Watchdog struct {
 	sv      *Supervisor
 	wake    chan struct{}
+	kicked  map[string]bool // spaces asked for a pass by Kick (guarded by mu)
 	started time.Time
 
 	mu       sync.Mutex
@@ -327,7 +330,7 @@ type Watchdog struct {
 
 // NewWatchdog returns the supervisor's watchdog (sv.Watchdog); Run starts it.
 func NewWatchdog(sv *Supervisor) *Watchdog {
-	w := &Watchdog{sv: sv, wake: make(chan struct{}, 1), started: sv.clock.Now(), acts: map[string]*activity{}, eps: map[string]*episode{},
+	w := &Watchdog{sv: sv, wake: make(chan struct{}, 1), kicked: map[string]bool{}, started: sv.clock.Now(), acts: map[string]*activity{}, eps: map[string]*episode{},
 		state: map[string]WatchState{}, restarts: map[string]bool{}}
 	w.turnOf, w.spaces, w.observe, w.nudge, w.escalate = w.runTurn, w.activeSpaces, w.read, w.deliver, w.raise
 	sv.Watchdog = w
@@ -401,15 +404,18 @@ func (w *Watchdog) act(runID string) *activity {
 	return a
 }
 
-// Kick asks for a pass soon (a control run turned idle).
-func (w *Watchdog) Kick() {
+// Kick asks for a pass over one space soon (its control run turned idle).
+func (w *Watchdog) Kick(spaceID string) {
+	w.mu.Lock()
+	w.kicked[spaceID] = true
+	w.mu.Unlock()
 	select {
 	case w.wake <- struct{}{}:
 	default:
 	}
 }
 
-// Run passes over the spaces once a minute and when kicked, until ctx ends.
+// Run passes over the spaces once a minute, and over a kicked space when kicked, until ctx ends.
 func (w *Watchdog) Run(ctx context.Context) {
 	t := time.NewTicker(watchEvery)
 	defer t.Stop()
@@ -418,9 +424,19 @@ func (w *Watchdog) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			w.Pass(ctx)
 		case <-w.wake:
+			w.mu.Lock()
+			ids := slices.Sorted(maps.Keys(w.kicked))
+			clear(w.kicked)
+			w.mu.Unlock()
+			for _, id := range ids {
+				if ctx.Err() != nil {
+					return
+				}
+				w.check(ctx, id)
+			}
 		}
-		w.Pass(ctx)
 	}
 }
 

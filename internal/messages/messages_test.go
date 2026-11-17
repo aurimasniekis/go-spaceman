@@ -624,3 +624,24 @@ func TestNotifyControlTxOncePerKey(t *testing.T) {
 		t.Fatalf("rolled-back notice: told %v, kicks %d", told, kicks)
 	}
 }
+
+// Unacknowledged skips what the run itself sent (the sentBy skip), but keeps a message it scheduled for itself and
+// mail from others.
+func TestUnacknowledgedSkipsOwnMessages(t *testing.T) {
+	f := newFx(t)
+	own := From{Kind: "run", ID: ctrlRun}
+	_, _, err := f.svc.Send(f.ctx, op, "spc_a", own, SendInput{To: "control", Subject: "to myself"})
+	must(t, err)
+	got, err := f.svc.Unacknowledged(f.ctx, "spc_a", ctrlRun, "control", true)
+	must(t, err)
+	if len(got) != 0 {
+		t.Fatalf("control's own message to control counted: %v", got)
+	}
+	_, _, err = f.svc.Send(f.ctx, op, "spc_a", From{Kind: "run", ID: wrkRun}, SendInput{To: "control", Subject: "from a worker"})
+	must(t, err)
+	got, err = f.svc.Unacknowledged(f.ctx, "spc_a", ctrlRun, "control", true)
+	must(t, err)
+	if len(got) != 1 {
+		t.Fatalf("the worker's message: %v", got)
+	}
+}

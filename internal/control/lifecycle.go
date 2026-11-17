@@ -212,7 +212,7 @@ func (sv *Supervisor) OnRunIdle(runID string) {
 		if r, err := sv.fl.GetRun(ctx, runID); err == nil && r.Kind == agenttools.KindControl {
 			sv.armIdle(ctx, r)
 			if sv.Watchdog != nil {
-				sv.Watchdog.Kick() // a control that just finished a turn with work still waiting is looked at now
+				sv.Watchdog.Kick(r.SpaceID) // a control that just finished a turn with work still waiting is looked at now
 			}
 		}
 	})

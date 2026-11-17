@@ -6660,7 +6660,7 @@
      - **the run is not control's live run:** no control run, or it is starting, stopping or ended (auto-start and
        recovery own those cases).
   5. **The nudge.** A one-line notice typed into control's terminal through the same idle-gated safe input as the
-     notifier's notices (`fleet.QueueNotice`), prefixed `SpaceMan:`, naming only counts of the backlog, for example:
+     notifier's notices (`fleet.QueueNotice`), prefixed `SpaceMan watchdog:`, naming only counts of the backlog, for example:
      "SpaceMan watchdog: 3 unacknowledged messages, 2 tasks in review with finished workers, 1 failed run are waiting
      for you. Check spaceman_messages, the queue and spaceman_runs_list, acknowledge what you have handled, then act
      on the rest." It carries no message content, titles or IDs: content is read through the tools as data, never as a
@@ -6693,6 +6693,8 @@
        recovery does (same role, harness, instance, model, settings, account and workspace, resuming the session when it
        finished a turn), with a prompt that says why. Restarts count against the supervisor's restart budget
        (`MaxRestarts` per hour, SM-CTRL-002); past the budget the human action is all that happens.
+       The restart count lives in central's memory: if central restarts between the stop and the run ending, it is lost
+       and control stays stopped until the next autostart.
 
      **Restart is off by default.** The incident's control was healthy and woke as soon as something typed into it, so a
      nudge is the fix for that failure; a restart interrupts work in flight, loses the turn's context when the session
