@@ -282,6 +282,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-CTRL-005 KB support admission is preauthorized by control or an operator. Agents request their own KB session through a scoped operation
   that is not general worker-launch permission. Support counts toward capacity, and reserved capacity prevents worker/support deadlock.
 - SM-CTRL-006 Task outcomes, messages, human blockers and memory errors are tracked separately.
+- SM-CTRL-007 Control can list its own space's roles with each role's kind, effective description (and whether it is the space role's or the template's), template and effective harness and model, through a read-only tool only control runs have. The list never carries prompt text, settings, skills or account references (ADR-0095).
 
 ### SM-COMM — Durable communication
 - SM-COMM-001 SpaceMan owns durable messages, requests, acknowledgement, reply and correlation. States are stored, available, acknowledged, resolved.
