@@ -89,8 +89,8 @@ type inputMark struct {
 // deliverInput runs send (the node typing input into run r) under the instance's input gate. Input that was sent marks
 // the instance busy until the run reports a later turn: its status may still say idle while the turn begins.
 func (m *memManager) deliverInput(r runRow, send func() error) error {
-	if r.InstanceID == "" {
-		return send()
+	if r.InstanceID == "" || !m.ffEnabled() {
+		return send() // memory.fast_forward off: no fast-forward to wait for, and no mark to read
 	}
 	g := m.inputGate(r.InstanceID)
 	g.Lock()
@@ -109,7 +109,7 @@ func (m *memManager) deliverInput(r runRow, send func() error) error {
 
 // awaitInputGate waits until no fast-forward of the instance's checkout is merging (a takeover that starts after it).
 func (m *memManager) awaitInputGate(instance string) {
-	if instance == "" {
+	if instance == "" || !m.ffEnabled() {
 		return
 	}
 	g := m.inputGate(instance)

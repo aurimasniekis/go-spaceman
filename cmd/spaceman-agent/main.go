@@ -211,7 +211,7 @@ func runCmd(g *globals) *cobra.Command {
 				RunnerInfo:      proto.RunnerInfo{Kind: "herdr-core", Version: client.Hello().Version, CoreID: client.Hello().Core.ID},
 				HarnessBinaries: map[string]string{harness.KindClaude: cfg.Harness.ClaudeBinary, harness.KindCodex: cfg.Harness.CodexBinary},
 				AgentBinary:     self, BridgeSocket: filepath.Join(filepath.Dir(cfg.Runner.Socket), "bridge.sock"), Capacity: cfg.Capacity, JournalRetention: cfg.JournalRetention.D(),
-				NoMemoryFastForward: !cfg.Memory.FastForward,
+				NoMemoryFastForward: noMemoryFastForward(cfg),
 				ReconnectMax:        cfg.Central.ReconnectMax.D(), Log: log, DefaultCols: defCols, DefaultRows: defRows, Claude: claude,
 			})
 			log.Info("spaceman-agent starting", slog.String("central", cfg.Central.URL), slog.String("hc_core", client.Hello().Core.ID),
@@ -220,6 +220,9 @@ func runCmd(g *globals) *cobra.Command {
 		},
 	}
 }
+
+// noMemoryFastForward maps memory.fast_forward (ADR-0094's kill switch) to the agent option, which is its negation.
+func noMemoryFastForward(cfg *config.AgentConfig) bool { return !cfg.Memory.FastForward }
 
 func launchCmd() *cobra.Command {
 	var secrets string
