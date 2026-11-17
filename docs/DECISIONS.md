@@ -129,6 +129,61 @@
   - **Gaps.** A reattach after `missed` or a restart emits a `gap` record.
   - **Upload.** Closed segments are uploaded to central storage.
   - **Fallback.** If the frames cannot be decoded reliably, a PTY tee shim inside the terminal records instead. A decision update would record that switch.
+- **Addendum (2026-11-17): central acknowledges only a durable, contiguous prefix (SM-REC-003).** Central acks a node's
+  recording chunk with `recording.Writer.Stored()`, and the node prunes every record at or below its highest ack. So
+  `Stored()` = N means *every record at or below N that the recording will ever hold is synced to disk and none is
+  missing below N*, apart from jumps the node itself made (records it never had: `SkipTo`, its own lost disk). Three
+  rules keep that true when central's disk fails:
+  - **Unsynced tails are cut.** A failed write or sync closes the segment and truncates it to its size at the last
+    successful sync (tracked per segment). A frame written after that may still decode from the page cache without
+    being on disk, so a writer reopened later would otherwise ack it. If the cut fails, central does not reopen the
+    recording (every chunk fails) until a retry of the cut succeeds.
+  - **No storing past the hole.** A failed writer is dropped and reopened from disk on the next chunk, and the run is
+    marked with the connection the failure happened on. On that connection, a chunk whose first new record is above
+    `Stored()+1` (records the node sent behind the lost ones) is not stored and is acked `Stored()`. A chunk that starts
+    at or below `Stored()+1` ends the mark. So does any chunk on a later connection, because the node's catch-up
+    re-ships from its acknowledgement first, and a jump there is one the node made itself. Refusing it would stall the
+    recording for good.
+  - **The node re-ships because central closes the connection.** Any chunk central could not store (open, write or
+    sync failure) is acked with what is stored, and then the hub closes the node connection (1013, try again later).
+    Messages queued behind the chunk are never read. The node re-ships records above its acknowledgement only in the
+    catch-up pass of a new connection, and that pass runs before the run's live output (`shipLive`). So the close is
+    what makes the node fill the hole. We chose this over a node-side rule ("an ack below what was sent starts a
+    catch-up") for three reasons. First, an ack below the sent sequence is also the normal state while chunks are in
+    flight, so the node could not tell a lost chunk from a slow one without per-chunk correlation or a protocol
+    change. Second, the close needs no protocol change. Third, it leaves the
+    node's ack and catch-up handling (`internal/agent/record.go`, including the persisted acknowledgements of
+    ADR-0097) unchanged.
+  - **Consequence: what a close costs, and when central closes.** Closing the connection runs the node's disconnect
+    handling: every live run of the node is marked `unknown` and its live terminals are cut, until the node reconnects
+    (its backoff is 1 s, doubling to a 30 s cap) and reports them. A space's lease is not revoked by it, but the
+    reconnect has to land within the lease TTL margin or the node's spaces lose their lease. Central therefore closes
+    only when a re-ship can help, and at most once per run and connection. A write or sync failure closes (once;
+    chunks already on their way behind it are refused in the backoff without closing again, and a refusal on a *new*
+    connection, which needs a re-ship, closes it once more). A recording that cannot be opened (permissions, the
+    object store) does not: central logs it, acks the chunk with what is stored and stores
+    nothing past that hole on the connection, so the node keeps the records and re-ships them on its next
+    connection, whenever that is. Such a recording can stall until then; the alternative, a reconnect per failing run
+    every few seconds, would flap every other run of the node. A storage failure that persists (a cut that keeps
+    failing, a disk that stays broken) closes each new connection once while it holds, so at the node's reconnect
+    backoff rate (about once per 30 s at its cap), and every such close marks the node's live runs unknown.
+  - **Older nodes.** Agents before v0.1.4 ship live output *before* the catch-up on a connection (`proto.MinMinor` is
+    0, so they are accepted). On a new connection their first live chunk can jump past the hole, end the resync mark
+    and be acked over it, so for them the close does not guarantee a gap-free copy: the hole can stay as a
+    gap in central's recording. The mark is not kept across connections for them (the node's
+    catch-up on that connection cannot be told apart from its own jumps).
+  - **Marks are pruned.** The marks above are dropped when the run ends and when the run has not been shipped to for
+    an hour (swept every minute), except a failed segment tail that cannot be cut yet. The resync mark is not aged: it
+    guards a live connection, so it ends with that connection (the hub's disconnect) or with the run.
+  - **Reopen backoff.** After a failure central does not open the run's recording again for a short while (5 s). Opening
+    reads the whole recording under the global lock, and a failed flush used to leave a new empty segment behind. A
+    chunk inside the window is refused without touching the disk: it is acked with what was stored when the writer
+    failed, and the hub still closes the connection, as for any chunk that is not stored (without the close the node
+    never re-ships). A failed segment with nothing synced is removed rather than truncated to zero bytes. A successful
+    chunk ends the backoff.
+  - **Limitation.** A process restart right after a failed sync can still find that frame in the page cache. Linux
+    reports a writeback error only to file descriptors that were open when it happened, so the new process cannot
+    detect it. The cut covers failures within one central process.
 
 ### ADR-0011 — Pulse ingestion: one durable consumer per subscription generation
 - **Status:** accepted; contract details in `docs/contracts/pulse.md`
@@ -396,6 +451,32 @@
   - Central needs `git` to store memory; without it, syncs are refused and the UI says so.
   - Changes newer than the last acknowledgement exist only on the node.
   - Rewritten history (e.g. after a restore) is preserved but not applied; reconciling it is a person's decision.
+
+- **Addendum, 2026-11-17 — harness configuration never travels through role memory (security-relevant change).**
+  - Context: the checkout is passed to Claude Code with `--add-dir`, which loads `.claude/skills` and `.claude/commands`
+    from it as project skills and commands (seen on Claude Code 2.1.325, and on 2.1.326 with folder trust; its prompt also
+    mentions the folder's git settings). Role memory is shared by every instance of a role, so a skill or command one
+    instance wrote would become active in all of them. Two options: (a) the node refuses harness-config paths, (b) memory
+    is documented as trusted like code. (a) is chosen: memory stays notes, never a channel that carries behaviour, in line
+    with the memory hardening of ADR-0094 and the node's Git hardening above.
+  - Decision: the node writes two files into each checkout's `.git` before it creates, moves or stages one:
+    `info/exclude`, so `.claude/`, `.codex/` and `.agents/` (at any depth) and a top-level `.mcp.json` are never staged,
+    and `info/sparse-checkout` (non-cone, `core.sparseCheckout`), so those paths are never written to the working tree
+    when a checkout is reset to, fast-forwarded onto or merged with history that already holds them (pushed by an older
+    agent). `prepare` applies it to an existing checkout too (`sparse-checkout reapply`), which removes such files from
+    its working tree. A conflict preserve skips such paths. `CLAUDE.md` and `AGENTS.md` notes stay allowed: they are text.
+  - Why on the node and not at central: the node is the only place memory is materialised and loaded by a harness, a
+    sparse checkout keeps the tree clean (no dirty status, so fast-forward is not blocked), and rejecting a bundle at
+    central would stall a whole collection's sync over one bad commit. Central keeps the history it was given, old
+    commits included; history is not rewritten. Central's file listing may therefore still show such paths.
+  - Limits: the agent can edit its own `.git` (see above), so this is a guard against accident and against content
+    arriving from other instances, not a sandbox; the guard is rewritten on every checkpoint and prepare. A harness-config
+    file an instance writes into its own checkout is never staged or shared. It is removed from that checkout's working
+    tree only by `sparse-checkout reapply`, which `prepare` runs when `core.sparseCheckout` was not already true (a
+    checkout created before this filter); later files stay local until the operator removes them. Memory content is
+    still untrusted text (AGENTS.md): it is never an authority source.
+  - Evidence: `TestMemoryHarnessConfigDoesNotTravel`, `TestMemoryHarnessConfigInOldHistoryIsNotMaterialised`,
+    `TestMemoryHarnessConfigRemovedFromExistingCheckout` (`internal/agent`); with the guard disabled they fail.
 
 ### ADR-0026 — KB support runs as per-requester kb sessions; KB changes are proposals accepted on the node
 - **Status:** Accepted, 2026-11-02.
@@ -6321,8 +6402,7 @@
   4. **Content and ancestry checks** (all required; each refusal is logged with a fixed reason and leaves the folder
      exactly as it was):
      - the checkout exists (`.git` is a directory), its git configuration is safe (the existing `UnsafeConfig`
-       guard), and git works on the checkout folder itself (`rev-parse --show-toplevel` is that folder, so a
-       `core.worktree` or `core.bare` in the agent-writable `.git/config` is refused);
+       guard), and git works on the checkout folder itself and on no other repository (the checkout guard below);
      - no merge, rebase, cherry-pick, revert or bisect in progress, and no `index.lock`;
      - `git status --porcelain --untracked-files=all --ignored=matching` is empty: no modified, staged, deleted, untracked or
        ignored file (an ignored file is local-only data that a fast-forward could overwrite);
@@ -6387,6 +6467,37 @@
       cannot see it when the idle checkpoint had already committed the earlier writes.
   - One lasting ignored or untracked file in a checkout keeps that instance from fast-forwarding, at run start too
     (logged at info).
+  - **Checkout guard.** The checkout, `.git` included, is writable by the agent, and the node runs git in it
+    (checkpoint `add -A` and `commit`, preserve `reset --hard`, this fast-forward). Those commands must read and write
+    only that checkout's own `.git` and run no code the agent chose. `memory.Git` checks before every command that
+    works in an existing repository (`Git.RunInput`; the fast-forward calls the same checks and refuses with
+    `unsafe_config`):
+    - configuration: `UnsafeConfig` (programs, transports, includes, `core.worktree`); `core.bare` and a git dir,
+      common dir or work tree that is not the checkout's own (a symlinked `.git`, a `gitdir:` file, `.git/commondir`)
+      are refused by `CheckoutIdentity`;
+    - inside `.git` (`ownGitDir`, a walk that does not list the loose-object fan-out folders): any symlink (git follows
+      it and its lockfiles, so a symlinked `refs`, `objects`, `index` or `packed-refs` moves another repository); a
+      FIFO or device; a regular file with more than one hard link outside the object store (git rewrites
+      `COMMIT_EDITMSG`, `FETCH_HEAD` and `MERGE_MSG` in place and appends to reflogs, so a hard link to another
+      checkout's ref, which an agent running as the same user as the daemon can make, would be overwritten);
+      `objects/info/alternates` (a push would copy borrowed objects into the shared history) and `info/grafts`
+      (replace refs are off: `GIT_NO_REPLACE_OBJECTS`);
+    - gitlinks (`Gitlinks`): an index entry for a submodule or embedded repository is refused before any command that
+      reads the work tree. Git runs a child git in such a folder, with that repository's own configuration, so its
+      filter drivers would run as the daemon, and in whatever git dir its `.git` names. `add` does so whatever
+      `diff.ignoreSubmodules` says; `submodule.recurse`, `diff.ignoreSubmodules`, `fetch`/`push.recurseSubmodules`
+      are also forced off on the command line. Commands that never read the work tree (the KB acceptance's, in
+      project repositories that may have submodules) are not checked for gitlinks;
+    - `GIT_CEILING_DIRECTORIES` is the checkout's parent, so a checkout without `.git` is not a repository rather than
+      part of one found above it.
+  - **Residual risk (time of check to time of use).** The checks run before git starts; the agent can write the
+    checkout while git runs, so a link planted in that window is followed. A live agent process can race the node's
+    git command; hitting the window needs no more than a loop that replaces `.git/refs` with a symlink. Not built,
+    proposed as structural fixes: (1) run the checkpoint and the fast-forward only when no process of the instance
+    is alive (at run end and at `prepare`), which this ADR's live fast-forward and the idle checkpoint give up; or
+    (2) let the node work in a daemon-owned copy (its own git dir, `GIT_DIR` and `GIT_WORK_TREE` set explicitly,
+    with the agent's work tree read into it by `git add` and written back by plain file copies that refuse links),
+    so no agent-writable file decides where git writes. Option 2 keeps the live behaviour and is the one recommended.
   - The per-instance input gates live in memory for the life of the agent process: one small lock per instance seen.
   - A stale-context overwrite by a shell command (not Claude Code's file tools) after a fast-forward now replaces the
     head's text in a plain fast-forward publish, where before it could have become a preserved conflict. History keeps
@@ -6404,7 +6515,9 @@
   `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestBusyInstanceNotTouched`
   (no git command, not even a fetch, in a busy checkout), `TestInputPendingUntilTurnReported`,
   `TestIgnoredFileAfterChecksNotOverwritten`, `TestRefreshAtStartWithAnotherLiveRun`, `TestTakeoverWaitsForFastForward`, `TestStartTakeoverWaitsForGate`,
-  `TestStatusReason`. Each
+  `TestStatusReason`, `TestFastForwardRefusesRedirectedGitDir`; `internal/memory`: `TestRunRefusesRedirectedGitDir`
+  (each redirection outside and inside `.git`, the other repository's files unchanged), `TestRunRefusesGitlinks` (the
+  embedded repository's filter does not run), `TestRunStopsAtTheCheckout`. Each
   guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
 
 ### ADR-0095 — Role descriptions: prompt metadata edited in place, a per-space description, and a role list for control
@@ -6511,7 +6624,9 @@
     to say "pick the role whose description fits".
   - The descriptions are visible to the control agent, so they must not contain secrets. They are already visible to
     every operator who can read the catalog.
-  - Skills keep fixed metadata. The same `PATCH` pattern (`update-skill`) is a follow-up.
+  - Skills: follow-up F1 (RD-F1) is implemented as `update-skill` (`PATCH /skills/{skill_id}`, see the table below). Skills
+    are installation-wide, so a rename shows in every space that uses the skill. The provider's `spaceman_skill` metadata
+    (name and description in place) remains a follow-up.
 - **Requirements:** the implementation adds SM-PROMPT-010 (prompt name and description edited in place without a new
   version), SM-PROMPT-011 (a space role's own description) and SM-CTRL-007 (control lists the space's roles with their
   effective descriptions) to GOAL.md and TRACEABILITY.md, as `todo` until their tests land.
@@ -6525,7 +6640,7 @@
   | T4 | Web: an **Edit details** dialog on the prompt page and a description on the space role form, `make web-check`, screenshots if they change. | T1, T2 | Sonnet |
   | T5 | Docs: the guide's "Starter roles" section says the templates are global and explains per-space overrides, plus template description edits, `spaceman_roles_list` in the control docs, the starter `control.md` line, and GOAL, TRACEABILITY and PLAN entries. `make site-check`. | T1–T3 | Haiku |
   | P1 | Provider: in-place `spaceman_prompt` `name` and `description` through `UpdatePrompt`, publishing only on content changes, `spaceman_space_role.description`, a clear error from an older central, unit and acceptance tests, regenerated docs. A PR into the provider's main. | T1, T2 merged | Sonnet |
-  | F1 | Follow-up, not in this request: `update-skill` (the same pattern for skills) and the provider's `spaceman_skill` metadata. | — | Haiku |
+  | F1 | Follow-up: `update-skill` (the same pattern for skills), implemented (RD-F1; skills are installation-wide, so a rename shows in every space). The provider's `spaceman_skill` metadata remains a follow-up. | — | Haiku |
 
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. `update-prompt` uses the existing prompt
   write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no

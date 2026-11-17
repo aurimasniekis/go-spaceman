@@ -10,6 +10,9 @@ SELECT * FROM skills WHERE slug = ?;
 -- name: ListSkills :many
 SELECT * FROM skills ORDER BY slug;
 
+-- name: UpdateSkillMeta :execrows
+UPDATE skills SET name = ?, description = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?;
+
 -- name: InsertSkillVersion :exec
 INSERT INTO skill_versions (id, skill_id, number, state, files_json, notes, created_at, created_by, updated_at)
 VALUES (?, ?, 0, 'draft', ?, ?, ?, ?, ?);

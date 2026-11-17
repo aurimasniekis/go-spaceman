@@ -649,6 +649,14 @@ func TestUpdateReadsVersion(t *testing.T) {
 	if h := f.last("POST", "/skills/skl_1/publish").header.Get("If-Match"); h != `"2"` {
 		t.Fatalf("skill If-Match %s", h)
 	}
+	// SM-MCP-010: skill update reads the skill, sends its version as If-Match and only the flags given change.
+	f.json("GET /skills/s2", 200, map[string]any{"id": "skl_2", "slug": "s2", "name": "Old", "description": "d0", "version": 4})
+	f.on("PATCH /skills/skl_2", func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) })
+	e.ok(t, "skill", "update", "s2", "--description", "d1")
+	pa := f.last("PATCH", "/skills/skl_2")
+	if h := pa.header.Get("If-Match"); h != `"4"` || pa.body["description"] != "d1" || pa.body["name"] != "Old" || len(pa.body) != 2 {
+		t.Fatalf("skill update If-Match %s body %v", h, pa.body)
+	}
 }
 
 // Relocation: the unavailable-source flow needs an explicit acknowledgement, --wait polls until a final state, and a

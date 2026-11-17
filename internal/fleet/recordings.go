@@ -39,14 +39,36 @@ type Recordings struct {
 	log     *slog.Logger
 	mu      sync.Mutex
 	w       map[string]*recording.Writer
+	// resync holds, per run whose writer failed, the node connection the failure happened on (SM-REC-003, ADR-0010
+	// addendum): on that connection nothing is stored past the gap the failure left (records already on their way
+	// there must not overtake the records central lost); the node's re-ship on its next connection clears it.
+	resync map[string]uint64
+	// unsynced holds failed writers whose unsynced segment tail could not be cut off yet: the run's recording is not
+	// opened again until it is (recording.Writer.DropUnsynced).
+	unsynced map[string]*recording.Writer
+	// failed holds, per run whose writer failed (or could not be opened), when the recording may be opened again and what
+	// was durably stored then. Until then chunks are refused without touching the disk (reopenBackoff).
+	failed map[string]failure
+	// closedOn holds, per run, the node connection the hub was last told to close for a storage failure: one close per
+	// (run, connection), because every close marks all of the node's live runs unknown (Hub.onDisconnect).
+	closedOn map[string]uint64
+	// touched is when a run's marks above were last set or used; pruneLocked drops the marks of runs not seen for
+	// markMaxAge.
+	touched   map[string]time.Time
+	nextPrune time.Time
+	// reopenBackoff is how long a failed recording is not reopened. A disk that keeps failing would otherwise cost every
+	// chunk a read of the whole recording under mu, which blocks every run and viewer.
+	reopenBackoff time.Duration
 	// subs are live viewers per run.
 	subs map[string]map[*Viewer]struct{}
 	// archiving marks runs whose segments are being uploaded; the channel closes when that ends.
 	archiving map[string]chan struct{}
 	now       func() time.Time
-	ctx       context.Context // cancelled by Close: ends archive uploads
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	// create overrides how segment files are created (fault tests); nil uses the filesystem.
+	create func(path string) (recording.File, error)
+	ctx    context.Context // cancelled by Close: ends archive uploads
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // Viewer is one live subscription.
@@ -80,7 +102,7 @@ func newRecordings(dir string, store artifacts.Store, log *slog.Logger, now func
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Recordings{dir: dir, store: store, archive: archive, log: log, w: map[string]*recording.Writer{}, subs: map[string]map[*Viewer]struct{}{},
-		archiving: map[string]chan struct{}{}, now: now, ctx: ctx, cancel: cancel}
+		resync: map[string]uint64{}, closedOn: map[string]uint64{}, touched: map[string]time.Time{}, failed: map[string]failure{}, reopenBackoff: defaultReopenBackoff, unsynced: map[string]*recording.Writer{}, archiving: map[string]chan struct{}{}, now: now, ctx: ctx, cancel: cancel}
 }
 
 // Dir returns a run's spool folder.
@@ -104,16 +126,53 @@ func (r *Recordings) waitArchiveLocked(runID string) {
 	}
 }
 
+// defaultReopenBackoff is how long central waits before it opens a recording again after a store failure.
+const defaultReopenBackoff = 5 * time.Second
+
+// failure is a recording that central could not store: it is not opened again before retry.
+type failure struct {
+	retry  time.Time
+	stored uint64
+	// storage is set when the failure lost a chunk the node must re-ship (a write or sync failure), so a refusal in
+	// the backoff window closes the connection like the failure did. A recording that could not even be opened
+	// (permissions, the object store) is not: see apply.
+	storage bool
+}
+
+// markMaxAge is how long the marks of a run nobody has shipped to are kept; markPruneEvery is how often they are swept.
+const (
+	markMaxAge     = time.Hour
+	markPruneEvery = time.Minute
+)
+
+// closeConn is the error apply returns when the hub must close the node connection: central lost a chunk that only a
+// re-ship on a new connection can bring back. Any other error leaves the connection open.
+type closeConn struct{ err error }
+
+func (e *closeConn) Error() string { return e.err.Error() }
+func (e *closeConn) Unwrap() error { return e.err }
+
+// errReopenBackoff is returned for a chunk refused while a failed recording waits to be reopened. Like any store
+// failure it is acked with the stored sequence and closes the node connection (the node re-ships on its next one).
+var errReopenBackoff = errors.New("recording store failed recently, not reopened yet")
+
 func (r *Recordings) writer(runID string) (*recording.Writer, error) {
 	r.waitArchiveLocked(runID)
 	if w := r.w[runID]; w != nil {
 		return w, nil
 	}
+	if f := r.unsynced[runID]; f != nil {
+		// What a failure wrote after the last sync must be gone before the recording is read back as stored.
+		if err := f.DropUnsynced(); err != nil {
+			return nil, err
+		}
+		delete(r.unsynced, runID)
+	}
 	dir, err := r.Dir(runID)
 	if err != nil {
 		return nil, err
 	}
-	o := recording.Options{Dir: dir, Now: r.now}
+	o := recording.Options{Dir: dir, Now: r.now, Create: r.create}
 	if r.archive {
 		if local, _ := recording.Segments(dir); len(local) == 0 {
 			// Continue an archived recording rather than renumber it (records at or below its last sequence are
@@ -147,23 +206,73 @@ func (r *Recordings) archivedTail(ctx context.Context, runID string) (int, uint6
 	return n, recording.LastSeq(o), nil
 }
 
-// apply stores a chunk and returns the highest stored sequence.
-func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
+// apply stores a chunk that arrived on node connection conn (the hub's connection number) and returns the highest
+// durably stored sequence, the only value the node may be acked (recording.Writer.Stored). Any error means central did
+// not store the chunk. Only a *closeConn error asks the hub to close the connection, so the node re-ships everything
+// above its acknowledgement on the next one (SM-REC-003, ADR-0010 addendum): that is a storage failure (a write or
+// flush), at most once per (run, connection), since a close costs every live run of the node. Other errors (the
+// recording could not be opened: permissions, the object store) are logged and the chunk is acked with what is
+// stored; on this connection nothing is stored past the hole they leave. A write or flush failure also closes the writer and drops it, so
+// the next chunk reopens the recording from what is durably on disk, and until the node re-ships, a chunk on the same
+// connection that starts past Stored()+1 (records sent behind the failed ones) is not stored: it is acked Stored().
+func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := r.now()
+	r.pruneLocked(now)
+	if f, ok := r.failed[c.RunID]; ok && r.w[c.RunID] == nil {
+		if now.Before(f.retry) {
+			// Refuse without reading the recording from disk; the node's chunk needs a re-ship when the failure was a
+			// storage one, so the connection is closed (once) for it.
+			r.touched[c.RunID] = now
+			if f.storage {
+				return f.stored, r.closeLocked(conn, c.RunID, errReopenBackoff)
+			}
+			return f.stored, errReopenBackoff
+		}
+	}
 	w, err := r.writer(c.RunID)
 	if err != nil {
-		return 0, err
+		f := r.failed[c.RunID]
+		f.retry = now.Add(r.reopenBackoff)
+		r.failed[c.RunID] = f
+		// Nothing of this connection's later chunks may be stored past what is stored now.
+		r.resync[c.RunID] = conn
+		r.touched[c.RunID] = now
+		r.log.Warn("recording not opened; chunk not stored, the node keeps it", slog.String("run.id", c.RunID), obs.Err(err))
+		if f.storage {
+			return f.stored, r.closeLocked(conn, c.RunID, err)
+		}
+		return f.stored, err
 	}
-	closed := false
+	recs := make([]recording.Record, 0, len(c.Records))
 	for _, raw := range c.Records {
 		var rec recording.Record
 		if json.Unmarshal(raw, &rec) != nil || rec.Seq == 0 {
 			continue
 		}
+		recs = append(recs, rec)
+	}
+	if failedOn, ok := r.resync[c.RunID]; ok {
+		stored := w.Stored()
+		switch first := firstAbove(recs, stored); {
+		case failedOn != conn:
+			// A new connection: the node's catch-up re-ships from its acknowledgement first, so a jump here is one
+			// the node made itself (records it never had), which a recording keeps as a gap.
+			delete(r.resync, c.RunID)
+		case first == 0:
+			// Only repeats: nothing to store.
+		case first > stored+1:
+			return stored, nil
+		default:
+			delete(r.resync, c.RunID)
+		}
+	}
+	closed := false
+	for _, rec := range recs {
 		stored, err := w.Append(rec)
 		if err != nil {
-			return w.Seq(), err
+			return r.dropFailedLocked(conn, c.RunID, w), r.closeLocked(conn, c.RunID, err)
 		}
 		if !stored {
 			continue
@@ -180,15 +289,99 @@ func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 		}
 	}
 	if err := w.Flush(); err != nil {
-		return w.Seq(), err
+		return r.dropFailedLocked(conn, c.RunID, w), r.closeLocked(conn, c.RunID, err)
 	}
-	seq := w.Seq()
+	seq := w.Stored()
+	delete(r.failed, c.RunID)
 	if closed {
 		_ = w.Close()
 		delete(r.w, c.RunID)
+		delete(r.resync, c.RunID)
+		delete(r.closedOn, c.RunID)
+		delete(r.touched, c.RunID)
 		r.archiveLater(c.RunID)
 	}
 	return seq, nil
+}
+
+// closeLocked wraps a storage failure on connection conn as the error that makes the hub close the connection, once per
+// (run, connection): later failures of the run on the same connection (chunks already on their way) return err as is.
+func (r *Recordings) closeLocked(conn uint64, runID string, err error) error {
+	if c, ok := r.closedOn[runID]; ok && c == conn {
+		return err
+	}
+	r.closedOn[runID] = conn
+	return &closeConn{err: err}
+}
+
+// pruneLocked forgets the marks of runs not seen for markMaxAge (the run ended without RunEnded, or the node never
+// came back): the maps would otherwise grow with every run that ever failed.
+func (r *Recordings) pruneLocked(now time.Time) {
+	if now.Before(r.nextPrune) {
+		return
+	}
+	r.nextPrune = now.Add(markPruneEvery)
+	for id, at := range r.touched {
+		if now.Sub(at) >= markMaxAge && r.w[id] == nil {
+			r.forgetLocked(id)
+		}
+	}
+}
+
+// ConnEnded drops the resync marks of node connection conn, which has ended: a resync mark guards a live connection
+// (chunks on it already on their way must not overtake the lost records) and nothing else, so it lives exactly as long
+// as the connection and is never aged out while it is open (pruneLocked would let the next chunk be stored and acked
+// past the gap).
+func (r *Recordings) ConnEnded(conn uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, c := range r.resync {
+		if c == conn {
+			delete(r.resync, id)
+		}
+	}
+}
+
+// forgetLocked drops the age-based marks of a run (failed, closedOn, touched), not resync: that one belongs to a live
+// connection and ends with it (ConnEnded), or with the run (RunEnded, the recording's close). An unsynced tail that cannot be cut yet keeps its entry (and the run its
+// failure mark): reading the recording back would take that tail for stored.
+func (r *Recordings) forgetLocked(runID string) {
+	if f := r.unsynced[runID]; f != nil {
+		if f.DropUnsynced() != nil {
+			return
+		}
+		delete(r.unsynced, runID)
+	}
+	delete(r.failed, runID)
+	delete(r.closedOn, runID)
+	delete(r.touched, runID)
+}
+
+// firstAbove returns the sequence of the first record above seq (0 when there is none).
+func firstAbove(recs []recording.Record, seq uint64) uint64 {
+	for _, r := range recs {
+		if r.Seq > seq {
+			return r.Seq
+		}
+	}
+	return 0
+}
+
+// dropFailedLocked closes a writer that failed on connection conn and forgets it, returning what it had durably
+// stored. The run is marked for a resync on that connection; a writer whose unsynced tail is still on disk is kept
+// until it can be cut off.
+func (r *Recordings) dropFailedLocked(conn uint64, runID string, w *recording.Writer) uint64 {
+	_ = w.Close()
+	if r.w[runID] == w {
+		delete(r.w, runID)
+	}
+	r.resync[runID] = conn
+	r.touched[runID] = r.now()
+	r.failed[runID] = failure{retry: r.now().Add(r.reopenBackoff), stored: w.Stored(), storage: true}
+	if w.DropUnsynced() != nil {
+		r.unsynced[runID] = w
+	}
+	return w.Stored()
 }
 
 // archiveLater archives a run's recording in the background (nothing to do with the local store).
@@ -216,6 +409,8 @@ func (r *Recordings) RunEnded(runID string) {
 		_ = w.Close()
 		delete(r.w, runID)
 	}
+	r.forgetLocked(runID)
+	delete(r.resync, runID)
 	r.mu.Unlock()
 	r.archiveLater(runID)
 }

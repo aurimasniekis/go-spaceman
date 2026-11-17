@@ -360,6 +360,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   per-server choice. An agent acting through a SpaceMan MCP server never counts as an approver.
 - SM-MCP-009 Central also serves the SpaceMan MCP tool surface at `/api/v1/mcp` to operators' own MCP clients,
   authenticated with a bearer API token, with the same classification, exclusions and approval rules.
+- SM-MCP-010 A skill's name and description can be changed in place, by ID or slug, under the skill's `version` (If-Match). The slug and files stay fixed, no skill version is created, and the change is audited by field name only and uses the skill write permission (ADR-0095).
 
 ### SM-MEM — Memory
 - SM-MEM-001 Memory is keyed by (space_id, agent_kind). All instances of a kind share history. KB sessions share KB memory by default with separate conversations.
