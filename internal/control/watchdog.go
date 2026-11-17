@@ -307,6 +307,22 @@ type WatchState struct {
 	CheckedAt    time.Time `json:"checked_at"`
 }
 
+// Status is the state's one-word summary: "off" (the watchdog is off or the space not active), "idle" (nothing is being
+// nudged, including a control that is not live), "nudging" or "escalated".
+func (s WatchState) Status() string {
+	switch {
+	case s.Guard == guardOff || s.Guard == guardPaused:
+		return "off"
+	case s.Guard == guardNoControl:
+		return "idle"
+	case s.Escalated:
+		return "escalated"
+	case s.Nudges > 0:
+		return "nudging"
+	}
+	return "idle"
+}
+
 // Watchdog watches every active space's live control.
 type Watchdog struct {
 	sv      *Supervisor
@@ -461,6 +477,15 @@ func (w *Watchdog) Pass(ctx context.Context) {
 		}
 		w.check(ctx, id)
 	}
+	// A space that dropped out of the active list (paused or archived) is no longer watched: its state says so, and
+	// keeps its episode in case it resumes.
+	w.mu.Lock()
+	for id, st := range w.state {
+		if !slices.Contains(ids, id) && st.Guard != guardPaused {
+			w.state[id] = WatchState{Guard: guardPaused, CheckedAt: w.sv.clock.Now()}
+		}
+	}
+	w.mu.Unlock()
 	w.prune()
 }
 

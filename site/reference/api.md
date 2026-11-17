@@ -136,6 +136,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/spaces/{space_id}` | `update-space` | Edit a space's profile |
 | `GET` | `/spaces/{space_id}/export/summary` | `get-space-export` | What a space export would hold now: counts, estimated size and the space's export limit |
 | `POST` | `/spaces/{space_id}/state` | `set-space-state` | Pause (hold, interrupt, emergency), resume, archive or restore a space |
+| `GET` | `/spaces/{space_id}/watchdog` | `get-space-watchdog` | A space's control watchdog state |
 
 ### runs
 

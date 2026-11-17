@@ -689,3 +689,45 @@ func TestWatchdogKickClearsMark(t *testing.T) {
 	stop()
 	<-done
 }
+
+// A space that drops out of the active list (paused, archived) is reported as not watched, not as nudging or
+// escalated as it last was, and keeps its episode for when it comes back.
+func TestWatchdogPassMarksDroppedSpacePaused(t *testing.T) {
+	e := newWDEnv(t)
+	if s := e.pass(0); s.Nudges != 1 || s.Status() != "nudging" {
+		t.Fatalf("first pass: %+v", s)
+	}
+	e.w.spaces = func(context.Context) ([]string, error) { return nil, nil }
+	s := e.pass(time.Minute)
+	if s.Guard != guardPaused || s.Status() != "off" {
+		t.Fatalf("dropped space: %+v", s)
+	}
+	e.w.mu.Lock()
+	ep := e.w.eps["spc_a"]
+	e.w.mu.Unlock()
+	if ep == nil || ep.nudges != 1 {
+		t.Fatalf("the episode was lost: %+v", ep)
+	}
+	e.w.spaces = func(context.Context) ([]string, error) { return []string{"spc_a"}, nil }
+	if s := e.pass(5 * time.Minute); s.Nudges != 2 {
+		t.Fatalf("resumed: %+v", s)
+	}
+}
+
+func TestWatchStateStatus(t *testing.T) {
+	for _, tc := range []struct {
+		st   WatchState
+		want string
+	}{
+		{WatchState{Guard: guardOff}, "off"},
+		{WatchState{Guard: guardPaused, Nudges: 2}, "off"},
+		{WatchState{Guard: guardNoControl, Nudges: 2}, "idle"},
+		{WatchState{Guard: guardNoBacklog}, "idle"},
+		{WatchState{Guard: guardBusy, Nudges: 1}, "nudging"},
+		{WatchState{Nudges: 3, Escalated: true}, "escalated"},
+	} {
+		if got := tc.st.Status(); got != tc.want {
+			t.Errorf("%+v: %s, want %s", tc.st, got, tc.want)
+		}
+	}
+}

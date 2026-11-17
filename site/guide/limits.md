@@ -30,6 +30,9 @@ it comes from and where SpaceMan enforces it.
 | Recording, transcript, attachment and finished human-action retention (`retention_*_days`) | kept (0) | 0–36,500 days | how long central keeps them | the daily retention pass ([Retention and export](/guide/retention)) |
 | Start control on new work (`control_autostart`) | on (1) | 0 off, 1 on | whether work waiting for control starts the space's control role ([Control](/guide/control#starting-and-stopping-on-its-own)) | control supervisor |
 | Stop idle control (`control_idle_stop_minutes`) | 30 | 0–10,080 (0: never) | how long control sits idle before it is stopped | control supervisor |
+| Control watchdog (`control_watchdog_minutes`) | 15 | 0–1,440 (0: off) | how long work may wait for a live, idle control that does nothing before SpaceMan types a reminder into its terminal ([control watchdog](/guide/control#the-control-watchdog)) | control watchdog |
+| Control watchdog escalation (`control_watchdog_nudges`) | 3 | 0–20 (0: never) | how many reminders in a row control may leave unanswered before the space's people get a human action | control watchdog |
+| Control watchdog restart (`control_watchdog_restart`) | off (0) | 0 off, 1 on | when the watchdog escalates, also stop control and start it again, resuming its session, within the supervisor's restart budget | control watchdog |
 | Usage-limit failover (`usage_limit_failover`) | off (0) | 0 off, 1 on | when the account a launch would use is held at a usage limit, use another account bound to the space for the same harness that isn't held; a space routed through Harbor Pilot never falls back to a direct account | run launch |
 | Usage-limit keep-alive (`usage_limit_keep_alive_max_minutes`) | 360 | 1–1,440 | how long a run at a usage limit waits for the reset with its process kept alive (after that, or at once when the reset is further away, SpaceMan stops it and parks it to resume at the reset); also the longest gap between re-checks of a hold whose reset time is unknown | usage-limit holds and parking |
 | Usage-limit maximum wait (`usage_limit_max_wait_hours`) | 168 (7 days) | 1–720 | how long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned; control is never given up on | usage-limit waits |
@@ -113,6 +116,9 @@ limits:
   budget_warn_percent: 80
   control_autostart: 1          # start control when work waits for it (0: off)
   control_idle_stop_minutes: 30 # stop control after 30 idle minutes (0: never)
+  control_watchdog_minutes: 15  # remind a stalled control after 15 quiet minutes (0: off)
+  control_watchdog_nudges: 3    # tell people after 3 unanswered reminders (0: never)
+  control_watchdog_restart: 0   # also restart control when escalating (1: on)
 ```
 
 - `GET /api/v1/spaces/{space_id}/limits`: every limit with its value, default, override and source, the related limits
