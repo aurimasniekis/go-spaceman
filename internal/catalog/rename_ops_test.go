@@ -173,8 +173,8 @@ func TestCloseRoleRename(t *testing.T) {
 				!strings.Contains(got.NodeMessage, "orphaned: a") {
 				t.Fatalf("closed rename: %+v", got)
 			}
-			if c.cmd == "pending" && strings.Join(commandStates(f.fx), ",") != RenameCommandKey(id)+"=cancelled" {
-				t.Errorf("the undelivered command was not cancelled: %v", commandStates(f.fx))
+			if c.cmd == "pending" && strings.Join(commandStates(f.fx), ",") != RenameCommandKey(id)+"=pending" {
+				t.Errorf("the undelivered command was cancelled (a node that never journaled the rename must still get it): %v", commandStates(f.fx))
 			}
 			if c.cmd == "accepted" && strings.Join(commandStates(f.fx), ",") != RenameCommandKey(id)+"=accepted" {
 				t.Errorf("a command the node holds was touched: %v", commandStates(f.fx))

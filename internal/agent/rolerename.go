@@ -475,6 +475,11 @@ func (j *Journal) finishRoleRename(ctx context.Context, r renameRow) error {
 			r.To, tx.NowMicros(), r.SpaceID, r.From); err != nil {
 			return err
 		}
+		// A role moved onto a closed rename's old name owns that folder now: the name is no longer an orphan.
+		if _, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET result = 'retained' WHERE space_id = ? AND from_role = ? AND state = 'dropped' AND result = ?`,
+			r.SpaceID, r.To, proto.MemoryRenameClosed); err != nil {
+			return err
+		}
 		_, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET state = 'done', result = 'ok', message = '', acked = 0, updated_at = ? WHERE rename_id = ?`,
 			tx.NowMicros(), r.ID)
 		return err
@@ -539,7 +544,10 @@ func (j *Journal) retainOrphan(ctx context.Context, root, spaceID, role string) 
 	var id string
 	if err := j.s.ReadDB().QueryRowContext(ctx, `SELECT rename_id FROM role_renames WHERE space_id = ? AND from_role = ? AND state = 'dropped' AND result = ?
 		ORDER BY created_at DESC, rename_id DESC LIMIT 1`, spaceID, role, proto.MemoryRenameClosed).Scan(&id); err != nil {
-		return nil //nolint:nilerr // no closed rename: nothing is orphaned
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // no closed rename: nothing is orphaned
+		}
+		return err
 	}
 	dir := filepath.Join(root, spaceID)
 	if folder := filepath.Join(dir, role); exists(folder) {

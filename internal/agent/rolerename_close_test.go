@@ -146,3 +146,82 @@ func TestRoleRenameClosedAckLeavesMovedRename(t *testing.T) {
 	}
 	stopTimers(a.mem)
 }
+
+const rnID2 = "rrn_rename00000000000000000002"
+
+// An admin closed a rename whose command the node had not received (it was offline). The command stays queued, so the node
+// journals it when it connects, moves the folder and its ok is answered closed: a role created with the old name then
+// starts a fresh collection and never inherits the renamed role's memory (ADR-0093 addendum 3).
+func TestClosedRenameDeliveredLateKeepsOldNameFresh(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	rnSeed(t, a, "implementor")
+	a.handleMemoryRename(ctx, rnCommand(t, "implementor", "builder"), true)
+	rnWait(t, a, "the move", func(r renameRow) bool { return r.State == renameDone })
+	a.roleRenamedAck(ctx, proto.MemoryRenamedAck{RenameID: rnID, Result: proto.MemoryRenameOK, Error: proto.MemoryRenameClosed})
+	if a.j.orphanedRole(ctx, rnSpace, "implementor") {
+		t.Fatal("a moved rename left an orphan marker")
+	}
+	dir, err := a.mem.prepare(ctx, rnSpace, "implementor", "ins_new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(dir, "notes.md")) {
+		t.Fatal("the new role inherited the renamed role's memory")
+	}
+	if !exists(filepath.Join(a.mem.root, rnSpace, "builder", "shared.git")) {
+		t.Fatal("the renamed role's folder is not under the new name")
+	}
+	stopTimers(a.mem)
+}
+
+// Close a->b, then rename c->a: the folder moved onto the orphaned name belongs to the moved role, so the name is no longer
+// an orphan, it syncs, and prepare keeps its folder.
+func TestRenameOntoOrphanedNameClearsMarker(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	rnSeed(t, a, "implementor")
+	rnPendingWithResult(t, a, proto.MemoryRenameError, "x", true)
+	a.roleRenamedAck(ctx, proto.MemoryRenamedAck{RenameID: rnID, Result: proto.MemoryRenameError, Error: proto.MemoryRenameClosed})
+	if !a.j.orphanedRole(ctx, rnSpace, "implementor") {
+		t.Fatal("not orphaned after the close")
+	}
+	rnSeed(t, a, "reviewer")
+	r := renameRow{ID: rnID2, SpaceID: rnSpace, From: "reviewer", To: "implementor", State: renamePending}
+	if err := a.j.insertRoleRename(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if res, msg := a.moveRoleMemory(ctx, r); res != proto.MemoryRenameOK {
+		t.Fatalf("move: %s %s", res, msg)
+	}
+	if a.j.orphanedRole(ctx, rnSpace, "implementor") {
+		t.Fatal("the moved role's name is still orphaned")
+	}
+	if !slices.Contains(a.mem.collections(ctx), [2]string{rnSpace, "implementor"}) {
+		t.Error("the moved role's collection is not offered for sync")
+	}
+	dir, err := a.mem.prepare(ctx, rnSpace, "implementor", "ins_three")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(dir, "notes.md")) {
+		t.Error("prepare did not keep the moved role's folder")
+	}
+	if got, _ := filepath.Glob(filepath.Join(a.mem.root, rnSpace, ".retained", "rename-"+rnID+"-implementor*")); len(got) != 0 {
+		t.Errorf("prepare set the live folder aside: %v", got)
+	}
+	stopTimers(a.mem)
+}
+
+// retainOrphan returns a query error; only no rows means nothing is orphaned.
+func TestRetainOrphanReturnsQueryError(t *testing.T) {
+	a := rnAgent(t)
+	if err := a.j.retainOrphan(context.Background(), a.mem.root, rnSpace, "implementor"); err != nil {
+		t.Fatalf("no closed rename: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := a.j.retainOrphan(ctx, a.mem.root, rnSpace, "implementor"); err == nil {
+		t.Fatal("a query error was swallowed")
+	}
+}

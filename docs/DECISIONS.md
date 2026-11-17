@@ -6386,8 +6386,11 @@
      open-rename indexes already filter on `pending`/`failed`, so `abandoned` is closed everywhere without a code path
      change: holds lift at once, another rename of either name and a clean relocation are no longer refused. Central's
      memory stays under the new name (its move is independent of the node state and already happened or is finished by
-     `ensureMoved`); the former name stays resolvable by history lookups. A close also cancels the rename's undelivered
-     commands. The node's old-name folder is **orphaned**: reported in the response and in `node_message`
+     `ensureMoved`); the former name stays resolvable by history lookups. A close leaves the rename's undelivered
+     commands queued (review of #230): a node that was offline or below minor 14 has no journal row, so cancelling would leave
+     its old-name folder unmarked and a later role of that name would inherit the renamed role's memory. The node journals the
+     command when it connects at 14 or more, moves the folder, and its `ok` is answered `closed` (harmless, see 4); a
+     rename that stays unmoved is reported and dropped. The node's old-name folder is **orphaned**: reported in the response and in `node_message`
      ("orphaned: <from> on node <id>"), never deleted and never synced again.
   4. **The node side, with no protocol change.** The node learns of a close only through the existing
      `memory.renamed.ack`: central sends it with `error: "closed"` (a new reason value in the existing field) at the
@@ -6406,7 +6409,7 @@
      still `pending` in its journal), its `ok` is harmless as in 4: the folder ends under the new name, where central's
      copy is. #220's ack
      wait covers only a done rename's `ok`, so it does not wait for a closed one. A retry that arrives after the close is a
-     409 for the operator, and a late `memory.rename` command for a closed rename is cancelled centrally before delivery.
+     409 for the operator, and a late `memory.rename` command for a closed rename is still delivered (see 3).
   6. **Migration and protocol.** Migration **0065** only. No proto change (the `closed` ack reason is a string in an
      existing field; an older node already ends a not-yet-moved rename on an ack error, but only when the result matches,
      so the widened handler ships with this change).
@@ -6417,7 +6420,8 @@
   8. **Implementation notes (T-H4):** the CLI commands are `role retry-rename` and `role close-rename` (close needs `--yes`)
      and the audit actions are `role_rename.retried` and `role_rename.closed`. The only proto addition is the constant
      `MemoryRenameClosed` (the ack's `error` value). On the node, `abandoned` is a journal `dropped` rename with result
-     `closed` (no agent migration); prepare of the old name sets the orphan aside and marks it `retained`, and
+     `closed` (no agent migration); prepare of the old name sets the orphan aside and marks it `retained` (a rename finishing onto the old name marks it `retained`
+     too: the moved role owns that folder), and
      `collections()` and `sync` skip an orphaned folder. A node that never connected a second time after the close is told
      at its next report. Retry is refused with `rename_not_open` when the space has moved off the rename's node.
   9. **Not security-relevant:** no guarantee is relaxed; the actions are admin-only and audited, and neither deletes data.

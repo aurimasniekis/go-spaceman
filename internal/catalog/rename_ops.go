@@ -115,8 +115,8 @@ func (svc *Service) RetryRoleRename(ctx context.Context, actor audit.Actor, spac
 	return out, nil
 }
 
-// CloseRoleRename gives up an open rename's node move: the rename becomes abandoned, its undelivered commands are
-// cancelled, and the holds on launches lift. Central's memory stays under the new name; the node's old-name folder is
+// CloseRoleRename gives up an open rename's node move: the rename becomes abandoned and the holds on launches lift. Its
+// undelivered commands stay queued, so a node that never journaled the rename still learns of it. Central's memory stays under the new name; the node's old-name folder is
 // left where it is (orphaned) and never deleted or synced again.
 func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spaceID, id, reason string) (*RoleRename, error) {
 	reason = strings.TrimSpace(reason)
@@ -139,10 +139,8 @@ func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spac
 		} else if n != 1 {
 			return apperr.New(apperr.CodeConflict, "the rename changed concurrently")
 		}
-		key := RenameCommandKey(r.ID)
-		if _, err := tx.Q.CancelRoleRenameCommands(ctx, db.CancelRoleRenameCommandsParams{Reason: "the rename was closed", NodeID: r.NodeID, Key: key, KeyEnd: key + ";"}); err != nil {
-			return err
-		}
+		// The rename's undelivered commands stay queued: a node that was offline or below minor 14 has no journal row yet,
+		// and must journal the rename when it connects, so it can move the folder or learn of the close (ADR-0093 addendum 3).
 		if err := svc.changes.Record(ctx, tx, spaceID, "space", spaceID, "updated", 0); err != nil {
 			return err
 		}
