@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -98,6 +97,11 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		a.handleRelocation(ctx, c, fresh)
 		return
 	}
+	if c.Kind == proto.CmdMemoryRename {
+		// A role rename (ADR-0093): a repeat is answered from the journaled rename, not just acknowledged.
+		a.handleMemoryRename(ctx, c, fresh)
+		return
+	}
 	if !fresh && c.Kind == proto.CmdReposSync {
 		a.ack(ctx, c, proto.AckDuplicate, "")
 		a.resendReposSync(ctx, c)
@@ -158,7 +162,8 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			a.ack(ctx, c, proto.AckRejected, "an operator has taken over the terminal; input is paused")
 			return
 		}
-		if err := a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force); err != nil {
+		// Under the instance's input gate: a fast-forward of its memory checkout (ADR-0094) finishes first.
+		if err := a.mem.deliverInput(r, func() error { return a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force) }); err != nil {
 			reason := "send failed"
 			if errors.Is(err, runner.ErrBusy) {
 				reason = "the program is busy; input not delivered (safe input)"
@@ -362,8 +367,8 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	} else if real, err := filepath.EvalSymlinks(memDir); err == nil {
 		memDir = real
 	}
-	if memDir != "" && !p.Resume {
-		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(memDir, p.Role))
+	if memDir != "" {
+		a.addMemoryNote(ctx, c.SpaceID, memDir, &p)
 	}
 	// Claude Code's auto memory is kept outside the space folder, where no other run's file tools reach (ADR-0068).
 	var autoMem string
@@ -566,6 +571,7 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		a.goTrack(func() {
 			a.mem.flush(bctx, row, "run ended")
 			a.usageFinal(bctx, row)
+			a.retryRoleRenames(bctx, row.SpaceID) // a rename the run deferred moves now
 		})
 		a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
 		a.goTrack(func() { a.removeRunAttachments(bctx, row) })

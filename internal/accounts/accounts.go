@@ -708,7 +708,12 @@ func RoleScoped(ctx context.Context, tx *store.Tx, spaceID, harness, role string
 // the role's pool when it has one (never widened to the space's accounts), otherwise the space's enabled bindings for
 // the harness.
 func PoolAccounts(ctx context.Context, tx *store.Tx, spaceID, harness, role string) ([]string, error) {
-	bs, err := bindings(ctx, tx.Q, spaceID)
+	return PoolAccountsQ(ctx, tx.Q, spaceID, harness, role)
+}
+
+// PoolAccountsQ is PoolAccounts on any queries (a read transaction, say).
+func PoolAccountsQ(ctx context.Context, q *db.Queries, spaceID, harness, role string) ([]string, error) {
+	bs, err := bindings(ctx, q, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +723,7 @@ func PoolAccounts(ctx context.Context, tx *store.Tx, spaceID, harness, role stri
 			usable = append(usable, b)
 		}
 	}
-	cands, _, err := candidates(ctx, tx.Q, spaceID, harness, role, bs, usable)
+	cands, _, err := candidates(ctx, q, spaceID, harness, role, bs, usable)
 	if err != nil {
 		return nil, err
 	}

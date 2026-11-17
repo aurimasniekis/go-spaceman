@@ -569,6 +569,31 @@ func (svc *Service) Waiting(ctx context.Context, spaceID, runID, role string, co
 	return false, nil
 }
 
+// Unacknowledged returns, oldest first, when each message waiting for a run's acknowledgement started waiting: due
+// messages to it (not sent by it) that are stored or available, from the time they became available, or from when they
+// were created (or became due) if they never were. At most 100 are read. The control watchdog uses it (ADR-0099).
+func (svc *Service) Unacknowledged(ctx context.Context, spaceID, runID, role string, control bool) ([]time.Time, error) {
+	msgs, err := svc.s.R().ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: spaceID, Now: micros(svc.now()), RunID: runID, Role: role, IsControl: b2i(control), Lim: 100})
+	if err != nil {
+		return nil, err
+	}
+	var out []time.Time
+	for _, m := range msgs {
+		if sentBy(m, runID) {
+			continue
+		}
+		since := m.CreatedAt
+		switch {
+		case m.AvailableAt.Valid:
+			since = m.AvailableAt.Int64
+		case m.DeliverAt.Valid && m.DeliverAt.Int64 > since:
+			since = m.DeliverAt.Int64
+		}
+		out = append(out, time.UnixMicro(since))
+	}
+	return out, nil
+}
+
 // sentBy reports whether a run sent a message (a run never receives its own role or control broadcasts). A scheduled
 // message is the exception: it is a reminder its sender set for itself (ADR-0065).
 func sentBy(m db.Message, runID string) bool {

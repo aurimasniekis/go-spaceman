@@ -92,6 +92,12 @@ func TestTelegramTopicsRenameAndRelinkReuseTopics(t *testing.T) {
 		t.Fatalf("%d topic creates after the relink, want 1", n)
 	}
 
+	// The notifier's link list follows the relink on the event bus, a moment after the web confirmation. A rename
+	// checks MayRead against that list and drops the topic of a link it doesn't hold yet (the name follows the next
+	// rename), so wait for the list to hold the new link before renaming.
+	eventuallyFor(t, "the notifier to hold the relinked chat", 10*time.Second, func() bool {
+		return e.h.c.TelegramNotify.MayRead(relinked, 42, e.space)
+	})
 	rename("Renamed again")
 	topicNamed(first.MessageThreadID, "Renamed again")
 	if n, c := edits(), creates(); n != 2 || c != 1 {

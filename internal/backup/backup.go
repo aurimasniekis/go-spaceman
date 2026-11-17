@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
@@ -256,6 +257,10 @@ type Sources struct {
 	Memory      string
 	// Git creates memory bundles; nil leaves memory out (with a warning).
 	Git *memory.Git
+	// HoldMemory keeps role renames from moving memory repositories from before the database snapshot until the memory
+	// is bundled (memory.Service.HoldMoves, ADR-0093), so each bundle carries the name the snapshot gives its collection.
+	// Nil: nothing moves them (an offline backup).
+	HoldMemory func() (release func())
 	// Store is a remote artifact store (S3) whose artifacts are copied into the backup as well; nil for the local
 	// store, whose directories are the trees above.
 	Store artifacts.Store
@@ -338,11 +343,18 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 	if w := o.MemoryFlush.staleWarning(); w != "" {
 		b.m.Warnings = append(b.m.Warnings, w)
 	}
+	s := o.Sources
+	release := func() {}
+	if s.HoldMemory != nil {
+		var once sync.Once
+		hold := s.HoldMemory()
+		release = func() { once.Do(hold) }
+	}
+	defer release()
 	b.t.enter(StageSnapshot)
 	if err := b.database(ctx, src); err != nil {
 		return nil, err
 	}
-	s := o.Sources
 	b.t.enter(StageFiles)
 	for _, t := range []struct{ root, dir, kind string }{
 		{s.Recordings, dirRecordings, KindRecording},
@@ -361,6 +373,7 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 	if err := b.memory(ctx, s.Memory, s.Git); err != nil {
 		return nil, err
 	}
+	release()
 	b.t.enter(StageManifest)
 	if o.Config != nil {
 		if err := b.bytes(ConfigFile, KindConfig, o.Config); err != nil {

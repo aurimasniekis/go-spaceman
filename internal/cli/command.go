@@ -107,6 +107,8 @@ type opts struct {
 	paged bool
 	idem  bool
 	done  string
+	// note returns a line printed after a successful table-format response (what is left to do).
+	note func(map[string]any) string
 	// prepare adjusts the call after the body is built (validation, renamed operations).
 	prepare func(ctx context.Context, cmd *cobra.Command, c *call, body map[string]any) error
 	// run replaces the generic flow.
@@ -389,6 +391,13 @@ func (a *App) cmd(o opts) *cobra.Command {
 		}
 		if format == FormatTable {
 			a.notes(cmd, out, o)
+			if o.note != nil {
+				if obj, err := res.Object(); err == nil {
+					if s := o.note(obj); s != "" {
+						fmt.Fprintln(cmd.ErrOrStderr(), s)
+					}
+				}
+			}
 		}
 		if o.check != nil {
 			obj, err := res.Object()

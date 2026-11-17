@@ -92,8 +92,8 @@ ORDER BY u.resets_at DESC, u.id DESC LIMIT sqlc.arg(lim);
 
 -- name: InsertLimitWait :exec
 INSERT INTO limit_waits (id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id,
-  resume_at, release_at, attempts, switch_to_account_id, account_switch_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  resume_at, release_at, attempts, switch_to_account_id, account_switch_id, cause, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- A switch's wait whose target changed (re-resolved) or that fell back to waiting (target cleared, resume_at moved).
 -- name: SetLimitWaitSwitch :execrows
