@@ -95,6 +95,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   backs off 5 seconds before reopening a recording that failed, removes an unsynced segment and never ages out a
   resync mark on a live connection. Reclaiming old recording directories that have no journal row remains a design
   (ADR-0096, not implemented): those directories are still kept.
+- **Live terminals stayed empty after an agent restart, and a full disk froze them** (ADR-0097). A restarted agent
+  re-shipped the whole recording of every journaled run, ended runs included, one at a time in run-ID order, and held
+  back the live output of the runs it had not reached; and the recording writer latched its first write error, dropping
+  all later output also for central's copy. Now live runs are caught up first and a waiting run is served between the
+  batches of another, ended runs' history is paced at 8 MiB/s, the node persists what central acknowledged
+  (`recording-acked` in the run's folder, so a restart re-ships only the rest), learns central's sequence before it
+  numbers an adopted run's new output, and a full disk no longer stops recording: output keeps flowing to central and
+  the live view, the local recording resumes in a new segment after a 5 second backoff (up to a minute), and there is no
+  `disk` `trunc` record any more. Only the node agent needs the update.
 - **Memory git guard** (security-relevant, ADR-0025 and ADR-0094). The node refuses a memory checkout whose git dir is
   redirected (a symlink, a `gitdir` file, `commondir`, `core.worktree`, a bare checkout), that holds config-based hooks,
   links inside `.git`, gitlinks, a parent repository, a nested `.git` or a FIFO in its work tree, or that lacks its own
