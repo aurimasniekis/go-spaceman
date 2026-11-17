@@ -1,5 +1,5 @@
 import { Anchor, Badge, Box, Breadcrumbs, Button, Card, Code, Group, Modal, Select, SimpleGrid, Stack, Text, Textarea, TextInput, Title } from '@mantine/core'
-import { IconArrowBackUp, IconGitFork, IconUpload } from '@tabler/icons-react'
+import { IconArrowBackUp, IconEdit, IconGitFork, IconUpload } from '@tabler/icons-react'
 import { useForm, useSelector } from '@tanstack/react-form'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
@@ -11,6 +11,7 @@ import { MarkdownView } from '@/components/MarkdownView'
 import { hasGlobal } from '@/lib/access'
 import { datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
+import { EditDetailsModal } from '@/features/prompts/EditDetailsModal'
 import { kindLabel } from './prompts.index'
 
 export const Route = createFileRoute('/prompts/$promptId')({ component: PromptPage })
@@ -22,6 +23,7 @@ function PromptPage() {
   const [diff, setDiff] = useState<{ from: string; to: string } | null>(null)
   const [forking, setForking] = useState<PromptVersion | null>(null)
   const [viewing, setViewing] = useState<PromptVersion | null>(null)
+  const [editing, setEditing] = useState(false)
   const qc = useQueryClient()
   if (prompt.error) return <ErrorAlert error={prompt.error} />
   if (!prompt.data) return null
@@ -41,7 +43,8 @@ function PromptPage() {
     <Stack gap="md">
       <Breadcrumbs><Anchor component={Link} to="/prompts" size="sm">Prompts</Anchor><Text size="sm">{p.name}</Text></Breadcrumbs>
       <Group gap="xs"><Title order={3}>{p.name}</Title><Badge variant="light">{kindLabel[p.kind]}</Badge>
-        {p.latest > 0 && <Badge variant="outline">latest v{p.latest}</Badge>}</Group>
+        {p.latest > 0 && <Badge variant="outline">latest v{p.latest}</Badge>}
+        {canWrite && <Button size="xs" variant="subtle" leftSection={<IconEdit size={12} />} onClick={() => setEditing(true)}>Edit details</Button>}</Group>
       <Text size="sm" c="dimmed"><span className="mono">{p.slug}</span>{p.description ? ` · ${p.description}` : ''}{p.forked_from ? ` · forked from ${p.forked_from}` : ''}</Text>
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
         <DraftCard prompt={p} draft={draft} canWrite={canWrite} />
@@ -71,6 +74,7 @@ function PromptPage() {
         </Card>
       </SimpleGrid>
       {diff && <DiffModal versions={p.versions ?? []} initial={diff} onClose={() => setDiff(null)} />}
+      {editing && <EditDetailsModal prompt={p} onClose={() => setEditing(false)} />}
       {forking && <ForkModal version={forking} prompt={p} onClose={() => setForking(null)} />}
       <Modal opened={viewing !== null} onClose={() => setViewing(null)} title={`Version ${viewing?.number}`} size="xl">
         {viewing && <MarkdownView source={viewing.body} spaceId="" />}
