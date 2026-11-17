@@ -15,8 +15,10 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // Role rename on the node (ADR-0093 §3.3, T-H3): the memory.rename command, the move of the role's memory folder, the
@@ -853,5 +855,110 @@ func TestForgetSpaceMemoryDropsRenames(t *testing.T) {
 	}
 	if _, found, _ := a.j.roleRename(ctx, "rrn_"+other); !found {
 		t.Fatal("another space's rename was dropped")
+	}
+}
+
+// Every resume restates the memory folder (Claude Code does not keep the appended system text, Codex drops it on a
+// resume), and one after a rename also says the old folder is gone (ADR-0093).
+func TestResumeRestatesMemoryNote(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	dir := "/m/space/builder/instances/ins"
+	claude := func(resume bool) proto.LaunchPayload {
+		return proto.LaunchPayload{Harness: harness.KindClaude, Role: "builder", Resume: resume, SystemText: "base", Prompt: "go"}
+	}
+	fresh := claude(false)
+	a.addMemoryNote(ctx, rnSpace, dir, &fresh)
+	if !strings.Contains(fresh.SystemText, dir) || fresh.Prompt != "go" {
+		t.Fatalf("fresh start %+v", fresh)
+	}
+	res := claude(true)
+	a.addMemoryNote(ctx, rnSpace, dir, &res)
+	if !strings.HasPrefix(res.SystemText, "base") || !strings.Contains(res.SystemText, dir) || strings.Contains(res.SystemText, "renamed") {
+		t.Fatalf("resume, never renamed: %q", res.SystemText)
+	}
+	cx := proto.LaunchPayload{Harness: harness.KindCodex, Role: "builder", Resume: true, SystemText: "base", Prompt: "go"}
+	a.addMemoryNote(ctx, rnSpace, dir, &cx)
+	if cx.SystemText != "base" || !strings.Contains(cx.Prompt, dir) || !strings.HasSuffix(cx.Prompt, "go") {
+		t.Fatalf("codex resume: the note leads the prompt, the system text is untouched: %+v", cx)
+	}
+	// An unfinished rename adds no line; a finished one does.
+	if err := a.j.insertRoleRename(ctx, renameRow{ID: rnID, SpaceID: rnSpace, From: "implementor", To: "builder", State: renameMoving}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.j.renamedFrom(ctx, rnSpace, "builder"); ok {
+		t.Fatal("an unfinished rename is not a rename yet")
+	}
+	if err := a.j.setRoleRenameResult(ctx, rnID, proto.MemoryRenameOK, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.j.setRoleRenameState(ctx, rnID, renameDone); err != nil {
+		t.Fatal(err)
+	}
+	renamed := claude(true)
+	a.addMemoryNote(ctx, rnSpace, dir, &renamed)
+	want := "Your role was renamed from implementor; the old folder /m/space/implementor/instances/ins no longer exists. Write only to " + dir + "."
+	if !strings.Contains(renamed.SystemText, dir) || !strings.Contains(renamed.SystemText, want) {
+		t.Fatalf("resume after a rename: %q", renamed.SystemText)
+	}
+	other := proto.LaunchPayload{Harness: harness.KindClaude, Role: "implementor", Resume: true}
+	a.addMemoryNote(ctx, rnSpace, "/m/space/implementor/instances/ins", &other)
+	if strings.Contains(other.SystemText, "renamed") {
+		t.Fatal("the old name was not renamed to")
+	}
+}
+
+// A name reused after it was renamed away is not "renamed from" anything: only the newest finished rename involving the
+// name counts, and only when it is a rename to it (ADR-0093).
+func TestRenamedFromNewestRenameOnly(t *testing.T) {
+	type step struct{ from, to string }
+	cases := []struct {
+		name  string
+		steps []step
+		role  string
+		want  string
+	}{
+		{"a to b alone", []step{{"a", "b"}}, "b", "a"},
+		{"a to b, b to c, new b", []step{{"a", "b"}, {"b", "c"}}, "b", ""},
+		{"a to b, b to a, new b", []step{{"a", "b"}, {"b", "a"}}, "b", ""},
+		{"a to b, b to a, a is the target", []step{{"a", "b"}, {"b", "a"}}, "a", "b"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := rnAgent(t)
+			ctx := context.Background()
+			for i, st := range c.steps {
+				id := fmt.Sprintf("rrn_%d", i)
+				if err := a.j.insertRoleRename(ctx, renameRow{ID: id, SpaceID: rnSpace, From: st.from, To: st.to, State: renameMoving}); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.j.setRoleRenameResult(ctx, id, proto.MemoryRenameOK, ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.j.setRoleRenameState(ctx, id, renameDone); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.j.s.W().TxNamed(ctx, "test.rename-at", func(tx *store.Tx) error {
+					_, err := tx.SQL.ExecContext(ctx, `UPDATE role_renames SET created_at = ? WHERE rename_id = ?`, 1000+i, id)
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, ok := a.j.renamedFrom(ctx, rnSpace, c.role)
+			if got != c.want || ok != (c.want != "") {
+				t.Fatalf("renamedFrom(%q) = %q, %v; want %q", c.role, got, ok, c.want)
+			}
+		})
+	}
+}
+
+// A Codex resume without a prompt gets no note: the note alone would start a turn nobody asked for.
+func TestCodexResumeWithoutPromptGetsNoNote(t *testing.T) {
+	a := rnAgent(t)
+	p := proto.LaunchPayload{Harness: harness.KindCodex, Role: "builder", Resume: true, SystemText: "base"}
+	a.addMemoryNote(context.Background(), rnSpace, "/m/space/builder/instances/ins", &p)
+	if p.Prompt != "" || p.SystemText != "base" {
+		t.Fatalf("empty-prompt codex resume was changed: %+v", p)
 	}
 }

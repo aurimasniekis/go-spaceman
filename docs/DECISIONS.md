@@ -6230,6 +6230,7 @@
      - a node below the new protocol minor makes the rename fail rather than risk unsynced memory.
   5. Old names resolve to the current name only where SpaceMan relaunches from a history row (control restart and
      autostart) and for the dream transcript filter. A name that is a live role is never redirected.
+     Every resume restates the memory note (Claude Code does not keep the appended system text in a session; a Codex resume puts it before the first input), and a resume after a finished rename adds that the old folder is gone and names the new one.
   6. The rename is exposed as `POST /spaces/{space_id}/roles/{name}/rename` with the same permission as saving a role.
      It is also in the CLI (`spaceman role rename`) and the admin MCP (classified dangerous). The Terraform provider
      treats a name change as an in-place update that calls it, never as a replace.
