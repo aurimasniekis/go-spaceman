@@ -8,7 +8,7 @@ func TestUnsafeConfig(t *testing.T) {
 	for _, bad := range []string{"filter.lfs.clean", "filter.X.Smudge", "filter.x.process", "merge.ours.driver", "diff.pdf.textconv",
 		"diff.x.command", "diff.external", "core.sshCommand", "core.gitProxy", "core.pager", "include.path", "includeIf.gitdir:/x.path",
 		"credential.helper", "credential.https://example.test.helper", "protocol.ext.allow", "protocol.allow", "url.ext::sh.insteadOf",
-		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "sequence.editor", "core.editor"} {
+		"remote.origin.uploadpack", "uploadpack.packObjectsHook", "gpg.program", "gpg.ssh.program", "sequence.editor", "core.editor", "core.worktree", "core.WorkTree"} {
 		if err := UnsafeConfig("local\t"+bad+"\n", true); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
@@ -24,6 +24,9 @@ func TestUnsafeConfig(t *testing.T) {
 		if err := UnsafeConfig("local\t"+ok, true); err != nil {
 			t.Errorf("%s refused: %v", ok, err)
 		}
+	}
+	if CheckoutBare("true\n") == nil || CheckoutBare("false\n") != nil || CheckoutBare("") != nil {
+		t.Error("CheckoutBare")
 	}
 	if err := UnsafeConfig("filter.x.clean\n", false); err == nil {
 		t.Error("unscoped list not checked")
@@ -55,5 +58,40 @@ func TestRunRefusesUnsafeRepositoryConfig(t *testing.T) {
 	}
 	if _, err := g.Run(ctx, dir, nil, "add", "-A"); err == nil {
 		t.Fatal("git ran in a checkout that defines a filter")
+	}
+}
+
+// core.worktree and core.bare in a checkout are refused before git runs, and a bare repository (the shared history)
+// still works.
+func TestRunRefusesRedirectedWorktree(t *testing.T) {
+	g, err := NewGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := t.Context()
+	bare := t.TempDir()
+	if err := g.InitBare(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Run(ctx, bare, nil, "rev-parse", "--git-dir"); err != nil {
+		t.Fatalf("a bare repository refused: %v", err)
+	}
+	for _, key := range []string{"core.worktree", "core.bare"} {
+		dir, outside := t.TempDir(), t.TempDir()
+		if _, err := g.Run(ctx, dir, nil, "init", "--quiet", "."); err != nil {
+			t.Fatal(err)
+		}
+		val := outside
+		if key == "core.bare" {
+			val = "true"
+		}
+		if _, err := g.Run(ctx, dir, nil, "config", key, val); err != nil {
+			t.Fatal(err)
+		}
+		for _, sub := range [][]string{{"status"}, {"reset", "--hard"}, {"checkout", "-f", "HEAD"}} {
+			if _, err := g.Run(ctx, dir, nil, sub...); err == nil {
+				t.Errorf("%s: git %s ran", key, sub[0])
+			}
+		}
 	}
 }

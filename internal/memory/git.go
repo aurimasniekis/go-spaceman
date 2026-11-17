@@ -57,6 +57,13 @@ func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []by
 		if err := UnsafeConfig(list, true); err != nil {
 			return "", err
 		}
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			// A checkout (unlike the shared bare repository) must not declare itself bare.
+			bare, _ := g.run(ctx, dir, nil, nil, "config", "--type=bool", "--get", "core.bare") // exit 1: unset
+			if err := CheckoutBare(bare); err != nil {
+				return "", err
+			}
+		}
 	}
 	return g.run(ctx, dir, id, stdin, args...)
 }
