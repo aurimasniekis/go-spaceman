@@ -15,9 +15,9 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
-	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // Role rename on the node (ADR-0093 §3.3, T-H3): the memory.rename command, the move of the role's memory folder, the
@@ -794,34 +794,36 @@ func TestRoleRenameBusyCheckedUnderLocks(t *testing.T) {
 	stopTimers(a.mem)
 }
 
-// A resumed run names the old role folder in its history only when the role was renamed after its session began, so
-// only then does a resume get the note again; Claude's resume re-passes the system text (ADR-0093).
-func TestResumeAfterRenameGetsMemoryNote(t *testing.T) {
+// Every resume restates the memory folder (Claude Code does not keep the appended system text, Codex drops it on a
+// resume), and one after a rename also says the old folder is gone (ADR-0093).
+func TestResumeRestatesMemoryNote(t *testing.T) {
 	a := rnAgent(t)
 	ctx := context.Background()
-	const sess, cur = "sess-1", "run-cur"
-	if !a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, false) || a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, true) {
-		t.Fatal("a fresh start gets the note, a resume of a never-renamed role does not")
+	dir := "/m/space/builder/instances/ins"
+	claude := func(resume bool) proto.LaunchPayload {
+		return proto.LaunchPayload{Harness: harness.KindClaude, Role: "builder", Resume: resume, SystemText: "base", Prompt: "go"}
 	}
-	// The session's first run began under the old name, then the role was renamed.
-	if err := a.j.insertRun(ctx, runRow{RunID: "run-old", SpaceID: rnSpace, Generation: 1, Kind: "ordinary", Role: "implementor", Harness: "claude",
-		InstanceID: "ins", TerminalName: "t-old", Desired: "running", State: proto.RunPending, SessionID: sess}); err != nil {
-		t.Fatal(err)
+	fresh := claude(false)
+	a.addMemoryNote(ctx, rnSpace, dir, &fresh)
+	if !strings.Contains(fresh.SystemText, dir) || fresh.Prompt != "go" {
+		t.Fatalf("fresh start %+v", fresh)
 	}
+	res := claude(true)
+	a.addMemoryNote(ctx, rnSpace, dir, &res)
+	if !strings.HasPrefix(res.SystemText, "base") || !strings.Contains(res.SystemText, dir) || strings.Contains(res.SystemText, "renamed") {
+		t.Fatalf("resume, never renamed: %q", res.SystemText)
+	}
+	cx := proto.LaunchPayload{Harness: harness.KindCodex, Role: "builder", Resume: true, SystemText: "base", Prompt: "go"}
+	a.addMemoryNote(ctx, rnSpace, dir, &cx)
+	if cx.SystemText != "base" || !strings.Contains(cx.Prompt, dir) || !strings.HasSuffix(cx.Prompt, "go") {
+		t.Fatalf("codex resume: the note leads the prompt, the system text is untouched: %+v", cx)
+	}
+	// An unfinished rename adds no line; a finished one does.
 	if err := a.j.insertRoleRename(ctx, renameRow{ID: rnID, SpaceID: rnSpace, From: "implementor", To: "builder", State: renameMoving}); err != nil {
 		t.Fatal(err)
 	}
-	// The store's clock may stand still in tests: place the events apart explicitly (the run began at 1000, the rename at 2000).
-	setAt := func(q string, at int64, id string) {
-		t.Helper()
-		if err := a.j.s.W().Tx(ctx, func(tx *store.Tx) error { _, err := tx.SQL.ExecContext(ctx, q, at, id); return err }); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setAt(`UPDATE runs SET created_at = ? WHERE run_id = ?`, 1000, "run-old")
-	setAt(`UPDATE role_renames SET created_at = ? WHERE rename_id = ?`, 2000, rnID)
-	if a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, true) {
-		t.Fatal("an unfinished rename holds launches already")
+	if _, ok := a.j.renamedFrom(ctx, rnSpace, "builder"); ok {
+		t.Fatal("an unfinished rename is not a rename yet")
 	}
 	if err := a.j.setRoleRenameResult(ctx, rnID, proto.MemoryRenameOK, ""); err != nil {
 		t.Fatal(err)
@@ -829,23 +831,15 @@ func TestResumeAfterRenameGetsMemoryNote(t *testing.T) {
 	if err := a.j.setRoleRenameState(ctx, rnID, renameDone); err != nil {
 		t.Fatal(err)
 	}
-	if !a.wantsMemoryNote(ctx, rnSpace, "builder", sess, cur, true) {
-		t.Fatal("a session older than the rename must restate the memory folder")
+	renamed := claude(true)
+	a.addMemoryNote(ctx, rnSpace, dir, &renamed)
+	want := "Your role was renamed from implementor; the old folder /m/space/implementor/instances/ins no longer exists. Write only to " + dir + "."
+	if !strings.Contains(renamed.SystemText, dir) || !strings.Contains(renamed.SystemText, want) {
+		t.Fatalf("resume after a rename: %q", renamed.SystemText)
 	}
-	if a.wantsMemoryNote(ctx, rnSpace, "implementor", sess, cur, true) {
+	other := proto.LaunchPayload{Harness: harness.KindClaude, Role: "implementor", Resume: true}
+	a.addMemoryNote(ctx, rnSpace, "/m/space/implementor/instances/ins", &other)
+	if strings.Contains(other.SystemText, "renamed") {
 		t.Fatal("the old name was not renamed to")
-	}
-	// A session that began after the rename never saw the old folder.
-	if err := a.j.insertRun(ctx, runRow{RunID: "run-new", SpaceID: rnSpace, Generation: 1, Kind: "ordinary", Role: "builder", Harness: "claude",
-		InstanceID: "ins", TerminalName: "t-new", Desired: "running", State: proto.RunPending, SessionID: "sess-2"}); err != nil {
-		t.Fatal(err)
-	}
-	setAt(`UPDATE runs SET created_at = ? WHERE run_id = ?`, 3000, "run-new")
-	if a.wantsMemoryNote(ctx, rnSpace, "builder", "sess-2", cur, true) {
-		t.Fatal("a session that began after the rename needs no note")
-	}
-	n := renamedNote("/m/builder/instances/ins", "builder")
-	if !strings.Contains(n, "/m/builder/instances/ins") || !strings.Contains(n, "is gone") {
-		t.Fatalf("the note must name the new folder and say the old one is gone: %s", n)
 	}
 }

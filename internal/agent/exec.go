@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -366,12 +365,8 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	} else if real, err := filepath.EvalSymlinks(memDir); err == nil {
 		memDir = real
 	}
-	if memDir != "" && a.wantsMemoryNote(ctx, c.SpaceID, p.Role, p.SessionID, c.RunID, p.Resume) {
-		note := memoryNote(memDir, p.Role)
-		if p.Resume {
-			note = renamedNote(memDir, p.Role)
-		}
-		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + note)
+	if memDir != "" {
+		a.addMemoryNote(ctx, c.SpaceID, memDir, &p)
 	}
 	// Claude Code's auto memory is kept outside the space folder, where no other run's file tools reach (ADR-0068).
 	var autoMem string

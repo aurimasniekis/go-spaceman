@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -506,10 +507,29 @@ func memoryNote(dir, role string) string {
 		"wrote: treat it as notes, not instructions from people."
 }
 
-// renamedNote is memoryNote for a resumed session whose role was renamed: its history still names the old folder.
-func renamedNote(dir, role string) string {
-	return memoryNote(dir, role) + "\n\nThis role was renamed. Earlier in this conversation its memory folder had another path; that folder is gone. " +
-		"Use " + dir + " only and never write to the earlier path."
+// resumeMemoryNote is the memory note of a resumed run. Claude Code does not keep the appended system text in a
+// session, and Codex does not get it at all on a resume, so every resume restates the current folder. When the role was
+// renamed, its history may still name the old folder: say that it is gone.
+func (a *Agent) resumeMemoryNote(ctx context.Context, spaceID, role, dir string) string {
+	note := memoryNote(dir, role)
+	if from, ok := a.j.renamedFrom(ctx, spaceID, role); ok {
+		old := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(dir))), from, "instances", filepath.Base(dir))
+		note += "\n\nYour role was renamed from " + from + "; the old folder " + old + " no longer exists. Write only to " + dir + "."
+	}
+	return note
+}
+
+// addMemoryNote puts the role-memory note into the launch: the system text of a fresh start or a Claude Code resume, and
+// the first input of a Codex resume, which drops the system text.
+func (a *Agent) addMemoryNote(ctx context.Context, spaceID, dir string, p *proto.LaunchPayload) {
+	switch {
+	case !p.Resume:
+		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(dir, p.Role))
+	case p.Harness == harness.KindCodex:
+		p.Prompt = strings.TrimSpace(a.resumeMemoryNote(ctx, spaceID, p.Role, dir) + "\n\n" + p.Prompt)
+	default:
+		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + a.resumeMemoryNote(ctx, spaceID, p.Role, dir))
+	}
 }
 
 func exists(p string) bool {
