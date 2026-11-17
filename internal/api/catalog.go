@@ -18,6 +18,7 @@ var CatalogRules = map[string]Rule{
 	"list-prompts":           Global(authz.PromptRead),
 	"get-prompt":             Global(authz.PromptRead),
 	"create-prompt":          Global(authz.PromptWrite),
+	"update-prompt":          Global(authz.PromptWrite),
 	"save-prompt-draft":      Global(authz.PromptWrite),
 	"publish-prompt":         Global(authz.PromptWrite),
 	"discard-prompt-draft":   Global(authz.PromptWrite),
@@ -175,6 +176,26 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				p, err := svc.CreatePrompt(ctx, Actor(ctx), in.Body.Slug, in.Body.Name, in.Body.Kind, in.Body.Description, in.Body.Body)
 				if err != nil {
 					return nil, d.fail(ctx, "prompts.create", err)
+				}
+				return &struct{ Body *catalog.Prompt }{Body: p}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "update-prompt", Method: http.MethodPatch, Path: "/prompts/{prompt_id}", Summary: "Change a prompt's name or description",
+			Description: "Changes the prompt in place and creates no version. A field left out keeps its value; the slug and kind never change. If-Match is the prompt's version.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				PromptPath
+				IfMatch
+				Body struct {
+					Name        *string `json:"name,omitempty" maxLength:"120"`
+					Description *string `json:"description,omitempty" maxLength:"2000"`
+				}
+			}) (*struct{ Body *catalog.Prompt }, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "prompts.update", err)
+				}
+				p, err := svc.UpdatePromptMeta(ctx, Actor(ctx), in.PromptID, v, in.Body.Name, in.Body.Description)
+				if err != nil {
+					return nil, d.fail(ctx, "prompts.update", err)
 				}
 				return &struct{ Body *catalog.Prompt }{Body: p}, nil
 			})

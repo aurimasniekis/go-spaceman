@@ -6402,6 +6402,130 @@
   `TestStatusReason`. Each
   guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
 
+### ADR-0095 — Role descriptions: prompt metadata edited in place, a per-space description, and a role list for control
+
+- **Status:** Proposed, 2026-11-17 (an operator feature request, items 1–3, from rolling out more worker roles of different
+  sizes). Central migration 0064 (`space_roles.description`). No node protocol change. New API op `update-prompt`, new
+  agent tool `spaceman_roles_list`. Extends ADR-0051 (starter roles) and ADR-0063 (admin MCP).
+- **Context:** surveyed on next/v0.1.11 and the Terraform provider's main branch.
+  1. **Descriptions.**
+     - A role template's name and description can already be changed in place: `PUT /role-templates/{id}`,
+       `spaceman template update --description`, and the provider's `spaceman_role_template.description`. The change
+       bumps the template's `revision`, which only run manifests record. It creates no prompt version.
+     - A prompt's name and description cannot be changed at all. The store has an `UpdatePrompt` query (name and
+       description, guarded by `prompts.version`), but no API operation or CLI command calls it. So the provider marks
+       both attributes "fixed after creation" and refuses a change. The only way to change a prompt's description is to
+       create a new prompt and re-point every template at it. Skills have the same gap.
+  2. **Control can't see what a role is for.** The control tools (`spaceman_queue_next`, `spaceman_worker_launch`,
+     `spaceman_runs_list`) say nothing about the space's roles. `spaceman_worker_launch` describes `role` as "e.g.
+     implementor-backend or reviewer". Only the opt-in admin MCP (ADR-0063) can list space roles and templates. Even
+     there a space role has no description, only a template ID, so control has to join the two lists itself. As a
+     result, every space repeats its routing guidance ("Opus for hard work, medium/light for smaller work, the reviewer
+     checks them") in its control instructions.
+  3. **Starter templates are global.** ADR-0051 seeds them once per installation as ordinary catalog entries, so
+     editing `starter-implementor` changes it for every space, demo spaces included. A space role can already override
+     a template per space: profile, prompt and pin, model, settings, skills and appended instructions. It can't
+     override the description. The operator guide doesn't say the templates are shared.
+- **Decision:**
+  1. **Prompt metadata in place.**
+     - A new operation `update-prompt`, `PATCH /prompts/{prompt_id}`, takes an ID or slug and a body
+       `{name?, description?}`. If-Match is required and is the prompt's `version`. The response is the prompt.
+     - Rule: `Global(authz.PromptWrite)`, the same rule as `create-prompt`. Admin MCP class: `Write` (rDraft). Audit
+       action: `prompt.updated`, with the names of the fields that changed, never their text.
+     - Validation matches `create-prompt`: a non-empty name of at most 120 characters, a description of at most 2000
+       characters. A field left out keeps its value.
+     - Slug and kind stay fixed. The slug is the prompt's identity in Terraform and in configuration. Changing the kind
+       would change which roles may use the prompt.
+     - It never touches `prompt_versions`, so no new version is created, and runs that follow the latest version see
+       no change.
+     - CLI: `spaceman prompt update <prompt> [--name] [--description]`, built with the `merge` helper like
+       `template update`.
+     - Web: the prompt page gets an **Edit details** dialog for the name and description.
+  2. **Role templates: no API change.** The way they work today already meets the request. The guide says it outright:
+     changing a template's name or description creates no prompt version, and a run picks it up at its next launch.
+  3. **A space role's own description.**
+     - Migration 0064: `ALTER TABLE space_roles ADD COLUMN description TEXT NOT NULL DEFAULT ''`. Existing rows stay
+       empty, so they fall back to their template's description.
+     - `catalog.SpaceRole` gets `description` (at most 2000 characters), with the same rule as the other override
+       fields: empty means "use the template's".
+     - The field is carried by `save-space-role`, `list-space-roles`, `get-space-role` and the role preview (as an
+       effective value with its origin).
+     - CLI `role set --description`. Web: a field on the space role form, with the template's description shown as
+       the placeholder.
+     - The description is not part of the launched agent's prompt and doesn't change run manifests. It is routing
+       guidance for whoever chooses a role.
+  4. **`spaceman_roles_list` for control.**
+     - A read-only agent tool, given to control runs only, like `spaceman_queue_next`.
+     - It returns the run's own space's roles, sorted by name. For each role: `name`, `kind` (from the template),
+       `description` (the space role's own if set, else the template's), `description_origin` (`space_role` or
+       `template`), `template` (slug), and the effective `harness` and `model` (the space role's override, else the
+       profile's).
+     - It shows no prompt text, settings, skills or account references. The descriptions are configuration operators
+       wrote, and they grant nothing (SM-SEC-001).
+     - `spaceman_worker_launch`'s `role` argument and `spaceman_queue_next`'s description point to the tool ("choose
+       the role with spaceman_roles_list"). Existing control prompts don't need to change.
+     - The starter control prompt (`builtin/starter/control.md`) mentions the tool. As ADR-0051 says, already-seeded
+       prompts are not rewritten.
+  5. **Starter templates stay global, documented.**
+     - The guide's "Starter roles" section says the starter templates, prompts and profiles are shared by every space
+       of the installation.
+     - To change a role in one space, override it on the space role: profile, model, prompt, instructions, skills and
+       now description.
+     - To change it for a group of spaces, copy the template (`spaceman template create` from `template get`), or fork
+       the prompt and point those spaces' roles at the copy.
+     - There is no per-space template layer and no automatic fork.
+  6. **Terraform provider (terraform-provider-spaceman).**
+     - `spaceman_prompt`:
+       - `name` and `description` lose `fixedAfterCreate` and become ordinary in-place attributes.
+       - `Update` calls `update-prompt` when only they changed. It saves a draft and publishes only when `body`,
+         `extends` or `notes` changed. A metadata-only change no longer publishes a version.
+       - `slug` and `kind` stay fixed.
+       - The client gets `UpdatePrompt(ctx, id, version, in)`.
+     - `spaceman_space_role`: a new optional attribute, `description` (Optional+Computed, default `""`, updated in
+       place).
+     - `spaceman_role_template`: no schema change. Its `description` documentation says a change creates no prompt
+       version.
+     - Against a central without `update-prompt` (a 404 or 405 on the PATCH), the provider reports "requires SpaceMan
+       0.1.11 or later" instead of a raw error.
+- **Alternatives:**
+  - *Store the description on the prompt version:* a description would then need a new version, which is what the
+    request asks to avoid. Rejected.
+  - *Put the role list in control's built-in orientation (system prompt):* it would be stale as soon as an operator
+    changed a role, and it would grow every control prompt. A tool is current on every call. Rejected.
+  - *Add the role descriptions to `spaceman_queue_next`'s result:* this mixes queue state with configuration and
+    repeats the list on every poll. A pointer to one tool is enough. Rejected.
+  - *Per-space role templates (`space_id` on `role_templates`) or a "fork template into space" operation:* this adds a
+    second layer of templates that every resolver, UI page and the provider would need to understand. Space-role
+    overrides already cover everything except the description, which this ADR adds. Rejected for now; it can be
+    revisited if overrides are not enough in practice.
+  - *Per-space memory conventions override:* not part of the request. Left as a follow-up.
+- **Consequences:**
+  - Operators can fix a prompt's or template's description from Terraform without creating versions or new prompts.
+    An existing prompt resource that tried to change its description gets an in-place update instead of an error.
+  - Routing guidance lives in the role descriptions, which control reads with one call. Control instructions only need
+    to say "pick the role whose description fits".
+  - The descriptions are visible to the control agent, so they must not contain secrets. They are already visible to
+    every operator who can read the catalog.
+  - Skills keep fixed metadata. The same `PATCH` pattern (`update-skill`) is a follow-up.
+- **Requirements:** the implementation adds SM-PROMPT-010 (prompt name and description edited in place without a new
+  version), SM-PROMPT-011 (a space role's own description) and SM-CTRL-007 (control lists the space's roles with their
+  effective descriptions) to GOAL.md and TRACEABILITY.md, as `todo` until their tests land.
+- **Implementation split** (tiers suggested for control, each a separate draft PR into next/v0.1.11 unless noted):
+
+  | # | Task | Depends on | Tier |
+  |---|---|---|---|
+  | T1 | `update-prompt`: `catalog.UpdatePromptMeta` (existing `UpdatePrompt` query, audit `prompt.updated`), the API op and rule, the admin MCP class, the Telegram entry (`TelegramExcluded`, like `create-prompt`), `make api`, `prompt update` CLI and `make cli-docs`, tests in `internal/catalog` (no version is created, If-Match, validation) and over HTTP in `internal/app`. | — | Sonnet |
+  | T2 | Migration 0064 and `space_roles.description`: sqlc queries, `catalog.SpaceRole`, save, list and get, preview origin, CLI `role set --description`, `make api`, an upgrade test (`embeddedUpTo(t, "0063")`), tests. Coordinate the number with memory fast-forward (0063). | — | Sonnet |
+  | T3 | `spaceman_roles_list` in `internal/control/tools.go` (control only, read-only), effective description, harness and model, the pointer in `spaceman_worker_launch` and `spaceman_queue_next`, tests: effective values and origins, another space's roles never visible, only for control. | T2 | Sonnet |
+  | T4 | Web: an **Edit details** dialog on the prompt page and a description on the space role form, `make web-check`, screenshots if they change. | T1, T2 | Sonnet |
+  | T5 | Docs: the guide's "Starter roles" section says the templates are global and explains per-space overrides, plus template description edits, `spaceman_roles_list` in the control docs, the starter `control.md` line, and GOAL, TRACEABILITY and PLAN entries. `make site-check`. | T1–T3 | Haiku |
+  | P1 | Provider: in-place `spaceman_prompt` `name` and `description` through `UpdatePrompt`, publishing only on content changes, `spaceman_space_role.description`, a clear error from an older central, unit and acceptance tests, regenerated docs. A PR into the provider's main. | T1, T2 merged | Sonnet |
+  | F1 | Follow-up, not in this request: `update-skill` (the same pattern for skills) and the provider's `spaceman_skill` metadata. | — | Haiku |
+
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. `update-prompt` uses the existing prompt
+  write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no
+  prompt text, settings or credentials.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

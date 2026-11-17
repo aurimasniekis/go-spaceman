@@ -409,6 +409,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/prompts` | `list-prompts` | The prompt catalog |
 | `POST` | `/prompts` | `create-prompt` | Add a prompt (with a first draft) |
 | `GET` | `/prompts/{prompt_id}` | `get-prompt` | A prompt with its draft and versions |
+| `PATCH` | `/prompts/{prompt_id}` | `update-prompt` | Change a prompt's name or description |
 | `DELETE` | `/prompts/{prompt_id}/draft` | `discard-prompt-draft` | Discard the draft |
 | `PUT` | `/prompts/{prompt_id}/draft` | `save-prompt-draft` | Create or update the prompt's draft |
 | `POST` | `/prompts/{prompt_id}/publish` | `publish-prompt` | Publish the draft as the next immutable version |
