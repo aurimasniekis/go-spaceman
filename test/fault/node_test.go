@@ -73,7 +73,7 @@ func TestFaultRecordingDiskFull(t *testing.T) {
 	e := apptest.New(t)
 	var full atomic.Bool
 	e.AgentOptions = func(o *agent.Options) {
-		o.RecordingRetryAfter = 200 * time.Millisecond
+		o.RecordingRetryAfter = 3 * time.Second // longer than the output below: all of it comes while the disk fails
 		o.RecordingCreate = func(path string) (recording.File, error) {
 			if full.Load() {
 				return nil, syscall.ENOSPC
@@ -99,13 +99,21 @@ func TestFaultRecordingDiskFull(t *testing.T) {
 	starts := e.Runner.StartCount()
 
 	full.Store(true)
+	// The writer notices at its next flush (at most a second later); the output after that comes while it fails.
+	e.Runner.Output(term, "the disk is full now\r\n")
+	time.Sleep(recording.FlushInterval + 200*time.Millisecond)
 	for i := range 20 {
 		e.Runner.Output(term, "while the disk is full "+string(rune('a'+i))+"\r\n")
 		time.Sleep(20 * time.Millisecond)
 	}
 	eventually(t, "output during the full disk at central", func() bool {
 		out, _ := centralRecording(e, r.ID)
-		return strings.Contains(out, "while the disk is full t")
+		for i := range 20 {
+			if !strings.Contains(out, "while the disk is full "+string(rune('a'+i))) {
+				return false
+			}
+		}
+		return true
 	})
 	// The run is unaffected: still running, the same single program, nothing restarted.
 	if x := e.Run(r.ID); x.Observed != "running" {
