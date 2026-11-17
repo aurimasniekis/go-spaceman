@@ -140,6 +140,61 @@ func TestMemoryHarnessConfigInOldHistoryIsNotMaterialised(t *testing.T) {
 	}
 }
 
+// A symlink or a plain file named like a harness directory, in history an older agent pushed, is not materialised
+// either: the sparse patterns must match a non-directory of that name.
+func TestMemoryHarnessNonDirectoryInOldHistoryIsNotMaterialised(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	if _, err := m.prepare(ctx, "spc_a", "implementor-backend", "ins_one"); err != nil {
+		t.Fatal(err)
+	}
+	shared := m.shared("spc_a", "implementor-backend")
+	old := filepath.Join(t.TempDir(), "old")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(_ string, args ...string) string {
+		t.Helper()
+		out, err := m.git.Run(ctx, old, ident("ins_old"), args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(out)
+	}
+	run("", "clone", "--quiet", shared, ".")
+	write(t, old, "CLAUDE.md", "# old note\n")
+	write(t, old, "blob", "cfg")
+	write(t, old, "target", "cfg")
+	linkBlob := run("", "hash-object", "-w", "target") // content "cfg": the link target
+	fileBlob := run("", "hash-object", "-w", "blob")
+	for path, spec := range map[string][2]string{
+		".claude":     {"120000", linkBlob}, // symlink .claude -> cfg
+		"sub/.claude": {"100644", fileBlob}, // plain file named like the directory
+		".codex":      {"120000", linkBlob},
+	} {
+		run("", "update-index", "--add", "--cacheinfo", spec[0]+","+spec[1]+","+path)
+	}
+	run("", "add", "CLAUDE.md")
+	run("", "commit", "--quiet", "-m", "old agent")
+	run("", "push", "--quiet", shared, "HEAD:refs/heads/main")
+	if !shown(t, m, shared, ".claude") || !shown(t, m, shared, "sub/.claude") {
+		t.Fatal("test setup: old history lacks the non-directory paths")
+	}
+	two, err := m.prepare(ctx, "spc_a", "implementor-backend", "ins_two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read(t, two, "CLAUDE.md") != "# old note\n" {
+		t.Fatal("the note was not received")
+	}
+	for _, p := range []string{".claude", "sub/.claude", ".codex"} {
+		if _, err := os.Lstat(filepath.Join(two, p)); err == nil {
+			t.Fatalf("%s was materialised", p)
+		}
+	}
+}
+
 // A checkout created before this filter existed holds such files; the next prepare removes them from the working tree.
 func TestMemoryHarnessConfigRemovedFromExistingCheckout(t *testing.T) {
 	a := memAgent(t)
@@ -355,6 +410,33 @@ func TestMemoryGuardRefusesLinks(t *testing.T) {
 			t.Fatal("guard wrote through a symlinked .git")
 		}
 	})
+	t.Run("symlinked config", func(t *testing.T) {
+		m, inst, outside := setup(t)
+		mk(t, outside)
+		cfg := filepath.Join(inst, ".git", "config")
+		_ = os.Remove(cfg)
+		if err := os.Symlink(outside, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.guard(context.Background(), inst); err == nil {
+			t.Fatal("guard accepted a symlinked config")
+		}
+		unchanged(t, outside)
+	})
+	t.Run("dangling symlinked config", func(t *testing.T) {
+		m, inst, outside := setup(t)
+		cfg := filepath.Join(inst, ".git", "config")
+		_ = os.Remove(cfg)
+		if err := os.Symlink(outside, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.guard(context.Background(), inst); err == nil {
+			t.Fatal("guard accepted a dangling symlinked config")
+		}
+		if _, err := os.Lstat(outside); err == nil {
+			t.Fatal("guard created the link's target")
+		}
+	})
 	t.Run("hard-linked exclude", func(t *testing.T) {
 		m, inst, outside := setup(t)
 		mk(t, outside)
@@ -368,4 +450,27 @@ func TestMemoryGuardRefusesLinks(t *testing.T) {
 		}
 		unchanged(t, outside)
 	})
+}
+
+// Running guard again leaves the exclude file as it is: the block is not appended twice, and other lines stay.
+func TestMemoryGuardExcludeRewriteIsIdempotent(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	inst, err := a.mem.prepare(ctx, "spc_a", "implementor-backend", "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := filepath.Join(inst, ".git", "info", "exclude")
+	if err := os.WriteFile(ex, []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := a.mem.guard(ctx, inst); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, _ := os.ReadFile(ex)
+	if string(b) != "mine\n"+harnessExclude() {
+		t.Fatalf("exclude = %q", b)
+	}
 }

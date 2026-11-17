@@ -83,11 +83,17 @@ func harnessSparse() string {
 // os.Root on the checkout's .git, and every component is looked at first: a symlinked .git, info or file, or a
 // hard-linked file, would otherwise let the write reach a file outside the checkout.
 func (m *memManager) guard(ctx context.Context, inst string) error {
-	gitDir := filepath.Join(inst, ".git")
-	if fi, err := os.Lstat(gitDir); err != nil || !fi.IsDir() {
+	// .git is opened through the checkout's own root, which refuses a link that leaves it, and is looked at without
+	// following links, so a symlinked .git is refused too.
+	top, err := os.OpenRoot(inst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = top.Close() }()
+	if fi, err := top.Lstat(".git"); err != nil || !fi.IsDir() {
 		return errors.New("memory checkout: .git is not a directory")
 	}
-	root, err := os.OpenRoot(gitDir)
+	root, err := top.OpenRoot(".git")
 	if err != nil {
 		return err
 	}
@@ -119,6 +125,10 @@ func (m *memManager) guard(ctx context.Context, inst string) error {
 		if err := guardWrite(root, "info/sparse-checkout", harnessSparse()); err != nil {
 			return err
 		}
+	}
+	// git config writes through a lock file that follows a symlinked .git/config (and creates a dangling target).
+	if _, err := guardFile(root, "config"); err != nil {
+		return err
 	}
 	if out, _ := m.git.Run(ctx, inst, nil, "config", "--local", "--get", "core.sparseCheckout"); strings.TrimSpace(out) != "true" {
 		if _, err := m.git.Run(ctx, inst, nil, "config", "--local", "core.sparseCheckout", "true"); err != nil {
@@ -165,5 +175,26 @@ func guardWrite(root *os.Root, name, body string) error {
 	if _, err := guardFile(root, name); err != nil {
 		return err
 	}
-	return root.WriteFile(name, []byte(body), 0o600)
+	// Write a new file beside the old one and rename it over: nothing is truncated in place, and a link planted at
+	// the name after the check is replaced, not followed.
+	tmp := name + ".spaceman-tmp"
+	_ = root.Remove(tmp)
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(body); err != nil {
+		_ = f.Close()
+		_ = root.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = root.Remove(tmp)
+		return err
+	}
+	if err := root.Rename(tmp, name); err != nil {
+		_ = root.Remove(tmp)
+		return err
+	}
+	return nil
 }
