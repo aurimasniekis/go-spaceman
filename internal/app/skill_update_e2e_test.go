@@ -58,6 +58,7 @@ func TestUpdateSkillOverHTTP(t *testing.T) {
 	// A name only: the description keeps its value (a missing field is not an empty one).
 	r = root.do("PATCH", "/skills/review", map[string]any{"name": "Review 3"}, ifm(got.Version)[0], ifm(got.Version)[1])
 	expect(t, r, 200)
+	got = catalog.Skill{} // decode into a fresh value: a stale description must not survive the decode
 	r.json(t, &got)
 	if got.Name != "Review 3" || got.Description != "d2" || got.Version != sk.Version+3 {
 		t.Fatalf("name only %+v", got)
