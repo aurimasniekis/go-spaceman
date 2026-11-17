@@ -6284,7 +6284,7 @@
 
 ### ADR-0095 — Role descriptions: prompt metadata edited in place, a per-space description, and a role list for control
 
-- **Status:** Proposed, 2026-11-17 (an Infra feature request, items 1–3, from rolling out more worker roles of different
+- **Status:** Proposed, 2026-11-17 (an operator feature request, items 1–3, from rolling out more worker roles of different
   sizes). Central migration 0064 (`space_roles.description`). No node protocol change. New API op `update-prompt`, new
   agent tool `spaceman_roles_list`. Extends ADR-0051 (starter roles) and ADR-0063 (admin MCP).
 - **Context:** surveyed on next/v0.1.11 and the Terraform provider's main branch.
