@@ -33,7 +33,7 @@ func newFx(t *testing.T) *fx {
 	f := &fx{t: t, ctx: context.Background(), s: s, svc: New(s, audit.NewWriter(kr), changefeed.New(nil), Options{})}
 	must(t, s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
 		for _, q := range []string{
-			`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`,
+			`INSERT INTO nodes (id, name, state, protocol_minor, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 14, 0, 't', 0)`,
 			`INSERT INTO spaces (id, slug, name, node_id, state, workdir, goals, standing_instructions, created_at, created_by, updated_at)
 			 VALUES ('spc_a', 'aaa', 'Payments', 'nod_1', 'active', 'a', 'Ship the retry budget.', 'Never push to main.', 0, 't', 0)`,
 		} {
@@ -408,5 +408,16 @@ func TestUpdatePromptMeta(t *testing.T) {
 	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM audit_events WHERE action = 'prompt.updated'`).Scan(&n))
 	if n != 2 {
 		t.Fatalf("%d prompt.updated rows, want 2", n)
+	}
+}
+
+// The description limit counts characters (runes), as UpdatePromptMeta and the API's maxLength do.
+func TestCreatePromptDescriptionCountsRunes(t *testing.T) {
+	f := newFx(t)
+	if _, err := f.svc.CreatePrompt(f.ctx, op, "multibyte", "Multibyte", "role", strings.Repeat("ž", 1200), "body"); err != nil {
+		t.Fatalf("1200 multibyte characters refused: %v", err)
+	}
+	if _, err := f.svc.CreatePrompt(f.ctx, op, "toolong", "Too long", "role", strings.Repeat("ž", 2001), "body"); err == nil {
+		t.Fatal("2001 characters accepted")
 	}
 }

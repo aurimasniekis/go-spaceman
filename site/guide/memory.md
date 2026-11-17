@@ -16,6 +16,8 @@ Memory is a folder of files, usually Markdown, with Git history:
 - The node keeps a shared history for each role, and one checkout per instance.
 - Central keeps a copy of the history the node has synced. It never edits memory itself: only the role's runs on the
   space's node change it.
+- Memory belongs to the role's name. [Renaming a role](roles-and-prompts.md#rename-a-role) moves its memory with it, on
+  central and on the node, without copying or rewriting its history.
 
 ## How changes are kept
 

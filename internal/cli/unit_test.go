@@ -877,3 +877,26 @@ func TestSpecParsing(t *testing.T) {
 		t.Fatal("no source")
 	}
 }
+
+// hintFor: a 409 whose detail says the object changed gets the re-read hint; other 409s and other statuses do not.
+func TestHintFor(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		ae   *APIError
+		want string
+	}{
+		{"changed", &APIError{Status: http.StatusConflict, Detail: "the space changed since version 3"}, "read it again"},
+		{"changed, capitalised", &APIError{Status: http.StatusConflict, Detail: "Object CHANGED"}, "read it again"},
+		{"conflict without changed", &APIError{Status: http.StatusConflict, Detail: "name taken"}, ""},
+		{"409 without detail", &APIError{Status: http.StatusConflict}, ""},
+		{"401", &APIError{Status: http.StatusUnauthorized}, "expired or revoked"},
+		{"428", &APIError{Status: http.StatusPreconditionRequired}, "--if-match"},
+		{"422 saying changed", &APIError{Status: http.StatusUnprocessableEntity, Detail: "changed"}, ""},
+		{"200", &APIError{Status: http.StatusOK, Detail: "changed"}, ""},
+	} {
+		if got := hintFor(c.ae); (c.want == "") != (got == "") || (c.want != "" && !strings.Contains(got, c.want)) {
+			t.Errorf("%s: hint %q, want it to contain %q", c.name, got, c.want)
+		}
+	}
+}

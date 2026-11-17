@@ -136,6 +136,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/spaces/{space_id}` | `update-space` | Edit a space's profile |
 | `GET` | `/spaces/{space_id}/export/summary` | `get-space-export` | What a space export would hold now: counts, estimated size and the space's export limit |
 | `POST` | `/spaces/{space_id}/state` | `set-space-state` | Pause (hold, interrupt, emergency), resume, archive or restore a space |
+| `GET` | `/spaces/{space_id}/watchdog` | `get-space-watchdog` | A space's control watchdog state |
 
 ### runs
 
@@ -479,11 +480,15 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/role-templates/{template_id}` | `get-role-template` | A role template (by ID or slug) |
 | `PUT` | `/role-templates/{template_id}` | `save-role-template` | Create (template_id "new") or update a role template |
 | `GET` | `/spaces/{space_id}/role-options` | `list-role-options` | Templates, profiles and prompts a space role can use (names only) |
+| `GET` | `/spaces/{space_id}/role-renames` | `list-space-role-renames` | A space's role renames, newest first |
+| `POST` | `/spaces/{space_id}/role-renames/{rename_id}/close` | `close-space-role-rename` | Give up a stuck role rename's memory move on the node (admins) |
+| `POST` | `/spaces/{space_id}/role-renames/{rename_id}/retry` | `retry-space-role-rename` | Send a stuck role rename's memory move to the node again (admins) |
 | `GET` | `/spaces/{space_id}/roles` | `list-space-roles` | A space's roles |
 | `DELETE` | `/spaces/{space_id}/roles/{name}` | `delete-space-role` | Remove a role from the space |
 | `GET` | `/spaces/{space_id}/roles/{name}` | `get-space-role` | One of a space's roles |
 | `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
 | `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
+| `POST` | `/spaces/{space_id}/roles/{name}/rename` | `rename-space-role` | Rename a role in place |
 | `POST` | `/spaces/{space_id}/starter-roles` | `add-starter-roles` | Give the space the starter roles it does not have yet |
 | `GET` | `/starter-roles` | `list-starter-roles` | The starter roles and whether each one's template still exists |
 

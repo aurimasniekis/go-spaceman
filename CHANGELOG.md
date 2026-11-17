@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Renaming a role needs nodes on node protocol minor 14.** The rename moves the role's memory folder on the space's
+  node (`memory.rename`), so a space whose node last connected with an older agent, or never connected, is refused
+  (`409 node_too_old`) until the node agent is upgraded and has connected. Upgrade central first.
+- **Schema migration `0062_role_rename_failed`**: rebuilds `space_role_renames` to add the `failed` node state. It is
+  applied on start, needs no action and is forward-only.
+- **Schema migration `0063_role_rename_abandoned`**: rebuilds `space_role_renames` to add the `abandoned` node state
+  (closing a stuck rename). It is applied on start, needs no action and is forward-only.
+
+### Added
+
+- **Rename a space role in place** (ADR-0093). `POST /spaces/{space_id}/roles/{name}/rename`,
+  `spaceman role rename NAME --to NEW` and the administrator MCP tool `rename_space_role` (classified dangerous) rename a role and every
+  live reference to it in one transaction: MCP grants, knowledge-base and dream configuration, schedules, the human policy
+  successor, human type permissions, the account pool, memory, open tasks, unacknowledged messages, open knowledge-base
+  requests and pending notifications. History keeps the name it was written with. A busy role is refused (`409 role_busy`,
+  listing what to stop), as is a name already used by a role or a memory collection (`409 name_taken`); an invalid name is
+  `422 validation_failed` and a stale `If-Match` is `409 precondition_failed`. `GET /spaces/{space_id}/role-renames` and `spaceman role renames` list the renames and the state of each
+  memory move. Telegram does not offer them. See the roles guide.
+  The role's memory moves with it: central renames its repository right after the commit (after a backup that is
+  bundling memory, if one is) and finishes an interrupted move on the next access or at start, and the space's node gets
+  a durable `memory.rename` command (node protocol minor 14) and reports `memory.renamed`. The rename's `node_state` is
+  `pending` until then, `failed` with the node's reason if it could not move the folder, and `done` once it has; until it
+  is done, launches of the role and dream runs in the space are held, the space cannot be relocated, and central refuses
+  memory under the old name, and under the new one until the node has moved (`role renamed`), without creating a collection for it.
+  The node agent speaks minor 14: it checkpoints the role's instance checkouts, sets a folder already under the new name
+  aside under `.retained/`, renames the role folder with its checkouts and preserved conflict folders, moves the sync
+  state, and reports `ok` (or `deferred` while a run of either name or a dream run is still active on it, moving when it
+  ends; or `error`, tried again at its next start) until central acknowledges it; then it syncs the role under the new
+  name, from where the old name stopped. Node journal migration `0010_role_renames` (applied on start, forward-only).
+
 ## [0.1.10] - 2026-11-17
 
 Patch release on top of v0.1.9. **Only the node agents need it**; central can stay on v0.1.9. It has no migrations, no

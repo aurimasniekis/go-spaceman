@@ -122,8 +122,31 @@ func TestMemoryInstancesShareAndPreserve(t *testing.T) {
 	if st := m.statusOf(ctx, "spc_a", "implementor-backend"); st.Uncheckpointed != 1 {
 		t.Fatalf("uncheckpointed: %+v", st)
 	}
-	if len(m.collections()) != 2 {
-		t.Fatalf("collections: %v", m.collections())
+	// An instance folder in the bare layout (HEAD, objects/, refs/, commondir, no .git) is counted as an instance but
+	// nothing in it is counted and no git runs there, even with a commondir that leads to the shared history.
+	bare := filepath.Join(m.root, "spc_a", "implementor-backend", "instances", "ins_bare")
+	// HEAD is a commit the shared history does not have in main (a preserved conflict), so a Count there would show.
+	lost, err := m.git.Run(ctx, shared, nil, "rev-parse", "--verify", refs[:strings.Index(refs, "\n")]+"^{commit}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, bare, "HEAD", strings.TrimSpace(lost)+"\n")
+	write(t, bare, "commondir", shared+"\n")
+	for _, d := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(bare, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := st.LocalCommits
+	got := m.statusOf(ctx, "spc_a", "implementor-backend")
+	if got.Instances != 3 || got.Uncheckpointed != 1 || got.LocalCommits != before {
+		t.Fatalf("bare-layout instance was counted: before %d, %+v", before, got)
+	}
+	if err := os.RemoveAll(bare); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.collections(ctx)) != 2 {
+		t.Fatalf("collections: %v", m.collections(ctx))
 	}
 	// Invalid keys never reach git.
 	if _, err := m.prepare(ctx, "spc_a", "../etc", "ins_one"); err == nil {

@@ -88,6 +88,8 @@ func (a *App) spaceCmd() *cobra.Command {
 	return group("space", "Spaces: create, edit, pause, archive, purge, relocate and usage", []string{"spaces"},
 		a.cmd(opts{use: "list", short: "List the spaces you can see", op: "list-spaces", alias: []string{"ls"}, view: view{items: "items", cols: spaceCols, empty: "No spaces."}}),
 		a.cmd(opts{use: "get", short: "Show a space (ID or slug)", op: "get-space", args: spaceArg()}),
+		a.cmd(opts{use: "watchdog", short: "The control watchdog's state for a space: why it holds back, or its reminders and escalation", op: "get-space-watchdog",
+			args: spaceArg(), view: view{first: []string{"status", "guard", "nudges", "escalated", "backlog", "next_nudge", "last_nudge", "last_activity", "checked_at"}}}),
 		create,
 		a.cmd(opts{use: "update", short: "Edit a space's profile (only the flags given change)", op: "update-space", get: "get-space", merge: true,
 			args: spaceArg(), form: profile}),

@@ -75,7 +75,7 @@ func (q *Queries) CountOtherLiveRunsOfInstance(ctx context.Context, arg CountOth
 }
 
 const getActiveControlLimitWait = `-- name: GetActiveControlLimitWait :one
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE space_id = ? AND run_kind = 'control' AND state IN ('waiting', 'resuming') LIMIT 1
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE space_id = ? AND run_kind = 'control' AND state IN ('waiting', 'resuming') LIMIT 1
 `
 
 // Waits a space's control is waiting in (autostart leaves control to its wait).
@@ -106,12 +106,13 @@ func (q *Queries) GetActiveControlLimitWait(ctx context.Context, spaceID string)
 		&i.UpdatedAt,
 		&i.SwitchToAccountID,
 		&i.AccountSwitchID,
+		&i.Cause,
 	)
 	return i, err
 }
 
 const getActiveLimitWait = `-- name: GetActiveLimitWait :one
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE space_id = ? AND instance_id = ? AND state IN ('waiting', 'resuming')
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE space_id = ? AND instance_id = ? AND state IN ('waiting', 'resuming')
 `
 
 type GetActiveLimitWaitParams struct {
@@ -146,12 +147,13 @@ func (q *Queries) GetActiveLimitWait(ctx context.Context, arg GetActiveLimitWait
 		&i.UpdatedAt,
 		&i.SwitchToAccountID,
 		&i.AccountSwitchID,
+		&i.Cause,
 	)
 	return i, err
 }
 
 const getLimitWait = `-- name: GetLimitWait :one
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE id = ?
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE id = ?
 `
 
 func (q *Queries) GetLimitWait(ctx context.Context, id string) (LimitWait, error) {
@@ -181,12 +183,13 @@ func (q *Queries) GetLimitWait(ctx context.Context, id string) (LimitWait, error
 		&i.UpdatedAt,
 		&i.SwitchToAccountID,
 		&i.AccountSwitchID,
+		&i.Cause,
 	)
 	return i, err
 }
 
 const getLimitWaitByRun = `-- name: GetLimitWaitByRun :one
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE run_id = ?
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE run_id = ?
 `
 
 func (q *Queries) GetLimitWaitByRun(ctx context.Context, runID string) (LimitWait, error) {
@@ -216,12 +219,13 @@ func (q *Queries) GetLimitWaitByRun(ctx context.Context, runID string) (LimitWai
 		&i.UpdatedAt,
 		&i.SwitchToAccountID,
 		&i.AccountSwitchID,
+		&i.Cause,
 	)
 	return i, err
 }
 
 const getLimitWaitResumedInto = `-- name: GetLimitWaitResumedInto :one
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE space_id = ? AND new_run_id = ? AND state = 'resumed' ORDER BY created_at DESC, id DESC LIMIT 1
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE space_id = ? AND new_run_id = ? AND state = 'resumed' ORDER BY created_at DESC, id DESC LIMIT 1
 `
 
 type GetLimitWaitResumedIntoParams struct {
@@ -257,6 +261,7 @@ func (q *Queries) GetLimitWaitResumedInto(ctx context.Context, arg GetLimitWaitR
 		&i.UpdatedAt,
 		&i.SwitchToAccountID,
 		&i.AccountSwitchID,
+		&i.Cause,
 	)
 	return i, err
 }
@@ -337,8 +342,8 @@ func (q *Queries) GetUsageLimit(ctx context.Context, id string) (UsageLimit, err
 
 const insertLimitWait = `-- name: InsertLimitWait :exec
 INSERT INTO limit_waits (id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id,
-  resume_at, release_at, attempts, switch_to_account_id, account_switch_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  resume_at, release_at, attempts, switch_to_account_id, account_switch_id, cause, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertLimitWaitParams struct {
@@ -359,6 +364,7 @@ type InsertLimitWaitParams struct {
 	Attempts          int64
 	SwitchToAccountID string
 	AccountSwitchID   string
+	Cause             string
 	CreatedAt         int64
 	UpdatedAt         int64
 }
@@ -382,6 +388,7 @@ func (q *Queries) InsertLimitWait(ctx context.Context, arg InsertLimitWaitParams
 		arg.Attempts,
 		arg.SwitchToAccountID,
 		arg.AccountSwitchID,
+		arg.Cause,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -429,7 +436,7 @@ func (q *Queries) InsertUsageLimit(ctx context.Context, arg InsertUsageLimitPara
 }
 
 const listDeferredLimitWaits = `-- name: ListDeferredLimitWaits :many
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE space_id = ? AND state = 'waiting' AND last_error = ? AND resume_at > ? ORDER BY created_at, id LIMIT ?
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE space_id = ? AND state = 'waiting' AND last_error = ? AND resume_at > ? ORDER BY created_at, id LIMIT ?
 `
 
 type ListDeferredLimitWaitsParams struct {
@@ -478,6 +485,7 @@ func (q *Queries) ListDeferredLimitWaits(ctx context.Context, arg ListDeferredLi
 			&i.UpdatedAt,
 			&i.SwitchToAccountID,
 			&i.AccountSwitchID,
+			&i.Cause,
 		); err != nil {
 			return nil, err
 		}
@@ -493,7 +501,7 @@ func (q *Queries) ListDeferredLimitWaits(ctx context.Context, arg ListDeferredLi
 }
 
 const listDueLimitWaits = `-- name: ListDueLimitWaits :many
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE state = 'waiting' AND resume_at <= ?
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE state = 'waiting' AND resume_at <= ?
 ORDER BY CASE run_kind WHEN 'control' THEN 0 ELSE 1 END, CASE WHEN switch_to_account_id <> '' THEN 0 ELSE 1 END, created_at, id LIMIT ?
 `
 
@@ -537,6 +545,7 @@ func (q *Queries) ListDueLimitWaits(ctx context.Context, arg ListDueLimitWaitsPa
 			&i.UpdatedAt,
 			&i.SwitchToAccountID,
 			&i.AccountSwitchID,
+			&i.Cause,
 		); err != nil {
 			return nil, err
 		}
@@ -599,7 +608,7 @@ func (q *Queries) ListDueUsageLimits(ctx context.Context, resetsAt sql.NullInt64
 }
 
 const listHoldWaitsToWake = `-- name: ListHoldWaitsToWake :many
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE state = 'waiting' AND resume_at > ?1
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE state = 'waiting' AND resume_at > ?1
   AND (usage_limit_id = ?2 OR last_error = 'account_held')
 ORDER BY resume_at, id LIMIT ?3
 `
@@ -645,6 +654,7 @@ func (q *Queries) ListHoldWaitsToWake(ctx context.Context, arg ListHoldWaitsToWa
 			&i.UpdatedAt,
 			&i.SwitchToAccountID,
 			&i.AccountSwitchID,
+			&i.Cause,
 		); err != nil {
 			return nil, err
 		}
@@ -660,7 +670,7 @@ func (q *Queries) ListHoldWaitsToWake(ctx context.Context, arg ListHoldWaitsToWa
 }
 
 const listLimitWaitsBySpace = `-- name: ListLimitWaitsBySpace :many
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
 `
 
 type ListLimitWaitsBySpaceParams struct {
@@ -701,6 +711,7 @@ func (q *Queries) ListLimitWaitsBySpace(ctx context.Context, arg ListLimitWaitsB
 			&i.UpdatedAt,
 			&i.SwitchToAccountID,
 			&i.AccountSwitchID,
+			&i.Cause,
 		); err != nil {
 			return nil, err
 		}
@@ -716,7 +727,7 @@ func (q *Queries) ListLimitWaitsBySpace(ctx context.Context, arg ListLimitWaitsB
 }
 
 const listLimitWaitsToRelease = `-- name: ListLimitWaitsToRelease :many
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE state = 'waiting' AND release_at IS NOT NULL AND release_at <= ? ORDER BY release_at, id
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE state = 'waiting' AND release_at IS NOT NULL AND release_at <= ? ORDER BY release_at, id
 `
 
 func (q *Queries) ListLimitWaitsToRelease(ctx context.Context, releaseAt sql.NullInt64) ([]LimitWait, error) {
@@ -752,6 +763,7 @@ func (q *Queries) ListLimitWaitsToRelease(ctx context.Context, releaseAt sql.Nul
 			&i.UpdatedAt,
 			&i.SwitchToAccountID,
 			&i.AccountSwitchID,
+			&i.Cause,
 		); err != nil {
 			return nil, err
 		}
@@ -1026,7 +1038,7 @@ func (q *Queries) ListOpenUsageLimitsBySpace(ctx context.Context, spaceID string
 }
 
 const listStuckLimitWaits = `-- name: ListStuckLimitWaits :many
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE state = 'resuming' AND updated_at < ? ORDER BY updated_at, id LIMIT ?
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE state = 'resuming' AND updated_at < ? ORDER BY updated_at, id LIMIT ?
 `
 
 type ListStuckLimitWaitsParams struct {
@@ -1068,6 +1080,7 @@ func (q *Queries) ListStuckLimitWaits(ctx context.Context, arg ListStuckLimitWai
 			&i.UpdatedAt,
 			&i.SwitchToAccountID,
 			&i.AccountSwitchID,
+			&i.Cause,
 		); err != nil {
 			return nil, err
 		}
@@ -1083,7 +1096,7 @@ func (q *Queries) ListStuckLimitWaits(ctx context.Context, arg ListStuckLimitWai
 }
 
 const listTaskLimitWaits = `-- name: ListTaskLimitWaits :many
-SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id FROM limit_waits WHERE task_id = ? AND state = 'waiting' ORDER BY created_at, id
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at, switch_to_account_id, account_switch_id, cause FROM limit_waits WHERE task_id = ? AND state = 'waiting' ORDER BY created_at, id
 `
 
 // A task's waiting waits (limit_waits(task_id) index): cancelled when the task is done with or given to another run.
@@ -1120,6 +1133,7 @@ func (q *Queries) ListTaskLimitWaits(ctx context.Context, taskID string) ([]Limi
 			&i.UpdatedAt,
 			&i.SwitchToAccountID,
 			&i.AccountSwitchID,
+			&i.Cause,
 		); err != nil {
 			return nil, err
 		}

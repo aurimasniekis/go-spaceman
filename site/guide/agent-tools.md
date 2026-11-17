@@ -25,6 +25,7 @@ Code's own question picker (`AskUserQuestion`) or plan mode (`EnterPlanMode`); s
 | `spaceman_tasks_list` | The queue in order, with eligibility reasons | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_task_get` | Read a task | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_queue_next` | The next eligible task and why others were skipped | ✓ | | | |
+| `spaceman_roles_list` | The space's roles: kind, description (and whether it is the space role's or the template's), template, effective harness and model; never prompts, settings, skills or accounts | ✓ | | | |
 | `spaceman_task_create` | Add a task (optionally from an inbox item); an incident needs a trusted trigger, else it is proposed or refused | ✓ | | | |
 | `spaceman_task_resume` | Resume a task an incident preempted | ✓ | | | |
 | `spaceman_task_set_status` | Move a task; a worker only its own task, to review or blocked. Control may also close a never-run backlog or ready task as done, with a result | ✓ | own | | |

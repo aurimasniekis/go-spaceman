@@ -282,6 +282,11 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-CTRL-005 KB support admission is preauthorized by control or an operator. Agents request their own KB session through a scoped operation
   that is not general worker-launch permission. Support counts toward capacity, and reserved capacity prevents worker/support deadlock.
 - SM-CTRL-006 Task outcomes, messages, human blockers and memory errors are tracked separately.
+- SM-CTRL-007 Control can list its own space's roles with each role's kind, effective description (and whether it is the space role's or the template's), template and effective harness and model, through a read-only tool only control runs have. The list never carries prompt text, settings, skills or account references (ADR-0095).
+- SM-CTRL-008 A live control that leaves waiting work alone (unacknowledged messages, reviews whose workers finished,
+  ended runs, free worker slots with eligible tasks) is reminded through its terminal, with backoff, never while it is
+  busy, at a usage limit, waiting for a person, taken over or paused. Unanswered reminders raise attention, and can
+  restart control. All of it is configurable per space (operator request, 2026-11-17; ADR-0099).
 
 ### SM-COMM — Durable communication
 - SM-COMM-001 SpaceMan owns durable messages, requests, acknowledgement, reply and correlation. States are stored, available, acknowledged, resolved.
@@ -407,6 +412,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   auto mode rules, environment, hooks, …). The UI edits permissions, auto mode and environment variables in
   dedicated fields and other keys as JSON, Terraform manages them, and the permission mode ceiling still applies
   (operator request 2026-11-06, §9).
+- SM-PROMPT-011 A space role has its own description (at most 2000 characters; empty means "use the role template's"). `save-space-role`, `get-space-role` and `list-space-roles` carry it, the role preview shows the effective description with its origin (`space_role` or `template`), and `spaceman role set --description` sets it. It is routing guidance for whoever chooses a role: it is not part of a launched agent's prompt and not in run manifests, and a rename keeps it (ADR-0095).
 - SM-PROMPT-009 A space role can be renamed in place. Its live references follow the new name and the history of what happened keeps the name it was written with. A busy role is refused, and the operation is audited and uses the role write permission (ADR-0093).
 - SM-PROMPT-010 A prompt's name and description can be changed in place, by ID or slug, under the prompt's `version` (If-Match). The slug and kind stay fixed, no prompt version is created, and the change is audited by field name only and uses the prompt write permission (ADR-0095).
 

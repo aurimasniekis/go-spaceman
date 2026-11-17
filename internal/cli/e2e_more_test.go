@@ -72,6 +72,10 @@ func newGroupsAgainstCentral(t *testing.T, c *central, e env, adaID string) {
 	e.ok(t, "human", "policy", "delete", "--space", s, "all")
 	e.ok(t, "human", "policy", "delete", "approval")
 	e.ok(t, "approval", "list", "--space", s)
+	// The control watchdog's state (ADR-0099): nothing has been observed yet in a fresh space.
+	if w := e.obj(t, "space", "watchdog", s); w["status"] != "off" || w["observed"] != false {
+		t.Fatalf("watchdog %v", w)
+	}
 
 	// Messages, knowledge bases, memory and dreams.
 	msg := e.obj(t, "message", "send", "--space", s, "--to", "control", "--subject", "Freeze deploys", "--body", "until Monday")

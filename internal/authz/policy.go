@@ -97,6 +97,9 @@ var (
 	// RetentionWrite changes a space's retention periods (ADR-0045): a shorter period deletes data in the next daily
 	// pass, so it is held by admins only, like recording:delete, on top of space_config:write.
 	RetentionWrite = perm("retention", "write")
+	// RoleRenameAdmin retries or closes a stuck role rename (ADR-0093 addendum): a close gives up the node's move of the
+	// role's memory folder and leaves it orphaned, so only admins hold it, on top of nothing a rename itself needs.
+	RoleRenameAdmin = perm("space_role_rename", "admin")
 	// TelegramGroupWrite binds a Telegram group to a space or unbinds it (ADR-0083 amendment TG-13): everyone in the
 	// group may then read the space's summaries through the bot, so it is held by admins only, on top of
 	// space_config:write.

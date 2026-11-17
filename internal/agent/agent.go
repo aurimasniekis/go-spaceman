@@ -155,6 +155,8 @@ type Agent struct {
 	bgMu     sync.Mutex
 	bg       sync.WaitGroup
 	stopping bool
+	// renameMu serializes the moves and acknowledgements of role renames (rolerename.go, ADR-0093).
+	renameMu sync.Mutex
 	// reloc tracks relocation steps and transfers (ADR-0037).
 	reloc relocState
 	// guardLocks serialize each space's lease guard between launches and retirement (ADR-0043), by space ID.
@@ -203,6 +205,14 @@ type Agent struct {
 	failureClasses map[string]string
 	stopScans      map[string]time.Time
 }
+
+// agentMaxMinor is the newest protocol minor this agent implements, advertised in the hello. It is a literal on purpose:
+// advertising proto.MaxMinor would claim every minor central adds later, before this agent speaks it (ADR-0093). Raise it
+// together with the code that handles the new minor.
+const agentMaxMinor = 14
+
+// helloMaxMinor is the minor the hello advertises; a variable only so a test can tell it apart from proto.MaxMinor.
+var helloMaxMinor = agentMaxMinor
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
 func (a *Agent) track(f func()) {
@@ -295,6 +305,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.reconcileRunner(ctx); err != nil {
 		a.log.Warn("initial runner reconcile", obs.Err(err))
 	}
+	// Role renames the journal holds open (deferred, failed, or interrupted by a stop) are tried again now that the
+	// journal knows which runs are still alive (ADR-0093).
+	a.goTrack(func() { a.retryRoleRenames(context.WithoutCancel(ctx), "") })
 	// Managed Claude Code: after the reconcile, so the journal's live and adoptable runs keep their versions.
 	var claudeWG sync.WaitGroup
 	defer claudeWG.Wait()
@@ -461,7 +474,7 @@ func (a *Agent) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor,
+	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: helloMaxMinor,
 		Capacity: a.o.Capacity, Runs: []proto.RunReport{}, Leases: a.leaseStates()}
 	a.mu.Lock()
 	hello.Capabilities = a.caps
@@ -531,6 +544,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resendKBResults(hbCtx)
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
+			go a.resendRoleRenames(hbCtx)
 			go a.capsAfterHello(hbCtx, helloCaps)
 			go a.reportAllHookData(hbCtx)
 			if len(follow) > 0 {
@@ -606,6 +620,11 @@ func (a *Agent) session(ctx context.Context) error {
 			var ack proto.MemoryAck
 			if err := env.Decode(&ack); err == nil {
 				go a.mem.acked(context.WithoutCancel(ctx), ack)
+			}
+		case proto.TypeMemoryRenamedAck:
+			var ack proto.MemoryRenamedAck
+			if err := env.Decode(&ack); err == nil {
+				go a.track(func() { a.roleRenamedAck(context.WithoutCancel(ctx), ack) })
 			}
 		case proto.TypeMemoryFlush:
 			var req proto.MemoryFlush

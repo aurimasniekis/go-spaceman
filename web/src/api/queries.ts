@@ -85,6 +85,7 @@ export const keys = {
   limits: (space: string) => ['limits', space] as const,
   usageLimits: (space: string) => ['usage-limits', space] as const,
   limitWaits: (space: string) => ['limit-waits', space] as const,
+  watchdog: (space: string) => ['watchdog', space] as const,
   schedules: (space: string) => ['schedules', space] as const,
   schedule: (space: string, id: string) => ['schedules', space, id] as const,
   repositories: (space: string) => ['repositories', space] as const,
@@ -314,6 +315,15 @@ export const useLimitWaits = (space: string) =>
   useQuery({
     queryKey: keys.limitWaits(space),
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/limit-waits', { params: { path: { space_id: space } }, signal })).items ?? [],
+  })
+
+/** A space's control watchdog state (ADR-0099); the watchdog passes once a minute and publishes no event, so it is polled. */
+export const useWatchdog = (space: string, enabled = true) =>
+  useQuery({
+    queryKey: keys.watchdog(space),
+    enabled,
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/watchdog', { params: { path: { space_id: space } }, signal })),
+    refetchInterval: 30_000,
   })
 
 export const useSchedules = (space: string) =>

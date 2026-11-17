@@ -17,6 +17,7 @@ var (
 	profileCols  = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("HARNESS", "harness"), c("MODEL", "model"), c("REVISION", "revision")}
 	templateCols = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("KIND", "kind"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("REVISION", "revision")}
 	starterCols  = []col{c("ROLE", "name"), c("KIND", "kind"), c("TEMPLATE", "template"), c("TEMPLATE ID", "template_id"), c("DESCRIPTION", "description")}
+	renameCols   = []col{c("ID", "id"), c("FROM", "from"), c("TO", "to"), c("NODE", "node_state"), c("RENAMED", "renamed_at"), c("BY", "renamed_by")}
 	roleCols     = []col{c("NAME", "name"), c("TEMPLATE", "template_id"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("MODEL", "model"), c("REVISION", "revision")}
 	connCols     = []col{c("ID", "id"), c("NAME", "name"), c("URL", "url"), c("STREAM", "stream"), c("CLIENT", "client_id"), c("ENABLED", "enabled")}
 	etplCols     = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("BUILTIN", "builtin"), {head: "VERSIONS", fn: countOf("versions")}}
@@ -300,6 +301,7 @@ func (a *App) roleCmd() *cobra.Command {
 		f.str("template", "template_id", "role template ID (required for a new role)").str("profile", "profile_id", "harness profile ID").
 			str("prompt", "prompt_id", "prompt ID").str("prompt-pin", "prompt_pin", "published prompt version to pin (empty follows the latest)").
 			str("model", "model", "model").kv("setting", "settings", "harness setting").text("instructions", "instructions", "role instructions").
+			str("description", "description", "what the role is for in this space, at most 2000 characters (empty uses the template's)").
 			list("skill", "skill", "skill to keep on the role (ID or slug), optionally pinned as <skill>@<version> (a published version number or ID; no pin follows the latest). Replaces the role's own skills; \"\" clears them")
 	}
 	tplForm := func(f *form) {
@@ -339,6 +341,24 @@ func (a *App) roleCmd() *cobra.Command {
 		a.cmd(opts{use: "preview", short: "A role's effective configuration and where each value comes from", op: "preview-space-role", scoped: true,
 			args: pos("name")}),
 		a.cmd(opts{use: "delete", short: "Remove a role from a space", op: "delete-space-role", scoped: true, args: pos("name"), done: "Role removed."}),
+		a.cmd(opts{use: "rename", short: "Rename a role in place: its configuration, pending work and memory follow", op: "rename-space-role", scoped: true,
+			get: "get-space-role", optionalIfMatch: true, version: roleRevision,
+			args: pos("name"), form: func(f *form) { f.str("to", "new_name", "the new name (required)") }, note: renameNote,
+			example: "spaceman role rename implementor --to implementor-hard --space payments"}),
+		a.cmd(opts{use: "retry-rename", short: "Send a stuck role rename's memory move to the node again (admins)", op: "retry-space-role-rename", scoped: true,
+			args: pos("rename-id"), note: retryRenameNote,
+			example: "spaceman role retry-rename rrn_01... --space payments"}),
+		a.cmd(opts{use: "close-rename", short: "Give up a stuck role rename's memory move: holds lift, the node's old folder stays as an orphan (admins)",
+			op: "close-space-role-rename", scoped: true, args: pos("rename-id"), form: func(f *form) {
+				f.str("reason", "reason", "why the move is given up").
+					boolean("forget-node", "forget_node", "also stop waiting for the node to receive the rename: releases both names for other renames; "+
+						"a node that comes back keeps the old folder as an orphan")
+			},
+			confirm: "give up the node's memory move (the old folder stays on the node, never synced again)",
+			note:    closeRenameNote,
+			example: "spaceman role close-rename rrn_01... --space payments --reason \"node retired\" --forget-node --yes"}),
+		a.cmd(opts{use: "renames", short: "A space's role renames, newest first, and the state of each memory move", op: "list-space-role-renames", scoped: true,
+			view: view{items: "items", cols: renameCols, empty: "No role renames."}}),
 		a.cmd(opts{use: "add-starters", short: "Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer)",
 			op: "add-starter-roles", scoped: true, example: "spaceman role add-starters --space payments"}),
 		tpl,
@@ -545,4 +565,36 @@ func (a *App) approvalPolicyCmd() *cobra.Command {
 		a.cmd(opts{use: "delete", short: "Remove a policy (approvals it produced stay usable until they expire)", op: "delete-approval-policy",
 			args: pos("policy"), done: "Approval policy removed."}),
 	)
+}
+
+// closeRenameNote says what a close did and left behind.
+func closeRenameNote(map[string]any) string {
+	return "Rename closed. Launches are no longer held; central's memory stays under the new name and the node's old folder is orphaned, not deleted. " +
+		"Until the node has received the rename, other renames of either name stay blocked; --forget-node releases them."
+}
+
+// retryRenameNote says what a retry left to do.
+func retryRenameNote(m map[string]any) string {
+	if m["node_too_old"] == true {
+		return "Queued, but the node last spoke a protocol below 1.14: the move is sent when it connects at 1.14 or more. Upgrade it, or close the rename."
+	}
+	if m["queued"] == true {
+		return "The move was queued again; launches stay held until the node reports it done."
+	}
+	return "A move is still waiting for the node; woke its delivery."
+}
+
+// roleRevision is the version a role rename checks with If-Match: the role's revision, which the API compares, not the
+// row's version.
+func roleRevision(m map[string]any) string { return numberString(m["revision"]) }
+
+// renameNote tells the operator what a rename left to do: "Role renamed.", and when the node still has to move the
+// role's memory, that launches of the role wait for it.
+func renameNote(m map[string]any) string {
+	out := "Role renamed."
+	if rn, _ := m["rename"].(map[string]any); rn != nil && rn["node_state"] == "pending" {
+		node, _ := rn["node_id"].(string)
+		out += " The role's memory moves when node " + node + " reconnects and reports; launches of the role wait until then."
+	}
+	return out
 }

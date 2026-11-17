@@ -13,9 +13,22 @@ Control has the tools every run has (see [Agent tools](./agent-tools)) plus the 
 | `spaceman_worker_launch` | Start a worker for a **ready, eligible** task. The task becomes running and is assigned to the worker. |
 | `spaceman_worker_stop` | Stop a worker (or a KB, dreamer or diagnostic run). Interrupt keeps the session resumable. |
 | `spaceman_runs_list` | The space's active runs with their role, program status and task (every run may read it). |
+| `spaceman_roles_list` | The space's roles, sorted by name: each one's kind, effective description (and whether it is the role's own or the template's), template, harness and model. Read only. |
 
 Workers cannot launch runs at all, and no tool starts a control run, so a worker can never promote itself. Control
 cannot stop itself or another control run; operators do that.
+
+### Choosing a role
+
+`spaceman_worker_launch` takes the role's name. Control finds the right one with `spaceman_roles_list`, one call that
+returns every role of the space with what it is for. A role that can't be resolved is still listed, with an `error`
+in place of its harness and model. It picks the role whose description fits the task, then launches it. Descriptions come from the space role, or the template when the space role has none, so an operator who changes a
+role changes what control sees on its next call. Nothing is cached in control's instructions.
+
+The list shows no prompt text, settings, skills or account references, and the descriptions grant nothing: a role
+still runs only with what its configuration gives it. Write descriptions for routing, such as "small, well-specified
+changes; cheap model" or "the final check before merge", and keep secrets out of them. The
+[starter roles](./roles-and-prompts#starter-roles) explain where each role's description comes from.
 
 A worker starts with the task as its first instruction (title, objective, acceptance criteria and anything control
 adds), then reports with `spaceman_task_set_status` (**review**, or **blocked**). Nothing is accepted
@@ -97,6 +110,34 @@ not been told about yet, and while it waits for its usage limit to reset (its id
 Both behaviours are [limits](./limits) of the space. Turn **Start control on new work** (`control_autostart`) off to
 start control only by hand. Set **Stop idle control** (`control_idle_stop_minutes`) to 0 to keep an idle control
 running. Turning auto-start off never stops a control that is running.
+
+## The control watchdog
+
+A control that is alive and idle can still leave work waiting: a worker's message nobody acknowledged, a task in
+review whose worker finished, a run that ended, or free worker slots while tasks are ready. The **watchdog** notices
+this and reminds control.
+
+- **When.** Work has waited longer than the space's **Control watchdog** limit (`control_watchdog_minutes`, 15 by
+  default, 0 turns it off) and control has done nothing for that long: no tool call, no new turn.
+- **The reminder.** One line typed into control's terminal, naming only counts ("3 unacknowledged messages, 1 failed
+  run are waiting for you…"). It carries no message text, titles or identifiers; control reads those through its
+  tools. The first reminder goes out at once; the next ones follow after 5 minutes, then 10, 20 and 40, up to an hour.
+  Each reminder is audited.
+- **Left alone.** The watchdog never reminds a control that is working, waiting for a person, at a usage limit or
+  taken over, nor in a space that is paused or archived.
+- **Reviews and ended runs.** A backlog made only of reviews and ended runs gets a single reminder and never
+  escalates, and so does one found after central restarts. They count only if they arrived after control's last
+  activity: control was told, and a review may rightly wait a long time.
+- **Escalation.** When `control_watchdog_nudges` reminders in a row (3 by default, 0 never) leave the work waiting,
+  the space's people get one human action, "Control is not responding in …", with the counts. If
+  `control_watchdog_restart` is on (off by default), control is also stopped and started again, resuming its session,
+  within the supervisor's restart budget.
+- **Seeing it.** The Agents card on the space overview shows a **being nudged** or **not responding** badge on control
+  while the watchdog is acting. `spaceman space watchdog <space>` and `GET /api/v1/spaces/{space_id}/watchdog` give the
+  state as of the last pass (one a minute): why it holds back, how many reminders were sent, whether it escalated and
+  what waits. It is read-only, needs the permission to read runs, and starts over when central restarts.
+
+The three settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
 
 ## Recovery
 

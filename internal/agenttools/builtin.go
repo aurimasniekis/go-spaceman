@@ -174,7 +174,7 @@ func (r *Registry) registerTasks() {
 	Add(r, "spaceman_task_get", "Read one task.", allKinds, true, func(ctx context.Context, p *fleet.RunPrincipal, in taskIn) (any, error) {
 		return r.d.Queue.Get(ctx, p.SpaceID, in.TaskID)
 	})
-	Add(r, "spaceman_queue_next", "The next eligible task and why higher tasks were skipped (control only).", control, true,
+	Add(r, "spaceman_queue_next", "The next eligible task and why higher tasks were skipped (control only). To pick a role for it, see spaceman_roles_list.", control, true,
 		func(ctx context.Context, p *fleet.RunPrincipal, _ struct{}) (any, error) {
 			return r.d.Queue.Next(ctx, actor(p), p.SpaceID, true)
 		})
