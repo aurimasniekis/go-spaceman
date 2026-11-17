@@ -375,13 +375,17 @@ func (j *Journal) awaitRenameAck(ctx context.Context, spaceID, role string) {
 	}
 }
 
-// renamedFrom returns the old name of the newest finished rename to role, if there is one: a session that began under
-// the old name still names the old folder in its history (ADR-0093).
+// renamedFrom returns the old name of the newest finished rename involving role, when that rename is one to role: a
+// session that began under the old name still names the old folder in its history (ADR-0093). A newer finished rename
+// away from the name (a->b, b->c, then a new b) means the name was reused, so there is no old folder to report.
 func (j *Journal) renamedFrom(ctx context.Context, spaceID, role string) (string, bool) {
-	var from string
-	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT from_role FROM role_renames WHERE space_id = ? AND to_role = ? AND state = 'done' AND result = ?
-		ORDER BY created_at DESC, rename_id DESC LIMIT 1`, spaceID, role, proto.MemoryRenameOK).Scan(&from)
-	return from, err == nil
+	var from, to, result string
+	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT from_role, to_role, result FROM role_renames WHERE space_id = ? AND state = 'done'
+		AND (to_role = ? OR from_role = ?) ORDER BY created_at DESC, rename_id DESC LIMIT 1`, spaceID, role, role).Scan(&from, &to, &result)
+	if err != nil || to != role || result != proto.MemoryRenameOK {
+		return "", false
+	}
+	return from, true
 }
 
 const renameCols = `rename_id, space_id, from_role, to_role, state, result, message, acked`

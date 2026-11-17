@@ -527,6 +527,9 @@ func (a *Agent) addMemoryNote(ctx context.Context, spaceID, dir string, p *proto
 	case !p.Resume:
 		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(dir, p.Role))
 	case p.Harness == harness.KindCodex:
+		if p.Prompt == "" {
+			return // a note alone would start a turn the user never asked for
+		}
 		p.Prompt = strings.TrimSpace(a.resumeMemoryNote(ctx, spaceID, p.Role, dir) + "\n\n" + p.Prompt)
 	default:
 		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + a.resumeMemoryNote(ctx, spaceID, p.Role, dir))
