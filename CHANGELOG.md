@@ -8,9 +8,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Upgrade notes
 
-- **Upgrade central first, then the node agents.** v0.1.11 speaks node protocol **minor 14** (v0.1.10: 13). A node agent
-  of an older release keeps working with everything except renaming a role's memory (see the next note). An upgraded
-  node agent needs an upgraded central.
+- **Upgrade central first, then the node agents.** v0.1.11 speaks node protocol **minor 14** (v0.1.10: 13). Older
+  node agents keep working but miss the node-side fixes (memory guard, harness-config filter, fast-forward, recording)
+  and cannot take a role rename (see the last note).
 - **Schema migrations 0061–0065** are applied on start, need no action and are forward-only: `0061_space_role_renames`,
   `0062_role_rename_failed`, `0063_role_rename_abandoned` (role rename, ADR-0093), `0064_limit_wait_cause` (a read-only
   `cause` on limit waits, ADR-0098) and `0065_space_role_description` (a space role's own description, ADR-0095).
@@ -57,7 +57,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   blocked, taken-over or usage-limited control, and a paused space, are left alone. Read-only state:
   `GET /spaces/{space_id}/watchdog` (`get-space-watchdog`), `spaceman space watchdog <space>` and a badge on the
   control row of the space overview.
-- **Runs an agent restart stopped are resumed** (ADR-0098). A worker or diagnostic run that ends because the node agent
+- **Runs an agent restart stopped are resumed** (ADR-0098). A worker or diagnostic run that holds a task and ends because the node agent
   restarted (`stopped_by_restart`) is resumed by the limit-wait machinery: a new run of the same instance, the same
   worktree and account, `--resume` of its session, after 15, 30 and 60 seconds. At most 3 automatic resumes per chain
   (a resumed run that lived 30 minutes starts the count again); then the task goes back to `ready` and control is told.
@@ -84,12 +84,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
-- `spaceman role set` replaces only what its flags name. `--skill` accepts a slug, `slug@number` or an ID, and the
-  help states that only the space role's own skills are cleared.
+- `spaceman role set --skill` accepts a slug, `slug@number` or an ID. `role set` still replaces the role's whole
+  configuration; its help now says only the space role's own skills are cleared, not the template's.
 
 ### Fixed
 
-- **A recording is acknowledged only once central has stored it** (#242, ADR-0096). Central acknowledged the highest
+- **A recording is acknowledged only once central has stored it** (#242, ADR-0010 addendum). Central acknowledged the highest
   sequence it had accepted, so a failed write could let the node delete the only copy of records central never stored.
   Central now acknowledges what it synced to disk, closes and reopens a failed writer so the node ships the gap again,
   backs off 5 seconds before reopening a recording that failed, removes an unsynced segment and never ages out a
@@ -106,7 +106,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `disk` `trunc` record any more. Only the node agent needs the update.
 - **Memory git guard** (security-relevant, ADR-0025 and ADR-0094). The node refuses a memory checkout whose git dir is
   redirected (a symlink, a `gitdir` file, `commondir`, `core.worktree`, a bare checkout), that holds config-based hooks,
-  links inside `.git`, gitlinks, a parent repository, a nested `.git` or a FIFO in its work tree, or that lacks its own
+  links inside `.git`, gitlinks, a nested `.git` or a FIFO in its work tree, or that lacks its own
   `.git` directory. The checks run first and with timeouts, and cancellation sends SIGTERM first. `memory preserve`
   refuses a symlinked conflicts path.
 - **Harness configuration never travels through role memory** (security-relevant, ADR-0025 addendum). Because Claude

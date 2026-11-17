@@ -579,7 +579,7 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   nudging: set `control_watchdog_minutes` to 0 to turn it off. Simulated evidence only (fake clock, scripted runs).
 - **Runs an agent restart stopped are resumed a limited number of times** (ADR-0098). At most 3 automatic resumes per
   chain (a resumed run that lived 30 minutes starts again); then the task goes back to `ready` and control is told. A
-  task already in review, a run somebody asked to stop, a control run, and a run whose node was silent so long that the
+  run without a task, a task already in review, a run somebody asked to stop, a control run, and a run whose node was silent so long that the
   stale-run sweeper ended it are not resumed. A run that finished no turn starts again with its original prompt rather
   than resuming a session. Simulated evidence only (scripted node, fake clock): not verified with a real agent restart.
 
