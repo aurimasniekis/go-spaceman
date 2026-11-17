@@ -282,6 +282,10 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-CTRL-005 KB support admission is preauthorized by control or an operator. Agents request their own KB session through a scoped operation
   that is not general worker-launch permission. Support counts toward capacity, and reserved capacity prevents worker/support deadlock.
 - SM-CTRL-006 Task outcomes, messages, human blockers and memory errors are tracked separately.
+- SM-CTRL-008 A live control that leaves waiting work alone (unacknowledged messages, reviews whose workers finished,
+  ended runs, free worker slots with eligible tasks) is reminded through its terminal, with backoff, never while it is
+  busy, at a usage limit, waiting for a person, taken over or paused. Unanswered reminders raise attention, and can
+  restart control. All of it is configurable per space (operator request, 2026-11-17; ADR-0099).
 
 ### SM-COMM — Durable communication
 - SM-COMM-001 SpaceMan owns durable messages, requests, acknowledgement, reply and correlation. States are stored, available, acknowledged, resolved.
