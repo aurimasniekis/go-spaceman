@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ type seqCentral struct {
 	drops int // records dropped as repeats
 	// mute, while set, loses every recording message (not stored, not acknowledged): central is out of reach.
 	mute bool
+	// only, when set, limits what central keeps and acknowledges to that run: messages about other runs are ignored.
+	only string
 	// muted counts the recording messages lost while mute was set (the recorder's probes among them).
 	muted int
 }
@@ -52,6 +55,9 @@ func (c *seqCentral) within(d time.Duration, cond func() bool) bool {
 			}
 			if c.mute {
 				c.muted++
+				continue
+			}
+			if c.only != "" && ch.RunID != c.only {
 				continue
 			}
 			for _, raw := range ch.Records {
@@ -88,47 +94,71 @@ func (c *seqCentral) has(data string) bool {
 // adopted). Central holds up to held, records the previous process numbered and shipped while its disk failed.
 func restartedRecorderEnv(t *testing.T, runID string, local, saved, held uint64) (*Agent, *seqCentral, string) {
 	t.Helper()
+	return restartedRecorderEnvWith(t, runID, local, saved, held, nil)
+}
+
+// restartedRecorderEnvWith is restartedRecorderEnv with other live runs (each with 10 local records and no saved
+// acknowledgement) journaled beside runID. Central's copy (seqCentral) is of runID alone: messages about the others are
+// received and ignored. before runs once the agent exists, ahead of its connection.
+func restartedRecorderEnvWith(t *testing.T, runID string, local, saved, held uint64, others []string, before ...func(a *Agent)) (*Agent, *seqCentral, string) {
+	t.Helper()
 	a, f := ccAgent(t, t.TempDir(), nil, nil)
 	ctx := context.Background()
-	p, err := f.Start(ctx, runner.Spec{Name: RunName(runID), Argv: []string{"/bin/true"}, Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": runID}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	row := runRow{RunID: runID, SpaceID: ccSpace, Generation: 1, Kind: "worker", Role: "implementor", Harness: "claude-code", TerminalName: RunName(runID)}
-	if err := a.j.insertRun(ctx, row); err != nil {
-		t.Fatal(err)
-	}
-	row.TerminalID, row.State, row.Desired = p.ID, proto.RunRunning, "running"
-	if err := a.j.updateRun(ctx, row); err != nil {
-		t.Fatal(err)
-	}
-	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(runID)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := uint64(1); i <= local; i++ {
-		r := recording.Record{Kind: recording.KindOut, Data: []byte("before ")}
-		if i == 1 {
-			r = recording.Record{Kind: recording.KindOpen, Cols: 80, Rows: 24, RunID: runID}
-		}
-		if err := w.Add(r); err != nil {
+	var term string
+	setup := func(id string, local, saved uint64) {
+		p, err := f.Start(ctx, runner.Spec{Name: RunName(id), Argv: []string{"/bin/true"}, Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": id}})
+		if err != nil {
 			t.Fatal(err)
 		}
+		if id == runID {
+			term = p.ID
+		}
+		row := runRow{RunID: id, SpaceID: ccSpace, Generation: 1, Kind: "worker", Role: "implementor", Harness: "claude-code", TerminalName: RunName(id)}
+		if err := a.j.insertRun(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+		row.TerminalID, row.State, row.Desired = p.ID, proto.RunRunning, "running"
+		if err := a.j.updateRun(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+		w, err := recording.Open(recording.Options{Dir: a.RecordingDir(id)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := uint64(1); i <= local; i++ {
+			r := recording.Record{Kind: recording.KindOut, Data: []byte("before ")}
+			if i == 1 {
+				r = recording.Record{Kind: recording.KindOpen, Cols: 80, Rows: 24, RunID: id}
+			}
+			if err := w.Add(r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if saved > 0 {
+			a.saveAck(id, saved)
+		}
 	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if saved > 0 {
-		a.saveAck(runID, saved)
+	setup(runID, local, saved)
+	for _, id := range others {
+		setup(id, 10, 0)
 	}
 	c := &seqCentral{t: t, a: a, seq: held}
+	if len(others) > 0 {
+		c.only = runID
+	}
 	for i := uint64(1); i <= held; i++ {
 		c.recs = append(c.recs, recording.Record{Seq: i, Kind: recording.KindOut, Data: []byte("shipped before the restart ")})
+	}
+	for _, f := range before {
+		f(a)
 	}
 	c.fc = newWSCentral(t, proto.MaxMinor)
 	a.o.ReconnectMax = 10 * time.Millisecond
 	runAgent(t, a, c.fc)
-	return a, c, p.ID
+	return a, c, term
 }
 
 // localAbove returns the local recording's records above seq.
@@ -258,6 +288,46 @@ func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
 		defer a.mu.Unlock()
 		return a.recorders[runID] == nil
 	})
+}
+
+// The catch-up sweep must re-ship what the local recording holds above central's sequence for a run whose probe answer
+// arrived before the sweep reached it. run_aaa's catch-up is held until run_zzz's recorder has central's answer: the
+// acknowledgement (200) is then known when the sweep gets to run_zzz, and only the acknowledgement saved at the last
+// process (200 as well, restored at the recorder's start) says that records 201..250 are local only.
+func testProbeAckBeforeTheSweepReachesTheRun(t *testing.T, block bool) {
+	var ag atomic.Pointer[Agent]
+	sendRecordingHook = func(id string) error {
+		if !block || id != "run_aaa" {
+			return nil
+		}
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			if a := ag.Load(); a != nil {
+				a.mu.Lock()
+				known := a.seqKnown["run_zzz"]
+				a.mu.Unlock()
+				if known {
+					return nil
+				}
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { sendRecordingHook = nil })
+	_, c, _ := restartedRecorderEnvWith(t, "run_zzz", 250, 200, 200, []string{"run_aaa"}, func(a *Agent) { ag.Store(a) })
+	c.until("run_zzz's records 201..250 at central", func() bool { return c.seq >= 250 })
+	for i, r := range c.recs[200:250] {
+		if r.Seq != uint64(201+i) {
+			t.Fatalf("central holds %d after %d, want %d", r.Seq, 200+i, 201+i)
+		}
+	}
+}
+
+func TestSweepReshipsAboveTheAckWhenTheProbeAckComesFirst(t *testing.T) {
+	testProbeAckBeforeTheSweepReachesTheRun(t, true)
+}
+
+func TestSweepReshipsAboveTheAckWithoutTheProbeAckFirst(t *testing.T) {
+	testProbeAckBeforeTheSweepReachesTheRun(t, false)
 }
 
 // The gate keeps output within seqGateMaxBytes and marks what it dropped with one gap record; other records are kept.

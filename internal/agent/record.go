@@ -90,6 +90,10 @@ func (a *Agent) recordSize(runID string, cols, rows int) {
 // because herdr-core streams carry no offsets (S-3).
 func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 	log := a.log.With(slog.String(obs.FieldRunID, row.RunID))
+	// Before anything can ask central: its answer to the probe (recordingAck) may reach this process ahead of the
+	// catch-up sweep, and an acknowledgement that was not restored by then is not marked restored, so the sweep would
+	// take the run for clean and never re-ship the local records above it.
+	a.restoreAck(row.RunID)
 	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: a.recordingQuota(row.RunID), Now: a.o.Clock.Now, Create: a.o.RecordingCreate,
 		RetryAfter: a.o.RecordingRetryAfter})
 	if err != nil {
