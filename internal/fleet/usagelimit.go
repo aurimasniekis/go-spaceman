@@ -104,7 +104,7 @@ type LimitWait struct {
 	// SwitchToAccountID is the account the resume uses instead of the parked run's (an account switch, ADR-0090).
 	SwitchToAccountID string    `json:"switch_to_account_id,omitempty" doc:"The account the resume uses instead of the parked run's (an account switch)"`
 	AccountSwitchID   string    `json:"account_switch_id,omitempty" doc:"The account switch this wait belongs to"`
-	Cause             string    `json:"cause,omitempty" enum:"agent_restart" doc:"Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0096)"`
+	Cause             string    `json:"cause,omitempty" enum:"agent_restart" doc:"Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098)"`
 	Version           int64     `json:"version"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`

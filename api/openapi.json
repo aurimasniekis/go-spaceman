@@ -4990,7 +4990,7 @@
             "type": "integer"
           },
           "cause": {
-            "description": "Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0096)",
+            "description": "Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098)",
             "enum": [
               "agent_restart"
             ],

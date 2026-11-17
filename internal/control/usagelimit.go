@@ -106,7 +106,7 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 	}
 	var key, subject, body string
 	if w.Cause == fleet.WaitCauseRestart {
-		// A run an agent restart stopped (ADR-0096): told once, when it resumes or when SpaceMan gives up.
+		// A run an agent restart stopped (ADR-0098): told once, when it resumes or when SpaceMan gives up.
 		switch ev.Change {
 		case fleet.LimitWaitResumed:
 			key, subject = "limit-wait-resumed:"+w.ID, fmt.Sprintf("%s run resumed after an agent restart", w.Role)

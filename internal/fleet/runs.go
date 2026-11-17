@@ -974,7 +974,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 					return err
 				}
 			} else if sweep == nil && r.Desired == "running" && nodeReason == EndStoppedByRestart && rep.State == proto.RunExited {
-				// An agent restart stopped a run that was still wanted: resume it, or give it up after the cap (ADR-0096).
+				// An agent restart stopped a run that was still wanted: resume it, or give it up after the cap (ADR-0098).
 				sid := r.SessionID
 				if rep.SessionID != "" {
 					sid = rep.SessionID

@@ -6531,7 +6531,7 @@
   write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no
   prompt text, settings or credentials.
 
-### ADR-0096 — A run an agent restart stopped is resumed, within a cap
+### ADR-0098 — A run an agent restart stopped is resumed, within a cap
 
 - **Status:** Accepted by control (task request of 2026-11-17). Central migration `0063_limit_wait_cause` (one column;
   0061/0062 are ADR-0093's), a read-only `cause` field on limit waits in the HTTP API. No protocol change and no node
@@ -6567,6 +6567,10 @@
      its own bounds. A usage limit wins over the restart: a run ended at its limit is parked by ADR-0079 as before.
   6. **Control hears once.** One message when the run is resumed (the new run and the task now pointing at it), or the
      relaunch notice above when SpaceMan gives up. No "parked" message is sent for a restart wait.
+  7. **Outages long enough for the stale-run sweeper are not resumed.** The stale-run sweeper ends a run whose node has
+     been silent too long with its own reason, not `stopped_by_restart`. A node that was away for that long (not a
+     quick agent restart) therefore leaves its runs ended without a restart wait; control hears the ordinary run-ended
+     notice and relaunches. The resume covers the quick restart, where the node reports the exit itself.
 - **Consequences:** a wait row exists per restart, visible with its cause among the space's limit waits; `limit_waits.cause` is `''`
   for usage limits. Resumes after an agent restart now happen without control. A run whose resume itself fails before its
   first turn is handled by ADR-0079's one fresh retry. Simulated evidence only (scripted node, fake clock): not verified

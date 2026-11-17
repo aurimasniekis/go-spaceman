@@ -13,7 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
-// Resuming runs an agent restart stopped (ADR-0096). herdr-core ends the process of a run whose node agent restarted
+// Resuming runs an agent restart stopped (ADR-0098). herdr-core ends the process of a run whose node agent restarted
 // with the reason stopped_by_restart; central sees it as an ordinary exit. A run that ends that way while it is still
 // wanted (desired running) is brought back through the limit-wait machinery of ADR-0079 with the cause agent_restart:
 // the same instance, --resume of its session, the same worktree, the task pointed at the new run, under the usual
@@ -63,20 +63,27 @@ func (svc *Service) restartEndedTx(ctx context.Context, tx *store.Tx, r db.Run, 
 	w := db.LimitWait{ID: ids.New(ids.LimitWait), SpaceID: r.SpaceID, RunID: r.ID, TaskID: taskID, RunKind: r.Kind, Role: r.Role, NodeID: r.NodeID,
 		InstanceID: r.InstanceID, Harness: r.Harness, LaunchJson: r.LaunchJson, Cause: WaitCauseRestart, State: WaitWaiting, Version: 1,
 		CreatedAt: now.UnixMicro(), UpdatedAt: now.UnixMicro()}
-	if turn > 0 {
-		w.SessionID = sessionID
-		if w.SessionID == "" {
-			w.SessionID = r.SessionID
-		}
+	// The session to resume: the run's once it finished a turn, or the one it was itself resumed with (a resumed run
+	// restarted again before its first turn still has the conversation).
+	pr := r
+	if sessionID != "" {
+		pr.SessionID = sessionID
+	}
+	pr.Turn = max(pr.Turn, turn)
+	if w.SessionID, err = resumableSession(ctx, tx.Q, pr); err != nil {
+		return err
 	}
 	prev, err := tx.Q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: r.ID})
 	switch {
 	case err == nil:
-		w.ReleaseAt = prev.ReleaseAt
-		// Consecutive restarts count against the cap; a resumed run that lived on for a while starts the count again.
+		// Consecutive restarts count against the cap and share one release deadline; a resumed run that lived on for a
+		// while starts the count and the deadline again.
 		stable := r.StartedAt.Valid && now.Sub(time.UnixMicro(r.StartedAt.Int64)) >= restartStableAfter
 		if prev.Cause == WaitCauseRestart && !stable {
 			w.Attempts = prev.Attempts
+		}
+		if !stable {
+			w.ReleaseAt = prev.ReleaseAt
 		}
 		// The resumed run was launched with the resume note: a later fresh session needs the original prompt.
 		var spec, first LaunchSpec

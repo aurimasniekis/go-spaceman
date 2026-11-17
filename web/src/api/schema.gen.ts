@@ -6841,7 +6841,7 @@ export interface components {
             /** Format: int64 */
             attempts: number;
             /**
-             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0096)
+             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098)
              * @enum {string}
              */
             cause?: "agent_restart";
