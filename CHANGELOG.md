@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-17
+
+Patch release on top of v0.1.9. **Only the node agents need it**; central can stay on v0.1.9. It has no migrations, no
+node protocol change (minor 13) and no configuration change. It fixes Claude Code runs stopping at Claude Code 2.1.326's
+new "Adding a new directory" trust prompt before their first turn.
+
+### Upgrade notes
+
+- Upgrade the node agents. Runs already waiting at the prompt stay there: answer it, or stop and relaunch them after the
+  upgrade.
+
+### Fixed
+
+- **Claude Code runs stopped at "Adding a new directory".** From Claude Code 2.1.326, a directory passed with `--add-dir`
+  must be trusted like the working directory, or the session asks "This session hasn't worked here before. Is this a
+  directory you created or one you trust?" and an unattended run waits there forever. The run's memory folder is passed
+  that way, so every Claude Code run with memory on 2.1.326 or later stopped before its first turn. The node agent now
+  trusts the memory folder too, exactly that folder, in the run's own `.claude.json` (ADR-0021). Only the node agent
+  needs the update.
+
 ## [0.1.9] - 2026-11-16
 
 **v0.1.8 was tagged but never released** (its release build produced no images), so its changes ship in v0.1.9.
@@ -2069,7 +2089,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.5...v0.1.6

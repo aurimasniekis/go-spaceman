@@ -26,6 +26,9 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   - A fresh `CLAUDE_CONFIG_DIR` first shows the theme picker, then the folder-trust prompt for the working directory.
     Both are skipped when `$CLAUDE_CONFIG_DIR/.claude.json` contains `hasCompletedOnboarding: true`, `theme`, and
     `projects["<real path>"].hasTrustDialogAccepted: true`. The key is the real path (`/private/tmp/…` on macOS) (ADR-0021).
+  - From 2.1.326, a directory passed with `--add-dir` that is not trusted stops the session at "Adding a new directory …
+    This session hasn't worked here before" (default answer: No, exit). The same key, `projects["<real path>"]
+    .hasTrustDialogAccepted: true` for that directory, skips it (verified with 2.1.326; 2.1.325 does not ask).
   - The startup notice says auto mode is the default permission mode in this version.
   - Inherited `CLAUDE_CODE_CHILD_SESSION` (set inside another Claude Code session) turns transcript saving off; the
     launcher shim removes inherited session markers.

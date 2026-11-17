@@ -283,8 +283,9 @@
     there when they launched the run.
 - **Decision:**
   - Before a launch, the node agent merges into `$CLAUDE_CONFIG_DIR/.claude.json`: `hasCompletedOnboarding: true`, a
-    theme, and `hasTrustDialogAccepted: true` for exactly the run's working directory (symlinks resolved). Nothing else in
-    the file is changed, and no other directory is trusted.
+    theme, and `hasTrustDialogAccepted: true` for exactly the run's working directory and, when the run has one, the
+    memory folder it adds with `--add-dir` (symlinks resolved). Nothing else in the file is changed, and no other directory
+    is trusted. (The memory folder is trusted since Claude Code 2.1.326 started asking about `--add-dir` directories.)
   - The launcher shim removes inherited Claude Code and Codex session markers and node-level provider credentials
     (`ANTHROPIC_*`, `CLAUDE_CODE_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`) before applying the run's
     own secrets, so a run uses only its SpaceMan account (SM-ACCT-004).
