@@ -42,4 +42,21 @@ describe('Space role description', () => {
     open({ name: 'impl-web', template_id: 'rt_impl', description: 'Builds the web UI', revision: 1 } as SpaceRole)
     expect(screen.getByLabelText(/^Description/)).toHaveValue('Builds the web UI')
   })
+
+  it('saves every field of an existing role unchanged, and an empty description as an empty string', async () => {
+    const put = vi.spyOn(api, 'PUT').mockResolvedValue({ data: {}, response: new Response() } as never)
+    const role = {
+      name: 'impl-web', template_id: 'rt_impl', revision: 2, description: '', profile_id: 'prf_1', prompt_id: 'prm_1', prompt_pin: '3',
+      model: 'claude-opus-5-5', instructions: 'Be careful', settings: { effort: 'high' }, skills: [{ skill_id: 'skl_1', pin: '2' }],
+    } as unknown as SpaceRole
+    open(role)
+    expect(screen.getByLabelText(/^Description/)).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const body = (put.mock.calls[0][1] as { body: Record<string, unknown> }).body
+    expect(body).toEqual({
+      description: '', template_id: 'rt_impl', profile_id: 'prf_1', prompt_id: 'prm_1', prompt_pin: '3', model: 'claude-opus-5-5',
+      settings: { effort: 'high' }, instructions: 'Be careful', skills: [{ skill_id: 'skl_1', pin: '2' }],
+    })
+  })
 })

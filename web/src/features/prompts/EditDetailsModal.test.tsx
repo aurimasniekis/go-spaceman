@@ -15,9 +15,12 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
+const wrap = (p: Prompt, onClose: () => void, qc: QueryClient) =>
+  <MantineProvider><QueryClientProvider client={qc}><EditDetailsModal prompt={p} onClose={onClose} /></QueryClientProvider></MantineProvider>
+
 function open(onClose = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<MantineProvider><QueryClientProvider client={qc}><EditDetailsModal prompt={prompt} onClose={onClose} /></QueryClientProvider></MantineProvider>)
+  return { qc, ...render(wrap(prompt, onClose, qc)) }
 }
 
 describe('Edit details', () => {
@@ -31,7 +34,7 @@ describe('Edit details', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
     expect(patch).toHaveBeenCalledWith('/prompts/{prompt_id}', {
       params: { path: { prompt_id: 'prm_1' }, header: { 'If-Match': '"3"' } },
-      body: { name: 'Reviewer', description: 'Reviews pull requests' },
+      body: { description: 'Reviews pull requests' },
     })
   })
 
@@ -39,14 +42,29 @@ describe('Edit details', () => {
     patch.mockResolvedValue({ error: { title: 'conflict' }, response: new Response(null, { status }) } as never)
     const onClose = vi.fn()
     open(onClose)
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Renamed' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/Someone else changed this prompt/)
     expect(onClose).not.toHaveBeenCalled()
+    // after a conflict Save must not go through with stale data
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('keeps If-Match at the version loaded when the dialog opened, even if the prompt refetches', async () => {
+    patch.mockResolvedValue({ data: { ...prompt }, response: new Response() } as never)
+    const onClose = vi.fn()
+    const { qc, rerender } = open(onClose)
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Mine' } })
+    rerender(wrap({ ...prompt, version: 4, description: 'Someone else' } as Prompt, onClose, qc))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(patch.mock.calls[0][1]).toMatchObject({ params: { header: { 'If-Match': '"3"' } }, body: { description: 'Mine' } })
   })
 
   it('shows another error as it is', async () => {
     patch.mockRejectedValue(new ApiError('name is required', 422, 'invalid', {}))
     open()
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Renamed' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('name is required')
   })

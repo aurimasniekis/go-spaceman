@@ -16,20 +16,26 @@ export function EditDetailsModal({ prompt, onClose }: { prompt: Prompt; onClose:
   const qc = useQueryClient()
   const narrow = useNarrow()
   const [error, setError] = useState('')
+  const [stale, setStale] = useState(false)
+  // Pinned when the dialog opens: the watch stream refetches the prompt, and a live version with stale values would overwrite someone else's edit.
+  const [loaded] = useState(() => ({ version: prompt.version, name: prompt.name, description: prompt.description ?? '' }))
   const form = useForm({
-    defaultValues: { name: prompt.name, description: prompt.description ?? '' },
+    defaultValues: { name: loaded.name, description: loaded.description },
     onSubmit: async ({ value }) => {
       setError('')
+      const body: { name?: string; description?: string } = {}
+      if (value.name !== loaded.name) body.name = value.name
+      if (value.description !== loaded.description) body.description = value.description
+      if (Object.keys(body).length === 0) { onClose(); return }
       try {
-        unwrap(await api.PATCH('/prompts/{prompt_id}', { params: { path: { prompt_id: prompt.id }, header: { 'If-Match': ifMatch(prompt.version) } },
-          body: { name: value.name, description: value.description } }))
+        unwrap(await api.PATCH('/prompts/{prompt_id}', { params: { path: { prompt_id: prompt.id }, header: { 'If-Match': ifMatch(loaded.version) } }, body }))
         void qc.invalidateQueries({ queryKey: keys.prompt(prompt.id) })
         void qc.invalidateQueries({ queryKey: keys.prompts })
         notifyOk('Prompt details saved')
         onClose()
       } catch (e) {
+        if (isConflict(e)) setStale(true)
         setError(isConflict(e) ? 'Someone else changed this prompt since you opened it. Close this dialog to load the latest version, then try again.' : errorMessage(e))
-        if (isConflict(e)) void qc.invalidateQueries({ queryKey: keys.prompt(prompt.id) })
       }
     },
   })
@@ -45,7 +51,7 @@ export function EditDetailsModal({ prompt, onClose }: { prompt: Prompt; onClose:
           {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
-            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy} disabled={stale}>Save</Button>}</form.Subscribe>
           </Group>
         </Stack>
       </form>
