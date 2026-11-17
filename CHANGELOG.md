@@ -29,9 +29,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `role memory unavailable for this run`. Fix what the reason names, or delete that instance's checkout under
   `<data dir>/memory/<space>/<role>/instances/<instance>` (unpublished changes in it are lost, the shared history is
   kept). See troubleshooting, "Memory checkout refused". It never stages or materialises harness configuration
-  (`.claude/`, `.codex/`, `.agents/`, a top-level `.mcp.json`) from role memory. An existing checkout is cleaned up the
-  first time the node guards it after the upgrade (a run start or a checkpoint). Memory notes stay as they are; only
-  such files stop travelling.
+  (`.claude/`, `.codex/`, `.agents/`, a top-level `.mcp.json`) from role memory. Memory notes stay as they
+  are; only such files stop travelling.
 - **Renaming a role needs nodes on node protocol minor 14.** The rename moves the role's memory folder on the space's
   node (`memory.rename`), so a space whose node last connected with an older agent, or never connected, is refused
   (`409 node_too_old`) until the node agent is upgraded and has connected. Upgrade central first.
