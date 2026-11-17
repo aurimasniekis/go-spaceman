@@ -7349,6 +7349,23 @@
   file or one `ackMargin` rejected, the probe's answer became the run's first acknowledgement and the sweep took the
   run for clean, so the local records above central's sequence were never re-shipped. The run's catch-up compares
   with the local recording and clears the mark. `TestSweepReshipsWithoutASavedAck*` (agent).
+- **A lowering during the run's own catch-up (race fix, v0.1.11).** The recorder's probe and the catch-up sweep run
+  independently, so the lowered answer (decision 4) could arrive after the run's catch-up had started from the restored
+  value. That catch-up found nothing above it, then cleared the run's catch-up mark that the lowering had set and the
+  "not compared" mark. The sweep the lowering asked for then took the run for clean, because nothing it had sent was
+  above the lowered value. The local records between the two values never reached central, while new records above
+  the restored value did: a silent hole. The race showed up about once in 150 runs of
+  `TestRestartedRecorderBelowTheSavedAcknowledgement`. Now the catch-up reads its starting point together with a
+  per-run count of lowerings. It checks that count before every send and before it marks the run caught up. When the
+  count changed, it starts again from the lowered value, before anything above that value goes out (kept-back live
+  records included). `TestLoweredAckDuringTheRunsCatchUp` (agent) holds the catch-up until the lowered answer is
+  applied.
+- **Open: records shipped above a restored value before the lowered answer arrives.** A catch-up that starts from a
+  restored value can still ship local records above that value before the first answer arrives. This happens when the
+  previous process stored records it never had acknowledged. If central then turns out to hold less, it has already
+  stored those records, so it drops the re-shipped records between the lowered and the restored value as repeats. Two
+  things must coincide for this: central losing acknowledged records, and the agent stopping with unacknowledged
+  records on disk. It is not fixed here.
 - **Limitation of `ackMargin`.** The margin is measured against the local recording's last sequence, which after a
   long ship-through on a full disk can be far below what central stores, and is 0 for an empty recording directory.
   A believable file can then be rejected. The cost is only a catch-up that compares with the local recording and

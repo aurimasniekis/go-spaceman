@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ type seqCentral struct {
 func (c *seqCentral) until(what string, cond func() bool) {
 	c.t.Helper()
 	if !c.within(10*time.Second, cond) {
-		c.t.Fatalf("timed out waiting for %s (central holds up to %d, dropped %d repeats)", what, c.seq, c.drops)
+		c.t.Fatalf("timed out waiting for %s (central holds up to %d, dropped %d repeats, recs %d)", what, c.seq, c.drops, len(c.recs))
 	}
 }
 
@@ -230,8 +231,16 @@ func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 		}
 		return n == 100
 	})
-	if c.drops > 0 {
-		t.Fatalf("central dropped %d records as repeats", c.drops)
+	// The probe's lowered acknowledgement can restart the catch-up sweep mid-way, so a harmless re-ship may be dropped by
+	// central as a repeat: repeats are allowed, what must hold is that every record is at central, in order.
+	last := uint64(0)
+	for _, r := range c.recs {
+		if r.Seq > 150 && r.Seq <= 250 && r.Seq < last {
+			t.Fatalf("record %d reached central after %d", r.Seq, last)
+		}
+		if r.Seq <= 250 {
+			last = max(last, r.Seq)
+		}
 	}
 	for _, r := range c.recs {
 		if strings.Contains(string(r.Data), "after the restart") && r.Seq <= 300 {
@@ -243,6 +252,59 @@ func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 			t.Fatalf("local record %d (%s) numbered at or below the acknowledged 300", r.Seq, r.Kind)
 		}
 	}
+}
+
+// The lowered acknowledgement (central holds 150, the saved one says 300) arrives while the catch-up of the run is
+// already under way from the restored 300. That catch-up had nothing above 300 to re-ship; it must start again from
+// 150 rather than mark the run caught up and clear the mark the lowering set, or no later sweep re-ships 151..250 (a
+// silent hole at central, while the new output above 300 still arrives).
+func TestLoweredAckDuringTheRunsCatchUp(t *testing.T) {
+	const runID = "run_low"
+	var ag atomic.Pointer[Agent]
+	reached := make(chan struct{})
+	var once sync.Once
+	catchUpRunHook = func(id string, from uint64) {
+		if id != runID || from != 300 {
+			return
+		}
+		once.Do(func() { close(reached) })
+		// Hold the catch-up, started from the restored acknowledgement, until central's lower answer is applied.
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			a := ag.Load()
+			a.mu.Lock()
+			known := a.seqKnown[runID]
+			a.mu.Unlock()
+			if known {
+				return
+			}
+		}
+	}
+	t.Cleanup(func() { catchUpRunHook = nil })
+	a, c, term := restartedRecorderEnvWith(t, runID, 250, 300, 150, nil, func(a *Agent) { ag.Store(a) })
+	// Central answers nothing (the probe among it) until the catch-up of the run has begun from 300.
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the catch-up never began from the restored acknowledgement")
+	}
+	writeUntil(t, a, c, term, "after the restart")
+	c.until("the local records above 150 at central", func() bool { return countBetween(c.recs, 150, 250) == 100 })
+	for i, r := range c.recs[150:250] {
+		if r.Seq != uint64(151+i) {
+			t.Fatalf("central holds %d after %d, want %d", r.Seq, 150+i, 151+i)
+		}
+	}
+}
+
+// countBetween counts the records numbered above lo and up to hi.
+func countBetween(recs []recording.Record, lo, hi uint64) int {
+	n := 0
+	for _, r := range recs {
+		if r.Seq > lo && r.Seq <= hi {
+			n++
+		}
+	}
+	return n
 }
 
 // A program that ends while central is out of reach after the restart: its records, the close among them, wait for
@@ -358,5 +420,22 @@ func TestSeqGateBound(t *testing.T) {
 	}
 	if len(g.recs) != 0 || g.bytes != 0 || g.dropped {
 		t.Fatalf("take left %+v", g)
+	}
+}
+
+// A run this process launched (nothing on disk) already knows central's sequence: uncomparedRecording must not mark it
+// restored, or its first acknowledgement would be taken for a restored one and the run re-compared for nothing.
+func TestLaunchedRunIsNotMarkedUncompared(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.launchedRecording("run_launched")
+	a.uncomparedRecording("run_launched")
+	a.uncomparedRecording("run_foreign")
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.restored["run_launched"] {
+		t.Fatal("a run this process launched was marked restored")
+	}
+	if !a.restored["run_foreign"] {
+		t.Fatal("a run this process did not launch was not marked restored")
 	}
 }

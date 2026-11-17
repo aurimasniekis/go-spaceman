@@ -628,7 +628,7 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 		if clean {
 			continue
 		}
-		if err := a.catchUpRun(ctx, conn, gen, r, acked, served, false); err != nil {
+		if err := a.catchUpRun(ctx, conn, gen, r, served, false); err != nil {
 			return err
 		}
 	}
@@ -696,12 +696,15 @@ func (a *Agent) catchUpWaiting(ctx context.Context, conn *websocket.Conn, gen ui
 				continue
 			}
 			a.restoreAck(id)
-			if err := a.catchUpRun(ctx, conn, gen, r, a.ackedSeq(id), served, true); err != nil {
+			if err := a.catchUpRun(ctx, conn, gen, r, served, true); err != nil {
 				return err
 			}
 		}
 	}
 }
+
+// catchUpRunHook, when set (tests), runs when a run's catch-up has read the sequence it re-ships above.
+var catchUpRunHook func(runID string, from uint64)
 
 // shipBatchHook, when set (tests), runs after each batch a catch-up ships.
 var shipBatchHook func(runID string, batch int)
@@ -711,19 +714,48 @@ var shipBatchHook func(runID string, batch int)
 // restart without known acknowledgements their history can be large (ADR-0097); live runs are never paced.
 var endedCatchUpRate int64 = 8 << 20
 
-// catchUpRun ships a run's local records above from in batches, then what live shipments kept back meanwhile, until
-// nothing more was kept back, and marks the run caught up (atomically with that check, under the lock shipLive decides
-// under). Between batches it serves the other runs whose live output waits (catchUpWaiting with served, which this run
-// joins), and an ended run's batches are paced by endedCatchUpRate, unless it is served nested inside another run's
-// catch-up (nested): pacing there would hold the outer run's waiting live output back at the pace of an ended run.
-func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64, r runRow, from uint64, served map[string]bool, nested bool) error {
+// errLowered stops a run's catch-up whose starting point central lowered meanwhile (recordingAck): it starts again
+// from the lowered acknowledgement.
+var errLowered = errors.New("central's acknowledgement of the run was lowered during its catch-up")
+
+// catchUpRun ships a run's local records above central's acknowledgement in batches, then what live shipments kept
+// back meanwhile, until nothing more was kept back, and marks the run caught up (atomically with that check, under the
+// lock shipLive decides under). Between batches it serves the other runs whose live output waits (catchUpWaiting with
+// served, which this run joins), and an ended run's batches are paced by endedCatchUpRate, unless it is served nested
+// inside another run's catch-up (nested): pacing there would hold the outer run's waiting live output back at the pace
+// of an ended run.
+//
+// The acknowledgement it starts from is read here, with the run's count of lowerings (recordingAck): a first answer
+// below the restored acknowledgement can arrive while the catch-up already runs from the restored one (the run's
+// recorder probes independently of the pass). Every send and the final check compare that count, and a lowering
+// starts the catch-up again from the lowered point before anything above it goes out or the run is marked caught up:
+// otherwise the catch-up cleared the mark the lowering set, the next sweep took the run for clean, and the local
+// records between the lowered and the restored acknowledgement never reached central.
+func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64, r runRow, served map[string]bool, nested bool) error {
 	served[r.RunID] = true
+	var from, lowers uint64
+	begin := func() {
+		a.mu.Lock()
+		from, lowers = a.acked[r.RunID], a.lowers[r.RunID]
+		delete(a.unshipped, r.RunID)
+		a.mu.Unlock()
+		if catchUpRunHook != nil {
+			catchUpRunHook(r.RunID, from)
+		}
+	}
+	loweredLocked := func() bool { return a.lowers[r.RunID] != lowers }
 	batch := 0
 	paced := ended(r.State) && !nested
 	began, sentBytes := time.Now(), int64(0)
 	others := func() error { return a.catchUpWaiting(ctx, conn, gen, served) }
 	send := func(recs []recording.Record) error {
 		for start := 0; start < len(recs); start += 256 {
+			a.mu.Lock()
+			lowered := loweredLocked()
+			a.mu.Unlock()
+			if lowered {
+				return errLowered
+			}
 			end := min(start+256, len(recs))
 			if err := a.ship(ctx, conn, r.RunID, r.SpaceID, recs[start:end]); err != nil {
 				return err
@@ -759,14 +791,24 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 		}
 		return send(res.Records)
 	}
-	a.mu.Lock()
-	delete(a.unshipped, r.RunID)
-	a.mu.Unlock()
-	if err := readDisk(); err != nil {
-		return err
-	}
+	restart := true
 	for {
+		if restart {
+			restart = false
+			begin()
+			if err := readDisk(); errors.Is(err, errLowered) {
+				restart = true
+				continue
+			} else if err != nil {
+				return err
+			}
+		}
 		a.mu.Lock()
+		if loweredLocked() {
+			a.mu.Unlock()
+			restart = true
+			continue
+		}
 		h := a.held[r.RunID]
 		delete(a.held, r.RunID)
 		delete(a.unshipped, r.RunID)
@@ -775,7 +817,7 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 			if a.catchUpGen == gen {
 				a.caughtUp[r.RunID] = true
 			}
-			// Everything on disk above the restored acknowledgement was sent: sentSeq and acked decide from now on.
+			// Everything on disk above the acknowledgement was sent: sentSeq and acked decide from now on.
 			delete(a.restored, r.RunID)
 			a.mu.Unlock()
 			return nil
@@ -785,6 +827,10 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 			// Some output was not kept back: the local recording has it.
 			if err := readDisk(); err != nil {
 				a.putBack(r.RunID, h.recs, from, true)
+				if errors.Is(err, errLowered) {
+					restart = true
+					continue
+				}
 				return err
 			}
 		}
@@ -797,6 +843,10 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 		if err := send(later); err != nil {
 			// What did not go out is kept back again for the next pass: a record with no local copy exists only here.
 			a.putBack(r.RunID, later, from, false)
+			if errors.Is(err, errLowered) {
+				restart = true
+				continue
+			}
 			return err
 		}
 	}
@@ -888,6 +938,11 @@ func (a *Agent) recordingAck(ack proto.RecordingAck) {
 		}
 		a.seqFloor[ack.RunID] = max(a.seqFloor[ack.RunID], prev)
 		a.acked[ack.RunID] = ack.Seq
+		// A catch-up of the run under way from the restored value starts again from this one (catchUpRun).
+		if a.lowers == nil {
+			a.lowers = map[string]uint64{}
+		}
+		a.lowers[ack.RunID]++
 		a.markUnshippedLocked(ack.RunID)
 		start = a.connected && a.startCatchUpLocked()
 	case advanced:
