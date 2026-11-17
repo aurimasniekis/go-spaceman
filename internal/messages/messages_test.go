@@ -625,8 +625,7 @@ func TestNotifyControlTxOncePerKey(t *testing.T) {
 	}
 }
 
-// Unacknowledged skips what the run itself sent (the sentBy skip), but keeps a message it scheduled for itself and
-// mail from others.
+// Unacknowledged skips what the run itself sent (the sentBy skip) and keeps mail from others.
 func TestUnacknowledgedSkipsOwnMessages(t *testing.T) {
 	f := newFx(t)
 	own := From{Kind: "run", ID: ctrlRun}

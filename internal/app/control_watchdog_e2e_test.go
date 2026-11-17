@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
+	"github.com/aurimasniekis/go-spaceman/internal/queue"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // SM-CTRL-008, ADR-0099: a live control that leaves a worker's message unacknowledged is reminded through its terminal
@@ -139,5 +142,57 @@ func TestControlWatchdog(t *testing.T) {
 	}
 	if n := e.auditCount("run.stop_requested", audit.OutcomeSuccess); n < 1 {
 		t.Fatalf("no stop audited")
+	}
+}
+
+// read() leaves out ready tasks no account would launch now (every account of the pool at a usage limit): they wait
+// for the reset, not for control (ADR-0099).
+func TestControlWatchdogReadSkipsHeldTasks(t *testing.T) {
+	t.Parallel()
+	e := newFleetEnv(t)
+	e.enroll()
+	e.startAgent()
+	ctx := context.Background()
+	admin := audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "held", Name: "Held", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accs := bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	ctrl, _ := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: hns.KindClaude})
+	eventually(t, "control running", func() bool { return e.run1(ctrl.ID).Observed == "running" })
+	e.run.SetStatus(e.run1(ctrl.ID).TerminalID, "idle")
+	unit := 20 * time.Millisecond
+	e.c.Supervisor.IdleUnit = unit
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.c.Queue.Create(ctx, admin, sp.ID, queue.CreateInput{Title: "Waiting", Status: queue.Ready}); err != nil {
+		t.Fatal(err)
+	}
+	startable := func() int {
+		e.c.Watchdog.Pass(ctx)
+		s, _ := e.c.Watchdog.State(sp.ID)
+		return s.Backlog.Startable
+	}
+	eventually(t, "a ready task is startable", func() bool { return startable() == 1 })
+	now := time.Now().UTC()
+	i := 0
+	for _, acc := range accs {
+		i++
+		if err := e.c.Store.W().TxNamed(ctx, "seed", func(tx *store.Tx) error {
+			_, err := tx.SQL.ExecContext(ctx, `INSERT INTO usage_limits (id, space_id, scope, account_id, kind, resets_at, source, first_run_id, seen_at, created_at, updated_at)
+				VALUES (?, ?, 'account', ?, 'five_hour', ?, 'transcript', 'run_seed', ?, ?, ?)`, fmt.Sprintf("ulm_held_%d", i), sp.ID, acc,
+				now.Add(2*time.Hour).UnixMicro(), now.UnixMicro(), now.UnixMicro(), now.UnixMicro())
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := startable(); n != 0 {
+		t.Fatalf("a ready task no account would launch counted: %d", n)
 	}
 }

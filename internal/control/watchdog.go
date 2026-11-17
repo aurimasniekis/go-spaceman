@@ -172,12 +172,12 @@ func assess(o observation, n time.Duration, now time.Time) verdict {
 // waitsOnAsk reports whether control, with a question of its run still open, is waiting for the answer: it asked in
 // its latest turn (the asking turn may have finished since, but no turn after it has; other tool calls in that turn,
 // such as telling a worker, do not count). With nothing known of its tool calls (central restarted), any open question
-// control asked counts.
+// control asked counts until the watchdog sees a turn of it finish.
 func waitsOnAsk(o observation) bool {
 	if o.Act.asked {
 		return o.Control.Turn <= o.Act.askTurn+1
 	}
-	return o.Act.tool == ""
+	return o.Act.tool == "" && o.Act.turnAt.IsZero()
 }
 
 // backlog counts what waits for control longer than cutoff, and returns when the oldest of what only control's handling
@@ -575,7 +575,7 @@ func (w *Watchdog) check(ctx context.Context, spaceID string) {
 // so their dropping out is no sign of handling and is not judged; when they were all that waited, the backlog empties.
 func (ep *episode) progress(v verdict) bool {
 	b := v.Backlog
-	return b.Empty() || b.Messages < ep.seen.Messages || b.Startable < ep.seen.Startable || v.Oldest.After(ep.oldest)
+	return b.Empty() || b.Messages < ep.seen.Messages || b.Startable < ep.seen.Startable || !ep.oldest.IsZero() && v.Oldest.After(ep.oldest)
 }
 
 // settle records a space's state after a pass.

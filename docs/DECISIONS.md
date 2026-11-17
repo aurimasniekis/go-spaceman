@@ -6655,7 +6655,7 @@
        `spaceman_human_ask` may have gone on to other tool calls (telling a worker, setting a task's status) and
        finished, but no later turn has. The dispatcher records the run's finished turns when the question is asked.
        After a central restart, which loses that record, any open human action that control asked counts until
-       control's next tool call;
+       the watchdog sees a turn of control finish (a turn without tool calls ends it too);
      - **the space is not active** (paused or archived), or an operator has taken over control's terminal;
      - **the run is not control's live run:** no control run, or it is starting, stopping or ended (auto-start and
        recovery own those cases).
@@ -6722,6 +6722,11 @@
   - A control that answers every nudge with a turn but leaves the backlog is reminded at a growing interval and its
     people are told after `control_watchdog_nudges` reminders; a control that handles any part of the backlog starts
     a new episode, so steady progress is never escalated.
+  - A backlog made only of reviews and ended runs gets a single nudge: they count only until control's next activity,
+    and the nudge's own turn is that activity, so they drop out and the episode ends. The same happens at a central
+    restart, which also forgets control's last activity.
+  - Fetching messages without acknowledging them (`spaceman_messages`) is a tool call, so each gives control a fresh `N`
+    minute window; the episode and its count carry on.
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The nudge is safe input with no untrusted
   content, refused during takeovers and limits like every notice. The restart is off by default, goes through the same
   launch resolution, admission and audit as recovery, and is bounded by the same restart budget.

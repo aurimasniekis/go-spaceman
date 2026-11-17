@@ -562,3 +562,130 @@ func TestWatchdogTakeRestart(t *testing.T) {
 		t.Fatal("a restart is taken exactly once")
 	}
 }
+
+// A backlog that began with reviews alone has no oldest message or task (zero): a message or a startable task that
+// arrives later is more backlog, not handling, so the count carries on to escalation.
+func TestWatchdogLaterArrivalKeepsReviewEpisode(t *testing.T) {
+	e := newWDEnv(t)
+	e.o.Unacked = nil
+	e.o.Tasks = []*queue.Task{task("tsk_r", queue.Review, "run_gone", ago(30*time.Minute))}
+	e.pass(0)
+	if s := e.pass(5 * time.Minute); s.Nudges != 2 {
+		t.Fatalf("%+v", s)
+	}
+	e.o.Unacked = []time.Time{ago(20 * time.Minute)}
+	if s := e.pass(10 * time.Minute); s.Nudges != 3 || s.Backlog.Reviews != 1 || s.Backlog.Messages != 1 {
+		t.Fatalf("a message reset the count: %+v", s)
+	}
+	e.o.Tasks = append(e.o.Tasks, task("tsk_s", queue.Ready, "", ago(30*time.Minute)))
+	if s := e.pass(20 * time.Minute); s.Nudges < 4 || !s.Escalated || e.escalated != 1 {
+		t.Fatalf("a startable task reset the count: %+v, %d escalations", s, e.escalated)
+	}
+}
+
+// After a central restart (nothing known of control's tool calls) an open question holds the guard only until the
+// watchdog sees a turn of control advance; control that takes turns without tool calls is nudged.
+func TestWatchdogHumanWaitEndsWithTurnAfterRestart(t *testing.T) {
+	e := newWDEnv(t)
+	e.o.HumanOpen = 1
+	if s := e.pass(0); s.Guard != guardHuman || len(e.nudges) != 0 {
+		t.Fatalf("first pass: %+v", s)
+	}
+	e.o.Control.Turn++
+	if s := e.pass(30 * time.Minute); s.Guard != guardActive || len(e.nudges) != 0 {
+		t.Fatalf("a turn is activity: %+v", s)
+	}
+	if s := e.pass(15 * time.Minute); s.Guard != "" || s.Nudges != 1 || len(e.nudges) != 1 {
+		t.Fatalf("not nudged after a turn: %+v", s)
+	}
+	// With a tool call known, and none after the asking turn, the question still holds.
+	if waitsOnAsk(observation{Control: &fleet.Run{Turn: 3}, Act: activity{tool: "x", asked: true, askTurn: 2}}) != true {
+		t.Fatal("asked in the latest turn")
+	}
+}
+
+// The ready task is what the oldest-waiting time follows.
+func TestWatchdogReadyTaskFeedsOldest(t *testing.T) {
+	o := stalled()
+	o.Unacked = nil
+	o.Tasks = []*queue.Task{task("tsk_a", queue.Ready, "", ago(40*time.Minute)), task("tsk_b", queue.Ready, "", ago(20*time.Minute))}
+	if v := assess(o, wdN, wdNow); !v.Oldest.Equal(ago(40 * time.Minute)) {
+		t.Fatalf("oldest %v", v.Oldest)
+	}
+	o.Unacked = []time.Time{ago(60 * time.Minute)}
+	if v := assess(o, wdN, wdNow); !v.Oldest.Equal(ago(60 * time.Minute)) {
+		t.Fatalf("oldest with a message %v", v.Oldest)
+	}
+}
+
+// A pass that did not read the backlog (the space is paused) leaves the episode alone: the empty backlog it reports is
+// not handling.
+func TestWatchdogPausedSpaceKeepsEpisode(t *testing.T) {
+	e := newWDEnv(t)
+	e.pass(0)
+	e.o.SpaceState = "paused"
+	if s := e.pass(time.Minute); s.Guard != guardPaused || s.Nudges != 1 {
+		t.Fatalf("paused: %+v", s)
+	}
+	e.o.SpaceState = "active"
+	if s := e.pass(5 * time.Minute); s.Nudges != 2 {
+		t.Fatalf("the episode was lost: %+v", s)
+	}
+}
+
+// A refused spaceman_human_ask is no question: it starts no guard. When the run's turn can't be read, the turn the
+// last pass saw stands in.
+func TestWatchdogHumanAskRecording(t *testing.T) {
+	e := newWDEnv(t)
+	e.o.Control.Turn = 7
+	e.pass(0)
+	call := func(err error) {
+		d := e.w.Tools(func(context.Context, *fleet.RunPrincipal, string, json.RawMessage) (json.RawMessage, error) {
+			return nil, err
+		})
+		_, _ = d(context.Background(), &fleet.RunPrincipal{RunID: "run_ctl"}, "spaceman_human_ask", nil)
+	}
+	call(errors.New("refused"))
+	e.w.mu.Lock()
+	asked := e.w.acts["run_ctl"].asked
+	e.w.mu.Unlock()
+	if asked {
+		t.Fatal("a failed human_ask started the guard")
+	}
+	e.w.turnOf = func(context.Context, string) (int64, bool) { return 0, false }
+	call(nil)
+	e.w.mu.Lock()
+	a := *e.w.acts["run_ctl"]
+	e.w.mu.Unlock()
+	if !a.asked || a.askTurn != 7 {
+		t.Fatalf("fallback turn: %+v", a)
+	}
+}
+
+// A kicked space is checked once and its mark cleared, so it is not checked again by the next wake.
+func TestWatchdogKickClearsMark(t *testing.T) {
+	e := newWDEnv(t)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	done := make(chan struct{})
+	go func() { e.w.Run(ctx); close(done) }()
+	e.w.Kick("spc_a")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if s, _ := e.w.State("spc_a"); s.Nudges == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the kicked space was not checked")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	e.w.mu.Lock()
+	left := len(e.w.kicked)
+	e.w.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d kicks left", left)
+	}
+	stop()
+	<-done
+}
