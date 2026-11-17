@@ -6569,7 +6569,9 @@
     to say "pick the role whose description fits".
   - The descriptions are visible to the control agent, so they must not contain secrets. They are already visible to
     every operator who can read the catalog.
-  - Skills keep fixed metadata. The same `PATCH` pattern (`update-skill`) is a follow-up.
+  - Skills: follow-up F1 (RD-F1) is implemented as `update-skill` (`PATCH /skills/{skill_id}`, see the table below). Skills
+    are installation-wide, so a rename shows in every space that uses the skill. The provider's `spaceman_skill` metadata
+    (name and description in place) remains a follow-up.
 - **Requirements:** the implementation adds SM-PROMPT-010 (prompt name and description edited in place without a new
   version), SM-PROMPT-011 (a space role's own description) and SM-CTRL-007 (control lists the space's roles with their
   effective descriptions) to GOAL.md and TRACEABILITY.md, as `todo` until their tests land.
@@ -6583,7 +6585,7 @@
   | T4 | Web: an **Edit details** dialog on the prompt page and a description on the space role form, `make web-check`, screenshots if they change. | T1, T2 | Sonnet |
   | T5 | Docs: the guide's "Starter roles" section says the templates are global and explains per-space overrides, plus template description edits, `spaceman_roles_list` in the control docs, the starter `control.md` line, and GOAL, TRACEABILITY and PLAN entries. `make site-check`. | T1–T3 | Haiku |
   | P1 | Provider: in-place `spaceman_prompt` `name` and `description` through `UpdatePrompt`, publishing only on content changes, `spaceman_space_role.description`, a clear error from an older central, unit and acceptance tests, regenerated docs. A PR into the provider's main. | T1, T2 merged | Sonnet |
-  | F1 | Follow-up, not in this request: `update-skill` (the same pattern for skills) and the provider's `spaceman_skill` metadata. | — | Haiku |
+  | F1 | Follow-up: `update-skill` (the same pattern for skills), implemented (RD-F1; skills are installation-wide, so a rename shows in every space). The provider's `spaceman_skill` metadata remains a follow-up. | — | Haiku |
 
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. `update-prompt` uses the existing prompt
   write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no

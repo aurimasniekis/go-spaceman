@@ -33,6 +33,9 @@ func TestAutoExcluded(t *testing.T) {
 	if c, ok := Classify("list-spaces", api.FilteredRead()); !ok || c != api.TelegramBoth {
 		t.Errorf("list-spaces: %q %v", c, ok)
 	}
+	if c, ok := Classify("update-skill", api.Global(authz.SkillWrite)); !ok || c != api.TelegramExcluded {
+		t.Errorf("update-skill: %q %v, want excluded from Telegram", c, ok)
+	}
 	if c, ok := Classify("not-an-op", api.Rule{Session: true}); !ok || c != api.TelegramExcluded {
 		t.Errorf("auto-excluded unknown op: %q %v", c, ok)
 	}

@@ -287,6 +287,7 @@ var Ops = map[string]api.TelegramClass{
 	"update-mcp-server":             api.TelegramExcluded,
 	"update-node":                   api.TelegramExcluded,
 	"update-schedule":               api.TelegramExcluded,
+	"update-skill":                  api.TelegramExcluded,
 	"update-space":                  api.TelegramExcluded,
 	"update-space-repository":       api.TelegramExcluded,
 	"update-subscription":           api.TelegramExcluded,
