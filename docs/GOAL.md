@@ -407,6 +407,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   dedicated fields and other keys as JSON, Terraform manages them, and the permission mode ceiling still applies
   (operator request 2026-11-06, §9).
 - SM-PROMPT-009 A space role can be renamed in place. Its live references follow the new name and the history of what happened keeps the name it was written with. A busy role is refused, and the operation is audited and uses the role write permission (ADR-0093).
+- SM-PROMPT-010 A prompt's name and description can be changed in place, by ID or slug, under the prompt's `version` (If-Match). The slug and kind stay fixed, no prompt version is created, and the change is audited by field name only and uses the prompt write permission (ADR-0095).
 
 ### SM-XSPACE — Cross-space collaboration
 - SM-XSPACE-001 Discovery, questions, delegation, disclosure and knowledge permissions are separate.

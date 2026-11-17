@@ -204,6 +204,15 @@ func TestCLIAgainstCentral(t *testing.T) {
 	e.code(t, ExitUsage, "prompt", "publish", "reviewer")
 	e.ok(t, "prompt", "list")
 	e.ok(t, "prompt", "get", "reviewer")
+	// SM-PROMPT-010: update changes name/description in place (only the flags given), no new version.
+	if u := e.obj(t, "prompt", "update", "reviewer", "--description", "checks work"); str(u, "description") != "checks work" || str(u, "name") != str(pr, "name") || len(items(t, u, "versions")) != len(items(t, pr, "versions")) {
+		t.Fatalf("prompt update %v", u)
+	}
+	if u := e.obj(t, "prompt", "update", "reviewer", "--name", "Reviewer 2"); str(u, "name") != "Reviewer 2" || str(u, "description") != "checks work" || str(u, "slug") != "reviewer" {
+		t.Fatalf("prompt update name %v", u)
+	}
+	e.code(t, ExitConflict, "prompt", "update", "reviewer", "--name", "x", "--if-match", "1")
+	e.code(t, ExitAPI, "prompt", "update", "reviewer", "--name", "")
 	e.ok(t, "skill", "list")
 
 	// Profiles, role templates and space roles (the GET operations added for the CLI).
