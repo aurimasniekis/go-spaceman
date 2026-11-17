@@ -4209,6 +4209,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/watchdog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's control watchdog state
+         * @description What the control watchdog (ADR-0099) saw at its last pass over the space: why it left control alone, or how many reminders it sent and whether it escalated, with the waiting work as counts. Read-only; the watchdog is configured with the control_watchdog_minutes, control_watchdog_nudges and control_watchdog_restart limits.
+         */
+        get: operations["get-space-watchdog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/xspace/peers": {
         parameters: {
             query?: never;
@@ -6080,6 +6100,20 @@ export interface components {
             stream?: string;
             /** @description nats://host:port or tls://host:port */
             url: string;
+        };
+        ControlBacklog: {
+            /** Format: int64 */
+            exited: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            free_slots: number;
+            /** Format: int64 */
+            messages: number;
+            /** Format: int64 */
+            reviews: number;
+            /** Format: int64 */
+            startable: number;
         };
         "Create-api-tokenRequest": {
             /**
@@ -12048,6 +12082,39 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["SettingsSpace"][];
+        };
+        SpaceWatchdog: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceWatchdog.json
+             */
+            readonly $schema?: string;
+            backlog: components["schemas"]["ControlBacklog"];
+            /** Format: date-time */
+            checked_at?: string;
+            control_run?: string;
+            escalated: boolean;
+            /** @description Why the last pass left the space alone (off, space_not_active, no_live_control, taken_over, usage_limit, waiting_for_person, busy, no_backlog, recently_active); empty while the watchdog is reminding */
+            guard?: string;
+            /** Format: date-time */
+            last_activity?: string;
+            /** Format: date-time */
+            last_nudge?: string;
+            /** Format: date-time */
+            next_nudge?: string;
+            /**
+             * Format: int64
+             * @description Reminders sent in the current stretch of the same backlog
+             */
+            nudges: number;
+            /** @description false until the watchdog has passed over the space since central started; the rest is then empty */
+            observed: boolean;
+            /**
+             * @description off: the watchdog is off or the space not active; idle: nothing is being nudged; nudging: control was reminded and the backlog still waits; escalated: the reminders went unanswered and the space's people were told
+             * @enum {string}
+             */
+            status: "off" | "idle" | "nudging" | "escalated";
         };
         SpaceexportCounts: {
             /** Format: int64 */
@@ -22865,6 +22932,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageSeriesPage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-watchdog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceWatchdog"];
                 };
             };
             /** @description Error */

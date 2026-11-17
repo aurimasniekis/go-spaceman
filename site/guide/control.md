@@ -98,6 +98,31 @@ Both behaviours are [limits](./limits) of the space. Turn **Start control on new
 start control only by hand. Set **Stop idle control** (`control_idle_stop_minutes`) to 0 to keep an idle control
 running. Turning auto-start off never stops a control that is running.
 
+## The control watchdog
+
+A control that is alive and idle can still leave work waiting: a worker's message nobody acknowledged, a task in
+review whose worker finished, a run that ended, or free worker slots while tasks are ready. The **watchdog** notices
+this and reminds control.
+
+- **When.** Work has waited longer than the space's **Control watchdog** limit (`control_watchdog_minutes`, 15 by
+  default, 0 turns it off) and control has done nothing for that long: no tool call, no new turn.
+- **The reminder.** One line typed into control's terminal, naming only counts ("3 unacknowledged messages, 1 failed
+  run are waiting for you…"). It carries no message text, titles or identifiers; control reads those through its
+  tools. The first reminder goes out at once; the next ones follow after 5 minutes, then 10, 20 and 40, up to an hour.
+  Each reminder is audited.
+- **Left alone.** The watchdog never reminds a control that is working, waiting for a person, at a usage limit or
+  taken over, nor in a space that is paused or archived.
+- **Escalation.** When `control_watchdog_nudges` reminders in a row (3 by default, 0 never) leave the work waiting,
+  the space's people get one human action, "Control is not responding in …", with the counts. If
+  `control_watchdog_restart` is on (off by default), control is also stopped and started again, resuming its session,
+  within the supervisor's restart budget.
+- **Seeing it.** The Agents card on the space overview shows a **being nudged** or **not responding** badge on control
+  while the watchdog is acting. `spaceman space watchdog <space>` and `GET /api/v1/spaces/{space_id}/watchdog` give the
+  state as of the last pass (one a minute): why it holds back, how many reminders were sent, whether it escalated and
+  what waits. It is read-only, needs the permission to read runs, and starts over when central restarts.
+
+The three settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
+
 ## Recovery
 
 If a control run ends while it was still wanted (it crashed or its harness exited), SpaceMan starts a new control run

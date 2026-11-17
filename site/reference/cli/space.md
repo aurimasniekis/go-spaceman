@@ -20,6 +20,7 @@ Aliases: `spaces`.
 | [`spaceman space resume`](#spaceman-space-resume) | Resume a paused space |
 | [`spaceman space update`](#spaceman-space-update) | Edit a space's profile (only the flags given change) |
 | [`spaceman space usage`](#spaceman-space-usage) | A space's usage totals and runs (runs with unknown usage are counted separately) |
+| [`spaceman space watchdog`](#spaceman-space-watchdog) | The control watchdog's state for a space: why it holds back, or its reminders and escalation |
 
 ## spaceman space archive
 
@@ -362,4 +363,14 @@ spaceman space usage <space> [flags]
 ```
 
 API: `get-space-usage` ([HTTP API](../api)).
+
+## spaceman space watchdog
+
+The control watchdog's state for a space: why it holds back, or its reminders and escalation.
+
+```sh
+spaceman space watchdog <space> [flags]
+```
+
+API: `get-space-watchdog` ([HTTP API](../api)).
 

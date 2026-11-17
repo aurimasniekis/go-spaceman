@@ -7040,7 +7040,7 @@
 ### ADR-0099 — A control watchdog nudges a stalled control and escalates when the nudges go unanswered
 
 - **Status:** Proposed, 2026-11-17 (operator request for v0.1.11, after an incident). New requirement SM-CTRL-008. No
-  migration, no node protocol change, no new API operation in this step: the settings are three new space limits, and
+  migration, no node protocol change, no new API operation in this step (the read-only state follows as `get-space-watchdog`, `spaceman space watchdog` and a badge on the control row): the settings are three new space limits, and
   watchdog state is kept in central's memory. Extends ADR-0056 (control auto-start and idle stop) and SM-COMM-003
   (terminal notices).
 - **Context:** in a space with several workers, four workers finished and sent their results. Their messages and the

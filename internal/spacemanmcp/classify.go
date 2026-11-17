@@ -388,6 +388,7 @@ var Table = map[string]Entry{
 	// Usage-limit holds and parked runs' waits (ADR-0079): identifiers, kinds and times only.
 	"list-space-usage-limits":     {Read, rRead},
 	"list-space-limit-waits":      {Read, rRead},
+	"get-space-watchdog":          {Read, rRead},
 	"list-space-account-switches": {Read, rRead},
 	// Clearing a space's own hold lets its launches through; a wrong clear only costs a refused launch at the limit.
 	"clear-space-usage-limit": {Write, rSpaceWrite},
