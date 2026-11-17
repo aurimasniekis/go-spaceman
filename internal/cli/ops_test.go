@@ -472,7 +472,107 @@ func TestRoleSetSkills(t *testing.T) {
 	}
 	e.code(t, ExitUsage, "role", "set", "--space", spaceID, "reviewer", "--template", "rtp_1", "--skill", "@skv_2")
 
-	if out := e.ok(t, "role", "set", "--help"); !strings.Contains(out, "so are the role's skills") {
+	if out := e.ok(t, "role", "set", "--help"); !strings.Contains(out, "the template's skills stay") {
 		t.Fatalf("help must say role set replaces skills: %s", out)
 	}
+}
+
+// --skill resolves slugs and slug@number through the space's role options; IDs need no lookup.
+func TestRoleSetSkillSlugs(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	echo := func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) }
+	f.on("PUT "+sp+"/roles/reviewer", echo)
+	f.json("GET "+sp+"/role-options", 200, map[string]any{"skills": []any{
+		map[string]any{"id": "skl_a", "slug": "alpha", "versions": []any{
+			map[string]any{"id": "skv_1", "number": 1}, map[string]any{"id": "skv_2", "number": 2}}},
+		map[string]any{"id": "skl_b", "slug": "beta", "versions": []any{}},
+	}})
+	e := f.env()
+	set := func(args ...string) {
+		t.Helper()
+		e.ok(t, append([]string{"role", "set", "--space", spaceID, "reviewer", "--template", "rtp_1"}, args...)...)
+	}
+	sent := func() []any {
+		t.Helper()
+		sk, _ := f.last("PUT", sp+"/roles/reviewer").body["skills"].([]any)
+		return sk
+	}
+	lookups := func() int { return f.count("GET", sp+"/role-options") }
+
+	set("--skill", "skl_a", "--skill", "skl_b@skv_2")
+	if lookups() != 0 {
+		t.Fatalf("IDs must not look anything up")
+	}
+	set("--skill", "alpha@2,beta")
+	sk := sent()
+	if lookups() != 1 || len(sk) != 2 {
+		t.Fatalf("lookups %d skills %v", lookups(), sk)
+	}
+	if a := sk[0].(map[string]any); a["skill_id"] != "skl_a" || a["pin"] != "skv_2" {
+		t.Fatalf("first %v", a)
+	}
+	if b := sk[1].(map[string]any); b["skill_id"] != "skl_b" || b["pin"] != nil {
+		t.Fatalf("second %v", b)
+	}
+	set("--skill", "skl_a@1")
+	if a := sent()[0].(map[string]any); a["pin"] != "skv_1" {
+		t.Fatalf("skl@number %v", a)
+	}
+
+	// --skill "" clears; it sends an empty list and needs no lookup.
+	before := lookups()
+	set("--skill", "")
+	if sk := f.last("PUT", sp+"/roles/reviewer").body["skills"]; sk == nil || len(sk.([]any)) != 0 || lookups() != before {
+		t.Fatalf("clear %v", sk)
+	}
+
+	bad := func(code int, args ...string) {
+		t.Helper()
+		e.code(t, code, append([]string{"role", "set", "--space", spaceID, "reviewer", "--template", "rtp_1"}, args...)...)
+	}
+	bad(ExitNotFound, "--skill", "skl@") // slug "skl", empty pin
+	bad(ExitUsage, "--skill", "alpha@latest")
+	bad(ExitUsage, "--skill", "alpha@0")
+	bad(ExitNotFound, "--skill", "nope")
+	bad(ExitNotFound, "--skill", "alpha@9")
+	bad(ExitNotFound, "--skill", "beta@1")
+}
+
+func TestRoleSetSkillAmbiguousSlug(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	f.json("GET "+sp+"/role-options", 200, map[string]any{"skills": []any{
+		map[string]any{"id": "skl_a", "slug": "dup"}, map[string]any{"id": "skl_b", "slug": "dup"}}})
+	e := f.env()
+	e.code(t, ExitUsage, "role", "set", "--space", spaceID, "reviewer", "--template", "rtp_1", "--skill", "dup")
+}
+
+// -f supplies skills too, a flag wins over it, and a non-string entry is a usage error, not a panic.
+func TestRoleSetSkillFile(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	echo := func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) }
+	f.on("PUT "+sp+"/roles/reviewer", echo)
+	e := f.env()
+	dir := t.TempDir()
+	write := func(name, doc string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	good := write("good.json", `{"template_id":"rtp_1","skill":["skl_f"]}`)
+	e.ok(t, "role", "set", "--space", spaceID, "reviewer", "-f", good)
+	sk := f.last("PUT", sp+"/roles/reviewer").body["skills"].([]any)
+	if len(sk) != 1 || sk[0].(map[string]any)["skill_id"] != "skl_f" {
+		t.Fatalf("file skills %v", sk)
+	}
+	e.ok(t, "role", "set", "--space", spaceID, "reviewer", "-f", good, "--skill", "skl_g")
+	sk = f.last("PUT", sp+"/roles/reviewer").body["skills"].([]any)
+	if len(sk) != 1 || sk[0].(map[string]any)["skill_id"] != "skl_g" {
+		t.Fatalf("flag must win over the file: %v", sk)
+	}
+	e.code(t, ExitUsage, "role", "set", "--space", spaceID, "reviewer", "-f", write("bad.json", `{"template_id":"rtp_1","skill":[7]}`))
 }

@@ -113,7 +113,7 @@ API: `preview-space-role` ([HTTP API](../api)).
 
 Configure a role in a space (creates it, or replaces its configuration, skills included).
 
-Creates the role, or replaces its whole configuration: every field not given is cleared, and so are the role's skills unless --skill is repeated for each one to keep.
+Creates the role, or replaces its whole configuration: every field not given is cleared. Without --skill, the skills this space role adds are cleared too (the template's skills stay); repeat --skill for each one to keep.
 
 ```sh
 spaceman role set <name> [flags]
@@ -124,7 +124,7 @@ API: `save-space-role` ([HTTP API](../api)).
 Example:
 
 ```sh
-spaceman role set --space payments reviewer --template tpl_01... --skill skl_01... --skill skl_02...@skv_01...
+spaceman role set --space payments reviewer --template tpl_01... --skill skl_01... --skill release-notes@2
 ```
 
 | Flag | Type | Default | Description |
@@ -137,7 +137,7 @@ spaceman role set --space payments reviewer --template tpl_01... --skill skl_01.
 | `--prompt` | string |  | prompt ID |
 | `--prompt-pin` | string |  | published prompt version to pin (empty follows the latest) |
 | `--setting` | string, repeatable |  | harness setting (key=value, repeatable) |
-| `--skill` | string, repeatable |  | skill ID to keep on the role (replaces the role's skills), optionally pinned as &lt;id&gt;@&lt;published-version-id&gt; (empty pin follows the latest) (repeatable or comma-separated) |
+| `--skill` | string, repeatable |  | skill to keep on the role (ID or slug), optionally pinned as &lt;skill&gt;@&lt;version&gt; (a published version number or ID; no pin follows the latest). Replaces the role's own skills; "" clears them (repeatable or comma-separated) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--template` | string |  | role template ID (required for a new role) |
 
