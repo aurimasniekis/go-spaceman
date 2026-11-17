@@ -1471,6 +1471,20 @@ type SpaceRoleAccount struct {
 	CreatedBy string
 }
 
+type SpaceRoleRename struct {
+	ID             string
+	SpaceID        string
+	FromName       string
+	ToName         string
+	RenamedAt      int64
+	RenamedBy      string
+	NodeID         string
+	NodeState      string
+	NodeMessage    string
+	NodeDoneAt     sql.NullInt64
+	CentralMovedAt sql.NullInt64
+}
+
 type SpaceSchedule struct {
 	ID              string
 	SpaceID         string

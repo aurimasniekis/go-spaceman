@@ -316,3 +316,29 @@ func (q *Queries) UpdateSkillDraft(ctx context.Context, arg UpdateSkillDraftPara
 	}
 	return result.RowsAffected()
 }
+
+const updateSkillMeta = `-- name: UpdateSkillMeta :execrows
+UPDATE skills SET name = ?, description = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?
+`
+
+type UpdateSkillMetaParams struct {
+	Name        string
+	Description string
+	UpdatedAt   int64
+	ID          string
+	Version     int64
+}
+
+func (q *Queries) UpdateSkillMeta(ctx context.Context, arg UpdateSkillMetaParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSkillMeta,
+		arg.Name,
+		arg.Description,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

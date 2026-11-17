@@ -182,7 +182,8 @@ Other facts:
 retries:
 
 1. Validate `to` against the role regex. Load `space_roles(space, from)`; if it is missing, return 404. If an
-   `If-Match` revision is given and differs, return 412.
+   `If-Match` revision is given and differs, return 409 `precondition_failed`. (This departs from the earlier 412 on
+   purpose, to match the API's documented status contract; see §3.4.)
 2. **Blockers** (decision 2). Collect all of them, then fail once with the list (run ids, wait ids, `relocation`,
    `dream run …`).
 3. **Target free** (decision 3).
@@ -331,8 +332,9 @@ rename is refused during a relocation, decision 2). A node that is gone for good
   - Body `{new_name}`, optional `If-Match` (role revision).
   - Returns `200` with the renamed `SpaceRole` plus `rename: {id, node_state, node_id}`.
   - Rule: `InSpace(authz.SpaceConfigWrite)`, the same as save and delete; no step-up, matching delete, which loses more.
-  - Errors: 404 (no role), 409 (`role_busy` with the blockers; `name_taken`; `node_too_old`), 412 (revision), 400
-    (invalid or same name).
+  - Errors: 404 (no role), 409 (`role_busy` with the blockers; `name_taken`; `node_too_old`), 409 `precondition_failed`
+    (revision), 422 `validation_failed` (invalid or same name). This departs from the earlier 412 and 400 on purpose, to
+    match the API's documented status contract (`site/reference/api.md`).
 - `list-space-role-renames`: `GET /spaces/{space_id}/role-renames`, newest first, read rule `SpaceConfigRead`. The
   provider uses it to follow a rename made outside Terraform (§3.5), and the operator uses it to see a pending node
   move.
@@ -473,6 +475,11 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 - **Risks:**
   - Lock ordering with `Apply`'s per-collection mutex (sort the keys).
   - The backup bundler's path listing.
+- **Done (2026-11-16, `feat/role-rename-memory`).** Deviations are in ADR-0093's T-H2 implementation notes: migration
+  0062 adds the `failed` node state; the hub sends the command at the space's current lease generation and re-queues
+  one the node refused; the guard also refuses a reused old name while the node move is open; a backup holds the moves
+  from its snapshot until it has bundled the memory (the bundler walks the disk, so the plan's "list from the DB" was
+  replaced by this hold).
 
 ### T-H3: node-side memory rename (hard)
 - **Goal:** the node half of §3.3:
@@ -496,9 +503,21 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 
   Instance checkouts still fetch and publish after the move. `make check-fast` passes.
 - **Depends on:** T-H2 (proto types).
+- **What T-H2 leaves for it:**
+  - raise `agentMaxMinor` (`internal/agent/agent.go`) to `proto.MaxMinor` once the handler exists;
+  - accept `memory.rename` with the lease at the command's generation (central sends the current one);
+  - answer `error` only for a move that failed, keep it journaled, retry it at the next agent start and report again
+    (central turns a failed rename done on a later `ok`, and pending on `deferred`);
+  - resend every unacknowledged `memory.renamed` on reconnect until `memory.renamed.ack` arrives; an ack with `error`
+    (unknown rename, or not this node's) also ends the resend;
+  - after the move, sync under the new name: central refuses the old name with `memory.ack{error, "role renamed"}`.
 - **Risks:**
   - The dream symlink layout. Central's dream blocker and the node busy check both cover it; add a test.
   - Lease checks for the command.
+- **Done (2026-11-16, `feat/role-rename-node`).** The agent advertises minor 14. The node journal migration is **0010**
+  (0009 is v0.1.9's conflict folders). Deviations are in ADR-0093's T-H3 implementation notes: a `moving` journal state
+  makes crash recovery exact; the busy check covers runs of both names; the node holds syncs of both names until central
+  acknowledges its `ok`.
 
 ### T-M1: API, CLI, admin MCP, docs (medium)
 - **Goal:** §3.4.
@@ -552,7 +571,9 @@ T-M0 ──► T-H1 ──► T-H2 ──► T-H3
 
 ### T-L2: API and CLI tests (light)
 - **Goal:** API e2e tests in the `internal/app` style:
-  - 200, 404, 400 (same name), 409 `role_busy` (a running run of the role), 409 `name_taken`, 412 (stale If-Match);
+  - 200, 404, 422 (same name), 409 `role_busy` (a running run of the role), 409 `name_taken`, 409
+    `precondition_failed` (stale If-Match). These depart from the earlier 400 and 412 on purpose, to match the API's
+    documented status contract (§3.4);
   - viewer denied, operator allowed;
   - `list-space-role-renames` order.
 

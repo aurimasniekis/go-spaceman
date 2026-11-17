@@ -232,6 +232,9 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		case sp.DesiredNodeID.Valid:
 			return apperr.New(apperr.CodePrecondition, "the space is relocating; launches are blocked until it finishes")
 		}
+		if err := renameHold(ctx, tx.Q, spaceID, in); err != nil {
+			return err
+		}
 		lease, err := tx.Q.GetLease(ctx, spaceID)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && (lease.State != "active" || !tx.Now.Before(time.UnixMicro(lease.ExpiresAt)) || lease.NodeID != sp.NodeID)) {
 			return apperr.New(apperr.CodeUnavailable, "the space's node is not connected (no valid execution lease); no new work starts until it reconnects")
@@ -424,6 +427,47 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 	return svc.GetRun(ctx, runID)
 }
 
+// ReasonRoleRenamePending names a launch held by a role rename whose memory move the node has not reported done yet
+// (the rename is pending or failed).
+const ReasonRoleRenamePending = "role_rename_pending"
+
+// RenamePendingError is the cause of a launch held by a pending role rename (ADR-0093): the role was renamed and the
+// space's node has not moved the role's memory directory yet, so a launch of the new name (or a dream, which reads
+// every role's memory) would start without that memory. The hold lifts when the node reports the move.
+type RenamePendingError struct {
+	RenameID, From, To, NodeID string
+	Dream                      bool
+	// Failed: the node reported that it could not move the directory (node_state failed); the hold stays until it
+	// reports the move done.
+	Failed bool
+}
+
+func (e *RenamePendingError) Error() string { return ReasonRoleRenamePending + ": " + e.RenameID }
+
+// renameHold refuses a launch while a rename in the space waits for its node move: a launch of the rename's new name,
+// of its old name (a new role of that name would start in the directory still to move), or any dream launch in the
+// space.
+func renameHold(ctx context.Context, q *db.Queries, spaceID string, in LaunchInput) error {
+	dream := in.Dream != nil || in.Kind == "dreamer"
+	r, err := q.OpenRoleRenameHold(ctx, db.OpenRoleRenameHoldParams{SpaceID: spaceID, Role: in.Role, Dream: b2i(dream)})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	cause := &RenamePendingError{RenameID: r.ID, From: r.FromName, To: r.ToName, NodeID: r.NodeID, Dream: dream && in.Role != r.ToName, Failed: r.NodeState == "failed"}
+	state := "has not moved its memory yet"
+	if cause.Failed {
+		state = "could not move its memory (" + r.NodeMessage + "); it retries when its agent starts again"
+	}
+	if cause.Dream {
+		return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s %s (%s); dreams in this space start once it reports the move",
+			r.FromName, r.ToName, r.NodeID, state, ReasonRoleRenamePending)
+	}
+	return apperr.Wrap(apperr.CodePrecondition, cause, "the role %s was renamed to %s and node %s %s (%s); %s launches once the node reports the move",
+		r.FromName, r.ToName, r.NodeID, state, ReasonRoleRenamePending, in.Role)
+}
+
 func (svc *Service) queueCommand(ctx context.Context, tx *store.Tx, nodeID, spaceID, runID string, gen int64, kind, key string, payload any) error {
 	_, err := svc.queueCommandID(ctx, tx, nodeID, spaceID, runID, gen, kind, key, payload)
 	return err
@@ -462,6 +506,33 @@ func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text s
 		return "", err
 	}
 	return svc.queueCommandID(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdInput, "notice:"+ids.New(ids.Message), proto.InputPayload{Text: text})
+}
+
+// NudgeRun types an idle-gated notice into a running run's terminal and audits it as action, in one transaction, then
+// wakes the run's node (the control watchdog, ADR-0099). It is refused like every notice: the run is not running, is
+// waiting for its usage limit to reset (ErrLimitWaiting) or an operator has taken over its terminal (ErrTakenOver).
+func (svc *Service) NudgeRun(ctx context.Context, actor audit.Actor, runID, text, action string, details map[string]any) error {
+	var nodeID string
+	err := svc.s.W().TxNamed(ctx, "fleet.nudge_run", func(tx *store.Tx) error {
+		r, err := tx.Q.GetRun(ctx, runID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errRunNotFound
+		} else if err != nil {
+			return err
+		}
+		nodeID = r.NodeID
+		if _, err := svc.QueueNotice(ctx, tx, runID, text); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "run", ID: runID},
+			Details: details})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	svc.hub.Kick(nodeID)
+	return nil
 }
 
 // MarkEndedRunStopped sets an ended run's desired state to stopped, so it no longer holds the space's single control
