@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -37,11 +38,18 @@ func TestSpaceRoleDescription(t *testing.T) {
 	} {
 		r, err := f.svc.Resolve(f.ctx, f.s.R(), f.space(), Launch{Role: role})
 		must(t, err)
-		if r.Effective["description"] != want {
-			t.Errorf("%s: effective description %+v, want %+v", role, r.Effective["description"], want)
+		if got := (Field{Value: r.Description, Origin: r.DescriptionOrigin}); got != want {
+			t.Errorf("%s: description %+v, want %+v", role, got, want)
 		}
-		if _, ok := r.Manifest["description"]; ok {
-			t.Errorf("%s: the description is in the manifest", role)
+		if _, ok := r.Effective["description"]; ok {
+			t.Errorf("%s: the description is in Effective", role)
+		}
+		mj, err := json.Marshal(r.Manifest)
+		must(t, err)
+		for _, text := range []string{"Hard backend work.", "Template text."} {
+			if strings.Contains(string(mj), text) {
+				t.Errorf("%s: the manifest contains the description %q: %s", role, text, mj)
+			}
 		}
 	}
 
@@ -50,8 +58,8 @@ func TestSpaceRoleDescription(t *testing.T) {
 	must(t, err)
 	r, err := f.svc.Resolve(f.ctx, f.s.R(), f.space(), Launch{Role: "impl-a"})
 	must(t, err)
-	if r.Effective["description"] != (Field{Value: "Template text.", Origin: OriginTemplate}) {
-		t.Errorf("after clearing: %+v", r.Effective["description"])
+	if r.Description != "Template text." || r.DescriptionOrigin != OriginTemplate {
+		t.Errorf("after clearing: %q %q", r.Description, r.DescriptionOrigin)
 	}
 
 	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "impl-a", TemplateID: tpl.ID, Description: strings.Repeat("x", 2001)})
@@ -60,4 +68,12 @@ func TestSpaceRoleDescription(t *testing.T) {
 	}
 	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "impl-a", TemplateID: tpl.ID, Description: strings.Repeat("x", 2000)})
 	must(t, err)
+
+	// The limit counts characters, not bytes: 1200 two-byte runes pass, 2001 runes do not.
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "impl-a", TemplateID: tpl.ID, Description: strings.Repeat("ž", 1200)})
+	must(t, err)
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "impl-a", TemplateID: tpl.ID, Description: strings.Repeat("ž", 2001)})
+	if err == nil {
+		t.Fatal("2001 multibyte characters were accepted")
+	}
 }

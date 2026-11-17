@@ -13127,6 +13127,16 @@
             "additionalProperties": {},
             "type": "object"
           },
+          "description": {
+            "type": "string"
+          },
+          "description_origin": {
+            "enum": [
+              "space_role",
+              "template"
+            ],
+            "type": "string"
+          },
           "effective": {
             "additionalProperties": {
               "$ref": "#/components/schemas/CatalogField"

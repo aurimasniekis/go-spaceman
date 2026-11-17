@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -407,7 +408,7 @@ func (svc *Service) SaveSpaceRole(ctx context.Context, actor audit.Actor, spaceI
 	if len(in.Model) > 128 || len(in.Instructions) > 50_000 {
 		v.Add("instructions", "at most 50000 characters")
 	}
-	if len(in.Description) > 2000 {
+	if utf8.RuneCountInString(in.Description) > 2000 {
 		v.Add("description", "at most 2000 characters")
 	}
 	sj := settingsJSON(v, in.Settings)

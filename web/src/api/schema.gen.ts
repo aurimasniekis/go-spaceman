@@ -10014,6 +10014,9 @@ export interface components {
             claude_settings?: {
                 [key: string]: unknown;
             };
+            description?: string;
+            /** @enum {string} */
+            description_origin?: "space_role" | "template";
             effective: {
                 [key: string]: components["schemas"]["CatalogField"];
             };

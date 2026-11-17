@@ -60,7 +60,11 @@ type Resolved struct {
 	Settings   map[string]string
 	SystemText string
 	Effective  map[string]Field
-	Prompt     *PromptRef
+	// Description and DescriptionOrigin are the role's effective description (the space role's own, else the template's).
+	// They are routing guidance for the preview only: never in Effective, so never in the manifest (ADR-0095).
+	Description       string
+	DescriptionOrigin string
+	Prompt            *PromptRef
 	// Skills are the skill versions the run gets (files included; the manifest records versions and hashes).
 	Skills []ResolvedSkill
 	// ClaudeSettings are the profile's Claude Code settings.json keys after policy, nil when it has none (ADR-0059).
@@ -116,9 +120,9 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 		manifest["space_role"] = map[string]any{"name": role.Name, "revision": role.Revision}
 		// The description is routing guidance only: shown in the preview, never in the manifest or the prompt (ADR-0095).
 		if role.Description != "" {
-			set("description", role.Description, OriginSpaceRole)
-		} else {
-			set("description", tpl.Description, OriginTemplate)
+			r.Description, r.DescriptionOrigin = role.Description, OriginSpaceRole
+		} else if tpl.Description != "" {
+			r.Description, r.DescriptionOrigin = tpl.Description, OriginTemplate
 		}
 		manifest["template"] = map[string]any{"id": tpl.ID, "slug": tpl.Slug, "revision": tpl.Revision}
 		profileID, profileOrigin := tpl.ProfileID, OriginTemplate

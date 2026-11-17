@@ -7,7 +7,7 @@ import (
 )
 
 // 0064 adds space_roles.description (ADR-0095): a database at 0060, the latest migration before it on this branch (0061-0063
-// belong to other branches of the release and the migrator needs no contiguous numbers), keeps its roles and they get ”
+// belong to other branches of the release and the migrator needs no contiguous numbers), keeps its roles and they get ""
 // (use the template's description); a fresh database has the column.
 func TestSpaceRoleDescriptionMigrationFrom0060(t *testing.T) {
 	t.Parallel()
