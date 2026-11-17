@@ -128,7 +128,7 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 	if fi, err := os.Lstat(gitDir); err != nil || !fi.IsDir() {
 		return "", ffNoCheckout
 	}
-	list, err := g.Run(ctx, inst, nil, memory.ConfigListArgs...)
+	list, err := g.RunCheckout(ctx, inst, nil, memory.ConfigListArgs...)
 	if err != nil || memory.UnsafeConfig(list, true) != nil || g.CheckoutIdentity(ctx, inst) != nil || g.Gitlinks(ctx, inst) != nil {
 		return "", ffUnsafeConfig
 	}
@@ -137,7 +137,7 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 			return "", p.reason
 		}
 	}
-	out, err := g.Run(ctx, inst, nil, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
+	out, err := g.RunCheckout(ctx, inst, nil, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
 	if err != nil {
 		return "", ffStatusFailed
 	}
@@ -155,7 +155,7 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 	case head:
 		return "", ffUpToDate
 	}
-	if _, err := g.Run(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil || g.RevParse(ctx, inst, "FETCH_HEAD") != theirs {
+	if _, err := g.RunCheckout(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil || g.RevParse(ctx, inst, "FETCH_HEAD") != theirs {
 		return "", ffNoShared
 	}
 	if !g.IsAncestor(ctx, inst, head, theirs) {
@@ -211,7 +211,7 @@ func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, i
 	old := g.RevParse(ctx, inst, "HEAD")
 	// --no-overwrite-ignore: git otherwise replaces an ignored file at a path the new history adds. The checkout's
 	// sparse-checkout patterns (memharness.go) make git skip that check, so the paths are looked at here as well.
-	added, err := g.Run(ctx, inst, nil, "diff", "--name-only", "-z", "--diff-filter=ACR", old, theirs)
+	added, err := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "-z", "--diff-filter=ACR", old, theirs)
 	if err != nil {
 		m.ffSkipped(ctx, spaceID, role, instance, ffMergeFailed)
 		return ffMergeFailed
@@ -225,12 +225,12 @@ func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, i
 			return ffMergeFailed
 		}
 	}
-	if _, err := g.Run(ctx, inst, nil, "merge", "--quiet", "--ff-only", "--no-overwrite-ignore", theirs); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "merge", "--quiet", "--ff-only", "--no-overwrite-ignore", theirs); err != nil {
 		m.ffSkipped(ctx, spaceID, role, instance, ffMergeFailed)
 		return ffMergeFailed
 	}
 	files := 0
-	if out, err := g.Run(ctx, inst, nil, "diff", "--name-only", "-z", old, theirs); err == nil {
+	if out, err := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "-z", old, theirs); err == nil {
 		for _, f := range strings.Split(out, "\x00") {
 			if f != "" {
 				files++

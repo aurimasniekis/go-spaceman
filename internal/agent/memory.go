@@ -132,21 +132,21 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 			if err := os.WriteFile(filepath.Join(inst, "README.md"), []byte(readme), 0o600); err != nil {
 				return "", err
 			}
-			if _, err := m.git.Run(ctx, inst, nil, "add", "-A"); err != nil {
+			if _, err := m.git.RunCheckout(ctx, inst, nil, "add", "-A"); err != nil {
 				return "", err
 			}
-			if _, err := m.git.Run(ctx, inst, ident(instance), "commit", "--quiet", "-m", "Start the "+role+" memory"); err != nil {
+			if _, err := m.git.RunCheckout(ctx, inst, ident(instance), "commit", "--quiet", "-m", "Start the "+role+" memory"); err != nil {
 				return "", err
 			}
-			if _, err := m.git.Run(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main"); err != nil {
+			if _, err := m.git.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main"); err != nil {
 				return "", err
 			}
 			m.scheduleSync(spaceID, role, syncDelay)
 		} else {
-			if _, err := m.git.Run(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil {
+			if _, err := m.git.RunCheckout(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil {
 				return "", err
 			}
-			if _, err := m.git.Run(ctx, inst, nil, "reset", "--quiet", "--hard", "FETCH_HEAD"); err != nil {
+			if _, err := m.git.RunCheckout(ctx, inst, nil, "reset", "--quiet", "--hard", "FETCH_HEAD"); err != nil {
 				return "", err
 			}
 		}
@@ -163,15 +163,15 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 // the next checkpoint, which merges. It is run start's refresh when memory.fast_forward is off; otherwise
 // refreshAtStart applies ADR-0094's checks.
 func (m *memManager) refresh(ctx context.Context, shared, inst string) {
-	if st, err := m.git.Run(ctx, inst, nil, "status", "--porcelain"); err != nil || strings.TrimSpace(st) != "" {
+	if st, err := m.git.RunCheckout(ctx, inst, nil, "status", "--porcelain"); err != nil || strings.TrimSpace(st) != "" {
 		return
 	}
-	if _, err := m.git.Run(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil {
+	if _, err := m.git.RunCheckout(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil {
 		return
 	}
 	theirs := m.git.RevParse(ctx, inst, "FETCH_HEAD")
 	if theirs != "" && m.git.IsAncestor(ctx, inst, "HEAD", theirs) {
-		_, _ = m.git.Run(ctx, inst, nil, "merge", "--quiet", "--ff-only", theirs)
+		_, _ = m.git.RunCheckout(ctx, inst, nil, "merge", "--quiet", "--ff-only", theirs)
 	}
 }
 
@@ -243,11 +243,11 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 	if err := m.guard(ctx, inst); err != nil {
 		return false, err
 	}
-	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "add", "-A"); err != nil {
 		return false, err
 	}
-	if _, err := g.Run(ctx, inst, nil, "diff", "--cached", "--quiet"); err != nil {
-		if _, err := g.Run(ctx, inst, id, "commit", "--quiet", "-m", fmt.Sprintf("Checkpoint (%s) by %s", reason, instance)); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "diff", "--cached", "--quiet"); err != nil {
+		if _, err := g.RunCheckout(ctx, inst, id, "commit", "--quiet", "-m", fmt.Sprintf("Checkpoint (%s) by %s", reason, instance)); err != nil {
 			return false, err
 		}
 	}
@@ -255,7 +255,7 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 	if head == "" {
 		return false, nil
 	}
-	if _, err := g.Run(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil {
 		return false, err
 	}
 	theirs := g.RevParse(ctx, inst, "FETCH_HEAD")
@@ -263,19 +263,19 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 	case theirs == head:
 		return false, nil
 	case theirs == "" || g.IsAncestor(ctx, inst, theirs, head):
-		_, err := g.Run(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main")
+		_, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main")
 		return err == nil, err
 	case g.IsAncestor(ctx, inst, head, theirs):
-		_, err := g.Run(ctx, inst, nil, "merge", "--quiet", "--ff-only", theirs)
+		_, err := g.RunCheckout(ctx, inst, nil, "merge", "--quiet", "--ff-only", theirs)
 		return false, err
 	}
 	// Both sides moved: merge, or preserve on conflict.
-	if _, err := g.Run(ctx, inst, id, "merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into "+instance, theirs); err == nil {
-		_, err := g.Run(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main")
+	if _, err := g.RunCheckout(ctx, inst, id, "merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into "+instance, theirs); err == nil {
+		_, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main")
 		return err == nil, err
 	}
-	out, _ := g.Run(ctx, inst, nil, "diff", "--name-only", "--diff-filter=U")
-	_, _ = g.Run(ctx, inst, nil, "merge", "--abort")
+	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "--diff-filter=U")
+	_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
 	return m.preserve(ctx, spaceID, role, instance, head, theirs, strings.Fields(out))
 }
 
@@ -290,7 +290,7 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	g := m.git
 	stamp := m.a.now().UTC().Format("20060102T150405Z")
 	ref := "refs/conflicts/" + instance + "-" + stamp
-	if _, err := g.Run(ctx, inst, nil, "push", "--quiet", shared, head+":"+ref); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, head+":"+ref); err != nil {
 		return false, err
 	}
 	saved := map[string][]byte{}
@@ -298,11 +298,11 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 		if isHarnessPath(f) {
 			continue // never materialised: harness configuration does not travel through memory
 		}
-		if b, err := g.Run(ctx, inst, nil, "show", head+":"+f); err == nil {
+		if b, err := g.RunCheckout(ctx, inst, nil, "show", head+":"+f); err == nil {
 			saved[f] = []byte(b)
 		}
 	}
-	if _, err := g.Run(ctx, inst, nil, "reset", "--quiet", "--hard", theirs); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "reset", "--quiet", "--hard", theirs); err != nil {
 		return false, err
 	}
 	dir := filepath.Join("conflicts", instance+"-"+stamp)
@@ -314,13 +314,13 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	if err := writeConflictCopies(inst, dir, saved, note); err != nil {
 		return false, err
 	}
-	if _, err := g.Run(ctx, inst, nil, "add", "-A"); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "add", "-A"); err != nil {
 		return false, err
 	}
-	if _, err := g.Run(ctx, inst, ident(instance), "commit", "--quiet", "-m", "Preserve conflicting memory from "+instance); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, ident(instance), "commit", "--quiet", "-m", "Preserve conflicting memory from "+instance); err != nil {
 		return false, err
 	}
-	if _, err := g.Run(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main"); err != nil {
+	if _, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main"); err != nil {
 		return false, err
 	}
 	st, _ := m.a.j.memory(ctx, spaceID, role)
@@ -523,9 +523,11 @@ func (m *memManager) statusOf(ctx context.Context, spaceID, role string) proto.M
 	for _, i := range insts {
 		c.Instances++
 		inst := filepath.Join(m.root, spaceID, role, "instances", i.Name())
-		if out, err := m.git.Run(ctx, inst, nil, "status", "--porcelain"); err == nil {
-			c.Uncheckpointed += len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
+		out, err := m.git.RunCheckout(ctx, inst, nil, "status", "--porcelain")
+		if err != nil {
+			continue // not a checkout of its own: nothing is counted, and no git runs there
 		}
+		c.Uncheckpointed += len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
 		// Commits an instance has not published (it diverged and is waiting for its next checkpoint).
 		if head != "" {
 			c.LocalCommits += m.git.Count(ctx, inst, head, "HEAD")

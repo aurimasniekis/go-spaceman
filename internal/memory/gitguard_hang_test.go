@@ -266,3 +266,69 @@ func TestRunSetsNoLazyFetch(t *testing.T) {
 		t.Fatalf("GIT_NO_LAZY_FETCH is not set: %q", out)
 	}
 }
+
+// A folder without .git that holds HEAD, objects/, refs/ and a commondir file is a bare repository to git, one that can
+// point at another repository. RunCheckout requires the checkout's own .git; plain Run has no such requirement.
+func TestRunCheckoutRequiresDotGit(t *testing.T) {
+	g, other := newCheckout(t)
+	inst := t.TempDir()
+	for _, d := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(inst, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(inst, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inst, "commondir"), []byte(filepath.Join(other, ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if out, err := g.RunCheckout(ctx, inst, nil, "rev-parse", "--git-dir"); err == nil {
+		t.Fatalf("a folder without .git was accepted as a checkout: %q", out)
+	}
+	if _, err := g.RunCheckout(ctx, inst, nil, "status"); err == nil {
+		t.Fatal("status accepted a folder without .git")
+	}
+	// The same folder with a real checkout's .git is fine.
+	if _, err := g.RunCheckout(ctx, other, nil, "status", "--porcelain"); err != nil {
+		t.Fatalf("a real checkout refused: %v", err)
+	}
+}
+
+// config and version are not Guarded, but a checkout still needs its .git for them.
+func TestRunCheckoutRequiresDotGitForConfig(t *testing.T) {
+	g, _ := newCheckout(t)
+	if _, err := g.RunCheckout(context.Background(), t.TempDir(), nil, "config", "--list"); err == nil {
+		t.Fatal("config accepted a folder without .git")
+	}
+}
+
+// .git as a gitdir: file or a symlink to another repository is not the checkout's own: no command, config included,
+// may run through it (config would write the other repository's configuration).
+func TestRunCheckoutRefusesLinkedDotGit(t *testing.T) {
+	g, other := newCheckout(t)
+	ctx := context.Background()
+	for name, link := range map[string]func(inst string) error{
+		"gitdir file": func(inst string) error {
+			return os.WriteFile(filepath.Join(inst, ".git"), []byte("gitdir: "+filepath.Join(other, ".git")+"\n"), 0o600)
+		},
+		"symlink": func(inst string) error { return os.Symlink(filepath.Join(other, ".git"), filepath.Join(inst, ".git")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			inst := t.TempDir()
+			if err := link(inst); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := g.RunCheckout(ctx, inst, nil, "config", "memtest.key", "v"); err == nil {
+				t.Fatal("config ran through a linked .git")
+			}
+			if out, err := os.ReadFile(filepath.Join(other, ".git", "config")); err != nil || strings.Contains(string(out), "memtest") {
+				t.Fatalf("the other repository's config was written: %q %v", out, err)
+			}
+			if _, err := g.RunCheckout(ctx, inst, nil, "status"); err == nil {
+				t.Fatal("status ran through a linked .git")
+			}
+		})
+	}
+}
