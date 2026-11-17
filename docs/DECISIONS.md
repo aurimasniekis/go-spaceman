@@ -6334,6 +6334,8 @@
        the placeholder.
      - The description is not part of the launched agent's prompt and doesn't change run manifests. It is routing
        guidance for whoever chooses a role.
+     - Role rename (ADR-0093) keeps it: the description is a column on the `space_roles` row, which a rename updates in
+       place.
   4. **`spaceman_roles_list` for control.**
      - A read-only agent tool, given to control runs only, like `spaceman_queue_next`.
      - It returns the run's own space's roles, sorted by name. For each role: `name`, `kind` (from the template),

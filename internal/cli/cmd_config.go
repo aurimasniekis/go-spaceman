@@ -197,7 +197,8 @@ func (a *App) roleCmd() *cobra.Command {
 	role := func(f *form) {
 		f.str("template", "template_id", "role template ID (required for a new role)").str("profile", "profile_id", "harness profile ID").
 			str("prompt", "prompt_id", "prompt ID").str("prompt-pin", "prompt_pin", "published prompt version to pin (empty follows the latest)").
-			str("model", "model", "model").kv("setting", "settings", "harness setting").text("instructions", "instructions", "role instructions")
+			str("model", "model", "model").kv("setting", "settings", "harness setting").text("instructions", "instructions", "role instructions").
+			str("description", "description", "what the role is for in this space, at most 2000 characters (empty uses the template's)")
 	}
 	tplForm := func(f *form) {
 		f.str("name", "name", "name").str("description", "description", "description").str("profile", "profile_id", "harness profile ID").

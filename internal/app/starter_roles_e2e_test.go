@@ -107,3 +107,73 @@ func TestStarterRolesOverHTTP(t *testing.T) {
 		}
 	}
 }
+
+// SM-PROMPT-011 over HTTP: save-space-role, get-space-role and list-space-roles carry the space role's own description, and
+// the preview shows the effective one with its origin; empty falls back to the template's.
+func TestSpaceRoleDescriptionOverHTTP(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	secret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = secret
+	en, err := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sp struct{ ID string }
+	r := root.do("POST", "/spaces", map[string]any{"slug": "desc", "name": "Desc", "node_id": en.Node.ID, "starter_roles": true})
+	expect(t, r, 201)
+	r.json(t, &sp)
+	var tpl struct {
+		ID          string
+		Description string
+	}
+	r = root.do("GET", "/role-templates/starter-reviewer", nil)
+	expect(t, r, 200)
+	r.json(t, &tpl)
+
+	preview := func() (string, string) {
+		var p struct {
+			Effective map[string]struct{ Value, Origin string }
+		}
+		r := root.do("GET", "/spaces/"+sp.ID+"/roles/reviewer/preview", nil)
+		expect(t, r, 200)
+		r.json(t, &p)
+		return p.Effective["description"].Value, p.Effective["description"].Origin
+	}
+	if v, o := preview(); v != tpl.Description || o != "template" {
+		t.Fatalf("starter role preview description %q (%s), want the template's %q", v, o, tpl.Description)
+	}
+
+	expect(t, root.do("PUT", "/spaces/"+sp.ID+"/roles/reviewer", map[string]any{"template_id": tpl.ID, "description": "Checks the backend PRs."}), 200)
+	var got struct{ Description string }
+	r = root.do("GET", "/spaces/"+sp.ID+"/roles/reviewer", nil)
+	expect(t, r, 200)
+	r.json(t, &got)
+	if got.Description != "Checks the backend PRs." {
+		t.Fatalf("get description %q", got.Description)
+	}
+	var list struct {
+		Items []struct{ Name, Description string }
+	}
+	r = root.do("GET", "/spaces/"+sp.ID+"/roles", nil)
+	expect(t, r, 200)
+	r.json(t, &list)
+	for _, it := range list.Items {
+		if want := map[bool]string{true: "Checks the backend PRs."}[it.Name == "reviewer"]; it.Description != want {
+			t.Errorf("list: role %s description %q, want %q", it.Name, it.Description, want)
+		}
+	}
+	if v, o := preview(); v != "Checks the backend PRs." || o != "space_role" {
+		t.Fatalf("preview description %q (%s)", v, o)
+	}
+
+	expect(t, root.do("PUT", "/spaces/"+sp.ID+"/roles/reviewer", map[string]any{"template_id": tpl.ID}), 200)
+	if v, o := preview(); v != tpl.Description || o != "template" {
+		t.Fatalf("after clearing: preview description %q (%s)", v, o)
+	}
+	if p := root.do("PUT", "/spaces/"+sp.ID+"/roles/reviewer", map[string]any{"template_id": tpl.ID, "description": strings.Repeat("x", 2001)}).problem(t); p.Status != 422 {
+		t.Fatalf("a 2001-character description: %+v", p)
+	}
+}

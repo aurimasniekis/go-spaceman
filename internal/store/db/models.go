@@ -1459,6 +1459,7 @@ type SpaceRole struct {
 	UpdatedAt    int64
 	Version      int64
 	SkillsJson   string
+	Description  string
 }
 
 type SpaceRoleAccount struct {

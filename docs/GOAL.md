@@ -406,6 +406,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   auto mode rules, environment, hooks, …). The UI edits permissions, auto mode and environment variables in
   dedicated fields and other keys as JSON, Terraform manages them, and the permission mode ceiling still applies
   (operator request 2026-11-06, §9).
+- SM-PROMPT-011 A space role has its own description (at most 2000 characters; empty means "use the role template's"). `save-space-role`, `get-space-role` and `list-space-roles` carry it, the role preview shows the effective description with its origin (`space_role` or `template`), and `spaceman role set --description` sets it. It is routing guidance for whoever chooses a role: it is not part of a launched agent's prompt and not in run manifests, and a rename keeps it (ADR-0095).
 - SM-PROMPT-009 A space role can be renamed in place. Its live references follow the new name and the history of what happened keeps the name it was written with. A busy role is refused, and the operation is audited and uses the role write permission (ADR-0093).
 
 ### SM-XSPACE — Cross-space collaboration

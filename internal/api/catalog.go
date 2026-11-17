@@ -85,6 +85,7 @@ type SpaceRoleInput struct {
 	Settings     map[string]string  `json:"settings,omitempty"`
 	Instructions string             `json:"instructions,omitempty" maxLength:"50000"`
 	Skills       []catalog.SkillRef `json:"skills,omitempty" maxItems:"20" doc:"Added to the template's skills; a pin here wins"`
+	Description  string             `json:"description,omitempty" maxLength:"2000" doc:"What the role is for in this space; empty uses the role template's description"`
 }
 
 // PromptPath identifies a prompt (ID or slug).
@@ -606,7 +607,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			}) (*struct{ Body *catalog.SpaceRole }, error) {
 				b := in.Body
 				r, err := svc.SaveSpaceRole(ctx, Actor(ctx), in.SpaceID, catalog.SpaceRole{Name: in.Name, TemplateID: b.TemplateID, ProfileID: b.ProfileID,
-					PromptID: b.PromptID, PromptPin: b.PromptPin, Model: b.Model, Settings: b.Settings, Instructions: b.Instructions, Skills: b.Skills})
+					PromptID: b.PromptID, PromptPin: b.PromptPin, Model: b.Model, Settings: b.Settings, Instructions: b.Instructions, Skills: b.Skills, Description: b.Description})
 				if err != nil {
 					return nil, d.fail(ctx, "roles.save", err)
 				}

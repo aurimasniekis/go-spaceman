@@ -114,6 +114,12 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 			return nil, apperr.New(apperr.CodeInvalid, "role %q is a %s role; a launch cannot change its kind", in.Role, tpl.Kind)
 		}
 		manifest["space_role"] = map[string]any{"name": role.Name, "revision": role.Revision}
+		// The description is routing guidance only: shown in the preview, never in the manifest or the prompt (ADR-0095).
+		if role.Description != "" {
+			set("description", role.Description, OriginSpaceRole)
+		} else {
+			set("description", tpl.Description, OriginTemplate)
+		}
 		manifest["template"] = map[string]any{"id": tpl.ID, "slug": tpl.Slug, "revision": tpl.Revision}
 		profileID, profileOrigin := tpl.ProfileID, OriginTemplate
 		if role.ProfileID != "" {
