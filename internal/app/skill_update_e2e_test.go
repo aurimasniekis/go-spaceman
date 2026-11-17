@@ -55,6 +55,13 @@ func TestUpdateSkillOverHTTP(t *testing.T) {
 	if got.Name != "Review 2" || got.Description != "d2" || got.Version != sk.Version+2 || len(got.Versions) != len(sk.Versions) {
 		t.Fatalf("partial %+v", got)
 	}
+	// A name only: the description keeps its value (a missing field is not an empty one).
+	r = root.do("PATCH", "/skills/review", map[string]any{"name": "Review 3"}, ifm(got.Version)[0], ifm(got.Version)[1])
+	expect(t, r, 200)
+	r.json(t, &got)
+	if got.Name != "Review 3" || got.Description != "d2" || got.Version != sk.Version+3 {
+		t.Fatalf("name only %+v", got)
+	}
 	if pr := root.do("PATCH", "/skills/review", map[string]any{"name": "Stale"}, ifm(sk.Version + 1)[0], ifm(sk.Version + 1)[1]).problem(t); pr.Status != 409 {
 		t.Fatalf("stale after update: %+v", pr)
 	}

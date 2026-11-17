@@ -149,8 +149,11 @@ func (svc *Service) createSkill(ctx context.Context, actor audit.Actor, slug, na
 	if !reSlug.MatchString(slug) {
 		v.Add("slug", "must be 1-63 lowercase letters, digits or dashes")
 	}
-	if strings.TrimSpace(name) == "" || len(name) > 120 || len(description) > 2000 {
+	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 120 {
 		v.Add("name", "is required (at most 120 characters)")
+	}
+	if utf8.RuneCountInString(description) > 2000 {
+		v.Add("description", "at most 2000 characters")
 	}
 	if err := v.Err(); err != nil {
 		return nil, err

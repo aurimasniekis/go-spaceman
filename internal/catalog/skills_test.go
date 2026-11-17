@@ -119,6 +119,14 @@ func TestUpdateSkillMeta(t *testing.T) {
 		t.Fatalf("partial %+v", got)
 	}
 
+	// A name only: the description keeps its value (a nil description is not an empty one).
+	n3 := "Review v3"
+	got, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, &n3, nil)
+	must(t, err)
+	if got.Name != n3 || got.Description != d2 || got.Version != sk.Version+3 {
+		t.Fatalf("name only %+v", got)
+	}
+
 	// Clearing the description is allowed.
 	empty := ""
 	got, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, nil, &empty)
@@ -131,16 +139,16 @@ func TestUpdateSkillMeta(t *testing.T) {
 	other := "Stale"
 	_, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, sk.Version, &other, nil)
 	code(t, err, apperr.CodePrecondition)
-	_, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, sk.Version, &name, nil)
+	_, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, sk.Version, &n3, nil)
 	code(t, err, apperr.CodePrecondition)
-	if cur, _ := f.svc.GetSkill(f.ctx, sk.ID); cur.Name != name {
+	if cur, _ := f.svc.GetSkill(f.ctx, sk.ID); cur.Name != n3 {
 		t.Fatalf("stale update applied: %+v", cur)
 	}
 	// Unknown skill.
 	_, err = f.svc.UpdateSkillMeta(f.ctx, op, "nope", 1, &other, nil)
 	code(t, err, apperr.CodeNotFound)
 
-	// Validation as for create (runes, not bytes): 120 multi-byte characters are fine, 121 are not.
+	// Validation counts runes, not bytes (create does too): 120 multi-byte characters are fine, 121 are not.
 	empty2, long, longDesc := "  ", strings.Repeat("x", 121), strings.Repeat("d", 2001)
 	for _, bad := range [][2]*string{{&empty2, nil}, {&long, nil}, {nil, &longDesc}} {
 		_, err = f.svc.UpdateSkillMeta(f.ctx, op, sk.ID, got.Version, bad[0], bad[1])
@@ -159,7 +167,32 @@ func TestUpdateSkillMeta(t *testing.T) {
 	}
 	var n int
 	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM audit_events WHERE action = 'skill.updated'`).Scan(&n))
-	if n != 4 {
-		t.Fatalf("%d skill.updated rows, want 4", n)
+	if n != 5 {
+		t.Fatalf("%d skill.updated rows, want 5", n)
+	}
+}
+
+// create counts runes too, like update, and reports a long description under description, not name.
+func TestCreateSkillRuneLimits(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	files := func(slug string) map[string]string { // SKILL.md's name must be the slug
+		return map[string]string{"SKILL.md": strings.Replace(reviewMD, "name: review", "name: "+slug, 1)}
+	}
+	if _, err := f.svc.CreateSkill(f.ctx, op, "rune-ok", strings.Repeat("ž", 120), "", files("rune-ok")); err != nil {
+		t.Fatalf("120 multi-byte runes refused: %v", err)
+	}
+	_, err := f.svc.CreateSkill(f.ctx, op, "rune-long", strings.Repeat("ž", 121), "", files("rune-long"))
+	code(t, err, apperr.CodeInvalid)
+	if !strings.HasPrefix(err.Error(), "name:") {
+		t.Fatalf("121 runes: %v, want a name error", err)
+	}
+	_, err = f.svc.CreateSkill(f.ctx, op, "desc-long", "Review", strings.Repeat("d", 2001), files("desc-long"))
+	code(t, err, apperr.CodeInvalid)
+	if !strings.HasPrefix(err.Error(), "description:") {
+		t.Fatalf("2001-character description: %v, want a description error", err)
+	}
+	if _, err := f.svc.CreateSkill(f.ctx, op, "desc-ok", "Review", strings.Repeat("ž", 2000), files("desc-ok")); err != nil {
+		t.Fatalf("2000 multi-byte runes of description refused: %v", err)
 	}
 }
