@@ -47,6 +47,8 @@ const (
 	ffCheckpointDue   = "checkpoint_pending"
 	ffTakenOver       = "taken_over"
 	ffInputInDelivery = "input_in_delivery"
+	ffInputPending    = "input_pending"
+	ffOtherLiveRun    = "other_live_run"
 	ffJournalFailed   = "journal_failed"
 )
 
@@ -78,15 +80,41 @@ func (m *memManager) inputGate(instance string) *sync.Mutex {
 	return g
 }
 
-// deliverInput runs send (the node typing input into a run) under the instance's input gate.
-func (m *memManager) deliverInput(instance string, send func() error) error {
-	if instance == "" {
+// inputMark is input the node delivered to a run whose turn the run has not reported yet: the turn counter it had.
+type inputMark struct {
+	runID string
+	turn  uint64
+}
+
+// deliverInput runs send (the node typing input into run r) under the instance's input gate. Input that was sent marks
+// the instance busy until the run reports a later turn: its status may still say idle while the turn begins.
+func (m *memManager) deliverInput(r runRow, send func() error) error {
+	if r.InstanceID == "" {
 		return send()
+	}
+	g := m.inputGate(r.InstanceID)
+	g.Lock()
+	defer g.Unlock()
+	err := send()
+	if err == nil {
+		m.mu.Lock()
+		if m.inputs == nil {
+			m.inputs = map[string]inputMark{}
+		}
+		m.inputs[r.InstanceID] = inputMark{runID: r.RunID, turn: r.Turn}
+		m.mu.Unlock()
+	}
+	return err
+}
+
+// awaitInputGate waits until no fast-forward of the instance's checkout is merging (a takeover that starts after it).
+func (m *memManager) awaitInputGate(instance string) {
+	if instance == "" {
+		return
 	}
 	g := m.inputGate(instance)
 	g.Lock()
-	defer g.Unlock()
-	return send()
+	g.Unlock() //nolint:staticcheck // SA2001: an empty critical section is the point: wait for the holder
 }
 
 // ffEnabled reports whether ADR-0094's fast-forward is on (memory.fast_forward).
@@ -101,7 +129,7 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 		return "", ffNoCheckout
 	}
 	list, err := g.Run(ctx, inst, nil, "config", "--list", "--name-only", "--show-scope")
-	if err != nil || memory.UnsafeConfig(list, true) != nil {
+	if err != nil || memory.UnsafeConfig(list, true) != nil || !m.ownWorktree(ctx, inst) {
 		return "", ffUnsafeConfig
 	}
 	for _, p := range inProgress {
@@ -121,10 +149,10 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 		return "", ffNoHead
 	}
 	theirs := g.RevParse(ctx, shared, "refs/heads/main")
-	switch {
-	case theirs == "":
+	switch theirs {
+	case "":
 		return "", ffNoShared
-	case theirs == head:
+	case head:
 		return "", ffUpToDate
 	}
 	if _, err := g.Run(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); err != nil || g.RevParse(ctx, inst, "FETCH_HEAD") != theirs {
@@ -134,6 +162,22 @@ func (m *memManager) checkoutReason(ctx context.Context, shared, inst string) (s
 		return "", ffDiverged
 	}
 	return theirs, ""
+}
+
+// ownWorktree reports whether git works on the checkout folder itself: a checkout's own configuration could point it
+// at another work tree (core.worktree) or declare it bare, and status and merge would then check and write a different
+// folder than the one checked.
+func (m *memManager) ownWorktree(ctx context.Context, inst string) bool {
+	out, err := m.git.Run(ctx, inst, nil, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return false
+	}
+	want, err := filepath.EvalSymlinks(inst)
+	if err != nil {
+		return false
+	}
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(out))
+	return err == nil && got == want
 }
 
 // statusReason classifies `git status --porcelain=v1 -z` output: the first kind of local content found, or "" when
@@ -181,8 +225,9 @@ func statusReason(out string) string {
 func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, inst, theirs, why string) string {
 	g := m.git
 	old := g.RevParse(ctx, inst, "HEAD")
-	if _, err := g.Run(ctx, inst, nil, "merge", "--quiet", "--ff-only", theirs); err != nil {
-		m.ffSkipped(spaceID, role, instance, ffMergeFailed)
+	// --no-overwrite-ignore: git otherwise replaces an ignored file at a path the new history adds.
+	if _, err := g.Run(ctx, inst, nil, "merge", "--quiet", "--ff-only", "--no-overwrite-ignore", theirs); err != nil {
+		m.ffSkipped(ctx, spaceID, role, instance, ffMergeFailed)
 		return ffMergeFailed
 	}
 	files := 0
@@ -199,29 +244,56 @@ func (m *memManager) fastForward(ctx context.Context, spaceID, role, instance, i
 	return ""
 }
 
-func (m *memManager) ffSkipped(spaceID, role, instance, reason string) {
-	m.a.log.Debug("memory checkout not fast-forwarded", slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role),
+// ffSkipped logs a refusal. A busy instance is ordinary (debug); a checkout of an idle instance, or one at run start,
+// that holds content outside its history or is in an odd state is not, and it keeps the instance from following the
+// head until someone looks (info).
+func (m *memManager) ffSkipped(ctx context.Context, spaceID, role, instance, reason string) {
+	level := slog.LevelInfo
+	switch reason {
+	case ffUpToDate, ffNoLiveRun, ffRunNotRunning, ffTurnNotEnded, ffCheckpointDue, ffTakenOver, ffInputInDelivery, ffInputPending, ffOtherLiveRun:
+		level = slog.LevelDebug
+	}
+	m.a.log.Log(ctx, level, "memory checkout not fast-forwarded", slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role),
 		slog.String("memory.instance", instance), slog.String("reason", reason))
 }
 
 // refreshAtStart is prepare's refresh of an existing checkout before a run starts (the run is journaled and not
-// started, so nothing writes in the checkout). The collection lock is held.
+// started). Another live run of the same instance may be writing in the checkout, so then it is left alone. The
+// collection lock is held.
 func (m *memManager) refreshAtStart(ctx context.Context, spaceID, role, instance string) string {
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	if !m.ffEnabled() {
 		m.refresh(ctx, shared, inst)
 		return ffDisabled
 	}
+	if runs, err := m.a.j.runs(ctx, true); err != nil {
+		m.ffSkipped(ctx, spaceID, role, instance, ffJournalFailed)
+		return ffJournalFailed
+	} else if n := countInstance(runs, instance); n > 1 {
+		m.ffSkipped(ctx, spaceID, role, instance, ffOtherLiveRun)
+		return ffOtherLiveRun
+	}
 	theirs, reason := m.checkoutReason(ctx, shared, inst)
 	if reason != "" {
-		m.ffSkipped(spaceID, role, instance, reason)
+		m.ffSkipped(ctx, spaceID, role, instance, reason)
 		return reason
 	}
 	return m.fastForward(ctx, spaceID, role, instance, inst, theirs, "run start")
 }
 
+func countInstance(runs []runRow, instance string) int {
+	n := 0
+	for _, r := range runs {
+		if r.InstanceID == instance {
+			n++
+		}
+	}
+	return n
+}
+
 // idleReason says why an instance is not idle (ADR-0094), or "" when every run of it on the node is running with its
-// turn ended, its own idle checkpoint already ran and no operator has taken it over.
+// turn ended, its own idle checkpoint already ran, no operator has taken it over and no input the node delivered is
+// still waiting for its turn to be reported.
 func (m *memManager) idleReason(ctx context.Context, instance string) string {
 	runs, err := m.a.j.runs(ctx, true)
 	if err != nil {
@@ -247,6 +319,12 @@ func (m *memManager) idleReason(ctx context.Context, instance string) string {
 		}
 		if m.a.takenOver(r.RunID) {
 			return ffTakenOver
+		}
+		m.mu.Lock()
+		mark, sent := m.inputs[r.InstanceID]
+		m.mu.Unlock()
+		if sent && mark.runID == r.RunID && r.Turn <= mark.turn {
+			return ffInputPending
 		}
 	}
 	if live == 0 {
@@ -291,7 +369,7 @@ func (m *memManager) fastForwardIdle(ctx context.Context, spaceID, role, except 
 // fastForwardIdleOne is one instance of fastForwardIdle; the collection lock is held.
 func (m *memManager) fastForwardIdleOne(ctx context.Context, spaceID, role, instance string) string {
 	skip := func(reason string) string {
-		m.ffSkipped(spaceID, role, instance, reason)
+		m.ffSkipped(ctx, spaceID, role, instance, reason)
 		return reason
 	}
 	if r := m.idleReason(ctx, instance); r != "" {

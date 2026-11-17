@@ -84,6 +84,9 @@ func (a *Agent) startTakeover(ctx context.Context, w proto.Takeover) {
 	}
 	a.takeovers[w.RunID] = t
 	a.mu.Unlock()
+	// A fast-forward of the instance's memory checkout already merging finishes before the operator can type; a later
+	// one sees the takeover (ADR-0094).
+	a.mem.awaitInputGate(r.InstanceID)
 	go func() {
 		st, _, err := a.o.Runner.Takeover(tctx, r.TerminalID)
 		if err != nil {

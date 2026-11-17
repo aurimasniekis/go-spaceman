@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,6 +91,13 @@ func (e *ffEnv) checkpoint(instance, reason string) {
 	}
 }
 
+// checkpointAsync is checkpoint for another goroutine: it reports a failure without stopping the test from there.
+func (e *ffEnv) checkpointAsync(instance string) {
+	if err := e.m.checkpointErr(e.ctx, ffSpace, ffRole, instance, "idle"); err != nil {
+		e.t.Error(err)
+	}
+}
+
 func (e *ffEnv) conflicts() int {
 	st, _ := e.a.j.memory(e.ctx, ffSpace, ffRole)
 	return st.Conflicts
@@ -148,6 +156,12 @@ func TestFastForwardRefusals(t *testing.T) {
 		{"revert", ffReverting, gitFile("REVERT_HEAD", false)},
 		{"bisect", ffBisecting, gitFile("BISECT_LOG", false)},
 		{"index lock", ffIndexLocked, gitFile("index.lock", false)},
+		{"core.worktree", ffUnsafeConfig, func(e *ffEnv, dir string, _ runRow) {
+			e.git(dir, "config", "core.worktree", filepath.Join(dir, "elsewhere"))
+		}},
+		{"core.bare", ffUnsafeConfig, func(e *ffEnv, dir string, _ runRow) {
+			e.git(dir, "config", "core.bare", "true")
+		}},
 		{"staged", ffStaged, func(e *ffEnv, dir string, _ runRow) {
 			write(e.t, dir, "staged.md", "staged\n")
 			e.git(dir, "add", "staged.md")
@@ -214,6 +228,24 @@ func TestFastForwardRefusals(t *testing.T) {
 			e.a.mu.Lock()
 			e.a.takeovers[r.RunID] = &takeover{runID: r.RunID}
 			e.a.mu.Unlock()
+		}},
+		{"input sent, turn not reported", ffInputPending, func(e *ffEnv, _ string, r runRow) {
+			if err := e.m.deliverInput(r, func() error { return nil }); err != nil {
+				e.t.Fatal(err)
+			}
+		}},
+		{"dreamer run of the instance, its checkpoint pending", ffCheckpointDue, func(e *ffEnv, _ string, r runRow) {
+			r.State = proto.RunExited
+			_ = e.a.j.updateRun(e.ctx, r)
+			d := e.run("ins_a", "dreamer", proto.RunRunning, "idle")
+			e.m.kick(d) // keyed by the dreamer run's own role, not the collection's
+			e.t.Cleanup(func() {
+				e.m.mu.Lock()
+				if tm := e.m.timers[colKey(d.SpaceID, d.Role)+"/"+d.InstanceID]; tm != nil {
+					tm.Stop()
+				}
+				e.m.mu.Unlock()
+			})
 		}},
 		{"input in delivery", ffInputInDelivery, func(e *ffEnv, _ string, _ runRow) {
 			g := e.m.inputGate("ins_a")
@@ -415,7 +447,7 @@ func TestInputWaitsForFastForward(t *testing.T) {
 	e.m.ffHook = func(string) { close(inMerge); <-release }
 	write(t, other, "notes.md", "from b\n")
 	done := make(chan struct{})
-	go func() { defer close(done); e.checkpoint("ins_b", "idle") }()
+	go func() { defer close(done); e.checkpointAsync("ins_b") }()
 	<-inMerge
 
 	delivered := make(chan struct{})
@@ -456,12 +488,12 @@ func TestRunStartDuringFastForward(t *testing.T) {
 	e.m.ffHook = func(string) { once.Do(func() { close(inMerge); <-release }) }
 	write(t, other, "notes.md", "from b\n")
 	done := make(chan struct{})
-	go func() { defer close(done); e.checkpoint("ins_b", "idle") }()
+	go func() { defer close(done); e.checkpointAsync("ins_b") }()
 	<-inMerge
 
 	prepared := make(chan string, 1)
+	e.run("ins_a", ffRole, proto.RunPending, "") // the launch journals its run, then prepares memory
 	go func() {
-		e.run("ins_a", ffRole, proto.RunPending, "") // the launch journals its run, then prepares memory
 		d, _ := e.m.prepare(e.ctx, ffSpace, ffRole, "ins_a")
 		prepared <- d
 	}()
@@ -537,6 +569,103 @@ func TestBusyInstanceNotTouched(t *testing.T) {
 	if after, _ := os.ReadFile(fetchHead); string(after) != string(before) {
 		t.Fatal("the busy checkout was fetched into")
 	}
+}
+
+// Input the node sent keeps the instance busy until the run reports a later turn, even while its status still says
+// idle; once the turn is reported, the instance follows the head again. Input that failed marks nothing.
+func TestInputPendingUntilTurnReported(t *testing.T) {
+	e := newFFEnv(t)
+	dir, other := e.checkout("ins_a"), e.checkout("ins_b")
+	r := e.idleRun("ins_a")
+	if err := e.m.deliverInput(r, func() error { return errors.New("busy") }); err == nil {
+		t.Fatal("the send error was lost")
+	}
+	write(t, other, "notes.md", "one\n")
+	e.checkpoint("ins_b", "idle")
+	if read(t, dir, "notes.md") != "one\n" {
+		t.Fatal("failed input kept the instance busy")
+	}
+	if err := e.m.deliverInput(r, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	write(t, other, "notes.md", "one\ntwo\n")
+	if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != ffInputPending {
+		t.Fatalf("reason %q, want %q", got, ffInputPending)
+	}
+	r.Turn++ // the run reported the turn the input started (working, then idle again)
+	if err := e.a.j.updateRun(e.ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != "" || read(t, dir, "notes.md") != "one\ntwo\n" {
+		t.Fatalf("reason %q after the turn was reported", got)
+	}
+}
+
+// An ignored file created after the checks, at a path the new history adds, is not overwritten: the merge refuses.
+func TestIgnoredFileAfterChecksNotOverwritten(t *testing.T) {
+	e := newFFEnv(t)
+	dir, other := e.checkout("ins_a"), e.checkout("ins_b")
+	e.idleRun("ins_a")
+	write(t, dir, ".git/info/exclude", "notes.md\n")
+	head := e.head(dir)
+	e.m.ffHook = func(string) { write(t, dir, "notes.md", "local, ignored\n") }
+	write(t, other, "notes.md", "from b\n")
+	if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != ffMergeFailed {
+		t.Fatalf("reason %q, want %q", got, ffMergeFailed)
+	}
+	if read(t, dir, "notes.md") != "local, ignored\n" || e.head(dir) != head {
+		t.Fatal("an ignored file was overwritten by the fast-forward")
+	}
+}
+
+// Run start leaves the checkout alone while another live run of the same instance exists: it may be writing there.
+func TestRefreshAtStartWithAnotherLiveRun(t *testing.T) {
+	e := newFFEnv(t)
+	dir, other := e.checkout("ins_a"), e.checkout("ins_b")
+	e.run("ins_a", ffRole, proto.RunRunning, "working")
+	write(t, other, "notes.md", "from b\n")
+	e.checkpoint("ins_b", "idle")
+	head := e.head(dir)
+	e.run("ins_a", ffRole, proto.RunPending, "") // the new launch
+	if _, err := e.m.prepare(e.ctx, ffSpace, ffRole, "ins_a"); err != nil {
+		t.Fatal(err)
+	}
+	if e.head(dir) != head {
+		t.Fatal("run start moved a checkout another live run of the instance uses")
+	}
+	if got := e.m.refreshAtStart(e.ctx, ffSpace, ffRole, "ins_a"); got != ffOtherLiveRun {
+		t.Fatalf("reason %q, want %q", got, ffOtherLiveRun)
+	}
+}
+
+// A takeover that starts while a fast-forward merges waits for the merge before the operator gets the terminal.
+func TestTakeoverWaitsForFastForward(t *testing.T) {
+	e := newFFEnv(t)
+	e.checkout("ins_a")
+	other := e.checkout("ins_b")
+	e.idleRun("ins_a")
+	inMerge, release := make(chan struct{}), make(chan struct{})
+	e.m.ffHook = func(string) { close(inMerge); <-release }
+	write(t, other, "notes.md", "from b\n")
+	done := make(chan struct{})
+	go func() { defer close(done); e.checkpointAsync("ins_b") }()
+	<-inMerge
+	waited := make(chan struct{})
+	go func() { defer close(waited); e.m.awaitInputGate("ins_a") }()
+	select {
+	case <-waited:
+		t.Fatal("a takeover did not wait for the merge")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	<-done
+	<-waited
 }
 
 // statusReason classifies porcelain output: staged before modified before untracked before ignored, renames skip

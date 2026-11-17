@@ -45,6 +45,7 @@ type memManager struct {
 	syncs   map[string]*time.Timer // sync schedule per collection
 	waiting map[string]string      // collection → sync ID in flight
 	gates   map[string]*sync.Mutex // input gate per instance (memff.go, ADR-0094)
+	inputs  map[string]inputMark   // input delivered per instance, until its turn is reported (memff.go)
 	// ffHook, when set (tests), runs right before a fast-forward of an idle checkout merges, with the locks held.
 	ffHook func(instance string)
 	// ffGated, when set (tests), runs right after a fast-forward took the instance's input gate, before its last checks.
