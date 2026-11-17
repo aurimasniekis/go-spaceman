@@ -6282,6 +6282,126 @@
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The operation uses the existing role
   write permission, and every rename is audited.
 
+### ADR-0094 — The node fast-forwards idle instance checkouts to the collection head
+
+- **Status:** Accepted by control, 2026-11-17 ("live idle runs", with a kill switch). Node agent only: one node
+  configuration key, `memory.fast_forward` (default `true`). No central migration, no agent journal migration, no
+  protocol change (minor stays as it is) and no HTTP API change. If a later step needs numbers, it takes central migration
+  0063+, agent migration 0011+ and protocol minor 15 (0061/0062, 0010 and 14 are ADR-0093's). Implements ADR-0092's
+  "item 3" proposal, with one deliberate change to it (see *Which instances*). Refines SM-MEM-006 ("instances refresh
+  at safe boundaries").
+- **Context:** an instance's checkout (`<data>/memory/<space>/<role>/instances/<instance>`) moves onto the collection
+  head (the node's shared `refs/heads/main`) only at its own checkpoint and when a run starts (`prepare`). A run that
+  stays alive between turns keeps the head of its last idle checkpoint while other instances and the dreamer publish.
+  Its next edit is then made on an old base, and when another instance changed the same place (two notes appended at
+  the end of one file is the common case) the checkpoint merge conflicts and the instance's version is preserved under
+  `conflicts/`, although the agent had nothing against the newer text: it never saw it. The preserved conflicts examined on
+  one installation were of this kind.
+- **Decision:**
+  1. **Who does it.** The node only. It never changes the shared repository: it moves an instance checkout onto history
+     the shared repository already has, so what the node offers central, its acknowledged head, its sync and central's
+     acceptance rules are unchanged. Central does nothing new.
+  2. **When.** Right after a checkpoint moved the shared head (any instance's checkpoint, a dream's checkpoint, a
+     preserved conflict), for the other instances of that collection; and, as before, when a run starts (`prepare`),
+     which now uses the same checks.
+  3. **Which instances ("idle").** An instance is idle when all of these hold, read under the locks of 5:
+     - it has a run on the node that has not ended, and **every** such run of the instance (of any role: a dreamer's
+       checkout of another role counts) is `running` with the harness status `idle` or `done` (its turn ended).
+       `pending`, `starting`, `stopping`, and the statuses `working`, `blocked`, `error` or none are not idle;
+     - no idle checkpoint is pending for it (its own debounced checkpoint already ran since the turn ended; the timer
+       of each run is keyed by that run's own role, so a dreamer run's counts too);
+     - no operator has taken over the terminal of any of its runs;
+     - no input the node delivered to one of its runs is still waiting for its turn: after a `run.input` was sent, the
+       instance stays busy until that run reports a later turn, because its status can still say `idle` while the
+       turn the input started begins.
+     An instance with **no** live run is not touched here: its next run's `prepare` fast-forwards it with the same
+     checks, so touching it earlier gains nothing. (ADR-0092 proposed the opposite, "only when the instance has no
+     run"; that is what `prepare` already does, and it does not remove the conflicts above, which come from live runs
+     between turns.)
+  4. **Content and ancestry checks** (all required; each refusal is logged with a fixed reason and leaves the folder
+     exactly as it was):
+     - the checkout exists (`.git` is a directory), its git configuration is safe (the existing `UnsafeConfig`
+       guard), and git works on the checkout folder itself (`rev-parse --show-toplevel` is that folder, so a
+       `core.worktree` or `core.bare` in the agent-writable `.git/config` is refused);
+     - no merge, rebase, cherry-pick, revert or bisect in progress, and no `index.lock`;
+     - `git status --porcelain --untracked-files=all --ignored=matching` is empty: no modified, staged, deleted, untracked or
+       ignored file (an ignored file is local-only data that a fast-forward could overwrite);
+     - the shared head exists, differs from the instance's `HEAD`, and the instance's `HEAD` is an ancestor of it
+       (`merge-base --is-ancestor`). An instance with commits the shared head lacks (diverged) is left to its next
+       checkpoint, which merges or preserves as before;
+     - then `git merge --ff-only --no-overwrite-ignore <shared head>`. Never `reset --hard`, never a merge commit,
+       never a force. Git itself refuses the merge if a tracked file it would update changed after the status check,
+       or if an untracked or (with `--no-overwrite-ignore`) ignored file appeared at a path the new history adds.
+     - At run start, the checkout is left alone while the instance has another live run besides the one starting
+       (`other_live_run`): that run may be writing in it.
+  5. **Locks and the start of a run or a turn.**
+     - Everything runs under the collection lock that checkpoints, `prepare` and (ADR-0093) renames take, so it never
+       interleaves with them. A sync only reads the shared repository.
+     - **A run that starts during a fast-forward:** the launch journals the run (`pending`) before `prepare`, and
+       `prepare` takes the collection lock before the harness starts. Either the fast-forward finishes first and
+       `prepare` finds nothing to do, or the run is journaled first and the instance is not idle, so it is skipped.
+     - **A turn that starts during a fast-forward:** input the node delivers (`run.input`: messages, nudges) waits on a
+       per-instance gate that the fast-forward holds from its final idle check to the end of the merge, and a
+       fast-forward skips an instance whose input is being delivered or whose delivered input has not had its turn
+       reported (3). A takeover that starts is registered first and then waits for the gate, so an operator never types
+       during a merge. Not fenced: a turn the harness starts on its own (a background task finishing). For those, the idle check is repeated immediately before the merge, git
+       refuses to overwrite a file that changed since the status check, and the remaining window is git's own, between
+       its per-file check and its write, only for files the fast-forward changes.
+  6. **No change to what an agent sees mid-turn.** Only between turns. A Claude Code agent whose context holds an
+     older version of a file is refused by its own Edit and Write tools until it reads the file again.
+  7. **Kill switch.** The node setting `memory.fast_forward` (`SPACEMAN_AGENT_MEMORY_FAST_FORWARD`, default `true`).
+     Off, the node fast-forwards no idle checkout and run start refreshes exactly as before this decision (a clean
+     checkout whose `HEAD` is an ancestor of the shared head is fast-forwarded, ignored files are not checked).
+  8. **Logs.** Every fast-forward that moves a checkout is logged at info ("memory checkout fast-forwarded": space,
+     role, instance, old and new head, number of files changed, and whether at run start or between turns), so each
+     can be audited. Every refusal is logged with its fixed reason: at debug when the instance is busy or already up
+     to date, at info when the checkout itself is in the way (local content, an unfinished operation, a configuration,
+     divergence, a failed merge), since that keeps the instance from following the head until someone looks. The
+     reasons: `unsafe_config`, `merge_in_progress`,
+     `rebase_in_progress`, `cherry_pick_in_progress`, `revert_in_progress`, `bisect_in_progress`, `index_locked`,
+     `status_failed`, `staged_changes`, `modified_files`, `untracked_files`, `ignored_files`, `no_head`,
+     `no_shared_head`, `up_to_date`, `diverged`, `merge_failed`, `no_live_run`, `run_not_running`, `turn_not_ended`,
+     `checkpoint_pending`, `taken_over`, `input_in_delivery`, `input_pending`, `other_live_run`, `journal_failed`. No file name or content is logged.
+- **Alternatives:**
+  - ADR-0092's "no live run only": safe, but adds nothing over `prepare` (3).
+  - `reset --hard` to the head when the content looks equal: rejected, it discards whatever was written since the
+    check.
+  - A union merge driver for notes appended at the end of a file: it would hide real conflicts and needs a configured
+    driver, which the git guard forbids.
+  - Fast-forward at every idle report: the instance's own idle checkpoint already does it; the head moving is what
+    makes another instance stale.
+- **Consequences:**
+  - A role's live instances see other instances' and the dreamer's notes at their next turn instead of at their next
+    run; same-place edits made between turns stop conflicting.
+  - Edits made during a turn while another instance publishes still merge or conflict as before.
+  - Residual risks (5), each needing a write the node did not start, in a file the fast-forward changes:
+    - a write the harness makes on its own between git's per-file check and its write of that file is replaced by the
+      head's version;
+    - git replaces an updated file by a new one, so a background process that kept such a file open across turns
+      keeps writing into the old, unlinked file after the fast-forward, and those writes are lost. The status check
+      cannot see it when the idle checkpoint had already committed the earlier writes.
+  - One lasting ignored or untracked file in a checkout keeps that instance from fast-forwarding, at run start too
+    (logged at info).
+  - The per-instance input gates live in memory for the life of the agent process: one small lock per instance seen.
+  - A stale-context overwrite by a shell command (not Claude Code's file tools) after a fast-forward now replaces the
+    head's text in a plain fast-forward publish, where before it could have become a preserved conflict. History keeps
+    both versions.
+- **Evidence:** `internal/agent` (`memff.go`): `TestFastForwardIdleCheckout` (only the idle instance moves; the shared
+  history is untouched), `TestFastForwardRefusals` (one case per refusal: unsafe configuration, each unfinished git
+  operation, `index.lock`, staged, modified, deleted, untracked, ignored, diverged, no live run, starting, stopping, a
+  second run pending, working, blocked, no status, the instance's dreamer run in a turn, checkpoint pending, taken over,
+  input in delivery, input sent whose turn is not reported, `core.worktree`, `core.bare`, a dreamer run's pending
+  checkpoint; each leaves the checkout as it was), `TestFastForwardUpToDateAndDisabled` (the kill switch, and
+  run start as before with it off), `TestRefreshAtStartChecks`, `TestDreamThenIdenticalEditDoesNotConflict` (the
+  original symptom: no preserved conflict; the same test with the switch off, the earlier behaviour, conflicts, and its
+  base variant fails on the base branch), `TestIdleAppendAfterOtherAppendMerges`, `TestInputWaitsForFastForward`
+  (`run.input` through the command handler waits for the merge), `TestRunStartDuringFastForward` (both orders),
+  `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestBusyInstanceNotTouched`
+  (no git command, not even a fetch, in a busy checkout), `TestInputPendingUntilTurnReported`,
+  `TestIgnoredFileAfterChecksNotOverwritten`, `TestRefreshAtStartWithAnotherLiveRun`, `TestTakeoverWaitsForFastForward`, `TestStartTakeoverWaitsForGate`,
+  `TestStatusReason`. Each
+  guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
+
 ### ADR-0095 — Role descriptions: prompt metadata edited in place, a per-space description, and a role list for control
 
 - **Status:** Proposed, 2026-11-17 (an operator feature request, items 1–3, from rolling out more worker roles of different

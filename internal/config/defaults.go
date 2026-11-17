@@ -92,5 +92,6 @@ func DefaultAgent() *AgentConfig {
 		Log:              defaultLog(),
 		Capacity:         4,
 		JournalRetention: Duration(30 * 24 * time.Hour),
+		Memory:           AgentMemoryConfig{FastForward: true},
 	}
 }

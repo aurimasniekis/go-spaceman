@@ -281,3 +281,11 @@ Selects the log level (debug, info, warn, error) and format (json, text).
 | `log.level` | `info` | `SPACEMAN_AGENT_LOG_LEVEL` | One of debug, info, warn or error. |
 | `log.format` | `json` | `SPACEMAN_AGENT_LOG_FORMAT` | One of json (ECS-aligned) or text. Logs go to stderr (the journal under systemd). |
 
+### `memory`
+
+Configures role memory on the node (ADR-0025).
+
+| Key | Default | Environment | Description |
+|---|---|---|---|
+| `memory.fast_forward` | `true` | `SPACEMAN_AGENT_MEMORY_FAST_FORWARD` | Moves the memory checkouts of live runs that are between turns onto the role's newest shared memory after another instance or a dream published, and refreshes a checkout at run start under the same checks (ADR-0094). Off: neither, and run start refreshes as before. Default on. |
+
