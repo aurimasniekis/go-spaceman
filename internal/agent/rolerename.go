@@ -375,19 +375,21 @@ func (j *Journal) awaitRenameAck(ctx context.Context, spaceID, role string) {
 	}
 }
 
-// renamedTo reports whether the role's memory arrived under this name through a rename that finished: a session that
-// began under the old name still names the old folder in its history (ADR-0093).
-func (j *Journal) renamedTo(ctx context.Context, spaceID, role string) bool {
+// renamedSince reports whether the role's memory arrived under this name through a finished rename that began after the
+// session first ran on this node: only then does the session's history name the old folder (ADR-0093). A session this
+// journal has no earlier run of (another node, or pruned) counts as renamed when any finished rename led to the role.
+func (j *Journal) renamedSince(ctx context.Context, spaceID, role, sessionID, runID string) bool {
 	var n int
-	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND to_role = ? AND state = 'done' AND result = ?`,
-		spaceID, role, proto.MemoryRenameOK).Scan(&n)
+	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND to_role = ? AND state = 'done' AND result = ?
+		AND created_at > COALESCE((SELECT MIN(created_at) FROM runs WHERE session_id = ? AND run_id <> ?), -1)`,
+		spaceID, role, proto.MemoryRenameOK, sessionID, runID).Scan(&n)
 	return err == nil && n > 0
 }
 
 // wantsMemoryNote reports whether a launch's prompt carries the role-memory note: every fresh start, and a resume
-// only when the role was renamed, because the resumed history names the old folder.
-func (a *Agent) wantsMemoryNote(ctx context.Context, spaceID, role string, resume bool) bool {
-	return !resume || a.j.renamedTo(ctx, spaceID, role)
+// only when its role was renamed since the session began, because the resumed history names the old folder.
+func (a *Agent) wantsMemoryNote(ctx context.Context, spaceID, role, sessionID, runID string, resume bool) bool {
+	return !resume || a.j.renamedSince(ctx, spaceID, role, sessionID, runID)
 }
 
 const renameCols = `rename_id, space_id, from_role, to_role, state, result, message, acked`
