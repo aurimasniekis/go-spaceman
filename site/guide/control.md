@@ -13,9 +13,22 @@ Control has the tools every run has (see [Agent tools](./agent-tools)) plus the 
 | `spaceman_worker_launch` | Start a worker for a **ready, eligible** task. The task becomes running and is assigned to the worker. |
 | `spaceman_worker_stop` | Stop a worker (or a KB, dreamer or diagnostic run). Interrupt keeps the session resumable. |
 | `spaceman_runs_list` | The space's active runs with their role, program status and task (every run may read it). |
+| `spaceman_roles_list` | The space's roles, sorted by name: each one's kind, effective description (and whether it is the role's own or the template's), template, harness and model. Read only. |
 
 Workers cannot launch runs at all, and no tool starts a control run, so a worker can never promote itself. Control
 cannot stop itself or another control run; operators do that.
+
+### Choosing a role
+
+`spaceman_worker_launch` takes the role's name. Control finds the right one with `spaceman_roles_list`, one call that
+returns every role of the space with what it is for. It picks the role whose description fits the task, then launches
+it. Descriptions come from the space role, or the template when the space role has none, so an operator who changes a
+role changes what control sees on its next call. Nothing is cached in control's instructions.
+
+The list shows no prompt text, settings, skills or account references, and the descriptions grant nothing: a role
+still runs only with what its configuration gives it. Write descriptions for routing, such as "small, well-specified
+changes; cheap model" or "the final check before merge", and keep secrets out of them. The
+[starter roles](./roles-and-prompts#starter-roles) explain where each role's description comes from.
 
 A worker starts with the task as its first instruction (title, objective, acceptance criteria and anything control
 adds), then reports with `spaceman_task_set_status` (**review**, or **blocked**). Nothing is accepted

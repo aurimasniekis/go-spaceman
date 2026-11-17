@@ -31,6 +31,48 @@ A space gets the roles when you ask for it:
 Then launch, for example, `control` from **Launch run** and let it start the other roles. To run them on Codex, set the
 templates' profile to `starter-codex`, or give the space role another profile.
 
+### Shared by every space
+
+The starter templates, prompts and profiles belong to the **installation**, not to a space. Editing `starter-implementor`
+changes what the implementor role runs with in **every** space that uses it, demo spaces included. A template or profile
+that a space role uses can't be deleted until nothing uses it. A space never has its own copy of a starter; it has a
+**space role** that points at the shared template.
+
+Changing a template's or a prompt's **name or description** creates no prompt version. A template change creates a new
+[revision](#harness-profiles-and-role-templates), and a run picks it up at its next launch. A prompt's name and
+description can be changed in place (`spaceman prompt update`, `PATCH /prompts/{prompt_id}`). Its slug and kind stay
+fixed: the slug identifies the prompt in configuration, and the kind decides which roles may use it.
+
+### Overriding a starter in one space
+
+To change a role in one space only, override it on that space's role instead of editing the template. The space role
+can set:
+
+- its **harness profile**, **model** and **settings**;
+- its **prompt** and the **pinned version** (empty follows the latest);
+- its **instructions**, appended after the prompt in this space only;
+- its **skills**, added to the template's; a pin on the space role wins;
+- its **description**, which says what the role is for in this space. Empty uses the template's description. Control
+  reads it to choose a role (see [Control and workers](./control#choosing-a-role)).
+
+Set an override on the space's role in the web UI, or with `spaceman role set <name> --space <space>`. Note that `role set`
+replaces the role's whole configuration, so pass every field you want to keep (read it first with `spaceman role get`).
+The override lasts only in that space, and the run's manifest records each effective value with where it came from.
+
+### Copying a template for a group of spaces
+
+When a group of spaces needs the same setup that differs from the starter, copy the template rather than overriding each
+space role one by one. There is no per-space template layer and no automatic fork:
+
+1. Read the template with `spaceman role template get <template>`.
+2. Add a new template with the same kind, profile, prompt and settings, and a new slug:
+   `spaceman role template create <new-slug> --kind <kind> --profile <profile> --prompt <prompt> --name "…" --description "…"`.
+3. Point each space's role at the copy: `spaceman role set <name> --space <space> --template <template-id>`, using the
+   ID the create step returned.
+
+To change the copy's prompt text too, fork the prompt (`spaceman prompt fork`) and point the copy at the fork. Forks never
+merge back, so later changes to the original do not reach the copy.
+
 ## Prompts
 
 **Prompts** hold the instructions for roles, dreams, knowledge bases and events, in one versioning system.
@@ -57,7 +99,8 @@ Claude Code's permission mode. A **role template** says what a role is: its run 
 
 <Shot name="roles" alt="Role templates for control and reviewer with their prompts and profiles" caption="Role templates" />
 
-Editing a profile or template creates a new **revision**; it applies to launches from then on.
+Editing a profile or template creates a new **revision**; it applies to launches from then on. Changing only a template's
+name or description also makes a revision, but no prompt version.
 
 ### Claude Code settings
 
@@ -148,8 +191,9 @@ versions.
 ## Space roles
 
 A space configures the roles it uses from these templates on its **Overview**. A space role can override the profile,
-the prompt (or its version), the model and settings, and add instructions that apply only in this space. **Effective
-configuration** shows what a launch of the role gets now and where each value comes from.
+the prompt (or its version), the model and settings, add skills and instructions that apply only in this space, and give
+the role its own description. **Effective configuration** shows what a launch of the role gets now and where each value
+comes from. The [starter roles](#starter-roles) section explains how this works for the shared starters.
 
 <Shot name="space-role-preview" alt="Effective configuration of the control role: harness from the profile, kind from the template, permission mode from the profile, and the composed system text" caption="A role's effective configuration" />
 
@@ -175,6 +219,7 @@ Field by field:
 | Settings | Merged key by key; the last layer that sets a key wins. |
 | Claude Code version | From the profile only (empty: the node's channel). |
 | System text | Concatenated in order: SpaceMan's orientation, the role prompt, the template's memory conventions, the space's goals and standing instructions, the space role's instructions, then the launch's text. |
+| Description | The space role's own, otherwise the template's. Not part of the system text and not in the run manifest: it is guidance for whoever chooses a role, shown to control. |
 
 **Policy ceilings** apply last, whatever layer set the value. The central setting `harness.max_permission_mode`
 (default `auto`) is the most permissive Claude Code permission mode any run gets; a higher mode is lowered to it, and
