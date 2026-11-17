@@ -6398,7 +6398,7 @@
   (`run.input` through the command handler waits for the merge), `TestRunStartDuringFastForward` (both orders),
   `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestBusyInstanceNotTouched`
   (no git command, not even a fetch, in a busy checkout), `TestInputPendingUntilTurnReported`,
-  `TestIgnoredFileAfterChecksNotOverwritten`, `TestRefreshAtStartWithAnotherLiveRun`, `TestTakeoverWaitsForFastForward`,
+  `TestIgnoredFileAfterChecksNotOverwritten`, `TestRefreshAtStartWithAnotherLiveRun`, `TestTakeoverWaitsForFastForward`, `TestStartTakeoverWaitsForGate`,
   `TestStatusReason`. Each
   guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
 

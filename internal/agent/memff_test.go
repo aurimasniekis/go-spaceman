@@ -668,6 +668,53 @@ func TestTakeoverWaitsForFastForward(t *testing.T) {
 	<-waited
 }
 
+// startTakeover itself waits for the gate: the operator's terminal is attached only after a merge in progress ended.
+func TestStartTakeoverWaitsForGate(t *testing.T) {
+	e := newFFEnv(t)
+	f := runnertest.New()
+	e.a.o.Runner = f
+	e.a.leases[ffSpace] = leaseRow{SpaceID: ffSpace, Generation: 1, ExpiresAt: time.Now().Add(time.Hour), Workdir: "ff"}
+	r := e.idleRun("ins_a")
+	p, err := f.Start(e.ctx, runner.Spec{Name: r.TerminalName, Argv: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.TerminalID = p.ID
+	if err := e.a.j.updateRun(e.ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	g := e.m.inputGate("ins_a")
+	g.Lock() // a fast-forward is merging
+	started := make(chan struct{})
+	go func() {
+		defer close(started)
+		e.a.startTakeover(e.ctx, proto.Takeover{TakeoverID: "tko_1", SpaceID: ffSpace, RunID: r.RunID, Generation: 1})
+	}()
+	select {
+	case <-started:
+		g.Unlock()
+		t.Fatal("the takeover did not wait for the merge")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if !e.a.takenOver(r.RunID) {
+		g.Unlock()
+		t.Fatal("the takeover was not registered before waiting: a later fast-forward would not see it")
+	}
+	if f.TakeoverAttached(p.ID) != 0 {
+		g.Unlock()
+		t.Fatal("the operator's terminal was attached during the merge")
+	}
+	g.Unlock()
+	<-started
+	e.a.mu.Lock()
+	tk := e.a.takeovers[r.RunID]
+	e.a.mu.Unlock()
+	if tk != nil {
+		<-tk.ready
+		tk.cancel()
+	}
+}
+
 // statusReason classifies porcelain output: staged before modified before untracked before ignored, renames skip
 // their source path.
 func TestStatusReason(t *testing.T) {
