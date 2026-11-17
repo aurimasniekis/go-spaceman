@@ -25,9 +25,9 @@ export function watchdogBadge(w: Watchdog | undefined): { label: string; color: 
 }
 
 /** On the control's row: shown while the control watchdog is nudging it or has escalated (ADR-0099). */
-export function WatchdogBadge({ spaceId }: { spaceId: string }) {
+export function WatchdogBadge({ spaceId, runId }: { spaceId: string; runId: string }) {
   const w = useWatchdog(spaceId)
-  const b = watchdogBadge(w.data)
+  const b = w.data?.control_run === runId ? watchdogBadge(w.data) : null
   if (!b) return null
   return (
     <Tooltip label={b.tip} multiline maw={320} withArrow>

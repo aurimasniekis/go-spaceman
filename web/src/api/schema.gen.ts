@@ -12108,10 +12108,10 @@ export interface components {
              * @description Reminders sent in the current stretch of the same backlog
              */
             nudges: number;
-            /** @description false until the watchdog has passed over the space since central started; the rest is then empty */
+            /** @description false while the space is not observed: the watchdog has not yet passed over it since central started (status is then off) and the rest is empty */
             observed: boolean;
             /**
-             * @description off: the watchdog is off or the space not active; idle: nothing is being nudged; nudging: control was reminded and the backlog still waits; escalated: the reminders went unanswered and the space's people were told
+             * @description off: the watchdog is off, the space is not active or not yet observed; idle: nothing is being nudged; nudging: control was reminded and the backlog still waits; escalated: the reminders went unanswered and the space's people were told
              * @enum {string}
              */
             status: "off" | "idle" | "nudging" | "escalated";

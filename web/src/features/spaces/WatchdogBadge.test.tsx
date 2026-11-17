@@ -33,10 +33,46 @@ describe('watchdog badge', () => {
     expect(backlogText(w({}).backlog)).toBe('')
   })
 
+  it('words the backlog', () => {
+    const b = (over: Partial<W['backlog']>) => ({ ...w({}).backlog, ...over })
+    for (const [backlog, want] of [
+      [b({ messages: 1 }), '1 message'],
+      [b({ failed: 1 }), '1 failed run'],
+      [b({ failed: 3 }), '3 failed runs'],
+      [b({ exited: 1 }), '1 ended run'],
+      [b({ exited: 2 }), '2 ended runs'],
+      [b({ startable: 1, free_slots: 2 }), '1 task to start'],
+      [b({ startable: 4, free_slots: 2 }), '4 tasks to start'],
+      [b({ messages: 2, reviews: 1, failed: 1, exited: 2, startable: 3 }), '2 messages, 1 review, 1 failed run, 2 ended runs, 3 tasks to start'],
+    ] as const) expect(backlogText(backlog)).toBe(want)
+  })
+
+  it('words the reminders, the last one and the tooltip', () => {
+    const waiting = { messages: 0, reviews: 0, failed: 1, exited: 1, startable: 2, free_slots: 1 }
+    const one = watchdogBadge(w({ status: 'nudging', nudges: 1, backlog: waiting }))!
+    expect(one.tip).toBe('The watchdog reminded control of waiting work: 1 reminder sent. Waiting: 1 failed run, 1 ended run, 2 tasks to start.')
+    const last = watchdogBadge(w({ status: 'nudging', nudges: 2, last_nudge: new Date(Date.now() - 5 * 60_000).toISOString() }))!
+    expect(last.tip).toMatch(/^The watchdog reminded control of waiting work: 2 reminders sent, last .+\.$/)
+    expect(last.tip).not.toContain('Waiting:')
+    const esc = watchdogBadge(w({ status: 'escalated', nudges: 3, escalated: true, backlog: waiting }))!
+    expect(esc.tip).toBe("Control left waiting work alone after 3 reminders sent; the space's people were told. Waiting: 1 failed run, 1 ended run, 2 tasks to start.")
+  })
+
+  it('renders only on the control run the state belongs to', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
+    qc.setQueryData(keys.watchdog('spc_1'), w({ status: 'nudging', nudges: 1, control_run: 'run_new' }))
+    const ui = (runId: string) => <MantineProvider><QueryClientProvider client={qc}><WatchdogBadge spaceId="spc_1" runId={runId} /></QueryClientProvider></MantineProvider>
+    const { unmount } = render(ui('run_old'))
+    expect(screen.queryByTestId('watchdog-badge')).toBeNull()
+    unmount()
+    render(ui('run_new'))
+    expect(screen.getByTestId('watchdog-badge')).toHaveTextContent('being nudged')
+  })
+
   it('renders on the control row from the cached state', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
-    qc.setQueryData(keys.watchdog('spc_1'), w({ status: 'escalated', nudges: 3, escalated: true }))
-    render(<MantineProvider><QueryClientProvider client={qc}><WatchdogBadge spaceId="spc_1" /></QueryClientProvider></MantineProvider>)
+    qc.setQueryData(keys.watchdog('spc_1'), w({ status: 'escalated', nudges: 3, escalated: true, control_run: 'run_1' }))
+    render(<MantineProvider><QueryClientProvider client={qc}><WatchdogBadge spaceId="spc_1" runId="run_1" /></QueryClientProvider></MantineProvider>)
     expect(screen.getByTestId('watchdog-badge')).toHaveTextContent('not responding')
   })
 })

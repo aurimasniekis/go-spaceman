@@ -112,6 +112,9 @@ this and reminds control.
   Each reminder is audited.
 - **Left alone.** The watchdog never reminds a control that is working, waiting for a person, at a usage limit or
   taken over, nor in a space that is paused or archived.
+- **Reviews and ended runs.** A backlog made only of reviews and ended runs gets a single reminder and never
+  escalates, and so does one found after central restarts. They count only if they arrived after control's last
+  activity: control was told, and a review may rightly wait a long time.
 - **Escalation.** When `control_watchdog_nudges` reminders in a row (3 by default, 0 never) leave the work waiting,
   the space's people get one human action, "Control is not responding in …", with the counts. If
   `control_watchdog_restart` is on (off by default), control is also stopped and started again, resuming its session,

@@ -81,7 +81,7 @@ function SpacePage() {
                   </Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text></Table.Td>
                   <Table.Td>
-                    <Group gap={6} wrap="wrap"><Text size="sm">{runStateText(r)}</Text><RunLimitBadge run={r} />{r.kind === 'control' && <WatchdogBadge spaceId={spaceId} />}</Group>
+                    <Group gap={6} wrap="wrap"><Text size="sm">{runStateText(r)}</Text><RunLimitBadge run={r} />{r.kind === 'control' && <WatchdogBadge spaceId={spaceId} runId={r.id} />}</Group>
                   </Table.Td>
                   <Table.Td><Tooltip label={datetime(r.started_at ?? r.created_at)}><Text size="sm" c="dimmed">{ago(isSet(r.started_at) ? r.started_at : r.created_at)}</Text></Tooltip></Table.Td>
                 </Table.Tr>
