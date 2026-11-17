@@ -1,4 +1,4 @@
--- 0065_role_rename_abandoned: an operator can close a stuck role rename (ADR-0093 addendum, T-H4). The node move is given up:
+-- 0063_role_rename_abandoned: an operator can close a stuck role rename (ADR-0093 addendum, T-H4). The node move is given up:
 --   node_state  abandoned: an admin closed the rename while it was pending or failed. Central's memory stays under the new
 --               name; the node's old-name folder is left on disk (orphaned), never deleted and never synced again.
 --               node_done_at holds the close time and node_message the reason. Like done and not_needed it is not open:

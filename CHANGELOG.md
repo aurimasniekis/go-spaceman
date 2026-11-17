@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`409 node_too_old`) until the node agent is upgraded and has connected. Upgrade central first.
 - **Schema migration `0062_role_rename_failed`**: rebuilds `space_role_renames` to add the `failed` node state. It is
   applied on start, needs no action and is forward-only.
+- **Schema migration `0063_role_rename_abandoned`**: rebuilds `space_role_renames` to add the `abandoned` node state
+  (closing a stuck rename). It is applied on start, needs no action and is forward-only.
 
 ### Added
 

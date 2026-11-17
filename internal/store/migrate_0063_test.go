@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// 0065 widens space_role_renames.node_state with abandoned (ADR-0093 addendum, T-H4): a database at 0064 upgrades and
+// 0063 widens space_role_renames.node_state with abandoned (ADR-0093 addendum, T-H4): a database at 0062 upgrades and
 // keeps its renames with every column, and the rebuilt table still refuses an unknown state and a rename to the same
 // name, and still goes with its space.
-func TestRoleRenameAbandonedMigrationFrom0064(t *testing.T) {
+func TestRoleRenameAbandonedMigrationFrom0062(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
-	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0064")})
+	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0062")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestRoleRenameAbandonedMigrationFrom0064(t *testing.T) {
 		}
 	}
 	if _, err := s.wdb.ExecContext(ctx, `UPDATE space_role_renames SET node_state = 'abandoned' WHERE id = 'rrn_2'`); err == nil {
-		t.Fatal("0064 already accepts abandoned")
+		t.Fatal("0062 already accepts abandoned")
 	}
 	_ = s.Close()
 
@@ -39,8 +39,8 @@ func TestRoleRenameAbandonedMigrationFrom0064(t *testing.T) {
 	}
 	defer s.Close()
 	cur, latest, err := SchemaVersions(ctx, s.rdb, EmbeddedMigrations())
-	if err != nil || cur != latest || latest < 65 {
-		t.Fatalf("after the upgrade: version %d of %d, %v; want all applied, at least 0065", cur, latest, err)
+	if err != nil || cur != latest || latest < 63 {
+		t.Fatalf("after the upgrade: version %d of %d, %v; want all applied, at least 0063", cur, latest, err)
 	}
 	var (
 		from, to, by, node, state, msg string
