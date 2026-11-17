@@ -862,7 +862,13 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			return nil
 		}
 		seq, err := svc.rec.apply(s.seq, c)
-		_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
+		// A message that could not be applied at all and leaves nothing known of what central holds (the recording
+		// could not be opened, nothing stored before) is not acknowledged: a node that probes for central's sequence
+		// would take an ack of 0 for one (ADR-0097, addendum). It asks again. Any other outcome is acked with what is
+		// durably stored (Recordings.apply), before a storage failure closes the connection.
+		if err == nil || seq > 0 {
+			_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
+		}
 		return svc.rec.refused(s, err)
 	default:
 		return apperr.New(apperr.CodeInvalid, "unexpected message type %q", env.Type)

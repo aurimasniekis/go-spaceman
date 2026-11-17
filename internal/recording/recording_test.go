@@ -3,6 +3,7 @@ package recording
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -154,14 +155,18 @@ func (d *fullDisk) Write(p []byte) (int, error) {
 func (d *fullDisk) Sync() error  { d.syncs++; return d.f.Sync() }
 func (d *fullDisk) Close() error { return d.f.Close() }
 
-// SM-REC-004 (fault: disk exhaustion): a write failure stops recording output without failing callers that only add
-// output; the writer hands out a "disk" trunc record (once) numbered after every record it assigned, and the close
-// record still gets a sequence number for central's copy. What was synced stays readable; the torn frame written after
-// it is cut off (it was never synced, so no reader may take it for stored).
-func TestDiskFullTruncates(t *testing.T) {
+// SM-REC-004 (fault: disk exhaustion): a write failure never fails callers that only add output. While the disk is
+// full every record is still numbered and handed back (the caller ships it to central's copy) without being stored,
+// and no trunc record ends the recording. Once the backoff has passed and the disk has space, the writer starts a new
+// segment and the local recording goes on; what was synced before stays readable (the torn frame written after it is
+// cut off) and the records it could not store are a gap in the local copy, which Stored never moves past.
+func TestDiskFullRecovers(t *testing.T) {
 	dir := t.TempDir()
 	left := int64(1 << 30)
-	w, err := Open(Options{Dir: dir, Create: func(path string) (File, error) {
+	creates := 0
+	now := time.Unix(1_800_000_000, 0)
+	w, err := Open(Options{Dir: dir, Now: func() time.Time { return now }, RetryAfter: 5 * time.Second, Create: func(path string) (File, error) {
+		creates++
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			return nil, err
@@ -174,30 +179,124 @@ func TestDiskFullTruncates(t *testing.T) {
 	must(t, w.Add(Record{Kind: KindOpen, Cols: 80, Rows: 24, RunID: "run_x"}))
 	must(t, w.Add(Record{Kind: KindOut, Data: []byte("before\n")}))
 	must(t, w.Flush())
-	if _, ok := w.Truncation(); ok {
-		t.Fatal("truncation before any failure")
-	}
 	left = 10 // the disk fills up in the middle of the next frame
 	must(t, w.Add(Record{Kind: KindOut, Data: bytes.Repeat([]byte("lost "), 100)}))
 	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
 		t.Fatalf("flush error %v, want ENOSPC", err)
 	}
-	tr, ok := w.Truncation()
-	if !ok || tr.Kind != KindTrunc || tr.Why != "disk" || tr.Seq != 4 {
-		t.Fatalf("truncation %+v %v", tr, ok)
+	if tr, ok := w.Truncation(); ok {
+		t.Fatalf("a disk failure ended the recording: %+v", tr)
 	}
-	if _, again := w.Truncation(); again {
-		t.Fatal("truncation handed out twice")
+	// While the disk is full (and before the backoff passed) output is numbered for central but not stored.
+	r, err := w.AddRecord(Record{Kind: KindOut, Data: []byte("central only")})
+	if r.Seq != 4 || !errors.Is(err, syscall.ENOSPC) || string(r.Data) != "central only" {
+		t.Fatalf("output while the disk is full %+v %v", r, err)
 	}
-	if r, err := w.AddRecord(Record{Kind: KindOut, Data: []byte("dropped")}); r.Seq != 0 || err == nil {
-		t.Fatalf("output after failure %+v %v", r, err)
+	left = 1 << 30 // space freed, but the backoff has not passed yet
+	now = now.Add(4 * time.Second)
+	if r, err := w.AddRecord(Record{Kind: KindOut, Data: []byte("still waiting")}); r.Seq != 5 || err == nil {
+		t.Fatalf("output before the backoff passed %+v %v", r, err)
+	}
+	if w.Err() == nil {
+		t.Fatal("failure cleared before the backoff passed")
+	}
+	before := creates
+	now = now.Add(2 * time.Second)
+	r, err = w.AddRecord(Record{Kind: KindOut, Data: []byte("after\n")})
+	if r.Seq != 6 || err != nil {
+		t.Fatalf("output after the disk recovered %+v %v", r, err)
+	}
+	must(t, w.Flush())
+	if w.Err() != nil || creates != before+1 {
+		t.Fatalf("recovery: err %v, segments created %d", w.Err(), creates-before)
+	}
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after the recovery, want 2 (records 3 to 5 are a hole in the local copy)", w.Stored())
 	}
 	code := 0
 	cl, err := w.AddRecord(Record{Kind: KindClose, ExitCode: &code, Reason: "exited"})
-	if cl.Seq != 5 || err == nil {
-		t.Fatalf("close after failure %+v %v", cl, err)
+	if cl.Seq != 7 || err != nil {
+		t.Fatalf("close after recovery %+v %v", cl, err)
+	}
+	must(t, w.Close())
+	res, err := Read(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seqs []uint64
+	for _, r := range res.Records {
+		seqs = append(seqs, r.Seq)
+	}
+	if fmt.Sprint(seqs) != "[1 2 6 7]" || res.Truncated || res.Gaps < 1 || string(res.Records[2].Data) != "after\n" {
+		t.Fatalf("local recording after recovery: seqs %v %+v", seqs, res)
+	}
+	// A writer reopened later continues after the last stored record; SkipTo moves it above records central kept
+	// that the disk lost.
+	w2, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w2.Seq() != 7 {
+		t.Fatalf("resumed at %d", w2.Seq())
+	}
+	w2.SkipTo(9)
+	w2.SkipTo(3) // never backwards
+	must(t, w2.Add(Record{Kind: KindGap, Why: "reattach"}))
+	must(t, w2.Close())
+	res, _ = Read(dir, 0)
+	if last := res.Records[len(res.Records)-1]; last.Seq != 10 {
+		t.Fatalf("after resume: last %+v", last)
+	}
+}
+
+// SM-REC-003/004 (fault: disk exhaustion), central's side: a failure of Append is final for the writer. The torn frame
+// written after the last sync is cut off, Stored stays at the last synced record, no trunc record is added, and Append
+// keeps failing even once the disk has space and any backoff has passed (central drops the writer and reopens the
+// recording; the node re-ships). A writer reopened on the directory resumes from what is durably stored.
+func TestDiskFullTruncates(t *testing.T) {
+	dir := t.TempDir()
+	left := int64(1 << 30)
+	now := time.Unix(1_800_000_000, 0)
+	w, err := Open(Options{Dir: dir, Now: func() time.Time { return now }, RetryAfter: time.Second, Create: func(path string) (File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return &fullDisk{f: f, left: &left}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for seq, rec := range []Record{{Kind: KindOpen, Cols: 80, Rows: 24, RunID: "run_x"}, {Kind: KindOut, Data: []byte("before\n")}} {
+		rec.Seq = uint64(seq + 1)
+		if ok, err := w.Append(rec); !ok || err != nil {
+			t.Fatalf("append %d: %v %v", rec.Seq, ok, err)
+		}
+	}
+	must(t, w.Flush())
+	left = 10 // the disk fills up in the middle of the next frame
+	if _, err := w.Append(Record{Seq: 3, Kind: KindOut, Data: bytes.Repeat([]byte("lost "), 100)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush error %v, want ENOSPC", err)
+	}
+	if tr, ok := w.Truncation(); ok {
+		t.Fatalf("a disk failure added a trunc record: %+v", tr)
+	}
+	left = 1 << 30
+	now = now.Add(time.Hour)
+	if ok, err := w.Append(Record{Seq: 4, Kind: KindOut, Data: []byte("later")}); ok || !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("append after the failure (disk freed, backoff passed): %v %v", ok, err)
+	}
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush after the failure: %v", err)
+	}
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after the failure, want 2", w.Stored())
 	}
 	_ = w.Close()
+	must(t, w.DropUnsynced())
 	res, err := Read(dir, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -205,22 +304,76 @@ func TestDiskFullTruncates(t *testing.T) {
 	if len(res.Records) != 2 || res.Truncated || string(res.Records[1].Data) != "before\n" {
 		t.Fatalf("after disk full: %+v", res)
 	}
-	// A writer reopened later (space freed) continues after the last stored record; SkipTo moves it above records
-	// central kept that the disk lost.
+	// A writer reopened later continues after the last stored record, and the re-shipped records are stored again.
 	w2, err := Open(Options{Dir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w2.Seq() != 2 {
-		t.Fatalf("resumed at %d", w2.Seq())
+	if w2.Seq() != 2 || w2.Stored() != 2 {
+		t.Fatalf("reopened at seq %d stored %d, want 2 and 2", w2.Seq(), w2.Stored())
 	}
-	w2.SkipTo(5)
-	w2.SkipTo(3) // never backwards
-	must(t, w2.Add(Record{Kind: KindGap, Why: "reattach"}))
+	for seq := uint64(3); seq <= 4; seq++ {
+		if ok, err := w2.Append(Record{Seq: seq, Kind: KindOut, Data: []byte("again")}); !ok || err != nil {
+			t.Fatalf("re-shipped %d: %v %v", seq, ok, err)
+		}
+	}
 	must(t, w2.Close())
+	if w2.Stored() != 4 {
+		t.Fatalf("stored %d after the re-ship, want 4", w2.Stored())
+	}
 	res, _ = Read(dir, 0)
-	if last := res.Records[len(res.Records)-1]; last.Seq != 6 || res.Gaps < 2 {
-		t.Fatalf("after resume: last %+v gaps %d", last, res.Gaps)
+	if len(res.Records) != 4 || res.Gaps != 0 || res.Truncated {
+		t.Fatalf("after the re-ship: %d records, %d gaps, truncated %v", len(res.Records), res.Gaps, res.Truncated)
+	}
+}
+
+// A disk that stays full is tried again with a growing backoff, and the attempts that wrote nothing leave no empty
+// segments behind.
+func TestDiskFullBacksOff(t *testing.T) {
+	dir := t.TempDir()
+	full := false
+	creates := 0
+	now := time.Unix(1_800_000_000, 0)
+	w, err := Open(Options{Dir: dir, Now: func() time.Time { return now }, RetryAfter: time.Second, Create: func(path string) (File, error) {
+		creates++
+		if full {
+			return nil, syscall.ENOSPC
+		}
+		return createFile(path)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, w.Add(Record{Kind: KindOpen, Cols: 80, Rows: 24}))
+	must(t, w.Flush())
+	full = true
+	now = now.Add(SegmentMaxAge) // the next flush starts a new segment, which cannot be created
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("x")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	// Attempts at 1 s, then 2 s, then 4 s after each failure: one create per attempt, none in between.
+	for _, wait := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second} {
+		before := creates
+		now = now.Add(wait - time.Millisecond)
+		_, _ = w.AddRecord(Record{Kind: KindOut, Data: []byte("x")})
+		_ = w.Flush()
+		if creates != before {
+			t.Fatalf("tried before the %s backoff passed", wait)
+		}
+		now = now.Add(time.Millisecond)
+		_, _ = w.AddRecord(Record{Kind: KindOut, Data: []byte("x")})
+		if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) || creates != before+1 {
+			t.Fatalf("attempt after %s: %v, creates %d", wait, err, creates-before)
+		}
+	}
+	full = false
+	now = now.Add(8 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("back")}))
+	must(t, w.Close())
+	segs, _ := Segments(dir)
+	if len(segs) != 2 || filepath.Base(segs[1]) != SegmentName(2) {
+		t.Fatalf("segments %v", segs)
 	}
 }
 
@@ -241,6 +394,198 @@ func TestQuotaTruncationHandedOut(t *testing.T) {
 	must(t, w.Close())
 }
 
+// flakyFile is a segment file whose writes fail, writing nothing, while *fail is set.
+type flakyFile struct {
+	f      *os.File
+	fail   *bool
+	onFail func()
+}
+
+func (d *flakyFile) Write(p []byte) (int, error) {
+	if *d.fail {
+		if d.onFail != nil {
+			d.onFail()
+		}
+		return 0, syscall.ENOSPC
+	}
+	return d.f.Write(p)
+}
+func (d *flakyFile) Sync() error  { return d.f.Sync() }
+func (d *flakyFile) Close() error { return d.f.Close() }
+
+func flakyWriter(t *testing.T, dir string, fail *bool, now *time.Time, onFail func(path string)) *Writer {
+	t.Helper()
+	w, err := Open(Options{Dir: dir, Now: func() time.Time { return *now }, RetryAfter: time.Second, Create: func(path string) (File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		d := &flakyFile{f: f, fail: fail}
+		if onFail != nil {
+			d.onFail = func() { onFail(path) }
+		}
+		return d, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+// A segment that took no byte before the write failed is removed and its number is used again by the next one: no
+// empty segment stays behind and the numbering has no hole.
+func TestFailedFirstWriteLeavesNoEmptySegment(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, nil)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	if segs, _ := Segments(dir); len(segs) != 0 {
+		t.Fatalf("an empty segment stayed behind: %v", segs)
+	}
+	fail = false
+	now = now.Add(2 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Close())
+	segs, _ := Segments(dir)
+	if len(segs) != 1 || filepath.Base(segs[0]) != SegmentName(1) {
+		t.Fatalf("segments %v, want only %s", segs, SegmentName(1))
+	}
+}
+
+// When the empty segment cannot be removed it keeps its number: the next segment must not try to create it again.
+func TestFailedFirstWriteKeepsTheNumberOfASegmentLeftBehind(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, func(path string) {
+		// Make os.Remove fail: the path becomes a directory that is not empty.
+		_ = os.Remove(path)
+		_ = os.Mkdir(path, 0o700)
+		_ = os.WriteFile(filepath.Join(path, "keep"), []byte("x"), 0o600)
+	})
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	fail = false
+	now = now.Add(2 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Flush())
+	if w.Err() != nil {
+		t.Fatalf("the next segment failed: %v", w.Err())
+	}
+	if _, err := os.Stat(filepath.Join(dir, SegmentName(2))); err != nil {
+		t.Fatalf("the next segment is not number 2: %v", err)
+	}
+	must(t, w.Close())
+}
+
+// A failed segment that is already gone when the writer removes it (someone else removed it) counts as removed: its
+// number is used again and nothing is left to cut.
+func TestFailedSegmentAlreadyGoneGivesItsNumberBack(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, func(path string) { _ = os.Remove(path) })
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	must(t, w.DropUnsynced()) // nothing left to cut
+	fail = false
+	now = now.Add(2 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Close())
+	segs, _ := Segments(dir)
+	if len(segs) != 1 || filepath.Base(segs[0]) != SegmentName(1) {
+		t.Fatalf("segments %v, want only %s", segs, SegmentName(1))
+	}
+}
+
+// A segment that could not be removed at the failure is removed when the writer retries, and only then gives its
+// number back: the next segment takes it.
+func TestRetryRemovesASegmentLeftBehindAndReusesItsNumber(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, func(path string) {
+		_ = os.Remove(path)
+		_ = os.Mkdir(path, 0o700)
+		_ = os.WriteFile(filepath.Join(path, "keep"), []byte("x"), 0o600)
+	})
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush %v", err)
+	}
+	seg := filepath.Join(dir, SegmentName(1))
+	must(t, os.Remove(filepath.Join(seg, "keep"))) // the left-behind segment can be removed now
+	fail = false
+	now = now.Add(2 * time.Second)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Close())
+	segs, _ := Segments(dir)
+	if len(segs) != 1 || filepath.Base(segs[0]) != SegmentName(1) {
+		t.Fatalf("segments %v, want only %s", segs, SegmentName(1))
+	}
+	if res, _ := Read(dir, 0); len(res.Records) != 1 || res.Records[0].Seq != 2 {
+		t.Fatalf("recording %+v, want record 2 alone", res)
+	}
+}
+
+// After a flush succeeded the backoff starts over: a later failure waits RetryAfter again, not the doubled wait of the
+// failures before.
+func TestBackoffStartsOverAfterASuccessfulFlush(t *testing.T) {
+	dir := t.TempDir()
+	fail := true
+	now := time.Unix(1_800_000_000, 0)
+	w := flakyWriter(t, dir, &fail, &now, nil)
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("a")}))
+	_ = w.Flush() // the first failure: waits 1 s, the next failure would wait 2 s
+	now = now.Add(time.Second)
+	fail = false
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("b")}))
+	must(t, w.Flush())
+	fail = true
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("c")}))
+	if err := w.Flush(); err == nil {
+		t.Fatal("the write did not fail")
+	}
+	now = now.Add(time.Second)
+	if _, err := w.AddRecord(Record{Kind: KindOut, Data: []byte("d")}); err != nil {
+		t.Fatalf("still backing off one RetryAfter after the failure: %v", err)
+	}
+}
+
+// A last segment that holds no decodable record (torn at its first frame) does not hide the records of the segment
+// before it, and a recording whose segments are all torn has sequence 0.
+func TestLastSeqInSkipsATornOnlyLastSegment(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		must(t, w.Add(Record{Kind: KindOut, Data: []byte("x")}))
+	}
+	must(t, w.Close())
+	if got, err := LastSeqIn(dir); err != nil || got != 3 {
+		t.Fatalf("LastSeqIn %d %v, want 3", got, err)
+	}
+	must(t, os.WriteFile(filepath.Join(dir, SegmentName(2)), []byte{0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x58, 0x99}, 0o600))
+	if got, err := LastSeqIn(dir); err != nil || got != 3 {
+		t.Fatalf("LastSeqIn with a torn last segment %d %v, want 3", got, err)
+	}
+	torn := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(torn, SegmentName(1)), []byte("not a frame"), 0o600))
+	if got, err := LastSeqIn(torn); err != nil || got != 0 {
+		t.Fatalf("LastSeqIn of only torn segments %d %v, want 0", got, err)
+	}
+}
+
 // failSync is a segment file whose Sync fails while fail is set.
 type failSync struct {
 	File
@@ -254,8 +599,8 @@ func (f failSync) Sync() error {
 	return f.File.Sync()
 }
 
-// Stored is the highest sequence that was synced: it never counts buffered records, a failed flush, or the trunc
-// record a failure adds, while Seq does (the hub acks Stored, so a node never prunes records central lacks).
+// Stored is the highest sequence that was synced: it never counts buffered records or a failed flush, while Seq does
+// (the hub acks Stored, so a node never prunes records central lacks).
 func TestStoredDoesNotAdvanceOnFailedFlush(t *testing.T) {
 	dir := t.TempDir()
 	fail := false

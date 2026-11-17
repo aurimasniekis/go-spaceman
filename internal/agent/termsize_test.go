@@ -245,6 +245,7 @@ func TestTerminalSizeRecorded(t *testing.T) {
 			}
 		}
 	}()
+	a.launchedRecording(row.RunID) // as launch notes it: no central here to ask for its sequence
 	a.startRecorder(ctx, row)
 	// Output sent before the recorder's attach is open would be lost (the fake drops it), so wait for its first paint.
 	waitFor(t, "recorder attached", func() bool {

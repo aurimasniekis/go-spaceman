@@ -562,10 +562,12 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   terminal is not affected.
 
 ## Recordings
-- **A full disk on the node ends the local recording.** The run is unaffected. Central's copy keeps everything shipped
-  before the failure and ends with a `trunc` record (`disk`) and the run's close record. Output after the failure is
-  not recorded. It is not resumed when space frees up, only when a new attachment starts (for example after an agent
-  restart), which leaves a gap.
+- **A full disk on the node leaves a gap in the node's local recording** (ADR-0097). The run is unaffected, and its
+  output still reaches central's copy and the live view. The node tries the disk again with a backoff (5 s, up to a
+  minute) and the local recording resumes in a new segment once space is freed; output while it was full is missing
+  from the local copy only, and also from central's if it could not be shipped meanwhile (the node disconnected for
+  more than about 1 MiB of output, or the agent restarted while disconnected). Recordings of nodes older than this release end with a `trunc` record (`disk`)
+  at the failure instead.
 - **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
   node keeps its local recording. Tested: node-side only (`make test-fault`).
 - **Retention deletes central's copy only.** `retention_recordings_days` deletes central's copy of an ended run's
@@ -577,8 +579,8 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **The attention summary covers central, not node disks.** **Attention** (and each space overview's counters) gathers
   pending human actions, blocked and failed tasks, quarantined events, unknown and recently failed runs, budget notices,
   attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and central's storage
-  health. Node disks are not reported: a full node disk shows only as a truncated recording on its run, labelled
-  "Truncated (quota)" even then. Storage health has no change-feed event, so that section refreshes with other changes
+  health. Node disks are not reported: a full node disk shows only as a warning in the node agent's log (and, on nodes
+  older than this release, as a truncated recording labelled "Truncated (quota)"). Storage health has no change-feed event, so that section refreshes with other changes
   or on **Refresh**. Memory sync state and knowledge-base work stay on their pages (SM-UI-003).
 - **Terminal takeover is time-bound and keeps the terminal's size.** An admin (`terminal:takeover`) can take over a
   running terminal; automated input waits until it ends. It ends 30 seconds after the holder's page stops renewing it,

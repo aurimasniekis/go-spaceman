@@ -161,7 +161,8 @@
     only when a re-ship can help, and at most once per run and connection. A write or sync failure closes (once;
     chunks already on their way behind it are refused in the backoff without closing again, and a refusal on a *new*
     connection, which needs a re-ship, closes it once more). A recording that cannot be opened (permissions, the
-    object store) does not: central logs it, acks the chunk with what is stored and stores
+    object store) does not: central logs it, acks the chunk with what is stored (no ack at all when that is 0: ADR-0097
+    addendum, decision 3) and stores
     nothing past that hole on the connection, so the node keeps the records and re-ships them on its next
     connection, whenever that is. Such a recording can stall until then; the alternative, a reconnect per failing run
     every few seconds, would flap every other run of the node. A storage failure that persists (a cut that keeps
@@ -7254,6 +7255,121 @@
   positive answer, about its own runs. The new message is authenticated and scoped by the existing node session.
   Central answers `unknown` for other nodes' runs, the same as for runs that do not exist, so the query discloses
   nothing new. Central changes nothing in response to a query.
+
+### ADR-0097 — Live output never waits for another run's recording catch-up; acknowledgements survive an agent restart; a full disk no longer stops the live view
+
+- **Status:** Accepted by control, 2026-11-17 (incident follow-up). Node agent and the recording writer only. No central
+  migration, no agent journal migration, no protocol change (minor stays as it is), no HTTP API change. Refines
+  SM-REC-003/004 and ADR-0010; replaces the "disk" trunc record of SM-REC-004's disk-exhaustion behaviour.
+- **Context:** after a node's disk filled up, the agent's recording writer latched the write error: it dropped every
+  later output record, also for central's copy, so every terminal froze, and it never tried the disk again. The agent
+  was restarted once space was freed, and then *every* live terminal (the runs adopted across the restart and the ones
+  launched after it) stayed empty: central's terminal stream answered with an empty `tail` event and nothing else. Two
+  causes in the node's catch-up pass (`internal/agent/record.go`): (1) acknowledgements (`recording.ack`) were kept in
+  memory only, so a restarted agent treated every journaled run, ended ones included (over a thousand on that node),
+  as possibly behind and re-read and re-shipped each whole local recording from sequence 1; (2) the pass caught runs up
+  one at a time in run-ID order while `shipLive` kept back the live output of every run it had not reached yet, so the
+  newest runs, the ones people watch, came last, after gigabytes of history. Nothing failed, so nothing was logged.
+- **Decision:**
+  1. **No run's live output waits for another run's backlog.** A sweep catches up live runs before ended ones, and
+     before each run and between every batch of a run's catch-up it first serves the runs whose live output is waiting
+     (marked or kept back by `shipLive`), each once per sweep. A waiting run waits at most for the batch on its way.
+     Ordering guarantees per run are unchanged (a run's live records still never overtake its own catch-up).
+  2. **Ended runs' history is paced**: their re-shipment is bounded at 8 MiB/s of output (`endedCatchUpRate`). Live
+     runs are never paced.
+  3. **Acknowledgements are persisted on the node**, in the run's directory (`recording-acked`, next to
+     `recording-quota`; replaced whole by rename, written when an acknowledgement advances). A restarted agent reads it
+     when its pass reaches the run; the run is compared with the local recording (the last segment's last sequence, no
+     full decode) and only records above the acknowledgement are sent. A failed write only leaves an older value, which
+     re-ships a little more. The value has the semantics of central's `recording.ack`, so it improves with central's
+     fix that acknowledges only the durably stored sequence. Prune removes the file with the run directory. A file
+     rather than a journal column: it needs no journal migration (0010 is ADR-0093's) and lives and dies with the
+     recording it describes.
+  4. **The writer recovers from a write failure.** While the disk fails, every record still gets its sequence number
+     and is handed back to the caller, which ships it to central's copy: the live view continues, and no trunc record
+     ends the recording. The writer tries a new segment after a backoff (5 s, doubling up to a minute; an attempt that
+     wrote nothing leaves no file), and the local recording resumes once the disk has space. Records not stored
+     meanwhile are a gap in the local copy only (in central's too if they could not be shipped either). The agent logs
+     a warning when a run's local recording starts failing and an info line when it is written again. The retry applies
+     to records the node numbers (`AddRecord`). Central's copy (`Append`) never retries in the writer: a failed
+     `Append` is final, and central drops the writer and reopens the recording from disk (ADR-0010 addendum). Both
+     share one failure path in `recording.Writer`, so no writer option tells them apart: a failure cuts the segment
+     back to its last sync (removed, and its number used again, when nothing of it was synced), adds no trunc record,
+     and `Stored()` never moves past the hole it leaves, even after the node's writer recovered.
+- **Consequences:** a restart costs a pass over the journal that reads one small file and at most one segment per run
+  instead of re-shipping every recording; the first restart after upgrading still re-ships once (no file yet), paced
+  and behind live output. A central restored from an older backup is told nothing new: as before, the node trusts
+  the acknowledgements it has, now also across its own restarts. The `disk` trunc reason is no longer produced by
+  current nodes; readers keep accepting it.
+- **Evidence:** `TestDiskFullRecovers`, `TestDiskFullBacksOff` (recording); `TestCatchUpServesLiveRunsBeforeTheEndedBacklog`,
+  `TestCatchUpAfterRestartSkipsAcknowledged`, `TestCatchUpPacesEndedRuns` (agent); `test/fault`
+  `TestFaultRecordingDiskFull` (a full disk, then space freed). Each fails without its part of the change.
+
+#### ADR-0097 addendum — a restarted agent learns central's sequence before it numbers a run's records (2026-11-17)
+
+- **Problem (review of decision 4):** while the disk is full, the writer numbers and ships records it cannot store,
+  so central can hold up to 200 while the local recording ends at 100. The acknowledgement file is written to the
+  same full disk, so it can also stay near 100. A restarted agent resumed numbering from the local recording (101…).
+  Central drops records at or below what it holds as repeats, so the output after the restart was lost until
+  central's first acknowledgement arrived, and the two copies held different content under the same numbers. An idle
+  run that stores nothing locally between the disk recovering and the restart keeps the stale state.
+- **Decision:**
+  1. **Records wait for central's sequence.** A run's sequence at central counts as *known* to an agent process
+     once central acknowledged any recording message of the run in that process, or once the process launched the
+     run itself with no recording on disk and no acknowledgement file. Until then the recorder numbers nothing and
+     stores nothing locally. It keeps the records back in memory, with their output time: output up to 4 MiB
+     (counting a per-record overhead), and every other record (sizes, the close). Output past the bound is dropped
+     and one `gap` record (`why: sequence-unknown`) marks where. Once the sequence is known, the writer moves above
+     it (`SkipTo`) and the kept records are numbered there. A kept `open` record becomes a `size` record when central
+     already holds records. A recorder whose program ended keeps waiting for the answer. If it is stopped first (the
+     agent shuts down), the kept records are dropped, never numbered without central's sequence.
+  2. **Asking for it.** The waiting recorder sends an empty `recording` message at most every 2 s while connected.
+     Central applies it like any chunk, stores nothing and acknowledges what it holds. There is no new message type
+     and no protocol minor: every central version answers. A probe or answer lost with a connection is asked again.
+  3. **Central does not acknowledge a message it could not apply at all.** If the run's recording could not even be
+     opened, the acknowledgement is skipped when it would be 0, which a probing node would take for "nothing
+     stored". A store failure that still knows a stored sequence is acknowledged as before.
+  4. **Finding 2 (an acknowledgement below the saved one).** The first acknowledgement a process receives for a run
+     is authoritative. When it is below the value restored from the run directory, central lost records it had
+     acknowledged (a restored central or disk), or an older central acknowledged more than it stored. The node then
+     lowers its acknowledgement and rewrites the file. It marks the run for a catch-up, which re-ships the local
+     records above the lowered value; live records wait behind that catch-up as usual. New records are still numbered
+     above the old, higher value. A jump is a gap, but numbering below it could reuse a number central once
+     acknowledged and may still hold. Later acknowledgements only ever raise the value, as before.
+- **Interplay with #242 (central acknowledges `Stored()`):** after #242, an acknowledgement is the contiguous
+  durable prefix: every record up to N is stored, apart from jumps the node made itself. The answer to an empty probe
+  is that prefix, so the node never reuses a number central holds. It never skips a record central lacks: the
+  catch-up still sends every local record above the acknowledgement. #242 accepts a jump on a new connection as the
+  node's own, which is exactly why the node must learn the prefix before it numbers anything (decision 1). #242's hub
+  acknowledges before it closes a connection after a store failure. Decision 3 keeps that acknowledgement from being a
+  bogus 0. The merged hub keeps both changes: the guarded acknowledgement, then the close (`Recordings.refused`).
+- **A run without a usable acknowledgement file is compared too (review fix).** The recorder of a run this process
+  did not launch marks the run as not compared with central's acknowledgement at its start, whether or not a file was
+  restored. Without that, for a run with no file (an older agent, a failed first save), a stored 0, an unreadable
+  file or one `ackMargin` rejected, the probe's answer became the run's first acknowledgement and the sweep took the
+  run for clean, so the local records above central's sequence were never re-shipped. The run's catch-up compares
+  with the local recording and clears the mark. `TestSweepReshipsWithoutASavedAck*` (agent).
+- **Limitation of `ackMargin`.** The margin is measured against the local recording's last sequence, which after a
+  long ship-through on a full disk can be far below what central stores, and is 0 for an empty recording directory.
+  A believable file can then be rejected. The cost is only a catch-up that compares with the local recording and
+  re-ships what central already holds (dropped there as repeats); numbering is unaffected, because it waits for
+  central's answer (decision 1).
+- **With close-on-error (after the merge):** a probe for a run whose recording central cannot open, with nothing
+  stored before, is logged and leaves the connection open, as #242 handles any open failure, and gets no
+  acknowledgement (decision 3); the node probes again. Only a store failure that knows a stored sequence is acked with
+  it, and then closes the connection once per run and connection. `TestHubRecordingAckOnlyWhenApplied` (fleet).
+- **Consequences:** after an agent restart, an adopted run's output reaches central one round trip later, and is
+  written locally only from then on. If central stays out of reach across the restart, at most 4 MiB of output per run
+  survives in memory until it answers. A run launched by the restarted process never waits. A central older than
+  decision 3 that cannot open a run's recording still answers 0: the node then numbers above the larger of its
+  local recording and its saved acknowledgement, and can reuse numbers only if that central later recovers more than
+  both. Centrals without a recordings directory never answer, and adopted runs then record nothing locally (central
+  stores no recording there either).
+- **Evidence:** `TestRestartedRecorderNumbersAboveCentral` (central holds 200, the disk and the file 100: the output
+  after the restart is numbered above 200, and nothing is dropped as a repeat),
+  `TestRestartedRecorderBelowTheSavedAcknowledgement` (finding 2),
+  `TestRestartedRecorderKeepsTheCloseUntilCentralAnswers`, `TestSeqGateBound` (agent); `test/fault`
+  `TestFaultRecordingDiskFullRestart`. Without the gate, the first test fails with records dropped as repeats.
 
 ### ADR-0098 — A run an agent restart stopped is resumed, within a cap
 

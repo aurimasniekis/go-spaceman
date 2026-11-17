@@ -60,6 +60,9 @@ type Options struct {
 	Wrap func(runDir string, l harness.Launch) []string
 	// RecordingCreate creates recording segment files; nil uses the filesystem (fault tests inject a full disk).
 	RecordingCreate func(path string) (recording.File, error)
+	// RecordingRetryAfter is the first wait before a recording whose disk failed is tried again; 0 is
+	// recording.DefaultRetryAfter (fault tests shorten it).
+	RecordingRetryAfter time.Duration
 	// Claude configures node-managed Claude Code (ADR-0077); the zero value keeps runs on HarnessBinaries.
 	Claude ClaudeOptions
 	// JournalRetention is how long the journal keeps an ended run (prune.go); 0 and anything below the Claude Code pin window
@@ -109,6 +112,18 @@ type Agent struct {
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
+	// restored marks runs whose acked value was read from their run directory after a restart (restoreAck) and not yet
+	// compared with the local recording by a catch-up.
+	restored map[string]bool
+	// ackFileMu serialises writing a run's acknowledgement file with removing the run directory (prune).
+	ackFileMu sync.Mutex
+	// seqKnown marks runs whose recording sequence at central this process knows: it launched the run with an empty
+	// recording, or central acknowledged a recording message of it. Until then the run's recorder numbers nothing
+	// (seqGate): a process that ran before may have shipped records its failing disk never stored (ADR-0097).
+	// seqFloor is, for a run whose first acknowledgement in this process was below its restored one, that restored
+	// value: new records are still numbered above it.
+	seqKnown map[string]bool
+	seqFloor map[string]uint64
 	// Recording shipping (record.go). sentSeq is the last sequence a send of each run went out for (above acked: on
 	// its way, or lost with a connection). held are records a live shipment kept back while it waited for a catch-up.
 	// catching is set while the catch-up pass runs, on catchUpConn with catchUpCtx (the newest connection's);
