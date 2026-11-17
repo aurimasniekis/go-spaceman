@@ -309,6 +309,7 @@ var Table = map[string]Entry{
 
 	// Prompts and harness profiles.
 	"create-prompt":          {Write, rDraft},
+	"update-prompt":          {Write, rDraft},
 	"diff-prompt-versions":   {Read, rRead},
 	"discard-prompt-draft":   {Write, rDraft},
 	"fork-prompt":            {Write, rDraft},

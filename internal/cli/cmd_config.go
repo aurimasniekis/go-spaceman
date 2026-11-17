@@ -136,6 +136,9 @@ func (a *App) promptCmd() *cobra.Command {
 				f.str("name", "name", "name (required)").str("kind", "kind", "role, dream, kb, event or general (required)").
 					str("description", "description", "description").text("body", "body", "first draft")
 			}}),
+		a.cmd(opts{use: "update", short: "Change a prompt's name or description in place (only the flags given change; no new version)", op: "update-prompt", get: "get-prompt",
+			canonical: "prompt_id", merge: true, args: pos("prompt"),
+			form: func(f *form) { f.str("name", "name", "name").str("description", "description", "description") }}),
 		a.cmd(opts{use: "draft", short: "Save the prompt's draft (starts one when there is none)", op: "save-prompt-draft", get: "get-prompt", canonical: "prompt_id",
 			args: pos("prompt"), version: draftVersion, optionalIfMatch: true,
 			example: "spaceman prompt draft control --body-file control.md --notes \"tighten escalation\"",
