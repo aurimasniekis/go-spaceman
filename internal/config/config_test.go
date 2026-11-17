@@ -399,3 +399,30 @@ func TestTelegramWebhookBaseURLMiniAppHostCollision(t *testing.T) {
 		t.Fatalf("distinct hosts: %v", err)
 	}
 }
+
+// ADR-0094: memory.fast_forward defaults to on, and is turned off by the file key or by its environment variable.
+func TestAgentMemoryFastForward(t *testing.T) {
+	const url = "SPACEMAN_AGENT_CENTRAL_URL=https://c.example.com"
+	cfg, err := LoadAgent("", []string{url})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Memory.FastForward {
+		t.Fatal("memory.fast_forward is not on by default")
+	}
+	file := writeFile(t, "central:\n  url: https://c.example.com\nmemory:\n  fast_forward: false\n")
+	cfg, err = LoadAgent(file, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.FastForward {
+		t.Fatal("memory.fast_forward: false from YAML did not turn the switch off")
+	}
+	cfg, err = LoadAgent("", []string{url, "SPACEMAN_AGENT_MEMORY_FAST_FORWARD=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.FastForward {
+		t.Fatal("SPACEMAN_AGENT_MEMORY_FAST_FORWARD=false did not turn the switch off")
+	}
+}
