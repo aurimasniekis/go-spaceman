@@ -68,6 +68,9 @@ type Options struct {
 	// DefaultCols and DefaultRows are the size the runner starts programs at (runner.terminal_size); a takeover open
 	// when a run's held size is cleared is resized back to it (ADR-0075). 0: left as it is.
 	DefaultCols, DefaultRows int
+	// NoMemoryFastForward turns ADR-0094's fast-forward of idle memory checkouts off (memory.fast_forward: false); run
+	// start then refreshes a checkout as before.
+	NoMemoryFastForward bool
 }
 
 // Agent is a running node agent.

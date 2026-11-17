@@ -158,7 +158,8 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			a.ack(ctx, c, proto.AckRejected, "an operator has taken over the terminal; input is paused")
 			return
 		}
-		if err := a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force); err != nil {
+		// Under the instance's input gate: a fast-forward of its memory checkout (ADR-0094) finishes first.
+		if err := a.mem.deliverInput(r.InstanceID, func() error { return a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force) }); err != nil {
 			reason := "send failed"
 			if errors.Is(err, runner.ErrBusy) {
 				reason = "the program is busy; input not delivered (safe input)"

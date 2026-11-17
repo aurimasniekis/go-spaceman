@@ -44,6 +44,11 @@ type memManager struct {
 	timers  map[string]*time.Timer // checkpoint debounce per instance
 	syncs   map[string]*time.Timer // sync schedule per collection
 	waiting map[string]string      // collection → sync ID in flight
+	gates   map[string]*sync.Mutex // input gate per instance (memff.go, ADR-0094)
+	// ffHook, when set (tests), runs right before a fast-forward of an idle checkout merges, with the locks held.
+	ffHook func(instance string)
+	// ffGated, when set (tests), runs right after a fast-forward took the instance's input gate, before its last checks.
+	ffGated func(instance string)
 }
 
 func newMemManager(a *Agent) *memManager {
@@ -132,12 +137,13 @@ func (m *memManager) prepare(ctx context.Context, spaceID, role, instance string
 		}
 		return inst, nil
 	}
-	m.refresh(ctx, shared, inst)
+	m.refreshAtStart(ctx, spaceID, role, instance)
 	return inst, nil
 }
 
 // refresh fast-forwards a clean checkout to the shared history. A checkout with changes or its own commits is left for
-// the next checkpoint, which merges.
+// the next checkpoint, which merges. It is run start's refresh when memory.fast_forward is off; otherwise
+// refreshAtStart applies ADR-0094's checks.
 func (m *memManager) refresh(ctx context.Context, shared, inst string) {
 	if st, err := m.git.Run(ctx, inst, nil, "status", "--porcelain"); err != nil || strings.TrimSpace(st) != "" {
 		return
@@ -204,6 +210,7 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	_ = m.a.j.putMemory(ctx, st)
 	if published {
 		m.scheduleSync(spaceID, role, syncDelay)
+		m.fastForwardIdle(ctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
 	}
 	m.sendStatus(ctx)
 	return err

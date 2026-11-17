@@ -6284,8 +6284,9 @@
 
 ### ADR-0094 — The node fast-forwards idle instance checkouts to the collection head
 
-- **Status:** Proposed, 2026-11-17. Node agent only. No central migration, no agent journal migration, no protocol
-  change (minor stays as it is) and no HTTP API change. If a later step needs numbers, it takes central migration
+- **Status:** Accepted by control, 2026-11-17 ("live idle runs", with a kill switch). Node agent only: one node
+  configuration key, `memory.fast_forward` (default `true`). No central migration, no agent journal migration, no
+  protocol change (minor stays as it is) and no HTTP API change. If a later step needs numbers, it takes central migration
   0063+, agent migration 0011+ and protocol minor 15 (0061/0062, 0010 and 14 are ADR-0093's). Implements ADR-0092's
   "item 3" proposal, with one deliberate change to it (see *Which instances*). Refines SM-MEM-006 ("instances refresh
   at safe boundaries").
@@ -6338,6 +6339,16 @@
        its per-file check and its write, only for files the fast-forward changes.
   6. **No change to what an agent sees mid-turn.** Only between turns. A Claude Code agent whose context holds an
      older version of a file is refused by its own Edit and Write tools until it reads the file again.
+  7. **Kill switch.** The node setting `memory.fast_forward` (`SPACEMAN_AGENT_MEMORY_FAST_FORWARD`, default `true`).
+     Off, the node fast-forwards no idle checkout and run start refreshes exactly as before this decision (a clean
+     checkout whose `HEAD` is an ancestor of the shared head is fast-forwarded, ignored files are not checked).
+  8. **Logs.** Every fast-forward that moves a checkout is logged at info ("memory checkout fast-forwarded": space,
+     role, instance, old and new head, number of files changed, and whether at run start or between turns), so each
+     can be audited. Every refusal is logged at debug with its fixed reason: `unsafe_config`, `merge_in_progress`,
+     `rebase_in_progress`, `cherry_pick_in_progress`, `revert_in_progress`, `bisect_in_progress`, `index_locked`,
+     `status_failed`, `staged_changes`, `modified_files`, `untracked_files`, `ignored_files`, `no_head`,
+     `no_shared_head`, `up_to_date`, `diverged`, `merge_failed`, `no_live_run`, `run_not_running`, `turn_not_ended`,
+     `checkpoint_pending`, `taken_over`, `input_in_delivery`, `journal_failed`. No file name or content is logged.
 - **Alternatives:**
   - ADR-0092's "no live run only": safe, but adds nothing over `prepare` (3).
   - `reset --hard` to the head when the content looks equal: rejected, it discards whatever was written since the
@@ -6356,7 +6367,17 @@
   - A stale-context overwrite by a shell command (not Claude Code's file tools) after a fast-forward now replaces the
     head's text in a plain fast-forward publish, where before it could have become a preserved conflict. History keeps
     both versions.
-- **Evidence:** `internal/agent` tests (see TRACEABILITY SM-MEM-006).
+- **Evidence:** `internal/agent` (`memff.go`): `TestFastForwardIdleCheckout` (only the idle instance moves; the shared
+  history is untouched), `TestFastForwardRefusals` (one case per refusal: unsafe configuration, each unfinished git
+  operation, `index.lock`, staged, modified, deleted, untracked, ignored, diverged, no live run, starting, stopping, a
+  second run pending, working, blocked, no status, the instance's dreamer run in a turn, checkpoint pending, taken over,
+  input in delivery; each leaves the checkout as it was), `TestFastForwardUpToDateAndDisabled` (the kill switch, and
+  run start as before with it off), `TestRefreshAtStartChecks`, `TestDreamThenIdenticalEditDoesNotConflict` (the
+  original symptom: no preserved conflict; the same test with the switch off, the earlier behaviour, conflicts, and its
+  base variant fails on the base branch), `TestIdleAppendAfterOtherAppendMerges`, `TestInputWaitsForFastForward`
+  (`run.input` through the command handler waits for the merge), `TestRunStartDuringFastForward` (both orders),
+  `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestStatusReason`. Each
+  guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
 
 ## 2. Open items and unresolved contracts
 

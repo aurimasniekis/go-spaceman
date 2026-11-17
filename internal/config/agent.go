@@ -25,7 +25,16 @@ type AgentConfig struct {
 	// JournalRetention is how long the journal keeps an ended run after its final state: older ended runs are deleted once
 	// central acknowledged their final state, their recording is fully shipped and their transcript upload is finished
 	// (30 days to 1 year; default 30 days, the harness pin window of ADR-0077).
-	JournalRetention Duration `yaml:"journal_retention"`
+	JournalRetention Duration          `yaml:"journal_retention"`
+	Memory           AgentMemoryConfig `yaml:"memory"`
+}
+
+// AgentMemoryConfig configures role memory on the node (ADR-0025).
+type AgentMemoryConfig struct {
+	// FastForward moves the memory checkouts of live runs that are between turns onto the role's newest shared memory
+	// after another instance or a dream published, and refreshes a checkout at run start under the same checks
+	// (ADR-0094). Off: neither, and run start refreshes as before. Default on.
+	FastForward bool `yaml:"fast_forward"`
 }
 
 // CentralConfig locates the central service and the node credential.
