@@ -626,6 +626,39 @@ func TestIgnoredFileAfterChecksNotOverwritten(t *testing.T) {
 	}
 }
 
+// Harness files the guard excludes (a local .claude/, .mcp.json) are not local content: they never travel through
+// memory and the sparse-checkout keeps history from touching them, so they don't stop a fast-forward. Any other
+// ignored file still does.
+func TestFastForwardIgnoresHarnessFiles(t *testing.T) {
+	e := newFFEnv(t)
+	dir, other := e.checkout("ins_a"), e.checkout("ins_b")
+	e.idleRun("ins_a")
+	write(t, dir, ".claude/settings.json", "{}\n")
+	write(t, dir, "sub/.codex/config.toml", "x\n")
+	write(t, dir, ".mcp.json", "{}\n")
+	write(t, other, "notes.md", "from b\n")
+	if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != "" {
+		t.Fatalf("reason %q, want a fast-forward", got)
+	}
+	if read(t, dir, "notes.md") != "from b\n" || read(t, dir, ".claude/settings.json") != "{}\n" {
+		t.Fatal("not fast-forwarded, or the local harness file was lost")
+	}
+
+	// Another ignored file still blocks.
+	write(t, dir, ".git/info/exclude", read(t, dir, ".git/info/exclude")+"*.tmp\n")
+	write(t, dir, "scratch.tmp", "x\n")
+	write(t, other, "notes.md", "from b\nagain\n")
+	if _, err := e.m.publish(e.ctx, ffSpace, ffRole, "ins_b", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.fastForwardIdle(e.ctx, ffSpace, ffRole, "ins_b")["ins_a"]; got != ffIgnored {
+		t.Fatalf("reason %q, want %q", got, ffIgnored)
+	}
+}
+
 // Run start leaves the checkout alone while another live run of the same instance exists: it may be writing there.
 func TestRefreshAtStartWithAnotherLiveRun(t *testing.T) {
 	e := newFFEnv(t)
@@ -731,6 +764,9 @@ func TestStatusReason(t *testing.T) {
 		"R  new.md\x00old.md\x00":            ffStaged,
 		"?? b.md\x00 M a.md\x00A  c.md\x00":  ffStaged,
 		"!! x\x00?? y\x00 M z\x00":           ffModified,
+		"!! .claude/\x00":                    "",
+		"!! a/.codex/\x00!! .mcp.json\x00":   "",
+		"!! .claude/\x00!! a.tmp\x00":        ffIgnored,
 		"R  new.md\x00?? old.md\x00!! z\x00": ffStaged,
 	}
 	for in, want := range cases {

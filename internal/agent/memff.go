@@ -179,7 +179,12 @@ func statusReason(out string) string {
 		case x == '?' && y == '?':
 			untracked = true
 		case x == '!' && y == '!':
-			ignored = true
+			// The guard's own exclusions (a local .claude/, .mcp.json) are not content to protect: they never travel
+			// through memory, and the sparse-checkout and fastForward's path check keep history away from them.
+			// Any other ignored file might sit where the new history adds a path, so it still blocks.
+			if !isHarnessPath(e[3:]) {
+				ignored = true
+			}
 		default:
 			if x != ' ' {
 				staged = true
