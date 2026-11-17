@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -105,12 +106,23 @@ type Writer struct {
 	segStart time.Time
 	total    int64
 	seq      uint64
+	stored   uint64
+	// synced is how much of the current segment is known to be on disk (its size at the last successful sync).
+	synced int64
+	// unsynced is a segment tail written after the last sync that a failure could not cut off (DropUnsynced).
+	unsynced *tailCut
 	buf      bytes.Buffer
 	stopped  bool
 	err      error
 	// trunc is the truncation record not yet taken by Truncation (quota reached or a write failure).
 	trunc    *Record
 	truncOut bool
+}
+
+// tailCut is a segment that must be cut back to size bytes.
+type tailCut struct {
+	path string
+	size int64
 }
 
 // SegmentName returns the file name of segment n.
@@ -166,7 +178,7 @@ func Open(o Options) (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Writer{o: o, enc: enc, segIndex: o.ResumeSegment, seq: o.ResumeSeq}
+	w := &Writer{o: o, enc: enc, segIndex: o.ResumeSegment, seq: o.ResumeSeq, stored: o.ResumeSeq}
 	segs, err := Segments(o.Dir)
 	if err != nil {
 		return nil, err
@@ -185,6 +197,9 @@ func Open(o Options) (*Writer, error) {
 		if len(res.Records) > 0 && res.Records[len(res.Records)-1].Seq > w.seq {
 			w.seq = res.Records[len(res.Records)-1].Seq
 		}
+		if w.seq > w.stored {
+			w.stored = w.seq
+		}
 	}
 	return w, nil
 }
@@ -198,6 +213,20 @@ func (w *Writer) Seq() uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.seq
+}
+
+// Stored returns N such that every record at or below N that this recording will ever hold is durably stored and
+// contiguous: written and synced to disk (or already stored when the writer was opened), with no record missing below
+// N other than one its sender never had (a jump the sender made itself, SkipTo or a node's own lost records). Unlike
+// Seq it never counts buffered records, a failed flush, the trunc record of a failure, or a close that could not be
+// stored: it is the only value a receiver may acknowledge, and the sender may forget every record at or below it.
+//
+// A failure cuts the segment back to its last synced size (DropUnsynced), so a writer opened later never takes a
+// record written after the last successful sync for stored.
+func (w *Writer) Stored() uint64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stored
 }
 
 // Add appends one record (assigning seq and time) and flushes when the buffer is large.
@@ -333,15 +362,26 @@ func (w *Writer) flushLocked() error {
 	if err := w.f.Sync(); err != nil {
 		return w.failLocked(now, fmt.Errorf("recording sync: %w", err))
 	}
+	w.synced = w.segBytes
+	w.stored = w.seq
 	return nil
 }
 
 // failLocked stops the writer after a write failure: buffered records are lost locally (the caller has them), later
-// output is dropped, and a trunc record ("disk") is kept for Truncation. A partial frame may remain on disk; readers
-// report it as Truncated.
+// output is dropped, and a trunc record ("disk") is kept for Truncation. The segment is closed and cut back to its
+// last synced size: a frame written after that may still decode from the page cache although it never reached the
+// disk, and a writer opened later must not take it for stored.
 func (w *Writer) failLocked(now time.Time, err error) error {
 	w.err = err
 	w.buf.Reset()
+	if w.f != nil {
+		_ = w.f.Close()
+		w.f = nil
+		if w.segBytes > w.synced || w.synced == 0 {
+			w.unsynced = &tailCut{path: filepath.Join(w.o.Dir, SegmentName(w.segIndex)), size: w.synced}
+			_ = w.dropUnsyncedLocked()
+		}
+	}
 	if w.trunc == nil || w.trunc.Why != "disk" {
 		w.seq++
 		w.trunc = &Record{Seq: w.seq, T: now.UnixMicro(), Kind: KindTrunc, Why: "disk"}
@@ -363,7 +403,32 @@ func (w *Writer) rotateLocked(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	w.f, w.segBytes, w.segStart = f, 0, now
+	w.f, w.segBytes, w.synced, w.segStart = f, 0, 0, now
+	return nil
+}
+
+// DropUnsynced cuts off what a failure left on disk after the last successful sync (failLocked tries it at once).
+// It returns an error while that could not be done; a writer must not be opened on the directory until it succeeds.
+func (w *Writer) DropUnsynced() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.dropUnsyncedLocked()
+}
+
+func (w *Writer) dropUnsyncedLocked() error {
+	if w.unsynced == nil {
+		return nil
+	}
+	if w.unsynced.size == 0 {
+		// Nothing of the segment is synced: an empty or partial file is no segment. Removing it also keeps a disk that
+		// keeps failing from leaving one behind per attempt.
+		if err := os.Remove(w.unsynced.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("recording: remove the unsynced segment: %w", err)
+		}
+	} else if err := os.Truncate(w.unsynced.path, w.unsynced.size); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("recording: cut the unsynced tail: %w", err)
+	}
+	w.unsynced = nil
 	return nil
 }
 
