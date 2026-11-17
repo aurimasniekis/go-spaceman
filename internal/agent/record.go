@@ -88,7 +88,8 @@ func (a *Agent) recordSize(runID string, cols, rows int) {
 // because herdr-core streams carry no offsets (S-3).
 func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 	log := a.log.With(slog.String(obs.FieldRunID, row.RunID))
-	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: a.recordingQuota(row.RunID), Now: a.o.Clock.Now, Create: a.o.RecordingCreate})
+	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: a.recordingQuota(row.RunID), Now: a.o.Clock.Now, Create: a.o.RecordingCreate,
+		RetryAfter: a.o.RecordingRetryAfter})
 	if err != nil {
 		log.Warn("open recording", obs.Err(err))
 		return
@@ -98,6 +99,7 @@ func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 	defer flush.Stop()
 	first := w.Seq() == 0
 	cols, rows := 0, 0
+	failing := false
 	for attempt := 0; attempt < 20 && ctx.Err() == nil; attempt++ {
 		st, p, err := a.o.Runner.Attach(ctx, row.TerminalID, true, 0, 0)
 		if err != nil {
@@ -123,7 +125,7 @@ func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 			}
 		}
 		cols, rows = p.Cols, p.Rows
-		done := a.pump(ctx, row, st, w, flush, prelude, sizes, &cols, &rows)
+		done := a.pump(ctx, row, st, w, flush, prelude, sizes, &cols, &rows, &failing)
 		_ = st.Close()
 		if done {
 			return
@@ -134,19 +136,29 @@ func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 // pump copies one attachment into the recording; it returns true when the program ended. Records are shipped to
 // central after every flush (at most once a second). Shipping runs in the pump: a send may take up to its write timeout,
 // but it never waits for a catch-up pass or another run's send (shipLive).
-// sizes are the terminal's size changes; cols and rows are the size last recorded, kept across reattaches.
+// sizes are the terminal's size changes; cols and rows are the size last recorded, kept across reattaches. failing is
+// whether the local disk was failing at the last flush, also kept across reattaches.
 func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recording.Writer, flush *time.Ticker, prelude []recording.Record,
-	sizes <-chan [2]int, cols, rows *int) bool {
+	sizes <-chan [2]int, cols, rows *int, failing *bool) bool {
 	var batch []recording.Record
-	// truncated adds the writer's trunc record (quota reached, or the local disk failed) after the records before it,
-	// so central's copy shows where and why the recording ended; the run itself is never affected (SM-REC-004).
+	// truncated adds the writer's trunc record (quota reached) after the records before it, so central's copy shows
+	// where and why the recording ended; the run itself is never affected (SM-REC-004).
 	truncated := func() {
 		if tr, ok := w.Truncation(); ok {
-			if tr.Why == "disk" {
-				a.log.Warn("recording stopped: the local recording cannot be written; central keeps the records shipped so far",
-					slog.String(obs.FieldRunID, row.RunID), obs.Err(w.Err()))
-			}
 			batch = append(batch, tr)
+		}
+	}
+	// diskState logs when the local disk starts failing and when the writer could store records again. Records keep
+	// going to central meanwhile (the writer numbers them without storing them), so the live view goes on.
+	diskState := func() {
+		switch err := w.Err(); {
+		case err != nil && !*failing:
+			*failing = true
+			a.log.Warn("the local recording cannot be written: output still goes to central, and writing is retried",
+				slog.String(obs.FieldRunID, row.RunID), obs.Err(err))
+		case err == nil && *failing:
+			*failing = false
+			a.log.Info("the local recording is written again", slog.String(obs.FieldRunID, row.RunID))
 		}
 	}
 	add := func(r recording.Record) {
@@ -155,8 +167,8 @@ func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recor
 		if acked := a.ackedSeq(row.RunID); acked > w.Seq() {
 			w.SkipTo(acked)
 		}
-		// A stored record has a sequence number; after a write failure only the close record still gets one (it
-		// cannot be stored locally, but central can keep it).
+		// A record has a sequence number unless the quota dropped it; while the local disk fails it is numbered but
+		// not stored here, and central keeps it.
 		if stored, _ := w.AddRecord(r); stored.Seq != 0 {
 			batch = append(batch, stored)
 		}
@@ -167,6 +179,7 @@ func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recor
 	}
 	ship := func() {
 		_ = w.Flush()
+		diskState()
 		truncated()
 		if len(batch) > 0 {
 			// Central stores records in sequence order and ignores repeats, so a trunc record numbered while its
@@ -285,8 +298,9 @@ func (a *Agent) ship(ctx context.Context, conn *websocket.Conn, runID, spaceID s
 }
 
 // heldRecords are records a live shipment kept back while it waited for a catch-up (sent after the run's local
-// recording). Records with no local copy (a close or trunc record after the local disk failed) are always kept;
-// others only up to heldMaxBytes, past which lost is set and the catch-up reads the local recording again.
+// recording). Close and trunc records are always kept (one numbered while the local disk failed has no local copy);
+// others only up to heldMaxBytes, past which lost is set and the catch-up reads the local recording again (output
+// the failing disk did not store is then a gap in central's copy).
 type heldRecords struct {
 	recs  []recording.Record
 	bytes int
@@ -419,8 +433,11 @@ func (a *Agent) startCatchUpLocked() bool {
 // central's acknowledged sequence where central may lack some, and sweeps again while another pass was asked for or
 // a run waits for it (a run started during a sweep). It ends when a sweep left no run waiting, or at the first failed
 // send (the connection is gone; the next connection's pass resumes from what central acknowledged). Central stores
-// each sequence once, so re-sent records are harmless. Runs are caught up one at a time: a run with a long backlog
-// delays the others (their live output is kept back meanwhile, see shipLive).
+// each sequence once, so re-sent records are harmless. Runs are caught up one at a time, and a run's live output is
+// kept back until its turn (shipLive), so a sweep serves the runs that wait first: live runs before ended ones, and
+// before each further run any run whose live output waits meanwhile (catchUpWaiting). After an agent restart no
+// acknowledgement is known and every journaled run's recording is re-shipped: without that order the live terminals
+// stayed blank until the whole history of the ended runs had gone out again.
 func (a *Agent) catchUpRecordings() {
 	retry := time.Second
 	for {
@@ -463,13 +480,25 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 	if err != nil {
 		return err
 	}
+	// Live runs first: their output is what viewers wait for.
+	slices.SortStableFunc(runs, func(x, y runRow) int { return cmp.Compare(endedRank(x), endedRank(y)) })
 	journaled := map[string]bool{}
+	served := map[string]bool{}
 	for _, r := range runs {
 		journaled[r.RunID] = true
+		if err := a.catchUpWaiting(ctx, conn, gen, served); err != nil {
+			return err
+		}
+		if served[r.RunID] {
+			continue
+		}
+		a.restoreAck(r.RunID)
 		a.mu.Lock()
 		acked, known := a.acked[r.RunID]
 		dirty := a.unshipped[r.RunID] || a.held[r.RunID] != nil
-		clean := !dirty && (a.caughtUp[r.RunID] || known && a.sentSeq[r.RunID] <= acked)
+		// A restored acknowledgement says what central stored, not what this process sent: the local recording may
+		// hold records above it (catchUpRun compares).
+		clean := !dirty && (a.caughtUp[r.RunID] || known && !a.restored[r.RunID] && a.sentSeq[r.RunID] <= acked)
 		if clean && a.catchUpGen == gen {
 			// Everything sent so far was acknowledged (or this pass sent it): nothing to re-ship.
 			a.caughtUp[r.RunID] = true
@@ -478,7 +507,7 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 		if clean {
 			continue
 		}
-		if err := a.catchUpRun(ctx, conn, gen, r, acked); err != nil {
+		if err := a.catchUpRun(ctx, conn, gen, r, acked, served); err != nil {
 			return err
 		}
 	}
@@ -509,14 +538,68 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 	return nil
 }
 
+func endedRank(r runRow) int {
+	if ended(r.State) {
+		return 1
+	}
+	return 0
+}
+
+// catchUpWaiting catches up the runs whose live output waits for the pass (shipLive marked them or kept records back)
+// ahead of the rest of the sweep, each at most once per sweep (served). It runs before each run of the sweep and
+// between the batches of each run's catch-up, so a run's live output never waits for another run's backlog, only for
+// the batch on its way. A run not in the journal is left to the end of the sweep.
+func (a *Agent) catchUpWaiting(ctx context.Context, conn *websocket.Conn, gen uint64, served map[string]bool) error {
+	for {
+		a.mu.Lock()
+		var waiting []string
+		for id := range a.unshipped {
+			if !served[id] {
+				waiting = append(waiting, id)
+			}
+		}
+		for id := range a.held {
+			if !served[id] && !a.unshipped[id] {
+				waiting = append(waiting, id)
+			}
+		}
+		a.mu.Unlock()
+		if len(waiting) == 0 {
+			return nil
+		}
+		slices.Sort(waiting)
+		for _, id := range waiting {
+			r, err := a.j.getRun(ctx, id)
+			if err != nil {
+				served[id] = true
+				continue
+			}
+			a.restoreAck(id)
+			if err := a.catchUpRun(ctx, conn, gen, r, a.ackedSeq(id), served); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 // shipBatchHook, when set (tests), runs after each batch a catch-up ships.
 var shipBatchHook func(runID string, batch int)
 
+// endedCatchUpRate bounds how fast a catch-up re-ships an ended run's recording, in bytes of output per second (each
+// record counted with heldRecordOverhead). Ended runs have no viewer waiting for live output, and after an agent
+// restart without known acknowledgements their history can be large (ADR-0097); live runs are never paced.
+var endedCatchUpRate int64 = 8 << 20
+
 // catchUpRun ships a run's local records above from in batches, then what live shipments kept back meanwhile, until
 // nothing more was kept back, and marks the run caught up (atomically with that check, under the lock shipLive decides
-// under).
-func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64, r runRow, from uint64) error {
+// under). Between batches it serves the other runs whose live output waits (catchUpWaiting with served, which this run
+// joins), and an ended run's batches are paced by endedCatchUpRate.
+func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64, r runRow, from uint64, served map[string]bool) error {
+	served[r.RunID] = true
 	batch := 0
+	paced := ended(r.State)
+	began, sentBytes := time.Now(), int64(0)
+	others := func() error { return a.catchUpWaiting(ctx, conn, gen, served) }
 	send := func(recs []recording.Record) error {
 		for start := 0; start < len(recs); start += 256 {
 			end := min(start+256, len(recs))
@@ -528,10 +611,26 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 				shipBatchHook(r.RunID, batch)
 			}
 			from = max(from, recs[end-1].Seq)
+			if err := others(); err != nil {
+				return err
+			}
+			if paced {
+				for _, rec := range recs[start:end] {
+					sentBytes += int64(len(rec.Data)) + heldRecordOverhead
+				}
+				if err := paceCatchUp(ctx, began, sentBytes, others); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}
 	readDisk := func() error {
+		// Nothing above from on disk (the usual case for a run whose acknowledgement was restored after a restart):
+		// the last segment says so without decoding the whole recording.
+		if last, err := recording.LastSeqIn(a.RecordingDir(r.RunID)); err == nil && last <= from {
+			return nil
+		}
 		res, err := recording.Read(a.RecordingDir(r.RunID), from)
 		if err != nil {
 			return nil //nolint:nilerr // an unreadable local recording has nothing to re-ship; only a failed send ends the pass
@@ -554,6 +653,8 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 			if a.catchUpGen == gen {
 				a.caughtUp[r.RunID] = true
 			}
+			// Everything on disk above the restored acknowledgement was sent: sentSeq and acked decide from now on.
+			delete(a.restored, r.RunID)
 			a.mu.Unlock()
 			return nil
 		}
@@ -574,6 +675,29 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 		if err := send(later); err != nil {
 			// What did not go out is kept back again for the next pass: a record with no local copy exists only here.
 			a.putBack(r.RunID, later, from, false)
+			return err
+		}
+	}
+}
+
+// paceCatchUp waits until sent bytes fit endedCatchUpRate since began, serving runs whose live output waits (others)
+// at least every 50 ms meanwhile.
+func paceCatchUp(ctx context.Context, began time.Time, sent int64, others func() error) error {
+	if endedCatchUpRate <= 0 {
+		return nil
+	}
+	due := began.Add(time.Duration(float64(sent) / float64(endedCatchUpRate) * float64(time.Second)))
+	for {
+		wait := time.Until(due)
+		if wait <= 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(min(wait, 50*time.Millisecond)):
+		}
+		if err := others(); err != nil {
 			return err
 		}
 	}
@@ -618,8 +742,64 @@ func (a *Agent) recordingAck(ack proto.RecordingAck) {
 	if a.acked == nil {
 		a.acked = map[string]uint64{}
 	}
-	if ack.Seq > a.acked[ack.RunID] {
+	advanced := ack.Seq > a.acked[ack.RunID]
+	if advanced {
 		a.acked[ack.RunID] = ack.Seq
 	}
 	a.mu.Unlock()
+	if advanced {
+		a.saveAck(ack.RunID, ack.Seq)
+	}
+}
+
+// recordingAckedFile keeps central's last acknowledged recording sequence of a run, so a restarted agent's catch-up
+// pass skips what central already stores instead of re-shipping every journaled recording (ADR-0097).
+const recordingAckedFile = "recording-acked"
+
+// saveAck stores a run's acknowledged sequence in its run directory (replaced whole, so a reader never sees half a
+// number). A failed write (a full disk) only leaves an older value: the catch-up then re-ships a little more.
+func (a *Agent) saveAck(runID string, seq uint64) {
+	dir := a.runDir(runID)
+	if _, err := os.Stat(dir); err != nil {
+		return // pruned meanwhile: never recreate the directory
+	}
+	tmp := filepath.Join(dir, recordingAckedFile+".tmp")
+	if err := os.WriteFile(tmp, []byte(strconv.FormatUint(seq, 10)), 0o600); err != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, recordingAckedFile)); err != nil {
+		_ = os.Remove(tmp)
+	}
+}
+
+// restoreAck loads a run's stored acknowledgement when this process has none (after a restart). The run is marked
+// restored until a catch-up compared it with the local recording.
+func (a *Agent) restoreAck(runID string) {
+	a.mu.Lock()
+	_, known := a.acked[runID]
+	a.mu.Unlock()
+	if known {
+		return
+	}
+	b, err := os.ReadFile(filepath.Join(a.runDir(runID), recordingAckedFile)) //nolint:gosec // a fixed name in the run's own directory
+	if err != nil {
+		return
+	}
+	seq, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil || seq == 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, known := a.acked[runID]; known {
+		return
+	}
+	if a.acked == nil {
+		a.acked = map[string]uint64{}
+	}
+	if a.restored == nil {
+		a.restored = map[string]bool{}
+	}
+	a.acked[runID], a.restored[runID] = seq, true
 }

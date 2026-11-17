@@ -110,8 +110,9 @@ func (a *Agent) sweepOrphanRecordings(ctx context.Context) int {
 	return n
 }
 
-// removeRecording deletes a run's recording directory, then its quota file and the run directory itself when nothing
-// else is in it (a run directory holding anything else stays as it is). A malformed run ID removes nothing.
+// removeRecording deletes a run's recording directory, then its quota and acknowledgement files and the run directory
+// itself when nothing else is in it (a run directory holding anything else stays as it is). A malformed run ID removes
+// nothing.
 func (a *Agent) removeRecording(runID string) {
 	if !ids.Valid(ids.Run, runID) { // the ID becomes a path below
 		a.log.Warn("recording directory kept: malformed run ID", slog.Int("id_len", len(runID)))
@@ -126,12 +127,15 @@ func (a *Agent) removeRecording(runID string) {
 	if err != nil {
 		return
 	}
+	recordingFiles := map[string]bool{recordingQuotaFile: true, recordingAckedFile: true, recordingAckedFile + ".tmp": true}
 	for _, e := range left {
-		if e.Name() != recordingQuotaFile || !e.Type().IsRegular() {
+		if !recordingFiles[e.Name()] || !e.Type().IsRegular() {
 			return
 		}
 	}
-	_ = os.Remove(filepath.Join(run, recordingQuotaFile))
+	for name := range recordingFiles {
+		_ = os.Remove(filepath.Join(run, name))
+	}
 	_ = os.Remove(run) // fails (and stays) if anything appeared meanwhile
 }
 
@@ -316,6 +320,7 @@ func (a *Agent) pruneRuns(ctx context.Context) int {
 		delete(a.finalAcked, r.RunID)
 		delete(a.finalSent, r.RunID)
 		delete(a.acked, r.RunID)
+		delete(a.restored, r.RunID)
 		delete(a.sentSeq, r.RunID)
 		delete(a.caughtUp, r.RunID)
 		a.mu.Unlock()

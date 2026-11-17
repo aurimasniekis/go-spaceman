@@ -65,13 +65,15 @@ func (d diskFile) Write(p []byte) (int, error) {
 func (d diskFile) Sync() error  { return d.f.Sync() }
 func (d diskFile) Close() error { return d.f.Close() }
 
-// Fault: the node's disk fills up while a run is being recorded (SM-REC-004). The run keeps running and its later
-// exit is observed; central's copy keeps what was recorded before, ends with a "disk" trunc record and the close
-// record; the node's own recording stays readable up to its last complete frame.
+// Fault: the node's disk fills up while a run is being recorded (SM-REC-004), then space is freed. The run keeps
+// running and its later exit is observed. The live view never stops: what the program prints while the disk is full
+// still reaches central's copy, and no trunc record ends it. Once the disk has space again the node's own recording
+// resumes in a new segment, readable up to its last complete frame before the failure and from the recovery on.
 func TestFaultRecordingDiskFull(t *testing.T) {
 	e := apptest.New(t)
 	var full atomic.Bool
 	e.AgentOptions = func(o *agent.Options) {
+		o.RecordingRetryAfter = 200 * time.Millisecond
 		o.RecordingCreate = func(path string) (recording.File, error) {
 			if full.Load() {
 				return nil, syscall.ENOSPC
@@ -101,22 +103,34 @@ func TestFaultRecordingDiskFull(t *testing.T) {
 		e.Runner.Output(term, "while the disk is full "+string(rune('a'+i))+"\r\n")
 		time.Sleep(20 * time.Millisecond)
 	}
-	eventually(t, "disk truncation marker at central", func() bool {
-		_, recs := centralRecording(e, r.ID)
-		for _, rec := range recs {
-			if rec.Kind == recording.KindTrunc && rec.Why == "disk" {
-				return true
-			}
-		}
-		return false
+	eventually(t, "output during the full disk at central", func() bool {
+		out, _ := centralRecording(e, r.ID)
+		return strings.Contains(out, "while the disk is full t")
 	})
 	// The run is unaffected: still running, the same single program, nothing restarted.
-	time.Sleep(time.Second)
 	if x := e.Run(r.ID); x.Observed != "running" {
 		t.Fatalf("run %s after the disk filled, want running", x.Observed)
 	}
 	if n := len(e.Runner.LiveByLabel("spaceman.run", r.ID)); n != 1 || e.Runner.StartCount() != starts {
 		t.Fatalf("live %d starts %d→%d", n, starts, e.Runner.StartCount())
+	}
+
+	full.Store(false)
+	localDir := filepath.Join(e.AgentDir, "runs", r.ID, "recording")
+	local := func() string {
+		res, _ := recording.Read(localDir, 0)
+		var b strings.Builder
+		for _, rec := range res.Records {
+			b.Write(rec.Data)
+		}
+		return b.String()
+	}
+	for i := 0; !strings.Contains(local(), "after the disk recovered"); i++ {
+		if i > 100 {
+			t.Fatal("the local recording did not resume after the disk recovered")
+		}
+		e.Runner.Output(term, "after the disk recovered\r\n")
+		time.Sleep(100 * time.Millisecond)
 	}
 	e.Runner.Exit(term, 3, "exited")
 	eventually(t, "exit observed", func() bool { x := e.Run(r.ID); return x.Observed == "exited" })
@@ -124,14 +138,23 @@ func TestFaultRecordingDiskFull(t *testing.T) {
 		_, recs := centralRecording(e, r.ID)
 		return len(recs) > 0 && recs[len(recs)-1].Kind == recording.KindClose
 	})
-	_, recs := centralRecording(e, r.ID)
+	out, recs := centralRecording(e, r.ID)
 	increasing(t, recs)
 	if recs[0].Kind != recording.KindOpen {
 		t.Fatalf("first record %+v", recs[0])
 	}
-	local, err := recording.Read(filepath.Join(e.AgentDir, "runs", r.ID, "recording"), 0)
-	if err != nil || len(local.Records) < 2 {
-		t.Fatalf("local recording after disk full: %d records, %v", len(local.Records), err)
+	for _, rec := range recs {
+		if rec.Kind == recording.KindTrunc {
+			t.Fatalf("central's copy was truncated: %+v", rec)
+		}
+	}
+	for _, want := range []string{"before the disk filled", "while the disk is full a", "while the disk is full t", "after the disk recovered"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("central's copy lacks %q", want)
+		}
+	}
+	if l := local(); !strings.Contains(l, "before the disk filled") || strings.Contains(l, "while the disk is full t") {
+		t.Fatalf("local recording after the disk recovered: %q", l)
 	}
 }
 

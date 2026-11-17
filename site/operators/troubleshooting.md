@@ -90,7 +90,9 @@ The agent logs `central connection lost` on every disconnect and retries with ba
 The recorder attaches to a terminal as an observer. When it has to re-attach (for example after an agent restart),
 herdr-core cannot replay what was written meanwhile, so SpaceMan records an explicit **gap** and the repaint that
 follows; that output is not recoverable. A **truncated** badge means the recording reached its size limit. A node that
-lost central uploads its local copy when it reconnects. See [terminals and recordings](./terminals).
+lost central uploads its local copy when it reconnects, live runs first. When the node's disk is full, the live view
+goes on and the node's local copy has a gap until space is freed: the node agent logs `the local recording cannot be
+written` and, once it writes again, `the local recording is written again`. See [terminals and recordings](./terminals).
 
 ## Sign-in problems
 

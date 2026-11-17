@@ -6531,6 +6531,52 @@
   write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no
   prompt text, settings or credentials.
 
+### ADR-0097 — Live output never waits for another run's recording catch-up; acknowledgements survive an agent restart; a full disk no longer stops the live view
+
+- **Status:** Accepted by control, 2026-11-17 (incident follow-up). Node agent and the recording writer only. No central
+  migration, no agent journal migration, no protocol change (minor stays as it is), no HTTP API change. Refines
+  SM-REC-003/004 and ADR-0010; replaces the "disk" trunc record of SM-REC-004's disk-exhaustion behaviour.
+- **Context:** after a node's disk filled up, the agent's recording writer latched the write error: it dropped every
+  later output record, also for central's copy, so every terminal froze, and it never tried the disk again. The agent
+  was restarted once space was freed, and then *every* live terminal (the runs adopted across the restart and the ones
+  launched after it) stayed empty: central's terminal stream answered with an empty `tail` event and nothing else. Two
+  causes in the node's catch-up pass (`internal/agent/record.go`): (1) acknowledgements (`recording.ack`) were kept in
+  memory only, so a restarted agent treated every journaled run, ended ones included (over a thousand on that node),
+  as possibly behind and re-read and re-shipped each whole local recording from sequence 1; (2) the pass caught runs up
+  one at a time in run-ID order while `shipLive` kept back the live output of every run it had not reached yet, so the
+  newest runs, the ones people watch, came last, after gigabytes of history. Nothing failed, so nothing was logged.
+- **Decision:**
+  1. **No run's live output waits for another run's backlog.** A sweep catches up live runs before ended ones, and
+     before each run and between every batch of a run's catch-up it first serves the runs whose live output is waiting
+     (marked or kept back by `shipLive`), each once per sweep. A waiting run waits at most for the batch on its way.
+     Ordering guarantees per run are unchanged (a run's live records still never overtake its own catch-up).
+  2. **Ended runs' history is paced**: their re-shipment is bounded at 8 MiB/s of output (`endedCatchUpRate`). Live
+     runs are never paced.
+  3. **Acknowledgements are persisted on the node**, in the run's directory (`recording-acked`, next to
+     `recording-quota`; replaced whole by rename, written when an acknowledgement advances). A restarted agent reads it
+     when its pass reaches the run; the run is compared with the local recording (the last segment's last sequence, no
+     full decode) and only records above the acknowledgement are sent. A failed write only leaves an older value, which
+     re-ships a little more. The value has the semantics of central's `recording.ack`, so it improves with central's
+     fix that acknowledges only the durably stored sequence. Prune removes the file with the run directory. A file
+     rather than a journal column: it needs no journal migration (0010 is ADR-0093's) and lives and dies with the
+     recording it describes.
+  4. **The writer recovers from a write failure.** While the disk fails, every record still gets its sequence number
+     and is handed back to the caller, which ships it to central's copy: the live view continues, and no trunc record
+     ends the recording. The writer tries a new segment after a backoff (5 s, doubling up to a minute; an attempt that
+     wrote nothing leaves no file), and the local recording resumes once the disk has space. Records not stored
+     meanwhile are a gap in the local copy only (in central's too if they could not be shipped either). The agent logs
+     a warning when a run's local recording starts failing and an info line when it is written again. The retry applies
+     to records the node numbers (`AddRecord`); central's copy (`Append`) keeps its behaviour, and how central
+     acknowledges and recovers after a failed flush is a separate fix.
+- **Consequences:** a restart costs a pass over the journal that reads one small file and at most one segment per run
+  instead of re-shipping every recording; the first restart after upgrading still re-ships once (no file yet), paced
+  and behind live output. A central restored from an older backup is told nothing new: as before, the node trusts
+  the acknowledgements it has, now also across its own restarts. The `disk` trunc reason is no longer produced by
+  current nodes; readers keep accepting it.
+- **Evidence:** `TestDiskFullRecovers`, `TestDiskFullBacksOff` (recording); `TestCatchUpServesLiveRunsBeforeTheEndedBacklog`,
+  `TestCatchUpAfterRestartSkipsAcknowledged`, `TestCatchUpPacesEndedRuns` (agent); `test/fault`
+  `TestFaultRecordingDiskFull` (a full disk, then space freed). Each fails without its part of the change.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
