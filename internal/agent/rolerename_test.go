@@ -678,6 +678,8 @@ func TestAgentMaxMinorPinned(t *testing.T) {
 func TestPrepareRefusesRenamedFrom(t *testing.T) {
 	a := rnAgent(t)
 	ctx := context.Background()
+	defer func(w time.Duration) { renameAckWait = w }(renameAckWait)
+	renameAckWait = 0
 	for _, st := range []string{renamePending, renameMoving, "done-unacked", "done-acked", renameDropped} {
 		state := strings.TrimSuffix(strings.TrimSuffix(st, "-unacked"), "-acked")
 		if strings.HasPrefix(st, "done") {
@@ -791,4 +793,65 @@ func TestRoleRenameBusyCheckedUnderLocks(t *testing.T) {
 		t.Fatalf("move %+v with a run that started while it waited for the locks", got)
 	}
 	stopTimers(a.mem)
+}
+
+// The hello advertises agentMaxMinor even when proto.MaxMinor is higher (a central-side bump this agent does not speak).
+func TestHelloAdvertisesAgentMaxMinor(t *testing.T) {
+	defer func(v int) { helloMaxMinor = v }(helloMaxMinor)
+	helloMaxMinor = proto.MaxMinor + 7 // a value proto.MaxMinor can never equal, so the hello's field names its source
+	a := rnAgent(t)
+	a.o.Runner = runnertest.New()
+	fc := newRNCentral(t, proto.MaxMinor)
+	runAgent2(t, a, fc.srv.URL)
+	var hello proto.Hello
+	fc.next(t, proto.TypeHello, &hello)
+	if hello.MaxMinor != helloMaxMinor {
+		t.Fatalf("hello advertises minor %d, want the agent's own %d (not proto.MaxMinor %d)", hello.MaxMinor, helloMaxMinor, proto.MaxMinor)
+	}
+}
+
+// Central lifts its launch hold when it records the move, before the ack reaches the node: a launch of a new role reusing
+// the old name that arrives first waits for the ack instead of starting without memory.
+func TestPrepareWaitsForRenameAck(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	if err := a.j.insertRoleRename(ctx, renameRow{ID: rnID, SpaceID: rnSpace, From: "old", To: "new", State: renameDone}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.j.setRoleRenameResult(ctx, rnID, proto.MemoryRenameOK, ""); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		a.roleRenamedAck(ctx, proto.MemoryRenamedAck{RenameID: rnID, Result: proto.MemoryRenameOK})
+	}()
+	if _, err := a.mem.prepare(ctx, rnSpace, "old", "ins_new"); err != nil {
+		t.Fatalf("prepare of the reused name did not wait for the ack: %v", err)
+	}
+	stopTimers(a.mem)
+}
+
+// Releasing a space drops its journaled renames too: central closes an open rename when it relocates the space from its
+// own copy (source unavailable), so a node that held one must not keep it for the space's return.
+func TestForgetSpaceMemoryDropsRenames(t *testing.T) {
+	a := rnAgent(t)
+	ctx := context.Background()
+	other := "spc_other0000000000000000000"
+	for _, sp := range []string{rnSpace, other} {
+		if err := a.j.insertRoleRename(ctx, renameRow{ID: "rrn_" + sp, SpaceID: sp, From: "a", To: "b", State: renamePending}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.j.forgetSpaceMemory(ctx, rnSpace); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := a.j.roleRename(ctx, "rrn_"+rnSpace); found {
+		t.Fatal("the released space's rename stayed journaled")
+	}
+	if a.j.renameHeld(ctx, rnSpace, "a") {
+		t.Fatal("names still held after release")
+	}
+	if _, found, _ := a.j.roleRename(ctx, "rrn_"+other); !found {
+		t.Fatal("another space's rename was dropped")
+	}
 }

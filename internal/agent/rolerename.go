@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -348,6 +349,30 @@ func (j *Journal) renameFrom(ctx context.Context, spaceID, role string) bool {
 	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ?
 		AND (state IN ('pending', 'moving') OR (state = 'done' AND acked = 0))`, spaceID, role).Scan(&n)
 	return err != nil || n > 0
+}
+
+// renameAckWait is how long prepare waits for central's ack of a done rename of the role's name. Central lifts its launch
+// hold when it records the move, before the ack reaches this node, and the ack is stored on its own goroutine, so a launch
+// of a new role reusing the old name can arrive first (ADR-0093).
+var renameAckWait = 5 * time.Second
+
+// awaitRenameAck waits (bounded) while the only thing keeping role's name held is a done rename whose ack is on its way.
+// A pending or moving rename is not waited for: central holds those launches itself.
+func (j *Journal) awaitRenameAck(ctx context.Context, spaceID, role string) {
+	deadline := time.Now().Add(renameAckWait)
+	for time.Now().Before(deadline) {
+		var n int
+		err := j.s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM role_renames WHERE space_id = ? AND from_role = ? AND state = 'done' AND acked = 0`,
+			spaceID, role).Scan(&n)
+		if err != nil || n == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 const renameCols = `rename_id, space_id, from_role, to_role, state, result, message, acked`

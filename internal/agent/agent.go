@@ -178,12 +178,15 @@ type Agent struct {
 	stopScans      map[string]time.Time
 }
 
-// track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
 // agentMaxMinor is the newest protocol minor this agent implements, advertised in the hello. It is a literal on purpose:
 // advertising proto.MaxMinor would claim every minor central adds later, before this agent speaks it (ADR-0093). Raise it
 // together with the code that handles the new minor.
 const agentMaxMinor = 14
 
+// helloMaxMinor is the minor the hello advertises; a variable only so a test can tell it apart from proto.MaxMinor.
+var helloMaxMinor = agentMaxMinor
+
+// track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
 func (a *Agent) track(f func()) {
 	a.bgMu.Lock()
 	if a.stopping {
@@ -425,7 +428,7 @@ func (a *Agent) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: agentMaxMinor,
+	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: helloMaxMinor,
 		Capacity: a.o.Capacity, Runs: []proto.RunReport{}, Leases: a.leaseStates()}
 	a.mu.Lock()
 	hello.Capabilities = a.caps
