@@ -6357,6 +6357,65 @@
     new key) is acknowledged and answered from the journal: `ok` again for a done rename, another attempt for an open
     one. A rename ID reused for other names is refused. A first delivery without a valid lease at the command's
     generation is refused and journals nothing, so central's re-queue retries it.
+- **Addendum: retry and close a stuck rename (T-H4, 2026-11-17, Proposed; operator chose to build both).** A rename stays
+  open while its node state is `pending` or `failed`, which holds the role's launches and every dream launch in the space.
+  A node that keeps answering `error`, or was downgraded below minor 14, never ends it. Two admin-only operations end the
+  wait. Neither deletes anything.
+  1. **API.** `POST /spaces/{space_id}/role-renames/{rename_id}/retry` and `.../close` (`retry-space-role-rename`,
+     `close-space-role-rename`), body `{reason?}` (close: optional, up to 500 characters, stored as the node message).
+     A rename has no revision, so there is no `If-Match`: the state check inside the write transaction is the guard, so a
+     double click gets the second call a 409. Errors: rename not open (`done`, `not_needed`, `abandoned`) → 409
+     `rename_not_open`; unknown id or other space → 404; not an admin → 403. The permission is a new
+     `space_role_rename:admin`, which only the admin role holds (through `*`); the operator role, which may rename, may
+     not retry or close. Also `spaceman role rename retry|close <rename-id>` and two admin MCP tools (classified
+     dangerous). Not in Telegram. Both audit (`space.role_rename_retried`, `space.role_rename_closed`, with the actor,
+     rename id, names, previous state, the reason) and record a change-feed update of the space.
+  2. **Retry** is accepted in `pending` and `failed`. It queues a new `memory.rename` with the next key
+     (`role-rename:<id>:<n>`, as the connect-time re-queue does) unless a command is still pending, sent or accepted, in
+     which case it only wakes delivery. A `failed` rename becomes `pending` with the old message kept until the node
+     reports. It never ends the hold itself. For a node whose stored minor is below 14 the command is queued anyway and
+     waits for a connection at 14 or more (the hub already leaves it undelivered); the response says
+     `node_too_old: true` so the operator knows to upgrade the node or close. It is idempotent and safe: the node answers a
+     repeated command from its journal.
+  3. **Close** is accepted in `pending` and `failed`. It sets a new terminal state **`abandoned`**, with `node_done_at`
+     as the close time and the reason as `node_message`. A new state, not `not_needed` with a reason, because
+     `not_needed` means "no node holds memory", which is false here (an old-name folder is left on the node), and tools
+     that read the table (the UI, the list API, the backup of an old name) should be able to tell the two apart. It costs
+     migration **0065** (rebuild of `space_role_renames` to widen the CHECK, the same shape as 0062); no data change. The
+     open-rename indexes already filter on `pending`/`failed`, so `abandoned` is closed everywhere without a code path
+     change: holds lift at once, another rename of either name and a clean relocation are no longer refused. Central's
+     memory stays under the new name (its move is independent of the node state and already happened or is finished by
+     `ensureMoved`); the former name stays resolvable by history lookups. A close also cancels the rename's undelivered
+     commands. The node's old-name folder is **orphaned**: reported in the response and in `node_message`
+     ("orphaned: <from> on node <id>"), never deleted and never synced again.
+  4. **The node side, with no protocol change.** The node learns of a close only through the existing
+     `memory.renamed.ack`: central sends it with `error: "closed"` (a new reason value in the existing field) at the
+     node's next report, and also at once to a connected node (an unsolicited ack for the close). The node's handler is
+     widened: an ack with an error now drops an open (`pending`, not yet `moving`) journal rename whatever result it
+     carried; today it requires a matching result and only before the move. A dropped rename lifts the node's own hold
+     on syncs of both names, never retries, and is the node-side marker: **orphaned = a `dropped` journal rename whose
+     old folder still exists**. A `moving` rename the node finishes anyway; its later `ok` is answered with a plain ack
+     (the state is `abandoned`, nothing changes), and it syncs the new name, which matches central's moved copy: an unlucky
+     close does no harm. An old-name folder is never synced under the old name (central refuses it while no role has the
+     name). If a role with the old name is created later, the node's prepare sets the orphaned folder aside to
+     `.retained`, as it does for a leftover under a target name; it is never merged into the new role. A node that never
+     reconnects keeps its journal rename until it does; central stays closed regardless.
+  5. **With T-H3's retry at start and #220's ack wait.** After a close, a restarting node retries its journaled `pending`
+     rename, reports, and receives the `closed` ack, which drops it. If it moves the folder first (fault fixed, rename
+     still `pending` in its journal), its `ok` is harmless as in 4: the folder ends under the new name, where central's
+     copy is. #220's ack
+     wait covers only a done rename's `ok`, so it does not wait for a closed one. A retry that arrives after the close is a
+     409 for the operator, and a late `memory.rename` command for a closed rename is cancelled centrally before delivery.
+  6. **Migration and protocol.** Migration **0065** only. No proto change (the `closed` ack reason is a string in an
+     existing field; an older node already ends a not-yet-moved rename on an ack error, but only when the result matches,
+     so the widened handler ships with this change).
+  7. **Alternatives.** *Close as `not_needed` + reason:* no migration, but conflates two meanings. *Close that deletes or
+     moves the node folder:* needs a new command and risks lost edits; rejected, nothing is deleted. *Merging retry into
+     close:* a retry that just works is the common case and is cheap; close is the give-up. *Retry in `error` only:*
+     a downgraded node's `pending` rename is exactly where retry after the upgrade helps.
+  8. **Not security-relevant:** no guarantee is relaxed; the actions are admin-only and audited, and neither deletes data.
+     A close can leave unsynced edits in the node's old-name folder out of central's memory: they are kept on the node,
+     and listed as orphaned.
 
 ## 2. Open items and unresolved contracts
 
