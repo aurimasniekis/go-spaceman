@@ -68,6 +68,9 @@ type Options struct {
 	// DefaultCols and DefaultRows are the size the runner starts programs at (runner.terminal_size); a takeover open
 	// when a run's held size is cleared is resized back to it (ADR-0075). 0: left as it is.
 	DefaultCols, DefaultRows int
+	// NoMemoryFastForward turns ADR-0094's fast-forward of idle memory checkouts off (memory.fast_forward: false); run
+	// start then refreshes a checkout as before.
+	NoMemoryFastForward bool
 }
 
 // Agent is a running node agent.
@@ -154,6 +157,9 @@ type Agent struct {
 	holdsStopped bool
 	// runLocks serialize a run's launch (its last check and start) with its stop, by run ID (runLock).
 	runLocks map[string]*refMutex
+	// launching counts the launches in flight by run ID, from before the run is journaled until its process is started and
+	// observed. The runner reconcile leaves those runs alone (reconcileRunner).
+	launching map[string]int
 	// claudeStage, when set, runs at a managed Claude Code launch's stages ("acquired": the version is held;
 	// "recorded": the journal holds it and the hold is still taken; "released": the hold is released). Tests race GC
 	// and stops there.
@@ -169,6 +175,13 @@ type Agent struct {
 	// heldReports are the runs whose report came between the hello and the welcome (guarded by mu): the minor is not
 	// negotiated yet, so the report would go out stripped of what the central's minor decides. They are re-sent after the welcome.
 	heldReports map[string]struct{}
+	// preConn is set (under mu) from before the hello snapshot (helloRuns) until the connection is set: a report in that
+	// window cannot go out (no connection) and is not in the snapshot, so it is held like one between the hello and the
+	// welcome (sendReport). a.conn is not set earlier: another sender would then write before the hello.
+	// Lock order: limitSend, then mu (sendReport); session takes only mu here and never limitSend, so no cycle.
+	preConn bool
+	// helloStage, when set, runs after the hello snapshot and before the connection is set. Tests race a report there.
+	helloStage  func()
 	limitTimers map[string]*time.Timer
 	limitFiles  map[string]os.FileInfo
 	// statusSnaps are the latest status-line snapshots and failureClasses the latest non-limit StopFailure class of
@@ -243,7 +256,7 @@ func New(j *Journal, o Options) *Agent {
 		o.HTTPClient = http.DefaultClient
 	}
 	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
-		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, runLocks: map[string]*refMutex{}, takeovers: map[string]*takeover{}}
+		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, runLocks: map[string]*refMutex{}, launching: map[string]int{}, takeovers: map[string]*takeover{}}
 	a.mem = newMemManager(a)
 	return a
 }
@@ -284,7 +297,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	var claudeWG sync.WaitGroup
 	defer claudeWG.Wait()
 	a.startClaude(ctx, &claudeWG)
-	go a.monitor(ctx)
+	// Run returns after the monitor does (bounded): it reacts to runner events with the agent's state, and a Run that
+	// had returned must not leave it still reading what the caller restores or tears down next.
+	monitorDone := make(chan struct{})
+	defer func() {
+		select {
+		case <-monitorDone:
+		case <-time.After(10 * time.Second):
+			a.log.Warn("the runner monitor did not stop")
+		}
+	}()
+	go func() { defer close(monitorDone); a.monitor(ctx) }()
 	go a.enforce(ctx)
 	go a.capsLoop(ctx)
 	go a.pruneLoop(ctx)
@@ -424,6 +447,14 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 	conn.SetReadLimit(proto.MaxMessage)
 	defer func() { _ = conn.CloseNow() }()
+	a.mu.Lock()
+	a.preConn = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.preConn = false
+		a.mu.Unlock()
+	}()
 	runs, follow, err := a.helloRuns(ctx)
 	if err != nil {
 		return err
@@ -439,8 +470,11 @@ func (a *Agent) session(ctx context.Context) error {
 		// below 13 would store a filled reset as the transcript's. reportAllHookData sends it after a minor-13 welcome.
 		hello.Runs = append(hello.Runs, r.report(a.now()))
 	}
+	if a.helloStage != nil {
+		a.helloStage()
+	}
 	a.mu.Lock()
-	a.conn = conn
+	a.conn, a.preConn = conn, false
 	a.mu.Unlock()
 	if err := a.send(ctx, proto.TypeHello, hello); err != nil {
 		return err
@@ -676,10 +710,20 @@ func (a *Agent) resendHeldReports(ctx context.Context, held map[string]struct{})
 	}
 }
 
+// holdsReportsLocked is whether a report must wait for the welcome (mu held): the hello is being built or sent.
+func (a *Agent) holdsReportsLocked() bool { return a.preConn || (a.conn != nil && !a.connected) }
+
+// holdingReports is holdsReportsLocked, taking mu.
+func (a *Agent) holdingReports() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.holdsReportsLocked()
+}
+
 // sendReport sends a run's report as it is (limitSend held).
 func (a *Agent) sendReport(ctx context.Context, r runRow) {
 	a.mu.Lock()
-	if a.conn != nil && !a.connected {
+	if a.holdsReportsLocked() {
 		if a.heldReports == nil {
 			a.heldReports = map[string]struct{}{}
 		}

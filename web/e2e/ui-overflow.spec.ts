@@ -1,9 +1,9 @@
-import { expect, test, type Browser, type Page } from '@playwright/test'
+import { devices, expect, test, type Browser, type Page } from '@playwright/test'
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { overflowProblems, realScrollbars, seedWorld, stopWorld, type World } from './overflow'
+import { overflowProblems, phoneProblems, pinchCancelled, realScrollbars, smallTouchText, zoomBlockers, seedWorld, stopWorld, type World } from './overflow'
 import { env, settle } from './stack'
 
 /**
@@ -351,4 +351,61 @@ test('a dialog taller than the screen still scrolls', async ({ page }) => {
   expect(await overflowProblems(page)).toEqual([])
   await dialog.evaluate((e) => e.scrollTo(0, e.scrollHeight))
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Add to inbox' })).toBeInViewport()
+})
+
+/**
+ * Operator report (iPhone, v0.1.6): the account dialog ran off the right edge, with no way to scroll sideways or to pinch
+ * out. The desktop-width runs above never saw it: a narrow desktop window is not a phone. A phone (mobile emulation, touch,
+ * device pixel ratio 3) grows its layout viewport to fit wide content, so a dialog wider than the screen cut itself off
+ * and zoomed the page out. Every modal and drawer is opened on a phone and must lie inside the screen with nothing cut
+ * off, and every text control in it is at least 16 px (iOS zooms in on a smaller one); pinch-zoom stays allowed while one is
+ * open and once it is closed. SM_PHONE_SHOTS=<dir> saves screenshots.
+ */
+test('every modal and drawer fits a phone and leaves pinch-zoom alone', async ({ browser }) => {
+  test.setTimeout(600_000)
+  const { defaultBrowserType: _ignored, ...phone } = devices['iPhone 13']
+  void _ignored
+  const ctx = await browser.newContext({ ...phone, viewport: { width: 390, height: 844 }, storageState: STATE, colorScheme: 'dark' })
+  const page = await ctx.newPage()
+  const failures: string[] = []
+  const dialogs = page.locator('.mantine-Modal-content, .mantine-Drawer-content')
+  const shots = process.env.SM_PHONE_SHOTS
+  let at = ''
+  for (const d of DIALOGS) {
+    if (d.widths && !d.widths.includes(390)) continue
+    const path = d.path(world)
+    if (path !== at || !page.url().endsWith(path) || (await dialogs.count()) > 0) {
+      await page.goto(path)
+      await page.locator('main').waitFor()
+      await settle(page, 400)
+      at = path
+    }
+    try {
+      for (const step of d.open) {
+        await step(page)
+        await settle(page, 300)
+      }
+      await expect(dialogs.last()).toBeVisible(T)
+    } catch (e) {
+      failures.push(`${d.name}: could not open (${String(e).split('\n')[0]})`)
+      at = ''
+      continue
+    }
+    await settle(page, 450)
+    for (const p of await phoneProblems(page)) failures.push(`${d.name}: ${p}`)
+    for (const p of await smallTouchText(page)) failures.push(`${d.name}: text control under 16 px on a touch screen: ${p}`)
+    for (const p of await zoomBlockers(page)) failures.push(`${d.name} (open): ${p}`)
+    if (await pinchCancelled(page)) failures.push(`${d.name}: a pinch on the open dialog is cancelled (the scroll lock blocks zoom)`)
+    if (shots && /^(Edit account|Add account|New task)$/.test(d.name)) await page.screenshot({ path: join(shots, `${d.name.replace(/\W+/g, '-').toLowerCase()}.png`) })
+    for (let i = 0; i < 3 && (await dialogs.count()) > 0; i++) {
+      await page.keyboard.press('Escape')
+      await settle(page, 350)
+    }
+  }
+  // Closed again: the scroll lock is released and zoom is not blocked.
+  expect(await dialogs.count()).toBe(0)
+  expect(await zoomBlockers(page), 'after the last dialog closed').toEqual([])
+  expect(await page.evaluate(() => [document.body.style.overflow, document.body.style.position, document.documentElement.style.overflow])).toEqual(['', '', ''])
+  await ctx.close()
+  expect(failures).toEqual([])
 })

@@ -526,3 +526,25 @@ func TestClaudeUpdaterOff(t *testing.T) {
 		}
 	}
 }
+
+// TestClaudeTrustsMemoryDir: the memory folder passed with --add-dir is trusted too, exactly that folder. From Claude Code
+// 2.1.326 an untrusted --add-dir directory stops the run at "Adding a new directory" (ADR-0021).
+func TestClaudeTrustsMemoryDir(t *testing.T) {
+	c := ctxFor(proto.LaunchPayload{Kind: "control"})
+	c.MemoryDir = "/data/memory/spc_a/control/instances/ins_1"
+	l, err := Claude{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(l.Argv, " "), "--add-dir "+c.MemoryDir) {
+		t.Fatalf("argv %q has no --add-dir for the memory folder", l.Argv)
+	}
+	projects, _ := l.MergeJSON["/data/spaces/spc_a/instances/ins_1/claude/.claude.json"]["projects"].(map[string]any)
+	want := map[string]any{
+		"/data/spaces/spc_a/work": map[string]any{"hasTrustDialogAccepted": true},
+		c.MemoryDir:               map[string]any{"hasTrustDialogAccepted": true},
+	}
+	if !reflect.DeepEqual(projects, want) {
+		t.Fatalf("trusted projects %v, want %v", projects, want)
+	}
+}

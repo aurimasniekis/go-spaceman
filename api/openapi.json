@@ -2770,6 +2770,11 @@
             "description": "Where a built-in skill comes from",
             "type": "string"
           },
+          "version": {
+            "description": "The skill's own version (If-Match for update-skill); it moves only when the name or description changes",
+            "format": "int64",
+            "type": "integer"
+          },
           "versions": {
             "items": {
               "$ref": "#/components/schemas/CatalogSkillVersion"
@@ -2783,7 +2788,8 @@
           "name",
           "source",
           "latest",
-          "created_at"
+          "created_at",
+          "version"
         ],
         "type": "object"
       },
@@ -19762,6 +19768,52 @@
         ],
         "type": "object"
       },
+      "Update-promptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Update-promptRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Update-skillRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Update-skillRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "Update-taskRequest": {
         "additionalProperties": false,
         "properties": {
@@ -26441,6 +26493,66 @@
         "tags": [
           "prompts"
         ]
+      },
+      "patch": {
+        "description": "Changes the prompt in place and creates no version. A field left out keeps its value; the slug and kind never change. If-Match is the prompt's version.",
+        "operationId": "update-prompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Update-promptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPrompt"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change a prompt's name or description",
+        "tags": [
+          "prompts"
+        ]
       }
     },
     "/prompts/{prompt_id}/draft": {
@@ -26979,6 +27091,66 @@
           }
         },
         "summary": "A skill with its versions and files",
+        "tags": [
+          "skills"
+        ]
+      },
+      "patch": {
+        "description": "Changes the skill in place and creates no version: its files stay as they are. A field left out keeps its value; the slug never changes. If-Match is the skill's version.",
+        "operationId": "update-skill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Update-skillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSkill"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change a skill's name or description",
         "tags": [
           "skills"
         ]

@@ -162,7 +162,8 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			a.ack(ctx, c, proto.AckRejected, "an operator has taken over the terminal; input is paused")
 			return
 		}
-		if err := a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force); err != nil {
+		// Under the instance's input gate: a fast-forward of its memory checkout (ADR-0094) finishes first.
+		if err := a.mem.deliverInput(r, func() error { return a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force) }); err != nil {
 			reason := "send failed"
 			if errors.Is(err, runner.ErrBusy) {
 				reason = "the program is busy; input not delivered (safe input)"
@@ -181,6 +182,7 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 // exists (a repeated delivery, or a restart between start and journal update) it is adopted (SM-NODE-004/009).
 func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPayload) {
 	log := a.log.With(slog.String(obs.FieldRunID, c.RunID), slog.String(obs.FieldSpaceID, c.SpaceID))
+	defer a.launchInFlight(c.RunID)()
 	l, ok := a.lease(c.SpaceID, c.Generation)
 	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, Kind: p.Kind, Role: p.Role, Harness: p.Harness, InstanceID: p.InstanceID,
 		TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending, SessionID: p.SessionID}
@@ -674,6 +676,29 @@ func (a *Agent) reconcileDesired(ctx context.Context, rec proto.Reconcile) {
 	}
 }
 
+// launchInFlight marks runID's launch as running until the returned function is called.
+func (a *Agent) launchInFlight(runID string) func() {
+	a.mu.Lock()
+	if a.launching == nil {
+		a.launching = map[string]int{}
+	}
+	a.launching[runID]++
+	a.mu.Unlock()
+	return sync.OnceFunc(func() {
+		a.mu.Lock()
+		if a.launching[runID]--; a.launching[runID] <= 0 {
+			delete(a.launching, runID)
+		}
+		a.mu.Unlock()
+	})
+}
+
+func (a *Agent) launchRunning(runID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.launching[runID] > 0
+}
+
 // reconcileRunner re-reads every managed terminal and brings the journal up to date (startup, missed events).
 func (a *Agent) reconcileRunner(ctx context.Context) error {
 	procs, err := a.o.Runner.List(ctx, map[string]string{"spaceman.managed": "1"}, true)
@@ -692,6 +717,28 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 	}
 	for _, r := range runs {
 		p, ok := byRun[r.RunID]
+		if !ok {
+			// The runner's list and the journal's runs were read at different moments, so a run that is not in the list
+			// may have been launched in between. A launch in flight is not judged: its row is pending or starting until
+			// the process is started and observed. A launch that has finished since is found by a fresh look at the
+			// runner, taken after the launch is known to be over (its process is started before it leaves the set).
+			if a.launchRunning(r.RunID) {
+				continue
+			}
+			found, lerr := a.o.Runner.List(ctx, map[string]string{"spaceman.run": r.RunID}, true)
+			if lerr != nil {
+				return lerr
+			}
+			if len(found) > 0 {
+				p, ok = found[0], true
+			}
+			if fresh, err := a.j.getRun(ctx, r.RunID); err == nil {
+				if ended(fresh.State) {
+					continue
+				}
+				r = fresh
+			}
+		}
 		switch {
 		case ok:
 			a.observe(ctx, r, p, r.TerminalID == "" || r.TerminalID != p.ID)

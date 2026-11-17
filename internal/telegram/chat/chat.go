@@ -90,6 +90,10 @@ type Options struct {
 	// CardCaps is what a link's card of an action offers (notify.Notifier.CardCaps), for redrawing the card. Cosmetic
 	// only. Nil: no quick actions are drawn.
 	CardCaps func(linkID string, chatID int64, spaceID, actionID string) card.Caps
+	// CardSpace maps any notifier card (chat, message), whatever it shows, to its space and the link it was sent to, so
+	// a reply that isn't an answer goes to that space rather than the current one. Nil: such replies are captured as
+	// plain messages.
+	CardSpace func(ctx context.Context, chatID int64, messageID int) (spaceID, linkID string, ok bool)
 	// AppURL is the Mini App URL of an action, for forms that can't be answered in chat (nil or "": no button).
 	AppURL func(spaceID, actionID string) string
 	// AppPage is the Mini App URL of one of its pages, e.g. "/settings" (nil or "": the Mini App isn't available).
@@ -205,7 +209,7 @@ func (h *Handler) Handle(ctx context.Context, u botapi.Update, l updates.Link) {
 			}
 			return
 		}
-		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l) || h.qrReply(ctx, m, l)) {
+		if m.ReplyToMessage != nil && (h.promptReply(ctx, m, l) || h.rejectReply(ctx, m, l) || h.qrReply(ctx, m, l) || h.cardReply(ctx, m, l)) {
 			return
 		}
 		if h.controlText(ctx, m, l) {

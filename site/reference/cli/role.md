@@ -18,7 +18,7 @@ Aliases: `roles`.
 | [`spaceman role rename`](#spaceman-role-rename) | Rename a role in place: its configuration, pending work and memory follow |
 | [`spaceman role renames`](#spaceman-role-renames) | A space's role renames, newest first, and the state of each memory move |
 | [`spaceman role retry-rename`](#spaceman-role-retry-rename) | Send a stuck role rename's memory move to the node again (admins) |
-| [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration) |
+| [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration, skills included) |
 | [`spaceman role template`](#spaceman-role-template) | Role templates: list, show, create, update, delete and the starter set |
 
 ## spaceman role add-starters
@@ -196,13 +196,21 @@ spaceman role retry-rename rrn_01... --space payments
 
 ## spaceman role set
 
-Configure a role in a space (creates it, or replaces its configuration).
+Configure a role in a space (creates it, or replaces its configuration, skills included).
+
+Creates the role, or replaces its whole configuration: every field not given is cleared. Without --skill, the skills this space role adds are cleared too (the template's skills stay); repeat --skill for each one to keep.
 
 ```sh
 spaceman role set <name> [flags]
 ```
 
 API: `save-space-role` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman role set --space payments reviewer --template tpl_01... --skill skl_01... --skill release-notes@2
+```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -214,6 +222,7 @@ API: `save-space-role` ([HTTP API](../api)).
 | `--prompt` | string |  | prompt ID |
 | `--prompt-pin` | string |  | published prompt version to pin (empty follows the latest) |
 | `--setting` | string, repeatable |  | harness setting (key=value, repeatable) |
+| `--skill` | string, repeatable |  | skill to keep on the role (ID or slug), optionally pinned as &lt;skill&gt;@&lt;version&gt; (a published version number or ID; no pin follows the latest). Replaces the role's own skills; "" clears them (repeatable or comma-separated) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--template` | string |  | role template ID (required for a new role) |
 

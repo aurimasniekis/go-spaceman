@@ -17,6 +17,7 @@ Aliases: `prompts`.
 | [`spaceman prompt list`](#spaceman-prompt-list) | The prompt catalog |
 | [`spaceman prompt publish`](#spaceman-prompt-publish) | Publish the draft as the next immutable version |
 | [`spaceman prompt rollback`](#spaceman-prompt-rollback) | Publish an earlier version's content as a new version |
+| [`spaceman prompt update`](#spaceman-prompt-update) | Change a prompt's name or description in place (only the flags given change; no new version) |
 
 ## spaceman prompt create
 
@@ -156,4 +157,21 @@ API: `rollback-prompt` ([HTTP API](../api)).
 |---|---|---|---|
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--version` | string |  | version ID whose content to publish again (required) |
+
+## spaceman prompt update
+
+Change a prompt's name or description in place (only the flags given change; no new version).
+
+```sh
+spaceman prompt update <prompt> [flags]
+```
+
+API: `get-prompt`, `update-prompt` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--description` | string |  | description |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--name` | string |  | name |
 

@@ -115,8 +115,9 @@ func (svc *Service) RetryRoleRename(ctx context.Context, actor audit.Actor, spac
 	return out, nil
 }
 
-// RenameClosedKey is the idempotency key of the closed notice a forget queues for the node: a memory.rename with Closed
-// set. It is outside the range of RenameCommandKey's keys, so it is never counted as the rename's move command.
+// RenameClosedKey is the idempotency key of the closed notice every close queues for the node while the space is on
+// that node: a memory.rename with Closed set. It is outside the range of RenameCommandKey's keys, so it is never
+// counted as the rename's move command.
 func RenameClosedKey(renameID string) string { return "role-rename-closed:" + renameID }
 
 // CloseRoleRename gives up an open rename's node move: the rename becomes abandoned and the holds on launches lift. Its
@@ -124,11 +125,11 @@ func RenameClosedKey(renameID string) string { return "role-rename-closed:" + re
 // the rename keeps blocking renames of either name (renameBlockers). Central's memory stays under the new name; the
 // node's old-name folder is left where it is (orphaned) and never deleted or synced again.
 //
+// Every close, forgetNode or not, queues a closed notice for the node while the space is still on the rename's node,
+// so a node that comes back journals the rename as closed and sets the old folder aside instead of moving it.
 // forgetNode also gives up delivering the rename to the node (ADR-0093 addendum, forget): its pending and sent
-// commands are cancelled, which releases both names, and, while the space is still on that node, a closed notice is
-// queued in their place, so a node that comes back journals the rename as closed and sets the old folder aside instead
-// of moving it. It is accepted on an open rename (which it also closes) and on a closed one whose command the node has
-// not journaled yet; on anything else it is a 409 rename_not_open.
+// commands are cancelled, which releases both names. It is accepted on an open rename (which it also closes) and on a
+// closed one whose command the node has not journaled yet; on anything else it is a 409 rename_not_open.
 func (svc *Service) CloseRoleRename(ctx context.Context, actor audit.Actor, spaceID, id, reason string, forgetNode bool) (*RoleRename, error) {
 	reason = strings.TrimSpace(reason)
 	if len([]rune(reason)) > MaxRenameCloseReason {

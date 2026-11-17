@@ -32,7 +32,7 @@ func servePublic(t *testing.T, h *harness) string {
 	srv := app.PublicServer(h.c, context.Background())
 	srv.ErrorLog = log.New(io.Discard, "", 0)
 	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() { _ = srv.Close() })
+	cleanupReleased(t, func() { _ = srv.Close() }) // srv's handler is central's: release it (helpers_test.go)
 	return ln.Addr().String()
 }
 
