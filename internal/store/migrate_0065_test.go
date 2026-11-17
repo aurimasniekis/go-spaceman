@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 0064 adds space_roles.description (ADR-0095): a database at 0060, the latest migration before it on this branch (0061-0063
+// 0065 adds space_roles.description (ADR-0095): a database at 0060, the latest migration before it on this branch (0061-0064
 // belong to other branches of the release and the migrator needs no contiguous numbers), keeps its roles and they get ""
 // (use the template's description); a fresh database has the column.
 func TestSpaceRoleDescriptionMigrationFrom0060(t *testing.T) {
@@ -38,8 +38,8 @@ func TestSpaceRoleDescriptionMigrationFrom0060(t *testing.T) {
 	}
 	defer s.Close()
 	cur, latest, err := SchemaVersions(ctx, s.rdb, EmbeddedMigrations())
-	if err != nil || cur != latest || latest < 64 {
-		t.Fatalf("after the upgrade: version %d of %d, %v; want all applied, at least 0064", cur, latest, err)
+	if err != nil || cur != latest || latest < 65 {
+		t.Fatalf("after the upgrade: version %d of %d, %v; want all applied, at least 0065", cur, latest, err)
 	}
 	var desc, tpl string
 	if err := s.rdb.QueryRowContext(ctx, `SELECT description, template_id FROM space_roles WHERE space_id = 'spc_a' AND name = 'impl-a'`).Scan(&desc, &tpl); err != nil {
