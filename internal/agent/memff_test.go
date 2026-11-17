@@ -785,7 +785,9 @@ func TestKillSwitchSkipsInputGate(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		close(release)
-		<-first
+		if err := <-first; err != nil {
+			t.Log(err)
+		}
 		t.Fatal("with memory.fast_forward off, an input waited for another input's gate")
 	}
 	close(release)
