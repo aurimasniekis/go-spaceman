@@ -443,3 +443,36 @@ func TestBodyBuilders(t *testing.T) {
 	}
 	e.code(t, ExitUsage, "human", "type", "publish", "deploy")
 }
+
+// role set replaces the whole space role, so --skill lists every skill to keep: <id> follows the latest version and
+// <id>@<version> pins one; without --skill the body carries no skills.
+func TestRoleSetSkills(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	echo := func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) }
+	f.on("PUT "+sp+"/roles/reviewer", echo)
+	e := f.env()
+
+	e.ok(t, "role", "set", "--space", spaceID, "reviewer", "--template", "rtp_1", "--skill", "skl_a", "--skill", "skl_b@skv_2")
+	r := f.last("PUT", sp+"/roles/reviewer")
+	skills, _ := r.body["skills"].([]any)
+	if len(skills) != 2 || r.body["skill"] != nil {
+		t.Fatalf("skills %v", r.body)
+	}
+	if a := skills[0].(map[string]any); a["skill_id"] != "skl_a" || a["pin"] != nil {
+		t.Fatalf("first %v", a)
+	}
+	if b := skills[1].(map[string]any); b["skill_id"] != "skl_b" || b["pin"] != "skv_2" {
+		t.Fatalf("second %v", b)
+	}
+
+	e.ok(t, "role", "set", "--space", spaceID, "reviewer", "--template", "rtp_1")
+	if r := f.last("PUT", sp+"/roles/reviewer"); r.body["skills"] != nil || r.body["skill"] != nil {
+		t.Fatalf("no --skill must send no skills: %v", r.body)
+	}
+	e.code(t, ExitUsage, "role", "set", "--space", spaceID, "reviewer", "--template", "rtp_1", "--skill", "@skv_2")
+
+	if out := e.ok(t, "role", "set", "--help"); !strings.Contains(out, "so are the role's skills") {
+		t.Fatalf("help must say role set replaces skills: %s", out)
+	}
+}
