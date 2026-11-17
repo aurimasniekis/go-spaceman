@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -251,6 +252,59 @@ func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 			t.Fatalf("local record %d (%s) numbered at or below the acknowledged 300", r.Seq, r.Kind)
 		}
 	}
+}
+
+// The lowered acknowledgement (central holds 150, the saved one says 300) arrives while the catch-up of the run is
+// already under way from the restored 300. That catch-up had nothing above 300 to re-ship; it must start again from
+// 150 rather than mark the run caught up and clear the mark the lowering set, or no later sweep re-ships 151..250 (a
+// silent hole at central, while the new output above 300 still arrives).
+func TestLoweredAckDuringTheRunsCatchUp(t *testing.T) {
+	const runID = "run_low"
+	var ag atomic.Pointer[Agent]
+	reached := make(chan struct{})
+	var once sync.Once
+	catchUpRunHook = func(id string, from uint64) {
+		if id != runID || from != 300 {
+			return
+		}
+		once.Do(func() { close(reached) })
+		// Hold the catch-up, started from the restored acknowledgement, until central's lower answer is applied.
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			a := ag.Load()
+			a.mu.Lock()
+			known := a.seqKnown[runID]
+			a.mu.Unlock()
+			if known {
+				return
+			}
+		}
+	}
+	t.Cleanup(func() { catchUpRunHook = nil })
+	a, c, term := restartedRecorderEnvWith(t, runID, 250, 300, 150, nil, func(a *Agent) { ag.Store(a) })
+	// Central answers nothing (the probe among it) until the catch-up of the run has begun from 300.
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the catch-up never began from the restored acknowledgement")
+	}
+	writeUntil(t, a, c, term, "after the restart")
+	c.until("the local records above 150 at central", func() bool { return countBetween(c.recs, 150, 250) == 100 })
+	for i, r := range c.recs[150:250] {
+		if r.Seq != uint64(151+i) {
+			t.Fatalf("central holds %d after %d, want %d", r.Seq, 150+i, 151+i)
+		}
+	}
+}
+
+// countBetween counts the records numbered above lo and up to hi.
+func countBetween(recs []recording.Record, lo, hi uint64) int {
+	n := 0
+	for _, r := range recs {
+		if r.Seq > lo && r.Seq <= hi {
+			n++
+		}
+	}
+	return n
 }
 
 // A program that ends while central is out of reach after the restart: its records, the close among them, wait for
