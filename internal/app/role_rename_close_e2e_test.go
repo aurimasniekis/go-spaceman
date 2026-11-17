@@ -283,7 +283,12 @@ func TestRoleRenameClosedRejectedIsRequeued(t *testing.T) {
 		t.Fatal("a closed rename the node refused does not block its names")
 	}
 	n, _ = e.connect(proto.MaxMinor)
+	// The close queued its durable closed notice first; the refused move is queued again behind it.
 	c, p := n.memoryRename(t, proto.AckAccepted)
+	if p.RenameID != rn.ID || !p.Closed || c.IdempotencyKey != catalog.RenameClosedKey(rn.ID) {
+		t.Fatalf("closed notice %+v %+v", c, p)
+	}
+	c, p = n.memoryRename(t, proto.AckAccepted)
 	if p.RenameID != rn.ID || p.Closed || c.IdempotencyKey != catalog.RenameCommandKey(rn.ID)+":1" {
 		t.Fatalf("re-queued %+v %+v", c, p)
 	}
