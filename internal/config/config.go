@@ -182,6 +182,14 @@ type LimitsConfig struct {
 	// it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at
 	// most 10080).
 	ControlIdleStopMinutes int64 `yaml:"control_idle_stop_minutes"`
+	// ControlWatchdogMinutes is how long work may wait for a live, idle control that does nothing before SpaceMan types
+	// a reminder into its terminal (ADR-0099; 0: off; default 15; at most 1440).
+	ControlWatchdogMinutes int64 `yaml:"control_watchdog_minutes"`
+	// ControlWatchdogNudges is how many reminders in a row control may leave unanswered before the space's people get a
+	// human action (0: never; default 3; at most 20).
+	ControlWatchdogNudges int64 `yaml:"control_watchdog_nudges"`
+	// ControlWatchdogRestart also restarts control when the watchdog escalates (1: on; 0: off, the default).
+	ControlWatchdogRestart int64 `yaml:"control_watchdog_restart"`
 	// TerminalCols is the width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the
 	// node's runner.terminal_size. A size applies only when terminal_rows is set too.
 	TerminalCols int64 `yaml:"terminal_cols"`

@@ -3,6 +3,7 @@ package recording
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -155,8 +156,8 @@ func (d *fullDisk) Close() error { return d.f.Close() }
 
 // SM-REC-004 (fault: disk exhaustion): a write failure stops recording output without failing callers that only add
 // output; the writer hands out a "disk" trunc record (once) numbered after every record it assigned, and the close
-// record still gets a sequence number for central's copy. What reached the disk stays readable, the torn frame is
-// reported as Truncated.
+// record still gets a sequence number for central's copy. What was synced stays readable; the torn frame written after
+// it is cut off (it was never synced, so no reader may take it for stored).
 func TestDiskFullTruncates(t *testing.T) {
 	dir := t.TempDir()
 	left := int64(1 << 30)
@@ -201,7 +202,7 @@ func TestDiskFullTruncates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Records) != 2 || !res.Truncated || string(res.Records[1].Data) != "before\n" {
+	if len(res.Records) != 2 || res.Truncated || string(res.Records[1].Data) != "before\n" {
 		t.Fatalf("after disk full: %+v", res)
 	}
 	// A writer reopened later (space freed) continues after the last stored record; SkipTo moves it above records
@@ -238,4 +239,239 @@ func TestQuotaTruncationHandedOut(t *testing.T) {
 		t.Fatalf("quota truncation %+v %v", tr, ok)
 	}
 	must(t, w.Close())
+}
+
+// failSync is a segment file whose Sync fails while fail is set.
+type failSync struct {
+	File
+	fail *bool
+}
+
+func (f failSync) Sync() error {
+	if *f.fail {
+		return syscall.EIO
+	}
+	return f.File.Sync()
+}
+
+// Stored is the highest sequence that was synced: it never counts buffered records, a failed flush, or the trunc
+// record a failure adds, while Seq does (the hub acks Stored, so a node never prunes records central lacks).
+func TestStoredDoesNotAdvanceOnFailedFlush(t *testing.T) {
+	dir := t.TempDir()
+	fail := false
+	w, err := Open(Options{Dir: dir, Create: func(path string) (File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return failSync{File: f, fail: &fail}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := uint64(1); i <= 2; i++ {
+		if _, err := w.Append(Record{Seq: i, Kind: KindOut, Data: []byte("a")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if w.Stored() != 0 {
+		t.Fatalf("stored %d before any flush", w.Stored())
+	}
+	must(t, w.Flush())
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after flush, want 2", w.Stored())
+	}
+	fail = true
+	if _, err := w.Append(Record{Seq: 3, Kind: KindOut, Data: []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err == nil {
+		t.Fatal("flush succeeded")
+	}
+	if _, err := w.Append(Record{Seq: 4, Kind: KindOut}); err == nil {
+		t.Fatal("append after failure succeeded")
+	}
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after a failed flush, want 2", w.Stored())
+	}
+	if w.Seq() <= 2 {
+		t.Fatalf("seq %d should be above stored", w.Seq())
+	}
+	_ = w.Close()
+	// A reopened writer starts from what is on disk.
+	w2, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w2.Stored() < 2 || w2.Stored() != w2.Seq() {
+		t.Fatalf("reopened stored %d seq %d", w2.Stored(), w2.Seq())
+	}
+}
+
+// failSyncCreate creates segment files whose Sync fails while fail is set (the write itself reaches the page cache).
+func failSyncCreate(fail *bool) func(string) (File, error) {
+	return func(path string) (File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return failSync{File: f, fail: fail}, nil
+	}
+}
+
+// SM-REC-003: a frame written before a failed sync may still decode from the page cache although it never reached the
+// disk. The failure cuts it off, so a writer opened afterwards (central reopens one after every failure) never counts
+// it as stored: Stored is the last synced record, and a re-shipped copy of the lost record is stored again.
+func TestStoredNeverTrustsATailWrittenAfterAFailure(t *testing.T) {
+	dir := t.TempDir()
+	fail := false
+	w, err := Open(Options{Dir: dir, Create: failSyncCreate(&fail)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Append(Record{Seq: 1, Kind: KindOut, Data: []byte("a")}); err != nil {
+		t.Fatal(err)
+	}
+	must(t, w.Flush())
+	fail = true
+	if _, err := w.Append(Record{Seq: 2, Kind: KindOut, Data: []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err == nil {
+		t.Fatal("flush with a failing sync succeeded")
+	}
+	_ = w.Close()
+	if err := w.DropUnsynced(); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Read(dir, 0)
+	if err != nil || len(res.Records) != 1 || res.Truncated {
+		t.Fatalf("after the failed sync the segment holds %+v (%v), want record 1 alone", res, err)
+	}
+	fail = false
+	w2, err := Open(Options{Dir: dir, Create: failSyncCreate(&fail)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w2.Close() }()
+	if w2.Stored() != 1 || w2.Seq() != 1 {
+		t.Fatalf("reopened writer: stored %d seq %d, want 1", w2.Stored(), w2.Seq())
+	}
+	for seq := uint64(2); seq <= 3; seq++ {
+		if ok, err := w2.Append(Record{Seq: seq, Kind: KindOut, Data: []byte{byte('a' + seq - 1)}}); !ok || err != nil {
+			t.Fatalf("re-shipped record %d: stored %v %v", seq, ok, err)
+		}
+	}
+	must(t, w2.Flush())
+	if w2.Stored() != 3 {
+		t.Fatalf("stored %d after the re-ship, want 3", w2.Stored())
+	}
+	res, _ = Read(dir, 0)
+	if len(res.Records) != 3 || res.Gaps != 0 {
+		t.Fatalf("recording after the re-ship: %d records, %d gaps", len(res.Records), res.Gaps)
+	}
+}
+
+// When the unsynced tail cannot be cut off at once, DropUnsynced keeps failing until it can, and only then is the
+// tail gone (central does not reopen the recording meanwhile).
+func TestDropUnsyncedRetriesUntilTheTailIsCut(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	dir := t.TempDir()
+	fail := false
+	w, err := Open(Options{Dir: dir, Create: failSyncCreate(&fail)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Append(Record{Seq: 1, Kind: KindOut, Data: []byte("a")}); err != nil {
+		t.Fatal(err)
+	}
+	must(t, w.Flush())
+	seg := filepath.Join(dir, SegmentName(1))
+	synced, err := os.Stat(seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if _, err := w.Append(Record{Seq: 2, Kind: KindOut, Data: []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.Chmod(seg, 0o400)) // the cut fails
+	if err := w.Flush(); err == nil {
+		t.Fatal("flush with a failing sync succeeded")
+	}
+	if err := w.DropUnsynced(); err == nil {
+		t.Fatal("the tail was reported cut while the segment could not be written")
+	}
+	must(t, os.Chmod(seg, 0o600))
+	must(t, w.DropUnsynced())
+	must(t, w.DropUnsynced()) // nothing left to cut
+	if fi, err := os.Stat(seg); err != nil || fi.Size() != synced.Size() {
+		t.Fatalf("segment after the cut: %v %v, want %d bytes", fi, err, synced.Size())
+	}
+}
+
+// A writer resumed past archived records starts both its sequence and its stored sequence there.
+func TestOpenResumeSeqIsStored(t *testing.T) {
+	w, err := Open(Options{Dir: t.TempDir(), ResumeSegment: 2, ResumeSeq: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if w.Seq() != 7 || w.Stored() != 7 {
+		t.Fatalf("seq %d stored %d, want 7 and 7", w.Seq(), w.Stored())
+	}
+}
+
+// M9: a failed sync on a segment that has just been rotated cuts the new segment to nothing (it is removed) and
+// Stored stays at the last record of the previous one: nothing of the new segment counts as stored.
+func TestStoredAfterRotationAndFailedSync(t *testing.T) {
+	dir := t.TempDir()
+	fail := false
+	now := time.Unix(1_700_000_000, 0)
+	w, err := Open(Options{Dir: dir, Now: func() time.Time { return now }, Create: failSyncCreate(&fail)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first segment is much larger than what the second will hold, so a synced size left over from it would be
+	// above the new segment's size.
+	big := make([]byte, 4096)
+	for i := range big {
+		big[i] = byte(i*131 + i>>3)
+	}
+	for seq := uint64(1); seq <= 2; seq++ {
+		if _, err := w.Append(Record{Seq: seq, Kind: KindOut, Data: big}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(t, w.Flush())
+	now = now.Add(SegmentMaxAge + time.Second) // the next flush rotates
+	fail = true
+	if _, err := w.Append(Record{Seq: 3, Kind: KindOut, Data: []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err == nil {
+		t.Fatal("flush with a failing sync succeeded")
+	}
+	if w.Stored() != 2 {
+		t.Fatalf("stored %d after the failed rotation sync, want 2", w.Stored())
+	}
+	if _, err := os.Stat(filepath.Join(dir, SegmentName(2))); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the new segment was not cut to nothing: %v", err)
+	}
+	segs, _ := Segments(dir)
+	res, _ := Read(dir, 0)
+	if len(segs) != 1 || len(res.Records) != 2 {
+		t.Fatalf("recording holds %d segments, %d records, want 1 and 2", len(segs), len(res.Records))
+	}
+	_ = w.Close()
+	w2, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w2.Close() }()
+	if w2.Stored() != 2 {
+		t.Fatalf("reopened stored %d, want 2", w2.Stored())
+	}
 }

@@ -283,6 +283,10 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   that is not general worker-launch permission. Support counts toward capacity, and reserved capacity prevents worker/support deadlock.
 - SM-CTRL-006 Task outcomes, messages, human blockers and memory errors are tracked separately.
 - SM-CTRL-007 Control can list its own space's roles with each role's kind, effective description (and whether it is the space role's or the template's), template and effective harness and model, through a read-only tool only control runs have. The list never carries prompt text, settings, skills or account references (ADR-0095).
+- SM-CTRL-008 A live control that leaves waiting work alone (unacknowledged messages, reviews whose workers finished,
+  ended runs, free worker slots with eligible tasks) is reminded through its terminal, with backoff, never while it is
+  busy, at a usage limit, waiting for a person, taken over or paused. Unanswered reminders raise attention, and can
+  restart control. All of it is configurable per space (operator request, 2026-11-17; ADR-0099).
 
 ### SM-COMM — Durable communication
 - SM-COMM-001 SpaceMan owns durable messages, requests, acknowledgement, reply and correlation. States are stored, available, acknowledged, resolved.
@@ -361,6 +365,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   per-server choice. An agent acting through a SpaceMan MCP server never counts as an approver.
 - SM-MCP-009 Central also serves the SpaceMan MCP tool surface at `/api/v1/mcp` to operators' own MCP clients,
   authenticated with a bearer API token, with the same classification, exclusions and approval rules.
+- SM-MCP-010 A skill's name and description can be changed in place, by ID or slug, under the skill's `version` (If-Match). The slug and files stay fixed, no skill version is created, and the change is audited by field name only and uses the skill write permission (ADR-0095).
 
 ### SM-MEM — Memory
 - SM-MEM-001 Memory is keyed by (space_id, agent_kind). All instances of a kind share history. KB sessions share KB memory by default with separate conversations.
