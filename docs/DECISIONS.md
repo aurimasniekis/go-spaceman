@@ -7395,10 +7395,14 @@
   above S, nothing shipped). `catchUpRun` now first checks `seqKnown` for the run; if it is not set it sends an empty
   `recording` message itself (every central version answers it, as for the recorder's probe; every `seqProbeEvery`,
   serving other runs' waiting live output meanwhile) and ships only once the answer arrived. It then reads the run's
-  acknowledgement again, so a lowered value is the starting point. After `seqKnownWait` (10 s) without an answer the
-  pass fails like a failed send: the run stays marked, the kept-back records are untouched, and the next try follows
-  after the retry delay. The wait is per run, so a central that never answers for one run (decision 3's open failure)
-  holds that run's catch-up back, never numbers or ships anything of it. Evidence: `TestEndedRunCatchUpProbesBeforeShipping`
+  acknowledgement again, so a lowered value is the starting point. Before the first probe the run is marked as not compared with central (`restored`), so a late answer cannot make a
+  sweep take it for clean. After `seqKnownWait` (10 s) without an answer that run is skipped: it is marked unshipped
+  (and stays `restored`), its kept-back records are untouched, the sweep goes on with the other runs, and the sweep
+  then ends with an error, so the pass retries after its backoff (1 s, doubling to 30 s) instead of looping. The
+  wait is per run, so a central that never answers for one run (decision 3's open failure, a Forbidden `GetRun`, no
+  recordings directory) neither numbers nor ships anything of that run and does not hold the later runs back: it
+  delays only that run's own catch-up, once per retry, by up to `seqKnownWait`, and the sweep serves others' waiting live output
+  meanwhile. Evidence: `TestEndedRunCatchUpProbesBeforeShipping`
   (an ended run, central muted: no record leaves the node, then 151..250 arrive contiguously and nothing jumps),
   `TestLoweredAckWithQueuedRecordsShipsTheGapFirst`, and `TestRestartedRecorderBelowTheSavedAcknowledgement` (live
   records numbered above 300 are queued behind the catch-up; central never receives a record above 250 before
@@ -7408,7 +7412,12 @@
   the acknowledgement after a catch-up began. #254's restart (`lowers`, `errLowered`) therefore guards only a lowering
   that reaches a run whose sequence counted as known, which no current path produces (a reconnect does not: `seqKnown` and `acked` are set, never cleared, except when a run is pruned from the journal, which has no catch-up left); it is kept as a guard and
   exercised by forcing the state (`TestLoweringAfterTheCatchUpBeganRestartsIt`; `TestLoweredAckDuringTheRunsCatchUp`
-  now asserts that the catch-up begins from the lowered value).
+  now asserts that the catch-up begins from the lowered value). Only the final `loweredLocked` check of the guard is
+  covered by those tests; the per-batch check (a lowering forced between two batches) is not exercised by a test
+  (removing it changes no test result).
+  Evidence for the skip: `TestLateProbeAnswerStillShipsTheRun`, `TestUnansweredRunDoesNotBlockTheSweep`,
+  `TestUnansweredRunBacksOff` (they set `seqKnownWait` to a short value). The late-answer case is closed twice (the
+  `restored` mark and the unshipped mark); the test fails only when both are removed.
 
 ### ADR-0098 — A run an agent restart stopped is resumed, within a cap
 

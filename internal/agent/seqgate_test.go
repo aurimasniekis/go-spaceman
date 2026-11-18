@@ -557,3 +557,58 @@ func TestLaunchedRunIsNotMarkedUncompared(t *testing.T) {
 		t.Fatal("a run this process did not launch was not marked restored")
 	}
 }
+
+func endRuns(t *testing.T, ids ...string) func(a *Agent) {
+	return func(a *Agent) {
+		ctx := context.Background()
+		for _, id := range ids {
+			row, err := a.j.getRun(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.State, row.Desired = proto.RunExited, "stopped"
+			if err := a.j.updateRun(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func shortSeqWait(t *testing.T, wait time.Duration) {
+	oldP, oldW := seqProbeEvery, seqKnownWait
+	seqProbeEvery, seqKnownWait = 20*time.Millisecond, wait
+	t.Cleanup(func() { seqProbeEvery, seqKnownWait = oldP, oldW })
+}
+
+// A probe answer that comes after seqKnownWait, for an ended run with no saved acknowledgement: the late answer must
+// not make the sweep take the run for clean (the local records above it still have to be shipped).
+func TestLateProbeAnswerStillShipsTheRun(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	const runID = "run_late"
+	_, c, _ := restartedRecorderEnvWith(t, runID, 250, 0, 150, nil, endRuns(t, runID))
+	time.Sleep(350 * time.Millisecond) // central answers nothing until after seqKnownWait
+	if !c.within(5*time.Second, func() bool { return c.seq >= 250 }) {
+		t.Fatalf("central holds %d, want 250: records above the late answer were never shipped", c.seq)
+	}
+}
+
+// Central never answers one ended run (only=run_b): that run is skipped, the ended run after it still catches up.
+func TestUnansweredRunDoesNotBlockTheSweep(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	_, c, _ := restartedRecorderEnvWith(t, "run_b", 250, 0, 150, []string{"run_a"}, endRuns(t, "run_b", "run_a"))
+	if !c.within(8*time.Second, func() bool { return c.seq >= 250 }) {
+		t.Fatalf("central holds %d of run_b, want 250", c.seq)
+	}
+}
+
+// A run central never answers is retried after a backoff, not in a loop: over a few seconds the probes stay few.
+func TestUnansweredRunBacksOff(t *testing.T) {
+	shortSeqWait(t, 100*time.Millisecond)
+	_, c, _ := restartedRecorderEnvWith(t, "run_b", 20, 0, 0, []string{"run_a"}, endRuns(t, "run_b", "run_a"))
+	c.mute = true
+	c.within(2500*time.Millisecond, func() bool { return false })
+	// A sweep makes about 5-10 probes per run (100 ms wait, 20 ms apart); a hot loop would make over a hundred.
+	if c.muted < 3 || c.muted > 60 {
+		t.Fatalf("%d probes in 2.5 s: want a few sweeps separated by a backoff", c.muted)
+	}
+}

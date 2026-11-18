@@ -597,6 +597,9 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 	if ctx == nil || conn == nil {
 		return errors.New("not connected")
 	}
+	a.mu.Lock()
+	a.catchUpSkipped = false
+	a.mu.Unlock()
 	runs, err := a.j.runs(ctx, false)
 	if err != nil {
 		return err
@@ -655,7 +658,12 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 			delete(a.unshipped, id)
 		}
 	}
+	skipped := a.catchUpSkipped
 	a.mu.Unlock()
+	if skipped {
+		// Runs central did not answer for were skipped (catchUpRun): the pass retries them after its backoff.
+		return errSeqUnknown
+	}
 	return nil
 }
 
@@ -801,7 +809,15 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 	// seqKnown and acked are only ever set (recordingAck, launchedRecording, restoreAck) and are deleted only when a run
 	// is pruned from the journal (prune.go), which has no catch-up left; a reconnect starts another sweep, whose
 	// catch-up finds the run already known and reads the (possibly raised) acknowledgement as it stands.
-	if err := a.awaitSeqKnown(ctx, conn, r, others); err != nil {
+	if err := a.awaitSeqKnown(ctx, conn, r, others); errors.Is(err, errSeqUnknown) {
+		// Central did not answer within seqKnownWait (Forbidden on its side, no recordings directory, ...): this run
+		// is skipped, kept marked for a later sweep, and the sweep goes on with the rest and then backs off.
+		a.mu.Lock()
+		a.markUnshippedLocked(r.RunID)
+		a.catchUpSkipped = true
+		a.mu.Unlock()
+		return nil
+	} else if err != nil {
 		return err
 	}
 	restart := true
@@ -865,14 +881,18 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 	}
 }
 
-// seqKnownWait bounds how long a catch-up waits for central's answer to its probe before it gives the pass up (it is
-// asked again after the retry delay).
+// seqKnownWait bounds how long a catch-up waits for central's answer to its probe before it skips the run (it is
+// asked again by a later sweep, after the pass's backoff).
 var seqKnownWait = 10 * time.Second
+
+// errSeqUnknown is awaitSeqKnown's failure when central's answer did not come within seqKnownWait.
+var errSeqUnknown = errors.New("central's recording sequence is not known yet")
 
 // awaitSeqKnown returns once this process knows central's recording sequence of the run, asking with an empty
 // recording message every seqProbeEvery (a run's own recorder may ask too: harmless). Meanwhile it serves the other
-// runs whose live output waits (others). It fails when the answer does not come within seqKnownWait, or the
-// connection ends; the run stays marked and its kept-back records are untouched.
+// runs whose live output waits (others). It fails with errSeqUnknown when the answer does not come within
+// seqKnownWait (the caller skips the run), or with the connection's error when that ends. The run is first marked as
+// not compared with central (uncomparedRecording), so an answer that comes late cannot make the sweep take it for clean.
 func (a *Agent) awaitSeqKnown(ctx context.Context, conn *websocket.Conn, r runRow, others func() error) error {
 	known := func() bool {
 		a.mu.Lock()
@@ -882,11 +902,12 @@ func (a *Agent) awaitSeqKnown(ctx context.Context, conn *websocket.Conn, r runRo
 	if known() {
 		return nil
 	}
+	a.uncomparedRecording(r.RunID)
 	deadline := time.Now().Add(seqKnownWait)
 	var probed time.Time
 	for !known() {
 		if time.Now().After(deadline) {
-			return errors.New("central's recording sequence is not known yet")
+			return errSeqUnknown
 		}
 		if probed.IsZero() || time.Since(probed) >= seqProbeEvery {
 			probed = time.Now()
