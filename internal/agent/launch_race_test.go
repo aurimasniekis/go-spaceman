@@ -145,12 +145,22 @@ func TestAdoptStoppedRunWaitsForAsyncKill(t *testing.T) {
 // A program still live after the wait keeps the row ended and records its terminal for the monitor's finished event.
 func TestAdoptStoppedRunStillLiveAfterWait(t *testing.T) {
 	shortAdoptKillWait(t, 7)
-	_, ar, id, r := adoptStoppedRun(t, -1)
+	a, ar, id, r := adoptStoppedRun(t, -1)
 	if r.TerminalID != id || !r.Adopted || !ended(r.State) {
 		t.Fatalf("row %s terminal %q adopted %v, want ended with terminal %s", r.State, r.TerminalID, r.Adopted, id)
 	}
 	if ar.killed[id] != 7 {
 		t.Fatalf("polled %d times, want exactly the 7 tries", ar.killed[id])
+	}
+	if _, ok := a.endPending.Load(adoptWaitRun); !ok {
+		t.Fatal("the end work is not pending for the program's finished event")
+	}
+	ar.Fake.Exit(id, 129, "killed")
+	pr, _ := ar.Fake.Get(context.Background(), id)
+	row, _ := a.j.getRun(context.Background(), adoptWaitRun)
+	a.observe(context.Background(), row, *pr, false) // what the monitor does on the finished event
+	if _, ok := a.endPending.Load(adoptWaitRun); ok {
+		t.Fatal("the end work stayed pending after the program finished")
 	}
 }
 
@@ -178,7 +188,11 @@ func TestAdoptStoppedRunRunsEndHooks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(attDir, "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a.stop(ctx, adoptWaitRun, "kill", 0, "test")
+	row, _ := a.j.getRun(ctx, adoptWaitRun) // stopped before start, seeded directly: stop's own end work must not mask adopt's
+	row.Desired, row.State, row.Reason = "stopped", proto.RunExited, "stopped before start"
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
 	a.adopt(ctx, a.log, adoptWaitRun, *p)
 	a.drain(10 * time.Second)
 	if g, err := f.Get(ctx, guard); err == nil && g.State == runner.StateLive {

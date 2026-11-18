@@ -604,17 +604,23 @@ func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found
 				time.Sleep(adoptKillPoll)
 			}
 		}
-		// The row is already ended, so observe would skip the run-end work: do it here. (A row that ended with a
-		// program recorded was handled when it ended; one not yet ended is handled by observe below.)
-		if ended(row.State) && row.TerminalID == "" {
-			defer a.runEndHooks(ctx, row, true)
-		}
+		// The row is already ended, so observe would skip the run-end work: do it here once the program is gone. (A
+		// row that ended with a program recorded was handled when it ended; one not yet ended is handled by observe
+		// below.) The helper is safe to run again after a stop before start already ran it.
+		atEnd := ended(row.State) && row.TerminalID == ""
 		if found.State == runner.StateLive {
-			// Still live: keep the row ended, record only the terminal, and leave the exit to the monitor's finished event.
+			// Still live: keep the row ended, record only the terminal, and leave the exit to the monitor's finished
+			// event, which runs the end work (retiring the guard needs the program gone).
+			if atEnd {
+				a.endPending.Store(runID, true)
+			}
 			row.TerminalID, row.CoreID, row.Identity, row.PID = found.ID, found.CoreID, found.Identity(), found.PID
 			row.Adopted = true
 			_ = a.j.updateRun(ctx, row)
 			return
+		}
+		if atEnd {
+			defer a.runEndHooks(ctx, row, true)
 		}
 	}
 	a.observe(ctx, row, found, true)
@@ -659,8 +665,12 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		}
 	}
 	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
+	_, pending := a.endPending.Load(row.RunID)
 	switch {
 	case ended(row.State) && !ended(prev.State):
+		a.runEndHooks(ctx, row, true)
+	case pending && p.State == runner.StateFinished && ended(row.State):
+		a.endPending.Delete(row.RunID) // an adopted program stopped before adoption has now gone
 		a.runEndHooks(ctx, row, true)
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
@@ -675,7 +685,7 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 
 // runEndHooks does what a run's end leaves to do: forget its hook data, scan its transcript for a usage limit, flush
 // its role memory, report its final usage, retry the role renames it deferred, retire the space's lease guard once no
-// run is live, and remove its saved attachments. Every path that ends a run calls it, once: a normal exit (observe),
+// run is live, and remove its saved attachments. The paths that end a run call it: a normal exit (observe),
 // a stop before the run had a program (started false: nothing ran, so no limit scan, memory flush or usage), and an
 // adopted program that was stopped before adoption. The background work is tracked and uses a context that outlives ctx.
 func (a *Agent) runEndHooks(ctx context.Context, row runRow, started bool) {

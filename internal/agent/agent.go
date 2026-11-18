@@ -177,6 +177,9 @@ type Agent struct {
 	// launching counts the launches in flight by run ID, from before the run is journaled until its process is started and
 	// observed. The runner reconcile leaves those runs alone (reconcileRunner).
 	launching map[string]int
+	// endPending holds runs whose row was ended while their adopted program was still live: the monitor's finished
+	// event for the program runs their end-of-run work (observe), as the row's end already passed.
+	endPending sync.Map
 	// claudeStage, when set, runs at a managed Claude Code launch's stages ("acquired": the version is held;
 	// "recorded": the journal holds it and the hold is still taken; "released": the hold is released). Tests race GC
 	// and stops there.
