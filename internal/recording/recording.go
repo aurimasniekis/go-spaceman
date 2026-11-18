@@ -132,6 +132,8 @@ type Writer struct {
 	lost    bool
 	buf     bytes.Buffer
 	stopped bool
+	// closed is whether the last record numbered or found on disk is a close record.
+	closed bool
 	// err is the current write failure (nil while the disk works); retryAt is when the writer tries a new segment
 	// again and wait the wait after the next failure in a row.
 	err     error
@@ -227,6 +229,7 @@ func Open(o Options) (*Writer, error) {
 		if w.seq > w.stored {
 			w.stored = w.seq
 		}
+		w.closed = len(res.Records) > 0 && res.Records[len(res.Records)-1].Kind == KindClose
 	}
 	return w, nil
 }
@@ -240,6 +243,14 @@ func (w *Writer) Seq() uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.seq
+}
+
+// Closed reports whether the recording's last record is a close record: the program's end is already recorded, and
+// a recorder that starts again for the run must not end it a second time.
+func (w *Writer) Closed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.closed
 }
 
 // Stored returns N such that every record at or below N that this recording will ever hold is durably stored and
@@ -276,6 +287,7 @@ func (w *Writer) AddRecord(r Record) (Record, error) {
 	}
 	w.seq++
 	r.Seq = w.seq
+	w.closed = r.Kind == KindClose
 	if r.T == 0 {
 		r.T = now.UnixMicro()
 	}
