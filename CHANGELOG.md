@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A launch that fails before its program starts ends the run under the observe lock too.** Its failed write now takes
+  the observe lock after the run's lock, like a stop, and the end work runs after the locks are released. A stop for a
+  run this node had no record of takes it too, so every write that ends a run takes the observe lock.
 - **A stop can no longer be overwritten by a launch** (#272 and follow-ups). The managed Claude Code launch's `starting`
   write, and now also a pre-start failure (download, build, credentials, secrets), check that the run was not stopped
   and write under one lock, so a stop landing in between is kept. A launch re-delivered after a crash between starting
