@@ -492,7 +492,11 @@ func TestCapabilitiesOlderGenerationNeverFollowsNewer(t *testing.T) {
 	osName.Store("older")
 	a.takeCapabilities(context.Background())
 	close(hold)
-	<-reached // capsAfterHello has read the older generation and not sent it
+	select { // capsAfterHello has read the older generation and not sent it
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("capsAfterHello never read the older generation")
+	}
 	osName.Store("newer")
 	c, gen := a.takeCapabilities(context.Background())
 	a.reportCapabilities(context.Background(), c, gen) // what capsLoop does
