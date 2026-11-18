@@ -6,9 +6,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-11-18
+
+The `v0.1.11` tag was created but never released (its release run stopped at the gates, so no images, archives or
+release exist for it). This release ships everything planned for 0.1.11. The Terraform provider 0.1.11 works with it.
+
 ### Upgrade notes
 
-- **Upgrade central first, then the node agents.** v0.1.11 speaks node protocol **minor 14** (v0.1.10: 13). Older
+- **Upgrade central first, then the node agents.** v0.1.12 speaks node protocol **minor 14** (v0.1.10: 13). Older
   node agents keep working but miss the node-side fixes (memory guard, harness-config filter, fast-forward, recording)
   and cannot take a role rename (see the last note).
 - **Schema migrations 0061–0065** are applied on start, need no action and are forward-only: `0061_space_role_renames`,
@@ -2218,7 +2223,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.12
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7

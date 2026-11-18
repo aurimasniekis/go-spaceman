@@ -667,7 +667,11 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reas
 }
 
 // StopRun sets a run's desired state to stopped and queues a stop command (interrupt politely, then kill after the
-// grace; or kill at once).
+// grace; or kill at once). Stopping a run that has already exited or failed is a no-op, idempotent with success: a node
+// without the run (pruned, or wiped) answers a stop with "exited, stopped before start", which would overwrite the
+// real end (its reason, exit code, a failure). A lost run is still stopped: its program may live on the node. This is
+// the one place that decides it (every caller selects live runs, or wants this idempotence); applyRunReport is left as
+// it is, since a node's report of an end is also how a run's first end is recorded.
 func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode, reason string) (*Run, error) {
 	if mode == "" {
 		mode = "interrupt"
@@ -676,6 +680,7 @@ func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode,
 		return nil, apperr.New(apperr.CodeInvalid, "mode must be interrupt or kill")
 	}
 	var nodeID string
+	var noop bool
 	err := svc.s.W().TxNamed(ctx, "fleet.stop_run", func(tx *store.Tx) error {
 		r, err := tx.Q.GetRun(ctx, runID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -684,6 +689,10 @@ func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode,
 			return err
 		}
 		nodeID = r.NodeID
+		if r.Observed == proto.RunExited || r.Observed == proto.RunFailed {
+			noop = true
+			return nil
+		}
 		if err := svc.stopRunTx(ctx, tx, r, mode, reason); err != nil {
 			return err
 		}
@@ -694,7 +703,9 @@ func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode,
 	if err != nil {
 		return nil, err
 	}
-	svc.hub.Kick(nodeID)
+	if !noop {
+		svc.hub.Kick(nodeID)
+	}
 	return svc.GetRun(ctx, runID)
 }
 
