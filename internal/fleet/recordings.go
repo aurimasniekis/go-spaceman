@@ -75,6 +75,8 @@ type Recordings struct {
 	// record) are acked and dropped instead of recreating the folder. pruneLocked forgets a mark after markMaxAge, which
 	// bounds the map; by then the node's acknowledgement has long moved past what it had to ship.
 	deleted map[string]time.Time
+	// beforeRemove is a test hook called in Delete just before the folder is removed (mu released).
+	beforeRemove func()
 }
 
 // errRecordingsClosed is returned for a chunk that arrives after Close.
@@ -225,6 +227,13 @@ func (r *Recordings) archivedTail(ctx context.Context, runID string) (int, uint6
 // the next chunk reopens the recording from what is durably on disk, and until the node re-ships, a chunk on the same
 // connection that starts past Stored()+1 (records sent behind the failed ones) is not stored: it is acked Stored().
 func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) {
+	return r.applyRun(conn, c, false)
+}
+
+// applyRun is apply for a run whose database row says its recording was deleted (durable): such a chunk is dropped and
+// acked like one for a run in the in-memory deleted mark, so a node's catch-up after the mark expired or central
+// restarted does not bring the recording back.
+func (r *Recordings) applyRun(conn uint64, c proto.RecordingChunk, durablyDeleted bool) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -234,7 +243,7 @@ func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) 
 	}
 	now := r.now()
 	r.pruneLocked(now)
-	if _, gone := r.deleted[c.RunID]; gone {
+	if _, gone := r.deleted[c.RunID]; gone || durablyDeleted {
 		// The recording was deleted (retention or an operator): a late chunk must not recreate it. It is acked as
 		// stored, up to its highest sequence, so the node moves its acknowledgement past it and stops shipping; a
 		// refusal or an ack of 0 would make it re-ship the run (ADR-0097) for ever.
@@ -458,7 +467,9 @@ func (r *Recordings) Archive(ctx context.Context, runID string) error {
 		return err
 	}
 	r.mu.Lock()
-	if r.w[runID] != nil || r.archiving[runID] != nil {
+	if _, gone := r.deleted[runID]; gone || r.w[runID] != nil || r.archiving[runID] != nil {
+		// A deleted recording is not uploaded: an archive that starts after Delete released mu would put segments
+		// past Delete's List, and they would be served.
 		r.mu.Unlock()
 		return nil
 	}
@@ -632,7 +643,8 @@ func (r *Recordings) stored(ctx context.Context, runID string) ([]string, func(s
 }
 
 // Delete removes a run's stored recording (permission recording:delete), in the spool and in the store. The node's
-// local copy is separate.
+// own copy is not touched, but central acks later chunks for the run without storing them (durably, through the run's
+// recording_deleted_at), so the node treats its copy as shipped and its journal prune may remove it.
 func (r *Recordings) Delete(ctx context.Context, runID string) error {
 	dir, err := r.Dir(runID)
 	if err != nil {
@@ -647,6 +659,9 @@ func (r *Recordings) Delete(ctx context.Context, runID string) error {
 		delete(r.w, runID)
 	}
 	r.mu.Unlock()
+	if r.beforeRemove != nil {
+		r.beforeRemove()
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}

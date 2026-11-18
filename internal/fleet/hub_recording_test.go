@@ -131,3 +131,49 @@ func TestHubRecordingAckOnFailureWithAStoredSequence(t *testing.T) {
 		t.Fatalf("ack %s %+v %v, want recording.ack 2", got.Type, ack, err)
 	}
 }
+
+// A run whose recording_deleted_at is set (a deletion that outlived the in-memory mark: central restarted, or the mark
+// expired) gets its late chunk acked at the highest sequence and nothing stored, so the folder is not recreated.
+func TestHubRecordingDeletedRunNotRecreated(t *testing.T) {
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+	const runID = "run_00000000000000000000000001"
+	e.run(runID, "spc_a", "nod_1", "ended", e.us(-time.Hour))
+	e.exec(`UPDATE runs SET recording_deleted_at = 1 WHERE id = 'run_00000000000000000000000001'`)
+	s := &session{nodeID: "nod_1", out: make(chan []byte, 8), done: make(chan struct{})}
+	dir := t.TempDir()
+	e.svc.opts.RecordingsDir = dir
+	e.svc.rec = newRecordings(dir, nil, nil, e.clk.Now) // as after a restart: no deleted mark
+	t.Cleanup(e.svc.rec.cancel)
+	c := proto.RecordingChunk{RunID: runID, SpaceID: "spc_a"}
+	for _, n := range []uint64{4, 5} {
+		b, _ := json.Marshal(recording.Record{Seq: n, T: int64(n), Kind: recording.KindOut, Data: []byte("x")})
+		c.Records = append(c.Records, b)
+	}
+	b, err := proto.Encode("msg_1", proto.TypeRecording, e.t0, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := proto.Decode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.hub.handle(e.ctx, s, env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, runID)); !os.IsNotExist(err) {
+		t.Fatalf("the folder of a deleted recording was recreated: %v", err)
+	}
+	if len(s.out) != 1 {
+		t.Fatalf("%d acks, want 1", len(s.out))
+	}
+	got, err := proto.Decode(<-s.out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ack proto.RecordingAck
+	if err := got.Decode(&ack); err != nil || ack.Seq != 5 {
+		t.Fatalf("ack %+v %v, want seq 5", ack, err)
+	}
+}
