@@ -49,7 +49,8 @@ func (c *Central) uploadSpooledArtifacts(ctx context.Context) {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true // no such run (deleted, or not in a restored database): archive what is left
 		}
-		return err == nil && r.EndedAt.Valid
+		// A recording deleted earlier is not uploaded again (a folder an older release recreated).
+		return err == nil && r.EndedAt.Valid && !r.RecordingDeletedAt.Valid
 	}
 	if n, err := c.Fleet.Recordings().ArchiveSpooled(ctx, ended); err != nil && ctx.Err() == nil {
 		log.Warn("spooled recordings not archived to the artifact store; retried at the next start", slog.Int("archived", n), obs.Err(err))

@@ -17,7 +17,7 @@ import (
 // records the deletion: the run's recording_deleted_at, an audit event and a change. The files go first, outside any
 // transaction; a crash in between leaves a run whose recording is gone but not yet marked, which the next deletion
 // (or retention pass) marks. A recording of an active run is refused: its node is still shipping it. The node's own
-// copy is separate and not affected.
+// copy is not deleted, but central then acks its chunks without storing them, so the node counts it as shipped.
 func (svc *Service) DeleteRecording(ctx context.Context, actor audit.Actor, spaceID, runID string, details map[string]any) error {
 	r, err := svc.s.R().GetRun(ctx, runID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && r.SpaceID != spaceID) {

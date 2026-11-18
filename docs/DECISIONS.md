@@ -1880,7 +1880,7 @@
     SHA-256; then it is handed to the store. If the bucket refuses it, the transcript is kept as `<run>.jsonl` on the
     local disk, recorded as stored, served from there, and uploaded at the next start. The node is never asked to
     send it again.
-  - Deletes (an operator's, retention's and purge's) remove the objects as well as any local copy. Purging a space
+  - Deletes (an operator's, retention's and purge's) remove the objects as well as central's spooled copy. Purging a space
     now deletes its runs' recordings and transcripts after the purge commits, with either store; before, a purge left
     them in the data directory.
   - A deleted recording stays deleted (addendum): central checks the run's `recording_deleted_at` as well as its

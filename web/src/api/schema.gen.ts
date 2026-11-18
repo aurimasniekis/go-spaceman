@@ -3588,7 +3588,7 @@ export interface paths {
         post?: never;
         /**
          * Delete central's copy of a run's recording
-         * @description The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not affected.
+         * @description The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not deleted, but central then acknowledges its recording without storing it, so the node's journal prune may remove it.
          */
         delete: operations["delete-recording"];
         options?: never;
