@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +136,9 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
 		a.goTrack(func() {
+			if a.endUnlaunched(context.WithoutCancel(ctx), c) {
+				return
+			}
 			a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
 		})
 	case proto.CmdReposSync:
@@ -588,6 +592,29 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 }
 
 // stop ends a run: interrupt, then kill if still live after grace; or kill at once.
+// endUnlaunched answers a stop for a run this node has no record of: central cancelled the run's launch before it was
+// delivered, so the launch will never come and nothing else would move the run off pending. The node journals the run
+// as ended (stopped before start) and reports it. A launch that arrives anyway finds the row and does not start it. It
+// reports whether the run was unknown.
+func (a *Agent) endUnlaunched(ctx context.Context, c proto.Command) bool {
+	unlock := a.runLock(c.RunID)
+	if _, err := a.j.getRun(ctx, c.RunID); !errors.Is(err, sql.ErrNoRows) {
+		unlock()
+		return false
+	}
+	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending}
+	if err := a.j.insertRun(ctx, row); err != nil {
+		unlock()
+		a.log.Error("journal run stopped before start", slog.String(obs.FieldRunID, c.RunID), obs.Err(err))
+		return true
+	}
+	row.Desired, row.State, row.Reason = "stopped", proto.RunExited, "stopped before start"
+	_ = a.j.updateRun(ctx, row)
+	unlock()
+	a.report(ctx, row)
+	return true
+}
+
 func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duration, reason string) {
 	// Under the run's lock: a launch about to start the run either sees this stop, or has started and recorded it.
 	unlock := a.runLock(runID)
