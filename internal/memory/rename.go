@@ -29,6 +29,9 @@ const RetainedDir = ".retained"
 // ErrRoleRenamed is the message central answers a sync under a role name that was renamed away.
 const ErrRoleRenamed = "role renamed"
 
+// errRenamedAway is collection's answer for a name a rename took away between the caller's check and the insert.
+var errRenamedAway = errors.New("memory role renamed away")
+
 // HoldMoves keeps renames from moving repositories until release is called. A backup holds it from its database
 // snapshot until it has bundled the memory repositories, so the bundles sit under the names the snapshot gives them. A
 // rename that commits meanwhile moves on release (or on the next access to its space's memory, which waits for the
