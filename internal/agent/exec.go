@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +136,9 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
 		a.goTrack(func() {
+			if a.endUnlaunched(context.WithoutCancel(ctx), c) {
+				return
+			}
 			a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
 		})
 	case proto.CmdReposSync:
@@ -186,18 +190,18 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	l, ok := a.lease(c.SpaceID, c.Generation)
 	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, Kind: p.Kind, Role: p.Role, Harness: p.Harness, InstanceID: p.InstanceID,
 		TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending, SessionID: p.SessionID}
+	// Under the run's lock, so a stop of a run this node had no record of (endUnlaunched) either finishes first (the
+	// insert below is then a no-op and the ended row is read back) or finds this row and leaves it alone.
+	unlockRun := a.runLock(c.RunID)
 	if err := a.j.insertRun(ctx, row); err != nil {
+		unlockRun()
 		log.Error("journal run intent", obs.Err(err))
 		return
 	}
 	row, _ = a.j.getRun(ctx, c.RunID)
+	unlockRun()
 	if err := a.saveRecordingQuota(c.RunID, p.RecordingMaxBytes); err != nil {
 		log.Warn("store the recording bound; the default applies", obs.Err(err))
-	}
-	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
-	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
-		a.observe(ctx, row, found[0], true)
-		return
 	}
 	// abandoned re-reads the run before a step that would act on it: when it was stopped meanwhile (stop journaled
 	// desired stopped and ended it) the launch must neither start it nor overwrite that.
@@ -205,10 +209,46 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		r, err := a.j.getRun(ctx, c.RunID)
 		return err == nil && (r.Desired == "stopped" || ended(r.State))
 	}
+	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
+	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
+		a.adopt(ctx, log, c.RunID, found[0])
+		return
+	}
+	if abandoned() {
+		log.Info("launch abandoned: the run was stopped before it started")
+		return
+	}
+	// held is true while this launch holds the run's lock (from the last check before the start on); fail then writes
+	// under it instead of taking it again.
+	held := false
+	// guardTried is set once ensureGuard has run for this launch: the guard it may have started is then this launch's to
+	// retire when the launch is abandoned, since a stop may have retired the guard before it was started (it saw no
+	// live run), and nothing else would end it after.
+	guardTried := false
+	abandonedAfterGuard := func() {
+		if guardTried {
+			a.goTrack(func() { a.retireGuard(context.WithoutCancel(ctx), c.SpaceID) })
+		}
+	}
 	fail := func(msg string, err error) {
 		if abandoned() {
 			log.Info("launch abandoned: the run was stopped before it started", slog.String("at", msg))
+			abandonedAfterGuard()
 			return
+		}
+		if !held {
+			if a.beforeFailWrite != nil {
+				a.beforeFailWrite() // test hook: a stop may land here, before the lock is taken
+			}
+			// The check and the write are one step under the run's lock, which stop also takes: the write replaces
+			// the whole row (desired running), so a stop landing between the two would be overwritten.
+			unlockFail := a.runLock(c.RunID)
+			defer unlockFail()
+			if abandoned() {
+				log.Info("launch abandoned: the run was stopped before it started", slog.String("at", msg))
+				abandonedAfterGuard()
+				return
+			}
 		}
 		row.State, row.Error = proto.RunFailed, msg
 		if err != nil {
@@ -217,12 +257,16 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		_ = a.j.updateRun(ctx, row)
 		a.report(ctx, row)
 		log.Warn("launch failed", slog.String("reason", msg), obs.Err(err))
+		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now. (The async
+		// parts go through goTrack, so this is safe under the run's lock.)
+		a.runEndHooks(ctx, row, false)
 	}
 	// stillWanted is checked after every wait: the run was not stopped, and the space's lease still authorizes this
 	// generation (central may have fenced it meanwhile).
 	stillWanted := func() bool {
 		if abandoned() {
 			log.Info("launch abandoned: the run was stopped before it started")
+			abandonedAfterGuard()
 			return false
 		}
 		fresh, valid := a.lease(c.SpaceID, c.Generation)
@@ -264,8 +308,20 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		// blocks no other launch of the space; the version is held, from the cache only, right before the launch is
 		// built (see below).
 		selfUpdate = false
+		if a.beforeStartingWrite != nil {
+			a.beforeStartingWrite() // test hook: a stop may land here, before the lock is taken
+		}
+		// The check and the write are one step under the run's lock, which stop also takes: the write replaces the
+		// whole row (desired running), so a stop landing between the two would be overwritten.
+		unlockStart := a.runLock(c.RunID)
+		if abandoned() {
+			unlockStart()
+			log.Info("launch abandoned: the run was stopped before it started")
+			return
+		}
 		row.State = proto.RunStarting
 		_ = a.j.updateRun(ctx, row)
+		unlockStart()
 		a.report(ctx, row)
 		var cancel context.CancelFunc
 		wctx, cancel, waitLimit = a.claudeWait(ctx)
@@ -300,6 +356,9 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	}
 	// The space's guard lock is held until the run is started under the guard, so retiring an idle space's guard
 	// (retireGuard) never ends it under a starting run.
+	if a.beforeEnsureGuard != nil {
+		a.beforeEnsureGuard() // test hook: a stop may land (and retire the guard) here
+	}
 	gl := a.guardLock(c.SpaceID)
 	gl.Lock()
 	locked := true
@@ -309,6 +368,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 	}()
 	guard, err := a.ensureGuard(ctx, c.SpaceID)
+	guardTried = true
 	if err != nil {
 		fail("lease guard unavailable", err)
 		return
@@ -416,7 +476,9 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			gl.Lock()
 			locked = true
 			// The guard may have been retired while the lock was released (no live run in the space).
-			if guard, err = a.ensureGuard(ctx, c.SpaceID); err != nil {
+			guard, err = a.ensureGuard(ctx, c.SpaceID)
+			guardTried = true
+			if err != nil {
 				fail("lease guard unavailable", err)
 				return
 			}
@@ -498,6 +560,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	// waits until the program is started and recorded and then stops it.
 	unlock := a.runLock(c.RunID)
 	defer unlock()
+	held = true
 	if !stillWanted() {
 		_ = os.Remove(filepath.Join(rd, SecretsFile))
 		return
@@ -521,6 +584,76 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	a.notePin(p.HarnessVersion) // only a started run protects its pin from GC (claudePinned)
 	a.launchedRecording(c.RunID)
 	a.observe(ctx, row, *proc, false)
+}
+
+// The wait for an adopted program to go after its kill (adopt): tries polls apart. Variables so a test can shorten it.
+var (
+	adoptKillTries = 20
+	adoptKillPoll  = 100 * time.Millisecond
+)
+
+// adopt takes over the program a launch found already running under the run's name (a repeated delivery, or a restart
+// between start and journal update). The row is re-read under the run's lock first: a stop that landed since the launch
+// read it, while the row still had no terminal, ended the run as stopped before start without killing anything, so the
+// found program is stopped here instead of being recorded as running.
+func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found runner.Process) {
+	if a.beforeAdoptObserve != nil {
+		a.beforeAdoptObserve() // test hook: a stop may land here, before the lock is taken
+	}
+	unlock := a.runLock(runID)
+	defer unlock()
+	row, err := a.j.getRun(ctx, runID)
+	if err != nil {
+		log.Warn("adopt: read the run", obs.Err(err))
+		return
+	}
+	if row.Desired == "stopped" || ended(row.State) {
+		log.Info("launch abandoned: the run was stopped or ended before it was adopted; stopping its program")
+		if found.State == runner.StateLive {
+			if _, err := a.o.Runner.Kill(ctx, found.ID); err != nil {
+				log.Warn("kill the program of a stopped run", obs.Err(err))
+			}
+			// Kill may return before the program is gone: wait briefly for it, so the row is not left live.
+			for i := 0; i < adoptKillTries; i++ {
+				p, err := a.o.Runner.Get(ctx, found.ID)
+				if err == nil {
+					found = *p
+				}
+				if err != nil || p.State == runner.StateFinished {
+					break
+				}
+				time.Sleep(adoptKillPoll)
+			}
+		}
+		// The row is already ended, so observe would skip the run-end work: do it here once the program is gone. (A
+		// row that ended with a program recorded was handled when it ended; one not yet ended is handled by observe
+		// below.) The helper is safe to run again after a stop before start already ran it.
+		atEnd := ended(row.State) && row.TerminalID == ""
+		if found.State == runner.StateLive {
+			// Still live: keep the row ended, record only the terminal, and leave the exit to the monitor's finished
+			// event, which runs the end work (retiring the guard needs the program gone).
+			if atEnd {
+				a.endPending.Store(runID, true)
+			}
+			row.TerminalID, row.CoreID, row.Identity, row.PID = found.ID, found.CoreID, found.Identity(), found.PID
+			row.Adopted = true
+			_ = a.j.updateRun(ctx, row)
+			// The program may have exited since the last kill-wait read, and the monitor's finished event may have
+			// been dropped before the terminal was recorded: look once more, and do the end work here if it is gone.
+			if atEnd {
+				if again, gerr := a.o.Runner.Get(ctx, found.ID); gerr == nil && again.State == runner.StateFinished {
+					if _, ok := a.endPending.LoadAndDelete(runID); ok {
+						a.runEndHooks(ctx, row, true)
+					}
+				}
+			}
+			return
+		}
+		if atEnd {
+			defer a.runEndHooks(ctx, row, true)
+		}
+	}
+	a.observe(ctx, row, found, true)
 }
 
 func (a *Agent) wrap(runDir string, l harness.Launch) []string {
@@ -549,8 +682,19 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 			row.State = proto.RunLost
 		}
 	}
+	// Reading the previous row and writing the new one are one step, so of two concurrent observes (the monitor's and a
+	// stop's) exactly one sees the run end and runs its end work. (Not the run's own lock: a launch and adopt call
+	// observe while holding it.)
+	unlockObs := a.observeLock(row.RunID)
 	prev, _ := a.j.getRun(ctx, row.RunID)
+	if ended(prev.State) && !ended(row.State) {
+		// A stale snapshot (taken before the run ended): never move an ended row back, or its later end would run the
+		// end work a second time.
+		unlockObs()
+		return
+	}
 	_ = a.j.updateRun(ctx, row)
+	unlockObs()
 	if row.Status == "working" {
 		a.failureEnded(row.RunID, prev.Status != "working")
 	}
@@ -562,20 +706,17 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		}
 	}
 	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
+	// An adopted program stopped before adoption has now gone: claim the pending end work atomically, so two
+	// concurrent observes do not both run it.
+	pending := false
+	if p.State == runner.StateFinished && ended(row.State) {
+		_, pending = a.endPending.LoadAndDelete(row.RunID)
+	}
 	switch {
 	case ended(row.State) && !ended(prev.State):
-		bctx := context.WithoutCancel(ctx)
-		a.forgetHookData(row.RunID)
-		if row.Harness == harness.KindClaude {
-			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
-		}
-		a.goTrack(func() {
-			a.mem.flush(bctx, row, "run ended")
-			a.usageFinal(bctx, row)
-			a.retryRoleRenames(bctx, row.SpaceID) // a rename the run deferred moves now
-		})
-		a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
-		a.goTrack(func() { a.removeRunAttachments(bctx, row) })
+		a.runEndHooks(ctx, row, true)
+	case pending:
+		a.runEndHooks(ctx, row, true)
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)
@@ -587,18 +728,73 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	}
 }
 
+// runEndHooks does what a run's end leaves to do: forget its hook data, scan its transcript for a usage limit, flush
+// its role memory, report its final usage, retry the role renames it deferred, retire the space's lease guard once no
+// run is live, and remove its saved attachments. The paths that end a run call it: a normal exit (observe),
+// a stop before the run had a program (started false: nothing ran, so no limit scan, memory flush or usage), and an
+// adopted program that was stopped before adoption. The background work is tracked and uses a context that outlives ctx.
+func (a *Agent) runEndHooks(ctx context.Context, row runRow, started bool) {
+	if a.onRunEndHooks != nil {
+		a.onRunEndHooks(row.RunID)
+	}
+	bctx := context.WithoutCancel(ctx)
+	a.forgetHookData(row.RunID)
+	if started {
+		if row.Harness == harness.KindClaude {
+			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
+		}
+		a.goTrack(func() {
+			a.mem.flush(bctx, row, "run ended")
+			a.usageFinal(bctx, row)
+			a.retryRoleRenames(bctx, row.SpaceID) // a rename the run deferred moves now
+		})
+	} else {
+		a.goTrack(func() { a.retryRoleRenames(bctx, row.SpaceID) })
+	}
+	a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
+	a.goTrack(func() { a.removeRunAttachments(bctx, row) })
+}
+
+// endUnlaunched answers a stop for a run this node has no record of: central cancelled the run's launch before it was
+// delivered, so the launch will never come and nothing else would move the run off pending. The node journals the run
+// as ended (stopped before start) and reports it. A launch that arrives anyway finds the row and does not start it. It
+// reports whether the run was unknown.
+func (a *Agent) endUnlaunched(ctx context.Context, c proto.Command) bool {
+	unlock := a.runLock(c.RunID)
+	if _, err := a.j.getRun(ctx, c.RunID); !errors.Is(err, sql.ErrNoRows) {
+		unlock()
+		return false
+	}
+	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending}
+	if err := a.j.insertRun(ctx, row); err != nil {
+		unlock()
+		a.log.Error("journal run stopped before start", slog.String(obs.FieldRunID, c.RunID), obs.Err(err))
+		return true
+	}
+	row.Desired, row.State, row.Reason = "stopped", proto.RunExited, "stopped before start"
+	_ = a.j.updateRun(ctx, row)
+	unlock()
+	a.report(ctx, row)
+	return true
+}
+
 // stop ends a run: interrupt, then kill if still live after grace; or kill at once.
 func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duration, reason string) {
 	// Under the run's lock: a launch about to start the run either sees this stop, or has started and recorded it.
 	unlock := a.runLock(runID)
+	// Also under the observe lock (always taken inside the run's lock): every write that ends a run excludes an
+	// observe's read-then-write, which reconcile's found-program branch calls without the run's lock.
+	unlockObs := a.observeLock(runID)
 	row, err := a.j.getRun(ctx, runID)
 	if err != nil {
+		unlockObs()
 		unlock()
 		return
 	}
 	row.Desired = "stopped"
 	if ended(row.State) {
 		_ = a.j.updateRun(ctx, row)
+		unlockObs()
 		unlock()
 		a.report(ctx, row)
 		return
@@ -606,12 +802,16 @@ func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duratio
 	if row.TerminalID == "" {
 		row.State, row.Reason = proto.RunExited, "stopped before start"
 		_ = a.j.updateRun(ctx, row)
+		unlockObs()
 		unlock()
 		a.report(ctx, row)
+		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now.
+		a.runEndHooks(ctx, row, false)
 		return
 	}
 	row.State = proto.RunStopping
 	_ = a.j.updateRun(ctx, row)
+	unlockObs()
 	unlock()
 	a.report(ctx, row)
 	if mode != "kill" {
@@ -745,14 +945,41 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 			a.observe(ctx, r, p, r.TerminalID == "" || r.TerminalID != p.ID)
 		case r.State == proto.RunPending:
 			// Intent journaled but never started (crash before start): leave it for central's reconcile; a launch
-			// re-delivery is a duplicate, so mark it failed rather than starting it silently.
-			r.State, r.Error = proto.RunFailed, "agent restarted before the process started"
-			_ = a.j.updateRun(ctx, r)
-			a.removeRunAttachments(ctx, r)
+			// re-delivery is a duplicate, so mark it failed rather than starting it silently. Re-checked and written
+			// under the run's lock: a re-delivered launch or an observe may have moved the row since it was read.
+			unlock := a.runLock(r.RunID)
+			unlockObs := a.observeLock(r.RunID) // every write that ends a run takes it (runLock, then observeLock)
+			fresh, gerr := a.j.getRun(ctx, r.RunID)
+			if gerr != nil || fresh.State != proto.RunPending {
+				unlockObs()
+				unlock()
+				continue
+			}
+			fresh.State, fresh.Error = proto.RunFailed, "agent restarted before the process started"
+			_ = a.j.updateRun(ctx, fresh)
+			unlockObs()
+			unlock()
+			a.runEndHooks(ctx, fresh, false)
 		default:
-			r.State, r.Reason = proto.RunLost, "process not found in the runner"
-			_ = a.j.updateRun(ctx, r)
-			a.removeRunAttachments(ctx, r)
+			unlock := a.runLock(r.RunID)
+			fresh, gerr := a.j.getRun(ctx, r.RunID)
+			if gerr != nil || ended(fresh.State) || fresh.TerminalID != r.TerminalID {
+				unlock() // ended or relaunched meanwhile: whoever did it owns the row
+				continue
+			}
+			// Also under the observe lock (always taken inside the run's lock), so an observe's end detection and this
+			// write exclude each other.
+			unlockObs := a.observeLock(r.RunID)
+			if fresh, gerr = a.j.getRun(ctx, r.RunID); gerr != nil || ended(fresh.State) {
+				unlockObs()
+				unlock()
+				continue
+			}
+			fresh.State, fresh.Reason = proto.RunLost, "process not found in the runner"
+			_ = a.j.updateRun(ctx, fresh)
+			unlockObs()
+			unlock()
+			a.runEndHooks(ctx, fresh, fresh.TerminalID != "") // a program that ran: its memory flush and final usage still matter
 		}
 	}
 	return nil
@@ -863,7 +1090,10 @@ func (a *Agent) ensureGuard(ctx context.Context, spaceID string) (string, error)
 	return p.ID, nil
 }
 
-// guardLock returns the lock that serializes a space's lease guard.
+// observeLock serializes observe's read of a run's previous row with its write (see observe). It is never held across a
+// call that takes runLock.
+func (a *Agent) observeLock(runID string) func() { return a.runLock("observe/" + runID) }
+
 // runLock locks one run against a concurrent launch and stop (the launch's last check and start, the stop's state
 // change) and returns its unlock. Entries are dropped when nobody holds or waits for them.
 func (a *Agent) runLock(runID string) func() {
@@ -892,6 +1122,7 @@ type refMutex struct {
 	refs int
 }
 
+// guardLock returns the lock that serializes a space's lease guard.
 func (a *Agent) guardLock(spaceID string) *sync.Mutex {
 	a.mu.Lock()
 	defer a.mu.Unlock()

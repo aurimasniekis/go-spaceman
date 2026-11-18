@@ -51,6 +51,8 @@ type Run struct {
 	StatusKind string `json:"status_kind,omitempty"`
 	Turn       int64  `json:"turn"`
 	Adopted    bool   `json:"adopted"`
+	// RecordingDeleted is set once central's copy of the recording was deleted; the recording is then not served.
+	RecordingDeleted bool `json:"-"`
 	// Limit is the run's open usage limit (ADR-0079): a live run with one is waiting for it to reset.
 	Limit *RunLimit `json:"limit,omitempty" doc:"The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset"`
 	// Failure is the latest non-limit failure class Claude Code reported for the run (node protocol 1.13 or later).
@@ -94,7 +96,7 @@ type LaunchSpec struct {
 func runFromRow(r db.Run) *Run {
 	out := &Run{ID: r.ID, SpaceID: r.SpaceID, NodeID: r.NodeID, Generation: r.Generation, Kind: r.Kind, Role: r.Role, Harness: r.Harness,
 		InstanceID: r.InstanceID, SessionID: r.SessionID, Desired: r.Desired, Observed: r.Observed, TerminalID: r.TerminalID, PID: r.Pid,
-		EndReason: r.EndReason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind, Turn: r.Turn, Adopted: r.Adopted == 1, Version: r.Version,
+		EndReason: r.EndReason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind, Turn: r.Turn, Adopted: r.Adopted == 1, RecordingDeleted: r.RecordingDeletedAt.Valid, Version: r.Version,
 		HarnessVersion: r.HarnessVersion, HarnessRequested: r.HarnessRequested, HarnessFallback: r.HarnessFallback,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), CreatedBy: r.CreatedBy, Manifest: json.RawMessage(r.ManifestJson), StartedAt: microsPtr(r.StartedAt), EndedAt: microsPtr(r.EndedAt), ObservedAt: microsPtr(r.ObservedAt)}
 	if r.ExitCode.Valid {
@@ -665,7 +667,11 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reas
 }
 
 // StopRun sets a run's desired state to stopped and queues a stop command (interrupt politely, then kill after the
-// grace; or kill at once).
+// grace; or kill at once). Stopping a run that has already exited or failed is a no-op, idempotent with success: a node
+// without the run (pruned, or wiped) answers a stop with "exited, stopped before start", which would overwrite the
+// real end (its reason, exit code, a failure). A lost run is still stopped: its program may live on the node. This is
+// the one place that decides it (every caller selects live runs, or wants this idempotence); applyRunReport is left as
+// it is, since a node's report of an end is also how a run's first end is recorded.
 func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode, reason string) (*Run, error) {
 	if mode == "" {
 		mode = "interrupt"
@@ -674,6 +680,7 @@ func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode,
 		return nil, apperr.New(apperr.CodeInvalid, "mode must be interrupt or kill")
 	}
 	var nodeID string
+	var noop bool
 	err := svc.s.W().TxNamed(ctx, "fleet.stop_run", func(tx *store.Tx) error {
 		r, err := tx.Q.GetRun(ctx, runID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -682,6 +689,10 @@ func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode,
 			return err
 		}
 		nodeID = r.NodeID
+		if r.Observed == proto.RunExited || r.Observed == proto.RunFailed {
+			noop = true
+			return nil
+		}
 		if err := svc.stopRunTx(ctx, tx, r, mode, reason); err != nil {
 			return err
 		}
@@ -692,7 +703,9 @@ func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode,
 	if err != nil {
 		return nil, err
 	}
-	svc.hub.Kick(nodeID)
+	if !noop {
+		svc.hub.Kick(nodeID)
+	}
 	return svc.GetRun(ctx, runID)
 }
 

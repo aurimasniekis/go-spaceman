@@ -238,8 +238,12 @@ func TestGatewayRevokedOnRelocationAndRunsEnded(t *testing.T) {
 
 // SM-GW-005, row "space purge" (PurgeSpace): the revocations are queued before the runs are deleted, and survive it
 // (the queue is not tied to the runs).
+//
+// Not parallel, on purpose: the purge cascades over about forty child tables inside one write transaction that holds
+// only database work (no file or gateway call), and under the race detector alongside the package's parallel tests it
+// has held the write lock past the HP-DB-004 limit (512 ms against 500 ms). A test that is not parallel runs before the
+// parallel ones resume, so the transaction gets the CPU; the guard itself stays as it is.
 func TestGatewayRevokedOnPurge(t *testing.T) {
-	t.Parallel()
 	e := newGWEnv(t)
 	e.run("run_1", proto.RunExited)
 	e.exec(`UPDATE spaces SET state = 'archived' WHERE id = 'spc_a'`)
@@ -598,4 +602,30 @@ func TestSpaceChangesPublishTelegramSettingsEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect("purge", true)
+}
+
+// Review of PR #270 (round 2): stopping a run that already exited or failed queues nothing and changes nothing, so a
+// node's "exited, stopped before start" cannot overwrite the real end; a lost run is still stopped.
+func TestStopRunOfEndedRunIsNoOp(t *testing.T) {
+	t.Parallel()
+	e := newGWEnv(t)
+	ctx := context.Background()
+	for _, st := range []string{proto.RunExited, proto.RunFailed} {
+		id := "run_" + st
+		e.run(id, st)
+		r, err := e.svc.StopRun(ctx, audit.System, id, "interrupt", "late")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Desired != "running" || r.Observed != st {
+			t.Fatalf("%s: run changed: desired %s, observed %s", st, r.Desired, r.Observed)
+		}
+		if n := e.count(`SELECT COUNT(*) FROM node_commands WHERE run_id = ? AND kind = 'run.stop'`, id); n != 0 {
+			t.Fatalf("%s: %d stop commands queued", st, n)
+		}
+	}
+	e.run("run_lost", proto.RunLost)
+	if r, err := e.svc.StopRun(ctx, audit.System, "run_lost", "kill", "late"); err != nil || r.Desired != "stopped" {
+		t.Fatalf("lost run: %+v, %v", r, err)
+	}
 }

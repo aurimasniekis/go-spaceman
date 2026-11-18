@@ -6,9 +6,43 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A stop can no longer be overwritten by a launch** (#272 and follow-ups). The managed Claude Code launch's `starting`
+  write, and now also a pre-start failure (download, build, credentials, secrets), check that the run was not stopped
+  and write under one lock, so a stop landing in between is kept. A launch re-delivered after a crash between starting
+  the program and journaling it re-checks the run under that lock before adopting the program: when the run was stopped
+  meanwhile, it stops the found program instead of recording it as running.
+- **A run stopped before it had a program now gets its end-of-run work** (follow-up to #273). The run-end work (forget
+  hook data, memory flush, final usage, deferred role renames, retiring the idle lease guard, removing saved
+  attachments) is one helper. It now also runs when a stop ends a run before start (the guard the launch may have
+  started is retired) and when a launch adopts a program of a run already stopped, which no longer leaks an idle guard
+  or the run's attachments. The wait for that program to go after its kill has tests, and `TestGatewayRevokedOnPurge`
+  no longer runs in parallel with the package's other tests, where it could pass the 500 ms write-lock limit.
+- **The run-end work runs exactly once, and an abandoned launch retires its guard** (follow-up to #276). A launch that
+  is abandoned after it started the space's lease guard retires it (a stop may have retired the guard before it was
+  started). The runner reconcile re-checks a pending or lost run under the run's lock before it ends it, so a
+  re-delivered launch or an observe is not overwritten and the end work does not run twice. Reading a run's previous row
+  and writing the new one in `observe` is one locked step, so two concurrent observes (the monitor and a stop) cannot
+  both see the run end.
+- **A deleted recording stays deleted** (#262, #263, #264). Late chunks that arrive after the recordings were closed, or
+  for a deleted recording, are dropped instead of recreating it; the deleted state is durable across restarts and
+  against an S3 archive racing a delete; and central stops serving a deleted recording (`410 Gone`) and cleans up
+  its leftovers at startup.
+- **The terminal treats a deleted recording as final** (#266). The web terminal handles a `410` for a recording as the
+  end of that recording, not as an error to retry.
+- **Test flakes** (#262, #267). The recording-retention test and the control watchdog test wait for the event they
+  check instead of passing early.
+
+## [0.1.13] - 2026-11-18
+
+The `v0.1.11` and `v0.1.12` tags were created but never released (their release runs stopped at the gates, so no
+images, archives or releases exist for them). This release ships everything planned for 0.1.11, plus the fix below for
+a run stopped before its launch reached the node. The Terraform provider 0.1.11 works with it.
+
 ### Upgrade notes
 
-- **Upgrade central first, then the node agents.** v0.1.11 speaks node protocol **minor 14** (v0.1.10: 13). Older
+- **Upgrade central first, then the node agents.** v0.1.13 speaks node protocol **minor 14** (v0.1.10: 13). Older
   node agents keep working but miss the node-side fixes (memory guard, harness-config filter, fast-forward, recording)
   and cannot take a role rename (see the last note).
 - **Schema migrations 0061–0065** are applied on start, need no action and are forward-only: `0061_space_role_renames`,
@@ -96,6 +130,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   configuration; its help now says only the space role's own skills are cleared, not the template's.
 
 ### Fixed
+
+_The first entry below was added after the v0.1.13 release._
+
+- **A role rename that races a memory sync no longer leaves a second memory collection under the old name** (#274).
+  Central re-checks the rename inside the transaction that creates the collection, so a sync that passed the check
+  before the rename committed is answered `role renamed` instead of stranding a new collection under the old name.
+
+- **A run stopped before its launch reached the node no longer stays `pending` for ever** (#270). The node reports it ended
+  ("stopped before start") so central closes it through the normal end path, and a launch that arrives after the stop
+  does not start it. Stopping a run that has already exited or failed is now a no-op.
 
 - **A recording is acknowledged only once central has stored it** (#242, ADR-0010 addendum). Central acknowledged the highest
   sequence it had accepted, so a failed write could let the node delete the only copy of records central never stored.
@@ -2218,7 +2262,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.13
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7

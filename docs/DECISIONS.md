@@ -1880,9 +1880,14 @@
     SHA-256; then it is handed to the store. If the bucket refuses it, the transcript is kept as `<run>.jsonl` on the
     local disk, recorded as stored, served from there, and uploaded at the next start. The node is never asked to
     send it again.
-  - Deletes (an operator's, retention's and purge's) remove the objects as well as any local copy. Purging a space
+  - Deletes (an operator's, retention's and purge's) remove the objects as well as central's spooled copy. Purging a space
     now deletes its runs' recordings and transcripts after the purge commits, with either store; before, a purge left
     them in the data directory.
+  - A deleted recording stays deleted (addendum): central checks the run's `recording_deleted_at` as well as its
+    in-memory mark, so a node's catch-up after a restart of central or after the mark expired is acknowledged at the
+    chunk's highest sequence and stored nowhere. The node's own copy is therefore not independent of a delete: central's
+    ack tells the node that copy is fully shipped, and the agent's journal prune (which waits for a fully shipped
+    recording) may then remove it.
 - **Decision — credentials and isolation.** The bucket is configured like the backups' (`artifacts.s3`): keys come from
   files read at start, are never logged or put in an error, and `Location` shows only `s3://bucket/prefix`. TLS is always
   verified, a private-network endpoint needs `allow_private_network`, plain HTTP is development-only. The artifacts'
@@ -7349,7 +7354,7 @@
   file or one `ackMargin` rejected, the probe's answer became the run's first acknowledgement and the sweep took the
   run for clean, so the local records above central's sequence were never re-shipped. The run's catch-up compares
   with the local recording and clears the mark. `TestSweepReshipsWithoutASavedAck*` (agent).
-- **A lowering during the run's own catch-up (race fix, v0.1.11).** The recorder's probe and the catch-up sweep run
+- **A lowering during the run's own catch-up (race fix, v0.1.13).** The recorder's probe and the catch-up sweep run
   independently, so the lowered answer (decision 4) could arrive after the run's catch-up had started from the restored
   value. That catch-up found nothing above it, then cleared the run's catch-up mark that the lowering had set and the
   "not compared" mark. The sweep the lowering asked for then took the run for clean, because nothing it had sent was

@@ -49,6 +49,14 @@ func (c *Central) uploadSpooledArtifacts(ctx context.Context) {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true // no such run (deleted, or not in a restored database): archive what is left
 		}
+		if err == nil && r.RecordingDeletedAt.Valid {
+			// A recording deleted earlier is not uploaded again: a folder an older release recreated is removed, with
+			// whatever it uploaded to the store.
+			if derr := c.Fleet.Recordings().Delete(ctx, runID); derr != nil && ctx.Err() == nil {
+				log.Warn("leftover recording of a deleted run not removed; retried at the next start", obs.Err(derr))
+			}
+			return false
+		}
 		return err == nil && r.EndedAt.Valid
 	}
 	if n, err := c.Fleet.Recordings().ArchiveSpooled(ctx, ended); err != nil && ctx.Err() == nil {

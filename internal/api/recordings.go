@@ -67,7 +67,7 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
 		tags := []string{"recordings"}
 		huma.Register(api, huma.Operation{OperationID: "get-recording", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}/recording",
-			Summary: "Replay a run's terminal recording", Description: "Records are output (base64), size, gap, close and truncation markers in sequence order.",
+			Summary: "Replay a run's terminal recording", Description: "Records are output (base64), size, gap, close and truncation markers in sequence order. A run whose recording was deleted returns 410 (code recording_deleted): its output is gone for good, so a client does not retry it.",
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				RunPath
@@ -75,8 +75,8 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 				Limit int    `query:"limit" minimum:"1" maximum:"5000" default:"1000"`
 				Tail  int64  `query:"tail" minimum:"0" maximum:"16777216" doc:"Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after."`
 			}) (*struct{ Body RecordingPage }, error) {
-				if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
-					return nil, err
+				if _, p := d.recordingRun(ctx, f, in.SpaceID, in.RunID); p != nil {
+					return nil, p
 				}
 				release, ok := d.acquireCatchUp(ctx)
 				if !ok {
@@ -113,7 +113,7 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 			})
 		huma.Register(api, huma.Operation{OperationID: "delete-recording", Method: http.MethodDelete, Path: "/spaces/{space_id}/runs/{run_id}/recording",
 			Summary: "Delete central's copy of a run's recording", Description: "The run must have ended (409 otherwise). The deletion is audited " +
-				"and recorded in the change feed; the node's own copy is not affected.", Tags: tags, DefaultStatus: http.StatusNoContent},
+				"and recorded in the change feed; the node's own copy is not deleted, but central then acknowledges its recording without storing it, so the node's journal prune may remove it.", Tags: tags, DefaultStatus: http.StatusNoContent},
 			func(ctx context.Context, in *RunPath) (*struct{}, error) {
 				if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
 					return nil, err
@@ -127,6 +127,7 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 }
 
 // RecordingStreams returns the raw (non-huma) recording endpoints: the live terminal stream (SSE) and the download.
+// Both answer 410 (code recording_deleted) for a run whose recording was deleted, before any stream or body starts.
 func RecordingStreams(f *fleet.Service) []RawRoute {
 	return []RawRoute{
 		{Pattern: "GET " + Prefix + "/spaces/{space_id}/runs/{run_id}/terminal", Perm: authz.TerminalWatch, Handler: func(d *Deps) http.HandlerFunc {
@@ -139,6 +140,7 @@ func RecordingStreams(f *fleet.Service) []RawRoute {
 }
 
 // terminalStream serves a live, watch-only terminal (SM-UI-004): stored records first (catch-up), then live records.
+// A run whose recording was deleted answers 410 (code recording_deleted) before the stream starts; it never streams.
 // A viewer that falls behind is told about the gap and re-reads from storage; it never slows the node (SM-REC-004).
 // The catch-up is read one record at a time, so a long recording is never held in memory.
 //
@@ -153,9 +155,9 @@ func RecordingStreams(f *fleet.Service) []RawRoute {
 func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.Service) {
 	ctx := r.Context()
 	spaceID, runID := r.PathValue("space_id"), r.PathValue("run_id")
-	run, err := d.spaceRun(ctx, f, spaceID, runID)
-	if err != nil {
-		writeProblem(w, newProblem(http.StatusNotFound, "not_found", "run not found", nil))
+	run, p := d.recordingRun(ctx, f, spaceID, runID)
+	if p != nil {
+		writeProblem(w, p)
 		return
 	}
 	fl, ok := w.(http.Flusher)
@@ -298,16 +300,30 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 	}
 }
 
+// recordingRun is spaceRun for the operations that serve a recording: a run whose recording was deleted is gone (410),
+// whatever a spool folder an older release recreated or an object it uploaded still holds.
+func (d *Deps) recordingRun(ctx context.Context, f *fleet.Service, spaceID, runID string) (*fleet.Run, *Problem) {
+	r, err := d.spaceRun(ctx, f, spaceID, runID)
+	if err != nil {
+		return nil, newProblem(http.StatusNotFound, "not_found", "run not found", nil)
+	}
+	if r.RecordingDeleted {
+		return nil, newProblem(http.StatusGone, "recording_deleted", "this run's recording was deleted", nil)
+	}
+	return r, nil
+}
+
 func ended(observed string) bool {
 	return observed == "exited" || observed == "failed" || observed == "lost"
 }
 
-// recordingDownload streams central's segments as one zstd stream (concatenated frames of JSONL records).
+// recordingDownload streams central's segments as one zstd stream (concatenated frames of JSONL records). A run whose
+// recording was deleted answers 410 (code recording_deleted) instead.
 func (d *Deps) recordingDownload(w http.ResponseWriter, r *http.Request, f *fleet.Service) {
 	ctx := r.Context()
 	spaceID, runID := r.PathValue("space_id"), r.PathValue("run_id")
-	if _, err := d.spaceRun(ctx, f, spaceID, runID); err != nil {
-		writeProblem(w, newProblem(http.StatusNotFound, "not_found", "run not found", nil))
+	if _, p := d.recordingRun(ctx, f, spaceID, runID); p != nil {
+		writeProblem(w, p)
 		return
 	}
 	segs, err := f.Recordings().Segments(ctx, runID)

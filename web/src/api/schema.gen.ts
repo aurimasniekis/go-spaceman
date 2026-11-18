@@ -3581,14 +3581,14 @@ export interface paths {
         };
         /**
          * Replay a run's terminal recording
-         * @description Records are output (base64), size, gap, close and truncation markers in sequence order.
+         * @description Records are output (base64), size, gap, close and truncation markers in sequence order. A run whose recording was deleted returns 410 (code recording_deleted): its output is gone for good, so a client does not retry it.
          */
         get: operations["get-recording"];
         put?: never;
         post?: never;
         /**
          * Delete central's copy of a run's recording
-         * @description The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not affected.
+         * @description The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not deleted, but central then acknowledges its recording without storing it, so the node's journal prune may remove it.
          */
         delete: operations["delete-recording"];
         options?: never;

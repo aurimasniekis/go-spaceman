@@ -14,6 +14,23 @@ export interface StreamHandlers {
   onReconnecting(): void
   /** The stream is closed for good: the caller decides about a retry. `status` is the HTTP status when there was one. */
   onClosed(status?: number): void
+  /**
+   * EventSource never exposes the status of a refused request. A caller that needs it (the terminal: a 410 is final) sets
+   * this, and the EventSource transport then asks the same URL once after the stream closed, before onClosed.
+   */
+  statusOnClose?: boolean
+}
+
+/** The HTTP status the URL answers now, the body dropped at once; undefined when the request itself fails. */
+async function probeStatus(url: string): Promise<number | undefined> {
+  const ac = new AbortController()
+  try {
+    const res = await fetch(url, { headers: { Accept: 'text/event-stream' }, cache: 'no-store', signal: ac.signal })
+    ac.abort()
+    return res.status
+  } catch {
+    return undefined
+  }
 }
 
 export interface StreamHandle {
@@ -36,8 +53,9 @@ export const eventSourceTransport: WatchTransport = {
     const src = new EventSource(url)
     src.onopen = () => h.onOpen()
     src.onerror = () => {
-      if (src.readyState === EventSource.CLOSED) h.onClosed()
-      else h.onReconnecting()
+      if (src.readyState !== EventSource.CLOSED) return h.onReconnecting()
+      if (h.statusOnClose) void probeStatus(url).then((status) => h.onClosed(status))
+      else h.onClosed()
     }
     for (const type of types) {
       src.addEventListener(type, (ev) => h.onEvent(type, (ev as MessageEvent<string>).data, (ev as MessageEvent<string>).lastEventId))

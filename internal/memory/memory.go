@@ -115,6 +115,11 @@ func (svc *Service) repo(spaceID, role string) string {
 }
 
 // collection returns (creating) the collection row.
+//
+// It returns errRenamedAway when the name is renamed away. The check is repeated inside the creating transaction: a
+// rename commits on the one writer, so either it commits first and the insert sees it, or the insert commits first and the
+// rename moves the new row. Checking only before the call lets a rename commit in between and strand a second collection
+// under the old name.
 func (svc *Service) collection(ctx context.Context, spaceID, role string) (db.MemoryCollection, error) {
 	c, err := svc.s.R().GetMemoryCollection(ctx, db.GetMemoryCollectionParams{SpaceID: spaceID, Role: role})
 	if err == nil || !errors.Is(err, sql.ErrNoRows) {
@@ -123,6 +128,11 @@ func (svc *Service) collection(ctx context.Context, spaceID, role string) (db.Me
 	err = svc.s.W().TxNamed(ctx, "memory.collection", func(tx *store.Tx) error {
 		if _, err := tx.Q.GetMemoryCollection(ctx, db.GetMemoryCollectionParams{SpaceID: spaceID, Role: role}); err == nil {
 			return nil
+		}
+		if n, err := tx.Q.RoleNameRenamedAway(ctx, db.RoleNameRenamedAwayParams{SpaceID: spaceID, Name: role}); err != nil {
+			return err
+		} else if n > 0 {
+			return errRenamedAway
 		}
 		id := ids.New(ids.MemoryColl)
 		if err := tx.Q.InsertMemoryCollection(ctx, db.InsertMemoryCollectionParams{ID: id, SpaceID: spaceID, Role: role, CreatedAt: tx.NowMicros(),
@@ -175,6 +185,9 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 	}
 	defer svc.lock(m.SpaceID + "/" + m.Role)()
 	col, err := svc.collection(ctx, m.SpaceID, m.Role)
+	if errors.Is(err, errRenamedAway) {
+		return fail(ErrRoleRenamed, nil)
+	}
 	if err != nil {
 		return fail("internal error", err)
 	}

@@ -178,10 +178,22 @@ type Agent struct {
 	// launching counts the launches in flight by run ID, from before the run is journaled until its process is started and
 	// observed. The runner reconcile leaves those runs alone (reconcileRunner).
 	launching map[string]int
+	// endPending holds runs whose row was ended while their adopted program was still live: the monitor's finished
+	// event for the program runs their end-of-run work (observe), as the row's end already passed.
+	endPending sync.Map
 	// claudeStage, when set, runs at a managed Claude Code launch's stages ("acquired": the version is held;
 	// "recorded": the journal holds it and the hold is still taken; "released": the hold is released). Tests race GC
 	// and stops there.
 	claudeStage func(stage string, res dist.Resolution)
+	// beforeStartingWrite, when set, runs in a managed launch between the abandoned check and the starting write (tests).
+	beforeStartingWrite func()
+	// beforeFailWrite and beforeAdoptObserve, when set, run in a launch between its abandoned check and the lock
+	// that guards the write (a failure) or the observe (an adoption) (tests).
+	beforeFailWrite, beforeAdoptObserve func()
+	// beforeEnsureGuard runs in a launch before it takes the guard lock; onRunEndHooks runs at the start of runEndHooks.
+	// Test hooks.
+	beforeEnsureGuard func()
+	onRunEndHooks     func(runID string)
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time
