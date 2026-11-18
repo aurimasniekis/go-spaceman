@@ -100,6 +100,17 @@ test('resizing a live run terminal', async ({ page, browser, baseURL }) => {
   await expect(page.getByRole('dialog', { name: 'Custom terminal size' })).toBeHidden()
   await expect(control).toBeFocused()
 
+  // Apply by keyboard (Enter in a field) also returns focus, even while the request is in flight.
+  await page.keyboard.press('Enter')
+  await page.getByTestId('terminal-size-custom').focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByTestId('terminal-size-cols')).toBeFocused()
+  await page.getByTestId('terminal-size-cols').fill('101')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('dialog', { name: 'Custom terminal size' })).toBeHidden()
+  await expect(control).toHaveText(/101×30/)
+  await expect(control).toBeFocused()
+
   // Fit to window: a size from the terminal area at the regular font size; it refits when the window changes.
   await control.click()
   await page.getByTestId('terminal-size-fit').click()

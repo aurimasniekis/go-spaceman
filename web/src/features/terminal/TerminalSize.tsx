@@ -1,4 +1,4 @@
-import { Button, Group, Menu, NumberInput, Popover, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
+import { Button, Group, Loader, Menu, NumberInput, Popover, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { IconCheck, IconChevronDown, IconDimensions } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
@@ -144,6 +144,8 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   }, [qc, spaceId, run.id])
 
   const apply = async (c: SizeChoice) => {
+    // The trigger stays focusable while busy (a disabled button would drop focus), so a choice made meanwhile is ignored.
+    if (busy) return
     setChoice(c)
     saveChoice(c)
     setCustom(false)
@@ -229,8 +231,8 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
     return () => clearInterval(t)
   }, [custom])
   const button = (
-    <Button ref={trigger} size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
-      loading={busy} aria-label={`Terminal size: ${sizeLabel(run)}`} data-testid="terminal-size">
+    <Button ref={trigger} size="compact-xs" variant="default" leftSection={busy ? <Loader size={12} /> : <IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
+      aria-busy={busy} aria-label={`Terminal size: ${sizeLabel(run)}`} data-testid="terminal-size">
       {sizeLabel(run)}{fitting ? ' · fit' : ''}
     </Button>
   )
