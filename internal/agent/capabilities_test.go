@@ -194,6 +194,9 @@ func TestCapabilitiesReReported(t *testing.T) {
 	if !hello.Managed || !slices.Contains(hello.Cached, "2.1.900") {
 		t.Fatalf("hello %+v", hello)
 	}
+	// The startup prefetch resolves the channel once, asynchronously; let it finish before the pointer moves, or it
+	// may read the new pointer and signal a second change.
+	waitUntil(t, "the startup prefetch resolved latest", func() bool { return m.Resolved()[dist.ChannelLatest] == "2.1.900" })
 	// The channel moves on and its target is installed: each change is re-reported, without waiting for the interval.
 	srv.SetPointer(dist.ChannelLatest, "2.1.901")
 	if _, err := m.Ensure(context.Background(), "2.1.901"); err != nil {
@@ -206,9 +209,8 @@ func TestCapabilitiesReReported(t *testing.T) {
 	if !got.Managed || got.CacheBytes <= hello.CacheBytes {
 		t.Fatalf("after the install %+v (hello %+v)", got, hello)
 	}
-	// One install signals the cache twice (the channel pointer moving, the install finishing), and a detection can
-	// already see the installed version on the first: further reports for the same change are legitimate. Let the
-	// agent finish them before asserting that nothing is reported without a change.
+	// A report can legitimately repeat (a loop send racing capsAfterHello's re-send, both with the same content):
+	// let the agent finish before asserting that nothing is reported without a change.
 	waitUntil(t, "the change detected and no detection pending", func() bool {
 		a.mu.Lock()
 		idle := a.capsStarts == a.capsTaken
