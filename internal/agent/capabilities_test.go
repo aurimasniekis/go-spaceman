@@ -116,13 +116,18 @@ func (fc *wsCentral) next(t *testing.T, typ string) proto.Capabilities {
 	}
 }
 
-// drain discards messages until none has arrived for d.
-func (fc *wsCentral) drain(d time.Duration) {
+// drain discards messages until none has arrived for d. Messages that keep arriving past an overall deadline fail the
+// test: the agent is over-reporting, and waiting for quiet would hang until the binary timeout.
+func (fc *wsCentral) drain(t *testing.T, d time.Duration) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
 	for {
 		select {
 		case <-fc.msgs:
 		case <-time.After(d):
 			return
+		case <-deadline:
+			t.Fatalf("messages still arriving after 2s: the agent is over-reporting")
 		}
 	}
 }
@@ -194,9 +199,6 @@ func TestCapabilitiesReReported(t *testing.T) {
 	if !hello.Managed || !slices.Contains(hello.Cached, "2.1.900") {
 		t.Fatalf("hello %+v", hello)
 	}
-	// The startup prefetch resolves the channel once, asynchronously; let it finish before the pointer moves, or it
-	// may read the new pointer and signal a second change.
-	waitUntil(t, "the startup prefetch resolved latest", func() bool { return m.Resolved()[dist.ChannelLatest] == "2.1.900" })
 	// The channel moves on and its target is installed: each change is re-reported, without waiting for the interval.
 	srv.SetPointer(dist.ChannelLatest, "2.1.901")
 	if _, err := m.Ensure(context.Background(), "2.1.901"); err != nil {
@@ -209,15 +211,17 @@ func TestCapabilitiesReReported(t *testing.T) {
 	if !got.Managed || got.CacheBytes <= hello.CacheBytes {
 		t.Fatalf("after the install %+v (hello %+v)", got, hello)
 	}
-	// A report can legitimately repeat (a loop send racing capsAfterHello's re-send, both with the same content):
-	// let the agent finish before asserting that nothing is reported without a change.
+	// A report can legitimately repeat. capsAfterHello re-sends the capabilities once the welcome arrives; it runs late,
+	// because the test doesn't wait for the welcome, so it re-sends caps that already include the change, overlapping
+	// the capsLoop send with the same content. Let the agent finish before asserting that nothing is reported without a
+	// change.
 	waitUntil(t, "the change detected and no detection pending", func() bool {
 		a.mu.Lock()
 		idle := a.capsStarts == a.capsTaken
 		a.mu.Unlock()
 		return len(m.Changes()) == 0 && idle
 	})
-	fc.drain(100 * time.Millisecond)
+	fc.drain(t, 100*time.Millisecond)
 	// Nothing changes: no report until the interval has passed on the agent's clock.
 	fc.none(t, proto.TypeNodeCapabilities, 100*time.Millisecond)
 	clk.Advance(proto.NodeCapabilitiesInterval)
