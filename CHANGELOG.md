@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **The watchdog flags worker runs stuck at turn 0.** A live worker run still at turn 0 more than
+  `worker_start_watchdog_minutes` (default 10; 0 turns it off) after it started gets control one notification naming the
+  run and its task, once per run. `spaceman_runs_list` now shows each run's `turn`, and `not_started` for a worker that
+  started but has not taken its first turn.
+
 - **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
   credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.

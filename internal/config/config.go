@@ -190,6 +190,9 @@ type LimitsConfig struct {
 	ControlWatchdogNudges int64 `yaml:"control_watchdog_nudges"`
 	// ControlWatchdogRestart also restarts control when the watchdog escalates (1: on; 0: off, the default).
 	ControlWatchdogRestart int64 `yaml:"control_watchdog_restart"`
+	// WorkerStartWatchdogMinutes is how long a live worker run may stay at turn 0 after it started before control is
+	// notified (0: off; default 10; at most 1440).
+	WorkerStartWatchdogMinutes int64 `yaml:"worker_start_watchdog_minutes"`
 	// TerminalCols is the width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the
 	// node's runner.terminal_size. A size applies only when terminal_rows is set too.
 	TerminalCols int64 `yaml:"terminal_cols"`

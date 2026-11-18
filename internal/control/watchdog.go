@@ -330,11 +330,12 @@ type Watchdog struct {
 	kicked  map[string]bool // spaces asked for a pass by Kick (guarded by mu)
 	started time.Time
 
-	mu       sync.Mutex
-	acts     map[string]*activity // by run
-	eps      map[string]*episode  // by space
-	state    map[string]WatchState
-	restarts map[string]bool // control runs the watchdog stopped to restart
+	mu        sync.Mutex
+	acts      map[string]*activity // by run
+	eps       map[string]*episode  // by space
+	state     map[string]WatchState
+	restarts  map[string]bool // control runs the watchdog stopped to restart
+	unstarted map[string]bool // worker runs control was already told never left turn 0 (guarded by mu)
 
 	// Seams for tests; NewWatchdog points them at the supervisor's services.
 	turnOf   func(ctx context.Context, runID string) (int64, bool)
@@ -342,13 +343,18 @@ type Watchdog struct {
 	observe  func(ctx context.Context, spaceID string) (observation, error)
 	nudge    func(ctx context.Context, r *fleet.Run, text string, details map[string]any) error
 	escalate func(ctx context.Context, spaceID string, r *fleet.Run, ep *episode, b Backlog, quiet time.Duration)
+	workers  func(ctx context.Context, spaceID string) ([]*fleet.Run, map[string]*queue.Task, error)
+	tell     func(ctx context.Context, spaceID, dedup, subject, body string)
 }
 
 // NewWatchdog returns the supervisor's watchdog (sv.Watchdog); Run starts it.
 func NewWatchdog(sv *Supervisor) *Watchdog {
 	w := &Watchdog{sv: sv, wake: make(chan struct{}, 1), kicked: map[string]bool{}, started: sv.clock.Now(), acts: map[string]*activity{}, eps: map[string]*episode{},
-		state: map[string]WatchState{}, restarts: map[string]bool{}}
+		state: map[string]WatchState{}, restarts: map[string]bool{}, unstarted: map[string]bool{}}
 	w.turnOf, w.spaces, w.observe, w.nudge, w.escalate = w.runTurn, w.activeSpaces, w.read, w.deliver, w.raise
+	w.workers, w.tell = w.readWorkers, func(ctx context.Context, spaceID, dedup, subject, body string) {
+		sv.notify(ctx, spaceID, dedup, subject, body)
+	}
 	sv.Watchdog = w
 	return w
 }
@@ -476,6 +482,7 @@ func (w *Watchdog) Pass(ctx context.Context) {
 			return
 		}
 		w.check(ctx, id)
+		w.checkStarts(ctx, id)
 	}
 	// A space that dropped out of the active list (paused or archived) is no longer watched: its state says so, and
 	// keeps its episode in case it resumes.
@@ -487,6 +494,84 @@ func (w *Watchdog) Pass(ctx context.Context) {
 	}
 	w.mu.Unlock()
 	w.prune()
+}
+
+// stuckAtZero returns the live worker runs that started more than n ago and are still at turn 0 (their program never
+// took its first turn), oldest first. A run waiting for a usage limit is not stuck.
+func stuckAtZero(runs []*fleet.Run, n time.Duration, now time.Time) []*fleet.Run {
+	var out []*fleet.Run
+	for _, r := range runs {
+		if r.Kind != agenttools.KindWorker || r.Desired != "running" || !fleet.Live(r.Observed) || r.Limit != nil || r.Turn != 0 ||
+			r.StartedAt == nil || now.Sub(*r.StartedAt) < n {
+			continue
+		}
+		out = append(out, r)
+	}
+	slices.SortFunc(out, func(a, b *fleet.Run) int { return a.StartedAt.Compare(*b.StartedAt) })
+	return out
+}
+
+// checkStarts tells control, once per run, about each worker run still at turn 0 a configurable time after it started
+// (limit worker_start_watchdog_minutes): a run can report "running" and "working" for hours without its program ever
+// taking a turn. Control is notified durably (deduplicated by run), so a restart of central does not repeat it.
+func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
+	n := time.Duration(w.limit(ctx, spaceID, limits.WorkerStartWatchdog)) * w.sv.IdleUnit
+	if n <= 0 {
+		return
+	}
+	runs, tasks, err := w.workers(ctx, spaceID)
+	if err != nil {
+		w.sv.log.Warn("watchdog: read workers", slog.String("space.id", spaceID), obs.Err(err))
+		return
+	}
+	live := map[string]bool{}
+	for _, r := range runs {
+		live[r.ID] = true
+	}
+	for _, r := range stuckAtZero(runs, n, w.sv.clock.Now()) {
+		w.mu.Lock()
+		done := w.unstarted[r.ID]
+		w.unstarted[r.ID] = true
+		w.mu.Unlock()
+		if done {
+			continue
+		}
+		task := "no task"
+		if t := tasks[r.ID]; t != nil {
+			task = "task " + t.ID + " (" + t.Title + ")"
+		}
+		mins := int64(w.sv.clock.Now().Sub(*r.StartedAt) / w.sv.IdleUnit)
+		w.tell(ctx, spaceID, "worker-not-started:"+r.ID, "Worker run "+r.ID+" has not started working",
+			fmt.Sprintf("Worker run %s (role %s, %s) was launched %d minutes ago and is still at turn 0: its program never took a first turn. "+
+				"Look at it with spaceman_runs_list (turn, not_started), then stop it with spaceman_worker_stop and launch the task again.", r.ID, r.Role, task, mins))
+	}
+	// Forget runs that left the list, so the set stays small.
+	w.mu.Lock()
+	for id := range w.unstarted {
+		if !live[id] {
+			delete(w.unstarted, id)
+		}
+	}
+	w.mu.Unlock()
+}
+
+// readWorkers reads a space's recent runs and, by assigned run, their tasks.
+func (w *Watchdog) readWorkers(ctx context.Context, spaceID string) ([]*fleet.Run, map[string]*queue.Task, error) {
+	runs, err := w.sv.fl.ListRuns(ctx, spaceID, watchRuns)
+	if err != nil {
+		return nil, nil, err
+	}
+	tasks, _, err := w.sv.q.List(ctx, spaceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	by := map[string]*queue.Task{}
+	for _, t := range tasks {
+		if t.AssigneeRun != "" {
+			by[t.AssigneeRun] = t
+		}
+	}
+	return runs, by, nil
 }
 
 // prune forgets the activity of runs not seen for a day.

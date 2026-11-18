@@ -731,3 +731,39 @@ func TestWatchStateStatus(t *testing.T) {
 		}
 	}
 }
+
+// A worker run still at turn 0 past worker_start_watchdog_minutes gets control exactly one notification naming the
+// run and its task; a run that took a turn gets none.
+func TestWatchdogWorkerStuckAtZero(t *testing.T) {
+	e := newWDEnv(t)
+	e.lim[limits.WorkerStartWatchdog] = 10
+	stuck := &fleet.Run{ID: "run_stuck", Kind: "worker", Role: "reviewer", Desired: "running", Observed: "running", Status: "working", StartedAt: tp(wdNow)}
+	moving := &fleet.Run{ID: "run_moving", Kind: "worker", Role: "reviewer", Desired: "running", Observed: "running", Status: "working", StartedAt: tp(wdNow)}
+	tasks := map[string]*queue.Task{"run_stuck": {ID: "tsk_1", Title: "Review the thing"}}
+	var sent []string
+	var dedups []string
+	e.w.workers = func(context.Context, string) ([]*fleet.Run, map[string]*queue.Task, error) {
+		return []*fleet.Run{stuck, moving}, tasks, nil
+	}
+	e.w.tell = func(_ context.Context, _, dedup, _, body string) {
+		dedups = append(dedups, dedup)
+		sent = append(sent, body)
+	}
+	e.pass(9 * time.Minute)
+	if len(sent) != 0 {
+		t.Fatalf("before the threshold: %v", sent)
+	}
+	moving.Turn = 1 // reaches turn 1 meanwhile
+	e.pass(2 * time.Minute)
+	e.pass(time.Minute)
+	if len(sent) != 1 || dedups[0] != "worker-not-started:run_stuck" || !strings.Contains(sent[0], "run_stuck") || !strings.Contains(sent[0], "tsk_1") {
+		t.Fatalf("notifications %v %v", dedups, sent)
+	}
+	// A run that ended, waits at a limit, or is control is not stuck.
+	e2 := stuckAtZero([]*fleet.Run{{ID: "a", Kind: "worker", Desired: "running", Observed: "exited", StartedAt: tp(ago(time.Hour))},
+		{ID: "b", Kind: "worker", Desired: "running", Observed: "running", Limit: &fleet.RunLimit{}, StartedAt: tp(ago(time.Hour))},
+		{ID: "c", Kind: "control", Desired: "running", Observed: "running", StartedAt: tp(ago(time.Hour))}}, 10*time.Minute, wdNow)
+	if len(e2) != 0 {
+		t.Fatalf("not stuck: %+v", e2)
+	}
+}

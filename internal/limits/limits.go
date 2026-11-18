@@ -63,6 +63,8 @@ const (
 	ControlWatchdog        = "control_watchdog_minutes"
 	ControlWatchdogNudges  = "control_watchdog_nudges"
 	ControlWatchdogRestart = "control_watchdog_restart"
+	// Worker start watchdog: the minutes a live worker run may stay at turn 0 before control is told (0: off).
+	WorkerStartWatchdog = "worker_start_watchdog_minutes"
 	// A new run's terminal size (ADR-0075).
 	TerminalCols = "terminal_cols"
 	TerminalRows = "terminal_rows"
@@ -182,6 +184,9 @@ var Defs = []Def{
 	{Key: ControlWatchdogRestart, Label: "Control watchdog restart", Unit: "switch",
 		Scope:    "when the watchdog escalates, also stop control and start it again, resuming its session, within the supervisor's restart budget (default off)",
 		Enforced: "control watchdog", OnLower: "Turning it off never stops a running control.", Overridable: true},
+	{Key: WorkerStartWatchdog, Label: "Worker start watchdog", Unit: "minutes", ZeroNone: true,
+		Scope:    "how long a live worker run may stay at turn 0 after it started (its program never took the first turn) before control gets a notification naming the run and its task (0: off)",
+		Enforced: "control watchdog (one notification per run)", OnLower: "Applies from the watchdog's next pass.", Overridable: true},
 	{Key: TerminalCols, Label: "Terminal columns", Unit: "columns",
 		Scope: "the width new runs' terminals are held at (40-400; 0: the node's default size); applies only with terminal rows set too", ZeroNone: true,
 		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},
