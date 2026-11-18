@@ -70,7 +70,7 @@ func claudeCredentialEnv(name string) bool {
 }
 
 // claudeSafeEnv are the CLAUDE_CODE_* variables a gateway run's profile may set: output, UI and behaviour switches
-// that carry no credential or endpoint (each checked in the 2.1.317 binary).
+// that carry no credential or endpoint (checked in the 2.1.317 binary, except CLAUDE_CODE_TMPDIR: 2.1.325).
 var claudeSafeEnv = map[string]bool{
 	"CLAUDE_CODE_AUTO_COMPACT_WINDOW":          true,
 	"CLAUDE_CODE_DISABLE_1M_CONTEXT":           true,
@@ -89,6 +89,7 @@ var claudeSafeEnv = map[string]bool{
 	"CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY":     true,
 	"CLAUDE_CODE_NO_FLICKER":                   true,
 	"CLAUDE_CODE_SUBAGENT_MODEL":               true,
+	"CLAUDE_CODE_TMPDIR":                       true,
 }
 
 // claudeTransportEnv are the variables (upper-cased) that send Claude Code's traffic through a proxy or weaken its TLS

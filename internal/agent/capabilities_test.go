@@ -116,6 +116,22 @@ func (fc *wsCentral) next(t *testing.T, typ string) proto.Capabilities {
 	}
 }
 
+// drain discards messages until none has arrived for d. Messages that keep arriving past an overall deadline fail the
+// test: the agent is over-reporting, and waiting for quiet would hang until the binary timeout.
+func (fc *wsCentral) drain(t *testing.T, d time.Duration) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-fc.msgs:
+		case <-time.After(d):
+			return
+		case <-deadline:
+			t.Fatalf("messages still arriving after 2s: the agent is over-reporting")
+		}
+	}
+}
+
 // none fails when a message of type typ arrives within d.
 func (fc *wsCentral) none(t *testing.T, typ string, d time.Duration) {
 	t.Helper()
@@ -195,6 +211,17 @@ func TestCapabilitiesReReported(t *testing.T) {
 	if !got.Managed || got.CacheBytes <= hello.CacheBytes {
 		t.Fatalf("after the install %+v (hello %+v)", got, hello)
 	}
+	// A report can legitimately repeat. capsAfterHello re-sends the capabilities once the welcome arrives; it runs late,
+	// because the test doesn't wait for the welcome, so it re-sends caps that already include the change, overlapping
+	// the capsLoop send with the same content. Let the agent finish before asserting that nothing is reported without a
+	// change.
+	waitUntil(t, "the change detected and no detection pending", func() bool {
+		a.mu.Lock()
+		idle := a.capsStarts == a.capsTaken
+		a.mu.Unlock()
+		return len(m.Changes()) == 0 && idle
+	})
+	fc.drain(t, 100*time.Millisecond)
 	// Nothing changes: no report until the interval has passed on the agent's clock.
 	fc.none(t, proto.TypeNodeCapabilities, 100*time.Millisecond)
 	clk.Advance(proto.NodeCapabilitiesInterval)

@@ -410,9 +410,16 @@ func TestClaudeGatewayEnv(t *testing.T) {
 		}
 	}
 	allowed := map[string]any{"FOO": "1", "NO_PROXY": "example.com", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8000",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_NO_FLICKER": "1"}
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_NO_FLICKER": "1",
+		"CLAUDE_CODE_TMPDIR": "/var/cache/claude-tmp"}
 	if _, err := (Claude{}).Build(ctxFor(gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": allowed}}))); err != nil {
 		t.Fatal(err)
+	}
+	// CLAUDE_CODE_TMPDIR only moves Claude Code's temp directory: it is allowed, while a credential set beside it is not.
+	withCred := map[string]any{"CLAUDE_CODE_TMPDIR": "/var/cache/claude-tmp", "CLAUDE_CODE_OAUTH_TOKEN": "x"}
+	if _, err := (Claude{}).Build(ctxFor(gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": withCred}}))); err == nil ||
+		!strings.Contains(err.Error(), "env.CLAUDE_CODE_OAUTH_TOKEN ") {
+		t.Fatalf("credential beside TMPDIR: %v", err)
 	}
 	// Without a gateway nothing is refused: a direct account's profile keeps its env.
 	if _, err := (Claude{}).Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"HTTPS_PROXY": "http://p"}}})); err != nil {
