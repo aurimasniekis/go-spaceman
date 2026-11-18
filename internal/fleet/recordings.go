@@ -69,7 +69,12 @@ type Recordings struct {
 	ctx    context.Context // cancelled by Close: ends archive uploads
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	// closed is set by Close (under mu): chunks are refused from then on.
+	closed bool
 }
+
+// errRecordingsClosed is returned for a chunk that arrives after Close.
+var errRecordingsClosed = errors.New("recordings closed")
 
 // Viewer is one live subscription.
 type Viewer struct {
@@ -218,6 +223,11 @@ func (r *Recordings) archivedTail(ctx context.Context, runID string) (int, uint6
 func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		// A chunk from a connection the hub has not finished tearing down must not open a writer, and so create the
+		// run's folder, after Close flushed the writers and the data directory is being removed.
+		return 0, errRecordingsClosed
+	}
 	now := r.now()
 	r.pruneLocked(now)
 	if f, ok := r.failed[c.RunID]; ok && r.w[c.RunID] == nil {
@@ -637,6 +647,7 @@ func (r *Recordings) Close() {
 	r.wg.Wait()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.closed = true
 	for id, w := range r.w {
 		_ = w.Close()
 		delete(r.w, id)

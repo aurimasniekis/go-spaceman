@@ -968,3 +968,17 @@ func TestRecordingsBackoffRefusalRefreshesTouched(t *testing.T) {
 		t.Fatalf("touched %v, not refreshed by the refusal", at.Sub(base))
 	}
 }
+
+// A chunk that arrives after Close (a connection the hub is still tearing down) opens no writer and creates no folder.
+func TestRecordingsRefuseChunksAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, time.Now)
+	r.Close()
+	run := "run_" + strings.Repeat("0", 26)
+	if _, err := r.apply(1, proto.RecordingChunk{RunID: run}); !errors.Is(err, errRecordingsClosed) {
+		t.Fatalf("apply after Close: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, run)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the run folder was created after Close: %v", err)
+	}
+}
