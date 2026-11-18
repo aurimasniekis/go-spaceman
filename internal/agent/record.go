@@ -797,7 +797,10 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 	// begin (below) reads the acknowledgement afterwards, so it is the lowered one when the answer lowered it. With
 	// this wait the lowering restart below (errLowered) can no longer fire on the first answer of a run this catch-up
 	// serves (that answer is what ends the wait, and the lowering is counted with it under one lock); it stays as the
-	// guard for any other path that lowers a run's acknowledgement while its catch-up ships.
+	// guard for any other path that lowers a run's acknowledgement while its catch-up ships. A reconnect is not one:
+	// seqKnown and acked are only ever set (recordingAck, launchedRecording, restoreAck) and are deleted only when a run
+	// is pruned from the journal (prune.go), which has no catch-up left; a reconnect starts another sweep, whose
+	// catch-up finds the run already known and reads the (possibly raised) acknowledgement as it stands.
 	if err := a.awaitSeqKnown(ctx, conn, r, others); err != nil {
 		return err
 	}

@@ -7406,7 +7406,7 @@
   **Relation to the restart on lowering (#254):** the catch-up's wait comes before it reads its starting point, and
   the lowering is counted under the same lock that sets `seqKnown`, so the first answer of a run can no longer lower
   the acknowledgement after a catch-up began. #254's restart (`lowers`, `errLowered`) therefore guards only a lowering
-  that reaches a run whose sequence counted as known, which no current path produces; it is kept as a guard and
+  that reaches a run whose sequence counted as known, which no current path produces (a reconnect does not: `seqKnown` and `acked` are set, never cleared, except when a run is pruned from the journal, which has no catch-up left); it is kept as a guard and
   exercised by forcing the state (`TestLoweringAfterTheCatchUpBeganRestartsIt`; `TestLoweredAckDuringTheRunsCatchUp`
   now asserts that the catch-up begins from the lowered value).
 
