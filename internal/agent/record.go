@@ -759,6 +759,14 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 		}
 		return send(res.Records)
 	}
+	// Nothing goes out above the restored acknowledgement before central's sequence is known: the answer may be lower
+	// (central lost records it acknowledged), and a record shipped above it first would make central jump over the
+	// missing ones and drop them as repeats later. Ended runs have no recorder to probe, so the catch-up asks itself.
+	if err := a.awaitSeqKnown(ctx, conn, r, others); err != nil {
+		return err
+	}
+	// The answer may have lowered the acknowledgement: ship from what central holds now.
+	from = a.ackedSeq(r.RunID)
 	a.mu.Lock()
 	delete(a.unshipped, r.RunID)
 	a.mu.Unlock()
@@ -800,6 +808,49 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 			return err
 		}
 	}
+}
+
+// seqKnownWait bounds how long a catch-up waits for central's answer to its probe before it gives the pass up (it is
+// asked again after the retry delay).
+var seqKnownWait = 10 * time.Second
+
+// awaitSeqKnown returns once this process knows central's recording sequence of the run, asking with an empty
+// recording message every seqProbeEvery (a run's own recorder may ask too: harmless). Meanwhile it serves the other
+// runs whose live output waits (others). It fails when the answer does not come within seqKnownWait, or the
+// connection ends; the run stays marked and its kept-back records are untouched.
+func (a *Agent) awaitSeqKnown(ctx context.Context, conn *websocket.Conn, r runRow, others func() error) error {
+	known := func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.seqKnown[r.RunID]
+	}
+	if known() {
+		return nil
+	}
+	deadline := time.Now().Add(seqKnownWait)
+	var probed time.Time
+	for !known() {
+		if time.Now().After(deadline) {
+			return errors.New("central's recording sequence is not known yet")
+		}
+		if probed.IsZero() || time.Since(probed) >= seqProbeEvery {
+			probed = time.Now()
+			if err := a.sendOn(ctx, conn, proto.TypeRecording, proto.RecordingChunk{RunID: r.RunID, SpaceID: r.SpaceID, Records: []json.RawMessage{}}); err != nil {
+				a.markUnshipped(r.RunID)
+				return err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			a.markUnshipped(r.RunID)
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+		if err := others(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // paceCatchUp waits until sent bytes fit endedCatchUpRate since began, serving runs whose live output waits (others)

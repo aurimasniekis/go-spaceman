@@ -27,8 +27,13 @@ type seqCentral struct {
 	mute bool
 	// only, when set, limits what central keeps and acknowledges to that run: messages about other runs are ignored.
 	only string
-	// muted counts the recording messages lost while mute was set (the recorder's probes among them).
-	muted int
+	// muted counts the recording messages lost while mute was set (the recorder's probes among them), mutedRecs the
+	// records in them.
+	muted, mutedRecs int
+	// barrier, when set, is a sequence central must hold up to before it is sent anything above it: a record above
+	// it that arrives sooner is a jump over records central lacks (jumped counts them).
+	barrier uint64
+	jumped  int
 }
 
 // until applies the recording messages central receives until cond holds, or fails.
@@ -55,6 +60,7 @@ func (c *seqCentral) within(d time.Duration, cond func() bool) bool {
 			}
 			if c.mute {
 				c.muted++
+				c.mutedRecs += len(ch.Records)
 				continue
 			}
 			if c.only != "" && ch.RunID != c.only {
@@ -68,6 +74,9 @@ func (c *seqCentral) within(d time.Duration, cond func() bool) bool {
 				if r.Seq <= c.seq {
 					c.drops++
 					continue
+				}
+				if c.barrier > 0 && c.seq < c.barrier && r.Seq > c.barrier {
+					c.jumped++
 				}
 				c.seq = r.Seq
 				c.recs = append(c.recs, r)
@@ -220,18 +229,14 @@ func writeUntil(t *testing.T, a *Agent, c *seqCentral, term, out string) {
 func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 	const runID = "run_low"
 	a, c, term := restartedRecorderEnv(t, runID, 250, 300, 150)
+	c.barrier = 250
 	writeUntil(t, a, c, term, "after the restart")
-	c.until("the local records above 150 at central", func() bool {
-		n := 0
-		for _, r := range c.recs {
-			if r.Seq > 150 && r.Seq <= 250 {
-				n++
-			}
-		}
-		return n == 100
-	})
-	if c.drops > 0 {
-		t.Fatalf("central dropped %d records as repeats", c.drops)
+	c.until("the local records above 150 at central", func() bool { return c.seq >= 250 })
+	// Contiguous: 151..250 held in order, each once (central drops repeats, so anything else is a hole).
+	c.contiguous(151, 250)
+	// A repeat of 151..250 (the lowering starts a second sweep) is dropped by central and harmless; a jump is not.
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
 	}
 	for _, r := range c.recs {
 		if strings.Contains(string(r.Data), "after the restart") && r.Seq <= 300 {
@@ -358,5 +363,81 @@ func TestSeqGateBound(t *testing.T) {
 	}
 	if len(g.recs) != 0 || g.bytes != 0 || g.dropped {
 		t.Fatalf("take left %+v", g)
+	}
+}
+
+// contiguous fails unless central's records from..to (sequence numbers) are held in order, each once.
+func (c *seqCentral) contiguous(from, to uint64) {
+	c.t.Helper()
+	if uint64(len(c.recs)) < to {
+		c.t.Fatalf("central holds %d records, want %d", len(c.recs), to)
+	}
+	for i, r := range c.recs[from-1 : to] {
+		if r.Seq != from+uint64(i) {
+			c.t.Fatalf("central holds %d at position %d, want %d", r.Seq, from+uint64(i), from+uint64(i))
+		}
+	}
+}
+
+// ADR-0097 addendum, residual: a catch-up that starts from the restored acknowledgement (300) must not ship anything
+// above it before central's sequence is known. An ended run has no recorder to ask, so its catch-up asks itself.
+// Central lost records above 150 it had acknowledged: with the local recording at 250 nothing is above 300, so
+// nothing would ever re-ship 151..250 if the catch-up took 300 for what central holds.
+func TestEndedRunCatchUpProbesBeforeShipping(t *testing.T) {
+	old := seqProbeEvery
+	seqProbeEvery = 20 * time.Millisecond
+	t.Cleanup(func() { seqProbeEvery = old })
+	const runID = "run_ended"
+	_, c, _ := restartedRecorderEnvWith(t, runID, 250, 300, 150, nil, func(a *Agent) {
+		ctx := context.Background()
+		row, err := a.j.getRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row.State, row.Desired = proto.RunExited, "stopped"
+		if err := a.j.updateRun(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	})
+	c.mute = true
+	// Central is out of reach: the catch-up asks and sends nothing else.
+	c.until("the catch-up's probes", func() bool { return c.muted >= 3 })
+	if c.mutedRecs > 0 {
+		t.Fatalf("%d records left the node before central's sequence was known", c.mutedRecs)
+	}
+	c.mute = false
+	c.barrier = 250
+	c.until("records 151..250 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+}
+
+// The same for a live run whose recorder numbers new records (above the restored 300) as soon as central answers, so
+// they are queued behind the catch-up while it still starts from the stale 300: nothing above 250 may reach central
+// before 151..250 do.
+func TestLoweredAckWithQueuedRecordsShipsTheGapFirst(t *testing.T) {
+	old := seqProbeEvery
+	seqProbeEvery = 20 * time.Millisecond
+	t.Cleanup(func() { seqProbeEvery = old })
+	const runID = "run_low2"
+	batches := 0
+	shipBatchHook = func(id string, batch int) {
+		if id == runID {
+			batches++
+		}
+	}
+	t.Cleanup(func() { shipBatchHook = nil })
+	a, c, term := restartedRecorderEnv(t, runID, 250, 300, 150)
+	c.barrier = 250
+	writeUntil(t, a, c, term, "after the restart")
+	c.until("records 151..250 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+	if batches == 0 {
+		t.Fatal("the catch-up shipped nothing")
 	}
 }

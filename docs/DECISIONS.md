@@ -7370,6 +7370,22 @@
   `TestRestartedRecorderBelowTheSavedAcknowledgement` (finding 2),
   `TestRestartedRecorderKeepsTheCloseUntilCentralAnswers`, `TestSeqGateBound` (agent); `test/fault`
   `TestFaultRecordingDiskFullRestart`. Without the gate, the first test fails with records dropped as repeats.
+- **Residual closed (v0.1.12): a catch-up ships nothing before central's sequence is known.** Decision 4 lowered the
+  acknowledgement when the first answer was below the restored one, but a catch-up that started from the restored
+  value S shipped the local records above S before that answer arrived. Central stores any `Seq` above what it holds,
+  so it jumped from L to S+1, and the re-shipped L+1..S were then dropped as repeats: a silent hole. A run that
+  ended has no recorder, so nothing probed it, and central's loss below S was never detected at all (nothing local
+  above S, nothing shipped). `catchUpRun` now first checks `seqKnown` for the run; if it is not set it sends an empty
+  `recording` message itself (every central version answers it, as for the recorder's probe; every `seqProbeEvery`,
+  serving other runs' waiting live output meanwhile) and ships only once the answer arrived. It then reads the run's
+  acknowledgement again, so a lowered value is the starting point. After `seqKnownWait` (10 s) without an answer the
+  pass fails like a failed send: the run stays marked, the kept-back records are untouched, and the next try follows
+  after the retry delay. The wait is per run, so a central that never answers for one run (decision 3's open failure)
+  holds that run's catch-up back, never numbers or ships anything of it. Evidence: `TestEndedRunCatchUpProbesBeforeShipping`
+  (an ended run, central muted: no record leaves the node, then 151..250 arrive contiguously and nothing jumps),
+  `TestLoweredAckWithQueuedRecordsShipsTheGapFirst`, and `TestRestartedRecorderBelowTheSavedAcknowledgement` (live
+  records numbered above 300 are queued behind the catch-up; central never receives a record above 250 before
+  151..250). Cost: a repeat of 151..250 may follow (the lowering asks for a second sweep); central drops repeats.
 
 ### ADR-0098 — A run an agent restart stopped is resumed, within a cap
 
