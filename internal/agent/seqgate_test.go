@@ -646,6 +646,29 @@ func TestUnansweredRunBacksOff(t *testing.T) {
 	}
 }
 
+// While one ended run stays unanswered the pass sleeps in its backoff; a request for another pass (a relocation, a
+// lowered acknowledgement, a run launched meanwhile) must wake it, or the live run, marked not caught up by the
+// request, holds its output back until the backoff ends (up to 30 s).
+func TestCatchUpRequestWakesTheBackoffSleep(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	const live = "run_live"
+	started := time.Now()
+	// run_live is already caught up (central holds all 10 records); run_ended is never answered (only=run_live).
+	a, c, term := restartedRecorderEnvWith(t, live, 10, 10, 10, []string{"run_ended"}, endRuns(t, "run_ended"))
+	writeUntil(t, a, c, term, "warm up")
+	// The sweeps end at about 0.2 s and 1.4 s; the backoff after the second one lasts 2 s (until about 3.4 s).
+	time.Sleep(max(0, 2*time.Second-time.Since(started)))
+	a.startCatchUp()
+	asked := time.Now()
+	t.Logf("asked at %v", asked.Sub(started))
+	a.o.Runner.(interface{ Output(id, data string) }).Output(term, "after the request")
+	ok := c.within(900*time.Millisecond, func() bool { return c.has("after the request") })
+	t.Logf("arrived=%v after %v", ok, time.Since(asked))
+	if !ok {
+		t.Fatalf("live output still held %v after the request: the backoff sleep was not woken", time.Since(asked))
+	}
+}
+
 // A recorder started again for a run whose close an earlier recorder of this process already recorded (a stale live
 // snapshot passed to observe does that) must not end the recording a second time: no further gap and no second close,
 // locally or at central.

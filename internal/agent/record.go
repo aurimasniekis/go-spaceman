@@ -557,6 +557,18 @@ func (a *Agent) markUnshippedLocked(runID string) {
 	a.unshipped[runID] = true
 }
 
+// wakeCatchUpLocked ends the catch-up pass's backoff sleep, if it sleeps (or its next one at once): the runs it keeps
+// back are waiting for another sweep, and live output must not wait out the backoff.
+func (a *Agent) wakeCatchUpLocked() {
+	if a.catchUpWake == nil {
+		a.catchUpWake = make(chan struct{}, 1)
+	}
+	select {
+	case a.catchUpWake <- struct{}{}:
+	default:
+	}
+}
+
 // startCatchUp asks for a catch-up pass on the current connection (before a relocation).
 func (a *Agent) startCatchUp() {
 	a.mu.Lock()
@@ -576,6 +588,7 @@ func (a *Agent) startCatchUpLocked() bool {
 	a.catchUpConn, a.catchUpCtx = a.conn, a.connCtx
 	if a.catching {
 		a.catchUpAgain = true
+		a.wakeCatchUpLocked()
 		return false
 	}
 	a.catching = true
@@ -610,15 +623,24 @@ func (a *Agent) catchUpRecordings() {
 			a.mu.Unlock()
 			return
 		}
+		if a.catchUpWake == nil {
+			a.catchUpWake = make(chan struct{}, 1)
+		}
+		wake := a.catchUpWake
 		a.mu.Unlock()
 		if err == nil {
 			retry = time.Second
 		}
 		if err != nil && !again {
+			// The backoff ends early on another request (startCatchUpLocked) or the first answer of a run
+			// (recordingAck): runs whose live output waits for the pass must not wait out the backoff.
+			t := time.NewTimer(retry)
 			select {
 			case <-ctx.Done():
-			case <-time.After(retry):
+			case <-wake:
+			case <-t.C:
 			}
+			t.Stop()
 			retry = min(retry*2, 30*time.Second)
 		}
 	}
@@ -1036,6 +1058,9 @@ func (a *Agent) recordingAck(ack proto.RecordingAck) {
 	}
 	first := !a.seqKnown[ack.RunID]
 	a.seqKnown[ack.RunID] = true
+	if first && a.catching {
+		a.wakeCatchUpLocked()
+	}
 	prev, had := a.acked[ack.RunID]
 	lowered := first && had && ack.Seq < prev
 	advanced := ack.Seq > prev
