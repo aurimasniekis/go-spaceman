@@ -782,14 +782,19 @@ func (a *Agent) endUnlaunched(ctx context.Context, c proto.Command) bool {
 func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duration, reason string) {
 	// Under the run's lock: a launch about to start the run either sees this stop, or has started and recorded it.
 	unlock := a.runLock(runID)
+	// Also under the observe lock (always taken inside the run's lock): every write that ends a run excludes an
+	// observe's read-then-write, which reconcile's found-program branch calls without the run's lock.
+	unlockObs := a.observeLock(runID)
 	row, err := a.j.getRun(ctx, runID)
 	if err != nil {
+		unlockObs()
 		unlock()
 		return
 	}
 	row.Desired = "stopped"
 	if ended(row.State) {
 		_ = a.j.updateRun(ctx, row)
+		unlockObs()
 		unlock()
 		a.report(ctx, row)
 		return
@@ -797,6 +802,7 @@ func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duratio
 	if row.TerminalID == "" {
 		row.State, row.Reason = proto.RunExited, "stopped before start"
 		_ = a.j.updateRun(ctx, row)
+		unlockObs()
 		unlock()
 		a.report(ctx, row)
 		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now.
@@ -805,6 +811,7 @@ func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duratio
 	}
 	row.State = proto.RunStopping
 	_ = a.j.updateRun(ctx, row)
+	unlockObs()
 	unlock()
 	a.report(ctx, row)
 	if mode != "kill" {
@@ -941,13 +948,16 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 			// re-delivery is a duplicate, so mark it failed rather than starting it silently. Re-checked and written
 			// under the run's lock: a re-delivered launch or an observe may have moved the row since it was read.
 			unlock := a.runLock(r.RunID)
+			unlockObs := a.observeLock(r.RunID) // every write that ends a run takes it (runLock, then observeLock)
 			fresh, gerr := a.j.getRun(ctx, r.RunID)
 			if gerr != nil || fresh.State != proto.RunPending {
+				unlockObs()
 				unlock()
 				continue
 			}
 			fresh.State, fresh.Error = proto.RunFailed, "agent restarted before the process started"
 			_ = a.j.updateRun(ctx, fresh)
+			unlockObs()
 			unlock()
 			a.runEndHooks(ctx, fresh, false)
 		default:
