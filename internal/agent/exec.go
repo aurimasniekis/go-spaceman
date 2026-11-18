@@ -277,8 +277,20 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		// blocks no other launch of the space; the version is held, from the cache only, right before the launch is
 		// built (see below).
 		selfUpdate = false
+		if a.beforeStartingWrite != nil {
+			a.beforeStartingWrite() // test hook: a stop may land here, before the lock is taken
+		}
+		// The check and the write are one step under the run's lock, which stop also takes: the write replaces the
+		// whole row (desired running), so a stop landing between the two would be overwritten.
+		unlockStart := a.runLock(c.RunID)
+		if abandoned() {
+			unlockStart()
+			log.Info("launch abandoned: the run was stopped before it started")
+			return
+		}
 		row.State = proto.RunStarting
 		_ = a.j.updateRun(ctx, row)
+		unlockStart()
 		a.report(ctx, row)
 		var cancel context.CancelFunc
 		wctx, cancel, waitLimit = a.claudeWait(ctx)
