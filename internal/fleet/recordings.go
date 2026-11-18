@@ -71,6 +71,10 @@ type Recordings struct {
 	wg     sync.WaitGroup
 	// closed is set by Close (under mu): chunks are refused from then on.
 	closed bool
+	// deleted holds, per run whose recording Delete removed, when: late chunks for it (a node's re-ship, its close
+	// record) are acked and dropped instead of recreating the folder. pruneLocked forgets a mark after markMaxAge, which
+	// bounds the map; by then the node's acknowledgement has long moved past what it had to ship.
+	deleted map[string]time.Time
 }
 
 // errRecordingsClosed is returned for a chunk that arrives after Close.
@@ -107,7 +111,7 @@ func newRecordings(dir string, store artifacts.Store, log *slog.Logger, now func
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Recordings{dir: dir, store: store, archive: archive, log: log, w: map[string]*recording.Writer{}, subs: map[string]map[*Viewer]struct{}{},
-		resync: map[string]uint64{}, closedOn: map[string]uint64{}, touched: map[string]time.Time{}, failed: map[string]failure{}, reopenBackoff: defaultReopenBackoff, unsynced: map[string]*recording.Writer{}, archiving: map[string]chan struct{}{}, now: now, ctx: ctx, cancel: cancel}
+		resync: map[string]uint64{}, closedOn: map[string]uint64{}, touched: map[string]time.Time{}, failed: map[string]failure{}, reopenBackoff: defaultReopenBackoff, unsynced: map[string]*recording.Writer{}, archiving: map[string]chan struct{}{}, deleted: map[string]time.Time{}, now: now, ctx: ctx, cancel: cancel}
 }
 
 // Dir returns a run's spool folder.
@@ -230,6 +234,19 @@ func (r *Recordings) apply(conn uint64, c proto.RecordingChunk) (uint64, error) 
 	}
 	now := r.now()
 	r.pruneLocked(now)
+	if _, gone := r.deleted[c.RunID]; gone {
+		// The recording was deleted (retention or an operator): a late chunk must not recreate it. It is acked as
+		// stored, up to its highest sequence, so the node moves its acknowledgement past it and stops shipping; a
+		// refusal or an ack of 0 would make it re-ship the run (ADR-0097) for ever.
+		var high uint64
+		for _, raw := range c.Records {
+			var rec recording.Record
+			if json.Unmarshal(raw, &rec) == nil {
+				high = max(high, rec.Seq)
+			}
+		}
+		return high, nil
+	}
 	if f, ok := r.failed[c.RunID]; ok && r.w[c.RunID] == nil {
 		if now.Before(f.retry) {
 			// Refuse without reading the recording from disk; the node's chunk needs a re-ship when the failure was a
@@ -334,6 +351,11 @@ func (r *Recordings) pruneLocked(now time.Time) {
 	for id, at := range r.touched {
 		if now.Sub(at) >= markMaxAge && r.w[id] == nil {
 			r.forgetLocked(id)
+		}
+	}
+	for id, at := range r.deleted {
+		if now.Sub(at) >= markMaxAge {
+			delete(r.deleted, id)
 		}
 	}
 }
@@ -618,6 +640,8 @@ func (r *Recordings) Delete(ctx context.Context, runID string) error {
 	}
 	r.mu.Lock()
 	r.waitArchiveLocked(runID)
+	// Marked before the lock is released: a chunk that arrives while the folder is removed must not reopen a writer.
+	r.deleted[runID] = r.now()
 	if w := r.w[runID]; w != nil {
 		_ = w.Close()
 		delete(r.w, runID)
