@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -74,6 +75,7 @@ type SpaceRole struct {
 	Settings     map[string]string `json:"settings"`
 	Instructions string            `json:"instructions,omitempty" doc:"Space-specific text appended after the role's prompt"`
 	Skills       []SkillRef        `json:"skills" doc:"Added to the template's skills; a pin here wins"`
+	Description  string            `json:"description,omitempty" doc:"What the role is for in this space, at most 2000 characters; empty uses the role template's description"`
 	Revision     int64             `json:"revision"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 	Version      int64             `json:"version"`
@@ -190,7 +192,7 @@ func templateOut(r db.RoleTemplate) *RoleTemplate {
 
 func spaceRoleOut(r db.SpaceRole) *SpaceRole {
 	return &SpaceRole{SpaceID: r.SpaceID, Name: r.Name, TemplateID: r.TemplateID, ProfileID: r.ProfileID, PromptID: r.PromptID, PromptPin: r.PromptPin, Model: r.Model,
-		Settings: parseSettings(r.SettingsJson), Instructions: r.Instructions, Skills: parseSkillRefs(r.SkillsJson), Revision: r.Revision, UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
+		Settings: parseSettings(r.SettingsJson), Instructions: r.Instructions, Skills: parseSkillRefs(r.SkillsJson), Description: r.Description, Revision: r.Revision, UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
 }
 
 // SaveProfile creates (id empty) or updates a profile; an update bumps its revision.
@@ -406,6 +408,9 @@ func (svc *Service) SaveSpaceRole(ctx context.Context, actor audit.Actor, spaceI
 	if len(in.Model) > 128 || len(in.Instructions) > 50_000 {
 		v.Add("instructions", "at most 50000 characters")
 	}
+	if utf8.RuneCountInString(in.Description) > 2000 {
+		v.Add("description", "at most 2000 characters")
+	}
 	sj := settingsJSON(v, in.Settings)
 	kj := svc.skillRefsJSON(ctx, v, in.Skills)
 	svc.checkRefs(ctx, svc.s.R(), v, in.ProfileID, in.PromptID, in.PromptPin)
@@ -420,7 +425,7 @@ func (svc *Service) SaveSpaceRole(ctx context.Context, actor audit.Actor, spaceI
 			return apperr.New(apperr.CodeNotFound, "space not found")
 		}
 		if err := tx.Q.UpsertSpaceRole(ctx, db.UpsertSpaceRoleParams{SpaceID: spaceID, Name: in.Name, TemplateID: in.TemplateID, ProfileID: in.ProfileID,
-			PromptID: in.PromptID, PromptPin: in.PromptPin, Model: in.Model, SettingsJson: sj, Instructions: in.Instructions, SkillsJson: kj, Now: tx.NowMicros(),
+			PromptID: in.PromptID, PromptPin: in.PromptPin, Model: in.Model, SettingsJson: sj, Instructions: in.Instructions, SkillsJson: kj, Description: in.Description, Now: tx.NowMicros(),
 			By: actor.ID}); err != nil {
 			return err
 		}

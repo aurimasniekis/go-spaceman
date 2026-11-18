@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
 )
 
@@ -55,5 +56,23 @@ func TestHookPermissionRequestCommand(t *testing.T) {
 			o.HookSpecificOutput.Decision.Behavior != "deny" || !strings.HasSuffix(o.HookSpecificOutput.Decision.Message, harness.ClaudePermissionDenyMessage) {
 			t.Fatalf("%s: %+v %v", name, o, err)
 		}
+	}
+}
+
+// ADR-0094: the configured switch reaches the agent as NoMemoryFastForward, inverted.
+func TestNoMemoryFastForwardMapping(t *testing.T) {
+	on, err := config.LoadAgent("", []string{"SPACEMAN_AGENT_CENTRAL_URL=https://c.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noMemoryFastForward(on) {
+		t.Fatal("fast-forward is on by default, so NoMemoryFastForward must be false")
+	}
+	off, err := config.LoadAgent("", []string{"SPACEMAN_AGENT_CENTRAL_URL=https://c.example.com", "SPACEMAN_AGENT_MEMORY_FAST_FORWARD=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !noMemoryFastForward(off) {
+		t.Fatal("memory.fast_forward off must set NoMemoryFastForward")
 	}
 }

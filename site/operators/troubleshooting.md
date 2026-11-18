@@ -85,12 +85,66 @@ The agent logs `central connection lost` on every disconnect and retries with ba
   account was deleted, disabled or unbound in the meantime fails with a message saying so.
 - A launch waits while the space is paused, relocating, or at its run limit ([limits](/guide/limits)).
 
+## After a node agent restart
+
+A restart of the node agent ends runs that it could not keep: herdr-core reports the exit as `stopped_by_restart`.
+
+- **Worker and diagnostic runs that hold a task are resumed by central**, after 15, 30 and 60 seconds, as a new run of the same instance
+  in the same worktree with the same account, continuing the session. Look at the space's limit waits: the wait has the
+  cause `agent_restart` (`cause` in the API). At most 3 resumes happen in a row; a run that lived 30 minutes starts the
+  count again. After that the task is `ready` again and control is told to relaunch it.
+- **Not resumed:** a run without a task, a task already in review (it stays in review, and control gets the ordinary
+  run-ended notice), a run somebody stopped, a control run (the supervisor restarts it), and any run whose node was gone
+  so long that the stale-run sweeper ended it (control hears the run-ended notice and relaunches).
+- **Recordings** show a gap where the agent was down; see below.
+- **Role renames** with a memory move still open continue at the node's next start.
+
+## The node's disk is full
+
+A full disk on the node does not stop the run or its live terminal. The node keeps numbering and shipping the run's output
+to central, so central's copy and the live view go on, and tries the disk again after 5 seconds, doubling up to a minute.
+The node's own local recording has a gap until space is freed, then continues in a new segment. Output written while the
+disk was full is missing from the local copy, and also from central's if it could not be shipped meanwhile (the node
+disconnected during more than about 1 MiB of output, or the agent restarted while disconnected). The agent logs
+`the local recording cannot be written` and, once it writes again, `the local recording is written again`. Node agents
+older than v0.1.11 end the recording with a `trunc` record (`disk`) instead and drop the rest. Free space on the node
+(old `runs/<id>/recording` folders and worktrees are the usual cause). Memory checkpoints and worktrees also need the
+disk, so free it promptly. On central, a full data disk shows as `disk_full` or `disk_reserve` in the readiness codes
+above. Central acknowledges a recording only up to what it has durably stored, so a write failure there makes the node
+ship the missing records again instead of deleting them. See [known limitations](/reference/limitations).
+
+## Live terminals are empty after an agent restart
+
+Before v0.1.11, a restarted node agent re-shipped every journaled run's recording from the start, one run at a time, and
+held back the live output of runs it had not reached, so live terminals stayed empty for a long time on a node with many
+old runs. Now the agent persists what central acknowledged (`recording-acked` in each run's folder), catches up live runs
+first and serves a waiting run between the batches of another, and paces the history of ended runs at 8 MiB/s. After a
+restart, live terminals fill within moments. Central's old copy is unchanged, and a node first learns central's sequence
+before it numbers an adopted run's new output, so nothing is numbered twice. The first restart after the upgrade still
+re-ships all history once, because there is no `recording-acked` yet; that re-shipping is paced and runs behind live
+output. Until central answers, a restarted agent holds a run's new output (up to 4 MiB) before numbering it, and drops
+output past that with a `gap` (`sequence-unknown`). So "fill within moments" holds once central is reachable.
+
+## Memory checkout refused
+
+The node refuses to use a memory checkout whose git state is unsafe (see
+[what never travels through memory](../guide/memory.md#what-never-travels-through-memory)). The node logs "role memory unavailable for this run" with a reason that usually starts with `checkout refused:`,
+`memory checkout:` or "the repository's git configuration sets …", and names it: `.git` is not a plain directory, the git dir, common dir or work tree is not
+the checkout's own, `.git/config` or hooks would run a program, a nested `.git`, a submodule or gitlink, or a FIFO in the
+work tree. The checkout lives under `<data dir>/memory/<space>/<role>/instances/<instance>`. Fix what the message names,
+or delete that instance's checkout (its unsynced changes are lost; the shared history is not) so the next run creates a
+clean one. The run itself still starts, without memory, and its checkpoints fail until then. Harness files such as
+`.claude/skills` in a memory checkout are removed once, the first time the node guards the checkout after the upgrade (a
+run start or a checkpoint); later ones stay local and unshared. That is not a fault.
+
 ## Recordings have gaps
 
 The recorder attaches to a terminal as an observer. When it has to re-attach (for example after an agent restart),
 herdr-core cannot replay what was written meanwhile, so SpaceMan records an explicit **gap** and the repaint that
 follows; that output is not recoverable. A **truncated** badge means the recording reached its size limit. A node that
-lost central uploads its local copy when it reconnects. See [terminals and recordings](./terminals).
+lost central uploads its local copy when it reconnects, live runs first. Central acknowledges a recording only up to what it has durably stored, so a storage failure on central leads the node to send the missing records again instead of deleting them. When the node's disk is full, the live view
+goes on and the node's local copy has a gap until space is freed: the node agent logs `the local recording cannot be
+written` and, once it writes again, `the local recording is written again`. See [terminals and recordings](./terminals).
 
 ## Sign-in problems
 

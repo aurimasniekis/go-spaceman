@@ -1,4 +1,4 @@
-import { Button, Group, Menu, NumberInput, Popover, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
+import { Button, Group, Loader, Menu, NumberInput, Popover, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { IconCheck, IconChevronDown, IconDimensions } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
@@ -116,6 +116,8 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   const [busy, setBusy] = useState(false)
   const path = { space_id: spaceId, run_id: run.id }
   const reasonId = useId()
+  const trigger = useRef<HTMLButtonElement>(null)
+  const colsInput = useRef<HTMLInputElement>(null)
   const current = useRef(run.terminal_size)
   useEffect(() => {
     current.current = run.terminal_size
@@ -142,6 +144,8 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   }, [qc, spaceId, run.id])
 
   const apply = async (c: SizeChoice) => {
+    // The trigger stays focusable while busy (a disabled button would drop focus), so a choice made meanwhile is ignored.
+    if (busy) return
     setChoice(c)
     saveChoice(c)
     setCustom(false)
@@ -213,9 +217,22 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   // An out-of-range number is shown as it is, with the field marked (not clamped silently).
   const colsBad = typeof cols === 'number' && (cols < BOUNDS.minCols || cols > BOUNDS.maxCols)
   const rowsBad = typeof rows === 'number' && (rows < BOUNDS.minRows || rows > BOUNDS.maxRows)
+  // The menu closes and returns focus to its trigger after the popover has opened, which beats the popover's own focus
+  // trap, so Esc would never reach the popover. Move focus into the form once that has settled.
+  useEffect(() => {
+    if (!custom) return
+    // Retried until it takes: on a loaded machine the menu's focus return can land after the first attempt.
+    let tries = 0
+    const t = setInterval(() => {
+      const el = colsInput.current
+      el?.focus()
+      if ((el && document.activeElement === el) || ++tries >= 20) clearInterval(t)
+    }, 50)
+    return () => clearInterval(t)
+  }, [custom])
   const button = (
-    <Button size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
-      loading={busy} aria-label={`Terminal size: ${sizeLabel(run)}`} data-testid="terminal-size">
+    <Button ref={trigger} size="compact-xs" variant="default" leftSection={busy ? <Loader size={12} /> : <IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
+      aria-busy={busy} aria-label={`Terminal size: ${sizeLabel(run)}`} data-testid="terminal-size">
       {sizeLabel(run)}{fitting ? ' · fit' : ''}
     </Button>
   )
@@ -234,11 +251,15 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
       </>
     )
   }
+  // withRoles is off: the popover's target is a plain span around the menu, whose button carries the menu's own ARIA;
+  // Popover.Target would add aria-haspopup/aria-expanded to a span with no role (axe aria-allowed-attr).
   return (
-    <Popover opened={custom} onChange={setCustom} position="bottom-start" withinPortal trapFocus>
+    <Popover opened={custom} onChange={(o) => { setCustom(o); if (!o) trigger.current?.focus() }} position="bottom-start" withinPortal trapFocus withRoles={false} closeOnEscape={false}>
       <Popover.Target>
         <span>
-          <Menu position="bottom-start" withinPortal>
+          {/* No initial-focus placeholder: it is a bare div[tabindex] inside role="menu", which axe rejects
+              (aria-required-children). The menu moves focus to its items by keyboard on its own. */}
+          <Menu position="bottom-start" withinPortal withInitialFocusPlaceholder={false}>
             <Menu.Target>{button}</Menu.Target>
             <Menu.Dropdown>
               <Menu.Label>Size of the run’s terminal</Menu.Label>
@@ -255,20 +276,26 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
           </Menu>
         </span>
       </Popover.Target>
-      <Popover.Dropdown>
-        <form onSubmit={(e) => { e.preventDefault(); if (customValid) void apply({ kind: 'fixed', cols: cols, rows: rows }) }}>
+      {/* closeOnEscape is off on the Popover: Mantine refocuses the menu item (which is unmounting) after an Esc close,
+          so focus would land on <body>. Esc is handled here and returns focus to the trigger. */}
+      <Popover.Dropdown role="dialog" aria-label="Custom terminal size"
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setCustom(false); trigger.current?.focus() } }}>
+        {/* While a resize is in flight a submit is ignored, and focus stays in the form so the typed size is not lost. */}
+        <form onSubmit={(e) => { e.preventDefault(); if (busy || !customValid) return; void apply({ kind: 'fixed', cols: cols, rows: rows }); trigger.current?.focus() }}>
           <Stack gap="xs">
             <Group gap="xs" wrap="nowrap" align="flex-end">
               <NumberInput label="Columns" w={96} min={BOUNDS.minCols} max={BOUNDS.maxCols} clampBehavior="none" allowDecimal={false} allowNegative={false}
-                value={cols} onChange={setCols} error={colsBad} data-testid="terminal-size-cols" />
+                ref={colsInput} data-autofocus value={cols} onChange={setCols} error={colsBad} data-testid="terminal-size-cols" />
               <Text pb={6}>×</Text>
               <NumberInput label="Rows" w={88} min={BOUNDS.minRows} max={BOUNDS.maxRows} clampBehavior="none" allowDecimal={false} allowNegative={false}
                 value={rows} onChange={setRows} error={rowsBad} data-testid="terminal-size-rows" />
             </Group>
             <Text size="xs" c="dimmed">{BOUNDS.minCols}–{BOUNDS.maxCols} columns, {BOUNDS.minRows}–{BOUNDS.maxRows} rows</Text>
             <Group justify="flex-end" gap="xs">
-              <Button size="xs" variant="default" onClick={() => setCustom(false)}>Cancel</Button>
-              <Button size="xs" type="submit" disabled={!customValid} data-testid="terminal-size-apply">Apply</Button>
+              {/* While busy Apply stays focusable (aria-disabled, not disabled: a disabled button drops focus to <body> and breaks Esc and the Tab trap); onSubmit ignores the submit. */}
+              <Button size="xs" variant="default" onClick={() => { setCustom(false); trigger.current?.focus() }}>Cancel</Button>
+              <Button size="xs" type="submit" disabled={!customValid} data-disabled={busy || undefined} aria-disabled={busy || undefined}
+                data-testid="terminal-size-apply">Apply</Button>
             </Group>
           </Stack>
         </form>

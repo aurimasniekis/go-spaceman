@@ -58,6 +58,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
+	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/repos"
 	"github.com/aurimasniekis/go-spaceman/internal/retention"
 	"github.com/aurimasniekis/go-spaceman/internal/schedule"
@@ -111,6 +112,8 @@ type Central struct {
 	Notifier *messages.Notifier
 	// Supervisor wakes control on actionable events and restarts it within bounds (SM-CTRL-002).
 	Supervisor *control.Supervisor
+	// Watchdog nudges a live control that leaves waiting work alone, and escalates (SM-CTRL-008, ADR-0099).
+	Watchdog *control.Watchdog
 	// GitKeys holds shared Git SSH keys (ADR-0058).
 	GitKeys *gitkeys.Service
 	// HarborPilot holds the Harbor Pilot connection and space settings (ADR-0060).
@@ -213,6 +216,9 @@ type Options struct {
 	StoreReaders int
 	// StaleRunGrace overrides the stale-run sweeper's grace period (tests; 0 keeps the default, ADR-0074).
 	StaleRunGrace time.Duration
+	// RecordingCreate creates the segment files of central's recording copies (tests inject a failing disk; nil uses
+	// the filesystem).
+	RecordingCreate func(path string) (recording.File, error)
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -281,7 +287,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock, WakeDeadlines: wakeDeadlines, StaleRunGrace: o.StaleRunGrace,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve, AccountHeadroom: usage.AccountHeadroomFunc(o.Clock.Now),
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RecordingCreate: o.RecordingCreate, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve, AccountHeadroom: usage.AccountHeadroomFunc(o.Clock.Now),
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
 			if err != nil {
@@ -326,6 +332,15 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		OnRunLaunched: func(string) {
 			if c.Human != nil {
 				c.Human.Kick() // a response held for the run's instance goes to it (SM-HUM-009)
+			}
+		},
+		OnRoleRenameDone: func(string) {
+			// The rename's launch hold is lifted (ADR-0093): control waiting for work and held dreams start again.
+			if c.Notifier != nil {
+				c.Notifier.Kick()
+			}
+			if c.Dreams != nil {
+				c.Dreams.Kick()
 			}
 		},
 		OnRunEnded: func(runID string) {
@@ -490,6 +505,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	// Control lifecycle (ADR-0056): started for waiting work, stopped after its idle time.
 	c.Supervisor.Limit = func(ctx context.Context, spaceID, key string) int64 { return c.Limits.Value(ctx, nil, spaceID, key) }
 	c.Supervisor.ControlRole = c.Catalog.ControlRole
+	c.Supervisor.RoleName = c.Catalog.CurrentRoleName
+	c.Watchdog = control.NewWatchdog(c.Supervisor)
 	c.Notifier.ControlWanted = c.Supervisor.ControlWanted
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Human.Inbox = c.Inbox // routed responses become inbox items when the human policy says so (SM-INBOX-001)
@@ -509,6 +526,18 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Memory = memory.New(st, c.Audit, c.Changes, st.Path("memory"), gitBin, obs.Component(log, "memory"))
 	c.Memory.Outbox = c.Outbox
+	// A rename's central repository move that a crash interrupted is finished before any node connects (ADR-0093).
+	if err := c.Memory.FinishAllRenames(ctx); err != nil {
+		log.Warn("finish role renames' memory moves; each is retried when its space's memory is next used", obs.Err(err))
+	}
+	c.Catalog.AfterRename = func(ctx context.Context, r catalog.RoleRename) {
+		c.Memory.RenameCommitted(ctx, r.SpaceID)
+		if r.NodeID != "" {
+			c.Fleet.Hub().Kick(r.NodeID)
+		}
+	}
+	c.Catalog.AfterRenameRetry = func(_ context.Context, r catalog.RoleRename) { c.Fleet.Hub().Kick(r.NodeID) }
+	c.Catalog.AfterRenameClose = func(_ context.Context, r catalog.RoleRename) { c.Fleet.Hub().RoleRenameClosed(r.NodeID, r.ID) }
 	c.Fleet.Hub().Memory = c.Memory
 	c.Fleet.MemoryExport = c.Memory
 	c.Fleet.Grants = c.Auth
@@ -542,8 +571,10 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return nil, err
 	}
 	bc := cfg.Backups
+	sources := backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts)
+	sources.HoldMemory = c.Memory.HoldMoves
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
-		Sources: backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
+		Sources: sources, Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
 		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(),
 		StallTimeout: bc.StallTimeout.D(), MaxDuration: bc.MaxDuration.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
 		PrepareMemory: c.prepareBackupMemory})
@@ -579,8 +610,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory, c.Dreams.MemoryRolesOfRun), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
-	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue, c.Catalog), memory.Tools(c.Memory, c.Dreams.MemoryRolesOfRun), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
+	// Every agent tool call counts as its run's activity for the control watchdog (ADR-0099).
+	c.Fleet.Hub().Tools = c.Watchdog.Tools(c.Limits.ToolCalls(c.Tools.Dispatch))
 	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)
 	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), OnAccepted: c.gatewayQuotaKick, RateFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
@@ -716,7 +748,7 @@ func (c *Central) APIDeps() *api.Deps {
 		CatchUps: make(chan struct{}, max(1, c.Cfg.HTTP.CatchUpConcurrency)), CatchUpWait: c.Cfg.HTTP.CatchUpWait.D(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink), api.RegisterTelegramLinkPrefs(c.TelegramLink), api.RegisterTelegramMiniApp(c.TelegramMiniApp), api.RegisterTelegramDownloads(c.TelegramDownloads, c.Attachments, c.miniAppOrigin)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterWatchdog(c.Watchdog), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink), api.RegisterTelegramLinkPrefs(c.TelegramLink), api.RegisterTelegramMiniApp(c.TelegramMiniApp), api.RegisterTelegramDownloads(c.TelegramDownloads, c.Attachments, c.miniAppOrigin)},
 		Raw: rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
 		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch, Sessions: c.TelegramMiniApp, MiniAppOrigin: c.miniAppOrigin,
 			EnforcedApproval: c.enforcedApproval, ApprovalsInChat: c.approvalsInChat, SpaceFeature: c.telegramSpaceFeature, Confirmations: c.TelegramConfirmations}}
@@ -944,6 +976,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		// The Telegram digest, at each linked user's own wall-clock time: it reads memory and only enqueues (ADR-0083).
 		human.Deadline{Name: "telegram.digest", Next: c.TelegramNotify.NextDigest, Due: c.TelegramNotify.DigestDue})
 	go c.Notifier.Run(ctx)
+	// The control watchdog: one pass a minute over the active spaces with a live control (ADR-0099).
+	go c.Watchdog.Run(ctx)
 	// Telegram links: the cache loads before the dispatcher's workers run, so the first update already sees them.
 	c.TelegramLinks.Start(ctx)
 	// Telegram updates: the dispatcher's workers (the webhook answers 503 until they run).
@@ -1031,7 +1065,7 @@ func (c *Central) housekeeping(ctx context.Context) {
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
-		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
+		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil), api.RegisterWatchdog(nil),
 		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil), api.RegisterTelegramBot(nil), api.RegisterTelegramSettings(nil), api.RegisterTelegramLink(nil), api.RegisterTelegramLinkPrefs(nil), api.RegisterTelegramMiniApp(nil), api.RegisterTelegramDownloads(nil, nil, nil)},
 		Raw: rawRoutes(nil, nil, nil, nil)}
 }
@@ -1045,7 +1079,7 @@ func rawRoutes(f *fleet.Service, att *attachments.Service, us *usage.Service, ex
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules, api.TelegramBotRules, api.TelegramSettingsRules, api.TelegramLinkRules, api.TelegramLinkPrefsRules, api.TelegramMiniAppRules, api.TelegramDownloadRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.WatchdogRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules, api.TelegramBotRules, api.TelegramSettingsRules, api.TelegramLinkRules, api.TelegramLinkPrefsRules, api.TelegramMiniAppRules, api.TelegramDownloadRules} {
 		for k, v := range m {
 			out[k] = v
 		}

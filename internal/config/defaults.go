@@ -51,6 +51,7 @@ func Default() *Config {
 		Limits: LimitsConfig{MaxConcurrentRuns: 8, MaxTopLevelTasks: 1, MaxKBSessions: 8, SupportDepth: 1, MaxHumanPending: 500,
 			MaxHumanPendingPerRun: 25, MaxToolCallsPerRun: 5000, IngestPerMinute: 600, EventDepth: 8, BudgetWarnPercent: 80, RecordingQuotaBytes: 512 << 20,
 			ExportMaxBytes: 2 << 30, ControlAutostart: 1, ControlIdleStopMinutes: 30,
+			ControlWatchdogMinutes: 15, ControlWatchdogNudges: 3,
 			UsageLimitKeepAliveMaxMinutes: 360, UsageLimitMaxWaitHours: 168, UsageLimitNotifyAfterHours: 12,
 			UsageLimitWaitIfResetWithin: 15, UsageLimitSwitchMaxPerDay: 6},
 		Shutdown: ShutdownConfig{Timeout: Duration(30 * time.Second)},
@@ -92,5 +93,6 @@ func DefaultAgent() *AgentConfig {
 		Log:              defaultLog(),
 		Capacity:         4,
 		JournalRetention: Duration(30 * 24 * time.Hour),
+		Memory:           AgentMemoryConfig{FastForward: true},
 	}
 }

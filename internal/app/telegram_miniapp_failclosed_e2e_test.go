@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -435,7 +437,7 @@ func miniAppLoadBeforeListeningOnce(t *testing.T) (portTaken bool) {
 			stopped = true
 		default:
 		}
-		if serveErr != nil && strings.Contains(serveErr.Error(), "address already in use") {
+		if serveErr != nil && errors.Is(serveErr, syscall.EADDRINUSE) {
 			return true
 		}
 		t.Fatalf("Serve never answered (%d refused in %s, Serve returned: %v)", firstRefused, time.Since(startedAt).Round(time.Millisecond), serveErr)
@@ -455,7 +457,7 @@ func miniAppLoadBeforeListeningOnce(t *testing.T) (portTaken bool) {
 		select {
 		case serveErr = <-served:
 			stopped = true
-			if strings.Contains(serveErr.Error(), "address already in use") {
+			if serveErr != nil && errors.Is(serveErr, syscall.EADDRINUSE) {
 				return true
 			}
 		case <-time.After(30 * time.Second):

@@ -2,6 +2,10 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -13,6 +17,7 @@ var (
 	profileCols  = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("HARNESS", "harness"), c("MODEL", "model"), c("REVISION", "revision")}
 	templateCols = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("KIND", "kind"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("REVISION", "revision")}
 	starterCols  = []col{c("ROLE", "name"), c("KIND", "kind"), c("TEMPLATE", "template"), c("TEMPLATE ID", "template_id"), c("DESCRIPTION", "description")}
+	renameCols   = []col{c("ID", "id"), c("FROM", "from"), c("TO", "to"), c("NODE", "node_state"), c("RENAMED", "renamed_at"), c("BY", "renamed_by")}
 	roleCols     = []col{c("NAME", "name"), c("TEMPLATE", "template_id"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("MODEL", "model"), c("REVISION", "revision")}
 	connCols     = []col{c("ID", "id"), c("NAME", "name"), c("URL", "url"), c("STREAM", "stream"), c("CLIENT", "client_id"), c("ENABLED", "enabled")}
 	etplCols     = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("BUILTIN", "builtin"), {head: "VERSIONS", fn: countOf("versions")}}
@@ -136,6 +141,9 @@ func (a *App) promptCmd() *cobra.Command {
 				f.str("name", "name", "name (required)").str("kind", "kind", "role, dream, kb, event or general (required)").
 					str("description", "description", "description").text("body", "body", "first draft")
 			}}),
+		a.cmd(opts{use: "update", short: "Change a prompt's name or description in place (only the flags given change; no new version)", op: "update-prompt", get: "get-prompt",
+			canonical: "prompt_id", merge: true, args: pos("prompt"),
+			form: func(f *form) { f.str("name", "name", "name").str("description", "description", "description") }}),
 		a.cmd(opts{use: "draft", short: "Save the prompt's draft (starts one when there is none)", op: "save-prompt-draft", get: "get-prompt", canonical: "prompt_id",
 			args: pos("prompt"), version: draftVersion, optionalIfMatch: true,
 			example: "spaceman prompt draft control --body-file control.md --notes \"tighten escalation\"",
@@ -163,6 +171,9 @@ func (a *App) skillCmd() *cobra.Command {
 	return group("skill", "Skill catalog: list, show, create, draft and publish", []string{"skills"},
 		a.cmd(opts{use: "list", short: "The skill catalog", op: "list-skills", alias: []string{"ls"}, view: view{items: "items", cols: skillCols, empty: "No skills."}}),
 		a.cmd(opts{use: "get", short: "A skill with its versions and files", op: "get-skill", args: pos("skill")}),
+		a.cmd(opts{use: "update", short: "Change a skill's name or description in place (only the flags given change; no new version)", op: "update-skill", get: "get-skill",
+			canonical: "skill_id", merge: true, args: pos("skill"),
+			form: func(f *form) { f.str("name", "name", "name").str("description", "description", "description") }}),
 		a.cmd(opts{use: "publish", short: "Publish the skill's draft", op: "publish-skill", get: "get-skill", canonical: "skill_id", args: pos("skill"), version: draftVersion,
 			prepare: needVersion("the skill has no draft to publish")}),
 	)
@@ -193,11 +204,105 @@ func (a *App) profileCmd() *cobra.Command {
 	)
 }
 
+// skillRefs turns the repeated --skill <skill>[@<version>] values into the API's skills list. A skill is an ID (skl_…) or a
+// slug; a version is an ID (skv_…) or a published version number. Slugs and numbers resolve through the space's role options,
+// which is skipped when every value is already an ID.
+func (a *App) skillRefs(ctx context.Context, _ *cobra.Command, c *call, body map[string]any) error {
+	raw, ok := body["skill"].([]any)
+	if !ok {
+		return nil
+	}
+	delete(body, "skill")
+	type parsed struct{ name, pin string }
+	var in []parsed
+	needLookup := false
+	for _, r := range raw {
+		s, ok := r.(string)
+		if !ok {
+			return usageErrorf("skill takes a string like <skill> or <skill>@<version>, got %v", r)
+		}
+		name, pin, _ := strings.Cut(s, "@")
+		if name == "" {
+			return usageErrorf("--skill takes <skill> or <skill>@<version>, got %q", s)
+		}
+		if !strings.HasPrefix(name, "skl_") || (pin != "" && !strings.HasPrefix(pin, "skv_")) {
+			needLookup = true
+		}
+		in = append(in, parsed{name, pin})
+	}
+	var skills []any
+	if needLookup {
+		res, err := a.do(ctx, call{op: "list-role-options", params: map[string]string{"space_id": c.params["space_id"]}})
+		if err != nil {
+			return err
+		}
+		obj, err := res.Object()
+		if err != nil {
+			return err
+		}
+		skills, _ = obj["skills"].([]any)
+	}
+	refs := []any{}
+	for _, p := range in {
+		id, pin := p.name, p.pin
+		if needLookup {
+			var err error
+			if id, pin, err = lookupSkill(skills, p.name, p.pin); err != nil {
+				return err
+			}
+		}
+		ref := map[string]any{"skill_id": id}
+		if pin != "" {
+			ref["pin"] = pin
+		}
+		refs = append(refs, ref)
+	}
+	body["skills"] = refs
+	return nil
+}
+
+// lookupSkill resolves one --skill value against the role options' skills.
+func lookupSkill(skills []any, name, pin string) (id, versionID string, err error) {
+	var match []map[string]any
+	for _, it := range skills {
+		m, _ := it.(map[string]any)
+		if m["id"] == name || m["slug"] == name {
+			match = append(match, m)
+		}
+	}
+	switch len(match) {
+	case 0:
+		return "", "", &APIError{Status: http.StatusNotFound, Code: "not_found", Detail: fmt.Sprintf("no skill with ID or slug %q", name)}
+	case 1:
+	default:
+		return "", "", usageErrorf("%d skills match %q; use the skill ID", len(match), name)
+	}
+	id = fmt.Sprint(match[0]["id"])
+	switch {
+	case pin == "", strings.HasPrefix(pin, "skv_"):
+		return id, pin, nil
+	}
+	n, perr := strconv.Atoi(pin)
+	if perr != nil || n < 1 {
+		return "", "", usageErrorf("--skill version %q is neither a version ID (skv_…) nor a published version number", pin)
+	}
+	vs, _ := match[0]["versions"].([]any)
+	for _, v := range vs {
+		m, _ := v.(map[string]any)
+		if fmt.Sprint(m["number"]) == strconv.Itoa(n) {
+			return id, fmt.Sprint(m["id"]), nil
+		}
+	}
+	return "", "", &APIError{Status: http.StatusNotFound, Code: "not_found", Detail: fmt.Sprintf("skill %q has no published version %d", name, n)}
+}
+
 func (a *App) roleCmd() *cobra.Command {
 	role := func(f *form) {
 		f.str("template", "template_id", "role template ID (required for a new role)").str("profile", "profile_id", "harness profile ID").
 			str("prompt", "prompt_id", "prompt ID").str("prompt-pin", "prompt_pin", "published prompt version to pin (empty follows the latest)").
-			str("model", "model", "model").kv("setting", "settings", "harness setting").text("instructions", "instructions", "role instructions")
+			str("model", "model", "model").kv("setting", "settings", "harness setting").text("instructions", "instructions", "role instructions").
+			str("description", "description", "what the role is for in this space, at most 2000 characters (empty uses the template's)").
+			list("skill", "skill", "skill to keep on the role (ID or slug), optionally pinned as <skill>@<version> (a published version number or ID; no pin follows the latest). Replaces the role's own skills; \"\" clears them")
 	}
 	tplForm := func(f *form) {
 		f.str("name", "name", "name").str("description", "description", "description").str("profile", "profile_id", "harness profile ID").
@@ -228,11 +333,32 @@ func (a *App) roleCmd() *cobra.Command {
 		a.cmd(opts{use: "list", short: "A space's roles", op: "list-space-roles", alias: []string{"ls"}, scoped: true,
 			view: view{items: "items", cols: roleCols, empty: "No roles."}}),
 		a.cmd(opts{use: "get", short: "Show one of a space's roles", op: "get-space-role", scoped: true, args: pos("name")}),
-		a.cmd(opts{use: "set", short: "Configure a role in a space (creates it, or replaces its configuration)", op: "save-space-role", scoped: true,
-			args: pos("name"), form: role}),
+		a.cmd(opts{use: "set", short: "Configure a role in a space (creates it, or replaces its configuration, skills included)", op: "save-space-role", scoped: true,
+			long: "Creates the role, or replaces its whole configuration: every field not given is cleared. Without --skill, the skills this space\n" +
+				"role adds are cleared too (the template's skills stay); repeat --skill for each one to keep.",
+			example: "spaceman role set --space payments reviewer --template tpl_01... --skill skl_01... --skill release-notes@2",
+			args:    pos("name"), form: role, prepare: a.skillRefs}),
 		a.cmd(opts{use: "preview", short: "A role's effective configuration and where each value comes from", op: "preview-space-role", scoped: true,
 			args: pos("name")}),
 		a.cmd(opts{use: "delete", short: "Remove a role from a space", op: "delete-space-role", scoped: true, args: pos("name"), done: "Role removed."}),
+		a.cmd(opts{use: "rename", short: "Rename a role in place: its configuration, pending work and memory follow", op: "rename-space-role", scoped: true,
+			get: "get-space-role", optionalIfMatch: true, version: roleRevision,
+			args: pos("name"), form: func(f *form) { f.str("to", "new_name", "the new name (required)") }, note: renameNote,
+			example: "spaceman role rename implementor --to implementor-hard --space payments"}),
+		a.cmd(opts{use: "retry-rename", short: "Send a stuck role rename's memory move to the node again (admins)", op: "retry-space-role-rename", scoped: true,
+			args: pos("rename-id"), note: retryRenameNote,
+			example: "spaceman role retry-rename rrn_01... --space payments"}),
+		a.cmd(opts{use: "close-rename", short: "Give up a stuck role rename's memory move: holds lift, the node's old folder stays as an orphan (admins)",
+			op: "close-space-role-rename", scoped: true, args: pos("rename-id"), form: func(f *form) {
+				f.str("reason", "reason", "why the move is given up").
+					boolean("forget-node", "forget_node", "also stop waiting for the node to receive the rename: releases both names for other renames; "+
+						"a node that comes back keeps the old folder as an orphan")
+			},
+			confirm: "give up the node's memory move (the old folder stays on the node, never synced again)",
+			note:    closeRenameNote,
+			example: "spaceman role close-rename rrn_01... --space payments --reason \"node retired\" --forget-node --yes"}),
+		a.cmd(opts{use: "renames", short: "A space's role renames, newest first, and the state of each memory move", op: "list-space-role-renames", scoped: true,
+			view: view{items: "items", cols: renameCols, empty: "No role renames."}}),
 		a.cmd(opts{use: "add-starters", short: "Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer)",
 			op: "add-starter-roles", scoped: true, example: "spaceman role add-starters --space payments"}),
 		tpl,
@@ -439,4 +565,36 @@ func (a *App) approvalPolicyCmd() *cobra.Command {
 		a.cmd(opts{use: "delete", short: "Remove a policy (approvals it produced stay usable until they expire)", op: "delete-approval-policy",
 			args: pos("policy"), done: "Approval policy removed."}),
 	)
+}
+
+// closeRenameNote says what a close did and left behind.
+func closeRenameNote(map[string]any) string {
+	return "Rename closed. Launches are no longer held; central's memory stays under the new name and the node's old folder is orphaned, not deleted. " +
+		"Until the node has received the rename, other renames of either name stay blocked; --forget-node releases them."
+}
+
+// retryRenameNote says what a retry left to do.
+func retryRenameNote(m map[string]any) string {
+	if m["node_too_old"] == true {
+		return "Queued, but the node last spoke a protocol below 1.14: the move is sent when it connects at 1.14 or more. Upgrade it, or close the rename."
+	}
+	if m["queued"] == true {
+		return "The move was queued again; launches stay held until the node reports it done."
+	}
+	return "A move is still waiting for the node; woke its delivery."
+}
+
+// roleRevision is the version a role rename checks with If-Match: the role's revision, which the API compares, not the
+// row's version.
+func roleRevision(m map[string]any) string { return numberString(m["revision"]) }
+
+// renameNote tells the operator what a rename left to do: "Role renamed.", and when the node still has to move the
+// role's memory, that launches of the role wait for it.
+func renameNote(m map[string]any) string {
+	out := "Role renamed."
+	if rn, _ := m["rename"].(map[string]any); rn != nil && rn["node_state"] == "pending" {
+		node, _ := rn["node_id"].(string)
+		out += " The role's memory moves when node " + node + " reconnects and reports; launches of the role wait until then."
+	}
+	return out
 }

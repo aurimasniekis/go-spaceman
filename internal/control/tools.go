@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
@@ -18,7 +19,7 @@ import (
 
 type launchIn struct {
 	TaskID  string `json:"task_id" jsonschema:"the ready, eligible task the worker implements"`
-	Role    string `json:"role" jsonschema:"the worker's role, e.g. implementor-backend or reviewer"`
+	Role    string `json:"role" jsonschema:"the worker's role (a name from spaceman_roles_list, which says what each role is for and what it runs on)"`
 	Harness string `json:"harness,omitempty" jsonschema:"claude-code or codex (default: the same as yours)"`
 	Prompt  string `json:"prompt,omitempty" jsonschema:"extra instructions for the worker, added after the task"`
 	Model   string `json:"model,omitempty"`
@@ -46,9 +47,14 @@ type RunRow struct {
 	Limit *fleet.RunLimit `json:"limit,omitempty"`
 }
 
+// RoleLister lists a space's roles with their effective description, harness and model (catalog.Service).
+type RoleLister interface {
+	RoleOverviews(ctx context.Context, spaceID string) ([]catalog.RoleOverview, error)
+}
+
 // Tools registers the orchestration tools (control only, SM-CTRL-001/003). Workers cannot launch runs at all, and no
 // tool launches a control run, so a worker can never promote itself or start another control.
-func Tools(fl *fleet.Service, q *queue.Service) func(r *agenttools.Registry) {
+func Tools(fl *fleet.Service, q *queue.Service, roles RoleLister) func(r *agenttools.Registry) {
 	ctrl := []string{agenttools.KindControl}
 	all := []string{agenttools.KindControl, agenttools.KindWorker, agenttools.KindKB, agenttools.KindDreamer, agenttools.KindDiagnostic}
 	return func(r *agenttools.Registry) {
@@ -77,6 +83,15 @@ func Tools(fl *fleet.Service, q *queue.Service) func(r *agenttools.Registry) {
 						Limit: x.Limit})
 				}
 				return out, nil
+			})
+		agenttools.Add(r, "spaceman_roles_list", "List your space's roles (control only): name, kind, what the role is for (description and whether it is the space role's own or the "+
+			"template's), template, and the harness and model it runs on. Use it to choose the role for spaceman_worker_launch. It never returns prompts, settings, skills or accounts.",
+			ctrl, true, func(ctx context.Context, p *fleet.RunPrincipal, _ struct{}) (any, error) {
+				l, err := roles.RoleOverviews(ctx, p.SpaceID)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"roles": l}, nil
 			})
 		agenttools.Add(r, "spaceman_worker_launch", "Start a worker run for a ready, eligible task (control only). The task becomes running and is assigned to the "+
 			"worker; with repo set, the worker gets its own git worktree so writers never share a working tree. The worker reports with "+

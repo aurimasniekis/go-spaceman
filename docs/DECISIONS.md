@@ -129,6 +129,62 @@
   - **Gaps.** A reattach after `missed` or a restart emits a `gap` record.
   - **Upload.** Closed segments are uploaded to central storage.
   - **Fallback.** If the frames cannot be decoded reliably, a PTY tee shim inside the terminal records instead. A decision update would record that switch.
+- **Addendum (2026-11-17): central acknowledges only a durable, contiguous prefix (SM-REC-003).** Central acks a node's
+  recording chunk with `recording.Writer.Stored()`, and the node prunes every record at or below its highest ack. So
+  `Stored()` = N means *every record at or below N that the recording will ever hold is synced to disk and none is
+  missing below N*, apart from jumps the node itself made (records it never had: `SkipTo`, its own lost disk). Three
+  rules keep that true when central's disk fails:
+  - **Unsynced tails are cut.** A failed write or sync closes the segment and truncates it to its size at the last
+    successful sync (tracked per segment). A frame written after that may still decode from the page cache without
+    being on disk, so a writer reopened later would otherwise ack it. If the cut fails, central does not reopen the
+    recording (every chunk fails) until a retry of the cut succeeds.
+  - **No storing past the hole.** A failed writer is dropped and reopened from disk on the next chunk, and the run is
+    marked with the connection the failure happened on. On that connection, a chunk whose first new record is above
+    `Stored()+1` (records the node sent behind the lost ones) is not stored and is acked `Stored()`. A chunk that starts
+    at or below `Stored()+1` ends the mark. So does any chunk on a later connection, because the node's catch-up
+    re-ships from its acknowledgement first, and a jump there is one the node made itself. Refusing it would stall the
+    recording for good.
+  - **The node re-ships because central closes the connection.** Any chunk central could not store (open, write or
+    sync failure) is acked with what is stored, and then the hub closes the node connection (1013, try again later).
+    Messages queued behind the chunk are never read. The node re-ships records above its acknowledgement only in the
+    catch-up pass of a new connection, and that pass runs before the run's live output (`shipLive`). So the close is
+    what makes the node fill the hole. We chose this over a node-side rule ("an ack below what was sent starts a
+    catch-up") for three reasons. First, an ack below the sent sequence is also the normal state while chunks are in
+    flight, so the node could not tell a lost chunk from a slow one without per-chunk correlation or a protocol
+    change. Second, the close needs no protocol change. Third, it leaves the
+    node's ack and catch-up handling (`internal/agent/record.go`, including the persisted acknowledgements of
+    ADR-0097) unchanged.
+  - **Consequence: what a close costs, and when central closes.** Closing the connection runs the node's disconnect
+    handling: every live run of the node is marked `unknown` and its live terminals are cut, until the node reconnects
+    (its backoff is 1 s, doubling to a 30 s cap) and reports them. A space's lease is not revoked by it, but the
+    reconnect has to land within the lease TTL margin or the node's spaces lose their lease. Central therefore closes
+    only when a re-ship can help, and at most once per run and connection. A write or sync failure closes (once;
+    chunks already on their way behind it are refused in the backoff without closing again, and a refusal on a *new*
+    connection, which needs a re-ship, closes it once more). A recording that cannot be opened (permissions, the
+    object store) does not: central logs it, acks the chunk with what is stored (no ack at all when that is 0: ADR-0097
+    addendum, decision 3) and stores
+    nothing past that hole on the connection, so the node keeps the records and re-ships them on its next
+    connection, whenever that is. Such a recording can stall until then; the alternative, a reconnect per failing run
+    every few seconds, would flap every other run of the node. A storage failure that persists (a cut that keeps
+    failing, a disk that stays broken) closes each new connection once while it holds, so at the node's reconnect
+    backoff rate (about once per 30 s at its cap), and every such close marks the node's live runs unknown.
+  - **Older nodes.** Agents before v0.1.4 ship live output *before* the catch-up on a connection (`proto.MinMinor` is
+    0, so they are accepted). On a new connection their first live chunk can jump past the hole, end the resync mark
+    and be acked over it, so for them the close does not guarantee a gap-free copy: the hole can stay as a
+    gap in central's recording. The mark is not kept across connections for them (the node's
+    catch-up on that connection cannot be told apart from its own jumps).
+  - **Marks are pruned.** The marks above are dropped when the run ends and when the run has not been shipped to for
+    an hour (swept every minute), except a failed segment tail that cannot be cut yet. The resync mark is not aged: it
+    guards a live connection, so it ends with that connection (the hub's disconnect) or with the run.
+  - **Reopen backoff.** After a failure central does not open the run's recording again for a short while (5 s). Opening
+    reads the whole recording under the global lock, and a failed flush used to leave a new empty segment behind. A
+    chunk inside the window is refused without touching the disk: it is acked with what was stored when the writer
+    failed, and the hub still closes the connection, as for any chunk that is not stored (without the close the node
+    never re-ships). A failed segment with nothing synced is removed rather than truncated to zero bytes. A successful
+    chunk ends the backoff.
+  - **Limitation.** A process restart right after a failed sync can still find that frame in the page cache. Linux
+    reports a writeback error only to file descriptors that were open when it happened, so the new process cannot
+    detect it. The cut covers failures within one central process.
 
 ### ADR-0011 — Pulse ingestion: one durable consumer per subscription generation
 - **Status:** accepted; contract details in `docs/contracts/pulse.md`
@@ -396,6 +452,32 @@
   - Central needs `git` to store memory; without it, syncs are refused and the UI says so.
   - Changes newer than the last acknowledgement exist only on the node.
   - Rewritten history (e.g. after a restore) is preserved but not applied; reconciling it is a person's decision.
+
+- **Addendum, 2026-11-17 — harness configuration never travels through role memory (security-relevant change).**
+  - Context: the checkout is passed to Claude Code with `--add-dir`, which loads `.claude/skills` and `.claude/commands`
+    from it as project skills and commands (seen on Claude Code 2.1.325, and on 2.1.326 with folder trust; its prompt also
+    mentions the folder's git settings). Role memory is shared by every instance of a role, so a skill or command one
+    instance wrote would become active in all of them. Two options: (a) the node refuses harness-config paths, (b) memory
+    is documented as trusted like code. (a) is chosen: memory stays notes, never a channel that carries behaviour, in line
+    with the memory hardening of ADR-0094 and the node's Git hardening above.
+  - Decision: the node writes two files into each checkout's `.git` before it creates, moves or stages one:
+    `info/exclude`, so `.claude/`, `.codex/` and `.agents/` (at any depth) and a top-level `.mcp.json` are never staged,
+    and `info/sparse-checkout` (non-cone, `core.sparseCheckout`), so those paths are never written to the working tree
+    when a checkout is reset to, fast-forwarded onto or merged with history that already holds them (pushed by an older
+    agent). `prepare` applies it to an existing checkout too (`sparse-checkout reapply`), which removes such files from
+    its working tree. A conflict preserve skips such paths. `CLAUDE.md` and `AGENTS.md` notes stay allowed: they are text.
+  - Why on the node and not at central: the node is the only place memory is materialised and loaded by a harness, a
+    sparse checkout keeps the tree clean (no dirty status, so fast-forward is not blocked), and rejecting a bundle at
+    central would stall a whole collection's sync over one bad commit. Central keeps the history it was given, old
+    commits included; history is not rewritten. Central's file listing may therefore still show such paths.
+  - Limits: the agent can edit its own `.git` (see above), so this is a guard against accident and against content
+    arriving from other instances, not a sandbox; the guard is rewritten on every checkpoint and prepare. A harness-config
+    file an instance writes into its own checkout is never staged or shared. It is removed from that checkout's working
+    tree only by `sparse-checkout reapply`, which `prepare` runs when `core.sparseCheckout` was not already true (a
+    checkout created before this filter); later files stay local until the operator removes them. Memory content is
+    still untrusted text (AGENTS.md): it is never an authority source.
+  - Evidence: `TestMemoryHarnessConfigDoesNotTravel`, `TestMemoryHarnessConfigInOldHistoryIsNotMaterialised`,
+    `TestMemoryHarnessConfigRemovedFromExistingCheckout` (`internal/agent`); with the guard disabled they fail.
 
 ### ADR-0026 — KB support runs as per-requester kb sessions; KB changes are proposals accepted on the node
 - **Status:** Accepted, 2026-11-02.
@@ -6228,8 +6310,8 @@
 
 ### ADR-0093 — A space role can be renamed in place; live references follow, history stays
 
-- **Status:** Proposed, 2026-11-16. Central migration 0061 (`space_role_renames`), agent migration 0010 (rename results),
-  protocol minor 14 (`memory.rename`, `memory.renamed`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
+- **Status:** Proposed, 2026-11-16. Central migrations 0061 (`space_role_renames`) and 0062 (the `failed` node state),
+  agent migration 0010 (rename results), protocol minor 14 (`memory.rename`, `memory.renamed`, `memory.renamed.ack`). Requirements SM-PROMPT-009 and SM-MEM-007. New API ops `rename-space-role` and `list-space-role-renames`.
 - **Context:** a space role's name is its identity: the primary key of `space_roles`. It is also copied as text into
   grants, pools, KB and dream configuration, schedules, human policies and permissions, open tasks, messages and
   requests, memory collections (including the directory names of the central and node Git repositories) and the history
@@ -6255,6 +6337,7 @@
      - a node below the new protocol minor makes the rename fail rather than risk unsynced memory.
   5. Old names resolve to the current name only where SpaceMan relaunches from a history row (control restart and
      autostart) and for the dream transcript filter. A name that is a live role is never redirected.
+     Every resume restates the memory note (Claude Code does not keep the appended system text in a session; a Codex resume puts it before the first input), and a resume after a finished rename adds that the old folder is gone and names the new one.
   6. The rename is exposed as `POST /spaces/{space_id}/roles/{name}/rename` with the same permission as saving a role.
      It is also in the CLI (`spaceman role rename`) and the admin MCP (classified dangerous). The Terraform provider
      treats a name change as an in-place update that calls it, never as a replace.
@@ -6281,6 +6364,1226 @@
   - A test classifies every role-name column as live or history, so a new column cannot be missed.
 - **Not security-relevant:** no requirement, guarantee or default is relaxed. The operation uses the existing role
   write permission, and every rename is audited.
+- **Implementation notes (T-H1, 2026-11-16):** `catalog.RenameSpaceRole` and `catalog.CurrentRoleName` live in
+  `internal/catalog/rename.go`. Where the code differs from the plan, or adds to it:
+  - A **live run** is one whose `observed` is `pending`, `starting`, `running`, `stopping` or `unknown`. The plan
+    also counted `desired = 'running'`, but a run that ends on its own keeps that value
+    (`ListActiveRunsBySpace`), so that test would block a rename forever after any crash.
+  - **An extra blocker:** a rename whose node move is still pending and that involves either name. A second rename of
+    the same names waits until the node has moved the first one, so the node never receives two moves of one
+    directory out of order.
+  - **`name_taken` also covers leftovers of a deleted role with the target name that would collide**: an MCP grant on
+    the same server or a pool entry for the same account. Leftovers that don't collide are adopted, as they would be
+    by creating a role with that name.
+  - The **reasons** (`role_busy`, `name_taken`) travel as a `*catalog.RenameRefused` cause:
+    - `role_busy` uses `apperr.CodePrecondition`;
+    - `name_taken` uses `CodeAlreadyExists`;
+    - an `If-Match` revision mismatch uses `CodePrecondition`, like every other `If-Match` in the service (HTTP 409
+      today). T-M1 maps these codes to the HTTP statuses in §3.4.
+  - The **launch hold** is `fleet.RenamePendingError` under `CodePrecondition` (`role_rename_pending`). It also holds
+    launches of the **old** name: otherwise a new role with that name would start in the node directory that is still
+    to move. The control supervisor treats a held restart or autostart as a quiet deferral. It logs and asks no one,
+    and the next sweep for waiting work starts control once the node has reported.
+  - **`CurrentRoleName` follows the chain in time order.** It takes the latest rename away from the name, then each
+    later rename of the name it reached. So `a→b`, `b→c` and then a new role `b` still resolves `a` to `c`.
+    `FormerRoleNames` walks through a reused name rather than stopping at it.
+  - **`cross-space` is reserved.** Knowledge-base requests from other spaces carry it as their requester role.
+    Renaming to it is refused, and the rewrite skips open requests that came from another space.
+  - Migration 0061 adds **`node_message`** for the node's last deferral or error message, which T-H2 writes.
+  - The **dream's excluded own role** also gets its former names, as its transcript roles do.
+  - The **change feed** also records the rewritten messages and the memory collection.
+  - The control supervisor gets the resolver through a hook, `Supervisor.RoleName`, which central wires to
+    `Catalog.CurrentRoleName`. This follows the existing `ControlRole` hook.
+- **Implementation notes (T-H2, 2026-11-16):** central's memory move and the central half of protocol minor 14
+  (`internal/memory/rename.go`, `internal/proto/rolerename.go`, `internal/fleet/rolerename.go`). Where the code differs
+  from the plan, or adds to it:
+  - **The node move's state machine.** Central migration **0062** adds `failed` to `node_state`. The node's
+    `memory.renamed` report moves an open rename: `ok` → `done` (sets `node_done_at`; final), `error` → `failed`,
+    `deferred` → `pending`; each stores the node's message. A failed rename becomes done on a later `ok` (the node
+    retries at its next start, T-H3). A report on a done rename changes nothing. Pending and failed renames are **open**:
+    both hold launches of either name and dream launches in the space, block another rename of either name, refuse a
+    clean relocation of the space, and make central refuse memory under both names. A `source_unavailable` relocation is
+    not refused: its finalize transaction closes the space's open renames as `not_needed` ("node lost; relocated from
+    central"), which ends the hold and the re-queue; central's copy already moved, so the memory carries over under the
+    new name. `node_too_old` is not a state: it is
+    refused at rename time, before anything is written, for a node whose stored `protocol_minor` is below 14 (also one
+    that never connected).
+  - **`memory.renamed.ack`** carries `error` for a rename that is unknown or not this node's, so the node stops sending
+    it. A report central could not store (a database error) gets no ack, so the node sends it again.
+  - **The command's generation.** `memory.rename` needs the space's lease like every non-stop command, but a rename can
+    commit while the node is away, and a lease granted after a revocation has a newer generation. So the hub sends it at
+    the space's **current** lease generation, and only on a connection that negotiated minor 14 and holds the lease;
+    otherwise it stays undelivered. A command the node refuses (`rejected`) is noted on the rename (`node_message`) and
+    queued again, with key `role-rename:<id>:<n>`, in the node's next connect transaction.
+  - **The resurrection guard also covers a reused name while the move is open.** The plan accepted the old name again
+    once `space_roles` had it. But while the node has not moved its folder, a sync under that name is still the renamed
+    role's history and would start the new role's collection with it. So memory under a former name is refused while
+    any rename away from it is open, and afterwards only while no role has the name. **The new name is refused too while
+    the move is open**: until the node has moved its folders, a folder of the new name on the node is a leftover it will
+    set aside, and its history must not reach the renamed collection. The hub records `memory.renamed` in the read loop,
+    in order, so the node's sync under the new name right after its `ok` finds the rename done.
+  - **Backups hold the moves** (`memory.Service.HoldMoves`, wired as `backup.Sources.HoldMemory`) from before the
+    database snapshot until the memory is bundled, so each bundle sits under the name its snapshot gives the collection.
+    The backup walks the disk, not the database, so without the hold a move between the listing and the bundling would
+    fail the backup or carry the repository under the wrong name. A rename that commits meanwhile records no
+    `central_moved_at`: the move runs when the backup releases the hold (or on the next access to the space's memory,
+    which waits for the release). A backup with the rename but not the move restores consistently, because the
+    start-up reconciler finishes the move on the restored disk. A memory sync (or any `ensureMoved` caller) in a space
+    whose rename committed during a backup can stall until the backup has bundled and released the hold.
+  - **`ensureMoved` is per space**, not per role: it finishes the space's unmoved renames in time order, so a chain
+    `a→b→c` interrupted before both moves ends with `c`. It runs before `Apply`, `Report`, `Files`, `File`, `History`
+    and `ExportBundles`; the start-up reconciler (`FinishAllRenames`) runs while central is built, before it serves
+    nodes. An error leaves the space's memory untouched by the caller.
+  - **`.retained` repositories are not in backups** (the bundler takes only `<space>/<role>.git`). They are leftovers
+    without a collection, kept on central's disk for an operator to look at.
+  - **The agent advertised minor 13 until T-H3**: a node that claimed 14 without moving its folder would hold a renamed
+    role forever, while one at 13 makes central refuse the rename. T-H3 raised it to 14.
+- **Implementation notes (T-H3, 2026-11-16):** the node's move (`internal/agent/rolerename.go`, node journal migration
+  **0010** `role_renames`). Where the code differs from the plan, or adds to it:
+  - **Journal states.** A rename is `pending`, then `moving` (journaled before the folder is renamed), then `done` (in the
+    same journal transaction that moves the `memory_sync` row, drops one the new name had, and resets retries and the
+    last error). A `moving` rename found at start is finished: the old folder is renamed if it is still there, otherwise
+    the rename happened before the crash. Because of that marker a folder under the new name is set aside only while the
+    rename has not started moving, so a crash after `os.Rename` never sets the moved folder aside. `dropped` is a rename
+    central answered with an ack error (unknown, or not this node's) before it moved: it is never tried again.
+  - **The busy check** covers an active run of **either** name in the space (central holds launches of both) and an active
+    dream run in the space. It reads the node's journal, so a run central no longer counts as live still defers the move.
+    A pending dream commit does not defer it: central's blockers cover it, and a commit whose run is gone would otherwise
+    defer the move forever.
+  - **Retries.** A deferred move is tried again when a run of the space ends (after that run's memory flush); every open
+    rename (deferred, failed or interrupted) is tried again at agent start, after the runner reconcile. A failed move is
+    not retried at a run's end. An unchanged outcome central already acknowledged is not reported again.
+  - **Unsynced edits.** Before the move every instance checkout of the old name is checkpointed, so edits a run left in
+    a checkout become history that syncs under the new name; a checkout that cannot be checkpointed keeps its changes in
+    its files, which move with the folder. A checkpoint of the old name that was waiting for the collection's lock during
+    the move finds no checkout and writes nothing.
+  - **Sync after the ack.** The node sends no `memory.sync` for either name from the rename until
+    central has acknowledged its `ok`, then syncs the new name at once. The sync bundles from the moved `acked`, so
+    central applies the node's newer history as a fast-forward of the renamed collection.
+  - **A repeat.** A `memory.rename` the journal already holds (a repeated delivery, or central's re-queued command with a
+    new key) is acknowledged and answered from the journal: `ok` again for a done rename, another attempt for an open
+    one. A rename ID reused for other names is refused. A first delivery without a valid lease at the command's
+    generation is refused and journals nothing, so central's re-queue retries it.
+- **Addendum: retry and close a stuck rename (T-H4, 2026-11-17, Proposed; operator chose to build both).** A rename stays
+  open while its node state is `pending` or `failed`, which holds the role's launches and every dream launch in the space.
+  A node that keeps answering `error`, or was downgraded below minor 14 after the rename was accepted (a rename is refused unless the node last spoke minor 14 or higher), never ends it. Two admin-only operations end the
+  wait. Neither deletes anything.
+  1. **API.** `POST /spaces/{space_id}/role-renames/{rename_id}/retry` and `.../close` (`retry-space-role-rename`,
+     `close-space-role-rename`), body `{reason?}` (close: optional, up to 500 characters, stored as the node message).
+     A rename has no revision, so there is no `If-Match`: the state check inside the write transaction is the guard, so a
+     double click gets the second call a 409. Errors: rename not open (`done`, `not_needed`, `abandoned`) → 409
+     `rename_not_open`; unknown id or other space → 404; not an admin → 403. The permission is a new
+     `space_role_rename:admin`, which only the admin role holds (through `*`); the operator role, which may rename, may
+     not retry or close. Also `spaceman role retry-rename|close-rename <rename-id>` (a `rename` leaf cannot also have
+     subcommands; close needs `--yes`) and two admin MCP tools (classified dangerous). Not in Telegram. Both audit
+     (`role_rename.retried`, `role_rename.closed`, with the actor,
+     rename id, names, previous state, the reason) and record a change-feed update of the space.
+  2. **Retry** is accepted in `pending` and `failed`. It queues a new `memory.rename` with the next key
+     (`role-rename:<id>:<n>`, as the connect-time re-queue does) unless a command is still pending or sent (not yet acknowledged by the node; an
+     accepted one is exactly the failed case: the node holds it and retries only at its start), in which case it only wakes delivery. A `failed` rename becomes `pending` with the old message kept until the node
+     reports. It never ends the hold itself. For a node whose stored minor is below 14 the command is queued anyway and
+     waits for a connection at 14 or more (the hub already leaves it undelivered); the response says
+     `node_too_old: true` so the operator knows to upgrade the node or close. It is idempotent and safe: the node answers a
+     repeated command from its journal.
+  3. **Close** is accepted in `pending` and `failed`. It sets a new terminal state **`abandoned`**, with `node_done_at`
+     as the close time and the reason as `node_message`. A new state, not `not_needed` with a reason, because
+     `not_needed` means "no node holds memory", which is false here (an old-name folder is left on the node), and tools
+     that read the table (the UI, the list API, the backup of an old name) should be able to tell the two apart. It costs
+     migration **0063** (rebuild of `space_role_renames` to widen the CHECK, the same shape as 0062); no data change. The
+     open-rename indexes already filter on `pending`/`failed`, so `abandoned` is closed everywhere without a code path
+     change: holds lift at once, another rename of either name and a clean relocation are no longer refused. Central's
+     memory stays under the new name (its move is independent of the node state and already happened or is finished by
+     `ensureMoved`); the former name stays resolvable by history lookups. A close leaves the rename's undelivered
+     commands queued (review of #230): a node that was offline (or downgraded below minor 14) has no journal row, so cancelling would leave
+     its old-name folder unmarked and a later role of that name would inherit the renamed role's memory. The node journals the
+     command when it connects at 14 or more, moves the folder, and its `ok` is answered `closed` (harmless, see 4); a
+     rename that stays unmoved is reported and dropped. The node's old-name folder is **orphaned**: reported in the response and in `node_message`
+     (`orphaned: <from> on node <id>`), never deleted and never synced again.
+     **Ordering (review of #230, round 3).** Lifting the either-name blocker at close would let central accept `b→c`, or a
+     new `a` then `a→x`, while the closed `a→b` is still undelivered, and the node could then run them in any order
+     (`a→x` first hands the old role's memory to `x`; `b→c` first strands it under `b`). So a closed rename **keeps
+     blocking renames of either name while its newest move command is `pending`, `sent` or `rejected`** (not yet journaled
+     by the node; a rejected one is queued again at the node's next connect, like an open rename's). `renameBlockers` adds
+     those (`ListUndeliveredClosedRoleRenames`, refusal `role_busy` naming "closed rename … not yet delivered"). Once the
+     node has accepted it, the node orders the moves itself (see 4). Launch holds still lift at close.
+     **Escape: `forget_node`.** A node that never returns must not block the names forever. Close takes
+     `{"forget_node": true}` (CLI `close-rename --forget-node`; same op, same admin-only `space_role_rename:admin`, so the
+     MCP tool and its classification are unchanged), accepted on an open rename (which it also closes) and on a closed one
+     the node has not journaled yet (a second forget, or one of a rename the node holds, is 409 `rename_not_open`). It
+     cancels the rename's `pending`, `sent` and `rejected` move commands (`CancelRoleRenameCommands`), which releases both
+     names, and, while the space is still on that node, queues a **closed notice** in their place: a `memory.rename` with
+     `closed: true` under its own key `role-rename-closed:<id>` (outside the move keys' range, so it never counts as a move
+     command or blocks anything). Audited as `role_rename.forgotten` with the number of cancelled commands. The warning
+     (API description, CLI help and note, guide): the node's old folder becomes an orphan, and whatever it holds that
+     central never received stays only on the node.
+  4. **The node side** (the closed notice and the ordering below were added in round 3; the rest needs no protocol change). The node learns of a plain close only through the existing
+     `memory.renamed.ack`: central sends it with `error: "closed"` (a new reason value in the existing field) at the
+     node's next report, and also at once to a connected node (an unsolicited ack for the close). The node's handler is
+     widened: an ack with an error now drops an open (`pending`, not yet `moving`) journal rename whatever result it
+     carried; today it requires a matching result and only before the move. A dropped rename lifts the node's own hold
+     on syncs of both names, never retries, and is the node-side marker: **orphaned = a `dropped` journal rename whose
+     old folder still exists**. A `moving` rename the node finishes anyway; its later `ok` is answered with a plain ack
+     (the state is `abandoned`, nothing changes), and it syncs the new name, which matches central's moved copy: an unlucky
+     close does no harm. An old-name folder is never synced under the old name (central refuses it while no role has the
+     name). If a role with the old name is created later, the node's prepare sets the orphaned folder aside to
+     `.retained`, as it does for a leftover under a target name; it is never merged into the new role. A node that never
+     reconnects keeps its journal rename until it does; central stays closed regardless.
+     **The closed notice** (forget): a `memory.rename` with `closed` is never a move. A rename the journal does not hold is
+     journaled `dropped` with result `closed` (the orphan marker) and nothing to report; a `pending` one is dropped; a
+     `moving` or `done` one is left. It needs no lease (nothing on disk changes), is acknowledged like any command, and is
+     not reported. Central delivers a node's commands in creation order and only with the space's lease, and the node
+     journals each `memory.rename` synchronously in its read loop, so the notice is journaled before any later rename of
+     those names.
+     **Every plain close queues the notice too** (round 4), while the space is on the rename's node, because the ack
+     is not enough: a node that journaled a rename that fails the same way each time never reports again, so it would
+     never learn of the close and would defer a later rename behind it forever (central releases the names once the move
+     command is `accepted`). The notice is idempotent on the node (a rename the node holds is answered from its journal)
+     and keeps its own key, so forget on the same rename queues no second one. A closed rename whose newest command was
+     `rejected` stops blocking the names once the space has left its node (the relocation cancels only `pending` and
+     `sent` commands, and nothing is delivered to the old node again).
+     **Ordering on the node (defence in depth).** Moves run on their own goroutines, so before moving a `pending` rename
+     the node defers it (`deferred`, naming the earlier one) while a rename of the same space journaled before it is still
+     `pending` or `moving` and shares a name with it (either old or new name). Journal order is central's order: central
+     queues a rename of either name only after the earlier one is done, or closed and journaled by the node, or forgotten.
+     When a rename ends `done`, or is dropped (closed ack or notice), the space's deferred renames are tried again at once.
+     **The orphan is never inherited by a rename either.** Before moving a `pending` rename whose old name is an unsettled
+     orphan (a closed rename dropped it and no role of that name has run here since), the node sets the orphan aside to
+     `.retained` and moves nothing: the reused name's role had no folder here, so `a→x` after a forgotten `a→b` gives `x`
+     nothing of the old role.
+  5. **With T-H3's retry at start and #220's ack wait.** After a close, a restarting node retries its journaled `pending`
+     rename, reports, and receives the `closed` ack, which drops it. If it moves the folder first (fault fixed, rename
+     still `pending` in its journal), its `ok` is harmless as in 4: the folder ends under the new name, where central's
+     copy is. #220's ack
+     wait covers only a done rename's `ok`, so it does not wait for a closed one. A retry that arrives after the close is a
+     409 for the operator, and a late `memory.rename` command for a closed rename is still delivered (see 3), before any
+     later rename of its names, which central refuses until the node has journaled it. After a forget, a returning node
+     gets the closed notice instead, again before any later command of the space; a rename deferred behind a dropped one
+     moves as soon as it is dropped.
+  6. **Migration and protocol.** Migration **0063** only. The `closed` ack reason is a string in an existing field (an
+     older node already ends a not-yet-moved rename on an ack error, but only when the result matches, so the widened
+     handler ships with this change). Round 3 adds the optional `closed` field to the `memory.rename` payload inside minor
+     14: minor 14 has not been released, so no node speaks it without this change, and no new minor is needed.
+  7. **Alternatives.** *Close as `not_needed` + reason:* no migration, but conflates two meanings. *Close that deletes or
+     moves the node folder:* needs a new command and risks lost edits; rejected, nothing is deleted. *Merging retry into
+     close:* a retry that just works is the common case and is cheap; close is the give-up. *Retry in `error` only:*
+     a downgraded node's `pending` rename is exactly where retry after the upgrade helps.
+  8. **Implementation notes (T-H4):** the CLI commands are `role retry-rename` and `role close-rename` (close needs `--yes`)
+     and the audit actions are `role_rename.retried`, `role_rename.closed` and (round 3) `role_rename.forgotten`. The only proto addition besides round 3's `MemoryRename.Closed` is the constant
+     `MemoryRenameClosed` (the ack's `error` value). On the node, `abandoned` is a journal `dropped` rename with result
+     `closed` (no agent migration); prepare of the old name sets the orphan aside and marks it `retained` (a rename finishing onto the old name marks it `retained`
+     too: the moved role owns that folder), and
+     `collections()` and `sync` skip an orphaned folder. A node that never connected a second time after the close is told
+     at its next report. Retry is refused with `rename_not_open` when the space has moved off the rename's node.
+  9. **Not security-relevant:** no guarantee is relaxed; the actions are admin-only and audited, and neither deletes data.
+     A close can leave unsynced edits in the node's old-name folder out of central's memory: they are kept on the node,
+     and listed as orphaned. A forget does the same for a node that has not received the rename; it releases names, never
+     data. Residual: a clean relocation is not blocked by a closed rename the node has not received (it was not before
+     either); the source node is connected for a clean relocation, so the command is normally delivered first.
+
+### ADR-0094 — The node fast-forwards idle instance checkouts to the collection head
+
+- **Status:** Accepted by control, 2026-11-17 ("live idle runs", with a kill switch). Node agent only: one node
+  configuration key, `memory.fast_forward` (default `true`). No central migration, no agent journal migration, no
+  protocol change (minor stays as it is) and no HTTP API change. If a later step needs numbers, it takes central migration
+  0063+, agent migration 0011+ and protocol minor 15 (0061/0062, 0010 and 14 are ADR-0093's). Implements ADR-0092's
+  "item 3" proposal, with one deliberate change to it (see *Which instances*). Refines SM-MEM-006 ("instances refresh
+  at safe boundaries").
+- **Context:** an instance's checkout (`<data>/memory/<space>/<role>/instances/<instance>`) moves onto the collection
+  head (the node's shared `refs/heads/main`) only at its own checkpoint and when a run starts (`prepare`). A run that
+  stays alive between turns keeps the head of its last idle checkpoint while other instances and the dreamer publish.
+  Its next edit is then made on an old base, and when another instance changed the same place (two notes appended at
+  the end of one file is the common case) the checkpoint merge conflicts and the instance's version is preserved under
+  `conflicts/`, although the agent had nothing against the newer text: it never saw it. The preserved conflicts examined on
+  one installation were of this kind.
+- **Decision:**
+  1. **Who does it.** The node only. It never changes the shared repository: it moves an instance checkout onto history
+     the shared repository already has, so what the node offers central, its acknowledged head, its sync and central's
+     acceptance rules are unchanged. Central does nothing new.
+  2. **When.** Right after a checkpoint moved the shared head (any instance's checkpoint, a dream's checkpoint, a
+     preserved conflict), for the other instances of that collection; and, as before, when a run starts (`prepare`),
+     which now uses the same checks.
+  3. **Which instances ("idle").** An instance is idle when all of these hold, read under the locks of 5:
+     - it has a run on the node that has not ended, and **every** such run of the instance (of any role: a dreamer's
+       checkout of another role counts) is `running` with the harness status `idle` or `done` (its turn ended).
+       `pending`, `starting`, `stopping`, and the statuses `working`, `blocked`, `error` or none are not idle;
+     - no idle checkpoint is pending for it (its own debounced checkpoint already ran since the turn ended; the timer
+       of each run is keyed by that run's own role, so a dreamer run's counts too);
+     - no operator has taken over the terminal of any of its runs;
+     - no input the node delivered to one of its runs is still waiting for its turn: after a `run.input` was sent, the
+       instance stays busy until that run reports a later turn, because its status can still say `idle` while the
+       turn the input started begins.
+     An instance with **no** live run is not touched here: its next run's `prepare` fast-forwards it with the same
+     checks, so touching it earlier gains nothing. (ADR-0092 proposed the opposite, "only when the instance has no
+     run"; that is what `prepare` already does, and it does not remove the conflicts above, which come from live runs
+     between turns.)
+  4. **Content and ancestry checks** (all required; each refusal is logged with a fixed reason and leaves the folder
+     exactly as it was):
+     - the checkout exists (`.git` is a directory), its git configuration is safe (the existing `UnsafeConfig`
+       guard), and git works on the checkout folder itself and on no other repository (the checkout guard below);
+     - no merge, rebase, cherry-pick, revert or bisect in progress, and no `index.lock`;
+     - `git status --porcelain --untracked-files=all --ignored=matching` is empty: no modified, staged, deleted, untracked or
+       ignored file (an ignored file is local-only data that a fast-forward could overwrite);
+     - the shared head exists, differs from the instance's `HEAD`, and the instance's `HEAD` is an ancestor of it
+       (`merge-base --is-ancestor`). An instance with commits the shared head lacks (diverged) is left to its next
+       checkpoint, which merges or preserves as before;
+     - then `git merge --ff-only --no-overwrite-ignore <shared head>`. Never `reset --hard`, never a merge commit,
+       never a force. Git itself refuses the merge if a tracked file it would update changed after the status check,
+       or if an untracked or (with `--no-overwrite-ignore`) ignored file appeared at a path the new history adds.
+     - At run start, the checkout is left alone while the instance has another live run besides the one starting
+       (`other_live_run`): that run may be writing in it.
+  5. **Locks and the start of a run or a turn.**
+     - Everything runs under the collection lock that checkpoints, `prepare` and (ADR-0093) renames take, so it never
+       interleaves with them. A sync only reads the shared repository.
+     - **A run that starts during a fast-forward:** the launch journals the run (`pending`) before `prepare`, and
+       `prepare` takes the collection lock before the harness starts. Either the fast-forward finishes first and
+       `prepare` finds nothing to do, or the run is journaled first and the instance is not idle, so it is skipped.
+     - **A turn that starts during a fast-forward:** input the node delivers (`run.input`: messages, nudges) waits on a
+       per-instance gate that the fast-forward holds from its final idle check to the end of the merge, and a
+       fast-forward skips an instance whose input is being delivered or whose delivered input has not had its turn
+       reported (3). A takeover that starts is registered first and then waits for the gate, so an operator never types
+       during a merge. Not fenced: a turn the harness starts on its own (a background task finishing). For those, the idle check is repeated immediately before the merge, git
+       refuses to overwrite a file that changed since the status check, and the remaining window is git's own, between
+       its per-file check and its write, only for files the fast-forward changes.
+       The input gate covers only input the node delivers. For the other turns (a queued message the harness starts,
+       a turn it starts on its own), what mostly covers them is the checkpoint-debounce condition of (3) together with
+       the harness status: a turn that has started is reported `working`, which is not idle, and an instance whose turn
+       just ended stays out of the merge until its own checkpoint has run. The repeated idle check and git's refusals
+       cover what is left.
+  6. **No change to what an agent sees mid-turn.** Only between turns. A Claude Code agent whose context holds an
+     older version of a file is refused by its own Edit and Write tools until it reads the file again.
+  7. **Kill switch.** The node setting `memory.fast_forward` (`SPACEMAN_AGENT_MEMORY_FAST_FORWARD`, default `true`).
+     Off, the node fast-forwards no idle checkout and run start refreshes exactly as before this decision (a clean
+     checkout whose `HEAD` is an ancestor of the shared head is fast-forwarded, ignored files are not checked).
+  8. **Logs.** Every fast-forward that moves a checkout is logged at info ("memory checkout fast-forwarded": space,
+     role, instance, old and new head, number of files changed, and whether at run start or between turns), so each
+     can be audited. Every refusal is logged with its fixed reason: at debug when the instance is busy or already up
+     to date, at info when the checkout itself is in the way (local content, an unfinished operation, a configuration,
+     divergence, a failed merge), since that keeps the instance from following the head until someone looks. The
+     reasons: `unsafe_config`, `merge_in_progress`,
+     `rebase_in_progress`, `cherry_pick_in_progress`, `revert_in_progress`, `bisect_in_progress`, `index_locked`,
+     `status_failed`, `staged_changes`, `modified_files`, `untracked_files`, `ignored_files`, `no_head`,
+     `no_shared_head`, `up_to_date`, `diverged`, `merge_failed`, `no_live_run`, `run_not_running`, `turn_not_ended`,
+     `checkpoint_pending`, `taken_over`, `input_in_delivery`, `input_pending`, `other_live_run`, `journal_failed`. No file name or content is logged.
+- **Alternatives:**
+  - ADR-0092's "no live run only": safe, but adds nothing over `prepare` (3).
+  - `reset --hard` to the head when the content looks equal: rejected, it discards whatever was written since the
+    check.
+  - A union merge driver for notes appended at the end of a file: it would hide real conflicts and needs a configured
+    driver, which the git guard forbids.
+  - Fast-forward at every idle report: the instance's own idle checkpoint already does it; the head moving is what
+    makes another instance stale.
+- **Consequences:**
+  - A role's live instances see other instances' and the dreamer's notes at their next turn instead of at their next
+    run; same-place edits made between turns stop conflicting.
+  - Edits made during a turn while another instance publishes still merge or conflict as before.
+  - Residual risks (5), each needing a write the node did not start, in a file the fast-forward changes:
+    - a write the harness makes on its own between git's per-file check and its write of that file is replaced by the
+      head's version;
+    - git replaces an updated file by a new one, so a background process that kept such a file open across turns
+      keeps writing into the old, unlinked file after the fast-forward, and those writes are lost. The status check
+      cannot see it when the idle checkpoint had already committed the earlier writes.
+  - One lasting ignored or untracked file in a checkout keeps that instance from fast-forwarding, at run start too
+    (logged at info).
+  - **Checkout guard.** The checkout, `.git` included, is writable by the agent, and the node runs git in it
+    (checkpoint `add -A` and `commit`, preserve `reset --hard`, this fast-forward). Those commands must read and write
+    only that checkout's own `.git` and run no code the agent chose. `memory.Git` checks before every command that
+    works in an existing repository (`Git.RunInput`; the fast-forward calls the same checks and refuses with
+    `unsafe_config`):
+    - configuration: `UnsafeConfig` (programs, transports, includes, `core.worktree`); `core.bare` and a git dir,
+      common dir or work tree that is not the checkout's own (a symlinked `.git`, a `gitdir:` file, `.git/commondir`)
+      are refused by `CheckoutIdentity`;
+    - inside `.git` (`ownGitDir`, a walk that does not list the loose-object fan-out folders): any symlink (git follows
+      it and its lockfiles, so a symlinked `refs`, `objects`, `index` or `packed-refs` moves another repository); a
+      FIFO or device; a regular file with more than one hard link outside the object store (git rewrites
+      `COMMIT_EDITMSG`, `FETCH_HEAD` and `MERGE_MSG` in place and appends to reflogs, so a hard link to another
+      checkout's ref, which an agent running as the same user as the daemon can make, would be overwritten);
+      `objects/info/alternates` (a push would copy borrowed objects into the shared history) and `info/grafts`
+      (replace refs are off: `GIT_NO_REPLACE_OBJECTS`);
+    - gitlinks (`Gitlinks`): an index entry for a submodule or embedded repository is refused before any command that
+      reads the work tree. Git runs a child git in such a folder, with that repository's own configuration, so its
+      filter drivers would run as the daemon, and in whatever git dir its `.git` names. `add` does so whatever
+      `diff.ignoreSubmodules` says; `submodule.recurse`, `diff.ignoreSubmodules`, `fetch`/`push.recurseSubmodules`
+      are also forced off on the command line. Commands that never read the work tree (the KB acceptance's, in
+      project repositories that may have submodules) are not checked for gitlinks;
+    - `GIT_CEILING_DIRECTORIES` is the checkout's parent, so a checkout without `.git` is not a repository rather than
+      part of one found above it.
+  - **Residual risk (time of check to time of use).** The checks run before git starts; the agent can write the
+    checkout while git runs, so a link planted in that window is followed. A live agent process can race the node's
+    git command; hitting the window needs no more than a loop that replaces `.git/refs` with a symlink. Not built,
+    proposed as structural fixes: (1) run the checkpoint and the fast-forward only when no process of the instance
+    is alive (at run end and at `prepare`), which this ADR's live fast-forward and the idle checkpoint give up; or
+    (2) let the node work in a daemon-owned copy (its own git dir, `GIT_DIR` and `GIT_WORK_TREE` set explicitly,
+    with the agent's work tree read into it by `git add` and written back by plain file copies that refuse links),
+    so no agent-writable file decides where git writes. Option 2 keeps the live behaviour and is the one recommended.
+  - The per-instance input gates live in memory for the life of the agent process: one small lock per instance seen.
+  - A stale-context overwrite by a shell command (not Claude Code's file tools) after a fast-forward now replaces the
+    head's text in a plain fast-forward publish, where before it could have become a preserved conflict. History keeps
+    both versions.
+- **Evidence:** `internal/agent` (`memff.go`): `TestFastForwardIdleCheckout` (only the idle instance moves; the shared
+  history is untouched), `TestFastForwardRefusals` (one case per refusal: unsafe configuration, each unfinished git
+  operation, `index.lock`, staged, modified, deleted, untracked, ignored, diverged, no live run, starting, stopping, a
+  second run pending, working, blocked, no status, the instance's dreamer run in a turn, checkpoint pending, taken over,
+  input in delivery, input sent whose turn is not reported, `core.worktree`, `core.bare`, a dreamer run's pending
+  checkpoint; each leaves the checkout as it was), `TestFastForwardUpToDateAndDisabled` (the kill switch, and
+  run start as before with it off), `TestRefreshAtStartChecks`, `TestDreamThenIdenticalEditDoesNotConflict` (the
+  original symptom: no preserved conflict; the same test with the switch off, the earlier behaviour, conflicts, and its
+  base variant fails on the base branch), `TestIdleAppendAfterOtherAppendMerges`, `TestInputWaitsForFastForward`
+  (`run.input` through the command handler waits for the merge), `TestRunStartDuringFastForward` (both orders),
+  `TestTurnStartBetweenChecks` (a turn or a file between the first checks and the merge), `TestBusyInstanceNotTouched`
+  (no git command, not even a fetch, in a busy checkout), `TestInputPendingUntilTurnReported`,
+  `TestIgnoredFileAfterChecksNotOverwritten`, `TestRefreshAtStartWithAnotherLiveRun`, `TestTakeoverWaitsForFastForward`, `TestStartTakeoverWaitsForGate`,
+  `TestStatusReason`, `TestFastForwardRefusesRedirectedGitDir`; `internal/memory`: `TestRunRefusesRedirectedGitDir`
+  (each redirection outside and inside `.git`, the other repository's files unchanged), `TestRunRefusesGitlinks` (the
+  embedded repository's filter does not run), `TestRunStopsAtTheCheckout`. Each
+  guard was mutated (removed) and its test failed. Simulated only: no real Claude Code run was observed with it.
+
+### ADR-0095 — Role descriptions: prompt metadata edited in place, a per-space description, and a role list for control
+
+- **Status:** Proposed, 2026-11-17 (an operator feature request, items 1–3, from rolling out more worker roles of different
+  sizes). Central migration 0065 (`space_roles.description`). No node protocol change. New API op `update-prompt`, new
+  agent tool `spaceman_roles_list`. Extends ADR-0051 (starter roles) and ADR-0063 (admin MCP).
+- **Context:** surveyed on next/v0.1.11 and the Terraform provider's main branch.
+  1. **Descriptions.**
+     - A role template's name and description can already be changed in place: `PUT /role-templates/{id}`,
+       `spaceman template update --description`, and the provider's `spaceman_role_template.description`. The change
+       bumps the template's `revision`, which only run manifests record. It creates no prompt version.
+     - A prompt's name and description cannot be changed at all. The store has an `UpdatePrompt` query (name and
+       description, guarded by `prompts.version`), but no API operation or CLI command calls it. So the provider marks
+       both attributes "fixed after creation" and refuses a change. The only way to change a prompt's description is to
+       create a new prompt and re-point every template at it. Skills have the same gap.
+  2. **Control can't see what a role is for.** The control tools (`spaceman_queue_next`, `spaceman_worker_launch`,
+     `spaceman_runs_list`) say nothing about the space's roles. `spaceman_worker_launch` describes `role` as "e.g.
+     implementor-backend or reviewer". Only the opt-in admin MCP (ADR-0063) can list space roles and templates. Even
+     there a space role has no description, only a template ID, so control has to join the two lists itself. As a
+     result, every space repeats its routing guidance ("Opus for hard work, medium/light for smaller work, the reviewer
+     checks them") in its control instructions.
+  3. **Starter templates are global.** ADR-0051 seeds them once per installation as ordinary catalog entries, so
+     editing `starter-implementor` changes it for every space, demo spaces included. A space role can already override
+     a template per space: profile, prompt and pin, model, settings, skills and appended instructions. It can't
+     override the description. The operator guide doesn't say the templates are shared.
+- **Decision:**
+  1. **Prompt metadata in place.**
+     - A new operation `update-prompt`, `PATCH /prompts/{prompt_id}`, takes an ID or slug and a body
+       `{name?, description?}`. If-Match is required and is the prompt's `version`. The response is the prompt.
+     - Rule: `Global(authz.PromptWrite)`, the same rule as `create-prompt`. Admin MCP class: `Write` (rDraft). Audit
+       action: `prompt.updated`, with the names of the fields that changed, never their text.
+     - Validation matches `create-prompt`: a non-empty name of at most 120 characters, a description of at most 2000
+       characters. A field left out keeps its value.
+     - Slug and kind stay fixed. The slug is the prompt's identity in Terraform and in configuration. Changing the kind
+       would change which roles may use the prompt.
+     - It never touches `prompt_versions`, so no new version is created, and runs that follow the latest version see
+       no change.
+     - CLI: `spaceman prompt update <prompt> [--name] [--description]`, built with the `merge` helper like
+       `template update`.
+     - Web: the prompt page gets an **Edit details** dialog for the name and description.
+  2. **Role templates: no API change.** The way they work today already meets the request. The guide says it outright:
+     changing a template's name or description creates no prompt version, and a run picks it up at its next launch.
+  3. **A space role's own description.**
+     - Migration 0065: `ALTER TABLE space_roles ADD COLUMN description TEXT NOT NULL DEFAULT ''`. Existing rows stay
+       empty, so they fall back to their template's description.
+     - `catalog.SpaceRole` gets `description` (at most 2000 characters), with the same rule as the other override
+       fields: empty means "use the template's".
+     - The field is carried by `save-space-role`, `list-space-roles`, `get-space-role` and the role preview (as an
+       effective value with its origin).
+     - CLI `role set --description`. Web: a field on the space role form, with the template's description shown as
+       the placeholder.
+     - The description is not part of the launched agent's prompt and doesn't change run manifests. It is routing
+       guidance for whoever chooses a role.
+     - Role rename (ADR-0093) keeps it: the description is a column on the `space_roles` row, which a rename updates in
+       place.
+  4. **`spaceman_roles_list` for control.**
+     - A read-only agent tool, given to control runs only, like `spaceman_queue_next`.
+     - It returns the run's own space's roles, sorted by name. For each role: `name`, `kind` (from the template),
+       `description` (the space role's own if set, else the template's), `description_origin` (`space_role` or
+       `template`), `template` (slug), and the effective `harness` and `model` (the space role's override, else the
+       profile's).
+     - It shows no prompt text, settings, skills or account references. The descriptions are configuration operators
+       wrote, and they grant nothing (SM-SEC-001).
+     - `spaceman_worker_launch`'s `role` argument and `spaceman_queue_next`'s description point to the tool ("choose
+       the role with spaceman_roles_list"). Existing control prompts don't need to change.
+     - The starter control prompt (`builtin/starter/control.md`) mentions the tool. As ADR-0051 says, already-seeded
+       prompts are not rewritten.
+  5. **Starter templates stay global, documented.**
+     - The guide's "Starter roles" section says the starter templates, prompts and profiles are shared by every space
+       of the installation.
+     - To change a role in one space, override it on the space role: profile, model, prompt, instructions, skills and
+       now description.
+     - To change it for a group of spaces, copy the template (`spaceman template create` from `template get`), or fork
+       the prompt and point those spaces' roles at the copy.
+     - There is no per-space template layer and no automatic fork.
+  6. **Terraform provider (terraform-provider-spaceman).**
+     - `spaceman_prompt`:
+       - `name` and `description` lose `fixedAfterCreate` and become ordinary in-place attributes.
+       - `Update` calls `update-prompt` when only they changed. It saves a draft and publishes only when `body`,
+         `extends` or `notes` changed. A metadata-only change no longer publishes a version.
+       - `slug` and `kind` stay fixed.
+       - The client gets `UpdatePrompt(ctx, id, version, in)`.
+     - `spaceman_space_role`: a new optional attribute, `description` (Optional+Computed, default `""`, updated in
+       place).
+     - `spaceman_role_template`: no schema change. Its `description` documentation says a change creates no prompt
+       version.
+     - Against a central without `update-prompt` (a 404 or 405 on the PATCH), the provider reports "requires SpaceMan
+       0.1.11 or later" instead of a raw error.
+- **Alternatives:**
+  - *Store the description on the prompt version:* a description would then need a new version, which is what the
+    request asks to avoid. Rejected.
+  - *Put the role list in control's built-in orientation (system prompt):* it would be stale as soon as an operator
+    changed a role, and it would grow every control prompt. A tool is current on every call. Rejected.
+  - *Add the role descriptions to `spaceman_queue_next`'s result:* this mixes queue state with configuration and
+    repeats the list on every poll. A pointer to one tool is enough. Rejected.
+  - *Per-space role templates (`space_id` on `role_templates`) or a "fork template into space" operation:* this adds a
+    second layer of templates that every resolver, UI page and the provider would need to understand. Space-role
+    overrides already cover everything except the description, which this ADR adds. Rejected for now; it can be
+    revisited if overrides are not enough in practice.
+  - *Per-space memory conventions override:* not part of the request. Left as a follow-up.
+- **Consequences:**
+  - Operators can fix a prompt's or template's description from Terraform without creating versions or new prompts.
+    An existing prompt resource that tried to change its description gets an in-place update instead of an error.
+  - Routing guidance lives in the role descriptions, which control reads with one call. Control instructions only need
+    to say "pick the role whose description fits".
+  - The descriptions are visible to the control agent, so they must not contain secrets. They are already visible to
+    every operator who can read the catalog.
+  - Skills: follow-up F1 (RD-F1) is implemented as `update-skill` (`PATCH /skills/{skill_id}`, see the table below). Skills
+    are installation-wide, so a rename shows in every space that uses the skill. The provider's `spaceman_skill` metadata
+    (name and description in place) remains a follow-up.
+- **Requirements:** the implementation adds SM-PROMPT-010 (prompt name and description edited in place without a new
+  version), SM-PROMPT-011 (a space role's own description) and SM-CTRL-007 (control lists the space's roles with their
+  effective descriptions) to GOAL.md and TRACEABILITY.md, as `todo` until their tests land.
+- **Implementation split** (tiers suggested for control, each a separate draft PR into next/v0.1.11 unless noted):
+
+  | # | Task | Depends on | Tier |
+  |---|---|---|---|
+  | T1 | `update-prompt`: `catalog.UpdatePromptMeta` (existing `UpdatePrompt` query, audit `prompt.updated`), the API op and rule, the admin MCP class, the Telegram entry (`TelegramExcluded`, like `create-prompt`), `make api`, `prompt update` CLI and `make cli-docs`, tests in `internal/catalog` (no version is created, If-Match, validation) and over HTTP in `internal/app`. | — | Sonnet |
+  | T2 | Migration 0065 and `space_roles.description`: sqlc queries, `catalog.SpaceRole`, save, list and get, preview origin, CLI `role set --description`, `make api`, an upgrade test (`embeddedUpTo(t, "0063")`), tests. Coordinate the number with memory fast-forward (0063). | — | Sonnet |
+  | T3 | `spaceman_roles_list` in `internal/control/tools.go` (control only, read-only), effective description, harness and model, the pointer in `spaceman_worker_launch` and `spaceman_queue_next`, tests: effective values and origins, another space's roles never visible, only for control. | T2 | Sonnet |
+  | T4 | Web: an **Edit details** dialog on the prompt page and a description on the space role form, `make web-check`, screenshots if they change. | T1, T2 | Sonnet |
+  | T5 | Docs: the guide's "Starter roles" section says the templates are global and explains per-space overrides, plus template description edits, `spaceman_roles_list` in the control docs, the starter `control.md` line, and GOAL, TRACEABILITY and PLAN entries. `make site-check`. | T1–T3 | Haiku |
+  | P1 | Provider: in-place `spaceman_prompt` `name` and `description` through `UpdatePrompt`, publishing only on content changes, `spaceman_space_role.description`, a clear error from an older central, unit and acceptance tests, regenerated docs. A PR into the provider's main. | T1, T2 merged | Sonnet |
+  | F1 | Follow-up: `update-skill` (the same pattern for skills), implemented (RD-F1; skills are installation-wide, so a rename shows in every space). The provider's `spaceman_skill` metadata remains a follow-up. | — | Haiku |
+
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. `update-prompt` uses the existing prompt
+  write permission and is audited. `spaceman_roles_list` is read-only, limited to the run's own space and returns no
+  prompt text, settings or credentials.
+
+### ADR-0096 — The node reclaims unjournaled recordings only when central confirms it holds them
+
+- **Status:** Proposed, 2026-11-17, revised the same day after its Opus review (holes in central's copy, a
+  streaming local proof, the documentation T3 owes, a global limit on central's scans; design only; the
+  implementation is tasks T1–T3 at the end). Follows up the review of
+  PR #190 (recording directories removed with their pruned run, and the segment-less orphan sweep). Needs **protocol
+  minor 15**: 14 is ADR-0093's (role rename). ADR-0094 mentioned 15 only in case it needed a number, and it did not
+  take one. If 15 is taken when T1 lands, this ADR takes the next free minor; every "minor 15" below means that minor,
+  and code names it only as `proto.MinorRecordingStatus`.
+  No central migration, no agent journal migration, no HTTP API change, no configuration key. Refines SM-REC-002/003
+  (node-side recording retention); SM-NODE-003 (versioned protocol).
+- **Context:** since PR #190 the node removes a run's recording directory in the same pass that prunes the run from its
+  journal, and only once central has acknowledged every record (`recordingPending`). Directories that earlier releases
+  left behind when they pruned a run are swept only when they hold **no segments** (`sweepOrphanRecordings`). A
+  directory with segments and no journal row is always kept. The node cannot tell a run an earlier release pruned
+  after central stored everything from a run whose journal row was lost: a reset or restored journal makes every run
+  look orphaned, and the node's in-memory acknowledgements (`acked`) do not survive a restart in the releases that left these directories (ADR-0097 persists them in `recording-acked`, but legacy directories have no such file, and a value saved from a central before #242 can be overstated; this ADR does not rely on it). Those recordings stay on
+  disk indefinitely, up to the recording quota per run (512 MiB by default).
+
+  Facts this design relies on (checked on `next/v0.1.11` at f57e828d; re-checked against #242 at 7e5c39b3):
+  - Central stores a recording's records in strictly increasing sequence order. `recording.Writer.Append` drops any
+    record whose sequence is at or below the highest one it accepted. Once central's stored sequence is at or above
+    every record the node can decode locally, re-shipping the local copy can add nothing central would accept. The
+    journaled path already relies on this: it removes a directory when `recording.Read(dir, acked)` returns no records.
+  - A high stored sequence does **not** prove central holds every record below it. Central's copy can have holes: on
+    f57e828d a failed flush made `failLocked` drop the buffered records and advance the sequence, and `recording.ack`
+    carried that overstated `Seq()`, so the node stopped re-shipping records central never stored; a central restore
+    can lose some segments but not others; a torn or corrupt frame in a middle segment hides the rest of that segment.
+    Records arriving later at or below the stored maximum are dropped by `Append`, so such a hole is never filled.
+    PR #242 (`Writer.Stored()`: central acks only what it synced to disk, and a failed writer is closed and reopened
+    from what is stored, so the node re-ships the lost records; on a connection whose chunk failed, nothing is stored past the hole until the node re-ships) removes the main cause; the other two remain. Holes in
+    the **numbering** are also legitimate on both sides: a writer that fails advances its sequence for its `trunc`
+    record, and a recorder restarted after a local disk loss `SkipTo`s above central's ack (since ADR-0097's addendum, before it numbers anything). A hole the node's copy
+    shares holds no record anywhere.
+  - `recording.ScanSegments(names, open, after, fn)` decodes segments one record at a time and stops at the first
+    error `fn` returns, so a reader holds one record, not the recording (`Read` and `ReadSegments` wrap it and collect
+    every record). It returns an error when a segment cannot be opened or its zstd stream cannot be started. A torn or
+    corrupt frame sets `Truncated` and skips the rest of that segment; later segments are still read. What it decodes
+    is exactly what the node's catch-up could still ship.
+  - Central has no database column for a recording's sequence or its holes. Both live in the stored segments: the
+    open writer's buffer flushed to its segment, then every segment, spool and artifact store merged by segment name
+    (as `Recordings.Segments` and `stored` do; `Recordings.Scan` streams over them).
+  - `runs.recording_deleted_at` is set when central's copy was deleted, by retention or by an operator
+    (`recording:delete`). Run rows are deleted only by `PurgeSpace`. A run row keeps the `node_id` it ran on, also after
+    a relocation.
+  - Central logs a message type it does not know (`handle` returns an `invalid` error, the read loop logs it) and
+    sends nothing back, and it does no per-minor gating of node → central types today. A node therefore must not send
+    a new message type to a central that did not negotiate the minor that introduced it: it would wait for an answer
+    that never comes.
+
+- **Decision:**
+  1. **Protocol (minor 15).** One node → central query and one central → node answer, in `internal/proto`:
+
+     ```go
+     TypeRecordingStatusQuery = "recording.status.query" // node → central, minor ≥ 15
+     TypeRecordingStatus      = "recording.status"       // central → node, minor ≥ 15
+
+     // RecordingStatusQuery asks central what it holds of some of the node's recordings.
+     type RecordingStatusQuery struct {
+         QueryID string   `json:"query_id"` // chosen by the node; echoed in the answer
+         RunIDs  []string `json:"run_ids"`  // at most RecordingStatusMaxRuns
+     }
+
+     // RecordingStatus answers a RecordingStatusQuery.
+     type RecordingStatus struct {
+         QueryID string               `json:"query_id"`
+         Runs    []RecordingRunStatus `json:"runs"`
+     }
+
+     type RecordingRunStatus struct {
+         RunID   string     `json:"run_id"`
+         Status  string     `json:"status"`            // RecordingComplete, RecordingIncomplete, RecordingDeleted, RecordingUnknown
+         Seq     uint64     `json:"seq,omitempty"`     // central's highest stored sequence; set with RecordingComplete
+         Missing []SeqRange `json:"missing,omitempty"` // with RecordingComplete: the sequences in 1..Seq central does not hold
+     }
+
+     // SeqRange is an inclusive range of record sequences, From ≤ To.
+     type SeqRange struct {
+         From uint64 `json:"from"`
+         To   uint64 `json:"to"`
+     }
+
+     // MinorRecordingStatus is the first minor version that carries recording.status.query and recording.status
+     // (ADR-0096).
+     const MinorRecordingStatus = 15
+
+     const (
+         RecordingComplete   = "complete"   // the run ended; central holds every sequence in 1..Seq except Missing
+         RecordingIncomplete = "incomplete" // the run has not ended in central's records
+         RecordingDeleted    = "deleted"    // the run ended and central deleted its copy (retention or an operator)
+         RecordingUnknown    = "unknown"    // anything else: central cannot or will not vouch for the recording
+         RecordingStatusMaxRuns   = 100
+         RecordingStatusMaxRanges = 32 // more holes than this is answered RecordingUnknown
+     )
+     ```
+
+     `MaxMinor` becomes `MinorRecordingStatus`, and the minor comment names this ADR. Code on both sides names the
+     gate `proto.MinorRecordingStatus`, never the literal. The node sends the query only on a connection whose
+     negotiated minor (the welcome's `Minor`) is at least `MinorRecordingStatus`. T1 adds an explicit check on
+     central: a query from a session below `MinorRecordingStatus` is logged and not answered (no per-minor gating of
+     node → central types exists today). An answer whose `QueryID` the node is not waiting for is ignored.
+
+  2. **What central answers** (`internal/fleet`, per run ID, in this order; the first match wins). Central considers
+     the first `RecordingStatusMaxRuns` entries of `RunIDs`; a repeated ID among them is answered once, at its first
+     occurrence, and the repeats are ignored (they still count toward the 100):
+     - `unknown` when the ID is malformed (`ids.Valid(ids.Run, …)`), has no run row, or its row's `node_id` is not the
+       asking node. Central answers the same for "not yours" as for "no such run", so a node learns nothing about
+       other nodes' runs. Also `unknown` when central keeps no recordings (`RecordingsDir == ""`: the node's copy is
+       the only one), when listing or opening the stored segments fails, while the run has a failed writer whose unsynced tail is not cut yet (`r.unsynced`; Status first tries `DropUnsynced`, as `writer()` does, and answers `unknown` if that fails), when the scan below finds more than `RecordingStatusMaxRanges` holes or a sequence out of
+       order, and when the query's budgets (decision 4) ran out before the run's scan finished.
+     - `incomplete` when the run's observed state is not ended (`exited`, `failed`, `lost`). No storage is read.
+     - `deleted` when the run ended and `recording_deleted_at` is set. No storage is read.
+     - `complete` with `Seq` and `Missing` otherwise, from a new `Recordings.Status(ctx, runID)`:
+       - It never uses the writer's `Seq()` (see Context). Under the same archive wait `Delete` uses, it flushes an
+         open writer (central's `apply` flushes after every chunk, so an open writer has nothing buffered; a writer that failed has already been closed and dropped, and its synced prefix is what is on disk) and notes the writer's `Stored()` (PR #242). Under `r.mu` (and the archive wait), Status notes the open writer's `Stored()`, if there is one, and the highest local segment number. The scan skips local segments numbered above it (a writer opened later always starts a new one) and stops at the first record above the noted `Stored()`.
+       - It then streams over **every** stored segment, spool and store merged, with `recording.ScanSegments` and a
+         callback that keeps only the next expected sequence (starting at 1) and the holes so far: a record above the
+         expected sequence adds the hole `[expected, record−1]`; a record at or below the previous one is `unknown`
+         (central never stores that, so the copy is not what this ADR assumes). With an open writer, the scan stops at
+         the first record above `Stored()`: only durably stored records count. A 33rd hole stops the scan with a sentinel error and answers `unknown`. `Stored()` is used only as an upper bound that excludes unsynced records; it is never taken as proof that the copy below it has no holes (after a reopen it is just the last decoded sequence).
+       - `Seq` is the last sequence the scan accepted, and `Missing` the holes in `1..Seq`, ascending and disjoint.
+         A torn or corrupt frame in central's copy can only hide records: they show as a hole, or as a lower `Seq`,
+         both of which keep more on the node.
+       - `Seq` may be 0 (central stored nothing; `Missing` is empty). The node then deletes only a directory with no
+         decodable record.
+
+     **Holes are reported, not refused.** The alternative, answering `complete` only when the copy has no holes (and
+     `unknown` otherwise), is simpler but never reclaims a recording whose numbering has a legitimate hole that the
+     node's copy shares (a failed writer's `trunc` sequence, a `SkipTo` after a node disk loss; see Context). Those
+     holes hold no record anywhere, and the legacy directories this ADR targets come from exactly the releases that
+     produced them. With ranges the node decides record by record: it deletes only when none of its records falls in a
+     hole or above `Seq` (decision 3), which is the same proof in both cases and strictly no weaker. The cost is up to
+     32 ranges per run in the answer (decision 4) and one comparison per local record. The cap bounds the answer; a
+     copy with more holes than that is damaged enough that central should not vouch for it.
+
+     Central decides from its own store only, never from anything the node says about the run, and it changes nothing:
+     the query is read-only on central.
+
+  3. **What the node deletes.** The orphan sweep (`sweepOrphanRecordings`) keeps its segment-less pass unchanged and
+     adds a confirmed pass for directories **with** segments. A candidate is a directory that passes every existing
+     check: a well-formed run ID; a real directory, not a symlink; no journal row; no live recorder, unshipped mark or
+     kept-back records; nothing in it modified for `orphanRecordingAge` (24 h). It must also hold at least one segment.
+     After central answers:
+     - `deleted`: removed.
+     - `complete` with `Seq = S` and `Missing`: the node first checks the answer's shape: at most
+       `RecordingStatusMaxRanges` ranges, each `From ≤ To ≤ S`, ascending and disjoint. A malformed answer keeps the
+       directory, logged as `unknown`. The node then streams over its copy with `recording.ScanSegments` (the
+       directory's `recording.Segments`, opened through the read budget of decision 4, `after` 0) and a callback that
+       returns a sentinel error at the **first** record whose sequence is above `S` (`errLocalNewer`) or inside a
+       missing range (`errLocalMissing`; a binary search over at most 32 ranges). The scan holds one record at a time,
+       never the recording. The directory is removed only when the scan ends without an error: every locally
+       decodable record has a sequence central holds (decision 7). The outcomes:
+       - `errLocalNewer`: kept, logged as `local_newer`.
+       - `errLocalMissing`: kept, logged as `local_missing`. Central's `Append` will never accept those records (they
+         are below its maximum), so this directory stays until an operator removes it (decision 8).
+       - Any other error (a segment that cannot be listed or opened, a zstd stream that cannot start): kept, logged as
+         `unreadable`.
+       - A torn or corrupt frame (`Truncated`) does not by itself keep the directory: the bytes after it cannot be
+         decoded by any SpaceMan reader, so the catch-up could never ship them either. This matches the journaled
+         path, which also ignores `Truncated`. (The stricter alternative, keeping every `Truncated` directory, would
+         keep most recordings of runs whose node agent was killed mid-write, which are the bulk of the legacy
+         directories.) Such removals are counted in the log line: as `torn` when only the last segment is truncated
+         (a writer killed mid-write), and as `torn_mid` when an earlier segment is (corruption, which should be rare
+         and is worth seeing). To tell them apart, the node scans one segment per `ScanSegments` call, in order, and
+         notes which one returned `Truncated`.
+     - `incomplete`, `unknown`, any other status string, an ID missing from the answer, no answer before the timeout
+       (60 s), or a connection that ended or changed before the answer arrived: kept, and nothing is cached for the
+       next sweep (apart from the ordering hint of decision 4, which never decides a deletion).
+
+     Right before each removal the node checks the candidate again: still no journal row, no live recorder or pending
+     marks, nothing modified for 24 h. It then removes the directory with the existing `removeRecording`, which also removes the quota and acknowledgement files (`recording-acked` and its `.tmp`) and the empty run directory. Each sweep logs one line with the number of directories removed,
+     the bytes freed, and a count of kept candidates per reason (`unknown`, `incomplete`, `local_newer`,
+     `local_missing`, `unreadable`, `no_answer`, `budget`) and of removed ones that were `torn` or `torn_mid`. It logs
+     no run IDs.
+
+     **Answer plumbing (T2).** The agent's read loop has no request/answer pairing for node-initiated messages today.
+     T2 adds a waiter registry keyed by `query_id` (a fresh random ID per query): the sweep registers a waiter, sends
+     the query and waits for its answer, the timeout, or the end of the connection. The read loop hands a
+     `recording.status` message to the waiter registered under its `query_id`, and drops it when there is none. Every
+     connection gets a generation number, incremented on each welcome; a waiter records the generation it sent on, and
+     when that connection ends (or a new welcome arrives) every waiter of the old generation is released as
+     `no_answer`. An answer is accepted only on the connection generation its query was sent on, so a late answer
+     arriving after a reconnect is dropped.
+
+  4. **Batching and bounds.**
+     - At most `RecordingStatusMaxRuns` (100) run IDs per query, and one query in flight per connection. The node
+       sends the next query only after the previous one is answered or timed out, with the existing `followUpPause`
+       between queries.
+     - At most 5 queries (500 candidates) per sweep, oldest directory first (by its newest modification time). The
+       sweep runs every `pruneEvery` (1 h), so a node with many legacy directories drains them over several hours
+       instead of in one burst.
+     - The node's local reads are bounded too: a sweep stops starting new local scans once it has read 2 GiB of
+       segment files (counted by the opener it passes to `ScanSegments`). A scan the budget cuts short keeps its
+       directory (`budget`); the remaining candidates wait for the next sweep and are not deleted. The scan's memory
+       is constant (one decoded record and the answer's at most 32 ranges), whatever the recording's size.
+     - **Ordering hint.** The node keeps, in memory only, the run IDs whose last answer in this process was anything
+       but `complete` or `deleted`, and sorts them after the candidates it has not asked about yet. Otherwise a block
+       of 100 runs central always answers `unknown` (for example recordings larger than central's read budget) would
+       hold the head of the queue forever. The hint changes only the order; it never makes a directory deletable.
+     - Central answers a query in a spawned goroutine (`h.spawn`, like `relocation.fetch`) with a 30 s budget. IDs it
+       has not reached when the budget ends are answered `unknown`. IDs beyond the first 100 are not answered (so the
+       node treats them as unknown). A second query from the same session while one is being answered is answered
+       `unknown` for every ID. Neither case closes the connection.
+     - **Cost of the full scan on central.** A `complete` answer reads every stored segment of the run, not just the
+       last one: up to the run's recording quota (512 MiB by default, compressed) per run, and for an archived
+       recording that is a download from the artifact store. Decompressing and decoding runs at roughly 100–300 MB/s
+       of decompressed output per core, so a full-quota run can take tens of seconds. Central bounds it three ways:
+       - **A global limit across sessions:** at most 2 run scans at once on central (`recordingStatusScans`, a
+         semaphore shared by every node session; a package variable so tests can set it). A scan waits for a slot
+         under the query's 30 s budget, so a busy central answers `unknown` instead of queueing without end, and a
+         fleet of nodes sweeping at the same hour cannot saturate central's disk, CPU or store bandwidth.
+       - **A read budget per query:** 1 GiB of stored segment bytes (counted by the opener). A scan the budget cuts
+         short is `unknown`, and so is every ID not reached.
+       - **Cancellation:** the scan's callback checks the query's context every 1,000 records, so the 30 s budget
+         ends a long scan promptly; the slot is released on every path.
+       `incomplete`, `deleted` and `unknown` for a foreign or missing run read no storage, so only ended runs with a
+       copy cost a scan. A recording larger than the per-query budget is never confirmed and stays on the node
+       (counted `unknown`); with the default quota that cannot happen.
+     - Message sizes: 100 IDs come to about 3 KiB. The answer with no holes is under 10 KiB; with 32 ranges for each of
+       100 runs (about 40 bytes per range) it is under 150 KiB, far below `MaxMessage` (4 MiB).
+
+  5. **An old central, or an old node.** A central below `MinorRecordingStatus` negotiates a lower minor. The node
+     then never sends the query, and the confirmed pass does nothing: only segment-less directories are removed,
+     exactly as today. A central at `MinorRecordingStatus` that does not answer (a bug, overload, a dropped connection)
+     leads to the timeout, and nothing is deleted. A node below `MinorRecordingStatus` never asks, and central behaves
+     as today. Neither side needs the other to upgrade first.
+
+  6. **When central has deleted its copy (retention or an operator): delete.** Recommended over keeping, because:
+     - Central is the only place a recording is replayed, downloaded or shown. A node-local copy of an unjournaled run is
+       reachable by nobody through SpaceMan, so keeping it serves no reader.
+     - Recordings may contain secrets (SM-REC-004). Retention (SM-REC-003) is the operator's statement that recordings
+       older than the period should no longer exist. Keeping the last copy on the node indefinitely works against that
+       policy, and a recording an operator deleted by hand was deleted on purpose.
+     - It is still a positive confirmation from central, not a guess. `deleted` is answered only for a run row that
+       exists, belongs to this node and has ended, so the journal-reset argument (decision 7) holds unchanged.
+     - The cost is that records central never received are deleted too (a tail the node had not shipped when central
+       deleted its copy). They belong to a recording the operator's policy, or the operator, already chose to delete:
+       retention deletes only runs that ended before its cutoff, and it never touches a live run.
+
+     Not reclaimed: directories of runs whose space was **purged** (their run rows are gone, so the answer is
+     `unknown`). That matches `PurgeSpace`'s documented behaviour, under which the node's folder is retained per the
+     node's recovery policy. An operator removes those by hand.
+
+  7. **Why a lost or reset journal cannot lose data.** The node's journal is no longer consulted to decide that a
+     recording is safe to delete, only to exclude runs the journaled path owns. Every deletion rests on central's
+     answer and, for `complete`, on the node's own read:
+     - **Journal reset or restored on the node:** every run looks unjournaled. A live run has a live recorder (skipped)
+       or wrote within 24 h (skipped), and central reports it `incomplete`. An ended run whose records central lacks
+       has local records above central's `Seq` or inside one of its holes, and is kept. An ended run central holds
+       completely is removed: central already has every record the node has.
+     - **The process restarted without a journal while a harness program kept running:** without the agent there is
+       no recorder, so nothing is written. The stale sweeper ends the run `lost` in central, and records written before
+       the restart that central never received are above its `Seq`, so the directory is kept.
+     - **Central restored from an older backup:** a run missing from the restored database is `unknown`. A run the
+       restored database still shows as live is `incomplete`. If the restore lost recording files, central answers
+       from what is actually stored: a lost **last** segment lowers `Seq`, and a lost **earlier** segment (or one whose
+       middle is corrupt) shows as a hole in `Missing`. Either way the node's records in the lost part are above `Seq`
+       or inside a hole, and the node keeps its copy. Central never answers from a remembered number, and a high `Seq`
+       alone is never taken to mean "everything below it".
+     - **Central acked records it then lost (before PR #242):** a failed flush dropped buffered records and advanced
+       the writer's sequence, and the ack let the node stop re-shipping them. Central's stored segments do not contain
+       them, so the full scan reports them as a hole, and the node keeps its copy (`local_missing`). PR #242 stops new
+       such holes; the scan covers the ones already on disk.
+     - **The node enrolled with another installation, or under a new node ID:** every ID is `unknown` (no row, or the
+       row names another node). Nothing is deleted.
+     - **How the node proves central holds every record it has:** it does not trust a remembered or partial number. It
+       streams every local segment through `recording.ScanSegments` and requires that no decodable record has a
+       sequence above `S` or inside a range of `Missing`, stopping at the first one that does. A segment it cannot list
+       or open keeps the directory. The scan sees exactly the records the catch-up would ship, so a clean scan means
+       "every record the catch-up could ship, central already holds". That is stronger than the journaled path's
+       condition (nothing above the ack), which does not look for holes. (Releases before ADR-0097's addendum could number records at or below sequences central already held, after a local disk loss and a restart; central dropped them as repeats. Legacy directories may still hold such records under numbers central holds with other content. The sweep removes them, as the journaled path does. Current nodes wait for central's sequence before numbering.) The proof holds only for the answer it
+       was checked against, and answers are not reused across sweeps or connections.
+
+  8. **Not in scope.** The node does not ship the missing tail of an `incomplete` or `local_newer` unjournaled
+     recording: the catch-up covers journaled runs only, and an unjournaled run's chunk needs its space ID, which only
+     the journal holds. Nor does anything fill a hole in central's copy (`local_missing`): `Append` drops records below
+     its maximum, so the node's copy is the only one of those records. Those directories are kept and counted in the
+     sweep's log line. A later ADR can add shipping or hole repair if the counts show it matters. The journaled path's
+     own condition (nothing above the ack) is unchanged here; PR #242 makes its ack truthful. No configuration key: an operator who wants to keep everything runs a node below this
+     release or keeps central below `MinorRecordingStatus`.
+
+- **Alternatives considered:**
+  - *Keep every directory with segments* (today): safe, but the disk is never reclaimed.
+  - *Delete on age alone:* a reset journal would make every recording deletable, including ones central never
+    received in full.
+  - *Answer `complete` only for a copy without holes* (`unknown` otherwise): rejected in decision 2. It never
+    reclaims a recording whose numbering has a hole both copies share, which the releases that left these
+    directories produced, and it proves nothing the range check does not.
+  - *Central answers only the last segment's last sequence* (the first draft of this ADR): cheap, but a hole below it
+    (a flush that failed before PR #242, a partly restored or corrupt copy) would let the node delete the only copy of
+    the records in it.
+  - *Central answers from a database column of the stored sequence:* it would need a migration and a write per chunk
+    (or at close), and after a restore it could claim records whose files were lost. Reading the stored segments is
+    slower, but it is what central actually holds.
+  - *Keep recordings central deleted:* this keeps sensitive data past the operator's retention, for no reader
+    (decision 6).
+  - *A new HTTP endpoint instead of a protocol message:* the WebSocket session already authenticates the node and
+    scopes it to its runs, and the protocol minor already says whether central can answer. An endpoint would need
+    its own authentication and version check.
+
+- **Test plan** (the implementor follows it. "Kept" means the directory and its files are byte-identical afterwards):
+  - Proto (`internal/proto`): JSON round trip of both messages, with and without `Missing`; `MaxMinor` equals
+    `MinorRecordingStatus`; the status constants, `RecordingStatusMaxRuns` and `RecordingStatusMaxRanges` are as above.
+  - Central (`internal/fleet`, unit tests on the handler and on `Recordings.Status`):
+    - C1 an ID whose run belongs to another node is `unknown`; C2 a nonexistent and a malformed ID are `unknown`
+      (and the answers are indistinguishable from C1's);
+    - C3 a live run (`running`, `stopping`, `unknown` observed) is `incomplete`;
+    - C4 an ended run with a spooled recording is `complete` with the highest stored sequence; C5 the same with the
+      recording archived to a fake artifact store, and with records continued in a new local segment after the
+      archive (the merged maximum); C6 an ended run with no stored segment is `complete` with `Seq` 0; C4–C6 have an
+      empty `Missing`;
+    - C7 `recording_deleted_at` set on an ended run is `deleted`, and on a live run is `incomplete`;
+    - C8 `RecordingsDir == ""` is `unknown` for every ID; C9 a failure to list or open the stored segments is
+      `unknown`, and the failed-writer cases are: (a) a writer that failed and whose tail cut failed (`r.unsynced`, with the `os.Truncate`/`Remove` failure injected) → `unknown`; (b) a writer that failed and whose tail was cut → `complete` from the synced prefix, with the dropped records above `Seq` or in `Missing`; (c) a writer opened, or a frame written and not yet synced, after the snapshot → not counted;
+    - C10 more than 100 IDs: only the first 100 are answered; C11 a budget exhausted midway (fake clock or a
+      blocking fake store) answers the rest `unknown`; C12 a second concurrent query from the same session is all
+      `unknown`;
+    - C13 a query from a session that negotiated a minor below `MinorRecordingStatus` is not answered (the new
+      explicit check);
+    - **holes:** C14 a stored copy with a middle segment removed answers `complete` with the top `Seq` and that
+      segment's sequences as one range; C15 a middle segment with a corrupt frame answers the records after the tear
+      in that segment as a range; C16 a copy whose first records are missing has the range `[1, first−1]`; C17 the failed-writer cases of C9 apply, and a stored copy shaped like a
+      pre-#242 failed flush (a hole below records stored after it) shows the dropped records as a range, never as
+      held; C18 exactly 32 holes answer `complete` with 32 ranges, and 33
+      holes answer `unknown`; C19 a stored sequence out of order (a hand-built segment) is `unknown`;
+    - C20 duplicate IDs in a query are answered once each, and the repeats count toward the 100;
+    - C21 **global scan limit:** with the semaphore set to 1 and a blocking fake store, a query from a second session
+      waits for the slot and, when the first holds it past the 30 s budget (fake clock), answers `unknown`; the slot is
+      released after a completed, a failed and a cancelled scan (a third query then gets it);
+    - C22 the per-query read budget (a small test value) answers the run it cuts short and every later ID `unknown`;
+    - C23 `Recordings.Status` holds constant memory: scanning a 50 MiB stored recording stays within a small heap
+      bound, like `TestTailMemoryBounded`.
+  - Node (`internal/agent`, with the existing fake central of `prune_test.go`/`prune_review_test.go`; each case uses an
+    aged directory with segments and no journal row unless it says otherwise):
+    - A1 **old central:** welcome minor 14, so no query is sent and the directory is kept
+      (`TestSweepKeepsSegmentedRecordingWithoutJournalRow` keeps passing unchanged);
+    - A2 **no answer:** minor 15, central never answers: kept after the timeout; A3 the connection drops before the
+      answer: kept; A4 an answer with another `query_id`: ignored, kept;
+    - A5 `complete` with `Seq` equal to the local maximum: removed, along with the quota and acknowledgement files and the empty run directory; A6 `Seq` above the local maximum: removed; A7 `Seq` one below the local maximum: kept
+      (`local_newer`);
+    - A7b **holes:** `complete` with a top `Seq` above every local record and a `Missing` range containing one local
+      record: kept (`local_missing`); a range that contains no local record (the node's copy shares the hole): removed;
+      a range ending exactly at a local record and one starting exactly at it: kept (inclusive bounds); a malformed
+      `Missing` (more than 32 ranges, `To` above `Seq`, unsorted or overlapping): kept (`unknown`);
+    - A8 `incomplete`, `unknown`, an unrecognized status string, and an ID missing from the answer: each kept;
+    - A9 `deleted`: removed;
+    - A10 a segment file that cannot be opened (mode 000), with `complete` and a high `Seq`: kept (`unreadable`); a
+      segment with a corrupt frame in the middle and decodable records after `S` in a later segment: kept
+      (`local_newer`); a torn final frame and every decodable record at or below `S`: removed and counted `torn`; a
+      torn earlier segment and every decodable record held: removed and counted `torn_mid`, not `torn`;
+    - A11 never queried: a journaled run, a live recorder, an unshipped or held mark, a directory modified within
+      24 h, a symlink, a malformed ID, a directory without segments (that one is still handled by the segment-less
+      pass);
+    - A12 **journal reset:** a node with several runs (live, ended and fully stored, ended with an unshipped tail,
+      deleted by retention) and an emptied journal, against a fake central that answers each run's truth: only the
+      fully stored and the deleted ones are removed;
+    - A13 a re-check race: a journal row appears for a candidate (or a file in it is touched) between the answer and
+      the removal: kept;
+    - A14 **batching and bounds:** 250 candidates make three queries of at most 100 IDs, sent one after another,
+      oldest first; more than 500 candidates are spread over several sweeps; the 2 GiB read budget stops new scans and
+      keeps the directory it cut short (`budget`; a small test budget through a package variable); the local scan stops
+      at the first offending record (an opener that fails the test if a segment after it is opened) and holds constant
+      memory on a 50 MiB local recording; runs answered `unknown` in an earlier sweep are asked after unasked ones;
+    - A16 **waiter registry:** two queries' answers arriving out of order each reach their waiter; an answer arriving
+      after a reconnect for a query sent on the previous connection is dropped and the waiter is released as
+      `no_answer` when the old connection ends;
+    - A15 the sweep's log line has the counts per reason (including `local_missing`, `budget`, `torn` and
+      `torn_mid` separately) and no run IDs.
+  - End to end (`internal/app`, one test): a real central and agent, a run that ended with its recording fully
+    stored, its journal row deleted and its directory aged: the sweep removes it. A second run whose central copy is
+    missing its last records is kept. A third run whose central copy lost a middle segment (removed from the spool
+    after the run ended) is kept, and a fourth whose central copy retention deleted is removed.
+  - Mutation check (recorded in the PR): each of these mutants must fail at least one test: treat `unknown` as
+    `complete`; skip the local scan; use `<` instead of "no record above `S`" (off by one); **ignore `Missing` on the
+    node**; **answer the last segment's last sequence without scanning for holes on central**; treat a range's bounds
+    as exclusive; send the query below `MinorRecordingStatus`; answer `complete` for a run of another node; answer from
+    the writer's `Seq()` instead of `Stored()` and the stored segments; skip the global scan semaphore; drop the re-check before removal; ignore `r.unsynced`; list segments after releasing `r.mu`.
+
+- **Implementation tasks** (T1 and T2 can run in parallel once T1's proto types are pushed):
+
+  | Task | Tier | Scope | Acceptance criteria | Depends on |
+  |---|---|---|---|---|
+  | T1 | medium | **Proto and central.** The `internal/proto` types and constants (decision 1, including `MinorRecordingStatus` and `SeqRange`), `MaxMinor` = `MinorRecordingStatus`, the hub handler with the minor check and duplicate handling (decision 2), `Recordings.Status` (the streaming scan with holes, on PR #242's `Stored()`), and the bounds of decision 4 on central (the 30 s budget, the per-query read budget, the global scan semaphore). | Tests P and C1–C23 pass. The query is read-only on central (no write transaction). `make check` passes. A draft PR into the release branch. | ADR-0093's minor 14 merged into the target branch (still open), and PR #242 |
+  | T2 | medium | **Node.** The confirmed pass of `sweepOrphanRecordings` (decisions 3–5 and 7): candidate selection and the ordering hint, gating on `proto.MinorRecordingStatus`, the waiter registry keyed by `query_id` with connection-generation tracking in the agent's read loop (decision 3), the timeout, the streaming local proof with its sentinel errors and the `Missing` check, the re-check, the batch and read budgets, and the log line. (The agent's hello advertises `proto.MaxMinor`, so T1's bump already makes the node offer the new minor; until T2 lands the node just never sends the query.) | Tests A1–A16 pass. Nothing is removed without a `complete` (with the local proof) or `deleted` answer. A central below `MinorRecordingStatus` removes nothing. `make check` passes. | T1's proto types |
+  | T3 | medium, plus an Opus review | **End to end, mutation check and docs.** The `internal/app` test; the mutation run of the test plan; the node operations docs (what is reclaimed and what is kept); PLAN. **TRACEABILITY SM-REC-003:** add the new evidence and replace "retention deletes central's copy only" in its notes. **LIMITATIONS, Recordings:** the bullet "Retention deletes central's copy only" becomes what is now true: once retention or an operator deleted central's copy, the node's sweep also removes the node's copy of that ended run (after the 24 h quiet period and only when unjournaled); state what is still kept (`incomplete`, `unknown`, `local_newer`, `local_missing`, purged spaces, a central below the new minor). The release manager writes the CHANGELOG line, and it must call out that retention now removes the node's copy too, not only central's. | The e2e test passes. Every listed mutant fails a test (the run is recorded in the PR). `make site-check` passes. An Opus review of T1–T3, with its findings resolved. | T1, T2 |
+
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. The node deletes only on central's
+  positive answer, about its own runs. The new message is authenticated and scoped by the existing node session.
+  Central answers `unknown` for other nodes' runs, the same as for runs that do not exist, so the query discloses
+  nothing new. Central changes nothing in response to a query.
+
+### ADR-0097 — Live output never waits for another run's recording catch-up; acknowledgements survive an agent restart; a full disk no longer stops the live view
+
+- **Status:** Accepted by control, 2026-11-17 (incident follow-up). Node agent and the recording writer only. No central
+  migration, no agent journal migration, no protocol change (minor stays as it is), no HTTP API change. Refines
+  SM-REC-003/004 and ADR-0010; replaces the "disk" trunc record of SM-REC-004's disk-exhaustion behaviour.
+- **Context:** after a node's disk filled up, the agent's recording writer latched the write error: it dropped every
+  later output record, also for central's copy, so every terminal froze, and it never tried the disk again. The agent
+  was restarted once space was freed, and then *every* live terminal (the runs adopted across the restart and the ones
+  launched after it) stayed empty: central's terminal stream answered with an empty `tail` event and nothing else. Two
+  causes in the node's catch-up pass (`internal/agent/record.go`): (1) acknowledgements (`recording.ack`) were kept in
+  memory only, so a restarted agent treated every journaled run, ended ones included (over a thousand on that node),
+  as possibly behind and re-read and re-shipped each whole local recording from sequence 1; (2) the pass caught runs up
+  one at a time in run-ID order while `shipLive` kept back the live output of every run it had not reached yet, so the
+  newest runs, the ones people watch, came last, after gigabytes of history. Nothing failed, so nothing was logged.
+- **Decision:**
+  1. **No run's live output waits for another run's backlog.** A sweep catches up live runs before ended ones, and
+     before each run and between every batch of a run's catch-up it first serves the runs whose live output is waiting
+     (marked or kept back by `shipLive`), each once per sweep. A waiting run waits at most for the batch on its way.
+     Ordering guarantees per run are unchanged (a run's live records still never overtake its own catch-up).
+  2. **Ended runs' history is paced**: their re-shipment is bounded at 8 MiB/s of output (`endedCatchUpRate`). Live
+     runs are never paced.
+  3. **Acknowledgements are persisted on the node**, in the run's directory (`recording-acked`, next to
+     `recording-quota`; replaced whole by rename, written when an acknowledgement advances). A restarted agent reads it
+     when its pass reaches the run; the run is compared with the local recording (the last segment's last sequence, no
+     full decode) and only records above the acknowledgement are sent. A failed write only leaves an older value, which
+     re-ships a little more. The value has the semantics of central's `recording.ack`, so it improves with central's
+     fix that acknowledges only the durably stored sequence. Prune removes the file with the run directory. A file
+     rather than a journal column: it needs no journal migration (0010 is ADR-0093's) and lives and dies with the
+     recording it describes.
+  4. **The writer recovers from a write failure.** While the disk fails, every record still gets its sequence number
+     and is handed back to the caller, which ships it to central's copy: the live view continues, and no trunc record
+     ends the recording. The writer tries a new segment after a backoff (5 s, doubling up to a minute; an attempt that
+     wrote nothing leaves no file), and the local recording resumes once the disk has space. Records not stored
+     meanwhile are a gap in the local copy only (in central's too if they could not be shipped either). The agent logs
+     a warning when a run's local recording starts failing and an info line when it is written again. The retry applies
+     to records the node numbers (`AddRecord`). Central's copy (`Append`) never retries in the writer: a failed
+     `Append` is final, and central drops the writer and reopens the recording from disk (ADR-0010 addendum). Both
+     share one failure path in `recording.Writer`, so no writer option tells them apart: a failure cuts the segment
+     back to its last sync (removed, and its number used again, when nothing of it was synced), adds no trunc record,
+     and `Stored()` never moves past the hole it leaves, even after the node's writer recovered.
+- **Consequences:** a restart costs a pass over the journal that reads one small file and at most one segment per run
+  instead of re-shipping every recording; the first restart after upgrading still re-ships once (no file yet), paced
+  and behind live output. A central restored from an older backup is told nothing new: as before, the node trusts
+  the acknowledgements it has, now also across its own restarts. The `disk` trunc reason is no longer produced by
+  current nodes; readers keep accepting it.
+- **Evidence:** `TestDiskFullRecovers`, `TestDiskFullBacksOff` (recording); `TestCatchUpServesLiveRunsBeforeTheEndedBacklog`,
+  `TestCatchUpAfterRestartSkipsAcknowledged`, `TestCatchUpPacesEndedRuns` (agent); `test/fault`
+  `TestFaultRecordingDiskFull` (a full disk, then space freed). Each fails without its part of the change.
+
+#### ADR-0097 addendum — a restarted agent learns central's sequence before it numbers a run's records (2026-11-17)
+
+- **Problem (review of decision 4):** while the disk is full, the writer numbers and ships records it cannot store,
+  so central can hold up to 200 while the local recording ends at 100. The acknowledgement file is written to the
+  same full disk, so it can also stay near 100. A restarted agent resumed numbering from the local recording (101…).
+  Central drops records at or below what it holds as repeats, so the output after the restart was lost until
+  central's first acknowledgement arrived, and the two copies held different content under the same numbers. An idle
+  run that stores nothing locally between the disk recovering and the restart keeps the stale state.
+- **Decision:**
+  1. **Records wait for central's sequence.** A run's sequence at central counts as *known* to an agent process
+     once central acknowledged any recording message of the run in that process, or once the process launched the
+     run itself with no recording on disk and no acknowledgement file. Until then the recorder numbers nothing and
+     stores nothing locally. It keeps the records back in memory, with their output time: output up to 4 MiB
+     (counting a per-record overhead), and every other record (sizes, the close). Output past the bound is dropped
+     and one `gap` record (`why: sequence-unknown`) marks where. Once the sequence is known, the writer moves above
+     it (`SkipTo`) and the kept records are numbered there. A kept `open` record becomes a `size` record when central
+     already holds records. A recorder whose program ended keeps waiting for the answer. If it is stopped first (the
+     agent shuts down), the kept records are dropped, never numbered without central's sequence.
+  2. **Asking for it.** The waiting recorder sends an empty `recording` message at most every 2 s while connected.
+     Central applies it like any chunk, stores nothing and acknowledges what it holds. There is no new message type
+     and no protocol minor: every central version answers. A probe or answer lost with a connection is asked again.
+  3. **Central does not acknowledge a message it could not apply at all.** If the run's recording could not even be
+     opened, the acknowledgement is skipped when it would be 0, which a probing node would take for "nothing
+     stored". A store failure that still knows a stored sequence is acknowledged as before.
+  4. **Finding 2 (an acknowledgement below the saved one).** The first acknowledgement a process receives for a run
+     is authoritative. When it is below the value restored from the run directory, central lost records it had
+     acknowledged (a restored central or disk), or an older central acknowledged more than it stored. The node then
+     lowers its acknowledgement and rewrites the file. It marks the run for a catch-up, which re-ships the local
+     records above the lowered value; live records wait behind that catch-up as usual. New records are still numbered
+     above the old, higher value. A jump is a gap, but numbering below it could reuse a number central once
+     acknowledged and may still hold. Later acknowledgements only ever raise the value, as before.
+- **Interplay with #242 (central acknowledges `Stored()`):** after #242, an acknowledgement is the contiguous
+  durable prefix: every record up to N is stored, apart from jumps the node made itself. The answer to an empty probe
+  is that prefix, so the node never reuses a number central holds. It never skips a record central lacks: the
+  catch-up still sends every local record above the acknowledgement. #242 accepts a jump on a new connection as the
+  node's own, which is exactly why the node must learn the prefix before it numbers anything (decision 1). #242's hub
+  acknowledges before it closes a connection after a store failure. Decision 3 keeps that acknowledgement from being a
+  bogus 0. The merged hub keeps both changes: the guarded acknowledgement, then the close (`Recordings.refused`).
+- **A run without a usable acknowledgement file is compared too (review fix).** The recorder of a run this process
+  did not launch marks the run as not compared with central's acknowledgement at its start, whether or not a file was
+  restored. Without that, for a run with no file (an older agent, a failed first save), a stored 0, an unreadable
+  file or one `ackMargin` rejected, the probe's answer became the run's first acknowledgement and the sweep took the
+  run for clean, so the local records above central's sequence were never re-shipped. The run's catch-up compares
+  with the local recording and clears the mark. `TestSweepReshipsWithoutASavedAck*` (agent).
+- **A lowering during the run's own catch-up (race fix, v0.1.11).** The recorder's probe and the catch-up sweep run
+  independently, so the lowered answer (decision 4) could arrive after the run's catch-up had started from the restored
+  value. That catch-up found nothing above it, then cleared the run's catch-up mark that the lowering had set and the
+  "not compared" mark. The sweep the lowering asked for then took the run for clean, because nothing it had sent was
+  above the lowered value. The local records between the two values never reached central, while new records above
+  the restored value did: a silent hole. The race showed up about once in 150 runs of
+  `TestRestartedRecorderBelowTheSavedAcknowledgement`. Now the catch-up reads its starting point together with a
+  per-run count of lowerings. It checks that count before every send and before it marks the run caught up. When the
+  count changed, it starts again from the lowered value, before anything above that value goes out (kept-back live
+  records included). `TestLoweredAckDuringTheRunsCatchUp` (agent) holds the catch-up until the lowered answer is
+  applied.
+- **Open: records shipped above a restored value before the lowered answer arrives.** A catch-up that starts from a
+  restored value can still ship local records above that value before the first answer arrives. This happens when the
+  previous process stored records it never had acknowledged. If central then turns out to hold less, it has already
+  stored those records, so it drops the re-shipped records between the lowered and the restored value as repeats. Two
+  things must coincide for this: central losing acknowledged records, and the agent stopping with unacknowledged
+  records on disk. It is not fixed here.
+- **Limitation of `ackMargin`.** The margin is measured against the local recording's last sequence, which after a
+  long ship-through on a full disk can be far below what central stores, and is 0 for an empty recording directory.
+  A believable file can then be rejected. The cost is only a catch-up that compares with the local recording and
+  re-ships what central already holds (dropped there as repeats); numbering is unaffected, because it waits for
+  central's answer (decision 1).
+- **With close-on-error (after the merge):** a probe for a run whose recording central cannot open, with nothing
+  stored before, is logged and leaves the connection open, as #242 handles any open failure, and gets no
+  acknowledgement (decision 3); the node probes again. Only a store failure that knows a stored sequence is acked with
+  it, and then closes the connection once per run and connection. `TestHubRecordingAckOnlyWhenApplied` (fleet).
+- **Consequences:** after an agent restart, an adopted run's output reaches central one round trip later, and is
+  written locally only from then on. If central stays out of reach across the restart, at most 4 MiB of output per run
+  survives in memory until it answers. A run launched by the restarted process never waits. A central older than
+  decision 3 that cannot open a run's recording still answers 0: the node then numbers above the larger of its
+  local recording and its saved acknowledgement, and can reuse numbers only if that central later recovers more than
+  both. Centrals without a recordings directory never answer, and adopted runs then record nothing locally (central
+  stores no recording there either).
+- **Evidence:** `TestRestartedRecorderNumbersAboveCentral` (central holds 200, the disk and the file 100: the output
+  after the restart is numbered above 200, and nothing is dropped as a repeat),
+  `TestRestartedRecorderBelowTheSavedAcknowledgement` (finding 2),
+  `TestRestartedRecorderKeepsTheCloseUntilCentralAnswers`, `TestSeqGateBound` (agent); `test/fault`
+  `TestFaultRecordingDiskFullRestart`. Without the gate, the first test fails with records dropped as repeats.
+
+### ADR-0098 — A run an agent restart stopped is resumed, within a cap
+
+- **Status:** Accepted by control (task request of 2026-11-17). Central migration `0064_limit_wait_cause` (one column;
+  0061/0062 are ADR-0093's), a read-only `cause` field on limit waits in the HTTP API. No protocol change and no node
+  change: herdr-core already ends a process the agent's restart stopped with the reason `stopped_by_restart`, which the
+  node reports as an ordinary exit. Not security-relevant: no requirement, guarantee or default is relaxed; the resume is
+  a launch through `LaunchRun` and so goes through every check of one (lease, space state, slots, budgets, accounts).
+- **Context:** after a node agent restart, six worker runs ended `stopped_by_restart` while their desired state was
+  `running`. Nothing brought them back: their tasks stayed `running` (or moved to `review` if the worker had already
+  finished) with no live run, and control had to notice and relaunch each one by hand.
+- **Decision:**
+  1. **Reuse the limit-wait machinery (ADR-0079), not a parallel one.** A worker or diagnostic run that ends with the
+     node reason `stopped_by_restart`, with desired `running`, gets a limit wait with `cause = agent_restart` in the report
+     transaction that records its end. The wait's job resumes it the way a usage-limit wait is resumed: a new run of the
+     same instance under the current lease, `--resume` of its session (Claude Code and Codex both support it), the same
+     worktree, the same account, the task pointed at the new run, the claim, deferral (node away, space paused or full)
+     and batching rules unchanged. The launch applies the same slot and budget limits as a normal launch. Only the
+     resume time differs: 15 s after the end, doubling per attempt (30 s, 60 s), so the agent is up again first.
+  2. **Session.** A run that finished no turn has no session worth resuming: it starts fresh with its original prompt, as
+     in ADR-0079. A resumed run is told, with the restart prompt, that the agent restarted and to continue from where it
+     left off.
+  3. **Restart loops: capped.** Each resume counts against `attempts`, and a run resumed because of a restart that is
+     stopped by one again carries the count forward. At most **3** automatic resumes are made per chain. The next end
+     writes the wait already `released` with the reason `restart_cap`, gives the task back (`ready` and unassigned) and
+     tells control: *"run X of task Y was stopped by an agent restart; relaunch"*. A resumed run that lived at least 30
+     minutes starts the count again, so an occasional restart never exhausts the cap. The chain also keeps the
+     `release_at` of ADR-0079 (the maximum wait, 7 days by default) after which a still-waiting task is released.
+  4. **Tasks in review.** A worker whose task is already in `review` has finished: its work waits for acceptance. It is
+     not resumed (that would restart an idle agent and burn budget for nothing); the task stays in `review` and the
+     ordinary run-ended notice tells control. A reviewer's feedback relaunches a worker as usual. A run without a task
+     (an ad hoc worker, a diagnostic) likewise gets only the run-ended notice.
+  5. **Not resumed, and why.** Runs somebody asked to stop (desired `stopped`: a stop, a lease revocation, a space
+     pause) are not wanted and are left ended. Control runs are not touched: the supervisor already relaunches them within
+     its own bounds. A usage limit wins over the restart: a run ended at its limit is parked by ADR-0079 as before.
+  6. **Control hears once.** One message when the run is resumed (the new run and the task now pointing at it), or the
+     relaunch notice above when SpaceMan gives up. No "parked" message is sent for a restart wait.
+  7. **Outages long enough for the stale-run sweeper are not resumed.** The stale-run sweeper ends a run whose node has
+     been silent too long with its own reason, not `stopped_by_restart`. A node that was away for that long (not a
+     quick agent restart) therefore leaves its runs ended without a restart wait; control hears the ordinary run-ended
+     notice and relaunches. The resume covers the quick restart, where the node reports the exit itself.
+- **Consequences:** a wait row exists per restart, visible with its cause among the space's limit waits; `limit_waits.cause` is `''`
+  for usage limits. Resumes after an agent restart now happen without control. A run whose resume itself fails before its
+  first turn is handled by ADR-0079's one fresh retry. Simulated evidence only (scripted node, fake clock): not verified
+  with a real agent restart.
+- **Evidence:** `internal/fleet` `TestRestartStoppedRunResumes`, `TestRestartResumeIsCapped`,
+  `TestRestartStableRunResetsCap`, `TestRestartNotResumed`.
+
+### ADR-0099 — A control watchdog nudges a stalled control and escalates when the nudges go unanswered
+
+- **Status:** Accepted, 2026-11-17 (operator request for v0.1.11, after an incident); implemented in #247 and #249. New requirement SM-CTRL-008. No
+  migration, no node protocol change, no new API operation in this step (the read-only state follows as
+  `get-space-watchdog`, `spaceman space watchdog` and a badge on the control row): the settings are three new space
+  limits, and watchdog state is kept in central's memory. Extends ADR-0056 (control auto-start and idle stop) and SM-COMM-003
+  (terminal notices).
+- **Context:** in a space with several workers, four workers finished and sent their results. Their messages and the
+  "task moved to review" notifications sat unacknowledged for about 90 minutes, and one worker launch had failed.
+  Control was alive and idle and never picked them up. Only the harness's own reminder, or the operator, woke it.
+  Nothing in SpaceMan noticed, by design of the parts it has today:
+  - The notifier (SM-COMM-003) types a one-line notice into an idle run's terminal for each *stored* item. Once the
+    node accepts the notice, the items become *available*. An available item is never noticed again: the notice was
+    typed, and from then on reading and acknowledging is the agent's job. If the agent's turn ends without acting on it
+    (it was interrupted, it misread the notice, the harness dropped the line, the model decided to wait), nothing
+    reminds it.
+  - Auto-start (ADR-0056) reacts only to items no control has seen (stored messages, unwoken human responses), and only
+    when no control run is live. A live, idle control is outside its scope.
+  - Idle stop (ADR-0056) keeps a control running while something waits for it, and stops one that is idle with nothing
+    waiting. Available but unacknowledged items do not count as waiting, so idle stop either stops control (and the next
+    control is told about them once) or, as in the incident, a newer stored item keeps control alive without anyone
+    acting on the older ones.
+  - Ended workers and tasks moved to review become notifications to control (SM-CTRL-002): the same messages, with the
+    same gap.
+- **Decision:**
+  1. **A watchdog per central, in the control package.** One loop in central (one minute tick, plus a kick when a
+     control run turns idle) looks at every active space that has a live control run. Its state (nudges sent, the
+     backoff, whether it escalated) lives in memory and starts over when central restarts, which can only delay a
+     nudge, never send an early one.
+  2. **What counts as backlog.** All of it is derived from existing state, per space. An item counts once it is older
+     than the space's threshold `N` (`control_watchdog_minutes`):
+     - **Unacknowledged messages:** messages to control (to control, to its role, or to its run) that are stored or
+       available, are due (a scheduled message counts only from its delivery time), were not sent by control itself,
+       and have been waiting for more than `N` minutes since they became available (or since they were created, for one
+       that was never noticed).
+     - **Reviews waiting:** tasks in `review` whose assigned run has ended or reports `done`, that nobody has changed
+       for `N` minutes, and that entered review (their last change) after control's last activity (below). Like an
+       ended run, a review is a notice to control, not a debt: once control has acted after it, a review may rightly
+       wait for hours (for a person to merge a pull request, say) without being backlog.
+     - **Ended runs:** worker and diagnostic runs of the space that ended on their own, with nobody asking them to stop
+       (`failed`, `exited` or `lost`; a failed launch is a `failed` run), more than `N` minutes ago, after the control run started, and after control's last activity
+       (below). A run parked at a usage limit is not counted: it comes back through its limit wait (ADR-0079).
+     - **Idle slots:** the space has fewer live worker and diagnostic runs than `max_concurrent_runs` while at least one
+       ready task is eligible now (no dependency, exclusion or policy holds it), has been ready for more than `N`
+       minutes, and some account would launch it: a task whose role's pool (ADR-0090; the harness from the role's
+       profile, or every harness the space has accounts for when that is unknown) has only accounts with an open usage
+       limit that has not reset waits for the reset, not for control. A pool with no usable account, or a space without
+       accounts, is not judged.
+  3. **When control counts as stalled.** Control is stalled when there is backlog *and* its last activity is older than
+     `N` minutes. Its activity is the latest of:
+     - its last SpaceMan or gateway tool call (every agent tool call passes through central's tool dispatcher, which
+       records the time per run; acknowledging a message is a tool call);
+     - the moment its turn counter last advanced, as the watchdog saw it;
+     - when the run started, and when this central started (so a restart never makes a quiet control look stalled
+       sooner than `N` minutes).
+  4. **False-positive guards.** No nudge is sent, and the backoff does not advance, while:
+     - **control is busy:** its program reports `working`, or one of its tool calls is still running (a call waiting
+       for an approval included); the notice would be refused by the node anyway (safe input is idle-gated);
+     - **control is at a usage limit:** the run has an open limit, a limit wait, or the space's control is parked
+       (ADR-0079). It is waiting for the reset, and typing into it would start a turn that fails at once;
+     - **control is waiting on a person:** its program reports `blocked` (a harness permission prompt), or a human
+       action its run asked is still open and control has taken no turn since asking: the turn that called
+       `spaceman_human_ask` may have gone on to other tool calls (telling a worker, setting a task's status) and
+       finished, but no later turn has. The dispatcher records the run's finished turns when the question is asked.
+       After a central restart, which loses that record, any open human action that control asked counts until
+       the watchdog sees a turn of control finish (a turn without tool calls ends it too);
+     - **the space is not active** (paused or archived), or an operator has taken over control's terminal;
+     - **the run is not control's live run:** no control run, or it is starting, stopping or ended (auto-start and
+       recovery own those cases).
+  5. **The nudge.** A one-line notice typed into control's terminal through the same idle-gated safe input as the
+     notifier's notices (`fleet.QueueNotice`), prefixed `SpaceMan watchdog:`, naming only counts of the backlog, for example:
+     "SpaceMan watchdog: 3 unacknowledged messages, 2 tasks in review with finished workers, 1 failed run are waiting
+     for you. Check spaceman_messages, the queue and spaceman_runs_list, acknowledge what you have handled, then act
+     on the rest." It carries no message content, titles or IDs: content is read through the tools as data, never as a
+     prompt. Each nudge writes an audit event `control.watchdog_nudged` (actor `system:control-watchdog`, target the
+     control run) with the counts and the nudge's number in the episode.
+  6. **Episodes and backoff.** An episode is the same backlog left waiting by one control run, and it is keyed on the
+     backlog, not on control's activity: a nudge typed into an idle program always starts a turn, so "control did
+     something" says nothing about whether the backlog was handled. The first nudge goes out when control is first
+     found stalled. The next one is due 5 minutes later, then the gap doubles (10, 20, 40) up to a 60-minute cap; a
+     nudge also waits until control has again been quiet for `N` minutes, so activity delays it but neither resets the
+     count nor the gap. The episode ends, and the count and the backoff start over, when:
+     - the backlog empties, whoever emptied it (control, or an operator acknowledging the messages), whether or not a
+       guard holds at the time;
+     - the backlog shrinks: fewer unacknowledged messages or startable tasks than the last pass saw, or the oldest of
+       them was handled (the oldest waiting item's time advanced). Reviews and ended runs count only until control's
+       next activity (decision 2), so their dropping out is not judged; when they were all that waited, the backlog
+       empties;
+     - control's live run is another run, or the watchdog is turned off for the space.
+
+     More backlog (a new message, another ready task) keeps the episode. A guard pauses an episode without advancing
+     it.
+  7. **Escalation.** When `control_watchdog_nudges` nudges of one episode left the backlog in place (the next one is
+     due, whether or not control took turns in between), the watchdog:
+     - raises one high-priority human action for the space's people, "Control is not responding in" followed by the
+       space name, naming the backlog counts and how long control has been quiet. It is deduplicated per episode and
+       reaches people the way every human action does: the space's inbox of human actions and, where the space has
+       Telegram linked, Telegram. Nudges continue at the capped interval;
+     - when `control_watchdog_restart` is on, also restarts control once per episode: it stops the run (interrupt,
+       then kill after the grace) as `system:control-watchdog`, and when the run has ended relaunches it the way
+       recovery does (same role, harness, instance, model, settings, account and workspace, resuming the session when it
+       finished a turn), with a prompt that says why. Restarts count against the supervisor's restart budget
+       (`MaxRestarts` per hour, SM-CTRL-002); past the budget the human action is all that happens.
+       The restart count lives in central's memory: if central restarts between the stop and the run ending, it is lost
+       and control stays stopped until the next autostart.
+
+     **Restart is off by default.** The incident's control was healthy and woke as soon as something typed into it, so a
+     nudge is the fix for that failure; a restart interrupts work in flight, loses the turn's context when the session
+     cannot be resumed, and costs a new run. An operator who prefers it turns it on per space or per installation.
+  8. **Settings.** Three space limits in the one limits model (ADR-0036), so they get installation defaults, per-space
+     overrides, audit, the API, the CLI, the Limits page and Terraform without a new resource:
+     - `control_watchdog_minutes` (minutes, default 15, 0 turns the watchdog off, at most 1,440): the threshold `N`;
+     - `control_watchdog_nudges` (count, default 3, 0 never escalates, at most 20): unanswered nudges before escalating;
+     - `control_watchdog_restart` (switch, default off): also restart control on escalation.
+
+     The in-process test environment defaults the watchdog to off so existing tests see no extra terminal input.
+- **Consequences:**
+  - A live control that stops acting on its backlog is reminded within `N` minutes of the oldest item being due, and
+    people are told after a bounded number of reminders, instead of the backlog waiting for someone to look.
+  - The watchdog adds no new terminal input to a busy, limited, paused, taken-over or human-waiting control. Its only
+    input is the one-line, content-free notice that the notifier already uses.
+  - The watchdog only reads state that already exists, plus one in-memory timestamp per run's tool calls (and the run's
+    turn when it asks a person). Its cost is one pass over the active spaces with a live control each minute, with
+    one read of the account holds per role of the eligible ready tasks.
+  - Watchdog state is not persisted. After a central restart an episode starts over: the first nudge comes `N` minutes
+    after the restart at the earliest, and an escalation already raised is not raised again for the same episode
+    (its human action is deduplicated).
+  - A notice the node refuses because control turned busy in the meantime still counts as sent; control is active then,
+    and the episode goes on only if the backlog is still there once control is quiet again.
+  - A control that answers every nudge with a turn but leaves the backlog is reminded at a growing interval and its
+    people are told after `control_watchdog_nudges` reminders; a control that handles any part of the backlog starts
+    a new episode, so steady progress is never escalated.
+  - A backlog made only of reviews and ended runs gets a single nudge: they count only until control's next activity,
+    and the nudge's own turn is that activity, so they drop out and the episode ends. The same happens at a central
+    restart, which also forgets control's last activity.
+  - Fetching messages without acknowledging them (`spaceman_messages`) is a tool call, so each gives control a fresh `N`
+    minute window; the episode and its count carry on.
+- **Not security-relevant:** no requirement, guarantee or default is relaxed. The nudge is safe input with no untrusted
+  content, refused during takeovers and limits like every notice. The restart is off by default, goes through the same
+  launch resolution, admission and audit as recovery, and is bounded by the same restart budget.
+- **Implementation split:**
+
+  | ID | Work | Depends on | Size |
+  |---|---|---|---|
+  | W1 | This ADR; the detector (`internal/control/watchdog.go`), the loop in central, tool-call activity tracking, the nudge with its audit event, backoff, escalation (human action, optional restart), the three limits and their config, unit tests for every signal and false-positive guard. | — | Opus |
+  | W2 | API and CLI: a read-only `get-space-watchdog` per space (state, counts, last nudge, next nudge, escalated) and `spaceman space watchdog`. | W1 | Sonnet |
+  | W3 | Terraform provider: nothing new for the three limits beyond the generic space limits resource; check and document them. | W1 | Haiku |
+  | W4 | Web: a badge on the space's control card when control is being nudged or was escalated, from W2's state. | W2 | Sonnet |
+  | W5 | Docs site: a "Watchdog" section in the control guide, the three limits in the limits guide, TRACEABILITY evidence for SM-CTRL-008. | W1 | Haiku |
 
 ## 2. Open items and unresolved contracts
 

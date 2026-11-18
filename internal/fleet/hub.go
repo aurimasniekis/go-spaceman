@@ -471,7 +471,8 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		for _, r := range live {
 			s.liveAtConnect[r.ID] = r.Version
 		}
-		return nil
+		// A role rename's memory.rename the node refused earlier goes out again on this connection (ADR-0093).
+		return svc.requeueRoleRenames(ctx, tx, s.nodeID)
 	}); err != nil {
 		return err
 	}
@@ -683,6 +684,11 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			if err := svc.inputRejected(ctx, tx, cmd, a); err != nil {
 				return err
 			}
+			if cmd.Kind == proto.CmdMemoryRename && a.Result == proto.AckRejected {
+				if err := memoryRenameRejected(ctx, tx, cmd, a.Reason); err != nil {
+					return err
+				}
+			}
 			if svc.opts.OnCommandAck == nil {
 				return nil
 			}
@@ -823,6 +829,20 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		return nil
 	case proto.TypeNodeCapabilities:
 		return h.nodeCapabilities(ctx, s, env)
+	case proto.TypeMemoryRenamed:
+		if s.minor < proto.MinorRoleRename {
+			return apperr.New(apperr.CodeInvalid, "memory.renamed needs protocol minor %d", proto.MinorRoleRename)
+		}
+		var rep proto.MemoryRenamed
+		if err := env.Decode(&rep); err != nil {
+			return err
+		}
+		// Recorded in order, before the next message is read: the node syncs the role under its new name right after
+		// reporting the move, and that sync must find the rename done.
+		if ack, ok := svc.roleRenamed(context.WithoutCancel(ctx), s.nodeID, rep); ok {
+			_ = s.send(proto.TypeMemoryRenamedAck, svc.now(), ack)
+		}
+		return nil
 	case proto.TypeTakeoverEnded:
 		var m proto.TakeoverEnded
 		if err := env.Decode(&m); err != nil {
@@ -841,12 +861,31 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if svc.opts.RecordingsDir == "" {
 			return nil
 		}
-		seq, err := svc.rec.apply(c)
-		_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
-		return err
+		seq, err := svc.rec.apply(s.seq, c)
+		// A message that could not be applied at all and leaves nothing known of what central holds (the recording
+		// could not be opened, nothing stored before) is not acknowledged: a node that probes for central's sequence
+		// would take an ack of 0 for one (ADR-0097, addendum). It asks again. Any other outcome is acked with what is
+		// durably stored (Recordings.apply), before a storage failure closes the connection.
+		if err == nil || seq > 0 {
+			_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
+		}
+		return svc.rec.refused(s, err)
 	default:
 		return apperr.New(apperr.CodeInvalid, "unexpected message type %q", env.Type)
 	}
+}
+
+// refused is the hub's reaction to an error from Recordings.apply: a storage failure closes the connection (central lost
+// a chunk that only a re-ship on a new one brings back, SM-REC-003, ADR-0010 addendum; once per run and connection,
+// since a close marks every live run of the node unknown) and is returned; any other error was logged by apply and the
+// chunk acked with what is stored, so the connection and the node's other runs are left alone.
+func (r *Recordings) refused(s *session, err error) error {
+	var cc *closeConn
+	if !errors.As(err, &cc) {
+		return nil //nolint:nilerr // not a storage failure: logged by apply, acked with what is stored
+	}
+	s.close(websocket.StatusTryAgainLater, "recording not stored")
+	return err
 }
 
 // syncLeases grants or renews the lease of every space pinned to the node that may run (not archived, not relocating
@@ -995,6 +1034,9 @@ func (h *Hub) dispatch(ctx context.Context, s *session) (retry, ok bool) {
 		if errors.Is(err, errMintPending) {
 			continue // the mint kicks this loop when it is done
 		}
+		if errors.Is(err, errRenameNotDeliverable) {
+			continue // waits for a lease grant or a newer agent, both of which run this loop again
+		}
 		if err != nil {
 			s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
 			retry = true
@@ -1067,6 +1109,17 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 		if keyed {
 			msg.Payload = mustJSON(p)
 		}
+		return msg, nil
+	}
+	if c.Kind == proto.CmdMemoryRename {
+		gen, ok, err := h.memoryRenameGeneration(ctx, c, nodeID, minor)
+		if err != nil {
+			return msg, err
+		}
+		if !ok {
+			return msg, errRenameNotDeliverable
+		}
+		msg.Generation = gen
 		return msg, nil
 	}
 	if c.Kind != proto.CmdLaunch {
@@ -1152,6 +1205,9 @@ func (h *Hub) onDisconnect(ctx context.Context, s *session) {
 		delete(h.sessions, s.nodeID)
 	}
 	h.mu.Unlock()
+	if h.svc.rec != nil {
+		h.svc.rec.ConnEnded(s.seq)
+	}
 	if s.counted {
 		h.svc.opts.Metrics.NodeConnected(-1)
 	}

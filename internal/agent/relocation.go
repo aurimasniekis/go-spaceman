@@ -277,7 +277,7 @@ func (a *Agent) spaceMemory(ctx context.Context, spaceID string) []proto.MemoryC
 	if a.mem.git == nil {
 		return out
 	}
-	for _, k := range a.mem.collections() {
+	for _, k := range a.mem.collections(ctx) {
 		if k[0] == spaceID {
 			out = append(out, a.mem.statusOf(ctx, k[0], k[1]))
 		}
@@ -532,6 +532,16 @@ func (a *Agent) relocPrepare(ctx context.Context, g *projectGit, spaceID string,
 	a.mu.Unlock()
 	if holds {
 		return nil, errors.New("this node holds the space's lease; it cannot be a relocation destination for it")
+	}
+	// Central's copy is what arrives, so a rename journaled here from an earlier stay is moot. A node that lost the space
+	// while unreachable never got the release that drops it, and central cancelled that rename's closed notice when it
+	// relocated the space: left behind it would hold the names again with nothing to close it.
+	// renameMu keeps the delete from landing inside a startup retry's moveRoleMemory of one of these renames.
+	a.renameMu.Lock()
+	err := a.j.forgetSpaceRenames(ctx, spaceID)
+	a.renameMu.Unlock()
+	if err != nil {
+		return nil, err
 	}
 	space := a.spaceDir(p.Workdir)
 	memDir := filepath.Join(a.mem.root, spaceID)
@@ -828,7 +838,21 @@ func (j *Journal) workdir(ctx context.Context, spaceID string) string {
 
 func (j *Journal) forgetSpaceMemory(ctx context.Context, spaceID string) error {
 	return j.s.W().TxNamed(ctx, "journal.forget_memory", func(tx *store.Tx) error {
-		_, err := tx.SQL.ExecContext(ctx, `DELETE FROM memory_sync WHERE space_id = ?`, spaceID)
+		if _, err := tx.SQL.ExecContext(ctx, `DELETE FROM memory_sync WHERE space_id = ?`, spaceID); err != nil {
+			return err
+		}
+		// A rename of the space still open here (central closed it when it relocated the space from its own copy, source
+		// unavailable) is moot once the node released the space's memory; left behind it would hold the names against a
+		// later return of the space and report a move of a folder that is no longer this node's.
+		_, err := tx.SQL.ExecContext(ctx, `DELETE FROM role_renames WHERE space_id = ?`, spaceID)
+		return err
+	})
+}
+
+// forgetSpaceRenames drops the space's journaled renames only (see relocPrepare).
+func (j *Journal) forgetSpaceRenames(ctx context.Context, spaceID string) error {
+	return j.s.W().TxNamed(ctx, "journal.forget_renames", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `DELETE FROM role_renames WHERE space_id = ?`, spaceID)
 		return err
 	})
 }

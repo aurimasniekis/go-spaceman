@@ -285,7 +285,7 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	if err := tx.Q.InsertLimitWait(ctx, db.InsertLimitWaitParams{ID: w.ID, SpaceID: w.SpaceID, RunID: w.RunID, TaskID: w.TaskID, RunKind: w.RunKind,
 		Role: w.Role, NodeID: w.NodeID, InstanceID: w.InstanceID, Harness: w.Harness, SessionID: w.SessionID, LaunchJson: w.LaunchJson,
 		UsageLimitID: w.UsageLimitID, ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, SwitchToAccountID: w.SwitchToAccountID,
-		AccountSwitchID: w.AccountSwitchID, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
+		AccountSwitchID: w.AccountSwitchID, Cause: w.Cause, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
 		return nil, err
 	}
 	if err := svc.record(ctx, tx, w.SpaceID, "limit_wait", w.ID, "created", 1); err != nil {
@@ -357,7 +357,7 @@ func (svc *Service) resumeFailedTx(ctx context.Context, tx *store.Tx, r db.Run) 
 	now := tx.Now.UnixMicro()
 	w := db.LimitWait{ID: ids.New(ids.LimitWait), SpaceID: r.SpaceID, RunID: r.ID, RunKind: r.Kind, Role: r.Role, NodeID: r.NodeID,
 		InstanceID: r.InstanceID, Harness: r.Harness, LaunchJson: prev.LaunchJson, UsageLimitID: prev.UsageLimitID, ResumeAt: now,
-		ReleaseAt: prev.ReleaseAt, State: WaitWaiting, Attempts: prev.Attempts, Version: 1, CreatedAt: now, UpdatedAt: now}
+		ReleaseAt: prev.ReleaseAt, State: WaitWaiting, Attempts: prev.Attempts, Cause: prev.Cause, Version: 1, CreatedAt: now, UpdatedAt: now}
 	if r.Kind != "control" {
 		if w.TaskID, err = activeTaskOf(ctx, tx, r.ID); err != nil {
 			return err
@@ -372,7 +372,7 @@ func (svc *Service) resumeFailedTx(ctx context.Context, tx *store.Tx, r db.Run) 
 	}
 	if err := tx.Q.InsertLimitWait(ctx, db.InsertLimitWaitParams{ID: w.ID, SpaceID: w.SpaceID, RunID: w.RunID, TaskID: w.TaskID, RunKind: w.RunKind,
 		Role: w.Role, NodeID: w.NodeID, InstanceID: w.InstanceID, Harness: w.Harness, LaunchJson: w.LaunchJson, UsageLimitID: w.UsageLimitID,
-		ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, SwitchToAccountID: w.SwitchToAccountID, CreatedAt: w.CreatedAt,
+		ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, SwitchToAccountID: w.SwitchToAccountID, Cause: w.Cause, CreatedAt: w.CreatedAt,
 		UpdatedAt: w.UpdatedAt}); err != nil {
 		return err
 	}
@@ -642,7 +642,7 @@ func (svc *Service) release(ctx context.Context, actor audit.Actor, waitID, reas
 		}
 		taskStatus := ""
 		if w.TaskID != "" && svc.opts.ReleaseTaskTx != nil {
-			if taskStatus, err = svc.opts.ReleaseTaskTx(ctx, tx, actor, w.TaskID, w.RunID, "its run waited for a usage limit to reset for too long"); err != nil {
+			if taskStatus, err = svc.opts.ReleaseTaskTx(ctx, tx, actor, w.TaskID, w.RunID, releaseReason(w)); err != nil {
 				return err
 			}
 		}
@@ -969,7 +969,11 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 		in.inTx = func(ctx context.Context, tx *store.Tx, runID string) error {
 			return svc.resumedTx(ctx, tx, actor, w, runID, fresh)
 		}
-		in.manifest = map[string]any{"usage_limit_resume": map[string]any{"limit_wait_id": w.ID, "parked_run_id": w.RunID, "session_resumed": in.SessionID != "",
+		resumeKey := "usage_limit_resume"
+		if w.Cause == WaitCauseRestart {
+			resumeKey = "agent_restart_resume"
+		}
+		in.manifest = map[string]any{resumeKey: map[string]any{"limit_wait_id": w.ID, "parked_run_id": w.RunID, "session_resumed": in.SessionID != "",
 			"relocated": fresh}}
 		if w.SwitchToAccountID != "" {
 			in.manifest["account_switch"] = map[string]any{"id": w.AccountSwitchID, "to": w.SwitchToAccountID}
@@ -1030,6 +1034,12 @@ const (
 	switchFreshPrompt = "SpaceMan moved you to another subscription account because the previous one reached its usage limit. Your previous " +
 		"session could not be resumed (the space moved to another node, or resuming it failed), so this is a fresh session. Continue the task " +
 		"from the state of the workspace; check spaceman_messages first."
+	// restartPrompt and restartFreshPrompt are an agent-restart resume's (ADR-0098).
+	restartPrompt = "The node's agent restarted and stopped your process; SpaceMan resumed your session. Continue the task you were working on " +
+		"from where you left off (your worktree is as it was); check spaceman_messages first."
+	restartFreshPrompt = "The node's agent restarted and stopped your previous process, and that session could not be resumed (the space moved to " +
+		"another node, or the session was never started), so this is a fresh session. Continue the task from the state of the workspace; check " +
+		"spaceman_messages first."
 	freshPrompt = "SpaceMan paused your previous session at a usage limit, and the limit has reset. That session could not be resumed (the " +
 		"space moved to another node, or resuming it failed), so this is a fresh session. Continue the task from the state of the workspace; " +
 		"check spaceman_messages first."
@@ -1045,6 +1055,9 @@ func waitLaunch(w db.LimitWait, fresh bool) (LaunchInput, error) {
 	in := LaunchInput{Kind: w.RunKind, Role: w.Role, Harness: w.Harness, InstanceID: w.InstanceID, Model: spec.Model, Settings: spec.Settings,
 		Workspace: spec.Workspace, Worktree: spec.Worktree, AccountRef: spec.AccountRef, Prompt: resumePrompt, RequirePoolMember: true}
 	again := freshPrompt
+	if w.Cause == WaitCauseRestart {
+		in.Prompt, again = restartPrompt, restartFreshPrompt
+	}
 	if w.SwitchToAccountID != "" {
 		// An account switch (ADR-0090): the launch names the target; the launch transaction still resolves it.
 		in.AccountRef, in.Prompt, again = w.SwitchToAccountID, switchPrompt, switchFreshPrompt
@@ -1174,4 +1187,12 @@ func (svc *Service) ControlParked(ctx context.Context, spaceID string) (bool, er
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// releaseReason is the status reason a released wait gives its task.
+func releaseReason(w db.LimitWait) string {
+	if w.Cause == WaitCauseRestart {
+		return "its run was stopped by an agent restart and could not be resumed"
+	}
+	return "its run waited for a usage limit to reset for too long"
 }

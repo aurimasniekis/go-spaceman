@@ -12,7 +12,7 @@ which keeps the data until someone deletes it or the space is purged.
 
 | Period | Configuration key | What is deleted once it has passed | What is never deleted |
 |---|---|---|---|
-| Recording retention | `limits.retention_recordings_days` | central's copy of a run's terminal recording, counted from the end of the run | the recording of a run that is still active; the node's own copy |
+| Recording retention | `limits.retention_recordings_days` | central's copy of a run's terminal recording, counted from the end of the run | the recording of a run that is still active; the node's own copy (the node prunes that with its journal, see `journal_retention` in [configuration](/reference/configuration)) |
 | Transcript retention | `limits.retention_transcripts_days` | a run's stored native transcript, counted from when it was stored | the run's usage record |
 | Attachment retention | `limits.retention_attachments_days` | an attachment older than the period whose items are all finished: done or rejected inbox items, unchanged for the period, with no open task or human action linked to them | an attachment that an open inbox item, or an item linked to open work, uses |
 | Finished human-action retention | `limits.retention_human_actions_days` | a resolved, cancelled or expired human action (with its comments and notifications), counted from when it finished | an action that an open task, an open follow-up or an open inbox item refers to, or whose response was not acknowledged yet |

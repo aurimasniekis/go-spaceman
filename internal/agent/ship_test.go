@@ -10,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
+	"github.com/aurimasniekis/go-spaceman/internal/runner"
 )
 
 func TestShipPartsStayInsideAMessage(t *testing.T) {
@@ -777,4 +780,223 @@ func TestCatchUpPutBackKeepsTheOrder(t *testing.T) {
 	e.connect()
 	e.whole("run_x", 1, 302)
 	e.idle()
+}
+
+// After an agent restart central's acknowledgements may be unknown (none stored yet, as after an upgrade), so the pass
+// re-ships the recording of every journaled run, ended ones included. Live output must not wait behind that history
+// (the terminals stayed blank until it had all gone out again): a run adopted across the restart is caught up before
+// the ended runs, its recorder's live output follows at once, and a run whose live output starts waiting during the
+// sweep (one launched after the restart) is caught up after the batch on its way, not after the run in progress.
+func TestCatchUpServesLiveRunsBeforeTheEndedBacklog(t *testing.T) {
+	a, rn := ccAgent(t, t.TempDir(), nil, nil)
+	t.Cleanup(func() { sendRecordingHook, shipBatchHook = nil, nil })
+	e := &shipEnv{t: t, a: a, stored: map[string][]uint64{}, writer: map[string]*recording.Writer{}}
+	ctx := context.Background()
+	for _, id := range []string{"run_0", "run_1", "run_2"} {
+		e.run(id)
+		e.add(id, 600)
+		r, err := a.j.getRun(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.State, r.Desired = proto.RunExited, "stopped"
+		if err := a.j.updateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// run_x ran under the previous agent process (its recording holds three records) and its program is still live:
+	// the restarted agent adopts it and records it again. Its ID sorts after the ended runs.
+	e.run("run_x")
+	e.add("run_x", 3)
+	_ = e.writer["run_x"].Close()
+	r, err := a.j.getRun(ctx, "run_x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.State = proto.RunRunning
+	if err := a.j.updateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	p, err := rn.Start(ctx, runner.Spec{Name: RunName("run_x"), Argv: []string{"claude"}, Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": "run_x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pass stops inside run_0's history until the test releases it: an ended run with a long backlog. Meanwhile
+	// run_y is launched and its first output waits for the pass.
+	release := make(chan struct{})
+	var launched atomic.Bool
+	shipBatchHook = func(id string, batch int) {
+		if id == "run_0" && batch == 1 && !launched.Swap(true) {
+			e.run("run_y")
+			e.live("run_y", e.add("run_y", 2))
+			<-release
+		}
+	}
+	e.connect()
+	// The adopted run's history (3) is caught up before the ended runs, and its recorder's output (the reattach gap
+	// and what the program prints) reaches central while the pass is still busy with run_0.
+	rn.Output(p.ID, "live after the restart\r\n")
+	e.drain("run_x", 5)
+	if !launched.Load() {
+		t.Fatal("the pass never reached the ended runs")
+	}
+	close(release)
+	// run_y waited only for the batch on its way, not for the rest of run_0's history or the other ended runs.
+	e.drain("run_y", 2)
+	if n, m := len(e.stored["run_0"]), len(e.stored["run_1"])+len(e.stored["run_2"]); n > 256 || m > 0 {
+		t.Fatalf("the run launched during the pass waited for other runs' history: %d and %d records of them first", n, m)
+	}
+	e.idle()
+	e.live("run_y", e.add("run_y", 1))
+	e.whole("run_y", 1, 3)
+	for _, id := range []string{"run_0", "run_1", "run_2"} {
+		e.whole(id, 1, 600)
+	}
+	if s := e.stored["run_x"]; s[0] != 1 || s[2] != 3 {
+		t.Fatalf("adopted run at central %v", s)
+	}
+}
+
+// restartEnv is a second agent process on the first one's data directory and journal (a restart): it knows nothing
+// from the first process's memory.
+func restartEnv(t *testing.T, e *shipEnv) *shipEnv {
+	t.Helper()
+	o := e.a.o
+	a := New(e.a.j, o)
+	a.mem.base = context.Background()
+	t.Cleanup(a.stopRecorders)
+	t.Cleanup(func() { a.drain(10 * time.Second) })
+	a.leases[ccSpace] = e.a.leases[ccSpace]
+	return &shipEnv{t: t, a: a, stored: map[string][]uint64{}, writer: e.writer}
+}
+
+// Central's acknowledgements survive an agent restart (ADR-0097): the restarted agent's pass sends only what central
+// has not acknowledged, so ended runs whose recording central stores whole are not re-shipped, and a run with records
+// above its acknowledgement (written after it, or never sent) gets exactly those.
+func TestCatchUpAfterRestartSkipsAcknowledged(t *testing.T) {
+	first := newShipEnv(t)
+	ctx := context.Background()
+	for _, id := range []string{"run_0", "run_1", "run_2"} {
+		first.run(id)
+		first.add(id, 600)
+	}
+	// Central acknowledged run_0 and run_2 whole, run_1 up to 300 (the rest was lost with the connection).
+	first.a.recordingAck(proto.RecordingAck{RunID: "run_0", Seq: 600})
+	first.a.recordingAck(proto.RecordingAck{RunID: "run_1", Seq: 300})
+	first.a.recordingAck(proto.RecordingAck{RunID: "run_2", Seq: 600})
+	first.a.recordingAck(proto.RecordingAck{RunID: "run_2", Seq: 500}) // never backwards
+	first.add("run_2", 2)                                              // written after the last acknowledgement
+	for _, id := range []string{"run_0", "run_1", "run_2"} {
+		r, err := first.a.j.getRun(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.State, r.Desired = proto.RunExited, "stopped"
+		if err := first.a.j.updateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shipped := map[string]int{}
+	shipBatchHook = func(id string, _ int) { shipped[id]++ }
+	e := restartEnv(t, first)
+	e.connect()
+	e.idle()
+	e.drain("run_2", 2)
+	e.drain("run_1", 300)
+	if s := e.stored["run_1"]; s[0] != 301 || s[len(s)-1] != 600 {
+		t.Fatalf("run_1 re-shipped %d..%d, want 301..600", s[0], s[len(s)-1])
+	}
+	if s := e.stored["run_2"]; len(s) != 2 || s[0] != 601 {
+		t.Fatalf("run_2 re-shipped %v, want [601 602]", s)
+	}
+	if n := len(e.stored["run_0"]) + shipped["run_0"]; n > 0 {
+		t.Fatalf("run_0, acknowledged whole before the restart, was re-shipped (%d)", n)
+	}
+	// After the pass the acknowledgements central sent are what count, as before.
+	e.a.mu.Lock()
+	restored := len(e.a.restored)
+	e.a.mu.Unlock()
+	if restored != 0 {
+		t.Fatalf("%d runs still marked restored after the pass", restored)
+	}
+}
+
+// An ended run's history is re-shipped at endedCatchUpRate, and a live run's output does not wait for it.
+func TestCatchUpPacesEndedRuns(t *testing.T) {
+	old := endedCatchUpRate
+	endedCatchUpRate = 100 << 10
+	t.Cleanup(func() { endedCatchUpRate = old })
+	e := newShipEnv(t)
+	ctx := context.Background()
+	e.run("run_0")
+	e.addSized("run_0", 1024, 200-heldRecordOverhead) // 200 KiB counted: about 2 s at 100 KiB/s
+	r, err := e.a.j.getRun(ctx, "run_0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.State, r.Desired = proto.RunExited, "stopped"
+	if err := e.a.j.updateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	e.run("run_l")
+	start := time.Now()
+	e.connect()
+	e.drain("run_0", 256)
+	e.live("run_l", e.add("run_l", 1))
+	sent := time.Now()
+	e.drain("run_l", 1)
+	if d := time.Since(sent); d > time.Second {
+		t.Fatalf("a live run's output waited %s for the paced history", d)
+	}
+	e.whole("run_0", 1, 1024)
+	if d := time.Since(start); d < time.Second {
+		t.Fatalf("200 KiB of ended history went out in %s at 100 KiB/s", d)
+	}
+}
+
+// SM-REC-003 (ADR-0010 addendum): central fails to store a chunk, acks only what it stored before it and closes the
+// connection; the next live chunk, already sent behind the lost one, is not stored past the hole either. The node is
+// never acked past the hole, so the run's recording stays pending (not prunable), and after the reconnect its
+// catch-up re-ships from the acknowledgement: central ends up with the whole recording, contiguous.
+func TestStoreFailureAtCentralIsReshippedAfterTheConnectionCloses(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_r")
+	e.add("run_r", 2)
+	e.connect()
+	e.whole("run_r", 1, 2)
+	e.idle()
+
+	// Central's disk fails on the chunk holding 3; the live chunk 4-5 follows on the same connection.
+	e.live("run_r", e.add("run_r", 1))
+	e.live("run_r", e.add("run_r", 2))
+	for got := 0; got < 2; {
+		select {
+		case env := <-e.fc.msgs:
+			if env.Type != proto.TypeRecording {
+				continue
+			}
+			got++
+			// Stored nothing: central acks what it held before the hole.
+			e.a.recordingAck(proto.RecordingAck{RunID: "run_r", Seq: 2})
+		case <-time.After(10 * time.Second):
+			t.Fatalf("central received %d of the 2 live chunks", got)
+		}
+	}
+	if acked := e.a.ackedSeq("run_r"); acked != 2 {
+		t.Fatalf("node acked at %d, want 2 (the hole is at 3)", acked)
+	}
+	if !e.a.recordingPending("run_r") {
+		t.Fatal("the run's recording counts as shipped while central lacks 3-5: it could be pruned")
+	}
+
+	// Central closes the connection after the failure; the node reconnects and catches up.
+	e.a.mu.Lock()
+	conn := e.a.conn
+	e.a.mu.Unlock()
+	_ = conn.Close(websocket.StatusTryAgainLater, "recording not stored")
+	e.whole("run_r", 1, 5)
+	e.idle()
+	if e.a.recordingPending("run_r") {
+		t.Fatal("the run's recording is still pending after central acknowledged all of it")
+	}
 }

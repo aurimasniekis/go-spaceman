@@ -225,8 +225,8 @@ test('documentation screenshots', async ({ page, browser }) => {
   const tControl = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'control', name: 'Control', kind: 'control', profile_id: sonnet.id, prompt_id: ctl.id,
     memory_conventions: 'Keep decisions in memory/decisions.md with absolute dates.', settings: {}, skills: [{ skill_id: hallpass.id }, { skill_id: runbook.id }] })
   const tReviewer = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'reviewer', name: 'Reviewer', kind: 'worker', profile_id: codexProf.id, prompt_id: rev.id, settings: {} })
-  await api.call('PUT', `/spaces/${payments.id}/roles/control`, { template_id: tControl.id, instructions: 'Settlement services live in services/settlement.', settings: {} })
-  await api.call('PUT', `/spaces/${payments.id}/roles/reviewer`, { template_id: tReviewer.id, settings: {} })
+  await api.call('PUT', `/spaces/${payments.id}/roles/control`, { template_id: tControl.id, description: 'Plans the work, launches workers and answers people. Routes small, well-specified changes to the cheaper roles.', instructions: 'Settlement services live in services/settlement.', settings: {} })
+  await api.call('PUT', `/spaces/${payments.id}/roles/reviewer`, { template_id: tReviewer.id, description: 'The final check before merge: reads the diff, runs the tests, and sends it back or approves.', settings: {} })
 
   // MCP gateway: the dev stack's fake ticket tracker, granted to control (every tool) and reviewer (read-only tools).
   const mcpUrl = readFileSync(env('SM_MCP_URL_FILE'), 'utf8').trim()
@@ -868,6 +868,16 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Effective configuration' }).first().click()
     await expect(page.getByText('System text')).toBeVisible()
+  })
+  await capture(page, 'space-role-edit', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByRole('row', { name: /reviewer/ }).getByRole('button', { name: 'Edit' }).click()
+    await expect(page.getByLabel('Description')).toHaveValue(/The final check before merge/)
+  })
+  await capture(page, 'prompt-edit-details', async () => {
+    await page.goto(`/prompts/${ctl.id}`)
+    await page.getByRole('button', { name: 'Edit details' }).click()
+    await expect(page.getByText('creates no version')).toBeVisible()
   })
   await capture(page, 'run-manifest', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${control.id}`)

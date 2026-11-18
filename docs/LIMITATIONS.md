@@ -327,10 +327,32 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   protocol minor 5, does not answer in time or has history central did not acknowledge is backed up with the history
   central acknowledged, and the manifest and the Backups page name it as possibly stale. Offline backups
   (`spaceman backup create` with central stopped) cannot flush (SM-MEM-005).
-- **Planned: renaming a role (ADR-0093, not implemented).** When it lands: a busy role cannot be renamed, and a node
-  that never comes back keeps the renamed role held. There will be no "abandon the node move" action at first, and a
-  deleted role's leftover memory collection will block reusing its name as a rename target. Deleting or archiving a
-  role's memory, an abandon action and a web UI rename are follow-ups.
+- **The memory guard is a guard against accident and against other instances, not a sandbox** (ADR-0025 addendum,
+  ADR-0094). The node refuses git in a checkout with a redirected git dir, config-based hooks, links inside `.git`,
+  gitlinks, a nested `.git` or a FIFO, and never stages or materialises `.claude/`, `.codex/`, `.agents/` or a top-level
+  `.mcp.json`. An agent can still edit its own checkout's `.git`, and the guard is rewritten at every checkpoint and run
+  start. A harness-config file an instance writes into its own checkout stays there, unshared, until the checkout is
+  next prepared (and then only if the sparse checkout was not already active). Central keeps history it was already
+  given, so its file listing can still show such paths. A refused checkout is not repaired by SpaceMan: the operator
+  removes or recreates it.
+- **Fast-forward touches only idle, clean checkouts** (ADR-0094). A checkout with local changes, a diverged history, a
+  run that is working or blocked, a taken-over terminal or input still waiting for its turn is left to its next
+  checkpoint, which may still preserve a conflict. `memory.fast_forward: false` turns it off.
+- **A role rename can stay open until an admin acts** (ADR-0093, addendum T-H4). A busy role is refused: a rename waits
+  while a run of either name (or a dream run in the space) is active on the node, and the move happens when it ends. A
+  node that keeps reporting `error` leaves the rename `failed` (central does not queue the command again on an `error`),
+  and the node retries an `error` only at its next agent start, not periodically. A node downgraded below protocol minor 14
+  after a rename never receives it. Until it is done the rename holds launches of both names and dream launches and
+  refuses a clean relocation. The exits: fix or upgrade the node and **retry** (`spaceman role retry-rename`), **close**
+  it (`spaceman role close-rename`, admins only), or a `source_unavailable` relocation (which closes the open rename as
+  `not_needed`). A close is final: the rename is `abandoned`, and the node's old-name folder is left on the node as an
+  orphan, never deleted and never synced again, so anything it held that central never received stays only there (a later
+  role of that name sets it aside under `.retained/`). A closed rename whose command the node has not received yet keeps
+  refusing renames of both names until the node connects, or until an admin closes it with `--forget-node`, which
+  gives up delivery (the node, if it returns, keeps the old folder as an orphan). Retry and close are not in the web UI or Telegram. A deleted role's
+  leftover memory collection blocks reusing its name as a rename target. Deleting or archiving a role's memory and a web UI
+  rename are follow-ups. A rename changes only its own space: the installation-wide default human policy keeps a successor
+  role of the old name.
 
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.
@@ -549,25 +571,50 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   repository with Git LFS installed per repository (`git lfs install --local`) is therefore refused. Install LFS in
   the node's global Git configuration instead. Hooks never run for the daemon. Agents' own Git use inside their
   terminal is not affected.
+- **The control watchdog reminds; it does not make control act** (ADR-0099). A reminder is a line typed into control's
+  terminal, naming counts only; whether control acts on it is up to the agent. The watchdog's state is in central's
+  memory and starts over when central restarts (which can only delay a reminder). It judges backlog from SpaceMan's own
+  state: work it cannot see (a pull request waiting for a person, a repository change) is not backlog. Restarting
+  control on escalation is off by default and stays within the supervisor's restart budget. It is on by default for
+  nudging: set `control_watchdog_minutes` to 0 to turn it off. Simulated evidence only (fake clock, scripted runs).
+- **Runs an agent restart stopped are resumed a limited number of times** (ADR-0098). At most 3 automatic resumes per
+  chain (a resumed run that lived 30 minutes starts again); then the task goes back to `ready` and control is told. A
+  run without a task, a task already in review, a run somebody asked to stop, a control run, and a run whose node was silent so long that the
+  stale-run sweeper ended it are not resumed. A run that finished no turn starts again with its original prompt rather
+  than resuming a session. Simulated evidence only (scripted node, fake clock): not verified with a real agent restart.
 
 ## Recordings
-- **A full disk on the node ends the local recording.** The run is unaffected. Central's copy keeps everything shipped
-  before the failure and ends with a `trunc` record (`disk`) and the run's close record. Output after the failure is
-  not recorded. It is not resumed when space frees up, only when a new attachment starts (for example after an agent
-  restart), which leaves a gap.
+- **A full disk on the node leaves a gap in the node's local recording** (ADR-0097). The run is unaffected, and its
+  output still reaches central's copy and the live view. The node tries the disk again with a backoff (5 s, up to a
+  minute) and the local recording resumes in a new segment once space is freed; output while it was full is missing
+  from the local copy only, and also from central's if it could not be shipped meanwhile (the node disconnected for
+  more than about 1 MiB of output, or the agent restarted while disconnected). Recordings of nodes older than this release end with a `trunc` record (`disk`)
+  at the failure instead.
 - **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
   node keeps its local recording. Tested: node-side only (`make test-fault`).
-- **Retention deletes central's copy only.** `retention_recordings_days` deletes central's copy of an ended run's
-  recording; the node's local recordings are never pruned by SpaceMan (remove old `runs/<id>/recording` folders on the
-  node yourself). The recording size limit (`recording_quota_bytes`) reaches nodes at launch: an agent older than this
+- **Central's retention deletes central's copy only.** `retention_recordings_days` deletes central's copy of an ended
+  run's recording and nothing on the node. The node prunes its own copy with its journal: once `journal_retention` has passed
+  for an ended run, central has acknowledged the run's final state and the recording is fully shipped, the run's
+  recording directory is removed with its journal row. A recording directory from an earlier release that has segments
+  but no journal row is kept, because a lost journal looks the same; those folders are for the operator to remove
+  (`runs/<id>/recording` on the node, once the run is over). Reclaiming them with central's confirmation is designed in
+  ADR-0096 and not implemented. Empty leftovers are swept after 24 hours. The recording size limit (`recording_quota_bytes`) reaches nodes at launch: an agent older than this
   release ignores it and keeps 512 MiB, and a run keeps the size it started with (SM-REC-003).
+- **Old recording directories with no journal row are still kept** (ADR-0096, design only). Since the acknowledgement
+  fix, central acknowledges only records it synced to disk, so a node no longer deletes the only copy of a record
+  central failed to store. Directories that an earlier release left behind with segments and no journal row remain on
+  the node: the node cannot tell them from a run whose journal was lost, and reclaiming them waits for central to
+  confirm what it holds (protocol minor 15, not implemented).
+- **A recording that failed on central is not reopened for 5 seconds.** Chunks in that window are refused and the node
+  re-ships them after central closes the connection and it reconnects; a persistent storage failure keeps the connection
+  closing and the run's recording incomplete on central until the disk is fixed.
 
 ## Web UI
 - **The attention summary covers central, not node disks.** **Attention** (and each space overview's counters) gathers
   pending human actions, blocked and failed tasks, quarantined events, unknown and recently failed runs, budget notices,
   attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and central's storage
-  health. Node disks are not reported: a full node disk shows only as a truncated recording on its run, labelled
-  "Truncated (quota)" even then. Storage health has no change-feed event, so that section refreshes with other changes
+  health. Node disks are not reported: a full node disk shows only as a warning in the node agent's log (and, on nodes
+  older than this release, as a truncated recording labelled "Truncated (quota)"). Storage health has no change-feed event, so that section refreshes with other changes
   or on **Refresh**. Memory sync state and knowledge-base work stay on their pages (SM-UI-003).
 - **Terminal takeover is time-bound and keeps the terminal's size.** An admin (`terminal:takeover`) can take over a
   running terminal; automated input waits until it ends. It ends 30 seconds after the holder's page stops renewing it,

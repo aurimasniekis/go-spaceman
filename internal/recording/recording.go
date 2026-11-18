@@ -8,15 +8,22 @@
 //	{"seq":3,"t":…,"k":"size","cols":120,"rows":40}
 //	{"seq":4,"t":…,"k":"gap","why":"reattach"}             // output may be missing here (no stream offsets, S-3)
 //	{"seq":5,"t":…,"k":"close","exit_code":0,"reason":"exited"}
-//	{"seq":6,"t":…,"k":"trunc","why":"quota"}               // recording stopped early ("quota" or "disk")
+//	{"seq":6,"t":…,"k":"trunc","why":"quota"}               // recording stopped early (quota reached)
 //
 // A frame is written on every flush (at least once per FlushInterval), so after a crash a segment decodes up to its
 // last complete frame; Read reports a torn tail as Truncated rather than failing (SM-REC-003). Sequence numbers are
 // continuous across segments and survive restarts of the writer (Resume).
 //
-// A write failure (a full disk, an I/O error) never reaches the recorded program: the writer stops recording output,
-// and its trunc record — which it usually cannot store itself — is handed to the caller (Truncation) so central's copy
-// shows where and why the recording ended (SM-REC-004).
+// A write failure (a full disk, an I/O error) never reaches the recorded program: while it lasts, the writer still
+// numbers every record and hands it back to the caller (who ships it to central's copy) without storing it, and it
+// tries a new segment again after a backoff, so the local recording resumes once the disk has space (SM-REC-004). The
+// records it could not store are a gap in the local copy only.
+//
+// The Writer serves two callers with one failure path. The node numbers its own records (AddRecord) and retries the
+// disk as above (ADR-0097). Central stores a node's numbered records (Append) and acknowledges Stored: there a failure
+// is final for the writer, which Append never retries; central drops it and opens a new one on what is durably on
+// disk, and the node re-ships everything above the acknowledgement (SM-REC-003, ADR-0010 addendum). Either way a
+// failure cuts the segment back to its last sync, and Stored never counts a record written or numbered after it.
 package recording
 
 import (
@@ -26,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,7 +100,17 @@ type Options struct {
 	// ResumeSegment, whichever of these and Dir's own segments is higher.
 	ResumeSeq     uint64
 	ResumeSegment int
+	// RetryAfter is how long the writer waits after a write failure before it tries a new segment (doubling after
+	// each failure in a row, up to maxRetryAfter); 0 is DefaultRetryAfter.
+	RetryAfter time.Duration
 }
+
+// DefaultRetryAfter is the first wait after a write failure before the writer tries the disk again; maxRetryAfter
+// bounds the doubling.
+const (
+	DefaultRetryAfter = 5 * time.Second
+	maxRetryAfter     = time.Minute
+)
 
 // Writer appends records. It is safe for concurrent use. Writes never block on readers.
 type Writer struct {
@@ -105,12 +123,30 @@ type Writer struct {
 	segStart time.Time
 	total    int64
 	seq      uint64
-	buf      bytes.Buffer
-	stopped  bool
-	err      error
-	// trunc is the truncation record not yet taken by Truncation (quota reached or a write failure).
+	stored   uint64
+	// synced is how much of the current segment is known to be on disk (its size at the last successful sync).
+	synced int64
+	// unsynced is a segment tail written after the last sync that a failure could not cut off (DropUnsynced).
+	unsynced *tailCut
+	// lost is set once a failure lost records: stored stays below that hole.
+	lost    bool
+	buf     bytes.Buffer
+	stopped bool
+	// err is the current write failure (nil while the disk works); retryAt is when the writer tries a new segment
+	// again and wait the wait after the next failure in a row.
+	err     error
+	retryAt time.Time
+	wait    time.Duration
+	// trunc is the quota truncation record not yet taken by Truncation.
 	trunc    *Record
 	truncOut bool
+}
+
+// tailCut is a segment (number index) that must be cut back to size bytes.
+type tailCut struct {
+	path  string
+	index int
+	size  int64
 }
 
 // SegmentName returns the file name of segment n.
@@ -159,6 +195,9 @@ func Open(o Options) (*Writer, error) {
 	if o.Create == nil {
 		o.Create = createFile
 	}
+	if o.RetryAfter <= 0 {
+		o.RetryAfter = DefaultRetryAfter
+	}
 	if err := os.MkdirAll(o.Dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -166,7 +205,7 @@ func Open(o Options) (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Writer{o: o, enc: enc, segIndex: o.ResumeSegment, seq: o.ResumeSeq}
+	w := &Writer{o: o, enc: enc, segIndex: o.ResumeSegment, seq: o.ResumeSeq, stored: o.ResumeSeq}
 	segs, err := Segments(o.Dir)
 	if err != nil {
 		return nil, err
@@ -185,6 +224,9 @@ func Open(o Options) (*Writer, error) {
 		if len(res.Records) > 0 && res.Records[len(res.Records)-1].Seq > w.seq {
 			w.seq = res.Records[len(res.Records)-1].Seq
 		}
+		if w.seq > w.stored {
+			w.stored = w.seq
+		}
 	}
 	return w, nil
 }
@@ -200,37 +242,45 @@ func (w *Writer) Seq() uint64 {
 	return w.seq
 }
 
+// Stored returns N such that every record at or below N that this recording will ever hold is durably stored and
+// contiguous: written and synced to disk (or already stored when the writer was opened), with no record missing below
+// N other than one its sender never had (a jump the sender made itself, SkipTo or a node's own lost records). Unlike
+// Seq it never counts buffered records, a failed flush, or a close that could not be stored: it is the only value a
+// receiver may acknowledge, and the sender may forget every record at or below it.
+//
+// A failure cuts the segment back to its last synced size (DropUnsynced), so a writer opened later never takes a
+// record written after the last successful sync for stored, and Stored stays below the hole a failure leaves in this
+// writer: records numbered while the disk failed (AddRecord) never count, even after the disk recovered.
+func (w *Writer) Stored() uint64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stored
+}
+
 // Add appends one record (assigning seq and time) and flushes when the buffer is large.
 func (w *Writer) Add(r Record) error {
 	_, err := w.AddRecord(r)
 	return err
 }
 
-// AddRecord is Add returning the stored record (with its sequence and time); ok is false when the record was dropped
-// (quota reached).
+// AddRecord is Add returning the record with its sequence and time; its Seq is 0 when the record was dropped (quota
+// reached). While the disk fails (the error returned) the record is numbered but not stored: the caller still ships
+// it to central's copy, and the writer tries the disk again once its backoff has passed.
 func (w *Writer) AddRecord(r Record) (Record, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.err != nil {
-		if r.Kind != KindClose {
-			return Record{}, w.err
-		}
-		// The program's end still gets its sequence number, so the caller can ship it to central's copy even though
-		// it cannot be stored here.
-		w.seq++
-		r.Seq = w.seq
-		if r.T == 0 {
-			r.T = w.o.Now().UnixMicro()
-		}
-		return r, w.err
-	}
+	now := w.o.Now()
+	w.retryLocked(now)
 	if w.stopped && r.Kind != KindClose {
 		return Record{}, nil
 	}
 	w.seq++
 	r.Seq = w.seq
 	if r.T == 0 {
-		r.T = w.o.Now().UnixMicro()
+		r.T = now.UnixMicro()
+	}
+	if w.err != nil {
+		return r, w.err
 	}
 	line, err := json.Marshal(r)
 	if err != nil {
@@ -246,7 +296,9 @@ func (w *Writer) AddRecord(r Record) (Record, error) {
 
 // Append stores a record that already carries its sequence number (central's copy of a node recording). Records at
 // or below the last stored sequence are ignored, so re-shipping after a reconnect is idempotent; a jump in sequence is
-// kept as-is (readers count it as a gap).
+// kept as-is (readers count it as a gap). A write failure is final for Append (unlike AddRecord, it never retries the
+// disk): the records it lost exist only at the sender, so the caller drops the writer and opens a new one on the
+// directory (after DropUnsynced succeeded), whose Stored tells the sender where to re-ship from.
 func (w *Writer) Append(r Record) (bool, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -283,8 +335,8 @@ func (w *Writer) SkipTo(seq uint64) {
 	}
 }
 
-// Truncation returns, once, the trunc record that ended this recording early (quota reached or a write failure), so
-// the caller can ship it with the records before it.
+// Truncation returns, once, the trunc record that ended this recording early (quota reached), so the caller can ship
+// it with the records before it.
 func (w *Writer) Truncation() (Record, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -333,21 +385,47 @@ func (w *Writer) flushLocked() error {
 	if err := w.f.Sync(); err != nil {
 		return w.failLocked(now, fmt.Errorf("recording sync: %w", err))
 	}
+	w.synced = w.segBytes
+	if !w.lost {
+		w.stored = w.seq
+	}
+	w.wait = 0
 	return nil
 }
 
-// failLocked stops the writer after a write failure: buffered records are lost locally (the caller has them), later
-// output is dropped, and a trunc record ("disk") is kept for Truncation. A partial frame may remain on disk; readers
-// report it as Truncated.
+// failLocked records a write failure: buffered records are lost locally (the caller has them), and the segment is
+// closed and cut back to its last synced size (removed when nothing of it was synced, its number then used again): a
+// frame written after the last sync may still decode from the page cache although it never reached the disk, and a
+// writer opened later must not take it for stored. A failure leaves a hole in the local copy, so Stored never moves
+// past it again. AddRecord tries a new segment after the backoff (retryLocked); Append never does (see Append).
 func (w *Writer) failLocked(now time.Time, err error) error {
 	w.err = err
+	w.lost = true
 	w.buf.Reset()
-	if w.trunc == nil || w.trunc.Why != "disk" {
-		w.seq++
-		w.trunc = &Record{Seq: w.seq, T: now.UnixMicro(), Kind: KindTrunc, Why: "disk"}
-		w.truncOut = false
+	if w.f != nil {
+		_ = w.f.Close()
+		w.f = nil
+		if w.segBytes > w.synced || w.synced == 0 {
+			w.unsynced = &tailCut{path: filepath.Join(w.o.Dir, SegmentName(w.segIndex)), index: w.segIndex, size: w.synced}
+			_ = w.dropUnsyncedLocked()
+		}
 	}
+	if w.wait == 0 {
+		w.wait = w.o.RetryAfter
+	}
+	w.retryAt = now.Add(w.wait)
+	w.wait = min(2*w.wait, max(maxRetryAfter, w.o.RetryAfter))
 	return err
+}
+
+// retryLocked clears a write failure once its backoff has passed: the next flush starts a new segment, and a failure
+// there starts a longer backoff.
+func (w *Writer) retryLocked(now time.Time) {
+	if w.err != nil && !now.Before(w.retryAt) {
+		// A tail the failure could not cut off is tried again first, so a segment removed now gives its number back.
+		_ = w.dropUnsyncedLocked()
+		w.err = nil
+	}
 }
 
 func (w *Writer) rotateLocked(now time.Time) error {
@@ -361,9 +439,40 @@ func (w *Writer) rotateLocked(now time.Time) error {
 	w.segIndex++
 	f, err := w.o.Create(filepath.Join(w.o.Dir, SegmentName(w.segIndex)))
 	if err != nil {
+		w.segIndex--
 		return err
 	}
-	w.f, w.segBytes, w.segStart = f, 0, now
+	w.f, w.segBytes, w.synced, w.segStart = f, 0, 0, now
+	return nil
+}
+
+// DropUnsynced cuts off what a failure left on disk after the last successful sync (failLocked tries it at once).
+// It returns an error while that could not be done; a writer must not be opened on the directory until it succeeds.
+func (w *Writer) DropUnsynced() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.dropUnsyncedLocked()
+}
+
+func (w *Writer) dropUnsyncedLocked() error {
+	if w.unsynced == nil {
+		return nil
+	}
+	if w.unsynced.size == 0 {
+		// Nothing of the segment is synced: an empty or partial file is no segment. Removing it also keeps a disk that
+		// keeps failing from leaving one behind per attempt.
+		if err := os.Remove(w.unsynced.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			// The segment keeps its number while it is on disk: the next one must not reuse it.
+			return fmt.Errorf("recording: remove the unsynced segment: %w", err)
+		}
+		if w.f == nil && w.unsynced.index == w.segIndex {
+			// The file is gone and no later segment was started: the next segment takes its number.
+			w.segIndex--
+		}
+	} else if err := os.Truncate(w.unsynced.path, w.unsynced.size); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("recording: cut the unsynced tail: %w", err)
+	}
+	w.unsynced = nil
 	return nil
 }
 
@@ -381,7 +490,8 @@ func (w *Writer) Close() error {
 	return err
 }
 
-// Err returns the first write error (disk full, I/O); after it the writer drops records without blocking the run.
+// Err returns the current write failure (disk full, I/O), nil while the disk works; meanwhile the writer numbers records
+// without storing them and never blocks the run.
 func (w *Writer) Err() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -461,6 +571,27 @@ func LastSeq(r io.Reader) uint64 {
 	var last uint64
 	_, _ = readSegment(r, func(rec Record) bool { last = rec.Seq; return true })
 	return last
+}
+
+// LastSeqIn returns the sequence number of the last record of a recording directory: that of its last segment holding
+// one, decoding segments from the end (0 when none holds a record).
+func LastSeqIn(dir string) (uint64, error) {
+	segs, err := Segments(dir)
+	if err != nil {
+		return 0, err
+	}
+	for i := len(segs) - 1; i >= 0; i-- {
+		f, err := os.Open(segs[i]) //nolint:gosec // paths from Segments
+		if err != nil {
+			return 0, err
+		}
+		last := LastSeq(f)
+		_ = f.Close()
+		if last > 0 {
+			return last, nil
+		}
+	}
+	return 0, nil
 }
 
 // readSegment decodes one segment, calling emit with each record until it returns false.

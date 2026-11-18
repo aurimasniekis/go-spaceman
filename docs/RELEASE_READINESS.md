@@ -439,7 +439,8 @@ The full list is in `CHANGELOG.md` `[0.1.3]`.
 - API clients that read `manifest` or `launch.prompt` from run lists must pass `include=`.
 
 **Known issues it ships with:** §16's list still applies. In addition:
-- A node's journal is never pruned, so its hello still lists every run it has ever had. A reconnect now writes
+- A node's journal is pruned only after `journal_retention` (30 days by default; `pruneRuns` in
+  `internal/agent/prune.go`), so its hello still lists every run of that period. A reconnect now writes
   nothing for unchanged runs, but reading them still grows with the node's history (follow-up).
 - The incident fix was verified on a local dev stack (simulated: a node with up to 2500 runs, non-reading clients,
   Playwright request budgets), not against the production deployment.

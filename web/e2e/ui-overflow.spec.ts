@@ -3,7 +3,7 @@ import { devices, expect, test, type Browser, type Page } from '@playwright/test
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { overflowProblems, phoneProblems, pinchCancelled, realScrollbars, zoomBlockers, seedWorld, stopWorld, type World } from './overflow'
+import { overflowProblems, phoneProblems, pinchCancelled, realScrollbars, smallTouchText, zoomBlockers, seedWorld, stopWorld, type World } from './overflow'
 import { env, settle } from './stack'
 
 /**
@@ -358,7 +358,8 @@ test('a dialog taller than the screen still scrolls', async ({ page }) => {
  * out. The desktop-width runs above never saw it: a narrow desktop window is not a phone. A phone (mobile emulation, touch,
  * device pixel ratio 3) grows its layout viewport to fit wide content, so a dialog wider than the screen cut itself off
  * and zoomed the page out. Every modal and drawer is opened on a phone and must lie inside the screen with nothing cut
- * off; pinch-zoom stays allowed while one is open and once it is closed. SM_PHONE_SHOTS=<dir> saves screenshots.
+ * off, and every text control in it is at least 16 px (iOS zooms in on a smaller one); pinch-zoom stays allowed while one is
+ * open and once it is closed. SM_PHONE_SHOTS=<dir> saves screenshots.
  */
 test('every modal and drawer fits a phone and leaves pinch-zoom alone', async ({ browser }) => {
   test.setTimeout(600_000)
@@ -392,6 +393,7 @@ test('every modal and drawer fits a phone and leaves pinch-zoom alone', async ({
     }
     await settle(page, 450)
     for (const p of await phoneProblems(page)) failures.push(`${d.name}: ${p}`)
+    for (const p of await smallTouchText(page)) failures.push(`${d.name}: text control under 16 px on a touch screen: ${p}`)
     for (const p of await zoomBlockers(page)) failures.push(`${d.name} (open): ${p}`)
     if (await pinchCancelled(page)) failures.push(`${d.name}: a pinch on the open dialog is cancelled (the scroll lock blocks zoom)`)
     if (shots && /^(Edit account|Add account|New task)$/.test(d.name)) await page.screenshot({ path: join(shots, `${d.name.replace(/\W+/g, '-').toLowerCase()}.png`) })
