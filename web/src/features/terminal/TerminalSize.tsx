@@ -219,8 +219,14 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   // trap, so Esc would never reach the popover. Move focus into the form once that has settled.
   useEffect(() => {
     if (!custom) return
-    const t = setTimeout(() => colsInput.current?.focus(), 50)
-    return () => clearTimeout(t)
+    // Retried until it takes: on a loaded machine the menu's focus return can land after the first attempt.
+    let tries = 0
+    const t = setInterval(() => {
+      const el = colsInput.current
+      el?.focus()
+      if ((el && document.activeElement === el) || ++tries >= 20) clearInterval(t)
+    }, 50)
+    return () => clearInterval(t)
   }, [custom])
   const button = (
     <Button ref={trigger} size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
@@ -246,7 +252,7 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   // withRoles is off: the popover's target is a plain span around the menu, whose button carries the menu's own ARIA;
   // Popover.Target would add aria-haspopup/aria-expanded to a span with no role (axe aria-allowed-attr).
   return (
-    <Popover opened={custom} onChange={(o) => { setCustom(o); if (!o) trigger.current?.focus() }} position="bottom-start" withinPortal trapFocus withRoles={false}>
+    <Popover opened={custom} onChange={(o) => { setCustom(o); if (!o) trigger.current?.focus() }} position="bottom-start" withinPortal trapFocus withRoles={false} closeOnEscape={false}>
       <Popover.Target>
         <span>
           {/* No initial-focus placeholder: it is a bare div[tabindex] inside role="menu", which axe rejects
@@ -268,8 +274,11 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
           </Menu>
         </span>
       </Popover.Target>
-      <Popover.Dropdown role="dialog" aria-label="Custom terminal size">
-        <form onSubmit={(e) => { e.preventDefault(); if (customValid) void apply({ kind: 'fixed', cols: cols, rows: rows }) }}>
+      {/* closeOnEscape is off on the Popover: Mantine refocuses the menu item (which is unmounting) after an Esc close,
+          so focus would land on <body>. Esc is handled here and returns focus to the trigger. */}
+      <Popover.Dropdown role="dialog" aria-label="Custom terminal size"
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setCustom(false); trigger.current?.focus() } }}>
+        <form onSubmit={(e) => { e.preventDefault(); if (customValid) { void apply({ kind: 'fixed', cols: cols, rows: rows }); trigger.current?.focus() } }}>
           <Stack gap="xs">
             <Group gap="xs" wrap="nowrap" align="flex-end">
               <NumberInput label="Columns" w={96} min={BOUNDS.minCols} max={BOUNDS.maxCols} clampBehavior="none" allowDecimal={false} allowNegative={false}

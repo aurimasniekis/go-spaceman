@@ -168,9 +168,26 @@ describe('TerminalSizeControl', () => {
     const cols = await screen.findByTestId('terminal-size-cols')
     const dialog = cols.closest<HTMLElement>('[role=dialog]')!
     dialog.style.display = 'block' // jsdom has no transition end, and a display:none field cannot take focus
-    await waitFor(() => expect(cols).toHaveFocus())
+    await waitFor(() => expect(cols).toHaveFocus(), { timeout: 4000 })
     fireEvent.keyDown(cols, { key: 'Escape' })
     await waitFor(() => expect(cols.isConnected).toBe(false))
+    expect(trigger).toHaveFocus()
+    // Mantine used to refocus the (unmounting) menu item after Esc: focus must still be on the trigger a tick later.
+    await new Promise((r) => setTimeout(r, 100))
+    expect(trigger).toHaveFocus()
+    expect(document.body).not.toHaveFocus()
+  })
+
+  it('returns focus to the trigger after Apply', async () => {
+    wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+    const trigger = screen.getByTestId('terminal-size')
+    fireEvent.click(trigger)
+    fireEvent.click(await screen.findByTestId('terminal-size-custom'))
+    const cols = await screen.findByTestId('terminal-size-cols')
+    cols.closest<HTMLElement>('[role=dialog]')!.style.display = 'block'
+    await waitFor(() => expect(cols).toHaveFocus(), { timeout: 4000 })
+    fireEvent.submit(cols.closest('form')!)
+    await new Promise((r) => setTimeout(r, 100))
     expect(trigger).toHaveFocus()
   })
 })
