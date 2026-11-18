@@ -492,3 +492,71 @@ func TestObserveStaleLiveSnapshotKeepsEndedRow(t *testing.T) {
 		t.Fatalf("the run-end work ran %d times, want once", n)
 	}
 }
+
+// Every write that ends a run takes the observe lock after the run's lock (runLock, then observeLock). While another
+// writer holds the observe lock mid-step, the reconcile's lost and pending branches wait, then see the row the holder
+// ended and neither overwrite it nor run the end work again.
+func TestReconcileRunnerEndTakesObserveLock(t *testing.T) {
+	for _, tc := range []struct{ name, state, terminal string }{{"pending", proto.RunPending, ""}, {"lost", proto.RunRunning, "term_gone"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _ := ccAgent(t, t.TempDir(), nil, nil)
+			ctx := context.Background()
+			ccAgentSeedRun(t, a)
+			row := getRun(t, a, adoptWaitRun)
+			row.State, row.TerminalID = tc.state, tc.terminal
+			if err := a.j.updateRun(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+			var ran atomic.Int32
+			a.onRunEndHooks = func(string) { ran.Add(1) }
+			unlockObs := a.observeLock(adoptWaitRun) // an observe is between its read and its write
+			done := make(chan error, 1)
+			go func() { done <- a.reconcileRunner(ctx) }()
+			time.Sleep(100 * time.Millisecond)
+			if r := getRun(t, a, adoptWaitRun); r.State != tc.state {
+				t.Fatalf("the reconcile wrote %s without the observe lock", r.State)
+			}
+			row.State, row.Reason = proto.RunExited, "ended by the lock holder"
+			if err := a.j.updateRun(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+			unlockObs()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			a.drain(10 * time.Second)
+			if r := getRun(t, a, adoptWaitRun); r.State != proto.RunExited || r.Reason != "ended by the lock holder" {
+				t.Fatalf("state %s (%s), want the lock holder's write kept", r.State, r.Reason)
+			}
+			if n := ran.Load(); n != 0 {
+				t.Fatalf("the end work ran %d times for a row the reconcile did not end", n)
+			}
+		})
+	}
+}
+
+// A stop before start (no terminal yet) ends the row under the observe lock too: it waits for an observe that is
+// between its read and its write, instead of ending the row underneath it.
+func TestStopBeforeStartTakesObserveLock(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	ctx := context.Background()
+	ccAgentSeedRun(t, a)
+	var ran atomic.Int32
+	a.onRunEndHooks = func(string) { ran.Add(1) }
+	unlockObs := a.observeLock(adoptWaitRun)
+	done := make(chan struct{})
+	go func() { a.stop(ctx, adoptWaitRun, "kill", 0, "test"); close(done) }()
+	time.Sleep(100 * time.Millisecond)
+	if r := getRun(t, a, adoptWaitRun); ended(r.State) || r.Desired != "running" {
+		t.Fatalf("the stop wrote %s (desired %s) without the observe lock", r.State, r.Desired)
+	}
+	unlockObs()
+	<-done
+	a.drain(10 * time.Second)
+	if r := getRun(t, a, adoptWaitRun); r.State != proto.RunExited || r.Reason != "stopped before start" {
+		t.Fatalf("state %s (%s)", r.State, r.Reason)
+	}
+	if n := ran.Load(); n != 1 {
+		t.Fatalf("the end work ran %d times, want once", n)
+	}
+}
