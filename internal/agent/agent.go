@@ -194,6 +194,8 @@ type Agent struct {
 	// Test hooks.
 	beforeEnsureGuard func()
 	onRunEndHooks     func(runID string)
+	// beforeRecordAttach, when set, runs before each of a recorder's attachments (tests).
+	beforeRecordAttach func(runID string)
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time

@@ -350,15 +350,14 @@ func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
 	fake := a.o.Runner.(interface {
 		Output(id, data string)
 		Exit(id string, code int, reason string)
+		Observed(id string) int
 	})
-	// The recorder is attached once its gap record is kept back (it numbers nothing while central is silent).
-	waitFor(t, "recorder attached", func() bool {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.recorders[runID] != nil
-	})
+	// The output and the exit must come while the recorder's attachment is open (a finished terminal cannot be
+	// attached: TestRecorderClosesAProgramThatEndedBeforeItAttached). Neither a recorder in the map (it is entered
+	// before it attaches) nor a probe at central (the catch-up pass probes too, ADR-0097) says it is open.
+	waitFor(t, "recorder attached", func() bool { return fake.Observed(term) >= 1 })
 	// The recorder asks for central's sequence while it waits: once it has asked, it holds what follows back.
-	c.until("the recorder's first probe", func() bool { return c.muted >= 1 })
+	c.until("the first probe", func() bool { return c.muted >= 1 })
 	fake.Output(term, "last words\r\n")
 	fake.Exit(term, 0, "exited")
 	// After the exit the recorder keeps asking (it has the close record to ship): the probes that follow came from
@@ -375,6 +374,51 @@ func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
 	}
 	if !c.has("last words") {
 		t.Fatal("the output before the exit did not reach central")
+	}
+	waitFor(t, "recorder ended", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.recorders[runID] == nil
+	})
+}
+
+// A program that ends after the restarted agent adopted it but before its recorder attached: a finished terminal
+// cannot be attached, so what it wrote meanwhile is missing, but the recording still ends with the program's close
+// record (after a gap), numbered above central's sequence once it is known, and the recorder ends.
+func TestRecorderClosesAProgramThatEndedBeforeItAttached(t *testing.T) {
+	const runID = "run_gone"
+	var once sync.Once
+	a, c, _ := restartedRecorderEnvWith(t, runID, 100, 100, 200, nil, func(a *Agent) {
+		fake := a.o.Runner.(interface {
+			Output(id, data string)
+			Exit(id string, code int, reason string)
+			LiveByLabel(k, v string) []runner.Process
+		})
+		a.beforeRecordAttach = func(id string) {
+			if id != runID {
+				return
+			}
+			once.Do(func() {
+				for _, p := range fake.LiveByLabel("spaceman.run", runID) {
+					fake.Output(p.ID, "unseen\r\n")
+					fake.Exit(p.ID, 3, "exited")
+				}
+			})
+		}
+	})
+	c.until("the close record at central", func() bool { return len(c.recs) > 200 && c.recs[len(c.recs)-1].Kind == recording.KindClose })
+	if c.drops > 0 {
+		t.Fatalf("central dropped %d records as repeats", c.drops)
+	}
+	got := c.recs[200:]
+	if len(got) != 2 || got[0].Kind != recording.KindGap || got[0].Seq != 201 || got[1].Seq != 202 {
+		t.Fatalf("records after the restart %+v, want a gap and the close numbered 201 and 202", got)
+	}
+	if got[1].ExitCode == nil || *got[1].ExitCode != 3 || got[1].Reason != "exited" {
+		t.Fatalf("close record %+v, want exit code 3, exited", got[1])
+	}
+	if recs := localAbove(t, a, runID, 200); len(recs) != 2 || recs[1].Kind != recording.KindClose {
+		t.Fatalf("the local recording above 200 holds %+v, want the gap and the close", recs)
 	}
 	waitFor(t, "recorder ended", func() bool {
 		a.mu.Lock()

@@ -117,9 +117,16 @@ func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 	first := w.Seq() == 0
 	cols, rows := 0, 0
 	for attempt := 0; attempt < 20 && ctx.Err() == nil; attempt++ {
+		if a.beforeRecordAttach != nil {
+			a.beforeRecordAttach(row.RunID)
+		}
 		st, p, err := a.o.Runner.Attach(ctx, row.TerminalID, true, 0, 0)
 		if err != nil {
-			if errors.Is(err, runner.ErrNotFound) || errors.Is(err, runner.ErrFinished) {
+			if errors.Is(err, runner.ErrFinished) {
+				s.finishedUnattached(ctx, first)
+				return
+			}
+			if errors.Is(err, runner.ErrNotFound) {
 				return
 			}
 			log.Warn("attach for recording", obs.Err(err))
@@ -288,6 +295,24 @@ func (s *recShipper) diskState() {
 		s.failing = false
 		s.a.log.Info("the local recording is written again", slog.String(obs.FieldRunID, s.row.RunID))
 	}
+}
+
+// finishedUnattached ends the recording of a program that finished while no attachment was open: it exited before
+// the recorder's first attachment (an adopted run ending right after an agent restart) or between two attachments.
+// A finished terminal cannot be attached, so the output it wrote meanwhile is missing (a gap), but the recording still
+// ends with the program's close record: without it neither the local recording nor central's copy says the program
+// ended. Like every record, they wait in the gate while central's sequence is unknown (settle ships them).
+func (s *recShipper) finishedUnattached(ctx context.Context, first bool) {
+	p, err := s.a.o.Runner.Get(ctx, s.row.TerminalID)
+	if err != nil || p.State != runner.StateFinished {
+		return
+	}
+	if first {
+		s.add(ctx, recording.Record{Kind: recording.KindOpen, Cols: p.Cols, Rows: p.Rows, RunID: s.row.RunID})
+	}
+	s.add(ctx, recording.Record{Kind: recording.KindGap, Why: "finished"})
+	s.add(ctx, recording.Record{Kind: recording.KindClose, ExitCode: p.ExitCode, Reason: p.Reason})
+	s.ship(ctx)
 }
 
 // settle runs after the recording's last attachment while the gate still keeps records back: it ships them once
