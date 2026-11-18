@@ -211,17 +211,33 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	}
 	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
 	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
-		a.observe(ctx, row, found[0], true)
+		a.adopt(ctx, log, c.RunID, found[0])
 		return
 	}
 	if abandoned() {
 		log.Info("launch abandoned: the run was stopped before it started")
 		return
 	}
+	// held is true while this launch holds the run's lock (from the last check before the start on); fail then writes
+	// under it instead of taking it again.
+	held := false
 	fail := func(msg string, err error) {
 		if abandoned() {
 			log.Info("launch abandoned: the run was stopped before it started", slog.String("at", msg))
 			return
+		}
+		if !held {
+			if a.beforeFailWrite != nil {
+				a.beforeFailWrite() // test hook: a stop may land here, before the lock is taken
+			}
+			// The check and the write are one step under the run's lock, which stop also takes: the write replaces
+			// the whole row (desired running), so a stop landing between the two would be overwritten.
+			unlockFail := a.runLock(c.RunID)
+			defer unlockFail()
+			if abandoned() {
+				log.Info("launch abandoned: the run was stopped before it started", slog.String("at", msg))
+				return
+			}
 		}
 		row.State, row.Error = proto.RunFailed, msg
 		if err != nil {
@@ -523,6 +539,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	// waits until the program is started and recorded and then stops it.
 	unlock := a.runLock(c.RunID)
 	defer unlock()
+	held = true
 	if !stillWanted() {
 		_ = os.Remove(filepath.Join(rd, SecretsFile))
 		return
@@ -546,6 +563,34 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	a.notePin(p.HarnessVersion) // only a started run protects its pin from GC (claudePinned)
 	a.launchedRecording(c.RunID)
 	a.observe(ctx, row, *proc, false)
+}
+
+// adopt takes over the program a launch found already running under the run's name (a repeated delivery, or a restart
+// between start and journal update). The row is re-read under the run's lock first: a stop that landed since the launch
+// read it, while the row still had no terminal, ended the run as stopped before start without killing anything, so the
+// found program is stopped here instead of being recorded as running.
+func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found runner.Process) {
+	if a.beforeAdoptObserve != nil {
+		a.beforeAdoptObserve() // test hook: a stop may land here, before the lock is taken
+	}
+	unlock := a.runLock(runID)
+	defer unlock()
+	row, err := a.j.getRun(ctx, runID)
+	if err != nil {
+		return
+	}
+	if row.Desired == "stopped" || ended(row.State) {
+		log.Info("launch abandoned: the run was stopped before it was adopted")
+		if found.State == runner.StateLive {
+			if _, err := a.o.Runner.Kill(ctx, found.ID); err != nil {
+				log.Warn("kill the program of a stopped run", obs.Err(err))
+			}
+		}
+		if p, err := a.o.Runner.Get(ctx, found.ID); err == nil {
+			found = *p
+		}
+	}
+	a.observe(ctx, row, found, true)
 }
 
 func (a *Agent) wrap(runDir string, l harness.Launch) []string {

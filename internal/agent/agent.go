@@ -183,6 +183,9 @@ type Agent struct {
 	claudeStage func(stage string, res dist.Resolution)
 	// beforeStartingWrite, when set, runs in a managed launch between the abandoned check and the starting write (tests).
 	beforeStartingWrite func()
+	// beforeFailWrite and beforeAdoptObserve, when set, run in a launch between its abandoned check and the lock
+	// that guards the write (a failure) or the observe (an adoption) (tests).
+	beforeFailWrite, beforeAdoptObserve func()
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time

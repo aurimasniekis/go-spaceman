@@ -8,8 +8,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
-- A stop that lands while a managed Claude Code launch is about to move its run to `starting` can no longer be overwritten:
-  the check and the write now happen under one lock.
+- **A stop can no longer be overwritten by a launch** (#272 and follow-ups). The managed Claude Code launch's `starting`
+  write, and now also a pre-start failure (download, build, credentials, secrets), check that the run was not stopped
+  and write under one lock, so a stop landing in between is kept. A launch re-delivered after a crash between starting
+  the program and journaling it re-checks the run under that lock before adopting the program: when the run was stopped
+  meanwhile, it stops the found program instead of recording it as running.
+- **A deleted recording stays deleted** (#262, #263, #264). Late chunks that arrive after the recordings were closed, or
+  for a deleted recording, are dropped instead of recreating it; the deleted state is durable across restarts and
+  against an S3 archive racing a delete; and central stops serving a deleted recording (`410 Gone`) and cleans up
+  its leftovers at startup.
+- **The terminal treats a deleted recording as final** (#266). The web terminal handles a `410` for a recording as the
+  end of that recording, not as an error to retry.
+- **Test flakes** (#262, #267). The recording-retention test and the control watchdog test wait for the event they
+  check instead of passing early.
 
 ## [0.1.13] - 2026-11-18
 
