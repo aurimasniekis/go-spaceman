@@ -565,6 +565,12 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	a.observe(ctx, row, *proc, false)
 }
 
+// The wait for an adopted program to go after its kill (adopt): tries polls apart. Variables so a test can shorten it.
+var (
+	adoptKillTries = 20
+	adoptKillPoll  = 100 * time.Millisecond
+)
+
 // adopt takes over the program a launch found already running under the run's name (a repeated delivery, or a restart
 // between start and journal update). The row is re-read under the run's lock first: a stop that landed since the launch
 // read it, while the row still had no terminal, ended the run as stopped before start without killing anything, so the
@@ -587,7 +593,7 @@ func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found
 				log.Warn("kill the program of a stopped run", obs.Err(err))
 			}
 			// Kill may return before the program is gone: wait briefly for it, so the row is not left live.
-			for i := 0; i < 20; i++ {
+			for i := 0; i < adoptKillTries; i++ {
 				p, err := a.o.Runner.Get(ctx, found.ID)
 				if err == nil {
 					found = *p
@@ -595,15 +601,26 @@ func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found
 				if err != nil || p.State == runner.StateFinished {
 					break
 				}
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(adoptKillPoll)
 			}
 		}
+		// The row is already ended, so observe would skip the run-end work: do it here once the program is gone. (A
+		// row that ended with a program recorded was handled when it ended; one not yet ended is handled by observe
+		// below.) The helper is safe to run again after a stop before start already ran it.
+		atEnd := ended(row.State) && row.TerminalID == ""
 		if found.State == runner.StateLive {
-			// Still live: keep the row ended, record only the terminal, and leave the exit to the monitor's finished event.
+			// Still live: keep the row ended, record only the terminal, and leave the exit to the monitor's finished
+			// event, which runs the end work (retiring the guard needs the program gone).
+			if atEnd {
+				a.endPending.Store(runID, true)
+			}
 			row.TerminalID, row.CoreID, row.Identity, row.PID = found.ID, found.CoreID, found.Identity(), found.PID
 			row.Adopted = true
 			_ = a.j.updateRun(ctx, row)
 			return
+		}
+		if atEnd {
+			defer a.runEndHooks(ctx, row, true)
 		}
 	}
 	a.observe(ctx, row, found, true)
@@ -648,20 +665,13 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		}
 	}
 	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
+	_, pending := a.endPending.Load(row.RunID)
 	switch {
 	case ended(row.State) && !ended(prev.State):
-		bctx := context.WithoutCancel(ctx)
-		a.forgetHookData(row.RunID)
-		if row.Harness == harness.KindClaude {
-			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
-		}
-		a.goTrack(func() {
-			a.mem.flush(bctx, row, "run ended")
-			a.usageFinal(bctx, row)
-			a.retryRoleRenames(bctx, row.SpaceID) // a rename the run deferred moves now
-		})
-		a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
-		a.goTrack(func() { a.removeRunAttachments(bctx, row) })
+		a.runEndHooks(ctx, row, true)
+	case pending && p.State == runner.StateFinished && ended(row.State):
+		a.endPending.Delete(row.RunID) // an adopted program stopped before adoption has now gone
+		a.runEndHooks(ctx, row, true)
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)
@@ -671,6 +681,30 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		(prev.Status != row.Status || prev.Turn != row.Turn) {
 		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
+}
+
+// runEndHooks does what a run's end leaves to do: forget its hook data, scan its transcript for a usage limit, flush
+// its role memory, report its final usage, retry the role renames it deferred, retire the space's lease guard once no
+// run is live, and remove its saved attachments. The paths that end a run call it: a normal exit (observe),
+// a stop before the run had a program (started false: nothing ran, so no limit scan, memory flush or usage), and an
+// adopted program that was stopped before adoption. The background work is tracked and uses a context that outlives ctx.
+func (a *Agent) runEndHooks(ctx context.Context, row runRow, started bool) {
+	bctx := context.WithoutCancel(ctx)
+	a.forgetHookData(row.RunID)
+	if started {
+		if row.Harness == harness.KindClaude {
+			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
+		}
+		a.goTrack(func() {
+			a.mem.flush(bctx, row, "run ended")
+			a.usageFinal(bctx, row)
+			a.retryRoleRenames(bctx, row.SpaceID) // a rename the run deferred moves now
+		})
+	} else {
+		a.goTrack(func() { a.retryRoleRenames(bctx, row.SpaceID) })
+	}
+	a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
+	a.goTrack(func() { a.removeRunAttachments(bctx, row) })
 }
 
 // endUnlaunched answers a stop for a run this node has no record of: central cancelled the run's launch before it was
@@ -717,6 +751,8 @@ func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duratio
 		_ = a.j.updateRun(ctx, row)
 		unlock()
 		a.report(ctx, row)
+		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now.
+		a.runEndHooks(ctx, row, false)
 		return
 	}
 	row.State = proto.RunStopping

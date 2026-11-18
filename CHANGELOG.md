@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and write under one lock, so a stop landing in between is kept. A launch re-delivered after a crash between starting
   the program and journaling it re-checks the run under that lock before adopting the program: when the run was stopped
   meanwhile, it stops the found program instead of recording it as running.
+- **A run stopped before it had a program now gets its end-of-run work** (follow-up to #273). The run-end work (forget
+  hook data, memory flush, final usage, deferred role renames, retiring the idle lease guard, removing saved
+  attachments) is one helper. It now also runs when a stop ends a run before start (the guard the launch may have
+  started is retired) and when a launch adopts a program of a run already stopped, which no longer leaks an idle guard
+  or the run's attachments. The wait for that program to go after its kill has tests, and `TestGatewayRevokedOnPurge`
+  no longer runs in parallel with the package's other tests, where it could pass the 500 ms write-lock limit.
 - **A deleted recording stays deleted** (#262, #263, #264). Late chunks that arrive after the recordings were closed, or
   for a deleted recording, are dropped instead of recreating it; the deleted state is durable across restarts and
   against an S3 archive racing a delete; and central stops serving a deleted recording (`410 Gone`) and cleans up

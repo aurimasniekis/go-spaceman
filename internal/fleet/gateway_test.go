@@ -238,8 +238,12 @@ func TestGatewayRevokedOnRelocationAndRunsEnded(t *testing.T) {
 
 // SM-GW-005, row "space purge" (PurgeSpace): the revocations are queued before the runs are deleted, and survive it
 // (the queue is not tied to the runs).
+//
+// Not parallel, on purpose: the purge cascades over about forty child tables inside one write transaction that holds
+// only database work (no file or gateway call), and under the race detector alongside the package's parallel tests it
+// has held the write lock past the HP-DB-004 limit (512 ms against 500 ms). A test that is not parallel runs before the
+// parallel ones resume, so the transaction gets the CPU; the guard itself stays as it is.
 func TestGatewayRevokedOnPurge(t *testing.T) {
-	t.Parallel()
 	e := newGWEnv(t)
 	e.run("run_1", proto.RunExited)
 	e.exec(`UPDATE spaces SET state = 'archived' WHERE id = 'spc_a'`)
