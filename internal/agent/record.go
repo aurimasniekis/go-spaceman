@@ -595,6 +595,9 @@ func (a *Agent) startCatchUpLocked() bool {
 	return true
 }
 
+// catchUpBackoffHook, when set (tests), runs as the catch-up pass is about to sleep its backoff of that length.
+var catchUpBackoffHook func(backoff time.Duration)
+
 // catchUpRecordings is the catch-up pass: it sweeps the journaled runs, re-shipping each run's local records above
 // central's acknowledged sequence where central may lack some, and sweeps again while another pass was asked for or
 // a run waits for it (a run started during a sweep). It ends when a sweep left no run waiting, or at the first failed
@@ -639,6 +642,9 @@ func (a *Agent) catchUpRecordings() {
 		if err != nil && !again {
 			// The backoff ends early on another request (startCatchUpLocked) or the first answer of a run
 			// (recordingAck): runs whose live output waits for the pass must not wait out the backoff.
+			if catchUpBackoffHook != nil {
+				catchUpBackoffHook(retry)
+			}
 			t := time.NewTimer(retry)
 			select {
 			case <-ctx.Done():
@@ -1063,7 +1069,10 @@ func (a *Agent) recordingAck(ack proto.RecordingAck) {
 	}
 	first := !a.seqKnown[ack.RunID]
 	a.seqKnown[ack.RunID] = true
-	if first && a.catching && a.unshipped[ack.RunID] { // a skipped run (catchUpRun) waits for its answer
+	// unshipped holds the runs the pass skipped for want of an answer (catchUpRun) and the runs whose live output
+	// shipLive holds back. The first answer of either ends the backoff sleep. For a held live run that is an early
+	// re-sweep at most once (the answer is the run's first), and harmless: central drops repeated records.
+	if first && a.catching && a.unshipped[ack.RunID] {
 		a.wakeCatchUpLocked()
 	}
 	prev, had := a.acked[ack.RunID]
