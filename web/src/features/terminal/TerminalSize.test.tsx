@@ -190,4 +190,91 @@ describe('TerminalSizeControl', () => {
     await new Promise((r) => setTimeout(r, 100))
     expect(trigger).toHaveFocus()
   })
+
+  describe('while a resize is in flight', () => {
+    /** Every PUT stays pending until the test settles it. */
+    function holdPuts() {
+      const calls: { resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = []
+      const put = vi.spyOn(api, 'PUT').mockImplementation(() => new Promise((resolve, reject) => { calls.push({ resolve, reject }) }) as never)
+      return { put, calls }
+    }
+
+    it('sends exactly one PUT for a preset chosen while another is pending', async () => {
+      const { put, calls } = holdPuts()
+      wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+      fireEvent.click(screen.getByTestId('terminal-size'))
+      fireEvent.click(await screen.findByTestId('terminal-size-120x40'))
+      await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+      expect(screen.getByTestId('terminal-size')).toHaveAttribute('aria-busy', 'true')
+
+      // Another preset while the first is pending is ignored: the menu closes and no second request goes out.
+      fireEvent.click(screen.getByTestId('terminal-size'))
+      fireEvent.click(await screen.findByTestId('terminal-size-160x50'))
+      await new Promise((r) => setTimeout(r, 50))
+      expect(put).toHaveBeenCalledTimes(1)
+      expect(put.mock.calls[0][1]).toMatchObject({ body: { cols: 120, rows: 40 } })
+
+      await act(async () => calls[0].resolve({ data: run({ terminal_size: { cols: 120, rows: 40 } }), response: new Response() }))
+      await waitFor(() => expect(screen.getByTestId('terminal-size')).toHaveAttribute('aria-busy', 'false'))
+      expect(put).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the trigger focusable and not disabled, with aria-busy, and has no ARIA violations', async () => {
+      const { put, calls } = holdPuts()
+      wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+      const trigger = screen.getByTestId('terminal-size')
+      fireEvent.click(trigger)
+      fireEvent.click(await screen.findByTestId('terminal-size-120x40'))
+      await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+      expect(trigger).toHaveAttribute('aria-busy', 'true')
+      expect(trigger).not.toBeDisabled()
+      const r = await axe.run(document.body, { runOnly: ['aria-allowed-attr', 'aria-required-children', 'aria-valid-attr-value'] })
+      expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.failureSummary).join(' ')}`)).toEqual([])
+      await act(async () => calls[0].resolve({ data: run({ terminal_size: { cols: 120, rows: 40 } }), response: new Response() }))
+      await waitFor(() => expect(trigger).toHaveAttribute('aria-busy', 'false'))
+    })
+
+    it('clears busy after a rejected PUT', async () => {
+      const { put, calls } = holdPuts()
+      wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+      const trigger = screen.getByTestId('terminal-size')
+      fireEvent.click(trigger)
+      fireEvent.click(await screen.findByTestId('terminal-size-120x40'))
+      await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+      expect(trigger).toHaveAttribute('aria-busy', 'true')
+      await act(async () => calls[0].reject(new Error('node unreachable')))
+      await waitFor(() => expect(trigger).toHaveAttribute('aria-busy', 'false'))
+      expect(trigger).not.toBeDisabled()
+    })
+
+    it('keeps the Custom dialog open and focus in the form when submitted while busy', async () => {
+      const { put, calls } = holdPuts()
+      wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="" measure={() => null} />)
+      const trigger = screen.getByTestId('terminal-size')
+      fireEvent.click(trigger)
+      fireEvent.click(await screen.findByTestId('terminal-size-120x40'))
+      await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+
+      // Custom… while busy, then a valid size submitted with the PUT still pending.
+      fireEvent.click(trigger)
+      fireEvent.click(await screen.findByTestId('terminal-size-custom'))
+      const cols = await screen.findByTestId('terminal-size-cols')
+      const dialog = cols.closest<HTMLElement>('[role=dialog]')!
+      dialog.style.display = 'block'
+      await waitFor(() => expect(cols).toHaveFocus(), { timeout: 4000 })
+      fireEvent.change(cols, { target: { value: '170' } })
+      expect(screen.getByTestId('terminal-size-apply')).toBeDisabled()
+      const form = cols.closest('form')!
+      fireEvent.submit(form)
+      await new Promise((r) => setTimeout(r, 100))
+
+      expect(put).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('dialog', { name: 'Custom terminal size' })).toBeInTheDocument()
+      expect(form).toContainElement(document.activeElement as HTMLElement)
+      expect(trigger).not.toHaveFocus()
+
+      await act(async () => calls[0].resolve({ data: run({ terminal_size: { cols: 120, rows: 40 } }), response: new Response() }))
+      await waitFor(() => expect(trigger).toHaveAttribute('aria-busy', 'false'))
+    })
+  })
 })
