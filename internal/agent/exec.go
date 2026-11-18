@@ -577,17 +577,33 @@ func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found
 	defer unlock()
 	row, err := a.j.getRun(ctx, runID)
 	if err != nil {
+		log.Warn("adopt: read the run", obs.Err(err))
 		return
 	}
 	if row.Desired == "stopped" || ended(row.State) {
-		log.Info("launch abandoned: the run was stopped before it was adopted")
+		log.Info("launch abandoned: the run was stopped or ended before it was adopted; stopping its program")
 		if found.State == runner.StateLive {
 			if _, err := a.o.Runner.Kill(ctx, found.ID); err != nil {
 				log.Warn("kill the program of a stopped run", obs.Err(err))
 			}
+			// Kill may return before the program is gone: wait briefly for it, so the row is not left live.
+			for i := 0; i < 20; i++ {
+				p, err := a.o.Runner.Get(ctx, found.ID)
+				if err == nil {
+					found = *p
+				}
+				if err != nil || p.State == runner.StateFinished {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
 		}
-		if p, err := a.o.Runner.Get(ctx, found.ID); err == nil {
-			found = *p
+		if found.State == runner.StateLive {
+			// Still live: keep the row ended, record only the terminal, and leave the exit to the monitor's finished event.
+			row.TerminalID, row.CoreID, row.Identity, row.PID = found.ID, found.CoreID, found.Identity(), found.PID
+			row.Adopted = true
+			_ = a.j.updateRun(ctx, row)
+			return
 		}
 	}
 	a.observe(ctx, row, found, true)
