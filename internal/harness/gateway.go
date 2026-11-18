@@ -89,6 +89,7 @@ var claudeSafeEnv = map[string]bool{
 	"CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY":     true,
 	"CLAUDE_CODE_NO_FLICKER":                   true,
 	"CLAUDE_CODE_SUBAGENT_MODEL":               true,
+	"CLAUDE_CODE_TMPDIR":                       true,
 }
 
 // claudeTransportEnv are the variables (upper-cased) that send Claude Code's traffic through a proxy or weaken its TLS
