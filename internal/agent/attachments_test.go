@@ -272,6 +272,7 @@ func TestReconcileRemovesLostRunsAttachments(t *testing.T) {
 	if err := a.reconcileRunner(ctx); err != nil {
 		t.Fatal(err)
 	}
+	a.drain(10 * time.Second) // the run-end work removes the files in the background
 	for _, r := range []string{lost.RunID, pending.RunID} {
 		if _, err := os.Stat(filepath.Join(dir, r)); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("run %s keeps its files: %v", r, err)

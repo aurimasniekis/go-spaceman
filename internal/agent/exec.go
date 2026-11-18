@@ -246,6 +246,9 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		_ = a.j.updateRun(ctx, row)
 		a.report(ctx, row)
 		log.Warn("launch failed", slog.String("reason", msg), obs.Err(err))
+		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now. (The async
+		// parts go through goTrack, so this is safe under the run's lock.)
+		a.runEndHooks(ctx, row, false)
 	}
 	// stillWanted is checked after every wait: the run was not stopped, and the space's lease still authorizes this
 	// generation (central may have fenced it meanwhile).
@@ -617,6 +620,15 @@ func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found
 			row.TerminalID, row.CoreID, row.Identity, row.PID = found.ID, found.CoreID, found.Identity(), found.PID
 			row.Adopted = true
 			_ = a.j.updateRun(ctx, row)
+			// The program may have exited since the last kill-wait read, and the monitor's finished event may have
+			// been dropped before the terminal was recorded: look once more, and do the end work here if it is gone.
+			if atEnd {
+				if again, gerr := a.o.Runner.Get(ctx, found.ID); gerr == nil && again.State == runner.StateFinished {
+					if _, ok := a.endPending.LoadAndDelete(runID); ok {
+						a.runEndHooks(ctx, row, true)
+					}
+				}
+			}
 			return
 		}
 		if atEnd {
@@ -665,12 +677,16 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		}
 	}
 	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
-	_, pending := a.endPending.Load(row.RunID)
+	// An adopted program stopped before adoption has now gone: claim the pending end work atomically, so two
+	// concurrent observes do not both run it.
+	pending := false
+	if p.State == runner.StateFinished && ended(row.State) {
+		_, pending = a.endPending.LoadAndDelete(row.RunID)
+	}
 	switch {
 	case ended(row.State) && !ended(prev.State):
 		a.runEndHooks(ctx, row, true)
-	case pending && p.State == runner.StateFinished && ended(row.State):
-		a.endPending.Delete(row.RunID) // an adopted program stopped before adoption has now gone
+	case pending:
 		a.runEndHooks(ctx, row, true)
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
@@ -893,11 +909,11 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 			// re-delivery is a duplicate, so mark it failed rather than starting it silently.
 			r.State, r.Error = proto.RunFailed, "agent restarted before the process started"
 			_ = a.j.updateRun(ctx, r)
-			a.removeRunAttachments(ctx, r)
+			a.runEndHooks(ctx, r, false)
 		default:
 			r.State, r.Reason = proto.RunLost, "process not found in the runner"
 			_ = a.j.updateRun(ctx, r)
-			a.removeRunAttachments(ctx, r)
+			a.runEndHooks(ctx, r, true) // the program ran: its memory flush and final usage still matter
 		}
 	}
 	return nil

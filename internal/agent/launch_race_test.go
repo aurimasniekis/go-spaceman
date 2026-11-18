@@ -149,8 +149,8 @@ func TestAdoptStoppedRunStillLiveAfterWait(t *testing.T) {
 	if r.TerminalID != id || !r.Adopted || !ended(r.State) {
 		t.Fatalf("row %s terminal %q adopted %v, want ended with terminal %s", r.State, r.TerminalID, r.Adopted, id)
 	}
-	if ar.killed[id] != 7 {
-		t.Fatalf("polled %d times, want exactly the 7 tries", ar.killed[id])
+	if ar.killed[id] != 8 {
+		t.Fatalf("polled %d times, want the 7 tries and the last look", ar.killed[id])
 	}
 	if _, ok := a.endPending.Load(adoptWaitRun); !ok {
 		t.Fatal("the end work is not pending for the program's finished event")
@@ -216,5 +216,124 @@ func TestStopBeforeStartRetiresGuard(t *testing.T) {
 	a.drain(10 * time.Second)
 	if g, err := f.Get(ctx, guard); err == nil && g.State == runner.StateLive {
 		t.Fatal("the lease guard is still live")
+	}
+}
+
+// endHooksFixture starts the space's lease guard and saves an attachment for the run, so a test can tell whether the
+// run-end work ran: it retires the guard and removes the attachments.
+func endHooksFixture(t *testing.T, a *Agent) (guard, attDir string) {
+	t.Helper()
+	guard, err := a.ensureGuard(context.Background(), ccSpace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attDir = filepath.Join(a.o.DataDir, "spaces", "cc", "instances", adoptWaitInst, attachmentsDir, adoptWaitRun, "att")
+	if err := os.MkdirAll(attDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(attDir, "f.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return guard, attDir
+}
+
+// requireEndHooksRan drains the agent's background work and checks the guard is retired and the attachments gone.
+func requireEndHooksRan(t *testing.T, a *Agent, guard, attDir string) {
+	t.Helper()
+	a.drain(10 * time.Second)
+	if g, err := a.o.Runner.Get(context.Background(), guard); err == nil && g.State == runner.StateLive {
+		t.Fatal("the lease guard is still live")
+	}
+	if _, err := os.Stat(filepath.Join(attDir, "..")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the run's attachments are still there: %v", err)
+	}
+}
+
+// adoptEndedRun is adoptStoppedRun with a live guard and saved attachments, the row ended directly (stop's own end
+// work would mask what adopt and observe do).
+func adoptEndedRun(t *testing.T, exitAfter int) (a *Agent, ar *asyncKillRunner, id, guard, attDir string) {
+	t.Helper()
+	a, _ = ccAgent(t, t.TempDir(), nil, func(o *Options) { ar = &asyncKillRunner{Fake: runnertest.New(), exitAfter: exitAfter}; o.Runner = ar })
+	ctx := context.Background()
+	p, err := ar.Fake.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
+		Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": adoptWaitRun, "spaceman.space": ccSpace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ccAgentSeedRun(t, a)
+	guard, attDir = endHooksFixture(t, a)
+	row := getRun(t, a, adoptWaitRun)
+	row.Desired, row.State, row.Reason = "stopped", proto.RunExited, "stopped before start"
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	a.adopt(ctx, a.log, adoptWaitRun, *p)
+	return a, ar, p.ID, guard, attDir
+}
+
+// The pending end work runs when the monitor's finished event for the still-live program arrives.
+func TestAdoptStoppedRunPendingEndHooksOnFinish(t *testing.T) {
+	shortAdoptKillWait(t, 7)
+	a, ar, id, guard, attDir := adoptEndedRun(t, -1)
+	ar.Fake.Exit(id, 129, "killed")
+	pr, _ := ar.Fake.Get(context.Background(), id)
+	a.observe(context.Background(), getRun(t, a, adoptWaitRun), *pr, false)
+	requireEndHooksRan(t, a, guard, attDir)
+}
+
+// A program that exits after the last kill-wait read but before the terminal is recorded produces no usable finished
+// event: adopt looks once more and runs the end work itself.
+func TestAdoptStoppedRunExitsAfterLastWait(t *testing.T) {
+	shortAdoptKillWait(t, 7)
+	a, _, id, guard, attDir := adoptEndedRun(t, 8) // the 8th Get after the kill is adopt's extra look
+	if r := getRun(t, a, adoptWaitRun); r.TerminalID != id {
+		t.Fatalf("terminal %q, want %s", r.TerminalID, id)
+	}
+	if _, ok := a.endPending.Load(adoptWaitRun); ok {
+		t.Fatal("the end work is still pending")
+	}
+	requireEndHooksRan(t, a, guard, attDir)
+}
+
+// A launch that fails after the lease guard was started retires the guard and removes the run's attachments.
+func TestLaunchFailRunsEndHooks(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	guard, attDir := endHooksFixture(t, a)
+	a.launch(context.Background(), proto.Command{CommandID: "cmd_" + adoptWaitRun, Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: adoptWaitRun, Generation: 1},
+		proto.LaunchPayload{Harness: "no-such-harness", Kind: "worker", Role: "implementor", InstanceID: adoptWaitInst})
+	if r := getRun(t, a, adoptWaitRun); r.State != proto.RunFailed {
+		t.Fatalf("state %s, want failed", r.State)
+	}
+	requireEndHooksRan(t, a, guard, attDir)
+}
+
+// The runner reconcile ends a pending run with no program (failed) and a running run whose program is gone (lost)
+// with the run-end work, not only the attachment removal.
+func TestReconcileRunnerEndHooks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		running bool
+		want    string
+	}{{"pending", false, proto.RunFailed}, {"lost", true, proto.RunLost}} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _ := ccAgent(t, t.TempDir(), nil, nil)
+			ctx := context.Background()
+			ccAgentSeedRun(t, a)
+			guard, attDir := endHooksFixture(t, a)
+			if tc.running {
+				row := getRun(t, a, adoptWaitRun)
+				row.State, row.TerminalID = proto.RunRunning, "term_gone"
+				if err := a.j.updateRun(ctx, row); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := a.reconcileRunner(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if r := getRun(t, a, adoptWaitRun); r.State != tc.want {
+				t.Fatalf("state %s, want %s", r.State, tc.want)
+			}
+			requireEndHooksRan(t, a, guard, attDir)
+		})
 	}
 }
