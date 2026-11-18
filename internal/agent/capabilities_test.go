@@ -116,6 +116,17 @@ func (fc *wsCentral) next(t *testing.T, typ string) proto.Capabilities {
 	}
 }
 
+// drain discards messages until none has arrived for d.
+func (fc *wsCentral) drain(d time.Duration) {
+	for {
+		select {
+		case <-fc.msgs:
+		case <-time.After(d):
+			return
+		}
+	}
+}
+
 // none fails when a message of type typ arrives within d.
 func (fc *wsCentral) none(t *testing.T, typ string, d time.Duration) {
 	t.Helper()
@@ -195,6 +206,16 @@ func TestCapabilitiesReReported(t *testing.T) {
 	if !got.Managed || got.CacheBytes <= hello.CacheBytes {
 		t.Fatalf("after the install %+v (hello %+v)", got, hello)
 	}
+	// One install signals the cache twice (the channel pointer moving, the install finishing), and a detection can
+	// already see the installed version on the first: further reports for the same change are legitimate. Let the
+	// agent finish them before asserting that nothing is reported without a change.
+	waitUntil(t, "the change detected and no detection pending", func() bool {
+		a.mu.Lock()
+		idle := a.capsStarts == a.capsTaken
+		a.mu.Unlock()
+		return len(m.Changes()) == 0 && idle
+	})
+	fc.drain(100 * time.Millisecond)
 	// Nothing changes: no report until the interval has passed on the agent's clock.
 	fc.none(t, proto.TypeNodeCapabilities, 100*time.Millisecond)
 	clk.Advance(proto.NodeCapabilitiesInterval)
