@@ -599,3 +599,29 @@ func TestSpaceChangesPublishTelegramSettingsEvents(t *testing.T) {
 	}
 	expect("purge", true)
 }
+
+// Review of PR #270 (round 2): stopping a run that already exited or failed queues nothing and changes nothing, so a
+// node's "exited, stopped before start" cannot overwrite the real end; a lost run is still stopped.
+func TestStopRunOfEndedRunIsNoOp(t *testing.T) {
+	t.Parallel()
+	e := newGWEnv(t)
+	ctx := context.Background()
+	for _, st := range []string{proto.RunExited, proto.RunFailed} {
+		id := "run_" + st
+		e.run(id, st)
+		r, err := e.svc.StopRun(ctx, audit.System, id, "interrupt", "late")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Desired != "running" || r.Observed != st {
+			t.Fatalf("%s: run changed: desired %s, observed %s", st, r.Desired, r.Observed)
+		}
+		if n := e.count(`SELECT COUNT(*) FROM node_commands WHERE run_id = ? AND kind = 'run.stop'`, id); n != 0 {
+			t.Fatalf("%s: %d stop commands queued", st, n)
+		}
+	}
+	e.run("run_lost", proto.RunLost)
+	if r, err := e.svc.StopRun(ctx, audit.System, "run_lost", "kill", "late"); err != nil || r.Desired != "stopped" {
+		t.Fatalf("lost run: %+v, %v", r, err)
+	}
+}

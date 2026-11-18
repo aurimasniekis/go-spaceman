@@ -6,9 +6,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- A stop that lands while a managed Claude Code launch is about to move its run to `starting` can no longer be overwritten:
+  the check and the write now happen under one lock.
+
+## [0.1.13] - 2026-11-18
+
+The `v0.1.11` and `v0.1.12` tags were created but never released (their release runs stopped at the gates, so no
+images, archives or releases exist for them). This release ships everything planned for 0.1.11, plus the fix below for
+a run stopped before its launch reached the node. The Terraform provider 0.1.11 works with it.
+
 ### Upgrade notes
 
-- **Upgrade central first, then the node agents.** v0.1.11 speaks node protocol **minor 14** (v0.1.10: 13). Older
+- **Upgrade central first, then the node agents.** v0.1.13 speaks node protocol **minor 14** (v0.1.10: 13). Older
   node agents keep working but miss the node-side fixes (memory guard, harness-config filter, fast-forward, recording)
   and cannot take a role rename (see the last note).
 - **Schema migrations 0061–0065** are applied on start, need no action and are forward-only: `0061_space_role_renames`,
@@ -96,6 +107,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   configuration; its help now says only the space role's own skills are cleared, not the template's.
 
 ### Fixed
+
+- **A run stopped before its launch reached the node no longer stays `pending` for ever** (#270). The node reports it ended
+  ("stopped before start") so central closes it through the normal end path, and a launch that arrives after the stop
+  does not start it. Stopping a run that has already exited or failed is now a no-op.
 
 - **A recording is acknowledged only once central has stored it** (#242, ADR-0010 addendum). Central acknowledged the highest
   sequence it had accepted, so a failed write could let the node delete the only copy of records central never stored.
@@ -2218,7 +2233,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.13
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7

@@ -107,7 +107,7 @@ The node's own local recording has a gap until space is freed, then continues in
 disk was full is missing from the local copy, and also from central's if it could not be shipped meanwhile (the node
 disconnected during more than about 1 MiB of output, or the agent restarted while disconnected). The agent logs
 `the local recording cannot be written` and, once it writes again, `the local recording is written again`. Node agents
-older than v0.1.11 end the recording with a `trunc` record (`disk`) instead and drop the rest. Free space on the node
+older than v0.1.13 end the recording with a `trunc` record (`disk`) instead and drop the rest. Free space on the node
 (old `runs/<id>/recording` folders and worktrees are the usual cause). Memory checkpoints and worktrees also need the
 disk, so free it promptly. On central, a full data disk shows as `disk_full` or `disk_reserve` in the readiness codes
 above. Central acknowledges a recording only up to what it has durably stored, so a write failure there makes the node
@@ -115,7 +115,7 @@ ship the missing records again instead of deleting them. See [known limitations]
 
 ## Live terminals are empty after an agent restart
 
-Before v0.1.11, a restarted node agent re-shipped every journaled run's recording from the start, one run at a time, and
+Before v0.1.13, a restarted node agent re-shipped every journaled run's recording from the start, one run at a time, and
 held back the live output of runs it had not reached, so live terminals stayed empty for a long time on a node with many
 old runs. Now the agent persists what central acknowledged (`recording-acked` in each run's folder), catches up live runs
 first and serves a waiting run between the batches of another, and paces the history of ended runs at 8 MiB/s. After a

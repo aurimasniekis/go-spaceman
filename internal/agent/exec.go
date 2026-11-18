@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +136,9 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
 		a.goTrack(func() {
+			if a.endUnlaunched(context.WithoutCancel(ctx), c) {
+				return
+			}
 			a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
 		})
 	case proto.CmdReposSync:
@@ -186,24 +190,33 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	l, ok := a.lease(c.SpaceID, c.Generation)
 	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, Kind: p.Kind, Role: p.Role, Harness: p.Harness, InstanceID: p.InstanceID,
 		TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending, SessionID: p.SessionID}
+	// Under the run's lock, so a stop of a run this node had no record of (endUnlaunched) either finishes first (the
+	// insert below is then a no-op and the ended row is read back) or finds this row and leaves it alone.
+	unlockRun := a.runLock(c.RunID)
 	if err := a.j.insertRun(ctx, row); err != nil {
+		unlockRun()
 		log.Error("journal run intent", obs.Err(err))
 		return
 	}
 	row, _ = a.j.getRun(ctx, c.RunID)
+	unlockRun()
 	if err := a.saveRecordingQuota(c.RunID, p.RecordingMaxBytes); err != nil {
 		log.Warn("store the recording bound; the default applies", obs.Err(err))
-	}
-	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
-	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
-		a.observe(ctx, row, found[0], true)
-		return
 	}
 	// abandoned re-reads the run before a step that would act on it: when it was stopped meanwhile (stop journaled
 	// desired stopped and ended it) the launch must neither start it nor overwrite that.
 	abandoned := func() bool {
 		r, err := a.j.getRun(ctx, c.RunID)
 		return err == nil && (r.Desired == "stopped" || ended(r.State))
+	}
+	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
+	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
+		a.observe(ctx, row, found[0], true)
+		return
+	}
+	if abandoned() {
+		log.Info("launch abandoned: the run was stopped before it started")
+		return
 	}
 	fail := func(msg string, err error) {
 		if abandoned() {
@@ -264,8 +277,20 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		// blocks no other launch of the space; the version is held, from the cache only, right before the launch is
 		// built (see below).
 		selfUpdate = false
+		if a.beforeStartingWrite != nil {
+			a.beforeStartingWrite() // test hook: a stop may land here, before the lock is taken
+		}
+		// The check and the write are one step under the run's lock, which stop also takes: the write replaces the
+		// whole row (desired running), so a stop landing between the two would be overwritten.
+		unlockStart := a.runLock(c.RunID)
+		if abandoned() {
+			unlockStart()
+			log.Info("launch abandoned: the run was stopped before it started")
+			return
+		}
 		row.State = proto.RunStarting
 		_ = a.j.updateRun(ctx, row)
+		unlockStart()
 		a.report(ctx, row)
 		var cancel context.CancelFunc
 		wctx, cancel, waitLimit = a.claudeWait(ctx)
@@ -585,6 +610,29 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		(prev.Status != row.Status || prev.Turn != row.Turn) {
 		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
+}
+
+// endUnlaunched answers a stop for a run this node has no record of: central cancelled the run's launch before it was
+// delivered, so the launch will never come and nothing else would move the run off pending. The node journals the run
+// as ended (stopped before start) and reports it. A launch that arrives anyway finds the row and does not start it. It
+// reports whether the run was unknown.
+func (a *Agent) endUnlaunched(ctx context.Context, c proto.Command) bool {
+	unlock := a.runLock(c.RunID)
+	if _, err := a.j.getRun(ctx, c.RunID); !errors.Is(err, sql.ErrNoRows) {
+		unlock()
+		return false
+	}
+	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending}
+	if err := a.j.insertRun(ctx, row); err != nil {
+		unlock()
+		a.log.Error("journal run stopped before start", slog.String(obs.FieldRunID, c.RunID), obs.Err(err))
+		return true
+	}
+	row.Desired, row.State, row.Reason = "stopped", proto.RunExited, "stopped before start"
+	_ = a.j.updateRun(ctx, row)
+	unlock()
+	a.report(ctx, row)
+	return true
 }
 
 // stop ends a run: interrupt, then kill if still live after grace; or kill at once.
