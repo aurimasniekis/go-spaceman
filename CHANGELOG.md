@@ -125,6 +125,12 @@ a run stopped before its launch reached the node. The Terraform provider 0.1.11 
 
 ### Fixed
 
+_The first entry below was added after the v0.1.13 release._
+
+- **A role rename that races a memory sync no longer leaves a second memory collection under the old name** (#274).
+  Central re-checks the rename inside the transaction that creates the collection, so a sync that passed the check
+  before the rename committed is answered `role renamed` instead of stranding a new collection under the old name.
+
 - **A run stopped before its launch reached the node no longer stays `pending` for ever** (#270). The node reports it ended
   ("stopped before start") so central closes it through the normal end path, and a launch that arrives after the stop
   does not start it. Stopping a run that has already exited or failed is now a no-op.
