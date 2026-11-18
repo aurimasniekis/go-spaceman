@@ -687,6 +687,12 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	// observe while holding it.)
 	unlockObs := a.observeLock(row.RunID)
 	prev, _ := a.j.getRun(ctx, row.RunID)
+	if ended(prev.State) && !ended(row.State) {
+		// A stale snapshot (taken before the run ended): never move an ended row back, or its later end would run the
+		// end work a second time.
+		unlockObs()
+		return
+	}
 	_ = a.j.updateRun(ctx, row)
 	unlockObs()
 	if row.Status == "working" {
@@ -947,12 +953,21 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 		default:
 			unlock := a.runLock(r.RunID)
 			fresh, gerr := a.j.getRun(ctx, r.RunID)
-			if gerr != nil || ended(fresh.State) {
-				unlock() // ended meanwhile: whoever ended it ran its end work
+			if gerr != nil || ended(fresh.State) || fresh.TerminalID != r.TerminalID {
+				unlock() // ended or relaunched meanwhile: whoever did it owns the row
+				continue
+			}
+			// Also under the observe lock (always taken inside the run's lock), so an observe's end detection and this
+			// write exclude each other.
+			unlockObs := a.observeLock(r.RunID)
+			if fresh, gerr = a.j.getRun(ctx, r.RunID); gerr != nil || ended(fresh.State) {
+				unlockObs()
+				unlock()
 				continue
 			}
 			fresh.State, fresh.Reason = proto.RunLost, "process not found in the runner"
 			_ = a.j.updateRun(ctx, fresh)
+			unlockObs()
 			unlock()
 			a.runEndHooks(ctx, fresh, fresh.TerminalID != "") // a program that ran: its memory flush and final usage still matter
 		}
@@ -1065,7 +1080,6 @@ func (a *Agent) ensureGuard(ctx context.Context, spaceID string) (string, error)
 	return p.ID, nil
 }
 
-// guardLock returns the lock that serializes a space's lease guard.
 // observeLock serializes observe's read of a run's previous row with its write (see observe). It is never held across a
 // call that takes runLock.
 func (a *Agent) observeLock(runID string) func() { return a.runLock("observe/" + runID) }
@@ -1098,6 +1112,7 @@ type refMutex struct {
 	refs int
 }
 
+// guardLock returns the lock that serializes a space's lease guard.
 func (a *Agent) guardLock(spaceID string) *sync.Mutex {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -459,3 +459,36 @@ func TestObserveEndHooksExactlyOnce(t *testing.T) {
 		t.Fatalf("the run-end work ran %d times, want once", n)
 	}
 }
+
+// An observe built from a snapshot taken before the run ended (a live program) does not move the ended row back, so
+// the program's later finished event does not run the end work a second time.
+func TestObserveStaleLiveSnapshotKeepsEndedRow(t *testing.T) {
+	a, f := ccAgent(t, t.TempDir(), nil, nil)
+	ctx := context.Background()
+	p, err := f.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
+		Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": adoptWaitRun, "spaceman.space": ccSpace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ccAgentSeedRun(t, a)
+	row := getRun(t, a, adoptWaitRun)
+	row.State, row.TerminalID = proto.RunRunning, p.ID
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := f.Get(ctx, p.ID)
+	f.Exit(p.ID, 0, "exited")
+	fin, _ := f.Get(ctx, p.ID)
+	var ran atomic.Int32
+	a.onRunEndHooks = func(string) { ran.Add(1) }
+	a.observe(ctx, row, *fin, false)  // the stop's observe ends the run
+	a.observe(ctx, row, *live, false) // the monitor's stale snapshot
+	a.observe(ctx, row, *fin, false)  // the finished event
+	a.drain(10 * time.Second)
+	if r := getRun(t, a, adoptWaitRun); !ended(r.State) {
+		t.Fatalf("state %s, want ended", r.State)
+	}
+	if n := ran.Load(); n != 1 {
+		t.Fatalf("the run-end work ran %d times, want once", n)
+	}
+}
