@@ -139,7 +139,7 @@ func TestHubRecordingDeletedRunNotRecreated(t *testing.T) {
 	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
 	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
 	const runID = "run_00000000000000000000000001"
-	e.run(runID, "spc_a", "nod_1", "ended", e.us(-time.Hour))
+	e.run(runID, "spc_a", "nod_1", "exited", e.us(-time.Hour))
 	e.exec(`UPDATE runs SET recording_deleted_at = 1 WHERE id = 'run_00000000000000000000000001'`)
 	s := &session{nodeID: "nod_1", out: make(chan []byte, 8), done: make(chan struct{})}
 	dir := t.TempDir()
