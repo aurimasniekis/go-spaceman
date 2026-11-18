@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-11-18
+
 ### Upgrade notes
 
 - **Upgrade central first, then the node agents.** v0.1.11 speaks node protocol **minor 14** (v0.1.10: 13). Older
@@ -2218,7 +2220,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9
 [0.1.7]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.6...v0.1.7
