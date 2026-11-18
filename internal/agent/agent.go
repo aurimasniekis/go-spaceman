@@ -136,7 +136,8 @@ type Agent struct {
 	catching       bool
 	catchUpSkipped bool // a sweep skipped a run central did not answer for (catchUpRun)
 	catchUpAgain   bool
-	catchUpGen     uint64 // counts requests: a sweep marks runs caught up only for the request it serves
+	catchUpWake    chan struct{} // wakes the pass's backoff sleep (wakeCatchUpLocked); created on first use
+	catchUpGen     uint64        // counts requests: a sweep marks runs caught up only for the request it serves
 	catchUpConn    *websocket.Conn
 	catchUpCtx     context.Context
 	caughtUp       map[string]bool
