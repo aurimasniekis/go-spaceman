@@ -35,7 +35,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   exits between the agent adopting it (after a restart) and its recorder attaching, or between two attachments, can no
   longer be attached; the recorder used to stop without a record, so neither the local recording nor central's copy
   said the program had ended. It now records a gap (`finished`) and the program's close record, numbered above
-  central's sequence like any other.
+  central's sequence like any other. A second recorder started for a run whose close is already recorded writes
+  nothing more.
 - **Test flakes** (#262, #267). The recording-retention test and the control watchdog test wait for the event they
   check instead of passing early.
 

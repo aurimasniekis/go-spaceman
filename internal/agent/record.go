@@ -303,8 +303,15 @@ func (s *recShipper) diskState() {
 // ends with the program's close record: without it neither the local recording nor central's copy says the program
 // ended. Like every record, they wait in the gate while central's sequence is unknown (settle ships them).
 func (s *recShipper) finishedUnattached(ctx context.Context, first bool) {
+	if s.w.Closed() {
+		return // an earlier recorder already ended it: a second gap and close would leave a stray segment
+	}
 	p, err := s.a.o.Runner.Get(ctx, s.row.TerminalID)
-	if err != nil || p.State != runner.StateFinished {
+	if err != nil {
+		s.a.log.Warn("read the finished terminal for its recording", slog.String(obs.FieldRunID, s.row.RunID), obs.Err(err))
+		return
+	}
+	if p.State != runner.StateFinished {
 		return
 	}
 	if first {

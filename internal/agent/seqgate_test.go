@@ -645,3 +645,81 @@ func TestUnansweredRunBacksOff(t *testing.T) {
 		t.Fatalf("%d probes in 2.5 s: want a few sweeps separated by a backoff", c.muted)
 	}
 }
+
+// A recorder started again for a run whose close an earlier recorder of this process already recorded (a stale live
+// snapshot passed to observe does that) must not end the recording a second time: no further gap and no second close,
+// locally or at central.
+func TestSecondRecorderAfterTheCloseWritesNothing(t *testing.T) {
+	const runID = "run_dup"
+	a, c, term := restartedRecorderEnv(t, runID, 100, 100, 100)
+	fake := a.o.Runner.(interface {
+		Output(id, data string)
+		Exit(id string, code int, reason string)
+		Observed(id string) int
+	})
+	waitFor(t, "recorder attached", func() bool { return fake.Observed(term) >= 1 })
+	fake.Output(term, "bye\r\n")
+	fake.Exit(term, 0, "exited")
+	c.until("the close at central", func() bool { return len(c.recs) > 0 && c.recs[len(c.recs)-1].Kind == recording.KindClose })
+	ended := func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.recorders[runID] == nil
+	}
+	waitFor(t, "recorder ended", ended)
+	before := len(localAbove(t, a, runID, 0))
+	atCentral := len(c.recs)
+	row, err := a.j.getRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.startRecorder(context.Background(), row)
+	waitFor(t, "second recorder ended", ended)
+	// Anything the second recorder shipped would be in flight to central: give it the time a flush takes.
+	c.within(recording.FlushInterval+500*time.Millisecond, func() bool { return len(c.recs) != atCentral })
+	closes := 0
+	for _, r := range localAbove(t, a, runID, 0) {
+		if r.Kind == recording.KindClose {
+			closes++
+		}
+	}
+	if closes != 1 {
+		t.Fatalf("local recording holds %d closes, want one", closes)
+	}
+	if n := len(localAbove(t, a, runID, 0)); n != before {
+		t.Fatalf("the second recorder wrote %d records", n-before)
+	}
+	if len(c.recs) != atCentral {
+		t.Fatalf("central holds %d records after the second recorder, %d before: %+v", len(c.recs), atCentral, c.recs[atCentral:])
+	}
+}
+
+// A program that ended before the recorder's first attachment of an empty recording: the recording begins with its
+// open record (the size from the terminal), then the gap and the close.
+func TestRecorderOpensTheRecordingOfAProgramThatEndedBeforeItAttached(t *testing.T) {
+	const runID = "run_fresh"
+	var once sync.Once
+	a, c, _ := restartedRecorderEnvWith(t, runID, 0, 0, 0, nil, func(a *Agent) {
+		fake := a.o.Runner.(interface {
+			Exit(id string, code int, reason string)
+			LiveByLabel(k, v string) []runner.Process
+		})
+		a.beforeRecordAttach = func(id string) {
+			if id != runID {
+				return
+			}
+			once.Do(func() {
+				for _, p := range fake.LiveByLabel("spaceman.run", runID) {
+					fake.Exit(p.ID, 0, "exited")
+				}
+			})
+		}
+	})
+	c.until("the close record at central", func() bool { return len(c.recs) > 0 && c.recs[len(c.recs)-1].Kind == recording.KindClose })
+	if len(c.recs) != 3 || c.recs[0].Kind != recording.KindOpen || c.recs[0].RunID != runID || c.recs[1].Kind != recording.KindGap {
+		t.Fatalf("records at central %+v, want open, gap, close", c.recs)
+	}
+	if recs := localAbove(t, a, runID, 0); len(recs) != 3 || recs[0].Kind != recording.KindOpen {
+		t.Fatalf("the local recording holds %+v, want open, gap, close", recs)
+	}
+}
