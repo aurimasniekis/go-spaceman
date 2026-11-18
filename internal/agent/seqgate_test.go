@@ -276,13 +276,13 @@ func TestLoweredAckDuringTheRunsCatchUp(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	for _, f := range froms {
-		if f != 150 {
-			t.Fatalf("the catch-up began from %d, want the lowered 150 (began from %v)", f, froms)
-		}
-	}
+	// Only the first begin is the one this test is about: the lowering asks for a second sweep, which may begin from
+	// the 250 central has acknowledged by then (it ships nothing above it).
 	if len(froms) == 0 {
 		t.Fatal("the catch-up never began")
+	}
+	if froms[0] != 150 {
+		t.Fatalf("the catch-up began from %d, want the lowered 150 (began from %v)", froms[0], froms)
 	}
 }
 
