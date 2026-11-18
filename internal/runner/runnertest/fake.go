@@ -260,6 +260,12 @@ func (s *stream) Next(ctx context.Context) ([]byte, *runner.CloseInfo, error) {
 	case d := <-s.fp.out:
 		return d, nil, nil
 	case <-s.fp.done:
+		// Output written before the exit is delivered first, like a real stream (select picks at random when both are ready).
+		select {
+		case d := <-s.fp.out:
+			return d, nil, nil
+		default:
+		}
 		s.f.mu.Lock()
 		p := s.fp.p
 		s.f.mu.Unlock()
