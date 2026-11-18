@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -396,5 +397,24 @@ func TestCloseRenameKeepsMemoryUnderNewName(t *testing.T) {
 	h3 := e.commit("c.md", "c")
 	if ack := e.syncAs(oldRole, h1, h3); ack.Result != proto.MemoryError || ack.Message != ErrRoleRenamed {
 		t.Fatalf("sync under the orphaned old name: %+v", ack)
+	}
+}
+
+// A rename that commits between a caller's renamedAway check and collection's insert must not leave a second collection
+// under the old name: collection checks again inside its transaction.
+func TestCollectionRefusesARenamedAwayName(t *testing.T) {
+	t.Parallel()
+	e := newRenameEnv(t)
+	h1 := e.commit("a.md", "a")
+	if ack := e.syncAs(oldRole, "", h1); ack.Result != proto.MemoryOK {
+		t.Fatalf("sync: %+v", ack)
+	}
+	e.rename(oldRole, newRole, true)
+	// What a sync or status report that passed the check before the rename does after it.
+	if _, err := e.svc.collection(e.ctx, "spc_a", oldRole); !errors.Is(err, errRenamedAway) {
+		t.Fatalf("collection under the old name: %v", err)
+	}
+	if got := e.collections(); len(got) != 1 || got[newRole] != h1 {
+		t.Fatalf("collections %v", got)
 	}
 }
