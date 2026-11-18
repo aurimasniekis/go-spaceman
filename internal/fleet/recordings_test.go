@@ -1022,3 +1022,60 @@ func TestRecordingsDropLateChunksAfterDelete(t *testing.T) {
 		t.Fatalf("%d deletion marks kept past markMaxAge", n)
 	}
 }
+
+// A chunk that arrives while Delete is removing the folder (mu is released then) must neither open a writer nor leave
+// a folder: the mark is set before the removal.
+func TestRecordingsChunkDuringDeleteRemoval(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, time.Now)
+	t.Cleanup(r.Close)
+	if seq, err := r.apply(1, chunk(t, out(1, "a"))); err != nil || seq != 1 {
+		t.Fatalf("first chunk: %d %v", seq, err)
+	}
+	var seq uint64
+	var aerr error
+	r.beforeRemove = func() { seq, aerr = r.apply(1, chunk(t, out(2, "b"))) }
+	if err := r.Delete(context.Background(), recRun); err != nil {
+		t.Fatal(err)
+	}
+	if aerr != nil || seq != 2 {
+		t.Fatalf("chunk during removal: acked %d, %v (want 2, nil)", seq, aerr)
+	}
+	r.mu.Lock()
+	open := r.w[recRun] != nil
+	r.mu.Unlock()
+	if open {
+		t.Fatal("a chunk during removal opened a writer")
+	}
+	if _, err := os.Stat(filepath.Join(dir, recRun)); !os.IsNotExist(err) {
+		t.Fatalf("folder remains: %v", err)
+	}
+}
+
+// An archive that starts after Delete marked the run (it was scheduled before, and had not registered) uploads nothing.
+func TestRecordingsArchiveAfterDeleteMarkUploadsNothing(t *testing.T) {
+	srv := s3test.New(t, "AKIDTEST")
+	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "rec", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",
+		CABundlePEM: srv.CAPEM(), AllowPrivateNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newRecordings(t.TempDir(), artifacts.NewS3(cl, "rec", ""), nil, time.Now)
+	defer r.Close()
+	if _, err := r.apply(1, chunk(t, out(1, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	if w := r.w[recRun]; w != nil {
+		_ = w.Close()
+		delete(r.w, recRun)
+	}
+	r.deleted[recRun] = time.Now()
+	r.mu.Unlock()
+	if err := r.Archive(context.Background(), recRun); err != nil {
+		t.Fatal(err)
+	}
+	if keys := srv.Keys("rec"); len(keys) != 0 {
+		t.Fatalf("a deleted recording was archived: %v", keys)
+	}
+}

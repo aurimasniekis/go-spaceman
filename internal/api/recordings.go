@@ -113,7 +113,7 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 			})
 		huma.Register(api, huma.Operation{OperationID: "delete-recording", Method: http.MethodDelete, Path: "/spaces/{space_id}/runs/{run_id}/recording",
 			Summary: "Delete central's copy of a run's recording", Description: "The run must have ended (409 otherwise). The deletion is audited " +
-				"and recorded in the change feed; the node's own copy is not affected.", Tags: tags, DefaultStatus: http.StatusNoContent},
+				"and recorded in the change feed; the node's own copy is not deleted, but central then acknowledges its recording without storing it, so the node's journal prune may remove it.", Tags: tags, DefaultStatus: http.StatusNoContent},
 			func(ctx context.Context, in *RunPath) (*struct{}, error) {
 				if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
 					return nil, err

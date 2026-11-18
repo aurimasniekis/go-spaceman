@@ -40,6 +40,8 @@ recent step-up).
 - Nothing is deleted while central was restored from a backup and the restore is not acknowledged yet: the pass waits
   until an administrator has looked at the restored installation.
 - Deleted data comes back only by restoring a backup.
+- A deleted recording stays deleted even if the node still holds it: central acknowledges what the node ships for it without
+  storing it. The node then counts its own copy as fully shipped, so its journal prune may remove that copy.
 
 ### Audit retention and the hash chain
 
