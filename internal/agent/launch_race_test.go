@@ -87,7 +87,7 @@ func (r *asyncKillRunner) Get(ctx context.Context, id string) (*runner.Process, 
 	}
 	r.mu.Unlock()
 	if killed && r.exitAfter >= 0 && n+1 >= r.exitAfter {
-		r.Fake.Exit(id, 129, "killed")
+		r.Exit(id, 129, "killed")
 	}
 	return r.Fake.Get(ctx, id)
 }
@@ -107,7 +107,7 @@ func adoptStoppedRun(t *testing.T, exitAfter int) (*Agent, *asyncKillRunner, str
 	var ar *asyncKillRunner
 	a, _ := ccAgent(t, dir, nil, func(o *Options) { ar = &asyncKillRunner{Fake: runnertest.New(), exitAfter: exitAfter}; o.Runner = ar })
 	ctx := context.Background()
-	p, err := ar.Fake.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
+	p, err := ar.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
 		Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": adoptWaitRun, "spaceman.space": ccSpace}})
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestAdoptStoppedRunStillLiveAfterWait(t *testing.T) {
 	if _, ok := a.endPending.Load(adoptWaitRun); !ok {
 		t.Fatal("the end work is not pending for the program's finished event")
 	}
-	ar.Fake.Exit(id, 129, "killed")
+	ar.Exit(id, 129, "killed")
 	pr, _ := ar.Fake.Get(context.Background(), id)
 	row, _ := a.j.getRun(context.Background(), adoptWaitRun)
 	a.observe(context.Background(), row, *pr, false) // what the monitor does on the finished event
@@ -256,7 +256,7 @@ func adoptEndedRun(t *testing.T, exitAfter int) (a *Agent, ar *asyncKillRunner, 
 	t.Helper()
 	a, _ = ccAgent(t, t.TempDir(), nil, func(o *Options) { ar = &asyncKillRunner{Fake: runnertest.New(), exitAfter: exitAfter}; o.Runner = ar })
 	ctx := context.Background()
-	p, err := ar.Fake.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
+	p, err := ar.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
 		Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": adoptWaitRun, "spaceman.space": ccSpace}})
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +276,7 @@ func adoptEndedRun(t *testing.T, exitAfter int) (a *Agent, ar *asyncKillRunner, 
 func TestAdoptStoppedRunPendingEndHooksOnFinish(t *testing.T) {
 	shortAdoptKillWait(t, 7)
 	a, ar, id, guard, attDir := adoptEndedRun(t, -1)
-	ar.Fake.Exit(id, 129, "killed")
+	ar.Exit(id, 129, "killed")
 	pr, _ := ar.Fake.Get(context.Background(), id)
 	a.observe(context.Background(), getRun(t, a, adoptWaitRun), *pr, false)
 	requireEndHooksRan(t, a, guard, attDir)
