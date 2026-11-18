@@ -7354,7 +7354,7 @@
   file or one `ackMargin` rejected, the probe's answer became the run's first acknowledgement and the sweep took the
   run for clean, so the local records above central's sequence were never re-shipped. The run's catch-up compares
   with the local recording and clears the mark. `TestSweepReshipsWithoutASavedAck*` (agent).
-- **A lowering during the run's own catch-up (race fix, v0.1.12).** The recorder's probe and the catch-up sweep run
+- **A lowering during the run's own catch-up (race fix, v0.1.13).** The recorder's probe and the catch-up sweep run
   independently, so the lowered answer (decision 4) could arrive after the run's catch-up had started from the restored
   value. That catch-up found nothing above it, then cleared the run's catch-up mark that the lowering had set and the
   "not compared" mark. The sweep the lowering asked for then took the run for clean, because nothing it had sent was
