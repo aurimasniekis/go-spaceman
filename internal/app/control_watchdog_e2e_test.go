@@ -56,7 +56,7 @@ func TestControlWatchdog(t *testing.T) {
 	// The watchdog on, with "1 minute" = 150 ms: one unanswered reminder escalates, and the restart is off at first.
 	unit := 150 * time.Millisecond
 	e.c.Supervisor.IdleUnit = unit
-	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 1}}); err != nil {
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 1, limits.WorkerStartWatchdog: 0}}); err != nil {
 		t.Fatal(err)
 	}
 	nudges := func() []string {
@@ -177,7 +177,7 @@ func TestControlWatchdogReadSkipsHeldTasks(t *testing.T) {
 	e.run.SetStatus(e.run1(ctrl.ID).TerminalID, "idle")
 	unit := 20 * time.Millisecond
 	e.c.Supervisor.IdleUnit = unit
-	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 0}}); err != nil {
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 0, limits.WorkerStartWatchdog: 0}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.c.Queue.Create(ctx, admin, sp.ID, queue.CreateInput{Title: "Waiting", Status: queue.Ready}); err != nil {
