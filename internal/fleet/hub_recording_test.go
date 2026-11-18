@@ -177,3 +177,27 @@ func TestHubRecordingDeletedRunNotRecreated(t *testing.T) {
 		t.Fatalf("ack %+v %v, want seq 5", ack, err)
 	}
 }
+
+// A run whose recording was deleted can't be revived by a node's late report: central keeps an ended run ended
+// (applyRunReport fences a live report for it), so recording_deleted_at never outlives the end it was set after.
+func TestRevivingReportOfEndedRunIsFenced(t *testing.T) {
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+	const runID = "run_00000000000000000000000001"
+	for _, ended := range []string{proto.RunFailed, proto.RunLost} {
+		e.exec(`DELETE FROM runs`)
+		e.run(runID, "spc_a", "nod_1", ended, e.us(-time.Hour))
+		e.exec(`UPDATE runs SET ended_at = 5, recording_deleted_at = 6 WHERE id = ?`, runID)
+		for _, state := range []string{proto.RunRunning, proto.RunStarting, proto.RunStopping} {
+			fenced, err := e.svc.applyRunReport(e.ctx, "nod_1", proto.RunReport{RunID: runID, SpaceID: "spc_a", Generation: 1, State: state}, nil)
+			if err != nil || !fenced {
+				t.Fatalf("%s run, %s report: fenced %v, %v", ended, state, fenced, err)
+			}
+			r, err := e.svc.s.R().GetRun(e.ctx, runID)
+			if err != nil || r.Observed != ended || !r.EndedAt.Valid || !r.RecordingDeletedAt.Valid {
+				t.Fatalf("%s run after a %s report: %+v %v", ended, state, r, err)
+			}
+		}
+	}
+}

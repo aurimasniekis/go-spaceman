@@ -75,8 +75,8 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 				Limit int    `query:"limit" minimum:"1" maximum:"5000" default:"1000"`
 				Tail  int64  `query:"tail" minimum:"0" maximum:"16777216" doc:"Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after."`
 			}) (*struct{ Body RecordingPage }, error) {
-				if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
-					return nil, err
+				if _, p := d.recordingRun(ctx, f, in.SpaceID, in.RunID); p != nil {
+					return nil, p
 				}
 				release, ok := d.acquireCatchUp(ctx)
 				if !ok {
@@ -153,9 +153,9 @@ func RecordingStreams(f *fleet.Service) []RawRoute {
 func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.Service) {
 	ctx := r.Context()
 	spaceID, runID := r.PathValue("space_id"), r.PathValue("run_id")
-	run, err := d.spaceRun(ctx, f, spaceID, runID)
-	if err != nil {
-		writeProblem(w, newProblem(http.StatusNotFound, "not_found", "run not found", nil))
+	run, p := d.recordingRun(ctx, f, spaceID, runID)
+	if p != nil {
+		writeProblem(w, p)
 		return
 	}
 	fl, ok := w.(http.Flusher)
@@ -298,6 +298,19 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 	}
 }
 
+// recordingRun is spaceRun for the operations that serve a recording: a run whose recording was deleted is gone (410),
+// whatever a spool folder an older release recreated or an object it uploaded still holds.
+func (d *Deps) recordingRun(ctx context.Context, f *fleet.Service, spaceID, runID string) (*fleet.Run, *Problem) {
+	r, err := d.spaceRun(ctx, f, spaceID, runID)
+	if err != nil {
+		return nil, newProblem(http.StatusNotFound, "not_found", "run not found", nil)
+	}
+	if r.RecordingDeleted {
+		return nil, newProblem(http.StatusGone, "recording_deleted", "this run's recording was deleted", nil)
+	}
+	return r, nil
+}
+
 func ended(observed string) bool {
 	return observed == "exited" || observed == "failed" || observed == "lost"
 }
@@ -306,8 +319,8 @@ func ended(observed string) bool {
 func (d *Deps) recordingDownload(w http.ResponseWriter, r *http.Request, f *fleet.Service) {
 	ctx := r.Context()
 	spaceID, runID := r.PathValue("space_id"), r.PathValue("run_id")
-	if _, err := d.spaceRun(ctx, f, spaceID, runID); err != nil {
-		writeProblem(w, newProblem(http.StatusNotFound, "not_found", "run not found", nil))
+	if _, p := d.recordingRun(ctx, f, spaceID, runID); p != nil {
+		writeProblem(w, p)
 		return
 	}
 	segs, err := f.Recordings().Segments(ctx, runID)
