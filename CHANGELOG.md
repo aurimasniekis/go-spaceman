@@ -19,6 +19,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   started is retired) and when a launch adopts a program of a run already stopped, which no longer leaks an idle guard
   or the run's attachments. The wait for that program to go after its kill has tests, and `TestGatewayRevokedOnPurge`
   no longer runs in parallel with the package's other tests, where it could pass the 500 ms write-lock limit.
+- **The run-end work runs exactly once, and an abandoned launch retires its guard** (follow-up to #276). A launch that
+  is abandoned after it started the space's lease guard retires it (a stop may have retired the guard before it was
+  started). The runner reconcile re-checks a pending or lost run under the run's lock before it ends it, so a
+  re-delivered launch or an observe is not overwritten and the end work does not run twice. Reading a run's previous row
+  and writing the new one in `observe` is one locked step, so two concurrent observes (the monitor and a stop) cannot
+  both see the run end.
 - **A deleted recording stays deleted** (#262, #263, #264). Late chunks that arrive after the recordings were closed, or
   for a deleted recording, are dropped instead of recreating it; the deleted state is durable across restarts and
   against an S3 archive racing a delete; and central stops serving a deleted recording (`410 Gone`) and cleans up

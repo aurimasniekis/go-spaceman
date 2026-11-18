@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -335,5 +336,159 @@ func TestReconcileRunnerEndHooks(t *testing.T) {
 			}
 			requireEndHooksRan(t, a, guard, attDir)
 		})
+	}
+}
+
+// liveGuards lists the space's lease-guard terminals that are still live.
+func liveGuards(t *testing.T, f *runnertest.Fake) []runner.Process {
+	t.Helper()
+	live, err := f.List(context.Background(), map[string]string{"spaceman.guard": ccSpace}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return live
+}
+
+// A stop that retires the guard before the launch's ensureGuard starts one leaves the guard to the launch: when the
+// launch is then abandoned it retires the guard it started, instead of leaking it.
+func TestLaunchAbandonedRetiresItsGuard(t *testing.T) {
+	a, f := ccAgent(t, t.TempDir(), nil, nil)
+	ctx := context.Background()
+	space := a.spaceDir("cc")
+	if err := os.MkdirAll(space, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A file where the workspace folder should be, so the launch fails after ensureGuard ("prepare folders").
+	if err := os.WriteFile(filepath.Join(space, "blocked"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.beforeEnsureGuard = func() {
+		// What a stop does before the launch starts a guard: it ends the row (no program yet) and retires the guard, which
+		// is not there. (Written directly, so the stop's own tracked retire cannot run after the guard is started.)
+		row := getRun(t, a, "run_leak")
+		row.Desired, row.State, row.Reason = "stopped", proto.RunExited, "stopped before start"
+		if err := a.j.updateRun(ctx, row); err != nil {
+			t.Error(err)
+		}
+		a.retireGuard(ctx, ccSpace)
+	}
+	a.launch(ctx, proto.Command{CommandID: "cmd_run_leak", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_leak", Generation: 1},
+		proto.LaunchPayload{Harness: "claude-code", Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Workspace: "blocked"})
+	a.drain(10 * time.Second)
+	if r := getRun(t, a, "run_leak"); r.State != proto.RunExited || r.Error != "" {
+		t.Fatalf("state %s (%s / %s)", r.State, r.Reason, r.Error)
+	}
+	if g := liveGuards(t, f); len(g) != 0 {
+		t.Fatalf("the abandoned launch leaked %d live guard(s)", len(g))
+	}
+}
+
+// The runner reconcile re-checks the row under the run's lock before it ends a pending or lost run: a launch or an
+// observe that moved the row meanwhile wins, and the reconcile neither overwrites it nor runs the end work again.
+func TestReconcileRunnerRechecksUnderRunLock(t *testing.T) {
+	for _, tc := range []struct{ name, state, terminal string }{{"pending", proto.RunPending, ""}, {"lost", proto.RunRunning, "term_gone"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _ := ccAgent(t, t.TempDir(), nil, nil)
+			ctx := context.Background()
+			ccAgentSeedRun(t, a)
+			row := getRun(t, a, adoptWaitRun)
+			row.State, row.TerminalID = tc.state, tc.terminal
+			if err := a.j.updateRun(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+			var ended atomic.Int32
+			a.onRunEndHooks = func(string) { ended.Add(1) }
+			unlock := a.runLock(adoptWaitRun) // a launch or an observe is mid-write
+			done := make(chan error, 1)
+			go func() { done <- a.reconcileRunner(ctx) }()
+			time.Sleep(100 * time.Millisecond)
+			if r := getRun(t, a, adoptWaitRun); r.State != tc.state {
+				t.Fatalf("the reconcile wrote %s without the run's lock", r.State)
+			}
+			row.State, row.Reason = proto.RunExited, "ended by the lock holder"
+			if err := a.j.updateRun(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+			unlock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if r := getRun(t, a, adoptWaitRun); r.State != proto.RunExited || r.Reason != "ended by the lock holder" {
+				t.Fatalf("state %s (%s), want the lock holder's write kept", r.State, r.Reason)
+			}
+			if n := ended.Load(); n != 0 {
+				t.Fatalf("the end work ran %d times for a row the reconcile did not end", n)
+			}
+		})
+	}
+}
+
+// Concurrent observes of a finished program (the monitor's and a stop's) run the run-end work exactly once.
+func TestObserveEndHooksExactlyOnce(t *testing.T) {
+	a, f := ccAgent(t, t.TempDir(), nil, nil)
+	ctx := context.Background()
+	p, err := f.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
+		Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": adoptWaitRun, "spaceman.space": ccSpace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ccAgentSeedRun(t, a)
+	row := getRun(t, a, adoptWaitRun)
+	row.State, row.TerminalID = proto.RunRunning, p.ID
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	f.Exit(p.ID, 0, "exited")
+	fin, _ := f.Get(ctx, p.ID)
+	var ran atomic.Int32
+	a.onRunEndHooks = func(string) { ran.Add(1) }
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			a.observe(ctx, row, *fin, false)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	a.drain(10 * time.Second)
+	if n := ran.Load(); n != 1 {
+		t.Fatalf("the run-end work ran %d times, want once", n)
+	}
+}
+
+// An observe built from a snapshot taken before the run ended (a live program) does not move the ended row back, so
+// the program's later finished event does not run the end work a second time.
+func TestObserveStaleLiveSnapshotKeepsEndedRow(t *testing.T) {
+	a, f := ccAgent(t, t.TempDir(), nil, nil)
+	ctx := context.Background()
+	p, err := f.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
+		Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": adoptWaitRun, "spaceman.space": ccSpace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ccAgentSeedRun(t, a)
+	row := getRun(t, a, adoptWaitRun)
+	row.State, row.TerminalID = proto.RunRunning, p.ID
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := f.Get(ctx, p.ID)
+	f.Exit(p.ID, 0, "exited")
+	fin, _ := f.Get(ctx, p.ID)
+	var ran atomic.Int32
+	a.onRunEndHooks = func(string) { ran.Add(1) }
+	a.observe(ctx, row, *fin, false)  // the stop's observe ends the run
+	a.observe(ctx, row, *live, false) // the monitor's stale snapshot
+	a.observe(ctx, row, *fin, false)  // the finished event
+	a.drain(10 * time.Second)
+	if r := getRun(t, a, adoptWaitRun); !ended(r.State) {
+		t.Fatalf("state %s, want ended", r.State)
+	}
+	if n := ran.Load(); n != 1 {
+		t.Fatalf("the run-end work ran %d times, want once", n)
 	}
 }
