@@ -550,6 +550,12 @@ func TestLaunchFailTakesObserveLock(t *testing.T) {
 			proto.LaunchPayload{Harness: "no-such-harness", Kind: "worker", Role: "implementor", InstanceID: "ins_cc"})
 		close(done)
 	}()
+	// The launch journals the run before it can fail it: wait for that row, then give the failed write time to land.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := a.j.getRun(ctx, runID); err == nil || time.Now().After(deadline) {
+			break
+		}
+	}
 	time.Sleep(100 * time.Millisecond)
 	if r := getRun(t, a, runID); r.State == proto.RunFailed {
 		t.Fatalf("the launch failed the run without the observe lock")

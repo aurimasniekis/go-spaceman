@@ -268,7 +268,8 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		a.report(ctx, row)
 		log.Warn("launch failed", slog.String("reason", msg), obs.Err(err))
 		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now. The end
-		// hooks run after the lock is released (or, when the launch holds it, when the launch returns), as stop does.
+		// hooks run after the locks are released, as stop does. When the launch holds the run's lock they run under
+		// it (their async parts go through goTrack), and the launch releases it on return.
 		a.runEndHooks(ctx, row, false)
 	}
 	// stillWanted is checked after every wait: the run was not stopped, and the space's lease still authorizes this
