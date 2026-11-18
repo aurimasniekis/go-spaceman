@@ -67,7 +67,7 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
 		tags := []string{"recordings"}
 		huma.Register(api, huma.Operation{OperationID: "get-recording", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}/recording",
-			Summary: "Replay a run's terminal recording", Description: "Records are output (base64), size, gap, close and truncation markers in sequence order.",
+			Summary: "Replay a run's terminal recording", Description: "Records are output (base64), size, gap, close and truncation markers in sequence order. A run whose recording was deleted returns 410 (code recording_deleted): its output is gone for good, so a client does not retry it.",
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				RunPath
@@ -127,6 +127,7 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 }
 
 // RecordingStreams returns the raw (non-huma) recording endpoints: the live terminal stream (SSE) and the download.
+// Both answer 410 (code recording_deleted) for a run whose recording was deleted, before any stream or body starts.
 func RecordingStreams(f *fleet.Service) []RawRoute {
 	return []RawRoute{
 		{Pattern: "GET " + Prefix + "/spaces/{space_id}/runs/{run_id}/terminal", Perm: authz.TerminalWatch, Handler: func(d *Deps) http.HandlerFunc {
@@ -139,6 +140,7 @@ func RecordingStreams(f *fleet.Service) []RawRoute {
 }
 
 // terminalStream serves a live, watch-only terminal (SM-UI-004): stored records first (catch-up), then live records.
+// A run whose recording was deleted answers 410 (code recording_deleted) before the stream starts; it never streams.
 // A viewer that falls behind is told about the gap and re-reads from storage; it never slows the node (SM-REC-004).
 // The catch-up is read one record at a time, so a long recording is never held in memory.
 //
@@ -315,7 +317,8 @@ func ended(observed string) bool {
 	return observed == "exited" || observed == "failed" || observed == "lost"
 }
 
-// recordingDownload streams central's segments as one zstd stream (concatenated frames of JSONL records).
+// recordingDownload streams central's segments as one zstd stream (concatenated frames of JSONL records). A run whose
+// recording was deleted answers 410 (code recording_deleted) instead.
 func (d *Deps) recordingDownload(w http.ResponseWriter, r *http.Request, f *fleet.Service) {
 	ctx := r.Context()
 	spaceID, runID := r.PathValue("space_id"), r.PathValue("run_id")

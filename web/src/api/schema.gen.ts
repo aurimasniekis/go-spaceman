@@ -3581,7 +3581,7 @@ export interface paths {
         };
         /**
          * Replay a run's terminal recording
-         * @description Records are output (base64), size, gap, close and truncation markers in sequence order.
+         * @description Records are output (base64), size, gap, close and truncation markers in sequence order. A run whose recording was deleted returns 410 (code recording_deleted): its output is gone for good, so a client does not retry it.
          */
         get: operations["get-recording"];
         put?: never;
