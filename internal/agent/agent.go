@@ -189,6 +189,10 @@ type Agent struct {
 	// beforeFailWrite and beforeAdoptObserve, when set, run in a launch between its abandoned check and the lock
 	// that guards the write (a failure) or the observe (an adoption) (tests).
 	beforeFailWrite, beforeAdoptObserve func()
+	// beforeEnsureGuard runs in a launch before it takes the guard lock; onRunEndHooks runs at the start of runEndHooks.
+	// Test hooks.
+	beforeEnsureGuard func()
+	onRunEndHooks     func(runID string)
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time
