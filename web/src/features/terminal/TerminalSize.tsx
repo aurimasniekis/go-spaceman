@@ -280,7 +280,8 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
           so focus would land on <body>. Esc is handled here and returns focus to the trigger. */}
       <Popover.Dropdown role="dialog" aria-label="Custom terminal size"
         onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setCustom(false); trigger.current?.focus() } }}>
-        <form onSubmit={(e) => { e.preventDefault(); if (customValid) { void apply({ kind: 'fixed', cols: cols, rows: rows }); trigger.current?.focus() } }}>
+        {/* While a resize is in flight a submit is ignored, and focus stays in the form so the typed size is not lost. */}
+        <form onSubmit={(e) => { e.preventDefault(); if (busy || !customValid) return; void apply({ kind: 'fixed', cols: cols, rows: rows }); trigger.current?.focus() }}>
           <Stack gap="xs">
             <Group gap="xs" wrap="nowrap" align="flex-end">
               <NumberInput label="Columns" w={96} min={BOUNDS.minCols} max={BOUNDS.maxCols} clampBehavior="none" allowDecimal={false} allowNegative={false}
@@ -291,8 +292,10 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
             </Group>
             <Text size="xs" c="dimmed">{BOUNDS.minCols}–{BOUNDS.maxCols} columns, {BOUNDS.minRows}–{BOUNDS.maxRows} rows</Text>
             <Group justify="flex-end" gap="xs">
+              {/* While busy Apply stays focusable (aria-disabled, not disabled: a disabled button drops focus to <body> and breaks Esc and the Tab trap); onSubmit ignores the submit. */}
               <Button size="xs" variant="default" onClick={() => { setCustom(false); trigger.current?.focus() }}>Cancel</Button>
-              <Button size="xs" type="submit" disabled={!customValid} data-testid="terminal-size-apply">Apply</Button>
+              <Button size="xs" type="submit" disabled={!customValid} data-disabled={busy || undefined} aria-disabled={busy || undefined}
+                data-testid="terminal-size-apply">Apply</Button>
             </Group>
           </Stack>
         </form>
