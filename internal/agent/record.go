@@ -610,6 +610,11 @@ func (a *Agent) catchUpRecordings() {
 		a.mu.Lock()
 		conn, ctx, gen := a.catchUpConn, a.catchUpCtx, a.catchUpGen
 		a.catchUpAgain = false
+		// A wake left over from before this sweep asked for it (catchUpAgain above) or is stale.
+		select {
+		case <-a.catchUpWake:
+		default:
+		}
 		a.mu.Unlock()
 		err := a.catchUpSweep(ctx, conn, gen)
 		a.mu.Lock()
@@ -1058,7 +1063,7 @@ func (a *Agent) recordingAck(ack proto.RecordingAck) {
 	}
 	first := !a.seqKnown[ack.RunID]
 	a.seqKnown[ack.RunID] = true
-	if first && a.catching {
+	if first && a.catching && a.unshipped[ack.RunID] { // a skipped run (catchUpRun) waits for its answer
 		a.wakeCatchUpLocked()
 	}
 	prev, had := a.acked[ack.RunID]
