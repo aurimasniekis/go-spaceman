@@ -229,6 +229,45 @@ describe('tails (ADR-0081)', () => {
     }
   })
 
+  it('a live terminal whose recording was deleted (410) is final: no retry, and it says so', async () => {
+    const streams: { readyState: number; onerror: (() => void) | null; on: Record<string, (ev: MessageEvent) => void> }[] = []
+    class FakeEventSource {
+      static CLOSED = 2
+      readyState = 1
+      onopen: (() => void) | null = null
+      onerror: (() => void) | null = null
+      on: Record<string, (ev: MessageEvent) => void> = {}
+      constructor(public url: string) {
+        streams.push(this)
+      }
+      addEventListener(kind: string, fn: (ev: MessageEvent) => void) {
+        this.on[kind] = fn
+      }
+      close() {}
+    }
+    // EventSource does not say why a stream closed, so the view asks the same URL: central answers 410 (gone).
+    const probe = vi.fn(async () => new Response(null, { status: 410 }))
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('fetch', probe)
+    try {
+      render(<MantineProvider><TerminalView spaceId="spc_1" runId="run_1" mode="live" /></MantineProvider>)
+      await flush()
+      expect(streams).toHaveLength(1)
+      streams[0].readyState = FakeEventSource.CLOSED
+      act(() => streams[0].onerror?.())
+      await flush()
+      expect(probe).toHaveBeenCalledTimes(1)
+      expect(screen.getByText('Recording deleted')).toBeTruthy()
+      expect(screen.getByText(/no longer kept, so it cannot be replayed/)).toBeTruthy()
+      // Final: no reconnect however long the back-off would have been.
+      await flush(60_000)
+      expect(streams).toHaveLength(1)
+      expect(screen.queryByText('Connecting…')).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   describe('loading earlier output', () => {
     const streams: { url: string; readyState: number; onerror: (() => void) | null; on: Record<string, (ev: MessageEvent) => void> }[] = []
     class FakeEventSource {
