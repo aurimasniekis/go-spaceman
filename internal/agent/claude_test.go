@@ -607,3 +607,26 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+// A stop for a run the node never received (central cancelled its undelivered launch) ends the run as stopped before
+// start, so central does not keep it pending. A launch that arrives anyway does not start it.
+func TestStopOfUnlaunchedRunEndsIt(t *testing.T) {
+	dir := t.TempDir()
+	a, f := ccAgent(t, dir, nil, nil)
+	stop := proto.Command{CommandID: "cmd_stop", Kind: proto.CmdStop, SpaceID: ccSpace, RunID: "run_gone", Generation: 1}
+	if !a.endUnlaunched(context.Background(), stop) {
+		t.Fatal("the run was known")
+	}
+	r := getRun(t, a, "run_gone")
+	if r.State != proto.RunExited || r.Desired != "stopped" || r.Reason != "stopped before start" || r.Generation != 1 || r.SpaceID != ccSpace {
+		t.Fatalf("state %s (%s), desired %s, generation %d", r.State, r.Reason, r.Desired, r.Generation)
+	}
+	if a.endUnlaunched(context.Background(), stop) {
+		t.Fatal("a known run was ended again")
+	}
+	ccLaunch(a, "run_gone")
+	notStarted(t, f, "run_gone")
+	if r := getRun(t, a, "run_gone"); r.State != proto.RunExited {
+		t.Fatalf("the late launch changed the run to %s", r.State)
+	}
+}
