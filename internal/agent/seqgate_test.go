@@ -338,17 +338,6 @@ func TestLoweringAfterTheCatchUpBeganRestartsIt(t *testing.T) {
 	}
 }
 
-// countBetween counts the records numbered above lo and up to hi.
-func countBetween(recs []recording.Record, lo, hi uint64) int {
-	n := 0
-	for _, r := range recs {
-		if r.Seq > lo && r.Seq <= hi {
-			n++
-		}
-	}
-	return n
-}
-
 // A program that ends while central is out of reach after the restart: its records, the close among them, wait for
 // central's sequence (they are not numbered meanwhile) and reach central once it answers.
 func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
