@@ -968,3 +968,57 @@ func TestRecordingsBackoffRefusalRefreshesTouched(t *testing.T) {
 		t.Fatalf("touched %v, not refreshed by the refusal", at.Sub(base))
 	}
 }
+
+// A chunk that arrives after Close (a connection the hub is still tearing down) opens no writer and creates no folder.
+func TestRecordingsRefuseChunksAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, time.Now)
+	r.Close()
+	run := "run_" + strings.Repeat("0", 26)
+	if _, err := r.apply(1, proto.RecordingChunk{RunID: run}); !errors.Is(err, errRecordingsClosed) {
+		t.Fatalf("apply after Close: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, run)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the run folder was created after Close: %v", err)
+	}
+}
+
+// A chunk for a run whose recording was deleted (a node's late re-ship) recreates no folder and is acked up to its highest
+// sequence, so the node stops shipping it; the mark is forgotten after markMaxAge.
+func TestRecordingsDropLateChunksAfterDelete(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	r := newRecordings(dir, nil, nil, func() time.Time { return now })
+	t.Cleanup(r.Close)
+	chunk := func(seqs ...uint64) proto.RecordingChunk {
+		c := proto.RecordingChunk{RunID: recRun}
+		for _, s := range seqs {
+			b, _ := json.Marshal(recording.Record{Seq: s, Kind: recording.KindOut})
+			c.Records = append(c.Records, b)
+		}
+		return c
+	}
+	if seq, err := r.apply(1, chunk(1, 2)); err != nil || seq != 2 {
+		t.Fatalf("first chunk: %d %v", seq, err)
+	}
+	if err := r.Delete(context.Background(), recRun); err != nil {
+		t.Fatal(err)
+	}
+	seq, err := r.apply(1, chunk(3, 4))
+	if err != nil || seq != 4 {
+		t.Fatalf("late chunk: acked %d, %v (want 4, nil)", seq, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, recRun)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the run folder was recreated after Delete: %v", err)
+	}
+	now = now.Add(markMaxAge + markPruneEvery)
+	if _, err := r.apply(1, chunk(5)); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	n := len(r.deleted)
+	r.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d deletion marks kept past markMaxAge", n)
+	}
+}
