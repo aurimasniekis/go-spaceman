@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
+  profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
+  credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.
+
 ### Fixed
 
 - **A stop can no longer be overwritten by a launch** (#272 and follow-ups). The managed Claude Code launch's `starting`
