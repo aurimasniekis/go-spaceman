@@ -40,6 +40,8 @@ type fakeProc struct {
 	// typed is what takeover streams wrote; attached counts open takeover streams.
 	typed    []byte
 	attached int
+	// observed counts the Attach calls that opened a stream (the recorder's attachments).
+	observed int
 	// interactive are the open takeover streams in the order they last set the size (newest last). Like herdr-core
 	// (docs/contracts/herdr-core.md S-7), the newest one sizes the terminal; with none open it has its start size.
 	interactive          []*takeoverStream
@@ -246,6 +248,7 @@ func (f *Fake) Attach(_ context.Context, id string, _ bool, _, _ int) (runner.St
 	if fp.p.State != runner.StateLive {
 		return nil, nil, runner.ErrFinished
 	}
+	fp.observed++
 	p := fp.p
 	return &stream{f: f, fp: fp}, &p, nil
 }
@@ -393,6 +396,16 @@ func (f *Fake) TakeoverAttached(id string) int {
 	defer f.mu.Unlock()
 	if fp, ok := f.procs[id]; ok {
 		return fp.attached
+	}
+	return 0
+}
+
+// Observed returns how many Attach calls opened a stream on a process.
+func (f *Fake) Observed(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fp, ok := f.procs[id]; ok {
+		return fp.observed
 	}
 	return 0
 }

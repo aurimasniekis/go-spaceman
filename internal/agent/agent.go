@@ -131,14 +131,15 @@ type Agent struct {
 	// catching is set while the catch-up pass runs, on catchUpConn with catchUpCtx (the newest connection's);
 	// catchUpAgain asks it for another sweep; caughtUp are the runs it has caught up. connCtx is the current
 	// connection's context.
-	sentSeq      map[string]uint64
-	held         map[string]*heldRecords
-	catching     bool
-	catchUpAgain bool
-	catchUpGen   uint64 // counts requests: a sweep marks runs caught up only for the request it serves
-	catchUpConn  *websocket.Conn
-	catchUpCtx   context.Context
-	caughtUp     map[string]bool
+	sentSeq        map[string]uint64
+	held           map[string]*heldRecords
+	catching       bool
+	catchUpSkipped bool // a sweep skipped a run central did not answer for (catchUpRun)
+	catchUpAgain   bool
+	catchUpGen     uint64 // counts requests: a sweep marks runs caught up only for the request it serves
+	catchUpConn    *websocket.Conn
+	catchUpCtx     context.Context
+	caughtUp       map[string]bool
 	// finalSent and finalAcked are, per ended run, the journal update time of the final state this process sent to central
 	// and the one central acknowledged (prune.go); memory only.
 	finalSent, finalAcked map[string]int64
@@ -193,6 +194,8 @@ type Agent struct {
 	// Test hooks.
 	beforeEnsureGuard func()
 	onRunEndHooks     func(runID string)
+	// beforeRecordAttach, when set, runs before each of a recorder's attachments (tests).
+	beforeRecordAttach func(runID string)
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time
