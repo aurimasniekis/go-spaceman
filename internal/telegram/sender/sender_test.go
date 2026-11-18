@@ -405,8 +405,9 @@ func TestStressNoRateLimitAtDefaults(t *testing.T) {
 	outstanding := make([]atomic.Int64, len(chats))
 	var finished atomic.Int64
 	next := make([]int, len(chats))
-	e.start()
+	// Read the start before Run: the sender advances the fake clock as soon as it runs.
 	start := e.clk.Now()
+	e.start()
 	enq := 0
 	for enq < total {
 		progressed := false
@@ -843,8 +844,9 @@ func TestGroupPerMinuteIsTheGroupBucket(t *testing.T) {
 		m.Group = false
 		e.enqueue(m)
 	}
-	e.start()
+	// Read the start before Run: the sender advances the fake clock as soon as it runs.
 	start := e.clk.Now()
+	e.start()
 	r.wait(t, 5)
 	// A burst of 2, then one every 30 s: the fifth message waits at least 90 s.
 	if d := e.clk.Now().Sub(start); d < 90*time.Second {
