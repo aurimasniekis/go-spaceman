@@ -263,7 +263,7 @@ describe('TerminalSizeControl', () => {
       dialog.style.display = 'block'
       await waitFor(() => expect(cols).toHaveFocus(), { timeout: 4000 })
       fireEvent.change(cols, { target: { value: '170' } })
-      expect(screen.getByTestId('terminal-size-apply')).toBeDisabled()
+      expect(screen.getByTestId('terminal-size-apply')).toHaveAttribute('aria-disabled', 'true')
       const form = cols.closest('form')!
       fireEvent.submit(form)
       await new Promise((r) => setTimeout(r, 100))
@@ -275,6 +275,39 @@ describe('TerminalSizeControl', () => {
 
       await act(async () => calls[0].resolve({ data: run({ terminal_size: { cols: 120, rows: 40 } }), response: new Response() }))
       await waitFor(() => expect(trigger).toHaveAttribute('aria-busy', 'false'))
+    })
+
+    it('keeps focus on Apply when a refit flips busy while it has focus', async () => {
+      const { put, calls } = holdPuts()
+      const fit = { cols: 150, rows: 41 }
+      wrap(<TerminalSizeControl spaceId="spc_1" run={run({ terminal_size: { cols: 100, rows: 30 } })} blocker="" measure={() => fit} />)
+      const trigger = screen.getByTestId('terminal-size')
+      fireEvent.click(trigger)
+      fireEvent.click(await screen.findByTestId('terminal-size-fit'))
+      await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+      await act(async () => calls[0].resolve({ data: run({ terminal_size: { cols: 150, rows: 41 } }), response: new Response() }))
+      await waitFor(() => expect(trigger).toHaveAttribute('aria-busy', 'false'))
+
+      fireEvent.click(trigger)
+      fireEvent.click(await screen.findByTestId('terminal-size-custom'))
+      const cols = await screen.findByTestId('terminal-size-cols')
+      cols.closest<HTMLElement>('[role=dialog]')!.style.display = 'block'
+      await waitFor(() => expect(cols).toHaveFocus(), { timeout: 4000 })
+      const apply = screen.getByTestId('terminal-size-apply')
+      act(() => apply.focus())
+      expect(apply).toHaveFocus()
+
+      // The window resizes: the fit refit PUT goes out and busy flips while Apply has focus.
+      fit.cols = 160
+      window.dispatchEvent(new Event('resize'))
+      await waitFor(() => expect(put).toHaveBeenCalledTimes(2), { timeout: 4000 })
+      await waitFor(() => expect(apply).toHaveAttribute('aria-disabled', 'true'))
+      expect(apply).not.toBeDisabled()
+      expect(apply).toHaveFocus()
+      expect(document.body).not.toHaveFocus()
+
+      await act(async () => calls[1].resolve({ data: run({ terminal_size: { cols: 160, rows: 41 } }), response: new Response() }))
+      await waitFor(() => expect(apply).not.toHaveAttribute('aria-disabled'))
     })
   })
 })

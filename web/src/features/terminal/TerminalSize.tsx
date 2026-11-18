@@ -292,8 +292,10 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
             </Group>
             <Text size="xs" c="dimmed">{BOUNDS.minCols}–{BOUNDS.maxCols} columns, {BOUNDS.minRows}–{BOUNDS.maxRows} rows</Text>
             <Group justify="flex-end" gap="xs">
+              {/* While busy Apply stays focusable (aria-disabled, not disabled: a disabled button drops focus to <body> and breaks Esc and the Tab trap); onSubmit ignores the submit. */}
               <Button size="xs" variant="default" onClick={() => { setCustom(false); trigger.current?.focus() }}>Cancel</Button>
-              <Button size="xs" type="submit" disabled={!customValid || busy} data-testid="terminal-size-apply">Apply</Button>
+              <Button size="xs" type="submit" disabled={!customValid} data-disabled={busy || undefined} aria-disabled={busy || undefined}
+                data-testid="terminal-size-apply">Apply</Button>
             </Group>
           </Stack>
         </form>
