@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ type seqCentral struct {
 func (c *seqCentral) until(what string, cond func() bool) {
 	c.t.Helper()
 	if !c.within(10*time.Second, cond) {
-		c.t.Fatalf("timed out waiting for %s (central holds up to %d, dropped %d repeats)", what, c.seq, c.drops)
+		c.t.Fatalf("timed out waiting for %s (central holds up to %d, dropped %d repeats, recs %d)", what, c.seq, c.drops, len(c.recs))
 	}
 }
 
@@ -250,6 +251,104 @@ func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 	}
 }
 
+// With probe-first (ADR-0097, v0.1.12) the catch-up of a run whose central sequence is unknown waits for central's answer
+// before it reads where to start: central holds 150, the saved acknowledgement says 300, and the catch-up begins from
+// the lowered 150, never from 300. Nothing above 250 reaches central before 151..250 do, queued new records included.
+func TestLoweredAckDuringTheRunsCatchUp(t *testing.T) {
+	const runID = "run_low"
+	var mu sync.Mutex
+	var froms []uint64
+	catchUpRunHook = func(id string, from uint64) {
+		if id == runID {
+			mu.Lock()
+			froms = append(froms, from)
+			mu.Unlock()
+		}
+	}
+	t.Cleanup(func() { catchUpRunHook = nil })
+	a, c, term := restartedRecorderEnv(t, runID, 250, 300, 150)
+	c.barrier = 250
+	writeUntil(t, a, c, term, "after the restart")
+	c.until("the local records above 150 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, f := range froms {
+		if f != 150 {
+			t.Fatalf("the catch-up began from %d, want the lowered 150 (began from %v)", f, froms)
+		}
+	}
+	if len(froms) == 0 {
+		t.Fatal("the catch-up never began")
+	}
+}
+
+// #254's restart on lowering is the guard for a lowering that arrives after the catch-up began from the restored
+// acknowledgement (no longer reachable through the first answer of a run, which the catch-up now waits for). Forced
+// here: the run's sequence counts as known (so the catch-up does not wait) with the saved 300 while central holds 150,
+// the catch-up begins from 300, and the lowering is applied meanwhile, with new records queued above (the recorder
+// numbers above 300). The catch-up must start again from 150 before anything above it goes out and before it marks
+// the run caught up: central must end up with 151..250 in order, and never see a record above 250 before them.
+func TestLoweringAfterTheCatchUpBeganRestartsIt(t *testing.T) {
+	const runID = "run_low3"
+	var ag atomic.Pointer[Agent]
+	var froms []uint64
+	var mu sync.Mutex
+	catchUpRunHook = func(id string, from uint64) {
+		if id != runID {
+			return
+		}
+		mu.Lock()
+		froms = append(froms, from)
+		first := len(froms) == 1
+		mu.Unlock()
+		if !first {
+			return
+		}
+		a := ag.Load()
+		a.mu.Lock()
+		a.seqKnown[runID] = false // central's answer has not been taken yet
+		a.mu.Unlock()
+		a.recordingAck(proto.RecordingAck{RunID: runID, Seq: 150})
+	}
+	t.Cleanup(func() { catchUpRunHook = nil })
+	a, c, term := restartedRecorderEnvWith(t, runID, 250, 300, 150, nil, func(a *Agent) {
+		ag.Store(a)
+		a.mu.Lock()
+		if a.seqKnown == nil {
+			a.seqKnown = map[string]bool{}
+		}
+		a.seqKnown[runID] = true
+		a.mu.Unlock()
+	})
+	c.barrier = 250
+	writeUntil(t, a, c, term, "after the restart")
+	c.until("the local records above 150 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(froms) < 2 || froms[0] != 300 || froms[1] != 150 {
+		t.Fatalf("the catch-up began from %v, want 300 and then, restarted by the lowering, 150", froms)
+	}
+}
+
+// countBetween counts the records numbered above lo and up to hi.
+func countBetween(recs []recording.Record, lo, hi uint64) int {
+	n := 0
+	for _, r := range recs {
+		if r.Seq > lo && r.Seq <= hi {
+			n++
+		}
+	}
+	return n
+}
+
 // A program that ends while central is out of reach after the restart: its records, the close among them, wait for
 // central's sequence (they are not numbered meanwhile) and reach central once it answers.
 func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
@@ -439,5 +538,22 @@ func TestLoweredAckWithQueuedRecordsShipsTheGapFirst(t *testing.T) {
 	}
 	if batches == 0 {
 		t.Fatal("the catch-up shipped nothing")
+	}
+}
+
+// A run this process launched (nothing on disk) already knows central's sequence: uncomparedRecording must not mark it
+// restored, or its first acknowledgement would be taken for a restored one and the run re-compared for nothing.
+func TestLaunchedRunIsNotMarkedUncompared(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	a.launchedRecording("run_launched")
+	a.uncomparedRecording("run_launched")
+	a.uncomparedRecording("run_foreign")
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.restored["run_launched"] {
+		t.Fatal("a run this process launched was marked restored")
+	}
+	if !a.restored["run_foreign"] {
+		t.Fatal("a run this process did not launch was not marked restored")
 	}
 }
