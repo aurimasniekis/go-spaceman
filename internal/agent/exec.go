@@ -913,7 +913,7 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 		default:
 			r.State, r.Reason = proto.RunLost, "process not found in the runner"
 			_ = a.j.updateRun(ctx, r)
-			a.runEndHooks(ctx, r, true) // the program ran: its memory flush and final usage still matter
+			a.runEndHooks(ctx, r, r.TerminalID != "") // a program that ran: its memory flush and final usage still matter
 		}
 	}
 	return nil
