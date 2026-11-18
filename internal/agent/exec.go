@@ -190,24 +190,33 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	l, ok := a.lease(c.SpaceID, c.Generation)
 	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, Kind: p.Kind, Role: p.Role, Harness: p.Harness, InstanceID: p.InstanceID,
 		TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending, SessionID: p.SessionID}
+	// Under the run's lock, so a stop of a run this node had no record of (endUnlaunched) either finishes first (the
+	// insert below is then a no-op and the ended row is read back) or finds this row and leaves it alone.
+	unlockRun := a.runLock(c.RunID)
 	if err := a.j.insertRun(ctx, row); err != nil {
+		unlockRun()
 		log.Error("journal run intent", obs.Err(err))
 		return
 	}
 	row, _ = a.j.getRun(ctx, c.RunID)
+	unlockRun()
 	if err := a.saveRecordingQuota(c.RunID, p.RecordingMaxBytes); err != nil {
 		log.Warn("store the recording bound; the default applies", obs.Err(err))
-	}
-	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
-	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
-		a.observe(ctx, row, found[0], true)
-		return
 	}
 	// abandoned re-reads the run before a step that would act on it: when it was stopped meanwhile (stop journaled
 	// desired stopped and ended it) the launch must neither start it nor overwrite that.
 	abandoned := func() bool {
 		r, err := a.j.getRun(ctx, c.RunID)
 		return err == nil && (r.Desired == "stopped" || ended(r.State))
+	}
+	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
+	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
+		a.observe(ctx, row, found[0], true)
+		return
+	}
+	if abandoned() {
+		log.Info("launch abandoned: the run was stopped before it started")
+		return
 	}
 	fail := func(msg string, err error) {
 		if abandoned() {
@@ -591,7 +600,6 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	}
 }
 
-// stop ends a run: interrupt, then kill if still live after grace; or kill at once.
 // endUnlaunched answers a stop for a run this node has no record of: central cancelled the run's launch before it was
 // delivered, so the launch will never come and nothing else would move the run off pending. The node journals the run
 // as ended (stopped before start) and reports it. A launch that arrives anyway finds the row and does not start it. It
@@ -615,6 +623,7 @@ func (a *Agent) endUnlaunched(ctx context.Context, c proto.Command) bool {
 	return true
 }
 
+// stop ends a run: interrupt, then kill if still live after grace; or kill at once.
 func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duration, reason string) {
 	// Under the run's lock: a launch about to start the run either sees this stop, or has started and recorded it.
 	unlock := a.runLock(runID)

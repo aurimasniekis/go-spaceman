@@ -630,3 +630,23 @@ func TestStopOfUnlaunchedRunEndsIt(t *testing.T) {
 		t.Fatalf("the late launch changed the run to %s", r.State)
 	}
 }
+
+// Review of PR #270 (round 2): on a managed node a launch arriving after the stop of an unknown run must not move the
+// ended row back to starting (a disconnect would then mark it lost on central and end it twice).
+func TestStopOfUnlaunchedRunEndsItManaged(t *testing.T) {
+	srv := disttest.New(t)
+	srv.Add("2.1.7", disttest.StubBinary("2.1.7"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.7")
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), nil)
+	a, f := ccAgent(t, dir, m, nil)
+	stop := proto.Command{CommandID: "cmd_stop", Kind: proto.CmdStop, SpaceID: ccSpace, RunID: "run_gone", Generation: 1}
+	if !a.endUnlaunched(context.Background(), stop) {
+		t.Fatal("the run was known")
+	}
+	ccLaunch(a, "run_gone")
+	notStarted(t, f, "run_gone")
+	if r := getRun(t, a, "run_gone"); r.State != proto.RunExited || r.Desired != "stopped" || r.Reason != "stopped before start" {
+		t.Fatalf("the late managed launch changed the run to %s (%s), desired %s", r.State, r.Reason, r.Desired)
+	}
+}
