@@ -463,3 +463,58 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// SM-HARN-008: capsAfterHello reads the cached generation and sends it later; capsLoop may take and report a newer
+// one in between. The older inventory must not land after the newer one (central keeps whichever arrives last).
+func TestCapabilitiesOlderGenerationNeverFollowsNewer(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	var osName atomic.Value
+	osName.Store("hello")
+	oldDetect := detectCapabilities
+	detectCapabilities = func(*Agent, context.Context) proto.Capabilities {
+		return proto.Capabilities{OS: osName.Load().(string)}
+	}
+	reached, release := make(chan struct{}), make(chan struct{})
+	capsAfterHelloRead = func(c proto.Capabilities) {
+		if c.OS == "older" {
+			close(reached)
+			<-release
+		}
+	}
+	t.Cleanup(func() { detectCapabilities, capsAfterHelloRead = oldDetect, nil })
+	hold := make(chan struct{})
+	fc := newHeldWSCentral(t, proto.MinorHarnessVersion, hold)
+	runAgent(t, a, fc)
+	if h := fc.next(t, proto.TypeHello); h.OS != "hello" {
+		t.Fatalf("hello %q", h.OS)
+	}
+	// The cache is taken again after the hello was built, before the welcome.
+	osName.Store("older")
+	a.takeCapabilities(context.Background())
+	close(hold)
+	<-reached // capsAfterHello has read the older generation and not sent it
+	osName.Store("newer")
+	c, gen := a.takeCapabilities(context.Background())
+	a.reportCapabilities(context.Background(), c, gen) // what capsLoop does
+	close(release)
+	var last string
+	deadline := time.After(300 * time.Millisecond)
+loop:
+	for {
+		select {
+		case env := <-fc.msgs:
+			if env.Type == proto.TypeNodeCapabilities {
+				var n proto.NodeCapabilities
+				if err := env.Decode(&n); err != nil {
+					t.Fatal(err)
+				}
+				last = n.Capabilities.OS
+			}
+		case <-deadline:
+			break loop
+		}
+	}
+	if last != "newer" {
+		t.Fatalf("last report %q, want newer", last)
+	}
+}

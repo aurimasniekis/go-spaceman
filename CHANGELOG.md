@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **An older capabilities inventory no longer overwrites a newer one at central.** The agent now remembers the newest
+  capabilities generation it sent (a hello counts) and skips any report at or below it, with the check and the send
+  as one step. Before, the report sent after a hello could read the cache, lose a race with the periodic/change
+  report of a newer generation, and land last, leaving central stale until the next change or the 30-minute report.
+  It also drops the duplicate identical reports.
+
 - **A stop can no longer be overwritten by a launch** (#272 and follow-ups). The managed Claude Code launch's `starting`
   write, and now also a pre-start failure (download, build, credentials, secrets), check that the run was not stopped
   and write under one lock, so a stop landing in between is kept. A launch re-delivered after a crash between starting
