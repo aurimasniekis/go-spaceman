@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- A stop that lands while a managed Claude Code launch is about to move its run to `starting` can no longer be overwritten:
+  the check and the write now happen under one lock.
+
 ## [0.1.13] - 2026-11-18
 
 The `v0.1.11` and `v0.1.12` tags were created but never released (their release runs stopped at the gates, so no
