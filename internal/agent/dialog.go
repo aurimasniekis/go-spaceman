@@ -242,7 +242,10 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 	log := a.log.With(slog.String(obs.FieldRunID, runID))
 	row, err := a.j.getRun(ctx, runID)
 	if err == nil && ended(row.State) {
-		a.dialogForget(runID) // a run that is no longer running keeps no watch, and nothing re-arms its timer
+		// A run that is no longer running keeps no watch, and nothing re-arms its timer. Its flag ends first, so central
+		// is told (the observation of the end may not have got to it yet).
+		a.dialogClear(ctx, row)
+		a.dialogForget(runID)
 	}
 	if err != nil || row.State != proto.RunRunning || row.TerminalID == "" || row.Desired == "stopped" {
 		return

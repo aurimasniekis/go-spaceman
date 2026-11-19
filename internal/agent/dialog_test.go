@@ -589,6 +589,17 @@ func TestDialogEndedRunKeepsNoWatch(t *testing.T) {
 			t.Fatalf("an ended run was flagged: %+v", ds)
 		}
 	})
+	t.Run("flagged run found ended by a check", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		e.show(fixture(t, "claude-unknown.txt"))
+		waitFor(t, "flagged", func() bool { return len(e.dialogs()) == 1 })
+		e.endRun()
+		e.a.dialogCheck(context.Background(), e.run)
+		waitFor(t, "cleared", func() bool { return len(e.dialogs()) == 2 })
+		if got := e.outcomes(); !slices.Equal(got, []string{"blocked:unknown", "cleared:unknown"}) || e.watching() {
+			t.Fatalf("outcomes %v, watching %v", got, e.watching())
+		}
+	})
 	t.Run("found ended by a check", func(t *testing.T) {
 		e := newDialogEnv(t, nil)
 		e.endRun() // no hook dropped the watch
