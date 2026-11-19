@@ -86,8 +86,8 @@ func (c *Central) uploadSpooledArtifacts(ctx context.Context) {
 }
 
 // Bounds of one recording reconcile pass: at most reconcileMaxRuns runs removed (examined one by one, with the absent
-// mode on), a pause after every removal, and a
-// run absent from the database is only removed once its recording has been untouched for reconcileMinAge.
+// mode on), a pause after every removal, and a run absent from the database is only removed once its recording has
+// been untouched for reconcileMinAge.
 const (
 	reconcileMaxRuns = 200
 	reconcilePace    = 100 * time.Millisecond
