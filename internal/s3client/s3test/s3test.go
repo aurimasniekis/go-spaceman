@@ -241,15 +241,17 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, bucket string) {
 		}
 	}
 	res := listResult{}
+	var common map[string]bool // keys that are a rolled-up CommonPrefix (with a delimiter), not an object
 	if delim := r.URL.Query().Get("delimiter"); delim != "" {
 		// Collapse the keys below one more delimiter into their common prefix (one entry per prefix).
 		var rolled []string
 		seen := map[string]bool{}
+		common = map[string]bool{}
 		for _, k := range keys {
 			if i := strings.Index(k[len(prefix):], delim); i >= 0 {
 				cp := k[:len(prefix)+i+len(delim)]
 				if !seen[cp] {
-					seen[cp] = true
+					seen[cp], common[cp] = true, true
 					rolled = append(rolled, cp)
 				}
 				continue
@@ -272,7 +274,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, bucket string) {
 		res.IsTruncated, res.NextContinuationToken = true, keys[len(keys)-1]
 	}
 	for _, k := range keys {
-		if strings.HasSuffix(k, "/") && r.URL.Query().Get("delimiter") != "" {
+		if common[k] { // an object whose key merely ends in "/" is still an object
 			res.CommonPrefixes = append(res.CommonPrefixes, listPrefix{Prefix: k})
 			continue
 		}

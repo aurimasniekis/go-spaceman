@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -293,5 +295,111 @@ func TestReconcileS3FoldersOnlyWithoutAbsent(t *testing.T) {
 	}
 	if len(left) != 3 || left[rcDeleted] || !left[rcAbsent] || !left[rcLive] || !left[rcBroken] {
 		t.Fatalf("bucket after the pass: %v", srv.Keys("rec"))
+	}
+}
+
+// deletedSet is a fake query: which of the given IDs have their recording deleted.
+func deletedSet(calls *int, fail error, set ...string) func(context.Context, []string) ([]string, error) {
+	return func(_ context.Context, ids []string) ([]string, error) {
+		*calls++
+		if fail != nil {
+			return nil, fail
+		}
+		var out []string
+		for _, id := range ids {
+			if slices.Contains(set, id) {
+				out = append(out, id)
+			}
+		}
+		return out, nil
+	}
+}
+
+// The query picks the candidates: only listed IDs the query returns are removed, in one pass, and the per-run fate
+// is never asked.
+func TestReconcileQuery(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, inTheFuture)
+	defer r.Close()
+	for _, id := range []string{rcDeleted, rcAbsent, rcLive, rcBroken, rcFresh} {
+		spool(t, dir, id)
+	}
+	var calls int
+	// The query also names an ID that is not in storage: ignored.
+	opts := ReconcileOptions{MaxRuns: 1, MinAge: time.Hour, Deleted: deletedSet(&calls, nil, rcDeleted, "run_zzzzzzzzzzzzzzzzzzzzzzzzzz")}
+	noFate := func(context.Context, string) (RunFate, error) { t.Fatal("per-run fate used"); return RunKeep, nil }
+	res, err := r.Reconcile(context.Background(), noFate, opts)
+	if err != nil || res.Removed != 1 || res.Examined != 5 || res.Truncated || calls != 1 {
+		t.Fatalf("%+v %v calls=%d", res, err, calls)
+	}
+	for _, id := range []string{rcAbsent, rcLive, rcBroken, rcFresh} {
+		if !exists(dir, id) {
+			t.Fatalf("%s removed although the query did not name it", id)
+		}
+	}
+	if exists(dir, rcDeleted) {
+		t.Fatal("leftover kept")
+	}
+}
+
+// All leftovers are reached in one pass (bounded by MaxRuns removals) and the batches are bounded.
+func TestReconcileQueryBatchesAndBound(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, inTheFuture)
+	defer r.Close()
+	var all []string
+	for i := range deletedBatch + 3 {
+		id := fmt.Sprintf("run_%026d", i)
+		all = append(all, id)
+		spool(t, dir, id)
+	}
+	var calls int
+	maxLen := 0
+	q := deletedSet(&calls, nil, all...)
+	opts := ReconcileOptions{MaxRuns: 600, Deleted: func(ctx context.Context, ids []string) ([]string, error) {
+		maxLen = max(maxLen, len(ids))
+		return q(ctx, ids)
+	}}
+	res, err := r.Reconcile(context.Background(), reconcileFate, opts)
+	if err != nil || res.Removed != len(all) || calls != 2 || maxLen != deletedBatch || res.Truncated {
+		t.Fatalf("%+v %v calls=%d maxLen=%d", res, err, calls, maxLen)
+	}
+	// MaxRuns bounds removals.
+	for _, id := range all {
+		spool(t, dir, id)
+	}
+	opts.MaxRuns = 10
+	res, err = r.Reconcile(context.Background(), reconcileFate, opts)
+	if err != nil || res.Removed != 10 || !res.Truncated {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+// A database error means no deletes at all.
+func TestReconcileQueryErrorDeletesNothing(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, inTheFuture)
+	defer r.Close()
+	spool(t, dir, rcDeleted)
+	var calls int
+	_, err := r.Reconcile(context.Background(), reconcileFate, ReconcileOptions{MaxRuns: 10, Deleted: deletedSet(&calls, errDB, rcDeleted)})
+	if !errors.Is(err, errDB) || !exists(dir, rcDeleted) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// With Absent on, the query is not used: the per-run fate decides, as before.
+func TestReconcileQueryIgnoredWithAbsent(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, inTheFuture)
+	defer r.Close()
+	spool(t, dir, rcDeleted)
+	spool(t, dir, rcAbsent)
+	var calls int
+	opts := reconcileOpts
+	opts.Deleted = deletedSet(&calls, nil) // would name nothing
+	res, err := r.Reconcile(context.Background(), reconcileFate, opts)
+	if err != nil || calls != 0 || res.Removed != 2 {
+		t.Fatalf("%+v %v calls=%d", res, err, calls)
 	}
 }

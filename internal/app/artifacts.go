@@ -120,7 +120,10 @@ func (c *Central) reconcileRecordings(ctx context.Context) {
 		r, err := c.Store.R().GetRun(ctx, runID)
 		return runFate(r, err)
 	}
-	opts := fleet.ReconcileOptions{MaxRuns: reconcileMaxRuns, MinAge: reconcileMinAge, Absent: c.Cfg.Artifacts.RecordingReconcileAbsent, Pace: reconcilePace}
+	opts := fleet.ReconcileOptions{MaxRuns: reconcileMaxRuns, MinAge: reconcileMinAge, Absent: c.Cfg.Artifacts.RecordingReconcileAbsent, Pace: reconcilePace,
+		Deleted: func(ctx context.Context, ids []string) ([]string, error) {
+			return c.Store.R().RunsWithRecordingDeleted(ctx, ids)
+		}}
 	reconcileLoop(ctx, log, interval, func(ctx context.Context) (fleet.ReconcileResult, error) {
 		return c.Fleet.Recordings().Reconcile(ctx, fate, opts)
 	})

@@ -97,3 +97,8 @@ WHERE seq > sqlc.arg(after_seq)
   AND (sqlc.narg(target_id) IS NULL OR target_id = sqlc.narg(target_id))
   AND (sqlc.narg(actor_id) IS NULL OR actor_id = sqlc.narg(actor_id))
 ORDER BY seq LIMIT sqlc.arg(lim);
+
+-- Which of the given runs have their recording deleted. Looked up by primary key, so the cost follows the number of ids,
+-- not the number of runs ever recorded. The recording reconcile sweep uses it to find leftover files.
+-- name: RunsWithRecordingDeleted :many
+SELECT id FROM runs WHERE id IN (sqlc.slice(ids)) AND recording_deleted_at IS NOT NULL;

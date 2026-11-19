@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 )
+
+// deletedBatch is the most run IDs given to ReconcileOptions.Deleted at once (well under SQLite's variable limit).
+const deletedBatch = 500
 
 // RunFate is what the database says about a run whose recording is in storage.
 type RunFate int
@@ -29,12 +33,16 @@ const (
 
 // ReconcileOptions bounds one reconcile pass.
 type ReconcileOptions struct {
-	// MaxRuns is the most runs examined per pass (the rest wait for the next pass). Every run examined counts, kept
-	// ones too: a pass continues after the last run of the previous one and wraps, so with N stored runs every run is
-	// examined within ceil(N/MaxRuns) passes. The worst case is a leftover waiting that many sweep intervals (with
-	// 200 runs per pass and a 24h interval, 1000 stored runs take 5 days). Counting only delete candidates would need
-	// a database lookup for every stored run on every pass, so it is not done.
+	// MaxRuns bounds one pass. With Deleted unset (the per-run fate walk, always used with Absent) it is the most runs
+	// examined per pass: a pass continues after the last run of the previous one and wraps, so with N stored runs every
+	// run is examined within ceil(N/MaxRuns) passes, and a leftover can wait that many sweep intervals. With Deleted set
+	// it is the most recordings removed per pass: the leftovers are found with one query per batch of stored run IDs
+	// (not one lookup per run), so they are all reached in ceil(leftovers/MaxRuns) passes.
 	MaxRuns int
+	// Deleted, when set and Absent is off, picks the candidates: it returns which of the given run IDs have
+	// recording_deleted_at set. It is called with batches of at most deletedBatch IDs. Any error ends the pass with no
+	// deletes. A run it does not return is never touched. Ignored with Absent, which needs the per-run fate.
+	Deleted func(ctx context.Context, runIDs []string) ([]string, error)
 	// Absent allows removing the recording of a run the database cleanly reports absent. Off, such a recording is kept:
 	// an absent row is also what a restored older backup or a second central on the same bucket looks like.
 	Absent bool
@@ -48,12 +56,14 @@ type ReconcileOptions struct {
 // ReconcileResult counts one pass.
 type ReconcileResult struct {
 	Examined, Removed, Skipped int
-	// Truncated is set when more runs were stored than MaxRuns; the next pass continues after the last one examined.
+	// Truncated is set when more runs were left than MaxRuns allows; the next pass continues (after the last one examined with
+	// the fate walk, with the remaining leftovers with the query).
 	Truncated bool
 }
 
 // Reconcile removes the stored recordings (spool folders and, with a remote store, objects) that belong to runs whose
-// recording was deleted or that no longer exist. fate asks the database; any error from it (or from listing, or from
+// recording was deleted or that no longer exist. With opts.Deleted (and Absent off) one query per batch names the
+// leftovers; otherwise fate asks the database run by run; any error from it (or from listing, or from
 // a delete) skips the run and is logged: nothing is deleted on an error. A run that exists with its recording not
 // deleted is never touched. The pass is bounded by opts.MaxRuns and paced by opts.Pace.
 func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Context, runID string) (RunFate, error), opts ReconcileOptions) (ReconcileResult, error) {
@@ -108,7 +118,39 @@ func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Contex
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	if opts.MaxRuns > 0 && len(ids) > opts.MaxRuns {
+	byQuery := opts.Deleted != nil && !opts.Absent
+	if byQuery {
+		// One query per batch of stored IDs; an error anywhere means nothing is deleted in this pass.
+		res.Examined = len(ids)
+		var cands []string
+		for i := 0; i < len(ids); i += deletedBatch {
+			if ctx.Err() != nil {
+				return res, ctx.Err()
+			}
+			got, err := opts.Deleted(ctx, ids[i:min(i+deletedBatch, len(ids))])
+			if err != nil {
+				return res, err
+			}
+			cands = append(cands, got...)
+		}
+		// Only IDs actually in storage count, whatever the query returned.
+		stored := make(map[string]struct{}, len(ids))
+		for _, id := range ids {
+			stored[id] = struct{}{}
+		}
+		ids = ids[:0]
+		for _, id := range cands {
+			if _, ok := stored[id]; ok {
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids)
+		ids = slices.Compact(ids)
+		if opts.MaxRuns > 0 && len(ids) > opts.MaxRuns {
+			ids, res.Truncated = ids[:opts.MaxRuns], true
+		}
+	}
+	if !byQuery && opts.MaxRuns > 0 && len(ids) > opts.MaxRuns {
 		// Continue after the last run the previous pass examined (wrapping), so runs that are kept do not pin every
 		// pass to the same first MaxRuns.
 		r.mu.Lock()
@@ -134,8 +176,14 @@ func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Contex
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
-		res.Examined++
-		f, err := fate(ctx, id)
+		var f RunFate
+		var err error
+		if byQuery {
+			f = RunRecordingDeleted // the query said so
+		} else {
+			res.Examined++
+			f, err = fate(ctx, id)
+		}
 		if err != nil {
 			r.log.Warn("recording reconcile: run not checked, recording kept", slog.String("run.id", id), obs.Err(err))
 			res.Skipped++
