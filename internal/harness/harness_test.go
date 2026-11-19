@@ -582,4 +582,22 @@ func TestClaudeAllowsExtraDirs(t *testing.T) {
 	if !reflect.DeepEqual(projects, want) {
 		t.Fatalf("trusted projects %v, want %v", projects, want)
 	}
+	// The memory dir is passed with its own --add-dir; an extra dir equal to it must not add a second one.
+	c.MemoryDir = "/data/memory/spc_a/dreamer/instances/ins_1"
+	c.ExtraDirs = []string{c.MemoryDir, "/data/memory/spc_a/reviewer/instances/ins_1"}
+	if l, err = (Claude{}).Build(c); err != nil {
+		t.Fatal(err)
+	}
+	added = nil
+	for i, a := range l.Argv {
+		if a == "--add-dir" && i+1 < len(l.Argv) {
+			added = append(added, l.Argv[i+1])
+		}
+	}
+	if n := strings.Count(strings.Join(added, "\n"), c.MemoryDir); n != 1 {
+		t.Fatalf("--add-dir %s appears %d times, want 1 (--add-dir %v)", c.MemoryDir, n, added)
+	}
+	if want := []string{c.MemoryDir, c.ExtraDirs[1]}; !reflect.DeepEqual(added, want) {
+		t.Fatalf("--add-dir %v, want %v", added, want)
+	}
 }

@@ -40,9 +40,11 @@ type fx struct {
 	issue *Template
 	m     *Manager
 	mt    *metrics.Metrics
-	// halted collects the pulse subscription of every halt (by subscription ID), via Manager.onHalt.
-	haltedMu sync.Mutex
-	halted   map[string]*pulse.Subscription
+	// halted collects the pulse subscription of every halt (by subscription ID), and haltState the subscription's
+	// state as the halt left it, via Manager.onHalt.
+	haltedMu  sync.Mutex
+	halted    map[string]*pulse.Subscription
+	haltState map[string]runState
 }
 
 func newFx(t *testing.T) *fx {
@@ -86,9 +88,20 @@ func newFx(t *testing.T) *fx {
 	m.retry = 200 * time.Millisecond
 	m.drainTimeout = time.Second
 	f.halted = map[string]*pulse.Subscription{}
+	f.haltState = map[string]runState{}
 	m.onHalt = func(id string, sub *pulse.Subscription) {
+		// Handler calls of the halted consumer end at Closed: wait for that, then record the state the halt left. The
+		// manager writes paused only after this hook returns, so a late handler write is visible here and nowhere later.
+		select {
+		case <-sub.Closed():
+		case <-time.After(10 * time.Second):
+		}
+		f.svc.stateMu.Lock()
+		st := f.svc.states[id]
+		f.svc.stateMu.Unlock()
 		f.haltedMu.Lock()
 		f.halted[id] = sub
+		f.haltState[id] = st
 		f.haltedMu.Unlock()
 	}
 	f.m = m
