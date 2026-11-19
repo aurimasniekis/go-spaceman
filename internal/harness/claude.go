@@ -494,11 +494,7 @@ func (Claude) Build(c Context) (Launch, error) {
 		// leave an unattended run waiting forever. SpaceMan provisions the run's working directory and its memory folder,
 		// so it marks first-run as done and trusts exactly those two directories, nothing else (ADR-0021, verified with
 		// Claude Code 2.1.316; from 2.1.326 a directory passed with --add-dir asks "Adding a new directory" unless trusted).
-		MergeJSON: map[string]map[string]any{filepath.Join(cfg, ".claude.json"): {
-			"hasCompletedOnboarding": true,
-			"theme":                  "dark",
-			"projects":               trustedProjects(c),
-		}},
+		MergeJSON: map[string]map[string]any{filepath.Join(cfg, ".claude.json"): claudeSeed(c, own)},
 		OwnJSON:   map[string]map[string]any{filepath.Join(cfg, "settings.json"): own},
 		StripJSON: map[string][]string{filepath.Join(cfg, "settings.json"): ClaudeUnsafeSettingsKeys},
 		// Verified: Claude Code loads $CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md (spike S-6).
@@ -507,6 +503,39 @@ func (Claude) Build(c Context) (Launch, error) {
 		RemoveFiles: remove,
 		SessionID:   session,
 	}, nil
+}
+
+// ClaudeCodeModeEnv turns on Claude Code's experimental Code Mode when a profile sets it in its settings env.
+const ClaudeCodeModeEnv = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
+
+// ClaudeCodeModeAcceptedKeys are the .claude.json flags that record the Code Mode caveats as accepted. A session that
+// starts with ClaudeCodeModeEnv set and without both flags stops at an interactive "Code Mode (experimental)" opt-in
+// dialog, which would leave an unattended run waiting forever at turn 0 (read from Claude Code 2.1.325, not run).
+var ClaudeCodeModeAcceptedKeys = []string{"codeModeCaveatsAcceptedV1", "codeModeAutoModeCaveatAcceptedV1"}
+
+// claudeSeed is what SpaceMan merges into the run's .claude.json before a launch: first-run done, a theme, trust for the
+// directories it provisions and, when the profile's settings env turns Code Mode on, the Code Mode caveats accepted.
+// The operator opted in by setting the env, so the run starts in Code Mode instead of waiting at its opt-in dialog.
+func claudeSeed(c Context, own map[string]any) map[string]any {
+	seed := map[string]any{
+		"hasCompletedOnboarding": true,
+		"theme":                  "dark",
+		"projects":               trustedProjects(c),
+	}
+	if claudeCodeModeOn(own) {
+		for _, k := range ClaudeCodeModeAcceptedKeys {
+			seed[k] = true
+		}
+	}
+	return seed
+}
+
+// claudeCodeModeOn reports whether the run's settings env sets ClaudeCodeModeEnv. Claude Code asks its opt-in question
+// whenever the variable is present, whatever its value, and the accepted flags change nothing when it is absent.
+func claudeCodeModeOn(own map[string]any) bool {
+	env, _ := own["env"].(map[string]any)
+	_, set := env[ClaudeCodeModeEnv]
+	return set
 }
 
 // trustedProjects is the .claude.json projects entry that trusts the run's working directory and, when it has one, the

@@ -45,7 +45,13 @@ func AllowedURL(raw string) (string, bool) {
 	default:
 		return "", false
 	}
-	return u.String(), true
+	// u.String() re-escapes (for example each '#' in a fragment becomes %23), so the result can outgrow the input: cap
+	// the URL that is actually emitted, or a link would be refused when it is validated again.
+	out := u.String()
+	if len(out) > maxURL {
+		return "", false
+	}
+	return out, true
 }
 
 // attachmentID returns the attachment ID of a spaceman://attachment/ reference.
