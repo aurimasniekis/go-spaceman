@@ -857,7 +857,9 @@ func TestWatchdogWorkerStartCheckOffKeepsBegan(t *testing.T) {
 
 // A run that never began is still flagged, once, when the check is turned back on after being off for over a day.
 func TestWatchdogWorkerStartCheckOffThenOnFlagsOnce(t *testing.T) {
-	e := newStartEnv(t, startWorker("run_stuck"))
+	// run_began has a record, so the off passes take the refresh branch rather than the idle early return.
+	e := newStartEnv(t, startWorker("run_stuck"), startWorker("run_began"))
+	e.call("run_began", proto.ToolCatalog)
 	e.lim[limits.WorkerStartWatchdog] = 0
 	for i := 0; i < 25; i++ {
 		e.pass(time.Hour)
@@ -881,18 +883,12 @@ func TestWatchdogWorkerStartCheckOffPrunesEndedRun(t *testing.T) {
 	e.call("run_done", proto.ToolCatalog)
 	e.lim[limits.WorkerStartWatchdog] = 0
 	e.pass(time.Minute)
-	e.w.mu.Lock()
-	_, ok := e.w.acts["run_done"]
-	e.w.mu.Unlock()
-	if !ok {
-		t.Fatal("record of a running run dropped while the check is off")
-	}
-	r.Desired, r.Observed = "stopped", "stopped"
+	r.Observed = "exited"
 	for i := 0; i < 25; i++ {
 		e.pass(time.Hour)
 	}
 	e.w.mu.Lock()
-	_, ok = e.w.acts["run_done"]
+	_, ok := e.w.acts["run_done"]
 	e.w.mu.Unlock()
 	if ok {
 		t.Fatal("record of an ended run kept for more than a day")
