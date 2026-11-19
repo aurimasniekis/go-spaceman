@@ -198,7 +198,7 @@ func (f *Fake) Send(_ context.Context, id, text string, ifIdle bool) error {
 	if !ok {
 		return runner.ErrNotFound
 	}
-	if ifIdle && fp.p.Status.State == "working" {
+	if ifIdle && fp.p.Status.State == "working" && fp.p.Status.Kind != runner.KindBackground { // like hc.Runner.Send
 		return runner.ErrBusy
 	}
 	fp.inputs = append(fp.inputs, text)
@@ -208,13 +208,21 @@ func (f *Fake) Send(_ context.Context, id, text string, ifIdle bool) error {
 // SetStatus changes a process's reported status. Like herdr-core, a working program that becomes idle or done has
 // finished a turn.
 func (f *Fake) SetStatus(id, state string) {
+	f.SetStatusReport(id, runner.Status{State: state})
+}
+
+// SetStatusReport changes a process's reported status with the rest of its OSC 7501 report (app, kind, message),
+// classified as hc.Runner does (runner.Classify): Claude Code's `working` with "… still running" after a finished turn
+// is runner.KindBackground.
+func (f *Fake) SetStatusReport(id string, s runner.Status) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if fp, ok := f.procs[id]; ok {
-		if fp.p.Status.State == "working" && (state == "idle" || state == "done") {
+		if fp.p.Status.State == "working" && (s.State == "idle" || s.State == "done") {
 			fp.p.Turn++
 		}
-		fp.p.Status.State = state
+		s.Reported = fp.p.Status.Reported
+		fp.p.Status = runner.Classify(s)
 		f.emit("status", fp.p)
 	}
 }

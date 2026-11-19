@@ -398,6 +398,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Human.Kick() // a resumed instance may take a held response
 			}
 		},
+		OnRunTakesNotice: func(string) {
+			if c.Notifier != nil {
+				c.Notifier.Kick() // waiting on background tasks at its prompt (ADR-0100): messages may be noticed
+			}
+		},
 		OnRunLimitTx: func(ctx context.Context, tx *store.Tx, r *fleet.Run, ended, opened *fleet.RunLimit) error {
 			if c.Supervisor == nil {
 				return nil

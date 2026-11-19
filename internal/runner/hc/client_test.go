@@ -289,3 +289,63 @@ func TestCoreOptionsValidation(t *testing.T) {
 		}
 	}
 }
+
+// An idle-gated send that herdr-core refuses (status_mismatch: its gate takes only `idle`) is typed ungated when the
+// program, read again, reports done or works only on background tasks after a finished turn (Claude Code's `working`
+// with "… still running", ADR-0100). A program in the middle of a turn stays refused.
+func TestSendIdleGateFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status map[string]any
+		typed  bool
+	}{
+		{"done", map[string]any{"state": "done", "app": "claude-code"}, true},
+		{"background", map[string]any{"state": "working", "app": "claude-code", "msg": "2 shells, 1 monitor still running"}, true},
+		{"working", map[string]any{"state": "working", "app": "claude-code", "msg": "Reading files"}, false},
+		{"working-other-app", map[string]any{"state": "working", "app": "codex", "msg": "1 shell still running"}, false},
+		{"blocked", map[string]any{"state": "blocked", "app": "claude-code", "kind": "permission"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sends := make(chan map[string]any, 4)
+			_, sock := startFake(t, func(_ *fakeCore, w io.Writer, req map[string]any) {
+				switch req["method"] {
+				case "terminal.get":
+					reply(w, req["id"], map[string]any{"address": "t3", "state": "live", "created_ms": 1, "status": tc.status, "reported": true})
+				case "terminal.send":
+					p, _ := req["params"].(map[string]any)
+					sends <- p
+					if p["if"] == "idle" {
+						b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req["id"], "error": map[string]any{"code": -32000, "message": "busy",
+							"data": map[string]any{"kind": "status_mismatch"}}})
+						writeFrame(w, 0, KindData, b)
+						return
+					}
+					reply(w, req["id"], map[string]any{"turn": 2, "started": true, "status": "working"})
+				}
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			c, err := Dial(ctx, sock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			err = New(c).Send(ctx, "t3", "notice", true)
+			if gated := <-sends; gated["if"] != "idle" {
+				t.Fatalf("first send %v, want idle-gated", gated)
+			}
+			if !tc.typed {
+				if !errors.Is(err, runner.ErrBusy) {
+					t.Fatalf("send = %v, want busy", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("send: %v", err)
+			}
+			if ungated := <-sends; ungated["if"] != nil || ungated["text"] != "notice" {
+				t.Fatalf("fallback send %v", ungated)
+			}
+		})
+	}
+}

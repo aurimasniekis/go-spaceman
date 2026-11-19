@@ -848,6 +848,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		svc.onReport(rep)
 	}
 	becameIdle, justEnded, skipped := false, false, false
+	takesNotice := false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:
 	default:
@@ -1032,6 +1033,8 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		// control's idle stop is armed again (ADR-0079 decision 3).
 		limitCleared := limitChanged && curLimit.kind != "" && nextLimit.kind == ""
 		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State || limitCleared)
+		takesNotice = !ended(rep.State) && rep.Status == "working" && rep.StatusKind == proto.StatusKindBackground &&
+			(r.Status != rep.Status || r.StatusKind != rep.StatusKind || r.Observed != rep.State || limitCleared)
 		justEnded = ended(rep.State) && !ended(r.Observed)
 		if !r.StartedAt.Valid && (rep.State == proto.RunRunning || (justEnded && rep.State == proto.RunExited)) {
 			if err := svc.runEvent(ctx, tx, r, outbox.RunStarted{Run: outboxRun(r), Adopted: rep.Adopted}); err != nil {
@@ -1103,6 +1106,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
 		svc.opts.OnRunIdle(rep.RunID)
+	}
+	if err == nil && takesNotice && svc.opts.OnRunTakesNotice != nil {
+		svc.opts.OnRunTakesNotice(rep.RunID)
 	}
 	if err == nil && justEnded && svc.opts.OnRunEnded != nil {
 		svc.opts.OnRunEnded(rep.RunID)

@@ -136,6 +136,14 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   `cache_read_input_tokens`); records of one request repeat while it streams (same `message.id`). A `cost-state` record
   carries `totalCostUSD`, `hasUnknownModelCost` and per-model `modelUsage`. Codex's equivalents are not verified.
 - **Status:** native OSC 7501 reporting (see herdr-core.md).
+  - **Background tasks after a turn (read from the 2.1.328 binary, 2026-11-19; consistent with a live control that reported `working` at its prompt for most of an hour while only background shells ran; the per-task records were seen live on a run):** when a turn has
+    completed while background tasks the session started still run (`local_bash` shells and monitors, background
+    agents), Claude Code reports `state=working` with `msg` "<N shells|N monitors|N background agents|…> still
+    running" (for example "1 shell still running", "2 shells, 1 monitor still running") instead of `done`. The program
+    is at its prompt and takes input; it reports `done` once the tasks end, or starts a turn by itself to report a
+    finished task. It also sends one OSC 7501 report per running task with `id=<task>`, which herdr-core keeps under
+    the terminal's `records`, apart from its `status`. SpaceMan classifies the main report as status kind
+    `background` (`runner.Classify`, ADR-0100); `TestClassifyBackground` keeps the known wordings.
 - **Hidden flags:** `--channels`, `--dangerously-load-development-channels` (strings only, so **not** relied on until verified).
 - **Print mode:** `-p`, `--output-format stream-json`, `--max-budget-usd`. Used only by opt-in real tests, never for managed runs, which are interactive in hc.
 

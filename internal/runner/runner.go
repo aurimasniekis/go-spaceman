@@ -5,7 +5,10 @@ package runner
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // Spec describes a terminal program to start.
@@ -37,6 +40,31 @@ type Status struct {
 	Kind     string `json:"kind,omitempty"` // permission, question, auth
 	Message  string `json:"msg,omitempty"`
 	Reported bool   `json:"reported"`
+}
+
+// KindBackground is the status kind SpaceMan gives a program that reports working although its turn has finished and
+// it waits at its prompt while background tasks it started still run (Classify). It is not an OSC 7501 kind.
+const KindBackground = proto.StatusKindBackground
+
+// claudeBackgroundSuffix ends the message Claude Code reports with `working` after a completed turn while background
+// tasks still run ("1 shell still running", "2 background agents still running"; 2.1.328, docs/contracts/harnesses.md).
+const claudeBackgroundSuffix = " still running"
+
+// Classify returns s with Kind set to KindBackground when the program's own report says that its turn has finished and
+// only background tasks are still running: Claude Code reports `working` then, not `done`. The program is at its prompt
+// and takes input, so an idle-gated notice may be typed (SM-COMM-003); for everything else (idle stops, account
+// switches, the watchdog) the run stays working. This reads the program-reported status message, never screen text.
+func Classify(s Status) Status {
+	if s.State == "working" && s.Kind == "" && s.App == "claude-code" && strings.HasSuffix(s.Message, claudeBackgroundSuffix) {
+		s.Kind = KindBackground
+	}
+	return s
+}
+
+// TakesNotice reports whether an idle-gated notice may be typed for a program with this status: it is idle, done (a
+// finished turn waiting for input), or working only on background tasks after a finished turn (KindBackground).
+func (s Status) TakesNotice() bool {
+	return s.State == "idle" || s.State == "done" || s.State == "working" && s.Kind == KindBackground
 }
 
 // Process is one supervised terminal.
