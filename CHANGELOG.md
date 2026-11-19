@@ -19,6 +19,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A launch that fails before its program starts ends the run under the observe lock too.** Its failed write now takes
+  the observe lock after the run's lock, like a stop, and the end work runs after the locks are released. A stop for a
+  run this node had no record of takes it too, so every write that ends a run takes the observe lock.
+- **An older capabilities inventory no longer overwrites a newer one at central.** The agent now remembers the newest
+  capabilities generation it sent (a hello counts) and skips any report at or below it, with the check and the send
+  as one step. Before, the report sent after a hello could read the cache, lose a race with the periodic/change
+  report of a newer generation, and land last, leaving central stale until the next change or the 30-minute report.
+  It also drops the duplicate identical reports.
 - **Live terminal output is no longer held through the recording catch-up's backoff.** While central left one run
   unanswered the catch-up pass slept (1 s up to 30 s) with every run marked not caught up by a new request, so live
   output waited for the sleep to end. A new request or the first answer for a run now wakes it.

@@ -236,29 +236,40 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			abandonedAfterGuard()
 			return
 		}
+		row.State, row.Error = proto.RunFailed, msg
+		if err != nil {
+			row.Error = msg + ": " + err.Error()
+		}
 		if !held {
 			if a.beforeFailWrite != nil {
 				a.beforeFailWrite() // test hook: a stop may land here, before the lock is taken
 			}
 			// The check and the write are one step under the run's lock, which stop also takes: the write replaces
-			// the whole row (desired running), so a stop landing between the two would be overwritten.
+			// the whole row (desired running), so a stop landing between the two would be overwritten. The observe
+			// lock is taken after it (lock order: runLock, then observeLock), as every write that ends a run does.
 			unlockFail := a.runLock(c.RunID)
-			defer unlockFail()
+			unlockObs := a.observeLock(c.RunID)
 			if abandoned() {
+				unlockObs()
+				unlockFail()
 				log.Info("launch abandoned: the run was stopped before it started", slog.String("at", msg))
 				abandonedAfterGuard()
 				return
 			}
+			_ = a.j.updateRun(ctx, row)
+			unlockObs()
+			unlockFail()
+		} else {
+			// The launch holds the run's lock here (released when it returns), so the observe lock is all it adds.
+			unlockObs := a.observeLock(c.RunID)
+			_ = a.j.updateRun(ctx, row)
+			unlockObs()
 		}
-		row.State, row.Error = proto.RunFailed, msg
-		if err != nil {
-			row.Error = msg + ": " + err.Error()
-		}
-		_ = a.j.updateRun(ctx, row)
 		a.report(ctx, row)
 		log.Warn("launch failed", slog.String("reason", msg), obs.Err(err))
-		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now. (The async
-		// parts go through goTrack, so this is safe under the run's lock.)
+		// ensureGuard may have started the space's guard for this launch; nothing else will retire it now. The end
+		// hooks run after the locks are released, as stop does. When the launch holds the run's lock they run under
+		// it (their async parts go through goTrack), and the launch releases it on return.
 		a.runEndHooks(ctx, row, false)
 	}
 	// stillWanted is checked after every wait: the run was not stopped, and the space's lease still authorizes this
@@ -761,18 +772,22 @@ func (a *Agent) runEndHooks(ctx context.Context, row runRow, started bool) {
 // reports whether the run was unknown.
 func (a *Agent) endUnlaunched(ctx context.Context, c proto.Command) bool {
 	unlock := a.runLock(c.RunID)
+	unlockObs := a.observeLock(c.RunID)
 	if _, err := a.j.getRun(ctx, c.RunID); !errors.Is(err, sql.ErrNoRows) {
+		unlockObs()
 		unlock()
 		return false
 	}
 	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending}
 	if err := a.j.insertRun(ctx, row); err != nil {
+		unlockObs()
 		unlock()
 		a.log.Error("journal run stopped before start", slog.String(obs.FieldRunID, c.RunID), obs.Err(err))
 		return true
 	}
 	row.Desired, row.State, row.Reason = "stopped", proto.RunExited, "stopped before start"
 	_ = a.j.updateRun(ctx, row)
+	unlockObs()
 	unlock()
 	a.report(ctx, row)
 	return true
