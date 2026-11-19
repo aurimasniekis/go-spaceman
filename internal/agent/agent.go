@@ -109,6 +109,10 @@ type Agent struct {
 	capsGen    uint64
 	capsStarts uint64
 	capsTaken  uint64
+	// capsSent is the newest generation sent to central (a hello counts), so an older one is never sent after it;
+	// capsSendMu makes reportCapabilities' check and send one step.
+	capsSent   uint64
+	capsSendMu sync.Mutex
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
@@ -136,7 +140,8 @@ type Agent struct {
 	catching       bool
 	catchUpSkipped bool // a sweep skipped a run central did not answer for (catchUpRun)
 	catchUpAgain   bool
-	catchUpGen     uint64 // counts requests: a sweep marks runs caught up only for the request it serves
+	catchUpWake    chan struct{} // wakes the pass's backoff sleep (wakeCatchUpLocked); created on first use
+	catchUpGen     uint64        // counts requests: a sweep marks runs caught up only for the request it serves
 	catchUpConn    *websocket.Conn
 	catchUpCtx     context.Context
 	caughtUp       map[string]bool
@@ -496,6 +501,7 @@ func (a *Agent) session(ctx context.Context) error {
 	a.mu.Lock()
 	hello.Capabilities = a.caps
 	helloCaps := a.capsGen
+	a.capsSent = max(a.capsSent, helloCaps)
 	a.mu.Unlock()
 	for _, r := range runs {
 		// The hello carries no hook data (failure class, status-line reset): the minor is not negotiated yet, and a central
