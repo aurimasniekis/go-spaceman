@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/dialog"
@@ -341,5 +343,36 @@ func TestDialogOccurrenceSurvivesAgentRestart(t *testing.T) {
 	quiet()
 	if n := len(e.dialogs()); n != 3 {
 		t.Fatalf("%d messages, want nothing more", n)
+	}
+}
+
+// The excerpt masks the run's secret values and token-shaped strings, keeps the dialog's last lines and stays within
+// proto's bounds on a rune boundary.
+func TestDialogExcerptRedaction(t *testing.T) {
+	lines := []string{
+		" Paste your key: sk-ant-api03-AbCdEfGhIjKlMnOp",
+		" gh token ghp_0123456789abcdefABCDEF0123",
+		" slack xoxb-1234-5678-abcdefgh",
+		" jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLXZhbHVl",
+		" long " + strings.Repeat("A1b2", 12),
+		" the run's own value my-run-secret-value here",
+		" ❯ 1. Yes",
+	}
+	x := excerpt(lines, []string{"my-run-secret-value"})
+	for _, leak := range []string{"sk-ant", "ghp_", "xoxb-", "eyJhbGci", "A1b2A1b2", "my-run-secret-value"} {
+		if strings.Contains(x, leak) {
+			t.Fatalf("excerpt leaks %q:\n%s", leak, x)
+		}
+	}
+	if !strings.Contains(x, "❯ 1. Yes") || strings.Count(x, "[redacted]") != 6 {
+		t.Fatalf("excerpt:\n%s", x)
+	}
+	var many []string
+	for i := range 50 {
+		many = append(many, fmt.Sprintf(" line %02d %s", i, strings.Repeat("é", 60)))
+	}
+	x = excerpt(many, nil)
+	if len(x) > proto.DialogExcerptMax || !utf8.ValidString(x) || strings.Contains(x, "line 29") || !strings.HasPrefix(x, " line 30") {
+		t.Fatalf("bounds: %d bytes, valid %v, starts %q", len(x), utf8.ValidString(x), x[:12])
 	}
 }

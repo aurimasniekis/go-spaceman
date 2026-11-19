@@ -667,8 +667,8 @@ func TestRoleRenameLateCheckpointWritesNothing(t *testing.T) {
 
 // The hello advertises the minor this agent implements, not whatever proto.MaxMinor becomes after a later central-side bump.
 func TestAgentMaxMinorPinned(t *testing.T) {
-	if agentMaxMinor != proto.MinorRoleRename {
-		t.Fatalf("agentMaxMinor %d, want %d (raise it with the code that speaks the new minor, never set it to proto.MaxMinor)", agentMaxMinor, proto.MinorRoleRename)
+	if agentMaxMinor != proto.MinorDialog {
+		t.Fatalf("agentMaxMinor %d, want %d (raise it with the code that speaks the new minor, never set it to proto.MaxMinor)", agentMaxMinor, proto.MinorDialog)
 	}
 	if agentMaxMinor > proto.MaxMinor {
 		t.Fatalf("agentMaxMinor %d above proto.MaxMinor %d", agentMaxMinor, proto.MaxMinor)
