@@ -430,6 +430,10 @@ func (svc *Service) leaseFor(ctx context.Context, tx *store.Tx, sp db.Space) (pr
 		if err := svc.record(ctx, tx, sp.ID, "space", sp.ID, "updated", sp.Version); err != nil {
 			return proto.LeaseGrant{}, err
 		}
+		// A parked run put off because this lease had lapsed resumes now, not at its retry time: a heartbeat can renew a
+		// lapsed lease without a new hello (the deadline job may have looked in between).
+		spaceID := sp.ID
+		tx.AfterCommit(func() { svc.wakeWaits(context.WithoutCancel(ctx), []string{spaceID}, WaitNodeOffline) })
 		if svc.opts.OnLeaseGranted != nil {
 			spaceID := sp.ID
 			tx.AfterCommit(func() { svc.opts.OnLeaseGranted(spaceID) })
