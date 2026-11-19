@@ -7807,9 +7807,11 @@
      keeps them; without them nothing that depends on them is answered.
   6. **Keystrokes** go through herdr-core `terminal.keys` only: named keys, never free text, and the core holds them while
      a person types. **A dialog is answered only while the program has reported no status:** startup dialogs come
-     before any status (decision context), so a program that reports one (`idle`, `blocked` without a kind, …) is past
-     them, and a registry dialog then is flagged (`answer_withheld`) instead. A dialog is answered once. If the same registry dialog is still there at the next quiet read, it is
-     flagged (`answer_failed`) instead of answered again. Nothing is read or typed during a takeover.
+     before any status (Claude Code reports none until its main screen, see the context above), so a program that
+     reports one (`idle`, `blocked` without a kind, …) is past them, and what looks like a registry dialog on its
+     screen is more likely text in the transcript than a question waiting for an answer. It is then flagged
+     (`answer_withheld`) instead. A dialog is answered once. If the same registry dialog is still there at the next
+     quiet read, it is flagged (`answer_failed`) instead of answered again. Nothing is read or typed during a takeover.
   7. **Unknown dialogs flag the run.** The node reports the run with status `blocked` and status kind `dialog`
      (`proto.StatusKindDialog`, sent on every minor; an older central stores it like any kind). The API keeps the two
      fields; `spaceman_runs_list` and the UI name it **`blocked_on_dialog`** (`fleet.StatusLabel`). Nothing that waits for

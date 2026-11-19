@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -540,5 +541,87 @@ func TestDialogAddDirResolvedSymlink(t *testing.T) {
 	s := strings.Replace(fixture(t, "claude-2.1.328-add-dir.txt"), "/srv/spaceman/memory/spc_example/worker/instances/ins_example", resolved, 1)
 	if r := dialog.Classify(s, c); r.Kind != dialog.Known || r.Answer != "yes" {
 		t.Fatalf("resolved path %s with dirs %v: %+v", resolved, c.Dirs, r)
+	}
+}
+
+// endRun marks the run as exited in the journal, as an observation of its exit does.
+func (e *dialogEnv) endRun() {
+	e.t.Helper()
+	row := getRun(e.t, e.a, e.run)
+	row.State = proto.RunExited
+	if err := e.a.j.updateRun(context.Background(), row); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// watching reports whether the agent keeps a watch for the run.
+func (e *dialogEnv) watching() bool {
+	e.a.dlg.mu.Lock()
+	defer e.a.dlg.mu.Unlock()
+	return e.a.dlg.runs[e.run] != nil
+}
+
+// A run that ends keeps no watch and no timer: not when it ends while its screen is read (the flag must not recreate
+// the watch that the end dropped, and the backoff must not re-arm it), and not when the watch survives until a check
+// finds the run no longer running.
+func TestDialogEndedRunKeepsNoWatch(t *testing.T) {
+	old := dialogRecheckMax
+	dialogRecheckMax = 100 * time.Millisecond
+	t.Cleanup(func() { dialogRecheckMax = old })
+	t.Run("ends during the read", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		var once sync.Once
+		var read atomic.Bool
+		e.f.OnReadScreen = func(string) {
+			once.Do(func() {
+				e.endRun()
+				e.a.dialogForget(e.run) // what the end of a run does (runEndHooks)
+				read.Store(true)
+			})
+		}
+		e.show(fixture(t, "claude-unknown.txt"))
+		waitFor(t, "read", read.Load)
+		quiet()
+		if e.watching() {
+			t.Fatal("a watch was recreated for the run that ended")
+		}
+		if ds := e.dialogs(); len(ds) != 0 {
+			t.Fatalf("an ended run was flagged: %+v", ds)
+		}
+	})
+	t.Run("found ended by a check", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		e.endRun() // no hook dropped the watch
+		e.a.dlg.mu.Lock()
+		e.a.dialogArmLocked(context.Background(), e.run, e.a.dlg.watchLocked(e.run), time.Hour)
+		e.a.dlg.mu.Unlock()
+		e.a.dialogCheck(context.Background(), e.run)
+		if e.watching() {
+			t.Fatal("the watch of an ended run was kept")
+		}
+	})
+}
+
+// The two reasons a known dialog is not answered again are separate: SpaceMan answered it and it is still there (checked
+// by TestDialogAnswerThatDoesNotTakeIsFlagged), and it is already flagged, here as withheld while the program reported a
+// status. When that status goes away and the same dialog is read again, it is not answered: the flag stands.
+func TestDialogFlaggedKnownDialogNotAnsweredLater(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	e.f.SetStatusReport(e.term, runner.Status{State: "idle", App: "claude-code"})
+	e.show(fixture(t, "claude-2.1.328-code-mode.txt"))
+	waitFor(t, "flagged", func() bool { return len(e.dialogs()) == 1 })
+	// Only the in-memory flag is left (the saved occurrence would also make it "again").
+	if err := os.Remove(filepath.Join(e.a.runDir(e.run), dialogOpenFile)); err != nil {
+		t.Fatal(err)
+	}
+	e.f.SetStatusReport(e.term, runner.Status{})
+	quiet()
+	e.show(fixture(t, "claude-2.1.328-code-mode.txt"))
+	quiet()
+	if got := e.f.KeysPressed(e.term); len(got) != 0 {
+		t.Fatalf("a flagged dialog was answered: %v", got)
+	}
+	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:claude.code_mode_optin"}) {
+		t.Fatalf("outcomes %v", got)
 	}
 }

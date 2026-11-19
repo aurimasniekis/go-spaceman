@@ -254,3 +254,26 @@ func TestAddDirUncleanPathDeclined(t *testing.T) {
 		}
 	}
 }
+
+// Below a dialog's options only a closed preview box and its hint belong to the dialog. A preview box that was opened in
+// the transcript and never closed (the prompt box follows), or a hint line without a preview box, means the options
+// are not the bottom of the screen.
+func TestThemePickerPreviewMustBeClosedAndHintFollowsIt(t *testing.T) {
+	c := claude("2.1.328")
+	theme := screen(t, "claude-2.1.328-theme.txt")
+	if r := Classify(theme, c); r.Kind != Known {
+		t.Fatalf("the picker alone: %+v", r)
+	}
+	at := strings.Index(theme, "\n ╌")
+	if at < 0 {
+		t.Fatal("no preview box in the fixture")
+	}
+	opened := theme[:at+1] + " ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n  1  function greet() {\n\n" + promptBox
+	if r := Classify(opened, c); r.Kind != None || len(r.Keys) != 0 {
+		t.Fatalf("a preview box opened in the transcript, then the prompt box: %+v", r)
+	}
+	hinted := theme[:at+1] + "\n  Syntax theme: Monokai Extended (ctrl+t to disable)\n"
+	if r := Classify(hinted, c); r.Kind != None || len(r.Keys) != 0 {
+		t.Fatalf("a hint without a preview box: %+v", r)
+	}
+}

@@ -241,6 +241,9 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 	defer a.dialogBackoff(ctx, runID) // a run still flagged after this read is read again later
 	log := a.log.With(slog.String(obs.FieldRunID, runID))
 	row, err := a.j.getRun(ctx, runID)
+	if err == nil && ended(row.State) {
+		a.dialogForget(runID) // a run that is no longer running keeps no watch, and nothing re-arms its timer
+	}
 	if err != nil || row.State != proto.RunRunning || row.TerminalID == "" || row.Desired == "stopped" {
 		return
 	}
@@ -270,7 +273,11 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 		a.dialogClear(ctx, row)
 	case dialog.Known:
 		a.dlg.mu.Lock()
-		w := a.dlg.watchLocked(runID)
+		w := a.dlg.runs[runID]
+		if w == nil {
+			a.dlg.mu.Unlock()
+			return // the run ended while its screen was read: its watch is gone and stays gone
+		}
 		again := w.answered == res.ID || w.blocked != nil && w.blocked.Dialog == res.ID
 		a.dlg.mu.Unlock()
 		if !again {
@@ -299,7 +306,9 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 			return
 		}
 		a.dlg.mu.Lock()
-		a.dlg.watchLocked(runID).answered = res.ID
+		if w := a.dlg.runs[runID]; w != nil {
+			w.answered = res.ID
+		}
 		a.dlg.mu.Unlock()
 		log.Info("dialog watch: answered a known dialog", slog.String("dialog", res.ID), slog.String("answer", res.Answer))
 		a.dialogSend(ctx, proto.RunDialog{ID: ids.New(ids.Dialog), RunID: runID, SpaceID: row.SpaceID, Generation: row.Generation,
@@ -313,7 +322,12 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 // dialogFlag marks a run as waiting at a dialog SpaceMan does not answer: one occurrence per dialog until it clears.
 func (a *Agent) dialogFlag(ctx context.Context, row runRow, res dialog.Result) {
 	a.dlg.mu.Lock()
-	w := a.dlg.watchLocked(row.RunID)
+	w := a.dlg.runs[row.RunID]
+	if w == nil {
+		// The run ended while its screen was read (its watch was dropped): a flag would only recreate the watch.
+		a.dlg.mu.Unlock()
+		return
+	}
 	if w.blocked != nil && w.blocked.Dialog == res.ID {
 		a.dlg.mu.Unlock()
 		return // the same dialog, still open: told once
