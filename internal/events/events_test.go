@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,9 @@ type fx struct {
 	issue *Template
 	m     *Manager
 	mt    *metrics.Metrics
+	// halted collects the pulse subscription of every halt (by subscription ID), via Manager.onHalt.
+	haltedMu sync.Mutex
+	halted   map[string]*pulse.Subscription
 }
 
 func newFx(t *testing.T) *fx {
@@ -80,6 +84,13 @@ func newFx(t *testing.T) *fx {
 	ctx, cancel := context.WithCancel(f.ctx)
 	m := NewManager(f.svc, nil)
 	m.retry = 200 * time.Millisecond
+	m.drainTimeout = time.Second
+	f.halted = map[string]*pulse.Subscription{}
+	m.onHalt = func(id string, sub *pulse.Subscription) {
+		f.haltedMu.Lock()
+		f.halted[id] = sub
+		f.haltedMu.Unlock()
+	}
 	f.m = m
 	done := make(chan struct{})
 	go func() { m.Run(ctx); close(done) }()
