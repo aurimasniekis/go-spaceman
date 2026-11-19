@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -812,5 +813,69 @@ func TestLeaseGrantWakesNodeOfflineWaits(t *testing.T) {
 	e.grantLease()
 	if n := e.due(); n != 1 || e.wait(w.ID).State != WaitResumed {
 		t.Fatalf("renewed before the job saw it lapsed: %d, %+v", n, e.wait(w.ID))
+	}
+}
+
+// resumeOutcome files a CodeUnavailable refusal as node_offline only when it is about the node's lease; any other
+// (gateway upstream, Harbor Pilot budget status) is upstream_unavailable with its own, shorter retry.
+func TestResumeOutcomeUnavailableCauses(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	lease := nodeNotConnectedError{apperr.New(apperr.CodeUnavailable, "the space's node is not connected")}
+	upstream := apperr.New(apperr.CodeUnavailable, "the upstream server is unavailable")
+	for _, tc := range []struct {
+		name   string
+		err    error
+		reason string
+		retry  time.Duration
+	}{
+		{"lease", lease, WaitNodeOffline, limitRetryNode},
+		{"lease wrapped", fmt.Errorf("launch: %w", lease), WaitNodeOffline, limitRetryNode},
+		{"upstream", upstream, WaitUpstreamDown, limitRetryUpstream},
+		{"upstream wrapped", fmt.Errorf("launch: %w", upstream), WaitUpstreamDown, limitRetryUpstream},
+	} {
+		at, reason, cancel := resumeOutcome(tc.err, now)
+		if reason != tc.reason || cancel || !at.Equal(now.Add(tc.retry)) {
+			t.Errorf("%s: got %s at %v cancel=%v", tc.name, reason, at.Sub(now), cancel)
+		}
+	}
+	if !errors.Is(lease, apperr.ErrUnavailable) || apperr.CodeOf(lease) != apperr.CodeUnavailable || lease.Error() != lease.err.Error() {
+		t.Errorf("the lease refusal must stay an unavailable apperr with the same text: %v", lease)
+	}
+}
+
+// failingGateway refuses every launch before its transaction, as a gateway upstream error or a Harbor Pilot budget
+// refusal does.
+type failingGateway struct {
+	fakeGateway
+	err error
+}
+
+func (g *failingGateway) PreLaunch(context.Context, string, string) error { return g.err }
+
+// A resume refused by the gateway's pre-launch check (the lease is valid) is put off as upstream_unavailable, retried by
+// time, and not woken by the node's hello; once the gateway answers, the wait resumes.
+func TestLimitWaitGatewayRefusalIsUpstreamUnavailable(t *testing.T) {
+	e := newParkEnv(t)
+	e.limited("run_u", "worker", proto.LimitFiveHour, dur(time.Hour), e.clk.Now().Sub(e.t0), 1)
+	e.end("run_u", proto.RunExited, "exited")
+	w := e.waitOf("run_u")
+	g := &failingGateway{err: apperr.New(apperr.CodeUnavailable, "the upstream server is unavailable")}
+	e.svc.opts.Gateway = g
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	e.due()
+	if w = e.wait(w.ID); w.State != WaitWaiting || w.LastError != WaitUpstreamDown || w.ResumeAt != e.clk.Now().Add(limitRetryUpstream).UnixMicro() {
+		t.Fatalf("gateway refusal: %+v", w)
+	}
+
+	// The node's hello wakes node_offline waits only.
+	e.svc.wakeWaitsOnNode(e.ctx, "nod_1")
+	if got := e.wait(w.ID); got.ResumeAt != w.ResumeAt {
+		t.Fatalf("a hello moved an upstream wait: %d -> %d", w.ResumeAt, got.ResumeAt)
+	}
+
+	g.err = nil
+	e.clk.Advance(limitRetryUpstream)
+	if n := e.due(); n != 1 || e.wait(w.ID).State != WaitResumed {
+		t.Fatalf("after the gateway answered: %d, %+v", n, e.wait(w.ID))
 	}
 }
