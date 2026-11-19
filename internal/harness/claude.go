@@ -420,6 +420,9 @@ func (Claude) Build(c Context) (Launch, error) {
 	if c.MemoryDir != "" {
 		argv = append(argv, "--add-dir", c.MemoryDir)
 	}
+	for _, d := range c.ExtraDirs {
+		argv = append(argv, "--add-dir", d)
+	}
 	if p.SystemText != "" {
 		argv = append(argv, "--append-system-prompt", p.SystemText)
 	}
@@ -509,6 +512,9 @@ func trustedProjects(c Context) map[string]any {
 	projects := map[string]any{c.WorkDir: map[string]any{"hasTrustDialogAccepted": true}}
 	if c.MemoryDir != "" {
 		projects[c.MemoryDir] = map[string]any{"hasTrustDialogAccepted": true}
+	}
+	for _, d := range c.ExtraDirs {
+		projects[d] = map[string]any{"hasTrustDialogAccepted": true}
 	}
 	return projects
 }

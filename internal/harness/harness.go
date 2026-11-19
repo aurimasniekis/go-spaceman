@@ -64,6 +64,9 @@ type Context struct {
 	Payload proto.LaunchPayload
 	// MemoryDir is the instance's checkout of its role memory ("" when memory is unavailable on the node).
 	MemoryDir string
+	// ExtraDirs are further directories the run may write and that SpaceMan provisions for it: a dream's linked role
+	// memory checkouts, which the workspace's memory/<role> symlinks point at (outside the workspace).
+	ExtraDirs []string
 	// AutoMemoryDir is the folder for the instance's own Claude Code auto memory of this launch's project, outside the
 	// space folder so no other run's file tools may write it ("" keeps Claude Code's default, ADR-0068).
 	AutoMemoryDir string

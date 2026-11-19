@@ -33,14 +33,15 @@ type evidenceFile struct {
 	mod            int64
 }
 
-// prepareDream builds a dream's workspace and returns its folder.
-func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instance string, d proto.DreamSpec) (string, error) {
+// prepareDream builds a dream's workspace and returns its folder and the real paths of the role memory checkouts the
+// memory/<role> links point at. The run must be allowed to write exactly those, since they lie outside the workspace.
+func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instance string, d proto.DreamSpec) (string, []string, error) {
 	if !safeName(strings.ReplaceAll(runID, "_", "-")) || !safeName(strings.ReplaceAll(d.ConfigID, "_", "-")) {
-		return "", errors.New("invalid dream")
+		return "", nil, errors.New("invalid dream")
 	}
 	dir := filepath.Join(space, "dreams", runID)
 	if err := os.MkdirAll(filepath.Join(dir, "evidence"), 0o700); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	// Memories.
 	roles := d.MemoryRoles
@@ -52,7 +53,7 @@ func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instanc
 			}
 		}
 	}
-	var mems []string
+	var mems, targets []string
 	for _, role := range roles {
 		inst, err := a.mem.prepare(ctx, spaceID, role, instance)
 		if err != nil {
@@ -60,18 +61,22 @@ func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instanc
 		}
 		link := filepath.Join(dir, "memory", role)
 		if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		_ = os.Remove(link)
 		if err := os.Symlink(inst, link); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		mems = append(mems, role)
+		if real, err := filepath.EvalSymlinks(inst); err == nil {
+			inst = real
+		}
+		targets = append(targets, inst)
 	}
 	// Evidence.
 	files, err := a.dreamEvidence(ctx, spaceID, space, d)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var listed []string
 	var total int64
@@ -80,7 +85,7 @@ func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instanc
 		return err
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	for _, f := range files {
 		if len(listed) >= d.MaxFiles || total >= d.MaxBytes {
@@ -97,7 +102,7 @@ func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instanc
 			_, err := tx.SQL.ExecContext(ctx, `INSERT INTO dream_pending (run_id, config_id, path, offset) VALUES (?, ?, ?, ?)`, runID, d.ConfigID, f.rel, f.from+n)
 			return err
 		}); err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 	var b strings.Builder
@@ -116,9 +121,9 @@ func (a *Agent) prepareDream(ctx context.Context, spaceID, space, runID, instanc
 	b.WriteString(strings.Join(listed, "\n"))
 	b.WriteString("\n")
 	if err := os.WriteFile(filepath.Join(dir, "DREAM.md"), []byte(b.String()), 0o600); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return dir, nil
+	return dir, targets, nil
 }
 
 // dreamEvidence finds transcript files with bytes past the configuration's position, newest first.

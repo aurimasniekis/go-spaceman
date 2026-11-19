@@ -405,13 +405,15 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 		work = dir
 	}
+	var dreamMem []string // role memory checkouts a dream's memory/<role> links point at
 	if p.Dream != nil {
-		dir, err := a.prepareDream(ctx, c.SpaceID, space, c.RunID, p.InstanceID, *p.Dream)
+		dir, links, err := a.prepareDream(ctx, c.SpaceID, space, c.RunID, p.InstanceID, *p.Dream)
 		if err != nil {
 			fail("prepare the dream", err)
 			return
 		}
 		work = dir
+		dreamMem = links
 	}
 	rd := a.runDir(c.RunID)
 	for _, d := range []string{rd, work, filepath.Join(space, "instances", p.InstanceID)} {
@@ -514,7 +516,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		bin = res.Path
 	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
-		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir,
+		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir, ExtraDirs: dreamMem,
 		AutoMemoryDir: autoMem, SelfUpdate: selfUpdate})
 	if err != nil {
 		fail("build launch", err)
