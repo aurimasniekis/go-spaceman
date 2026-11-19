@@ -151,6 +151,10 @@ this and reminds control.
   or a message from the worker starts over. A worker that is waiting for a person, at a usage limit or taken over is
   left alone, and one whose message to control is still open (not acknowledged, or a request not answered) is waiting
   for control: control is told instead of the worker being reminded. After central restarts, the clock starts again.
+  A worker whose program reports that background work is still running (Claude Code's "turn finished, background
+  shells or monitors running") is busy and not reminded. Where the program reports plain idle while background work
+  runs, SpaceMan cannot tell, so such a worker can get a reminder (which says so) and control a notice; the worker
+  answers by messaging control. After a restart, a message the worker sent control counts as its last act.
 
 The five settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
 

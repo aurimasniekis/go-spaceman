@@ -9,6 +9,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 )
 
@@ -327,4 +328,40 @@ func TestHandbackRefusedReminderRetries(t *testing.T) {
 	e.refuse = nil
 	e.pass(time.Minute)
 	e.want(1, 0)
+}
+
+// A run that finished its turn but reports working with status_kind background (shells, monitors or sub-agents still
+// running) is busy: no reminder, no notice, however long it lasts.
+func TestHandbackBackgroundIsBusy(t *testing.T) {
+	e := newHBEnv(t)
+	e.pass(0)
+	e.endTurn()
+	e.run.Status, e.run.StatusKind = "working", proto.StatusKindBackground
+	for range 12 {
+		e.pass(5 * time.Minute)
+	}
+	e.want(0, 0)
+	// The background work ends: a normal stretch starts, and the reminder follows N minutes later.
+	e.run.Status, e.run.StatusKind = "idle", ""
+	e.pass(time.Minute)
+	e.pass(10 * time.Minute)
+	e.want(1, 0)
+	if !strings.Contains(e.reminders[0], "background") {
+		t.Fatalf("reminder lacks the background caveat: %q", e.reminders[0])
+	}
+}
+
+// After a restart of central the watchdog has no working time: a message the run sent control (its turn ended with it)
+// counts as its last act, so the worker waits for control instead of being reminded.
+func TestHandbackRestartMessageIsLastAct(t *testing.T) {
+	e := newHBEnv(t)
+	e.endTurn()
+	e.wait.MsgAt = e.clk.Now().Add(-time.Hour)
+	e.restart()
+	e.pass(0)
+	e.pass(10 * time.Minute)
+	e.want(0, 1)
+	if !strings.Contains(e.subjects[0], "is waiting for you") {
+		t.Fatalf("notice %q", e.subjects[0])
+	}
 }

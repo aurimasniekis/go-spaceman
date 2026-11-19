@@ -7686,6 +7686,16 @@
 - **A worker that waits long.** A worker waiting for an answer that takes long (control asking a person or another
   space) can see the cycle "reminder, its message to control, notice to control" once per new turn control gives it.
   It stops when the task is set to `blocked`, which control or the worker can do.
+- **Background work.** A run reporting working with `status_kind` `background` (turn finished, shells, monitors or
+  sub-agents still running, ADR-0100) is busy, never a candidate. Where Claude Code reports plain `idle` while
+  background work runs, the check cannot tell: that worker can get a reminder and control a notice that are false. The
+  reminder text says so, so the worker answers by messaging control.
+- **After a restart** the watchdog has no working time for a run: a message to control then counts as the run's last
+  act, so the run waits for control (a notice) instead of being reminded.
+- **Replies to an ended control.** A reply addressed to a control run that has since ended still counts as open until it
+  is acknowledged or resolved; control starting again reads it through its inbox, so the worker is not reminded in the
+  meantime. Not changed.
+- The query for a run's messages to control uses `ix_messages_from` (migration 0066).
 - **Not a security-relevant change:** no requirement, guarantee or default is relaxed. The reminder is safe input with
   only the task's ID, refused during takeovers and usage limits like every notice.
 

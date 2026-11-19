@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 )
 
@@ -46,7 +47,8 @@ type workerWait struct {
 func handbackText(taskID string) string {
 	return "SpaceMan watchdog: your turn ended but task " + taskID + " is still running. If the work is done, set the task to review " +
 		"with spaceman_task_set_status and a short result, and message control. If you are blocked or waiting, message control " +
-		"(spaceman_message_send) saying what you need."
+		"(spaceman_message_send) saying what you need. (If you are only waiting for background work you started, message control " +
+		"saying so: SpaceMan cannot always tell.)"
 }
 
 // checkHandbacks runs the hand-back check over one space's live worker runs.
@@ -102,7 +104,10 @@ type busyMark struct {
 func (w *Watchdog) handbackRun(ctx context.Context, spaceID string, r *fleet.Run, t *queue.Task, n time.Duration, now time.Time) {
 	w.mu.Lock()
 	h := w.idle[r.ID]
-	working := r.Status != "idle" && r.Status != "done"
+	// Working includes "turn finished, background shells, monitors or sub-agents still running" (status_kind background,
+	// reported as working): no reminder then. Where the program reports plain idle while background work runs, the check
+	// cannot tell (ADR-0099 addendum).
+	working := r.Status != "idle" && r.Status != "done" || r.Status == "working" && r.StatusKind == proto.StatusKindBackground
 	if a := w.acts[r.ID]; a != nil && a.inflight > 0 {
 		working = true
 	}
@@ -150,7 +155,8 @@ func (w *Watchdog) handbackRun(ctx context.Context, spaceID string, r *fleet.Run
 	if h == nil {
 		// The stretch begins now. It waits on control when the run messaged control after the watchdog last saw it working
 		// (its turn ended with that message), or when it just answered with a message.
-		replied = replied || !busyAt.IsZero() && wt.MsgAt.After(busyAt)
+		// After a restart busyAt is zero: any message then counts as the last act, the cautious side (no reminder).
+		replied = replied || wt.MsgAt.After(busyAt)
 		w.idle[r.ID] = &handback{space: spaceID, task: t.ID, version: t.Version, turn: r.Turn, msgAt: wt.MsgAt, since: now, replied: replied}
 		w.mu.Unlock()
 		return
