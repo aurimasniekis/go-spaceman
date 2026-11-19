@@ -164,6 +164,30 @@ func (l *Local) Stat(_ context.Context, key string) (Info, error) {
 	return Info{Key: key, Size: fi.Size(), ModTime: fi.ModTime().UTC()}, nil
 }
 
+// ListPrefixes implements PrefixLister: the directories directly below prefix (a namespace or a folder in one).
+func (l *Local) ListPrefixes(_ context.Context, prefix string) ([]string, error) {
+	ns, rest, _ := strings.Cut(prefix, "/")
+	root, ok := l.roots[ns]
+	if !ok || strings.Contains(rest, "..") {
+		return nil, nil
+	}
+	es, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(rest)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range es {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // List implements Store: it walks the directories of the namespaces the prefix can match and returns the files that
 // are artifacts (temporary and partial files are not).
 func (l *Local) List(_ context.Context, prefix string) ([]Info, error) {

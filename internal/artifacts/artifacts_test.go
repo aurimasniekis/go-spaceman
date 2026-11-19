@@ -491,3 +491,28 @@ func TestFromConfig(t *testing.T) {
 
 // secretValue is generated per test binary run and must never appear in an error or a location.
 var secretValue = "sk-" + hex.EncodeToString([]byte(time.Now().String()))[:24]
+
+// ListPrefixes returns one name per folder below a prefix, however many objects each holds.
+func TestListPrefixes(t *testing.T) {
+	loc, _ := localStore(t)
+	s3, srv := s3Store(t)
+	srv.PageSize = 2
+	for name, s := range map[string]artifacts.Store{"local": loc, "s3": s3} {
+		pl, ok := s.(artifacts.PrefixLister)
+		if !ok {
+			t.Fatalf("%s: not a PrefixLister", name)
+		}
+		for _, id := range []string{"run_bbbbbbbbbbbbbbbbbbbbbbbbbb", "run_aaaaaaaaaaaaaaaaaaaaaaaaaa", "run_cccccccccccccccccccccccccc"} {
+			for _, seg := range []string{"seg-000001.smrec.zst", "seg-000002.smrec.zst", "seg-000003.smrec.zst"} {
+				put(t, s, artifacts.NSRecordings+"/"+id+"/"+seg, []byte(seg))
+			}
+		}
+		got, err := pl.ListPrefixes(context.Background(), artifacts.NSRecordings+"/")
+		if err != nil || len(got) != 3 || got[0] != "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" || got[1] != "run_bbbbbbbbbbbbbbbbbbbbbbbbbb" || got[2] != "run_cccccccccccccccccccccccccc" {
+			t.Errorf("%s: %v %v", name, got, err)
+		}
+		if got, err := pl.ListPrefixes(context.Background(), artifacts.NSRecordings+"/run_aaaaaaaaaaaaaaaaaaaaaaaaaa/"); err != nil || len(got) != 0 {
+			t.Errorf("%s: leaf folder: %v %v", name, got, err)
+		}
+	}
+}

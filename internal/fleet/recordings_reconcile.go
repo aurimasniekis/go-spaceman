@@ -29,7 +29,11 @@ const (
 
 // ReconcileOptions bounds one reconcile pass.
 type ReconcileOptions struct {
-	// MaxRuns is the most runs examined per pass (the rest wait for the next pass).
+	// MaxRuns is the most runs examined per pass (the rest wait for the next pass). Every run examined counts, kept
+	// ones too: a pass continues after the last run of the previous one and wraps, so with N stored runs every run is
+	// examined within ceil(N/MaxRuns) passes. The worst case is a leftover waiting that many sweep intervals (with
+	// 200 runs per pass and a 24h interval, 1000 stored runs take 5 days). Counting only delete candidates would need
+	// a database lookup for every stored run on every pass, so it is not done.
 	MaxRuns int
 	// Absent allows removing the recording of a run the database cleanly reports absent. Off, such a recording is kept:
 	// an absent row is also what a restored older backup or a second central on the same bucket looks like.
@@ -56,6 +60,9 @@ func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Contex
 	var res ReconcileResult
 	newest := map[string]time.Time{} // run -> newest modification time seen in storage
 	note := func(id string, t time.Time) {
+		if _, ok := newest[id]; !ok {
+			newest[id] = time.Time{} // seen; a zero time means "age unknown", never old enough to delete when absent
+		}
 		if t.After(newest[id]) {
 			newest[id] = t
 		}
@@ -71,14 +78,28 @@ func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Contex
 		note(e.Name(), localNewest(filepath.Join(r.dir, e.Name())))
 	}
 	if r.archive {
-		objs, err := r.store.List(ctx, artifacts.NSRecordings+"/")
-		if err != nil {
-			return res, err
-		}
-		for _, o := range objs {
-			id, _, ok := strings.Cut(strings.TrimPrefix(o.Key, artifacts.NSRecordings+"/"), "/")
-			if ok && reRunID.MatchString(id) {
-				note(id, o.ModTime)
+		if pl, ok := r.store.(artifacts.PrefixLister); ok && !opts.Absent {
+			// Only the run IDs are needed (an object's age matters only for absent runs), so list one folder per run
+			// instead of every segment object, whose count grows with history.
+			names, err := pl.ListPrefixes(ctx, artifacts.NSRecordings+"/")
+			if err != nil {
+				return res, err
+			}
+			for _, id := range names {
+				if reRunID.MatchString(id) {
+					note(id, time.Time{})
+				}
+			}
+		} else {
+			objs, err := r.store.List(ctx, artifacts.NSRecordings+"/")
+			if err != nil {
+				return res, err
+			}
+			for _, o := range objs {
+				id, _, ok := strings.Cut(strings.TrimPrefix(o.Key, artifacts.NSRecordings+"/"), "/")
+				if ok && reRunID.MatchString(id) {
+					note(id, o.ModTime)
+				}
 			}
 		}
 	}
@@ -148,7 +169,8 @@ func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Contex
 	return res, nil
 }
 
-// localNewest is the newest modification time of a folder and its files.
+// localNewest is the newest modification time of a folder and of the entries directly in it (not of anything nested
+// deeper; a recording folder holds only segment files). A zero time means nothing could be read.
 func localNewest(dir string) time.Time {
 	var t time.Time
 	if fi, err := os.Stat(dir); err == nil {

@@ -73,6 +73,14 @@ type Store interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// PrefixLister is implemented by stores that can list the "folders" directly below a prefix without listing every
+// object in them (S3 with a delimiter, a directory listing).
+type PrefixLister interface {
+	// ListPrefixes returns the names of the folders directly below prefix (which ends with "/"), without the prefix
+	// or a trailing slash, in order.
+	ListPrefixes(ctx context.Context, prefix string) ([]string, error)
+}
+
 // FileMover is implemented by stores that can take over a local file without copying it (Local, by renaming it).
 type FileMover interface {
 	MoveFile(ctx context.Context, key, path string, size int64, sha256 string) error
