@@ -49,6 +49,10 @@ const dialogPendingMax = 64
 // dialogContextFile holds what a run's dialog answers may depend on, written at launch (it survives an agent restart).
 const dialogContextFile = "dialog.json"
 
+// dialogOpenFile holds a run's open flagged occurrence, so an agent restart that finds the same dialog keeps its ID and
+// central does not count it twice.
+const dialogOpenFile = "dialog-open.json"
+
 // dialogLaunch is the launch facts saved in dialogContextFile.
 type dialogLaunch struct {
 	Harness  string   `json:"harness"`
@@ -268,8 +272,17 @@ func (a *Agent) dialogFlag(ctx context.Context, row runRow, res dialog.Result) {
 	prev := w.blocked
 	d := proto.RunDialog{ID: ids.New(ids.Dialog), RunID: row.RunID, SpaceID: row.SpaceID, Generation: row.Generation, Outcome: proto.DialogBlocked,
 		Dialog: res.ID, Signal: res.Signal, Excerpt: excerpt(res.Lines, w.secrets), HarnessVersion: row.Bin.Version, DetectedAt: a.now().UTC()}
+	if prev == nil {
+		// Flagged before an agent restart and still there: the same occurrence.
+		if open, ok := a.loadOpenDialog(row); ok && open.Dialog == res.ID {
+			d = open
+		}
+	}
 	w.blocked, w.answered = &d, ""
 	a.dlg.mu.Unlock()
+	if err := writeJSONFile(filepath.Join(a.runDir(row.RunID), dialogOpenFile), d); err != nil {
+		a.log.Warn("dialog watch: save the open dialog", slog.String(obs.FieldRunID, row.RunID), obs.Err(err))
+	}
 	if prev != nil {
 		c := *prev
 		c.Outcome, c.Excerpt, c.DetectedAt = proto.DialogCleared, "", a.now().UTC()
@@ -281,20 +294,35 @@ func (a *Agent) dialogFlag(ctx context.Context, row runRow, res dialog.Result) {
 	a.dialogSend(ctx, d)
 }
 
+// loadOpenDialog reads the open occurrence an earlier agent process saved for this run (and generation).
+func (a *Agent) loadOpenDialog(row runRow) (proto.RunDialog, bool) {
+	var d proto.RunDialog
+	b, err := os.ReadFile(filepath.Join(a.runDir(row.RunID), dialogOpenFile)) //nolint:gosec // a fixed name in the run's own directory
+	if err != nil || json.Unmarshal(b, &d) != nil || d.RunID != row.RunID || d.Generation != row.Generation || !d.Valid() ||
+		d.Outcome != proto.DialogBlocked {
+		return proto.RunDialog{}, false
+	}
+	return d, true
+}
+
 // dialogClear ends a run's flag (its dialog is gone, or the program works again).
 func (a *Agent) dialogClear(ctx context.Context, row runRow) {
 	a.dlg.mu.Lock()
-	w := a.dlg.runs[row.RunID]
-	if w == nil || w.blocked == nil && w.answered == "" {
-		a.dlg.mu.Unlock()
-		return
+	var prev *proto.RunDialog
+	if w := a.dlg.runs[row.RunID]; w != nil {
+		prev = w.blocked
+		w.blocked, w.answered = nil, ""
 	}
-	prev := w.blocked
-	w.blocked, w.answered = nil, ""
 	a.dlg.mu.Unlock()
 	if prev == nil {
-		return
+		// One flagged before an agent restart, gone since.
+		open, ok := a.loadOpenDialog(row)
+		if !ok {
+			return
+		}
+		prev = &open
 	}
+	_ = os.Remove(filepath.Join(a.runDir(row.RunID), dialogOpenFile))
 	if cur, err := a.j.getRun(ctx, row.RunID); err == nil {
 		row = cur
 	}

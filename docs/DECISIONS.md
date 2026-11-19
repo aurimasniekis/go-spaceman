@@ -7808,7 +7808,9 @@
      would answer the dialog; an operator's forced input and takeover still work. The flag clears when a quiet read
      finds no dialog, the program reports `working`, its turn counter moves, or the run ends.
   8. **Events.** Each occurrence has a node-made ID (`dlg_…`) and is sent once as `run.dialog` (minor 15), again after a
-     reconnect while open or unsent; central records it once (`run_dialogs`, `ON CONFLICT DO NOTHING`):
+     reconnect while open or unsent; central records it once (`run_dialogs`, `ON CONFLICT DO NOTHING`). An open
+     occurrence is also saved in the run's directory, so an agent restart that finds the same dialog keeps its ID, and
+     one gone since the restart is cleared:
      - `answered`: an audit event `run.dialog_answered` on the run (dialog, signal, answer). Not published.
      - `blocked`: audit `run.dialog_detected`; the outbox event `evt.spaceman.fleet.run.dialog_detected`
        (`spaceman.fleet.run_dialog_detected.v1`) with the run fields, `dialog_id`, `dialog`, `signal`, `harness_version`

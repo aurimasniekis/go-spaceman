@@ -308,3 +308,38 @@ func mustJSONT(t *testing.T, v any) json.RawMessage {
 	}
 	return b
 }
+
+// An agent restart that finds the same dialog still open keeps its occurrence (central counts it once); one gone since
+// the restart is cleared.
+func TestDialogOccurrenceSurvivesAgentRestart(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	e.show(fixture(t, "claude-unknown.txt"))
+	waitFor(t, "flagged", func() bool { return len(e.dialogs()) == 1 })
+	first := e.dialogs()[0]
+	forget := func() { // what a new agent process knows of the watch: nothing
+		e.a.dlg.mu.Lock()
+		for _, w := range e.a.dlg.runs {
+			if w.timer != nil {
+				w.timer.Stop()
+			}
+		}
+		e.a.dlg.runs = nil
+		e.a.dlg.mu.Unlock()
+	}
+	forget()
+	e.f.Output(e.term, "\x1b[H")
+	waitFor(t, "flagged again", func() bool { return len(e.dialogs()) == 2 })
+	if again := e.dialogs()[1]; again.ID != first.ID || again.Outcome != proto.DialogBlocked {
+		t.Fatalf("after a restart: %+v, want the same occurrence %s", again, first.ID)
+	}
+	forget()
+	e.show(fixture(t, "claude-2.1.328-main-idle.txt"))
+	waitFor(t, "cleared", func() bool { return len(e.dialogs()) == 3 })
+	if c := e.dialogs()[2]; c.ID != first.ID || c.Outcome != proto.DialogCleared {
+		t.Fatalf("cleared %+v", c)
+	}
+	quiet()
+	if n := len(e.dialogs()); n != 3 {
+		t.Fatalf("%d messages, want nothing more", n)
+	}
+}
