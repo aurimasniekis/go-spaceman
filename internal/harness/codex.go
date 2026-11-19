@@ -87,6 +87,17 @@ func (Codex) Build(c Context) (Launch, error) {
 		}
 		argv = append(argv, "-a", a)
 	}
+	// The role memory checkout and a dream's linked memory folders lie outside the workspace: --add-dir makes exactly
+	// those folders writable under workspace-write, without widening the sandbox (docs/contracts/harnesses.md).
+	if c.MemoryDir != "" {
+		argv = append(argv, "--add-dir", c.MemoryDir)
+	}
+	for _, d := range c.ExtraDirs {
+		if d == c.MemoryDir {
+			continue
+		}
+		argv = append(argv, "--add-dir", d)
+	}
 	if p.Resume {
 		if !reCodexSession.MatchString(p.SessionID) {
 			return Launch{}, errors.New("codex: resume needs a session_id")

@@ -583,3 +583,36 @@ func TestClaudeAllowsExtraDirs(t *testing.T) {
 		t.Fatalf("trusted projects %v, want %v", projects, want)
 	}
 }
+
+// A Codex run gets its role memory checkout and a dream's linked memory folders as extra writable roots (--add-dir,
+// which widens workspace-write by exactly those folders), each once, and none when there are none.
+func TestCodexBuildWritableRoots(t *testing.T) {
+	c := ctxFor(proto.LaunchPayload{Prompt: "dream", Settings: map[string]string{"sandbox": "workspace-write"}})
+	c.Binary = "codex"
+	c.MemoryDir = "/data/memory/own"
+	c.ExtraDirs = []string{"/data/memory/own", "/data/memory/other"}
+	l, err := Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for i, a := range l.Argv {
+		if a == "--add-dir" {
+			got = append(got, l.Argv[i+1])
+		}
+		if a == "danger-full-access" {
+			t.Fatalf("sandbox widened: %v", l.Argv)
+		}
+	}
+	if !reflect.DeepEqual(got, []string{"/data/memory/own", "/data/memory/other"}) {
+		t.Fatalf("add-dir %v in %v", got, l.Argv)
+	}
+	c.MemoryDir, c.ExtraDirs = "", nil
+	l, err = Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(l.Argv, " "), "--add-dir") {
+		t.Fatalf("unexpected --add-dir: %v", l.Argv)
+	}
+}
