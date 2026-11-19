@@ -182,8 +182,8 @@ func (r *Runner) Interrupt(ctx context.Context, id string) (string, error) {
 // (status_mismatch "… is done, not idle", hc 0.1.16). Claude Code reports done after every turn and stays there until
 // it gets input, so the idle gate alone would refuse every notice after a run's first turn. A done program has
 // finished its turn and waits for input, like an idle one. So has a Claude Code that reports working with "… still
-// running" after a finished turn (runner.KindBackground): it sits at its prompt while background shells, monitors or
-// agents run, which can be hours for a control. When the gate refuses and the program still reports either, the text
+// running" after a finished turn (runner.KindBackground): it sits at its prompt while background shells or monitors
+// run, which can be hours for a control. When the gate refuses and the program still reports either, the text
 // is sent ungated. The core still waits ~3 s without human typing before pressing Enter.
 func (r *Runner) Send(ctx context.Context, id, text string, ifIdle bool) error {
 	params := map[string]any{"terminal": id, "text": text}

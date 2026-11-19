@@ -47,7 +47,8 @@ type Status struct {
 const KindBackground = proto.StatusKindBackground
 
 // claudeBackgroundSuffix ends the message Claude Code reports with `working` after a completed turn while background
-// tasks still run ("1 shell still running", "2 background agents still running"; 2.1.328, docs/contracts/harnesses.md).
+// shells or monitors still run ("1 shell still running", "2 shells, 1 monitor still running"; 2.1.328,
+// docs/contracts/harnesses.md).
 const claudeBackgroundSuffix = " still running"
 
 // Classify returns s with Kind set to KindBackground when the program's own report says that its turn has finished and

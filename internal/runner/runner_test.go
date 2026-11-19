@@ -12,7 +12,7 @@ func TestClassifyBackground(t *testing.T) {
 	}{
 		{Status{State: "working", App: "claude-code", Message: "1 shell still running"}, KindBackground, true},
 		{Status{State: "working", App: "claude-code", Message: "2 shells, 1 monitor still running"}, KindBackground, true},
-		{Status{State: "working", App: "claude-code", Message: "1 background agent still running"}, KindBackground, true},
+		{Status{State: "working", App: "claude-code", Message: "1 monitor still running"}, KindBackground, true},
 		{Status{State: "working", App: "claude-code", Message: "Reading files"}, "", false},
 		{Status{State: "working", App: "claude-code"}, "", false},
 		{Status{State: "working", App: "codex", Message: "1 shell still running"}, "", false},

@@ -7650,12 +7650,11 @@
 - **Context:** messages and task-review notifications to control waited for up to 45 minutes while control sat at its
   prompt. They became available only when control called `spaceman_messages` on its own; a later "run ended"
   notification was typed within seconds. Control's run reported `working` the whole time, with only background
-  shells running. The cause is Claude Code's own status report (`docs/contracts/harnesses.md`, verified on 2.1.328):
-  after a turn has completed, while background tasks the session started (shells, monitors, background agents) still
-  run, it reports OSC 7501 `state=working` with the message "… still running" (for example "1 shell still running")
-  instead of `done`. SpaceMan treated that as a turn in progress in both places that gate a notice: the notifier only
-  considered runs reporting `idle` or `done`, and the node's idle-gated send (`hc.Runner.Send`) typed ungated only for
-  `done`. The program was at its prompt and would have taken the line, but the notice waited until the background
+  shells running. The cause is Claude Code's own status report (`docs/contracts/harnesses.md`, read from the 2.1.328
+  binary): after a turn has completed, while background shells or monitors the session started still run, it reports
+  OSC 7501 `state=working` with the message "… still running" (for example "1 shell still running") instead of
+  `done`. SpaceMan treated that as a turn in progress in both places that gate a notice: the notifier only considered
+  runs reporting `idle` or `done`, and the node's idle-gated send (`hc.Runner.Send`) typed ungated only for `done`. The program was at its prompt and would have taken the line, but the notice waited until the background
   tasks ended. A control that keeps a background shell or monitor running was never woken. herdr-core keeps
   Claude Code's per-task reports separate from the terminal's status (verified on hc 0.1.17), so the terminal's
   status itself is `working`.
@@ -7683,6 +7682,10 @@
     known wordings, and a harness bump should check the contract note.
   - The watchdog still counts control as busy while it waits on background tasks, so it does not nudge it then. With
     notices delivered, new items reach control; nudging for older backlog in that state is left as a follow-up.
+  - A running background **agent** (a subagent, fork or workflow) makes Claude Code report plain `working`, the same
+    as a turn in progress, with no "still running" message. A run waiting at its prompt on one still gets no notice
+    until the agent finishes (it then starts a turn by itself, and reports `done` after it). Telling the two apart
+    would need another signal, such as Claude Code's `Stop` hook; that is left open.
   - Codex is unaffected: no such report is known for it.
 - **Not a security-relevant change:** notices carry no content, and the input stays idle-gated: a program in the
   middle of a turn is still refused.
