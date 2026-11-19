@@ -58,6 +58,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Pausing, disabling or reconfiguring an event subscription no longer delays an event by 30 seconds.** The ingestion
+  manager stopped a durable subscription immediately, so an event the server delivered during the stop stayed
+  unacknowledged, and the consumer started next (after the space resumed, or with the new configuration) received it
+  only once the 30-second acknowledgement timeout expired. Subscriptions are now drained: events already delivered are
+  handled and acknowledged first, for at most 5 seconds. The go-pulse SDK is updated to v0.1.7 for this.
+
 - **Turning the worker start check back on no longer flags long-running runs.** While `worker_start_watchdog_minutes`
   is 0 the watchdog now keeps the start records of running runs, so a run that began long ago is not reported as
   never started after the check is re-enabled.

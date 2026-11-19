@@ -1,7 +1,7 @@
 # Contract: go-pulse
 
-- **Revision:** `github.com/aurimasniekis/go-pulse` **v0.1.3**, commit `9aba53b5c8cfe5eb8ff01321d30a36dfb6cac273` (local `../pulse`), Apache-2.0.
-  Inspected 2026-11-02. Specs: `docs/ENVELOPE.md`, `docs/GOAL.md`. Code: `pkg/pulse/{client,subscribe,blob}.go`, `pkg/pulse/envelope/envelope.go`,
+- **Revision:** `github.com/aurimasniekis/go-pulse` **v0.1.7**, commit `c151ac1e1f01fe062561054f0af9c9cb47ac39b6`, Apache-2.0. The
+  contract was inspected at v0.1.3 (`9aba53b`, 2026-11-02); v0.1.7 re-checked `pkg/pulse/subscribe.go` on 2026-11-19 (Stop, Drain). Specs: `docs/ENVELOPE.md`, `docs/GOAL.md`. Code: `pkg/pulse/{client,subscribe,blob}.go`, `pkg/pulse/envelope/envelope.go`,
   `internal/streams/events.go`, `internal/natsauth/grants.go`.
 
 ## Envelope (CloudEvents-lite in NATS headers; the body is the raw payload)
@@ -24,7 +24,16 @@ type PubAck struct { ID, Stream string; Sequence uint64; Duplicate bool }
 func (c *Client) Subscribe(ctx, filter string, h Handler, opts ...SubOption) (*Subscription, error) // Since|FromSeq|OnlyNew|Durable|AckWait|MaxDeliver|OnError|FromStream
 type Handler func(ctx context.Context, e Event) error
 func Terminal(err error) error
+func (s *Subscription) Stop()                          // immediate
+func (s *Subscription) Drain(ctx context.Context) error // graceful, v0.1.6+
 ```
+- **Handler context:** derived with `context.WithoutCancel` from the `Subscribe` ctx, so cancelling that ctx does not reach
+  handlers. Only `Stop`, or a `Drain` whose ctx ends first, cancels it.
+- **Stop vs Drain:** `Stop` stops delivery at once. An event the server delivers while the stop is in progress is never acked,
+  so the durable consumer redelivers it only after AckWait (30 s by default). `Drain` stops requesting events, lets the
+  delivered ones be handled and acked/nakked/termed, and returns when the consumer is closed. If its ctx ends first, it
+  cancels the handlers' ctx, stops and returns `ctx.Err()`. It is safe on nil, on a stopped subscription and when called
+  twice. SpaceMan halts durable subscriptions with a bounded `Drain` (`internal/events` `drainTimeout`).
 - **Without `Durable`:** an ordered ephemeral consumer, no acks.
 - **With `Durable(name)`:**
   - The consumer is `<clientID>_<name>`, with explicit ack and a single `FilterSubject`.

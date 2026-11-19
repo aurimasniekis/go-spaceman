@@ -66,11 +66,11 @@ func (m *Manager) startCore(ctx context.Context, c *connRun, s db.EventSubscript
 	}
 	run.nsub = nsub
 	if err := nc.FlushTimeout(subscribeCheck); err != nil {
-		run.halt()
+		run.halt(ctx)
 		return nil, fmt.Errorf("core subscribe: %w", err)
 	}
 	if last := nc.LastError(); last != nil && last != before && deniedSubscription(last, s.EffectiveSubject) { //nolint:errorlint // identity: a new error since subscribing
-		run.halt()
+		run.halt(ctx)
 		return nil, deniedError(s.EffectiveSubject)
 	}
 	m.coreMu.Lock()
