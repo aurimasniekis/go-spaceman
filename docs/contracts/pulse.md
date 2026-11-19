@@ -34,6 +34,10 @@ func (s *Subscription) Drain(ctx context.Context) error // graceful, v0.1.6+
   delivered ones be handled and acked/nakked/termed, and returns when the consumer is closed. If its ctx ends first, it
   cancels the handlers' ctx, stops and returns `ctx.Err()`. It is safe on nil, on a stopped subscription and when called
   twice. SpaceMan halts durable subscriptions with a bounded `Drain` (`internal/events` `drainTimeout`).
+  - **Pause behaviour:** events already delivered to a `while_paused=stop` subscription when its space pauses are handled and
+    acknowledged during the drain, so they are ingested although the space is paused; events not yet delivered wait in the
+    stream until the space resumes. After a drain times out (5 s) the handlers run with a cancelled ctx: they set no
+    subscription state and count no metric, and the stream redelivers their events.
 - **Without `Durable`:** an ordered ephemeral consumer, no acks.
 - **With `Durable(name)`:**
   - The consumer is `<clientID>_<name>`, with explicit ack and a single `FilterSubject`.

@@ -484,7 +484,8 @@ func (q *Queries) ListMessagesFor(ctx context.Context, arg ListMessagesForParams
 
 const listNoticeCandidates = `-- name: ListNoticeCandidates :many
 SELECT id, space_id, kind, role, harness, status, coalesce(started_at, created_at) AS since FROM runs
-WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done') AND limit_kind = ''
+WHERE desired = 'running' AND observed = 'running' AND limit_kind = ''
+  AND (status IN ('idle', 'done') OR (status = 'working' AND status_kind = 'background'))
 `
 
 type ListNoticeCandidatesRow struct {
@@ -497,8 +498,10 @@ type ListNoticeCandidatesRow struct {
 	Since   int64
 }
 
-// A run waiting for its usage limit to reset (limit_kind set) is no candidate: a notice would start a turn that fails at
-// once. Its items wait for the clear (ADR-0079 decision 3).
+// A candidate's program takes a notice (runner.Status.TakesNotice): it is idle or done, or it reports working only
+// because background tasks still run after its turn finished (status_kind 'background', ADR-0100). A run waiting for
+// its usage limit to reset (limit_kind set) is no candidate: a notice would start a turn that fails at once. Its items
+// wait for the clear (ADR-0079 decision 3).
 func (q *Queries) ListNoticeCandidates(ctx context.Context) ([]ListNoticeCandidatesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listNoticeCandidates)
 	if err != nil {

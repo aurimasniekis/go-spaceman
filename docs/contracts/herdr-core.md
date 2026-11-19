@@ -149,6 +149,12 @@ Run on 2026-11-03 with hc 0.1.16 on macOS against an isolated core (own `HC_SESS
   finished turn waiting for input): when the gate refuses and `terminal.get` still reports `done`, it sends ungated;
   the core still waits ~3 s without human typing before pressing Enter. `TestRealSendIdleOrDone` (idle and done
   accepted, working refused).
+- **Per-task reports stay apart, and `working` is refused (2026-11-19, hc 0.1.17, isolated core).** A program that
+  reports `state=done` and then `state=working:id=bg1` keeps `status` `done`; the second report appears only under
+  the terminal's `records` (`{"bg1":{"state":"working",…}}`) and disappears with `state=clear:id=bg1`. A program
+  reporting `state=working` with a `msg` is refused by `if: idle` ("… is working, not idle"), and `terminal.get`
+  returns the decoded `msg`. `hc.Runner.Send` therefore also sends ungated to a Claude Code run whose `working` report
+  says "… still running" (ADR-0100); `TestSendIdleGateFallback`.
 - **Programs start at the core's `headless` size.** `terminal.run` takes no size (`hc schema`: `cols`/`rows` appear
   only in `Terminal` and `RunResult`). The default is 200×120. `config.toml` `headless = "COLSxROWS"` sets it (an
   invalid value lets the core start but its terminals fail to spawn). A running core uses a rewritten value for the

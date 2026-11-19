@@ -101,7 +101,9 @@ func (m *Manager) handleCore(ctx context.Context, subID, spaceID string, msg *na
 	case m.svc.ownEvent(e):
 		err = m.svc.skipOwn(ctx, subID, fromPulse(e), 0)
 	case m.throttle(ctx, subID, spaceID, true) != nil:
-		m.svc.observe(DeliveryCore, OriginLive, "", errThrottled, -1)
+		if ctx.Err() == nil {
+			m.svc.observe(DeliveryCore, OriginLive, "", errThrottled, -1)
+		}
 		return // dropped: nothing could redeliver it
 	default:
 		// Always live: core NATS never redelivers, so a repeated ID is the source sending the message again.

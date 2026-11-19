@@ -59,7 +59,8 @@ func (r *Runner) proc(t terminal) runner.Process {
 		p.Finished = &f
 	}
 	if t.Status != nil {
-		p.Status = runner.Status{State: t.Status.State, App: t.Status.App, Kind: t.Status.Kind, Message: t.Status.Msg, Reported: t.Reported}
+		p.Status = runner.Classify(runner.Status{State: t.Status.State, App: t.Status.App, Kind: t.Status.Kind, Message: t.Status.Msg,
+			Reported: t.Reported})
 	}
 	return p
 }
@@ -174,13 +175,16 @@ func (r *Runner) Interrupt(ctx context.Context, id string) (string, error) {
 	return out.Outcome, nil
 }
 
-// Send pastes text and presses Enter. With ifIdle it types only while the program reports idle or done.
+// Send pastes text and presses Enter. With ifIdle it types only while the program takes a notice
+// (runner.Status.TakesNotice): it reports idle or done, or works only on background tasks after a finished turn.
 //
 // herdr-core's gate takes one exact status (`if: idle|working`) and refuses a program that reports done
 // (status_mismatch "… is done, not idle", hc 0.1.16). Claude Code reports done after every turn and stays there until
 // it gets input, so the idle gate alone would refuse every notice after a run's first turn. A done program has
-// finished its turn and waits for input, like an idle one: when the gate refuses and the program still reports done,
-// the text is sent ungated. The core still waits ~3 s without human typing before pressing Enter.
+// finished its turn and waits for input, like an idle one. So has a Claude Code that reports working with "… still
+// running" after a finished turn (runner.KindBackground): it sits at its prompt while background shells or monitors
+// run, which can be hours for a control. When the gate refuses and the program still reports either, the text
+// is sent ungated. The core still waits ~3 s without human typing before pressing Enter.
 func (r *Runner) Send(ctx context.Context, id, text string, ifIdle bool) error {
 	params := map[string]any{"terminal": id, "text": text}
 	if !ifIdle {
@@ -191,7 +195,7 @@ func (r *Runner) Send(ctx context.Context, id, text string, ifIdle bool) error {
 	if kind(err) != "status_mismatch" {
 		return mapErr(err)
 	}
-	if p, gerr := r.Get(ctx, id); gerr != nil || p.Status.State != "done" {
+	if p, gerr := r.Get(ctx, id); gerr != nil || !p.Status.TakesNotice() {
 		return mapErr(err)
 	}
 	delete(params, "if")

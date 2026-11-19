@@ -368,6 +368,12 @@ func (m *Manager) throttle(ctx context.Context, subID, spaceID string, core bool
 	wctx, cancel := context.WithTimeout(ctx, throttleWait)
 	defer cancel()
 	if err := lim.l.Wait(wctx); err != nil {
+		if ctx.Err() != nil {
+			// Cancelled, not throttled: a halt whose drain timed out cancels the handlers, and the events still buffered
+			// then reach this point. They must neither report the subscription as running (the manager has just set
+			// paused or stopped) nor count as rate limited; the stream redelivers them.
+			return ctx.Err()
+		}
 		msg := fmt.Sprintf("throttled: over the ingestion rate of %d events per minute; events wait in the stream", n)
 		if core {
 			msg = fmt.Sprintf("throttled: over the ingestion rate of %d events per minute; core NATS messages over it are dropped", n)
@@ -478,6 +484,9 @@ func (m *Manager) stopAll(ctx context.Context) {
 	}
 }
 
+// reconcile halts subscriptions one at a time (stopSub), so a pass can wait up to drainTimeout for each subscription
+// whose handler is held by the ingestion rate limit: K such subscriptions stall it for up to K*drainTimeout (stopAll
+// halts them together).
 func (m *Manager) reconcile(ctx context.Context) {
 	conns, err := m.svc.s.R().ListEventConnections(ctx)
 	if err != nil {
@@ -660,6 +669,9 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		if errors.As(err, &qe) {
 			return // expected and recorded in quarantine, not a subscription error
 		}
+		if errors.Is(err, context.Canceled) {
+			return // the handler was cancelled by a halt's drain timeout: not a subscription error, and the state is no longer ours
+		}
 		m.svc.setState(subID, "running", err.Error())
 	}))
 	sub, err := c.client.Subscribe(sctx, s.EffectiveSubject, func(hctx context.Context, e pulse.Event) error {
@@ -667,7 +679,9 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 			return m.svc.skipOwn(hctx, subID, fromPulse(e), e.Sequence)
 		}
 		if err := m.throttle(hctx, subID, spaceID, false); err != nil {
-			m.svc.observe(DeliveryDurable, OriginLive, "", err, -1)
+			if hctx.Err() == nil {
+				m.svc.observe(DeliveryDurable, OriginLive, "", err, -1)
+			}
 			return err // left in the stream: redelivered after a backoff
 		}
 		o := Origin{}

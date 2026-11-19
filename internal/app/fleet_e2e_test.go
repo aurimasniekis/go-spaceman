@@ -151,7 +151,7 @@ func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
 	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
 	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace, Clock: e.clk,
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, MCPCatalog: sharedMCPCatalog, StaleRunGrace: e.staleGrace, Clock: e.clk,
 		RecordingCreate: e.recCreate})
 	if err != nil {
 		e.t.Fatal(err)

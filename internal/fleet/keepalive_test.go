@@ -115,3 +115,44 @@ func TestRunLimitWindowHook(t *testing.T) {
 		t.Fatal("a failed hook's report was stored")
 	}
 }
+
+// ADR-0100: a run whose program starts waiting at its prompt on background tasks (`working`, kind background) wakes the
+// notifier once through OnRunTakesNotice; repeats, plain working and a run that stays idle do not.
+func TestOnRunTakesNoticeKick(t *testing.T) {
+	e := ulEnv(t)
+	var mu sync.Mutex
+	var kicked []string
+	e.svc.opts.OnRunTakesNotice = func(id string) { mu.Lock(); kicked = append(kicked, id); mu.Unlock() }
+	take := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		k := kicked
+		kicked = nil
+		return k
+	}
+	rep := func(status, kind string) {
+		t.Helper()
+		if _, err := e.svc.applyReport(e.ctx, "nod_1", proto.RunReport{RunID: "run_a", SpaceID: "spc_a", Generation: 1, State: proto.RunRunning,
+			Status: status, StatusKind: kind, ObservedAt: e.clk.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.runOn("run_a", "spc_a", "acc_1", "")
+	rep("working", "")
+	if k := take(); len(k) != 0 {
+		t.Fatalf("plain working kicked: %v", k)
+	}
+	rep("working", proto.StatusKindBackground)
+	if k := take(); len(k) != 1 || k[0] != "run_a" {
+		t.Fatalf("background: kicked %v, want run_a once", k)
+	}
+	rep("working", proto.StatusKindBackground)
+	if k := take(); len(k) != 0 {
+		t.Fatalf("repeat kicked: %v", k)
+	}
+	rep("done", "")
+	rep("idle", "")
+	if k := take(); len(k) != 0 {
+		t.Fatalf("done/idle kicked: %v", k)
+	}
+}
