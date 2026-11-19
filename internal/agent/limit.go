@@ -344,32 +344,39 @@ func limitScanned(status string) bool {
 
 // limitKick schedules a run's limit scan limitSettle after its status turned idle, done or error (debounced per run).
 func (a *Agent) limitKick(ctx context.Context, runID string) {
-	a.limitKickIn(ctx, runID, limitSettle)
+	a.limitKickIn(ctx, runID, limitSettle, false)
 }
 
-// limitKickIn is limitKick with its own delay.
-func (a *Agent) limitKickIn(ctx context.Context, runID string, d time.Duration) {
+// limitKickIn is limitKick with its own delay. keep leaves a scan that is already pending as it is (a re-arm never
+// pushes an earlier scan out).
+func (a *Agent) limitKickIn(ctx context.Context, runID string, d time.Duration, keep bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if t, ok := a.limitTimers[runID]; ok {
-		t.Reset(d)
+		if !keep {
+			t.Reset(d)
+		}
 		return
 	}
 	if a.limitTimers == nil {
 		a.limitTimers = map[string]*time.Timer{}
 	}
-	a.limitTimers[runID] = time.AfterFunc(d, func() {
+	var self *time.Timer
+	self = time.AfterFunc(d, func() {
 		a.mu.Lock()
-		delete(a.limitTimers, runID)
+		if a.limitTimers[runID] == self { // not a newer timer's entry
+			delete(a.limitTimers, runID)
+		}
 		a.mu.Unlock()
 		a.track(func() { a.limitScan(ctx, runID, false) })
 	})
+	a.limitTimers[runID] = self
 }
 
 // limitRearm schedules the next scan of a working run whose journaled limit is open.
 func (a *Agent) limitRearm(ctx context.Context, runID string) {
 	if cur, err := a.j.getRun(ctx, runID); err == nil && cur.State == proto.RunRunning && cur.Status == "working" && cur.Limit.Kind != "" {
-		a.limitKickIn(ctx, runID, limitPoll)
+		a.limitKickIn(ctx, runID, limitPoll, true)
 	}
 }
 

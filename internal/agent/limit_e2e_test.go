@@ -491,12 +491,10 @@ func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
 
 	// The reset passes: the run starts its auto-continuation turn and keeps working; the status never goes idle.
 	f.SetStatus(row.TerminalID, "working")
-	if err := rt.AppendTranscript(transcript, rt.NoticeRecord(reset), rt.AutoContinueRecord(reset)); err != nil {
-		t.Fatal(err)
-	}
-	// Its first reply is written a little later, still inside the same turn.
-	time.Sleep(100 * time.Millisecond)
-	if err := rt.AppendTranscript(transcript, rt.AssistantRecord("msg_continue", reset.Add(time.Second))); err != nil {
+	// The scan the working status kicked finds nothing yet; the continuation is written after it, so only the
+	// polling scan can see it while the turn is still running.
+	time.Sleep(150 * time.Millisecond)
+	if err := rt.AppendTranscript(transcript, rt.NoticeRecord(reset), rt.AutoContinueRecord(reset), rt.AssistantRecord("msg_continue", reset.Add(time.Second))); err != nil {
 		t.Fatal(err)
 	}
 	rs = fc.collect(t, runID, 500*time.Millisecond)
