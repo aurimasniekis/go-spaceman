@@ -74,10 +74,12 @@ type HarnessConfig struct {
 	Claude    ClaudeCodeConfig `yaml:"claude"`
 	// EnvPassthrough names extra environment variables the agent copies from its own environment into harness
 	// processes (Claude Code and Codex), when the agent has them set. Default: none. Only exact names are accepted
-	// (no patterns; an entry that is empty or contains "*" or "=" is refused), and names the agent sets itself or that
-	// carry credentials (SPACEMAN_*, HC_*, HALLPASS_*, HOME, PATH, XDG_*, ANTHROPIC_*, CODEX_*, CLAUDE_CODE_OAUTH_TOKEN,
-	// CLAUDE_CONFIG_DIR, OPENAI_API_KEY and similar) are refused too: a run's credentials come from its account, never
-	// from the node's environment. The value reaches the harness through the launcher shim after its scrub of
+	// (no patterns; an entry must be a plain name of letters, digits and "_"). The config refuses names the agent sets
+	// itself (SPACEMAN_*, HC_*, HALLPASS_*, XDG_*, HOME, PATH, TERM, CLAUDE_CONFIG_*), anything a gateway run's profile
+	// can't set (ANTHROPIC_*, every CLAUDE_CODE_* outside a short safe list such as CLAUDE_CODE_TMPDIR, proxy and TLS
+	// variables such as HTTPS_PROXY, NODE_OPTIONS and SSL_CERT_*), other providers' variables (AWS_*, GOOGLE_*,
+	// CLOUD_ML_*, VERTEX_*, AZURE_*, OPENAI_*, CODEX_*) and loader or shell hooks (LD_*, BASH_ENV): a run's credentials
+	// come from its account, never from the node's environment. The value reaches the harness through the launcher shim after its scrub of
 	// inherited variables, so a CLAUDE_CODE_* variable such as CLAUDE_CODE_TMPDIR can be passed. A profile's
 	// claude_settings.env is a separate, per-profile way to set variables for Claude Code only, applied by Claude Code
 	// itself from the profile's settings; use it for a value that differs per profile, and this option for a value

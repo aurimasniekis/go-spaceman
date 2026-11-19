@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -561,12 +562,12 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("write login", err)
 		return
 	}
+	built.SecretEnv = passthroughEnv(a.o.EnvPassthrough, os.LookupEnv, built) // before the secrets file the shim reads
 	a.rememberRunToken(c.RunID, p.RunToken)
 	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
 		fail("write secret file", err)
 		return
 	}
-	built.SecretEnv = passthroughEnv(a.o.EnvPassthrough, os.LookupEnv, built)
 	argv := a.wrap(rd, built)
 	// The last check before the start, under the run's lock, which stop also takes: a stop either is seen here, or
 	// waits until the program is started and recorded and then stops it.
@@ -1180,7 +1181,7 @@ func (a *Agent) retireGuard(ctx context.Context, spaceID string) {
 // environment, which the launcher shim applies after scrubbing inherited variables (so CLAUDE_CODE_* names survive)
 // and which herdr-core never persists. A name the launch already sets (Env or SecretEnv) keeps the agent's value.
 func passthroughEnv(names []string, lookup func(string) (string, bool), l harness.Launch) map[string]string {
-	out := l.SecretEnv
+	out := maps.Clone(l.SecretEnv)
 	for _, n := range names {
 		if _, ok := l.Env[n]; ok {
 			continue

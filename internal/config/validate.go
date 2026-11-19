@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -402,6 +403,8 @@ var protectedPassthroughNames = map[string]bool{
 	"OPENAI_API_KEY": true, "HARBOR_PILOT_TOKEN": true, "DISABLE_AUTOUPDATER": true, "DISABLE_UPDATES": true,
 }
 
+var passthroughNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func protectedPassthrough(name string) bool {
 	if protectedPassthroughNames[name] {
 		return true
@@ -418,10 +421,10 @@ func (v *validator) envPassthrough(names []string) {
 	seen := map[string]bool{}
 	for _, n := range names {
 		switch {
-		case n == "" || strings.ContainsAny(n, "*=?[ \t\x00"):
-			v.add("harness.env_passthrough: %q is not an exact variable name (no empty entries, patterns, \"=\" or spaces)", n)
-		case protectedPassthrough(n):
-			v.add("harness.env_passthrough: %q is set by the agent or carries credentials and can't be passed through", n)
+		case !passthroughNameRe.MatchString(n):
+			v.add("harness.env_passthrough: %q is not an exact variable name (letters, digits and _, not starting with a digit)", n)
+		case protectedPassthrough(n) || harness.PassthroughRefused(n):
+			v.add("harness.env_passthrough: %q is set by the agent, or is a credential, provider, proxy/TLS, loader or CLAUDE_CODE_* variable outside the safe list, and can't be passed through", n)
 		case seen[n]:
 			v.add("harness.env_passthrough: %q is listed twice", n)
 		}

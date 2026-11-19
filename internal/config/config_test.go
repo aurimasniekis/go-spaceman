@@ -437,7 +437,7 @@ func TestAgentEnvPassthroughValidation(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"", "FOO*", "A=B", "HOME", "SPACEMAN_RUN_ID", "HC_SESSION", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "XDG_STATE_HOME", "has space"} {
+	for _, bad := range []string{"", "FOO*", "A=B", "HOME", "SPACEMAN_RUN_ID", "HC_SESSION", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "XDG_STATE_HOME", "has space", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_SHELL_PREFIX", "AWS_ACCESS_KEY_ID", "OPENAI_BASE_URL", "HTTPS_PROXY", "https_proxy", "NODE_OPTIONS", "SSL_CERT_FILE", "LD_PRELOAD", "BASH_ENV", "1BAD"} {
 		cfg.Harness.EnvPassthrough = []string{bad}
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "harness.env_passthrough") {
 			t.Errorf("%q accepted: %v", bad, err)
