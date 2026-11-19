@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox
+  only let a run write its workspace, so a run on Codex could not write the memory folders outside it. The run now
+  gets write access to exactly those folders, and nothing else.
 - **Dream runs can now write the role memories they link.** The `memory/<role>` links in a dream's workspace point
   at memory folders outside it, which Claude Code refused to write through. The run now gets write access to exactly
   those folders of its own space, and nothing else.
