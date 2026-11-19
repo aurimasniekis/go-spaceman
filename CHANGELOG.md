@@ -13,12 +13,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   on a pending action an agent asked now becomes a `comment` notice, routed and woken like a clarification (the
   action stays pending and nothing needs an answer). The requester's own comments don't echo back, and comments on
   final actions notify nobody. Migration 0067 allows the new notice kind.
+- **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox
+  only let a run write its workspace, so a run on Codex could not write the memory folders outside it. The run now
+  gets write access to exactly those folders, and nothing else.
 - **Dream runs can now write the role memories they link.** The `memory/<role>` links in a dream's workspace point
   at memory folders outside it, which Claude Code refused to write through. The run now gets write access to exactly
   those folders of its own space, and nothing else.
 - **A parked run resumes as soon as its node's lease is renewed after a lapse.** When the usage-limit job looked
   at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
   the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
+- **A parked run's resume refused for a reason other than its node is no longer shown as `node_offline`.** A launch
+  refused as unavailable while the node's lease was valid (Harbor Pilot's budget status with `on_budget_status_unavailable: refuse`) was
+  recorded on the usage-limit wait as `node_offline`, and retried after 15 minutes (or at the node's next hello). Such a wait
+  now shows `upstream_unavailable` and is tried again after 5 minutes; a node hello leaves it alone.
 
 ## [0.1.14] - 2026-11-19
 

@@ -239,7 +239,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		lease, err := tx.Q.GetLease(ctx, spaceID)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && (lease.State != "active" || !tx.Now.Before(time.UnixMicro(lease.ExpiresAt)) || lease.NodeID != sp.NodeID)) {
-			return apperr.New(apperr.CodeUnavailable, "the space's node is not connected (no valid execution lease); no new work starts until it reconnects")
+			return nodeNotConnectedError{apperr.New(apperr.CodeUnavailable, "the space's node is not connected (no valid execution lease); no new work starts until it reconnects")}
 		} else if err != nil {
 			return err
 		}

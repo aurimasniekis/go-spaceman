@@ -601,3 +601,68 @@ func TestClaudeAllowsExtraDirs(t *testing.T) {
 		t.Fatalf("--add-dir %v, want %v", added, want)
 	}
 }
+
+// A Codex run gets its role memory checkout and a dream's linked memory folders as extra writable roots (--add-dir,
+// which widens workspace-write by exactly those folders), each once, and none when there are none.
+func TestCodexBuildWritableRoots(t *testing.T) {
+	c := ctxFor(proto.LaunchPayload{Prompt: "dream", Settings: map[string]string{"sandbox": "workspace-write"}})
+	c.Binary = "codex"
+	c.MemoryDir = "/data/memory/own"
+	c.ExtraDirs = []string{"/data/memory/own", "/data/memory/other"}
+	l, err := Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sandbox stays what the settings asked for: --add-dir must not change -s.
+	var got []string
+	sandbox := ""
+	for i, a := range l.Argv {
+		if a == "--add-dir" {
+			got = append(got, l.Argv[i+1])
+		}
+		if a == "-s" && i+1 < len(l.Argv) {
+			sandbox = l.Argv[i+1]
+		}
+	}
+	if sandbox != "workspace-write" {
+		t.Fatalf("sandbox %q, want workspace-write: %v", sandbox, l.Argv)
+	}
+	if !reflect.DeepEqual(got, []string{"/data/memory/own", "/data/memory/other"}) {
+		t.Fatalf("add-dir %v in %v", got, l.Argv)
+	}
+	// On resume the roots must come before "resume <id>", as -s and -a do (codex reads root flags only there).
+	r := ctxFor(proto.LaunchPayload{Prompt: "dream", Resume: true, SessionID: "019a2b3c-4d5e-7f00", Settings: map[string]string{"sandbox": "workspace-write"}})
+	r.Binary = "codex"
+	r.MemoryDir = "/data/memory/own"
+	r.ExtraDirs = []string{"/data/memory/own", "/data/memory/other"}
+	l, err = Codex{}.Build(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume := -1
+	for i, a := range l.Argv {
+		if a == "resume" {
+			resume = i
+		}
+	}
+	if resume < 0 {
+		t.Fatalf("no resume in %v", l.Argv)
+	}
+	var beforeResume []string
+	for i, a := range l.Argv {
+		if a == "--add-dir" && i < resume {
+			beforeResume = append(beforeResume, l.Argv[i+1])
+		}
+	}
+	if !reflect.DeepEqual(beforeResume, []string{"/data/memory/own", "/data/memory/other"}) {
+		t.Fatalf("--add-dir before resume %v, want both roots: %v", beforeResume, l.Argv)
+	}
+	c.MemoryDir, c.ExtraDirs = "", nil
+	l, err = Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(l.Argv, " "), "--add-dir") {
+		t.Fatalf("unexpected --add-dir: %v", l.Argv)
+	}
+}
