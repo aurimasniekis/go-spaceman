@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
   the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
 
+- **A parked run's resume refused for a reason other than its node is no longer shown as `node_offline`.** A launch
+  refused as unavailable while the node's lease was valid (Harbor Pilot's budget status with `on_budget_status_unavailable: refuse`) was
+  recorded on the usage-limit wait as `node_offline`, and retried after 15 minutes (or at the node's next hello). Such a wait
+  now shows `upstream_unavailable` and is tried again after 5 minutes; a node hello leaves it alone.
+
 ## [0.1.14] - 2026-11-19
 
 ### Added
