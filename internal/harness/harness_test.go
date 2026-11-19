@@ -555,3 +555,31 @@ func TestClaudeTrustsMemoryDir(t *testing.T) {
 		t.Fatalf("trusted projects %v, want %v", projects, want)
 	}
 }
+
+// TestClaudeAllowsExtraDirs: a dream's linked role memory checkouts lie outside its workspace, so each is passed with
+// --add-dir and trusted, exactly those and nothing else.
+func TestClaudeAllowsExtraDirs(t *testing.T) {
+	c := ctxFor(proto.LaunchPayload{Kind: "dreamer"})
+	c.ExtraDirs = []string{"/data/memory/spc_a/reviewer/instances/ins_1", "/data/memory/spc_a/worker/instances/ins_1"}
+	l, err := Claude{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var added []string
+	for i, a := range l.Argv {
+		if a == "--add-dir" && i+1 < len(l.Argv) {
+			added = append(added, l.Argv[i+1])
+		}
+	}
+	if !reflect.DeepEqual(added, c.ExtraDirs) {
+		t.Fatalf("--add-dir %v, want %v", added, c.ExtraDirs)
+	}
+	projects, _ := l.MergeJSON["/data/spaces/spc_a/instances/ins_1/claude/.claude.json"]["projects"].(map[string]any)
+	want := map[string]any{"/data/spaces/spc_a/work": map[string]any{"hasTrustDialogAccepted": true}}
+	for _, d := range c.ExtraDirs {
+		want[d] = map[string]any{"hasTrustDialogAccepted": true}
+	}
+	if !reflect.DeepEqual(projects, want) {
+		t.Fatalf("trusted projects %v, want %v", projects, want)
+	}
+}

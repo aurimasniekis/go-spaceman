@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Dream runs can now write the role memories they link.** The `memory/<role>` links in a dream's workspace point
+  at memory folders outside it, which Claude Code refused to write through. The run now gets write access to exactly
+  those folders of its own space, and nothing else.
 - **A parked run resumes as soon as its node's lease is renewed after a lapse.** When the usage-limit job looked
   at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
   the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
