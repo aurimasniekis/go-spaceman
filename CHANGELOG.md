@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **The watchdog flags worker runs whose program never connected to SpaceMan.** A running worker run whose program
+  has not loaded its SpaceMan tools (the MCP bridge fetches them when the program starts) and made no SpaceMan tool
+  call `worker_start_watchdog_minutes` (default 10; 0 turns it off) after it started gets control one notification
+  naming the run and its task, once per run. It asks control to check the run's terminal rather than stop it. A long
+  first turn, a run that waited at a usage limit and a run that started before central's last restart are never
+  flagged. `spaceman_runs_list` shows each run's `turn`.
+
 - **A sweep removes leftover recordings of deleted runs.** A recording folder left on the local backend, and S3
   objects of a run with no spool folder, were never removed after the run's recording was deleted or the run was
   gone. Central now sweeps the recordings directory and the bucket at start and every
@@ -16,6 +23,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   restored older backup or a second central on the same bucket also looks like "absent"), runs the database confirms
   absent whose recording has been untouched for 24h. A database or listing error skips the run, a run that exists is
   never touched, and each pass is bounded (200 runs, continuing where the last stopped) and paced.
+
 - **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
   credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.

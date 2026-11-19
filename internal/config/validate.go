@@ -266,6 +266,8 @@ var LimitRanges = map[string][2]int64{
 	"control_watchdog_minutes": {0, 1440},
 	"control_watchdog_nudges":  {0, 20},
 	"control_watchdog_restart": {0, 1},
+	// Worker start watchdog: minutes a worker's program may go without connecting to SpaceMan before control is told (0: off).
+	"worker_start_watchdog_minutes": {0, 1440},
 	// A new run's terminal size (ADR-0075): 0 is the node's runner.terminal_size; otherwise the terminal size bounds
 	// (TerminalLimitFloor).
 	"terminal_cols": {0, proto.TerminalMaxCols},
@@ -302,8 +304,8 @@ func (c *Config) LimitValues() map[string]int64 {
 		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
 		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes,
 		"control_watchdog_minutes": l.ControlWatchdogMinutes, "control_watchdog_nudges": l.ControlWatchdogNudges,
-		"control_watchdog_restart": l.ControlWatchdogRestart,
-		"terminal_cols":            l.TerminalCols, "terminal_rows": l.TerminalRows,
+		"control_watchdog_restart": l.ControlWatchdogRestart, "worker_start_watchdog_minutes": l.WorkerStartWatchdogMinutes,
+		"terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows,
 		"usage_limit_failover": l.UsageLimitFailover, "usage_limit_keep_alive_max_minutes": l.UsageLimitKeepAliveMaxMinutes,
 		"usage_limit_max_wait_hours": l.UsageLimitMaxWaitHours, "usage_limit_notify_after_hours": l.UsageLimitNotifyAfterHours,
 		"usage_limit_wait_if_reset_within": l.UsageLimitWaitIfResetWithin, "usage_limit_switch_max_per_day": l.UsageLimitSwitchMaxPerDay,

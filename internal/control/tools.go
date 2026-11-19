@@ -42,7 +42,10 @@ type RunRow struct {
 	Harness  string `json:"harness"`
 	Observed string `json:"observed"`
 	Status   string `json:"status,omitempty"`
-	TaskID   string `json:"task_id,omitempty"`
+	// Turn is how many turns the run's program finished: 0 can be a long first turn, so the watchdog (not this
+	// field) tells control about a worker whose program never connected to SpaceMan.
+	Turn   int64  `json:"turn"`
+	TaskID string `json:"task_id,omitempty"`
 	// Limit is the run's open usage limit (ADR-0079): the run is waiting for it to reset.
 	Limit *fleet.RunLimit `json:"limit,omitempty"`
 }
@@ -58,7 +61,7 @@ func Tools(fl *fleet.Service, q *queue.Service, roles RoleLister) func(r *agentt
 	ctrl := []string{agenttools.KindControl}
 	all := []string{agenttools.KindControl, agenttools.KindWorker, agenttools.KindKB, agenttools.KindDreamer, agenttools.KindDiagnostic}
 	return func(r *agenttools.Registry) {
-		agenttools.Add(r, "spaceman_runs_list", "List your space's active runs with their role, state, program status, task and usage limit (a run with a limit is waiting for it to reset).", all, true,
+		agenttools.Add(r, "spaceman_runs_list", "List your space's active runs with their role, state, program status, turn (finished turns; 0 can be a long first turn), task and usage limit (a run with a limit is waiting for it to reset).", all, true,
 			func(ctx context.Context, p *fleet.RunPrincipal, _ struct{}) (any, error) {
 				runs, err := fl.ListRuns(ctx, p.SpaceID, 100)
 				if err != nil {
@@ -79,8 +82,8 @@ func Tools(fl *fleet.Service, q *queue.Service, roles RoleLister) func(r *agentt
 					if !fleet.Live(x.Observed) {
 						continue
 					}
-					out = append(out, RunRow{ID: x.ID, Kind: x.Kind, Role: x.Role, Harness: x.Harness, Observed: x.Observed, Status: x.Status, TaskID: byRun[x.ID],
-						Limit: x.Limit})
+					out = append(out, RunRow{ID: x.ID, Kind: x.Kind, Role: x.Role, Harness: x.Harness, Observed: x.Observed, Status: x.Status, Turn: x.Turn,
+						TaskID: byRun[x.ID], Limit: x.Limit})
 				}
 				return out, nil
 			})
