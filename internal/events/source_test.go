@@ -101,7 +101,7 @@ func TestManagerUsesSourceInterface(t *testing.T) {
 		}
 	}
 	m := NewManager(svc, nil)
-	t.Cleanup(m.stopAll)
+	t.Cleanup(func() { m.stopAll(ctx) })
 	durable := &fakeSource{m: m, delivery: DeliveryDurable, running: map[string]db.EventSubscription{}}
 	core := &fakeSource{m: m, delivery: DeliveryCore, running: map[string]db.EventSubscription{}, fail: errors.New("fake core source refused")}
 	m.sources = map[string]Source{durable.Delivery(): durable, core.Delivery(): core}

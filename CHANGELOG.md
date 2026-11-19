@@ -65,6 +65,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Pausing, disabling or reconfiguring an event subscription no longer delays an event by 30 seconds.** The ingestion
+  manager stopped a durable subscription immediately, so an event the server delivered during the stop stayed
+  unacknowledged, and the consumer started next (after the space resumed, or with the new configuration) received it
+  only once the 30-second acknowledgement timeout expired. Subscriptions are now drained: events already delivered are
+  handled and acknowledged first, for at most 5 seconds. The go-pulse SDK is updated to v0.1.7 for this
+  (it also moves go-jose from 4.1.4 to 4.1.6). Events already delivered when a `while_paused=stop` space pauses are
+  ingested during the drain. If the drain times out, the events still buffered no longer set the subscription back to
+  `running` or count as rate limited.
+
 - **Messages and notifications now reach a control (or worker) that waits at its prompt while background tasks run.**
   After a turn, Claude Code reports `working` ("1 shell still running") instead of `done` while background shells or
   monitors it started are still running. SpaceMan took that for a turn in progress, so no terminal notice
