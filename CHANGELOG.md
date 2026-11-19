@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   pass, the capability loop and the report after hello as untracked goroutines, so one could still be running after
   `Run` returned (and, in tests, read package settings the caller restored next, a data race). They are tracked now and
   `Run` waits for them, bounded, like its other background work.
+- **A capabilities report is written only on the connection it was checked against.** The agent now reads what it has
+  sent, the protocol and the connection in one step and sends on that exact connection, so a reconnect in between makes
+  the write fail instead of putting an older inventory on the new session.
 - **A launch that fails before its program starts ends the run under the observe lock too.** Its failed write now takes
   the observe lock after the run's lock, like a stop, and the end work runs after the locks are released. A stop for a
   run this node had no record of takes it too, so every write that ends a run takes the observe lock.
