@@ -7815,7 +7815,8 @@
      - `blocked`: audit `run.dialog_detected`; the outbox event `evt.spaceman.fleet.run.dialog_detected`
        (`spaceman.fleet.run_dialog_detected.v1`) with the run fields, `dialog_id`, `dialog`, `signal`, `harness_version`
        and `detected_at`; and, after the commit, a notification to the operators and to control (not to control about
-       its own run) with the excerpt, deduplicated per occurrence.
+       its own run) with the excerpt, deduplicated per occurrence. The event carries no screen text: a subscriber
+       looks the occurrence up by `dialog_id` (the notice and the run's `run_dialogs` row; an API list is a follow-up).
      - `cleared`: audit `run.dialog_cleared`, `run_dialogs.cleared_at`, and `evt.spaceman.fleet.run.dialog_cleared`.
   9. **The excerpt** is the dialog's last 20 lines, at most 2 KiB, with the run's secret values (its secret env and run
      token, known to the agent process that launched it) and token-shaped strings masked. It is terminal output, so it
