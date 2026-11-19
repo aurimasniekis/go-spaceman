@@ -39,9 +39,11 @@ type feed struct {
 }
 
 func (f *feed) Latest(context.Context) (int64, error) {
-	f.latests.Add(1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Counted after the rows are read: a test that waits for the count and then adds a change must not see that
+	// change folded into the position this call returns.
+	defer f.latests.Add(1)
 	if len(f.rows) == 0 {
 		return 0, nil
 	}
