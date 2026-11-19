@@ -313,7 +313,7 @@ func TestMessageNoticedToControlWaitingOnBackgroundTasks(t *testing.T) {
 	e.run.SetStatusReport(ct, runner.Status{State: "working", App: "claude-code", Message: "1 shell still running"})
 	// Before ADR-0100 the notice never came while the shell ran: the notifier saw a working run, and the node's
 	// idle gate refused it. The status report kicks the notifier (the minute sweep is the fallback).
-	eventuallyFor(t, "notice typed into control", 90*time.Second, func() bool { return len(e.run.Inputs(ct)) == 1 })
+	eventuallyFor(t, "notice typed into control", 12*time.Second, func() bool { return len(e.run.Inputs(ct)) == 1 })
 	if notice := e.run.Inputs(ct)[0]; !strings.HasPrefix(notice, "SpaceMan: 1 new message") {
 		t.Fatalf("notice %q", notice)
 	}

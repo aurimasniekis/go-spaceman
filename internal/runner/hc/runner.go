@@ -195,7 +195,7 @@ func (r *Runner) Send(ctx context.Context, id, text string, ifIdle bool) error {
 	if kind(err) != "status_mismatch" {
 		return mapErr(err)
 	}
-	if p, gerr := r.Get(ctx, id); gerr != nil || p.Status.State != "done" && p.Status.Kind != runner.KindBackground {
+	if p, gerr := r.Get(ctx, id); gerr != nil || !p.Status.TakesNotice() {
 		return mapErr(err)
 	}
 	delete(params, "if")

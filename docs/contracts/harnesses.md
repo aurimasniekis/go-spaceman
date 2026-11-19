@@ -145,8 +145,12 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
     A running background **agent** (`local_agent`, `remote_agent`, teammate or workflow task) instead makes the session
     "busy": plain `working` with the turn's working detail, which SpaceMan cannot tell from a turn in progress. Claude
     Code also sends one OSC 7501 report per running task with `id=<task>`, which herdr-core keeps under the terminal's
-    `records`, apart from its `status`. SpaceMan classifies the "… still running" main report as status kind
-    `background` (`runner.Classify`, ADR-0100); `TestClassifyBackground` keeps the known wordings.
+    `records`, apart from its `status`. SpaceMan classifies the main report as status kind `background`
+    (`runner.Classify`, ADR-0100) only when `msg` is exactly the count wording, `^\d+ (shell|monitor)s?(, \d+
+    (shell|monitor)s?)* still running$`. The `msg` of a turn in progress is free text (a task summary), and a summary can
+    end in " still running" too ("fork still running"); matching the suffix alone would type a notice into a turn in
+    progress. Only the count wording is trusted because only it is generated from task counts, not written by the model.
+    `TestClassifyBackground` keeps the known wordings and the free-text look-alikes.
 - **Hidden flags:** `--channels`, `--dangerously-load-development-channels` (strings only, so **not** relied on until verified).
 - **Print mode:** `-p`, `--output-format stream-json`, `--max-budget-usd`. Used only by opt-in real tests, never for managed runs, which are interactive in hc.
 

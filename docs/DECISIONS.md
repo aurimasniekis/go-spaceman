@@ -7660,8 +7660,11 @@
   status itself is `working`.
 - **Decision:**
   1. **The node classifies the report.** `runner.Classify` gives a program status the kind `background`
-     (`proto.StatusKindBackground`) when it is `working`, has no kind, comes from `claude-code`, and its message ends
-     in " still running". It reads only the program's own report, never screen text (SM-RUN-002). The hc runner
+     (`proto.StatusKindBackground`) when it is `working`, has no kind, comes from `claude-code`, and its message is
+     exactly the count wording `^\d+ (shell|monitor)s?(, \d+ (shell|monitor)s?)* still running$`. The `msg` of a turn
+     in progress is free text (a task summary) that can end in " still running" too ("fork still running"), so a
+     suffix match would type an ungated notice into a running turn (review of PR #299); only the count wording, which
+     Claude Code generates from its task counts, is trusted. It reads only the program's own report, never screen text (SM-RUN-002). The hc runner
      applies it to every terminal it reads, so the run's `status_kind` reaches central with the status.
   2. **Such a program takes a notice.** `runner.Status.TakesNotice` is true for `idle`, `done` and
      `working`/`background`. When herdr-core's `if: idle` gate refuses a send and a fresh read shows `done` or

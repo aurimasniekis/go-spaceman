@@ -5,7 +5,7 @@ package runner
 import (
 	"context"
 	"errors"
-	"strings"
+	"regexp"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -46,17 +46,18 @@ type Status struct {
 // it waits at its prompt while background tasks it started still run (Classify). It is not an OSC 7501 kind.
 const KindBackground = proto.StatusKindBackground
 
-// claudeBackgroundSuffix ends the message Claude Code reports with `working` after a completed turn while background
-// shells or monitors still run ("1 shell still running", "2 shells, 1 monitor still running"; 2.1.328,
-// docs/contracts/harnesses.md).
-const claudeBackgroundSuffix = " still running"
+// claudeBackgroundMsg is the message Claude Code reports with `working` after a completed turn while background
+// shells or monitors still run ("1 shell still running", "2 shells, 1 monitor still running"; docs/contracts/harnesses.md).
+// Only this count wording is trusted: the msg of a turn in progress is free text (a task summary), and a summary can
+// end in " still running" too ("fork still running").
+var claudeBackgroundMsg = regexp.MustCompile(`^\d+ (shell|monitor)s?(, \d+ (shell|monitor)s?)* still running$`)
 
 // Classify returns s with Kind set to KindBackground when the program's own report says that its turn has finished and
 // only background tasks are still running: Claude Code reports `working` then, not `done`. The program is at its prompt
 // and takes input, so an idle-gated notice may be typed (SM-COMM-003); for everything else (idle stops, account
 // switches, the watchdog) the run stays working. This reads the program-reported status message, never screen text.
 func Classify(s Status) Status {
-	if s.State == "working" && s.Kind == "" && s.App == "claude-code" && strings.HasSuffix(s.Message, claudeBackgroundSuffix) {
+	if s.State == "working" && s.Kind == "" && s.App == "claude-code" && claudeBackgroundMsg.MatchString(s.Message) {
 		s.Kind = KindBackground
 	}
 	return s
