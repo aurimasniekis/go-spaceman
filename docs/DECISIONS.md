@@ -7623,6 +7623,25 @@
   | W4 | Web: a badge on the space's control card when control is being nudged or was escalated, from W2's state. | W2 | Sonnet |
   | W5 | Docs site: a "Watchdog" section in the control guide, the three limits in the limits guide, TRACEABILITY evidence for SM-CTRL-008. | W1 | Haiku |
 
+#### ADR-0099 addendum — worker start check (`worker_start_watchdog_minutes`)
+
+- **What.** A fourth limit, `worker_start_watchdog_minutes` (default 10, 0 off, at most 1,440), makes the watchdog tell
+  control, once per run, about a worker run that is `running` on a connected node, at turn 0, and whose program has not
+  connected to SpaceMan that long after the run started. The notice asks control to check the run's terminal; it does
+  not tell control to stop the run.
+- **Connected, not turn or activity.** `Run.Turn` counts finished turns, and a worker gets its whole task as one
+  prompt, so a healthy worker can stay at turn 0 for an hour, and often makes its first SpaceMan tool call only at the
+  end. The program's MCP bridge fetches the run's tool catalog (`_catalog`) when the program starts it, and central ties
+  that fetch to the run by its token; so the check flags a run only when neither that fetch nor any SpaceMan tool call
+  was seen. Once either is seen the run is never flagged.
+- **Usage limits.** A run that reported a usage limit shows its program began: while its limit is open the watchdog
+  records that, so the run is not flagged when it resumes after the limit clears, however long it waited.
+- **Restarts of central.** The catalog is fetched once per program, so after a restart of central it is unknown whether
+  a run that started earlier connected. Such a run is never flagged; the check covers runs started after central did.
+- **Not flagged either.** A run whose node is not connected (`observed` is not `running`), and control.
+- **`spaceman_runs_list`** shows `turn` only; the earlier `not_started` flag used turn 0 alone and is dropped.
+- **Not a security-relevant change.**
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
