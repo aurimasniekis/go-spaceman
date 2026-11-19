@@ -596,3 +596,70 @@ func TestStopBeforeStartTakesObserveLock(t *testing.T) {
 		t.Fatalf("the end work ran %d times, want once", n)
 	}
 }
+
+// startFails fails the program's start (not the lease guard's), so a launch takes the held fail("start") path.
+type startFails struct{ *runnertest.Fake }
+
+func (r *startFails) Start(ctx context.Context, s runner.Spec) (*runner.Process, error) {
+	if s.Labels["spaceman.run"] != "" {
+		return nil, errors.New("start refused by test")
+	}
+	return r.Fake.Start(ctx, s)
+}
+
+// A start that fails while the launch holds the run's lock fails the run under the observe lock too: it waits for an
+// observe between its read and its write (reconcile's found-program branch), instead of failing the row underneath it.
+func TestHeldStartFailTakesObserveLock(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, func(o *Options) { o.Runner = &startFails{Fake: o.Runner.(*runnertest.Fake)} })
+	ctx := context.Background()
+	const runID = "run_heldstartfail"
+	var ran atomic.Int32
+	a.onRunEndHooks = func(string) { ran.Add(1) }
+	unlockObs := a.observeLock(runID)
+	done := make(chan struct{})
+	go func() { ccLaunch(a, runID); close(done) }()
+	// The launch writes starting (no observe lock needed) and then blocks in the held fail: wait for that state.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if r, err := a.j.getRun(ctx, runID); (err == nil && (r.State == proto.RunStarting || r.State == proto.RunFailed)) || time.Now().After(deadline) {
+			break
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if r := getRun(t, a, runID); r.State == proto.RunFailed {
+		t.Fatalf("the held start failure wrote failed without the observe lock")
+	}
+	unlockObs()
+	<-done
+	a.drain(10 * time.Second)
+	if r := getRun(t, a, runID); r.State != proto.RunFailed || r.Error != "start: start refused by test" {
+		t.Fatalf("state %s (%s / %s), want failed with the start error", r.State, r.Reason, r.Error)
+	}
+	if n := ran.Load(); n != 1 {
+		t.Fatalf("the end work ran %d times, want once", n)
+	}
+}
+
+// A stop of a run the node never received takes the observe lock: it waits for an observe between its read and its
+// write instead of journaling the run as stopped underneath it.
+func TestEndUnlaunchedTakesObserveLock(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	ctx := context.Background()
+	const runID = "run_endunlaunchedobs"
+	unlockObs := a.observeLock(runID)
+	done := make(chan bool)
+	go func() {
+		done <- a.endUnlaunched(ctx, proto.Command{CommandID: "cmd_stop_" + runID, Kind: proto.CmdStop, SpaceID: ccSpace, RunID: runID, Generation: 1})
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if _, err := a.j.getRun(ctx, runID); err == nil {
+		t.Fatalf("the stop journaled the run without the observe lock")
+	}
+	unlockObs()
+	if !<-done {
+		t.Fatal("the run was known")
+	}
+	a.drain(10 * time.Second)
+	if r := getRun(t, a, runID); r.State != proto.RunExited || r.Desired != "stopped" || r.Reason != "stopped before start" {
+		t.Fatalf("state %s (%s), desired %s", r.State, r.Reason, r.Desired)
+	}
+}
