@@ -343,9 +343,9 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = n.Run(ctx); close(done) }()
-	// Run reads its start position first; wait until it has it. Latest counts the read when it is called, before it
-	// looks at the feed, so waiting for the count lets a change the test makes next land before the position is
-	// taken and be treated as history, never delivered.
+	// Run reads its start position first; wait until it has taken it. Waiting only for the feed's Latest call is not
+	// enough: a change the test makes next could land before the position is taken and be treated as history, never
+	// delivered.
 	select {
 	case <-n.Ready():
 	case <-time.After(10 * time.Second):
