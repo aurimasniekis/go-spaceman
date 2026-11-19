@@ -672,3 +672,50 @@ func TestUnacknowledgedSkipsOwnMessages(t *testing.T) {
 		t.Fatalf("the worker's message: %v", got)
 	}
 }
+
+// FromRunToControl (the worker hand-back watchdog, ADR-0099) reports a run's newest message to control and whether one
+// of them is still open: not acknowledged, or a request not resolved. Messages to others and from others don't count.
+func TestFromRunToControl(t *testing.T) {
+	f := newFx(t)
+	check := func(wantAt time.Time, wantOpen bool) {
+		t.Helper()
+		at, open, err := f.svc.FromRunToControl(f.ctx, "spc_a", wrkRun)
+		must(t, err)
+		if !at.Equal(wantAt) || open != wantOpen {
+			t.Fatalf("got %v open=%v, want %v open=%v", at, open, wantAt, wantOpen)
+		}
+	}
+	check(time.Time{}, false)
+	worker := From{Kind: "run", ID: wrkRun}
+	_, _, err := f.svc.Send(f.ctx, op, "spc_a", worker, SendInput{To: "operators", Subject: "not control"})
+	must(t, err)
+	_, _, err = f.svc.Send(f.ctx, op, "spc_a", From{Kind: "run", ID: ctrlRun}, SendInput{To: "control", Subject: "someone else"})
+	must(t, err)
+	check(time.Time{}, false)
+
+	f.clk.Advance(time.Minute)
+	started, _, err := f.svc.Send(f.ctx, op, "spc_a", worker, SendInput{To: "control", Subject: "started"})
+	must(t, err)
+	t1 := f.clk.Now()
+	check(t1, true)
+	must(t, f.svc.AckRun(f.ctx, op, ctrl, started.ID))
+	check(t1, false)
+
+	f.clk.Advance(time.Minute)
+	q, _, err := f.svc.Send(f.ctx, op, "spc_a", worker, SendInput{To: "control", Kind: "request", Subject: "Which branch?"})
+	must(t, err)
+	t2 := f.clk.Now()
+	must(t, f.svc.AckRun(f.ctx, op, ctrl, q.ID))
+	check(t2, true) // read, not answered
+	_, _, err = f.svc.Send(f.ctx, op, "spc_a", From{Kind: "run", ID: ctrlRun}, SendInput{To: "run:" + wrkRun, Kind: "reply", Subject: "main", ReplyTo: q.ID})
+	must(t, err)
+	check(t2, false)
+
+	// A reply to a control run's request counts as a message to control.
+	ask, _, err := f.svc.Send(f.ctx, op, "spc_a", From{Kind: "run", ID: ctrlRun}, SendInput{To: "run:" + wrkRun, Kind: "request", Subject: "Status?"})
+	must(t, err)
+	f.clk.Advance(time.Minute)
+	_, _, err = f.svc.Send(f.ctx, op, "spc_a", worker, SendInput{To: "run:" + ctrlRun, Kind: "reply", Subject: "Half done", ReplyTo: ask.ID})
+	must(t, err)
+	check(f.clk.Now(), true)
+}

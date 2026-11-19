@@ -817,6 +817,34 @@ func (q *Queries) ResolveMessage(ctx context.Context, arg ResolveMessageParams) 
 	return result.RowsAffected()
 }
 
+const runMessagesToControl = `-- name: RunMessagesToControl :one
+SELECT CAST(coalesce(max(m.created_at), 0) AS INTEGER) AS latest,
+  CAST(coalesce(sum(CASE WHEN m.state IN ('stored', 'available') OR (m.kind = 'request' AND m.state <> 'resolved') THEN 1 ELSE 0 END), 0) AS INTEGER) AS open
+FROM messages m
+WHERE m.space_id = ?1 AND m.from_kind = 'run' AND m.from_id = ?2
+  AND (m.to_kind = 'control'
+    OR (m.to_kind = 'run' AND m.to_id IN (SELECT r.id FROM runs r WHERE r.space_id = ?1 AND r.kind = 'control')))
+`
+
+type RunMessagesToControlParams struct {
+	SpaceID string
+	RunID   string
+}
+
+type RunMessagesToControlRow struct {
+	Latest int64
+	Open   int64
+}
+
+// The newest message a run sent control (to control, or to one of the space's control runs, as a reply does), and how
+// many of them are still open: not acknowledged yet, or a request not resolved (the worker hand-back watchdog, ADR-0099).
+func (q *Queries) RunMessagesToControl(ctx context.Context, arg RunMessagesToControlParams) (RunMessagesToControlRow, error) {
+	row := q.db.QueryRowContext(ctx, runMessagesToControl, arg.SpaceID, arg.RunID)
+	var i RunMessagesToControlRow
+	err := row.Scan(&i.Latest, &i.Open)
+	return i, err
+}
+
 const setMessageDeliverAt = `-- name: SetMessageDeliverAt :exec
 
 UPDATE messages SET deliver_at = ?1 WHERE id = ?2 AND state = 'stored'

@@ -335,8 +335,10 @@ type Watchdog struct {
 	acts      map[string]*activity // by run
 	eps       map[string]*episode  // by space
 	state     map[string]WatchState
-	restarts  map[string]bool // control runs the watchdog stopped to restart
-	unstarted map[string]bool // worker runs control was already told never left turn 0 (guarded by mu)
+	restarts  map[string]bool      // control runs the watchdog stopped to restart
+	unstarted map[string]bool      // worker runs control was already told never left turn 0 (guarded by mu)
+	idle      map[string]*handback // worker runs idle with their task still running, by run (guarded by mu)
+	busy      map[string]busyMark  // when a pass last saw each live worker run working, by run (guarded by mu)
 
 	// Seams for tests; NewWatchdog points them at the supervisor's services.
 	turnOf   func(ctx context.Context, runID string) (int64, bool)
@@ -346,13 +348,16 @@ type Watchdog struct {
 	escalate func(ctx context.Context, spaceID string, r *fleet.Run, ep *episode, b Backlog, quiet time.Duration)
 	workers  func(ctx context.Context, spaceID string) ([]*fleet.Run, map[string]*queue.Task, error)
 	tell     func(ctx context.Context, spaceID, dedup, subject, body string)
+	waits    func(ctx context.Context, spaceID, runID string) (workerWait, error)
+	remind   func(ctx context.Context, r *fleet.Run, text string, details map[string]any) error
 }
 
 // NewWatchdog returns the supervisor's watchdog (sv.Watchdog); Run starts it.
 func NewWatchdog(sv *Supervisor) *Watchdog {
 	w := &Watchdog{sv: sv, wake: make(chan struct{}, 1), kicked: map[string]bool{}, started: sv.clock.Now(), acts: map[string]*activity{}, eps: map[string]*episode{},
-		state: map[string]WatchState{}, restarts: map[string]bool{}, unstarted: map[string]bool{}}
+		state: map[string]WatchState{}, restarts: map[string]bool{}, unstarted: map[string]bool{}, idle: map[string]*handback{}, busy: map[string]busyMark{}}
 	w.turnOf, w.spaces, w.observe, w.nudge, w.escalate = w.runTurn, w.activeSpaces, w.read, w.deliver, w.raise
+	w.waits, w.remind = w.readWait, w.deliverWorker
 	w.workers, w.tell = w.readWorkers, func(ctx context.Context, spaceID, dedup, subject, body string) {
 		sv.notify(ctx, spaceID, dedup, subject, body)
 	}
@@ -495,6 +500,7 @@ func (w *Watchdog) Pass(ctx context.Context) {
 		}
 		w.check(ctx, id)
 		w.checkStarts(ctx, id)
+		w.checkHandbacks(ctx, id)
 	}
 	// A space that dropped out of the active list (paused or archived) is no longer watched: its state says so, and
 	// keeps its episode in case it resumes.

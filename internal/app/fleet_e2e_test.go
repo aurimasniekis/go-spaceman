@@ -83,6 +83,8 @@ func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config
 	cfg.Limits.ControlAutostart, cfg.Limits.ControlIdleStopMinutes = 0, 0
 	// No watchdog reminders typed into control's terminal unless a test asks (ADR-0099).
 	cfg.Limits.ControlWatchdogMinutes = 0
+	// Nor into workers' terminals (the hand-back check).
+	cfg.Limits.WorkerIdleWatchdogMinutes = 0
 	for _, o := range opts {
 		o(cfg)
 	}

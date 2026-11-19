@@ -123,3 +123,13 @@ WHERE m.state = 'stored' AND m.deliver_at > sqlc.arg(now)
 -- name: CancelScheduledMessage :execrows
 UPDATE messages SET state = 'resolved', resolved_at = sqlc.arg(now), resolution = sqlc.arg(resolution), version = version + 1
 WHERE id = sqlc.arg(id) AND state = 'stored' AND deliver_at > sqlc.arg(now);
+
+-- name: RunMessagesToControl :one
+-- The newest message a run sent control (to control, or to one of the space's control runs, as a reply does), and how
+-- many of them are still open: not acknowledged yet, or a request not resolved (the worker hand-back watchdog, ADR-0099).
+SELECT CAST(coalesce(max(m.created_at), 0) AS INTEGER) AS latest,
+  CAST(coalesce(sum(CASE WHEN m.state IN ('stored', 'available') OR (m.kind = 'request' AND m.state <> 'resolved') THEN 1 ELSE 0 END), 0) AS INTEGER) AS open
+FROM messages m
+WHERE m.space_id = sqlc.arg(space_id) AND m.from_kind = 'run' AND m.from_id = sqlc.arg(run_id)
+  AND (m.to_kind = 'control'
+    OR (m.to_kind = 'run' AND m.to_id IN (SELECT r.id FROM runs r WHERE r.space_id = sqlc.arg(space_id) AND r.kind = 'control')));
