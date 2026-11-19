@@ -397,12 +397,16 @@ type ArtifactsConfig struct {
 	// RecordingReconcileInterval is the time between sweeps that remove stored recordings (local folders, spool
 	// folders and S3 objects) of runs whose recording was deleted or that no longer exist (1h to 168h, default 24h;
 	// 0 turns the sweep off). It also runs once at start. Each sweep is bounded and rate-limited, and never deletes
-	// on an error or touches the recording of a run that still exists.
+	// on an error or touches the recording of a run that still exists. At most 200 stored runs are examined per
+	// sweep (kept runs count too; the next sweep continues after the last one and wraps), so with N stored runs a
+	// leftover can wait up to ceil(N/200) sweeps.
 	RecordingReconcileInterval Duration `yaml:"recording_reconcile_interval"`
 	// RecordingReconcileAbsent also lets the sweep remove recordings of runs that are not in the database at all (and
 	// untouched for 24h). Off by default: an absent row is also what a restored older backup, or a second central
 	// using the same bucket, looks like, and the sweep would delete those runs' recordings. Without it only runs
-	// whose recording was deleted are swept.
+	// whose recording was deleted are swept. Deleting a recording also sets the central's in-memory "deleted" mark
+	// for the run (fleet.Recordings.Delete), so central acks and drops later chunks for it and the node may prune its
+	// own copy. If absent mode ever becomes the default, it must delete the stored data without setting that mark.
 	RecordingReconcileAbsent bool `yaml:"recording_reconcile_absent"`
 }
 

@@ -335,9 +335,12 @@ type Object struct {
 }
 
 type listResult struct {
-	Contents              []Object `xml:"Contents"`
-	IsTruncated           bool     `xml:"IsTruncated"`
-	NextContinuationToken string   `xml:"NextContinuationToken"`
+	Contents       []Object `xml:"Contents"`
+	CommonPrefixes []struct {
+		Prefix string `xml:"Prefix"`
+	} `xml:"CommonPrefixes"`
+	IsTruncated           bool   `xml:"IsTruncated"`
+	NextContinuationToken string `xml:"NextContinuationToken"`
 }
 
 // List returns every object whose key starts with prefix (ListObjectsV2, following continuation tokens).
@@ -357,6 +360,33 @@ func (c *Client) List(ctx context.Context, prefix string) ([]Object, error) {
 			return nil, err
 		}
 		out = append(out, resp.Contents...)
+		if !resp.IsTruncated || resp.NextContinuationToken == "" {
+			return out, nil
+		}
+		token = resp.NextContinuationToken
+	}
+}
+
+// ListPrefixes returns the common prefixes one level below prefix (ListObjectsV2 with a "/" delimiter, following
+// continuation tokens): one entry per "folder", whatever the number of objects in it. Each entry ends with "/".
+func (c *Client) ListPrefixes(ctx context.Context, prefix string) ([]string, error) {
+	var out []string
+	token := ""
+	for page := 0; ; page++ {
+		if page > 100000 {
+			return nil, errors.New("object listing did not terminate")
+		}
+		q := url.Values{"list-type": {"2"}, "prefix": {prefix}, "delimiter": {"/"}, "max-keys": {strconv.Itoa(1000)}}
+		if token != "" {
+			q.Set("continuation-token", token)
+		}
+		resp, err := c.listRequest(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range resp.CommonPrefixes {
+			out = append(out, p.Prefix)
+		}
 		if !resp.IsTruncated || resp.NextContinuationToken == "" {
 			return out, nil
 		}

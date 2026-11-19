@@ -20,6 +20,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
   credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.
 
+### Changed
+
+- **The recording sweep lists one folder per run on S3.** With `artifacts.recording_reconcile_absent` off, the sweep
+  no longer lists every segment object (memory grew with history); it lists the run folders with a `/` delimiter.
+  Object ages are still read when absent mode is on. The reference now says that a removal also sets central's
+  in-memory deleted mark for the run, and that a leftover can wait up to ceil(N/200) sweeps when N runs are stored.
+  A space purge whose recording delete fails still leaves a leftover only the opt-in absent mode removes; this is
+  documented in the code.
+
 ### Fixed
 
 - **A close record numbered while the local disk failed is no longer sent twice.** The close reached central but not the

@@ -219,9 +219,14 @@ type listContent struct {
 	LastModified string `xml:"LastModified"`
 }
 
+type listPrefix struct {
+	Prefix string `xml:"Prefix"`
+}
+
 type listResult struct {
 	XMLName               xml.Name      `xml:"ListBucketResult"`
 	Contents              []listContent `xml:"Contents"`
+	CommonPrefixes        []listPrefix  `xml:"CommonPrefixes"`
 	IsTruncated           bool          `xml:"IsTruncated"`
 	NextContinuationToken string        `xml:"NextContinuationToken,omitempty"`
 }
@@ -231,16 +236,46 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, bucket string) {
 	start := r.URL.Query().Get("continuation-token")
 	var keys []string
 	for _, k := range s.Keys(bucket) {
-		if strings.HasPrefix(k, prefix) && k > start {
+		if strings.HasPrefix(k, prefix) {
 			keys = append(keys, k)
 		}
 	}
 	res := listResult{}
+	if delim := r.URL.Query().Get("delimiter"); delim != "" {
+		// Collapse the keys below one more delimiter into their common prefix (one entry per prefix).
+		var rolled []string
+		seen := map[string]bool{}
+		for _, k := range keys {
+			if i := strings.Index(k[len(prefix):], delim); i >= 0 {
+				cp := k[:len(prefix)+i+len(delim)]
+				if !seen[cp] {
+					seen[cp] = true
+					rolled = append(rolled, cp)
+				}
+				continue
+			}
+			rolled = append(rolled, k)
+		}
+		keys = rolled
+	}
+	if start != "" {
+		var after []string
+		for _, k := range keys {
+			if k > start {
+				after = append(after, k)
+			}
+		}
+		keys = after
+	}
 	if len(keys) > s.PageSize {
 		keys = keys[:s.PageSize]
 		res.IsTruncated, res.NextContinuationToken = true, keys[len(keys)-1]
 	}
 	for _, k := range keys {
+		if strings.HasSuffix(k, "/") && r.URL.Query().Get("delimiter") != "" {
+			res.CommonPrefixes = append(res.CommonPrefixes, listPrefix{Prefix: k})
+			continue
+		}
 		b, _ := s.Object(bucket, k)
 		s.mu.Lock()
 		mod := s.mod[bucket+"/"+k]
