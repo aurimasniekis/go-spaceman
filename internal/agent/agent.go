@@ -137,7 +137,8 @@ type Agent struct {
 	// connection's context.
 	sentSeq map[string]uint64
 	// closeNumbered are the runs whose close record this process numbered (and so sent or will send): a later recorder
-	// for the run must not end it again, whatever the local disk kept (record.go).
+	// for the run must not end it again, whatever the local disk kept (record.go). It is in memory only and does not
+	// survive an agent restart; closing that case needs central to report its last record.
 	closeNumbered  map[string]bool
 	held           map[string]*heldRecords
 	catching       bool
