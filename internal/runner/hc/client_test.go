@@ -252,6 +252,44 @@ func TestClientInterruptKillSend(t *testing.T) {
 	}
 }
 
+// ADR-0102: the dialog watch reads the visible screen (terminal.read, no history lines) and answers with named keys
+// (terminal.keys), never free text.
+func TestClientReadScreenAndKeys(t *testing.T) {
+	calls := make(chan map[string]any, 4)
+	_, sock := startFake(t, func(_ *fakeCore, w io.Writer, req map[string]any) {
+		calls <- req
+		switch req["method"] {
+		case "terminal.read":
+			reply(w, req["id"], map[string]any{"text": " ❯ No, exit\n", "complete": true, "how": "screen"})
+		case "terminal.keys":
+			reply(w, req["id"], map[string]any{})
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := Dial(ctx, sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	r := New(c)
+	if text, err := r.ReadScreen(ctx, "t3"); err != nil || text != " ❯ No, exit\n" {
+		t.Fatalf("read: %q %v", text, err)
+	}
+	req := <-calls
+	if p, _ := req["params"].(map[string]any); req["method"] != "terminal.read" || p["terminal"] != "t3" || p["lines"] != float64(0) {
+		t.Fatalf("read request %v", req)
+	}
+	if err := r.Keys(ctx, "t3", []string{"down", "enter"}); err != nil {
+		t.Fatal(err)
+	}
+	req = <-calls
+	p, _ := req["params"].(map[string]any)
+	if keys, _ := p["keys"].([]any); req["method"] != "terminal.keys" || p["terminal"] != "t3" || len(keys) != 2 || keys[0] != "down" || keys[1] != "enter" {
+		t.Fatalf("keys request %v", req)
+	}
+}
+
 func TestEventDecoding(t *testing.T) {
 	r := &Runner{c: &Client{hello: Hello{Core: Core{ID: "core1"}}}}
 	ev, ok := r.decodeEvent([]byte(`{"jsonrpc":"2.0","method":"event","params":{"data":{"exit_code":2,"finished_ms":1,"reason":"exited","signal":null},"seq":37,"terminal":"t11","type":"finished"}}`))

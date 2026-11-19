@@ -1,0 +1,13 @@
+ ▐▛███▛█   Claude Code v9.9.9
+▝▜██████▀  Opus 5.5
+ ▝▝   ▝▝   ~/work
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Something new (preview)
+
+ A feature this version asks about before it starts.
+
+ ❯ 1. Not now
+   2. Turn it on
+
+ Enter to confirm · Esc to cancel

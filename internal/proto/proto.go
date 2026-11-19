@@ -36,8 +36,8 @@ const (
 	// reports and node-managed harness details in capabilities, ADR-0077); 12: usage limits (the limit a node detected
 	// in a run's transcript on run reports, ADR-0079); 13: account usage (a run's StopFailure class and the source of a
 	// limit's reset time on run reports, account-switching plan §3.9); 14: role rename (the memory.rename command,
-	// memory.renamed reports and memory.renamed.ack, ADR-0093)
-	MaxMinor = 14
+	// memory.renamed reports and memory.renamed.ack, ADR-0093); 15: terminal dialogs (run.dialog, ADR-0102)
+	MaxMinor = 15
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).

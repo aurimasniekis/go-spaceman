@@ -141,6 +141,16 @@ type Event struct {
 	Snapshot []Process
 }
 
+// Screen is implemented by runners that can read a terminal's visible screen and press named keys in it. The node agent
+// uses it only to recognise interactive dialogs and to answer the known ones (ADR-0102): the screen text never decides a
+// program's status, and keys are herdr-core key names (enter, esc, up, down, …), never free text.
+type Screen interface {
+	// ReadScreen returns the terminal's visible screen as text (no history).
+	ReadScreen(ctx context.Context, id string) (string, error)
+	// Keys presses named keys, encoded for the program's keyboard modes; the core holds them while a person types.
+	Keys(ctx context.Context, id string, keys []string) error
+}
+
 // Runner supervises terminal programs.
 type Runner interface {
 	Start(ctx context.Context, s Spec) (*Process, error)

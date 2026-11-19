@@ -30,6 +30,9 @@ type Fake struct {
 	// AfterStart, when set, runs after a successful Start returns its process to the runner (outside the lock). Tests
 	// use it to crash the agent between starting a program and recording that it started.
 	AfterStart func(runner.Process)
+	// OnKeys, when set, runs after Keys recorded keys (outside the lock): a test changes the screen there, as the
+	// program would after the answer.
+	OnKeys func(id string, keys []string)
 }
 
 type fakeProc struct {
@@ -47,6 +50,9 @@ type fakeProc struct {
 	interactive          []*takeoverStream
 	resizes              int
 	startCols, startRows int
+	// screen is what ReadScreen returns; keys are the Keys calls, in order.
+	screen string
+	keys   [][]string
 }
 
 // resize recomputes a process's size from its interactive streams and emits a size event when it changed (f.mu held).
@@ -431,6 +437,62 @@ func (f *Fake) Output(id string, data string) {
 	}
 }
 
+// SetScreen sets what ReadScreen returns for a process.
+func (f *Fake) SetScreen(id, text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fp, ok := f.procs[id]; ok {
+		fp.screen = text
+	}
+}
+
+// ReadScreen implements runner.Screen.
+func (f *Fake) ReadScreen(_ context.Context, id string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fp, ok := f.procs[id]
+	if !ok {
+		return "", runner.ErrNotFound
+	}
+	return fp.screen, nil
+}
+
+// Keys implements runner.Screen: it records the keys (KeysPressed) and then calls OnKeys.
+func (f *Fake) Keys(_ context.Context, id string, keys []string) error {
+	f.mu.Lock()
+	fp, ok := f.procs[id]
+	if ok {
+		if fp.p.State != runner.StateLive {
+			f.mu.Unlock()
+			return runner.ErrFinished
+		}
+		fp.keys = append(fp.keys, append([]string(nil), keys...))
+	}
+	hook := f.OnKeys
+	f.mu.Unlock()
+	if !ok {
+		return runner.ErrNotFound
+	}
+	if hook != nil {
+		hook(id, keys)
+	}
+	return nil
+}
+
+// KeysPressed returns the Keys calls made for a process.
+func (f *Fake) KeysPressed(id string) [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fp, ok := f.procs[id]; ok {
+		out := make([][]string, len(fp.keys))
+		for i, k := range fp.keys {
+			out[i] = append([]string(nil), k...)
+		}
+		return out
+	}
+	return nil
+}
+
 // Subscribe implements runner.Runner.
 func (f *Fake) Subscribe(ctx context.Context, _ map[string]string) (<-chan runner.Event, error) {
 	ch := make(chan runner.Event, 256)
@@ -469,4 +531,7 @@ func (f *Fake) LiveByLabel(k, v string) []runner.Process {
 	return ps
 }
 
-var _ runner.Runner = (*Fake)(nil)
+var (
+	_ runner.Runner = (*Fake)(nil)
+	_ runner.Screen = (*Fake)(nil)
+)

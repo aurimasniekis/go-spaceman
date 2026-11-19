@@ -167,6 +167,11 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			a.ack(ctx, c, proto.AckRejected, "an operator has taken over the terminal; input is paused")
 			return
 		}
+		// Safe input never goes into a dialog the run is flagged at (ADR-0102): it would answer it.
+		if !p.Force && a.dialogBlocked(c.RunID) {
+			a.ack(ctx, c, proto.AckRejected, "the program waits at a dialog; input not delivered (safe input)")
+			return
+		}
 		// Under the instance's input gate: a fast-forward of its memory checkout (ADR-0094) finishes first.
 		if err := a.mem.deliverInput(r, func() error { return a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force) }); err != nil {
 			reason := "send failed"
@@ -565,6 +570,13 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	built.SecretEnv = passthroughEnv(a.o.EnvPassthrough, os.LookupEnv, built) // before the secrets file the shim reads
+	secretValues := []string{p.RunToken}
+	for _, v := range built.SecretEnv {
+		secretValues = append(secretValues, v)
+	}
+	if err := a.saveDialogLaunch(c.RunID, p.Harness, row.Bin.Version, append([]string{work, memDir}, dreamMem...), built, secretValues); err != nil {
+		log.Warn("dialog watch: save the launch context", obs.Err(err)) // the watch then answers nothing that depends on it
+	}
 	a.rememberRunToken(c.RunID, p.RunToken)
 	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
 		fail("write secret file", err)
@@ -713,6 +725,7 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	if row.Status == "working" {
 		a.failureEnded(row.RunID, prev.Status != "working")
 	}
+	a.dialogObserved(ctx, prev, row)
 	a.report(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
@@ -754,6 +767,7 @@ func (a *Agent) runEndHooks(ctx context.Context, row runRow, started bool) {
 	}
 	bctx := context.WithoutCancel(ctx)
 	a.forgetHookData(row.RunID)
+	a.dialogForget(row.RunID)
 	if started {
 		if row.Harness == harness.KindClaude {
 			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })
