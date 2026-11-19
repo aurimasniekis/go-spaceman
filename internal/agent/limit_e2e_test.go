@@ -456,3 +456,55 @@ func TestPreConnHoldClearedWhenHelloRunsFails(t *testing.T) {
 		t.Fatal("a failed hello snapshot left the pre-connection hold set")
 	}
 }
+
+// A run that continues at the reset and keeps working (a long turn that never goes idle) has its limit cleared while
+// the turn runs, not when it ends: the idle scan alone left it at "usage limit" for as long as the turn lasted.
+func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
+	oldSettle, oldPoll := limitSettle, limitPoll
+	limitSettle, limitPoll = 10*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { limitSettle, limitPoll = oldSettle, oldPoll })
+	dir := t.TempDir()
+	a, f := ccAgent(t, dir, nil, nil)
+	fc := newWSCentral(t, proto.MinorUsageLimit)
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	startAgent(t, a, fc, clk)
+	fc.next(t, proto.TypeHello)
+
+	const runID = "run_limit_working"
+	ccLaunch(a, runID)
+	row := getRun(t, a, runID)
+	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	at := clk.Now().Add(-time.Minute)
+	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	fc.collect(t, runID, 300*time.Millisecond)
+	reset := at.Add(5 * time.Hour).Truncate(time.Second)
+	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
+		t.Fatal(err)
+	}
+	rs := fc.collect(t, runID, 300*time.Millisecond)
+	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+
+	// The reset passes: the run starts its auto-continuation turn and keeps working; the status never goes idle.
+	f.SetStatus(row.TerminalID, "working")
+	if err := rt.AppendTranscript(transcript, rt.NoticeRecord(reset), rt.AutoContinueRecord(reset)); err != nil {
+		t.Fatal(err)
+	}
+	// Its first reply is written a little later, still inside the same turn.
+	time.Sleep(100 * time.Millisecond)
+	if err := rt.AppendTranscript(transcript, rt.AssistantRecord("msg_continue", reset.Add(time.Second))); err != nil {
+		t.Fatal(err)
+	}
+	rs = fc.collect(t, runID, 500*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the reset")
+	}
+	wantCleared(t, "cleared while working", rs[len(rs)-1], at)
+	if got := getRun(t, a, runID); got.Status != "working" || got.Limit.Kind != "" {
+		t.Fatalf("run %+v", got)
+	}
+}

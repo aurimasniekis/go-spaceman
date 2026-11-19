@@ -741,6 +741,12 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		(prev.Status != row.Status || prev.Turn != row.Turn) {
 		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
+	// A run with an open limit that is working again (the auto-continuation after the reset, or any new turn) may have
+	// passed the record that ends the limit: scan for it now and while the turn runs, not only when the turn ends.
+	if row.State == proto.RunRunning && row.Harness == harness.KindClaude && row.Status == "working" && prev.Limit.Kind != "" &&
+		(prev.Status != row.Status || prev.Turn != row.Turn) {
+		a.limitKick(context.WithoutCancel(ctx), row.RunID)
+	}
 }
 
 // runEndHooks does what a run's end leaves to do: forget its hook data, scan its transcript for a usage limit, flush
