@@ -676,7 +676,7 @@ func TestClaudeCodeModeSeed(t *testing.T) {
 	}{
 		"no env":         {proto.ClaudeSettings{}, false},
 		"other env only": {proto.ClaudeSettings{"env": map[string]any{"CLAUDE_CODE_TMPDIR": "/tmp/x"}}, false},
-		"empty value":    {proto.ClaudeSettings{"env": map[string]any{ClaudeCodeModeEnv: ""}}, false},
+		"empty value":    {proto.ClaudeSettings{"env": map[string]any{ClaudeCodeModeEnv: ""}}, true},
 		"code mode on":   {proto.ClaudeSettings{"env": map[string]any{ClaudeCodeModeEnv: "1"}}, true},
 	} {
 		t.Run(name, func(t *testing.T) {

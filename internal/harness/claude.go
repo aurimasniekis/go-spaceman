@@ -531,17 +531,11 @@ func claudeSeed(c Context, own map[string]any) map[string]any {
 }
 
 // claudeCodeModeOn reports whether the run's settings env sets ClaudeCodeModeEnv. Claude Code asks its opt-in question
-// whenever the variable is set at all, so any non-empty value counts.
+// whenever the variable is present, whatever its value, and the accepted flags change nothing when it is absent.
 func claudeCodeModeOn(own map[string]any) bool {
 	env, _ := own["env"].(map[string]any)
-	switch v := env[ClaudeCodeModeEnv].(type) {
-	case string:
-		return v != ""
-	case nil:
-		return false
-	default:
-		return true
-	}
+	_, set := env[ClaudeCodeModeEnv]
+	return set
 }
 
 // trustedProjects is the .claude.json projects entry that trusts the run's working directory and, when it has one, the
