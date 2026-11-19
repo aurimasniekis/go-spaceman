@@ -75,6 +75,8 @@ type Recordings struct {
 	// record) are acked and dropped instead of recreating the folder. pruneLocked forgets a mark after markMaxAge, which
 	// bounds the map; by then the node's acknowledgement has long moved past what it had to ship.
 	deleted map[string]time.Time
+	// reconcileAfter is the last run the previous reconcile pass examined (guarded by mu).
+	reconcileAfter string
 	// beforeRemove is a test hook called in Delete just before the folder is removed (mu released).
 	beforeRemove func()
 }

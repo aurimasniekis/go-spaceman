@@ -43,7 +43,7 @@ func Default() *Config {
 			EnrollmentTTL:     Duration(24 * time.Hour),
 			CommandTimeout:    Duration(30 * time.Second),
 		},
-		Artifacts: ArtifactsConfig{Backend: "local", SpaceQuotaBytes: 1 << 30},
+		Artifacts: ArtifactsConfig{Backend: "local", SpaceQuotaBytes: 1 << 30, RecordingReconcileInterval: Duration(24 * time.Hour)},
 		Harness:   HarnessPolicy{MaxPermissionMode: "auto"},
 		Events:    EventsConfig{Outbound: OutboundConfig{Source: "spaceman", Retention: Duration(7 * 24 * time.Hour)}},
 		Backups: BackupsConfig{Interval: Duration(24 * time.Hour), KeepLast: 7, Target: "local",
