@@ -4,8 +4,10 @@
 // keys; nothing here reads a terminal or types.
 //
 // Order of the checks, and why:
-//  1. Find the dialog: a selection cursor in front of an option, with a confirm footer or a numbered option list. The
-//     plain prompt of a waiting program ("❯ " with or without typed text) is not a dialog.
+//  1. Find the dialog: a selection cursor in front of an option, with a confirm footer or a numbered option list, at the
+//     bottom of the screen (nothing but its footer, or the theme picker's preview, below the options). Dialog text
+//     elsewhere on the screen (a transcript, a quoted file, typed text in the prompt box) is not a dialog. The plain
+//     prompt of a waiting program ("❯ " with or without typed text) is not a dialog.
 //  2. The never-answer list, over the dialog's own lines: permission and tool approval, login and credentials. Such a
 //     dialog is flagged, never answered, whatever the registry says.
 //  3. The registry: an entry for the harness and version whose stable text is all on the dialog's lines. Its answer
@@ -35,6 +37,9 @@ const (
 	SignalDeclined = "answer_declined"
 	// SignalStuck: SpaceMan answered the dialog and it was still there afterwards.
 	SignalStuck = "answer_failed"
+	// SignalWithheld: a registry dialog was on the screen while the program reported a status of its own. Startup
+	// dialogs come before any status, so it was not answered (the node agent decides this, not Classify).
+	SignalWithheld = "answer_withheld"
 )
 
 // UnknownID is the dialog ID of a dialog that is not in the registry (or that SpaceMan does not answer).
@@ -102,6 +107,9 @@ type Entry struct {
 	MinVersion, MaxVersion string
 	// Text are lines that must all appear on the dialog's lines (substring match, after collapsing spaces).
 	Text []string
+	// Options, when set, are the dialog's options exactly (in any order): a dialog with another option set is not this
+	// entry, whatever its text says.
+	Options []string
 	// Answer decides the keys for this screen; ok false declines (the dialog is then flagged).
 	Answer func(d Dialog, c Context) (a Answer, ok bool)
 }
@@ -131,6 +139,10 @@ var (
 	reFooter = regexp.MustCompile(`(?i)(enter to (confirm|select|continue|submit)|esc to (cancel|exit|go back|start without|skip)|\(y/n\)|\[y/n\]|↑/↓ to (select|navigate))`)
 	// reRule is a horizontal rule line (the top of a Claude Code dialog box).
 	reRule = regexp.MustCompile(`^\s*[─━╌—-]{20,}\s*$`)
+	// rePreview is a rule of the preview box Claude Code's theme picker draws below its options, and reHint the hint
+	// line below that box.
+	rePreview = regexp.MustCompile(`^\s*╌{20,}\s*$`)
+	reHint    = regexp.MustCompile(`^\s*Syntax theme: `)
 	// reCheck is the "current value" mark Claude Code draws in front of an option ("❯ ✔ Auto").
 	reCheck   = regexp.MustCompile(`^[✔✓]\s+`)
 	reNumber  = regexp.MustCompile(`^\d{1,2}\.\s+`)
@@ -145,8 +157,9 @@ func Never(lines []string) bool {
 }
 
 // Find returns the dialog on a screen, if there is one: an option line with the selection cursor, and either a
-// confirm footer below it or at least two numbered options (or, Weak, a block of at least two options). A program's
-// plain prompt ("❯ " with no text after it) is not a dialog.
+// confirm footer below it or at least two numbered options (or, Weak, a block of at least two options), with nothing
+// below the options but what a dialog draws there (bottomOf). A program's plain prompt ("❯ " with no text after it) is
+// not a dialog.
 func Find(screen string) (Dialog, bool) {
 	lines := strings.Split(strings.ReplaceAll(screen, "\r", ""), "\n")
 	for i := range lines {
@@ -180,6 +193,11 @@ func Find(screen string) (Dialog, bool) {
 			numbered++
 		}
 	}
+	// A dialog waiting for an answer is the last thing on the screen: options with a selection cursor higher up (in a
+	// transcript, above the program's prompt box) are text, not a dialog.
+	if !bottomOf(lines[last+1:]) {
+		return Dialog{}, false
+	}
 	footer := false
 	for _, l := range lines[last+1:] {
 		if reFooter.MatchString(l) {
@@ -209,6 +227,28 @@ func Find(screen string) (Dialog, bool) {
 		d.Options = append(d.Options, strings.TrimSpace(t))
 	}
 	return d, true
+}
+
+// bottomOf reports whether the lines below a dialog's options are only what a dialog draws there: blank lines, its
+// confirm footer, and the preview Claude Code's theme picker shows (a box of ╌ rules, then its "Syntax theme:" hint).
+// Anything else, such as the program's prompt box with its ─ rules, means the options are not the bottom of the screen.
+func bottomOf(below []string) bool {
+	box := 0 // 0: before the preview box, 1: inside it, 2: after it
+	for _, l := range below {
+		switch {
+		case box == 1:
+			if rePreview.MatchString(l) {
+				box = 2
+			}
+		case strings.TrimSpace(l) == "" || reFooter.MatchString(l):
+		case box == 0 && rePreview.MatchString(l):
+			box = 1
+		case box == 2 && reHint.MatchString(l):
+		default:
+			return false
+		}
+	}
+	return box != 1
 }
 
 // isOption reports whether a line can belong to the option block of a cursor line whose option text starts at column
@@ -303,6 +343,9 @@ func classify(reg []Entry, screen string, c Context) Result {
 		}
 		a, ok := e.Answer(d, c)
 		if !ok || len(a.Keys) == 0 {
+			if d.Weak {
+				return Result{Kind: None} // a weak block is never flagged on its own
+			}
 			return unknown(e.ID, SignalDeclined)
 		}
 		return Result{Kind: Known, ID: e.ID, Signal: SignalKnown, Keys: a.Keys, Answer: a.Choice, Lines: d.Lines}
@@ -333,17 +376,40 @@ func (e Entry) matches(d Dialog, c Context) bool {
 			return false
 		}
 	}
+	if e.Options != nil {
+		if len(d.Options) != len(e.Options) {
+			return false
+		}
+		for _, o := range e.Options {
+			if !slices.Contains(d.Options, o) {
+				return false
+			}
+		}
+	}
 	return true
 }
 
-// provisioned reports whether path (as a dialog shows it) is one of the run's provisioned directories.
+// hasOptions reports whether every one of opts is among the dialog's options.
+func (d Dialog) hasOptions(opts ...string) bool {
+	for _, o := range opts {
+		if !slices.Contains(d.Options, o) {
+			return false
+		}
+	}
+	return true
+}
+
+// provisioned reports whether path (as a dialog shows it) is one of the run's provisioned directories. A path that is
+// not already clean ("..", "." or doubled separators) is declined: the program may resolve it differently (symlinks).
 func (c Context) provisioned(path string) bool {
 	path = strings.TrimSpace(path)
 	if rest, ok := strings.CutPrefix(path, "~/"); ok {
-		if c.Home == "" {
+		if c.Home == "" || rest == "" || filepath.Clean(rest) != rest || filepath.IsAbs(rest) || rest == ".." || strings.HasPrefix(rest, "../") {
 			return false
 		}
 		path = filepath.Join(c.Home, rest)
+	} else if filepath.Clean(path) != path {
+		return false
 	}
 	if !filepath.IsAbs(path) {
 		return false
