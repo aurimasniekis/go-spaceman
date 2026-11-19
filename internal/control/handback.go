@@ -11,7 +11,6 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
-	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 )
 
@@ -104,10 +103,10 @@ type busyMark struct {
 func (w *Watchdog) handbackRun(ctx context.Context, spaceID string, r *fleet.Run, t *queue.Task, n time.Duration, now time.Time) {
 	w.mu.Lock()
 	h := w.idle[r.ID]
-	// Working includes "turn finished, background shells, monitors or sub-agents still running" (status_kind background,
-	// reported as working): no reminder then. Where the program reports plain idle while background work runs, the check
-	// cannot tell (ADR-0099 addendum).
-	working := r.Status != "idle" && r.Status != "done" || r.Status == "working" && r.StatusKind == proto.StatusKindBackground
+	// Working includes a finished turn with background shells or monitors still running (reported as working with
+	// status_kind background) and a running sub-agent (reported as plain working): no reminder then. Where the program
+	// reports plain idle while background work runs, the check cannot tell (ADR-0099 addendum).
+	working := r.Status != "idle" && r.Status != "done"
 	if a := w.acts[r.ID]; a != nil && a.inflight > 0 {
 		working = true
 	}
