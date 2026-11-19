@@ -327,6 +327,8 @@ type Manager struct {
 	svc   *Service
 	log   *slog.Logger
 	retry time.Duration
+	// drainTimeout bounds each halt's drain (tests lower it).
+	drainTimeout time.Duration
 	conns map[string]*connRun
 	subs  map[string]*subRun
 	limMu sync.Mutex
@@ -399,6 +401,8 @@ type subRun struct {
 	id      string
 	subject string
 	stop    context.CancelFunc
+	// drainTimeout bounds halt's drain; zero means defaultDrainTimeout.
+	drainTimeout time.Duration
 	// Durable.
 	sub    *pulse.Subscription
 	js     jetstream.JetStream
@@ -411,12 +415,12 @@ type subRun struct {
 	failed atomic.Bool
 }
 
-// drainTimeout bounds how long halting a durable subscription waits for the events already delivered to it to be
+// defaultDrainTimeout (Manager.drainTimeout) bounds how long halting a durable subscription waits for the events already delivered to it to be
 // handled and acknowledged (pulse Subscription.Drain). Handling one event is a few database writes, well under a
 // second; the bound only matters for a handler held by the ingestion rate limit (throttleWait), which the drain then
 // cancels: that event is negatively acknowledged and redelivered. It is below throttleWait so a pause or a
 // reconfiguration never waits on the rate limit, and well below the stream's AckWait, which a Stop would cost instead.
-const drainTimeout = 5 * time.Second
+const defaultDrainTimeout = 5 * time.Second
 
 // halt stops a running subscription. A durable consumer is drained, not stopped. Stop returns before the consumer
 // has unsubscribed (nats.go unsubscribes later and does not flush), so the server can still deliver an event to the
@@ -426,17 +430,20 @@ const drainTimeout = 5 * time.Second
 // drainTimeout it cancels the handlers' context and gives up waiting. halt holds no lock a handler takes (stateMu,
 // limMu, coreMu, the store writer), so a draining handler can always finish.
 func (r *subRun) halt(ctx context.Context) {
-	drain(ctx, r.sub)
+	drain(ctx, r.sub, r.drainTimeout)
 	r.stop()
 	if r.nsub != nil {
 		_ = r.nsub.Unsubscribe() // fails harmlessly when the connection was already closed
 	}
 }
 
-// drain drains a durable subscription for at most drainTimeout (see halt). It is safe on nil. ctx carries values
+// drain drains a durable subscription for at most timeout (see halt). It is safe on nil. ctx carries values
 // only: a shutdown has already cancelled it, and the subscription still gets its drainTimeout.
-func drain(ctx context.Context, sub *pulse.Subscription) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainTimeout)
+func drain(ctx context.Context, sub *pulse.Subscription, timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = defaultDrainTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	_ = sub.Drain(ctx) // on a timeout Drain already cancelled the handlers: nothing more to do
 }
@@ -446,7 +453,7 @@ func NewManager(svc *Service, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	m := &Manager{svc: svc, log: obs.Component(log, "events"), retry: 30 * time.Second, conns: map[string]*connRun{}, subs: map[string]*subRun{},
+	m := &Manager{svc: svc, log: obs.Component(log, "events"), retry: 30 * time.Second, drainTimeout: defaultDrainTimeout, conns: map[string]*connRun{}, subs: map[string]*subRun{},
 		lims: map[string]*limiter{}, core: map[*nats.Subscription]*subRun{}}
 	m.sources = map[string]Source{DeliveryDurable: durableSource{m}, DeliveryCore: coreSource{m}}
 	return m
@@ -704,10 +711,10 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 			}
 			return tx.Q.MarkSubscriptionApplied(ctx, db.MarkSubscriptionAppliedParams{AppliedGeneration: s.CursorGeneration, ID: s.ID})
 		}); err != nil {
-			drain(ctx, sub)
+			drain(ctx, sub, m.drainTimeout)
 			stop()
 			return nil, err
 		}
 	}
-	return &subRun{key: key, id: s.ID, subject: s.EffectiveSubject, sub: sub, stop: stop, js: c.client.JetStream(), stream: c.row.Stream}, nil
+	return &subRun{key: key, id: s.ID, subject: s.EffectiveSubject, sub: sub, stop: stop, drainTimeout: m.drainTimeout, js: c.client.JetStream(), stream: c.row.Stream}, nil
 }

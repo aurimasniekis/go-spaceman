@@ -80,6 +80,7 @@ func newFx(t *testing.T) *fx {
 	ctx, cancel := context.WithCancel(f.ctx)
 	m := NewManager(f.svc, nil)
 	m.retry = 200 * time.Millisecond
+	m.drainTimeout = time.Second
 	f.m = m
 	done := make(chan struct{})
 	go func() { m.Run(ctx); close(done) }()
