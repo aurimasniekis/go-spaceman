@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
+  output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
+  theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned
+  on only when the profile sets it), once and with named keys. It never answers permission, tool-approval or login
+  dialogs. Any other dialog shows the run as `blocked_on_dialog` (in `spaceman_runs_list` too, instead of idle). The
+  operators and control get a notice with the screen (secrets masked), and `evt.spaceman.fleet.run.dialog_detected` is
+  published. Every answer is logged on the run. Node protocol minor 15. See ADR-0102.
+
 ### Fixed
 
 - **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox

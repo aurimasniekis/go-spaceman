@@ -634,6 +634,21 @@ Quota board).
   and `script`). It covers the status line only; a live `StopFailure` was not triggered (it needs an API error), so that
   hook is *tested (simulated)*, not externally verified.
 
+## Startup dialogs (2.1.328, live, no credentials, 2026-11-19)
+
+Seen in an isolated herdr-core (herdr-core.md S-8) and kept as fixtures in `internal/dialog/testdata`; the registry of
+ADR-0102 matches on the stable lines quoted here.
+- **Theme picker** (fresh config directory): "Choose the text style that looks best with your terminal", options
+  "✔ Auto (match terminal)", "Dark mode", …, no confirm footer and no numbers. The `.claude.json` seed skips it.
+- **Login method** (no credentials): "Select login method:", numbered options. Never answered (login).
+- **Adding a new directory** (`--add-dir` of an untrusted folder, from 2.1.326): "Adding a new directory:", the path on
+  the next lines (wrapped when long), "This session hasn't worked here before. Is this a directory you created or one
+  you trust?", options "No, exit" (default) and "Yes, add it", footer "Enter to confirm · Esc to cancel".
+- **Code Mode (experimental)** opt-in: "❯ No, start without it / Yes, turn on Code Mode … Enter to confirm · Esc to start
+  without it" (recorded on a live run; its body text is not captured). Not reproduced here: it comes after login.
+- Before its main screen Claude Code reports no OSC 7501 status at all; the main screen's plain prompt is a `❯` with
+  nothing after it.
+
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |
 |---|---|---|
