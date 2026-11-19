@@ -836,8 +836,16 @@ func TestSecondRecorderAfterCloseLostToDisk(t *testing.T) {
 	}
 	failing.Store(false)
 	row, _ := a.j.getRun(context.Background(), runID)
-	a.startRecorder(context.Background(), row)
-	c.within(3*time.Second, func() bool { return false })
+	a.startRecorder(context.Background(), row) // registers the recorder before it returns
+	waitFor(t, "second recorder ended", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.recorders[runID] == nil })
+	// The disk works again: a second close would have been stored (and flushed) before the recorder returned.
+	for _, r := range localAbove(t, a, runID, 0) {
+		if r.Kind == recording.KindClose {
+			t.Fatal("the second recorder ended the run again")
+		}
+	}
+	// Anything it shipped was sent before it returned; give central a moment to read it.
+	c.within(500*time.Millisecond, func() bool { return closes() > 1 })
 	if n := closes(); n != 1 {
 		t.Fatalf("central holds %d close records, want 1", n)
 	}
