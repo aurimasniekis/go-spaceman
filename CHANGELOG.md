@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **A sweep removes leftover recordings of deleted runs.** A recording folder left on the local backend, and S3
+  objects of a run with no spool folder, were never removed after the run's recording was deleted or the run was
+  gone. Central now sweeps the recordings directory and the bucket at start and every
+  `artifacts.recording_reconcile_interval` (default 24h, `0s` turns it off). It removes only recordings of runs with
+  `recording_deleted_at` set, plus, with `artifacts.recording_reconcile_absent: true` (off by default, because a
+  restored older backup or a second central on the same bucket also looks like "absent"), runs the database confirms
+  absent whose recording has been untouched for 24h. A database or listing error skips the run, a run that exists is
+  never touched, and each pass is bounded (200 runs, continuing where the last stopped) and paced.
 - **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
   credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.
