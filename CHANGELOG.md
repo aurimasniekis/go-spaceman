@@ -8,10 +8,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
-- **The watchdog flags worker runs that never began.** A running worker run at turn 0 that shows no SpaceMan tool
-  call for more than `worker_start_watchdog_minutes` (default 10; 0 turns it off) after it started gets control one
-  notification naming the run and its task, once per run. It asks control to check the run's terminal rather than
-  stop it. After a restart of central the clock starts at the restart. `spaceman_runs_list` shows each run's `turn`.
+- **The watchdog flags worker runs whose program never connected to SpaceMan.** A running worker run whose program
+  has not loaded its SpaceMan tools (the MCP bridge fetches them when the program starts) and made no SpaceMan tool
+  call `worker_start_watchdog_minutes` (default 10; 0 turns it off) after it started gets control one notification
+  naming the run and its task, once per run. It asks control to check the run's terminal rather than stop it. A long
+  first turn, a run that waited at a usage limit and a run that started before central's last restart are never
+  flagged. `spaceman_runs_list` shows each run's `turn`.
 
 - **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no

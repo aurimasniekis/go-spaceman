@@ -546,8 +546,8 @@ func TestWatchdogToolsWrapper(t *testing.T) {
 		context.Background(), &fleet.RunPrincipal{RunID: "run_other"}, proto.ToolCatalog, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := e.w.acts["run_other"]; ok {
-		t.Fatal("the catalog call counted as activity")
+	if a := e.w.acts["run_other"]; a == nil || !a.at.IsZero() || a.tool != "" || a.began.IsZero() {
+		t.Fatalf("the catalog call counted as activity, or not as the program's start: %+v", a)
 	}
 }
 
@@ -732,71 +732,106 @@ func TestWatchStateStatus(t *testing.T) {
 	}
 }
 
-// A worker run at turn 0 with no activity past worker_start_watchdog_minutes gets control exactly one notification
-// naming the run and its task; a run with recent tool activity, or one that took a turn, gets none.
-func TestWatchdogWorkerStuckAtZero(t *testing.T) {
-	e := newWDEnv(t)
+// startEnv is a watchdog env with the worker start check at 10 minutes, central started before wdNow, and the
+// workers and notifications captured.
+type startEnv struct {
+	*wdEnv
+	runs   []*fleet.Run
+	sent   []string
+	dedups []string
+}
+
+func newStartEnv(t *testing.T, runs ...*fleet.Run) *startEnv {
+	e := &startEnv{wdEnv: newWDEnv(t), runs: runs}
 	e.lim[limits.WorkerStartWatchdog] = 10
-	mk := func(id string) *fleet.Run {
-		return &fleet.Run{ID: id, Kind: "worker", Role: "reviewer", Desired: "running", Observed: "running", Status: "working", StartedAt: tp(wdNow)}
-	}
-	stuck, busy, moving, away := mk("run_stuck"), mk("run_busy"), mk("run_moving"), mk("run_away")
-	away.Observed = "unknown"
-	tasks := map[string]*queue.Task{"run_stuck": {ID: "tsk_1", Title: "Review the thing"}}
-	var sent, dedups []string
 	e.w.workers = func(context.Context, string) ([]*fleet.Run, map[string]*queue.Task, error) {
-		return []*fleet.Run{stuck, busy, moving, away}, tasks, nil
+		return e.runs, map[string]*queue.Task{"run_stuck": {ID: "tsk_1", Title: "Review the thing"}}, nil
 	}
 	e.w.tell = func(_ context.Context, _, dedup, _, body string) {
-		dedups = append(dedups, dedup)
-		sent = append(sent, body)
+		e.dedups = append(e.dedups, dedup)
+		e.sent = append(e.sent, body)
 	}
-	e.pass(9 * time.Minute)
-	if len(sent) != 0 {
-		t.Fatalf("before the threshold: %v", sent)
-	}
-	moving.Turn = 1
-	e.w.mu.Lock()
-	e.w.act("run_busy").at = e.clk.Now() // a tool call 9 minutes in
-	e.w.mu.Unlock()
-	e.pass(2 * time.Minute)
-	e.pass(time.Minute)
-	if len(sent) != 1 || dedups[0] != "worker-not-started:run_stuck" || !strings.Contains(sent[0], "run_stuck") || !strings.Contains(sent[0], "tsk_1") ||
-		strings.Contains(sent[0], "worker_stop") {
-		t.Fatalf("notifications %v %v", dedups, sent)
-	}
-	// The busy run is flagged only once its own quiet time passes.
-	e.pass(10 * time.Minute)
-	if len(sent) != 2 || dedups[1] != "worker-not-started:run_busy" {
-		t.Fatalf("after the busy run went quiet: %v", dedups)
+	return e
+}
+
+func startWorker(id string) *fleet.Run {
+	return &fleet.Run{ID: id, Kind: "worker", Role: "reviewer", Desired: "running", Observed: "running", Status: "working", StartedAt: tp(wdNow)}
+}
+
+// call runs one tool call of a run through the watchdog's dispatcher.
+func (e *startEnv) call(runID, tool string) {
+	e.t.Helper()
+	if _, err := e.w.Tools(func(context.Context, *fleet.RunPrincipal, string, json.RawMessage) (json.RawMessage, error) {
+		return nil, nil
+	})(
+		context.Background(), &fleet.RunPrincipal{RunID: runID}, tool, nil); err != nil {
+		e.t.Fatal(err)
 	}
 }
 
-// Activity before a restart of central is unknown, not stuck: the clock starts at central's start.
+// A worker run whose program never connected to SpaceMan (no catalog fetch, no tool call) past
+// worker_start_watchdog_minutes gets control exactly one notification naming the run and its task. A run at turn 0
+// that fetched its catalog or made a tool call, one that took a turn, and one on a disconnected node get none.
+func TestWatchdogWorkerStuckAtZero(t *testing.T) {
+	stuck, fetched, called, moving, away := startWorker("run_stuck"), startWorker("run_fetched"), startWorker("run_called"), startWorker("run_moving"), startWorker("run_away")
+	away.Observed = "unknown"
+	moving.Turn = 1
+	e := newStartEnv(t, stuck, fetched, called, moving, away)
+	e.call("run_fetched", proto.ToolCatalog)
+	e.pass(9 * time.Minute)
+	if len(e.sent) != 0 {
+		t.Fatalf("before the threshold: %v", e.sent)
+	}
+	e.call("run_called", "spaceman_messages")
+	e.pass(2 * time.Minute)
+	e.pass(time.Minute)
+	if len(e.sent) != 1 || e.dedups[0] != "worker-not-started:run_stuck" || !strings.Contains(e.sent[0], "run_stuck") || !strings.Contains(e.sent[0], "tsk_1") ||
+		!strings.Contains(e.sent[0], "terminal") || strings.Contains(e.sent[0], "worker_stop") {
+		t.Fatalf("notifications %v %v", e.dedups, e.sent)
+	}
+	// A long first turn: hours at turn 0 with no tool call after the catalog fetch is never flagged.
+	e.pass(3 * time.Hour)
+	if len(e.sent) != 1 {
+		t.Fatalf("a long first turn was flagged: %v", e.dedups)
+	}
+}
+
+// A run that waited at a usage limit is not flagged when the limit clears: reporting the limit shows its program began.
+func TestWatchdogWorkerStartAfterLimit(t *testing.T) {
+	r := startWorker("run_limited")
+	r.Limit = &fleet.RunLimit{}
+	e := newStartEnv(t, r)
+	e.pass(time.Minute)
+	e.pass(2 * time.Hour)
+	r.Limit = nil
+	e.pass(time.Minute)
+	e.pass(time.Hour)
+	if len(e.sent) != 0 {
+		t.Fatalf("flagged after the limit cleared: %v", e.sent)
+	}
+}
+
+// A run that started before central did is unknown, not stuck: its catalog fetch, if any, came before the restart and
+// is not repeated. A run started after the restart is checked as usual.
 func TestWatchdogWorkerStartAfterRestart(t *testing.T) {
-	e := newWDEnv(t)
-	e.lim[limits.WorkerStartWatchdog] = 10
-	e.w.started = wdNow.Add(5 * time.Minute) // central came up 5 minutes after the run started, with no record of its calls
-	r := &fleet.Run{ID: "run_old", Kind: "worker", Role: "reviewer", Desired: "running", Observed: "running", StartedAt: tp(wdNow)}
-	var sent []string
-	e.w.workers = func(context.Context, string) ([]*fleet.Run, map[string]*queue.Task, error) {
-		return []*fleet.Run{r}, nil, nil
+	old, fresh := startWorker("run_old"), startWorker("run_new")
+	fresh.StartedAt = tp(wdNow.Add(10 * time.Minute))
+	e := newStartEnv(t, old, fresh)
+	e.w.started = wdNow.Add(5 * time.Minute) // central came up 5 minutes after the old run started
+	e.pass(15 * time.Minute)
+	if len(e.sent) != 0 {
+		t.Fatalf("flagged before a full interval: %v", e.sent)
 	}
-	e.w.tell = func(_ context.Context, _, _, _, body string) { sent = append(sent, body) }
-	e.pass(12 * time.Minute) // 12 minutes after the run, 7 after central started
-	if len(sent) != 0 {
-		t.Fatalf("flagged before a full interval after the restart: %v", sent)
-	}
-	e.pass(4 * time.Minute)
-	if len(sent) != 1 {
-		t.Fatalf("not flagged after a quiet interval: %v", sent)
+	e.pass(time.Hour)
+	if len(e.sent) != 1 || e.dedups[0] != "worker-not-started:run_new" {
+		t.Fatalf("notifications %v", e.dedups)
 	}
 	// Runs that ended, wait at a limit, or are control are not stuck.
 	for _, x := range []*fleet.Run{
-		{ID: "a", Kind: "worker", Desired: "running", Observed: "exited", StartedAt: tp(ago(time.Hour))},
-		{ID: "b", Kind: "worker", Desired: "running", Observed: "running", Limit: &fleet.RunLimit{}, StartedAt: tp(ago(time.Hour))},
-		{ID: "c", Kind: "control", Desired: "running", Observed: "running", StartedAt: tp(ago(time.Hour))}} {
-		if got := e.w.stuckAtZero([]*fleet.Run{x}, 10*time.Minute, wdNow.Add(time.Hour)); len(got) != 0 {
+		{ID: "a", Kind: "worker", Desired: "running", Observed: "exited", StartedAt: tp(wdNow.Add(time.Hour))},
+		{ID: "b", Kind: "worker", Desired: "running", Observed: "running", Limit: &fleet.RunLimit{}, StartedAt: tp(wdNow.Add(time.Hour))},
+		{ID: "c", Kind: "control", Desired: "running", Observed: "running", StartedAt: tp(wdNow.Add(time.Hour))}} {
+		if got := e.w.stuckAtZero([]*fleet.Run{x}, 10*time.Minute, wdNow.Add(3*time.Hour)); len(got) != 0 {
 			t.Errorf("%s: not stuck: %+v", x.ID, got)
 		}
 	}

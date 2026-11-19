@@ -102,6 +102,7 @@ type activity struct {
 	looked   time.Time // when a pass last read the turn (keeps the record of a run without tool calls)
 	asked    bool      // the run asked a person (spaceman_human_ask) since central started
 	askTurn  int64     // the run's finished turns when it last asked: the asking turn finishes as askTurn+1
+	began    time.Time // when the run's program first showed it started: it fetched its tool catalog or reported a usage limit
 }
 
 // observation is one space's state as a watchdog pass reads it.
@@ -364,6 +365,9 @@ func NewWatchdog(sv *Supervisor) *Watchdog {
 func (w *Watchdog) Tools(next fleet.ToolDispatcher) fleet.ToolDispatcher {
 	return func(ctx context.Context, p *fleet.RunPrincipal, tool string, args json.RawMessage) (json.RawMessage, error) {
 		if tool == proto.ToolCatalog {
+			// The catalog is fetched by the run's MCP bridge when the program starts it: not activity, but proof the
+			// program began and connected to SpaceMan.
+			w.programBegan(p.RunID)
 			return next(ctx, p, tool, args)
 		}
 		w.toolStarted(p.RunID, tool)
@@ -373,6 +377,14 @@ func (w *Watchdog) Tools(next fleet.ToolDispatcher) fleet.ToolDispatcher {
 			w.asked(ctx, p.RunID)
 		}
 		return out, err
+	}
+}
+
+func (w *Watchdog) programBegan(runID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if a := w.act(runID); a.began.IsZero() {
+		a.began = w.sv.clock.Now()
 	}
 }
 
@@ -496,26 +508,39 @@ func (w *Watchdog) Pass(ctx context.Context) {
 	w.prune()
 }
 
-// stuckAtZero returns the worker runs that are running on a connected node, still at turn 0, and showed no activity for
-// more than n: no SpaceMan tool call since the run started (turn counts finished turns, and a worker is often in its
-// first turn for an hour). The clock starts at the later of the run's start and central's start, because tool calls
-// before a restart of central are unknown. A run waiting for a usage limit is not stuck. Oldest first.
+// stuckAtZero returns the worker runs that are running on a connected node, still at turn 0, and whose program never
+// connected to SpaceMan for more than n: its MCP bridge never fetched the tool catalog (it does so when the program
+// starts it) and the run made no SpaceMan tool call. Turn 0 alone says nothing, since a worker is often in its first
+// turn for an hour. A run that reported a usage limit shows its program started, so it
+// is never flagged, even after the limit clears. Neither is a run that started before central did: the bridge fetches
+// the catalog once, when the program starts, so whether it connected before a restart of central is unknown. Oldest
+// first.
 func (w *Watchdog) stuckAtZero(runs []*fleet.Run, n time.Duration, now time.Time) []*fleet.Run {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var out []*fleet.Run
 	for _, r := range runs {
-		if r.Kind != agenttools.KindWorker || r.Desired != "running" || r.Observed != "running" || r.Limit != nil || r.Turn != 0 || r.StartedAt == nil {
+		if r.Kind != agenttools.KindWorker || r.Desired != "running" || r.Observed != "running" || r.Turn != 0 || r.StartedAt == nil {
 			continue
 		}
-		since := latest(*r.StartedAt, w.started)
+		if r.Limit != nil {
+			a := w.act(r.ID)
+			if a.began.IsZero() {
+				a.began = now
+			}
+			continue
+		}
+		if r.StartedAt.Before(w.started) {
+			continue
+		}
 		if a := w.acts[r.ID]; a != nil {
-			if a.inflight > 0 {
+			// Keep the record of a live run that has nothing else to refresh it.
+			a.looked = now
+			if !a.began.IsZero() || !a.at.IsZero() || a.inflight > 0 {
 				continue
 			}
-			since = latest(since, a.at, a.turnAt)
 		}
-		if now.Sub(since) < n {
+		if now.Sub(*r.StartedAt) < n {
 			continue
 		}
 		out = append(out, r)
@@ -524,9 +549,9 @@ func (w *Watchdog) stuckAtZero(runs []*fleet.Run, n time.Duration, now time.Time
 	return out
 }
 
-// checkStarts tells control, once per run, about each worker run at turn 0 with no activity for a configurable time
-// since it started (limit worker_start_watchdog_minutes): a run can report "running" and "working" for hours without
-// its program ever beginning. Control is notified durably (deduplicated by run), so a restart of central does not repeat it.
+// checkStarts tells control, once per run, about each worker run whose program has not connected to SpaceMan a
+// configurable time after it started (limit worker_start_watchdog_minutes): a run can report "running" and "working"
+// for hours without its program ever beginning. Control is notified durably (deduplicated by run), so a restart of central does not repeat it.
 func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 	n := time.Duration(w.limit(ctx, spaceID, limits.WorkerStartWatchdog)) * w.sv.IdleUnit
 	if n <= 0 {
@@ -554,9 +579,10 @@ func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 			task = "task " + t.ID + " (" + t.Title + ")"
 		}
 		mins := int64(w.sv.clock.Now().Sub(*r.StartedAt) / w.sv.IdleUnit)
-		w.tell(ctx, spaceID, "worker-not-started:"+r.ID, "Worker run "+r.ID+" shows no activity since launch",
-			fmt.Sprintf("Worker run %s (role %s, %s) was launched %d minutes ago and has shown no activity since: no SpaceMan tool call and no finished turn. "+
-				"It may be a first long turn or a program that never began. Check its terminal (spaceman_runs_list for its status) before deciding whether to stop it.", r.ID, r.Role, task, mins))
+		w.tell(ctx, spaceID, "worker-not-started:"+r.ID, "Worker run "+r.ID+" never connected to SpaceMan",
+			fmt.Sprintf("Worker run %s (role %s, %s) was launched %d minutes ago and its program has not connected to SpaceMan: its tools were never "+
+				"loaded and it made no SpaceMan tool call. The program may not have started. Check its terminal (spaceman_runs_list for its status) "+
+				"before deciding what to do.", r.ID, r.Role, task, mins))
 	}
 	// Forget runs that left the list, so the set stays small.
 	w.mu.Lock()
@@ -593,7 +619,7 @@ func (w *Watchdog) prune() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for id, a := range w.acts {
-		if a.inflight == 0 && now.Sub(latest(a.at, a.turnAt, a.looked)) > activityExpiry {
+		if a.inflight == 0 && now.Sub(latest(a.at, a.turnAt, a.looked, a.began)) > activityExpiry {
 			delete(w.acts, id)
 		}
 	}

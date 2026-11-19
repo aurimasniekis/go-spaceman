@@ -4298,7 +4298,7 @@ export interface paths {
         };
         /**
          * A space's control watchdog state
-         * @description What the control watchdog (ADR-0099) saw at its last pass over the space: why it left control alone, or how many reminders it sent and whether it escalated, with the waiting work as counts. Read-only; the watchdog is configured with the control_watchdog_minutes, control_watchdog_nudges, control_watchdog_restart and worker_start_watchdog_minutes limits (the last tells control about a worker at turn 0 with no activity since launch).
+         * @description What the control watchdog (ADR-0099) saw at its last pass over the space: why it left control alone, or how many reminders it sent and whether it escalated, with the waiting work as counts. Read-only; the watchdog is configured with the control_watchdog_minutes, control_watchdog_nudges, control_watchdog_restart and worker_start_watchdog_minutes limits (the last tells control about a worker whose program never connected to SpaceMan).
          */
         get: operations["get-space-watchdog"];
         put?: never;

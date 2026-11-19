@@ -263,7 +263,7 @@ var LimitRanges = map[string][2]int64{
 	"control_watchdog_minutes": {0, 1440},
 	"control_watchdog_nudges":  {0, 20},
 	"control_watchdog_restart": {0, 1},
-	// Worker start watchdog: minutes at turn 0 before control is told (0: off).
+	// Worker start watchdog: minutes a worker's program may go without connecting to SpaceMan before control is told (0: off).
 	"worker_start_watchdog_minutes": {0, 1440},
 	// A new run's terminal size (ADR-0075): 0 is the node's runner.terminal_size; otherwise the terminal size bounds
 	// (TerminalLimitFloor).

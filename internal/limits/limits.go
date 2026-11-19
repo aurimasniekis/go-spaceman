@@ -63,7 +63,7 @@ const (
 	ControlWatchdog        = "control_watchdog_minutes"
 	ControlWatchdogNudges  = "control_watchdog_nudges"
 	ControlWatchdogRestart = "control_watchdog_restart"
-	// Worker start watchdog: the minutes a live worker run may stay at turn 0 before control is told (0: off).
+	// Worker start watchdog: the minutes a live worker run's program may go without connecting to SpaceMan before control is told (0: off).
 	WorkerStartWatchdog = "worker_start_watchdog_minutes"
 	// A new run's terminal size (ADR-0075).
 	TerminalCols = "terminal_cols"
@@ -185,7 +185,7 @@ var Defs = []Def{
 		Scope:    "when the watchdog escalates, also stop control and start it again, resuming its session, within the supervisor's restart budget (default off)",
 		Enforced: "control watchdog", OnLower: "Turning it off never stops a running control.", Overridable: true},
 	{Key: WorkerStartWatchdog, Label: "Worker start watchdog", Unit: "minutes", ZeroNone: true,
-		Scope:    "how long a running worker run at turn 0 may show no activity (no SpaceMan tool call) after it started before control gets a notification naming the run and its task (0: off)",
+		Scope:    "how long a running worker run's program may go without connecting to SpaceMan (loading its SpaceMan tools or calling one) after it started before control gets a notification naming the run and its task (0: off)",
 		Enforced: "control watchdog (one notification per run)", OnLower: "Applies from the watchdog's next pass.", Overridable: true},
 	{Key: TerminalCols, Label: "Terminal columns", Unit: "columns",
 		Scope: "the width new runs' terminals are held at (40-400; 0: the node's default size); applies only with terminal rows set too", ZeroNone: true,

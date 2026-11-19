@@ -56,7 +56,7 @@ func TestControlWatchdog(t *testing.T) {
 	// The watchdog on, with "1 minute" = 150 ms: one unanswered reminder escalates, and the restart is off at first.
 	unit := 150 * time.Millisecond
 	e.c.Supervisor.IdleUnit = unit
-	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 1, limits.WorkerStartWatchdog: 0}}); err != nil {
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	nudges := func() []string {
@@ -114,7 +114,7 @@ func TestControlWatchdog(t *testing.T) {
 	// Reminders that leave the backlog escalate: people are told, and with the restart on control starts again (no
 	// reminder goes into the terminal that is being stopped).
 	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 1, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 1,
-		limits.ControlWatchdogRestart: 1, limits.WorkerStartWatchdog: 0}}); err != nil {
+		limits.ControlWatchdogRestart: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "escalated", func() bool { e.c.Watchdog.Pass(ctx); s, _ := e.c.Watchdog.State(sp.ID); return s.Escalated })
@@ -177,7 +177,7 @@ func TestControlWatchdogReadSkipsHeldTasks(t *testing.T) {
 	e.run.SetStatus(e.run1(ctrl.ID).TerminalID, "idle")
 	unit := 20 * time.Millisecond
 	e.c.Supervisor.IdleUnit = unit
-	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 0, limits.WorkerStartWatchdog: 0}}); err != nil {
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 0}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.c.Queue.Create(ctx, admin, sp.ID, queue.CreateInput{Title: "Waiting", Status: queue.Ready}); err != nil {

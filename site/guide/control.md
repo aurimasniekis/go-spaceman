@@ -137,11 +137,12 @@ this and reminds control.
   state as of the last pass (one a minute): why it holds back, how many reminders were sent, whether it escalated and
   what waits. It is read-only, needs the permission to read runs, and starts over when central restarts.
 
-- **Workers that never began.** A worker run on a connected node that is still at turn 0 and has made no SpaceMan tool
-  call for `worker_start_watchdog_minutes` after it started (10 by default, 0 off) gets control one notification, once
-  per run. The turn counter only counts finished turns, so a healthy worker in a long first turn stays at 0; the notice
-  therefore asks control to check the run's terminal, not to stop it. After central restarts the clock starts at the
-  restart, because earlier tool calls are unknown.
+- **Workers that never connected.** A worker run on a connected node whose program has not connected to SpaceMan
+  `worker_start_watchdog_minutes` after it started (10 by default, 0 off) gets control one notification, once per run.
+  A program connects when it starts SpaceMan's MCP server, which loads the run's tools; a SpaceMan tool call counts
+  too. A healthy worker in a long first turn has connected, so it is never flagged, nor is a run that waited at a usage
+  limit. The notice asks control to check the run's terminal, not to stop the run. Runs that started before central's
+  last restart are not checked, because whether they connected is unknown.
 
 The four settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
 

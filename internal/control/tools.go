@@ -43,7 +43,7 @@ type RunRow struct {
 	Observed string `json:"observed"`
 	Status   string `json:"status,omitempty"`
 	// Turn is how many turns the run's program finished: 0 can be a long first turn, so the watchdog (not this
-	// field) tells control about a worker that shows no activity since launch.
+	// field) tells control about a worker whose program never connected to SpaceMan.
 	Turn   int64  `json:"turn"`
 	TaskID string `json:"task_id,omitempty"`
 	// Limit is the run's open usage limit (ADR-0079): the run is waiting for it to reset.
