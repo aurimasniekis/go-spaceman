@@ -122,3 +122,23 @@ func gatewayClaudeSettings(s proto.ClaudeSettings) error {
 	}
 	return nil
 }
+
+// passthroughRefusedPrefixes are variable families the agent's harness.env_passthrough never copies into a run: other
+// cloud and model providers' credentials and endpoints, and the loader and shell hooks that run code in the harness.
+var passthroughRefusedPrefixes = []string{"AWS_", "GOOGLE_", "CLOUD_ML_", "VERTEX_", "AZURE_", "OPENAI_", "CODEX_", "LD_"}
+
+// PassthroughRefused reports whether harness.env_passthrough must refuse name: everything a gateway run's profile
+// can't set (claudeCredentialEnv: ANTHROPIC_*, every CLAUDE_CODE_* outside claudeSafeEnv, proxy and TLS variables),
+// other providers' families and the loader/shell hooks (LD_*, BASH_ENV, ENV). CLAUDE_CODE_TMPDIR and the other safe
+// switches pass.
+func PassthroughRefused(name string) bool {
+	if claudeCredentialEnv(name) || name == "BASH_ENV" || name == "ENV" {
+		return true
+	}
+	for _, p := range passthroughRefusedPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -561,6 +562,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("write login", err)
 		return
 	}
+	built.SecretEnv = passthroughEnv(a.o.EnvPassthrough, os.LookupEnv, built) // before the secrets file the shim reads
 	a.rememberRunToken(c.RunID, p.RunToken)
 	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
 		fail("write secret file", err)
@@ -1173,6 +1175,28 @@ func (a *Agent) retireGuard(ctx context.Context, spaceID string) {
 		}
 		_ = a.o.Runner.Remove(ctx, g.ID)
 	}
+}
+
+// passthroughEnv adds the configured harness.env_passthrough variables the agent has set to the launch's secret
+// environment, which the launcher shim applies after scrubbing inherited variables (so CLAUDE_CODE_* names survive)
+// and which herdr-core never persists. A name the launch already sets (Env or SecretEnv) keeps the agent's value.
+func passthroughEnv(names []string, lookup func(string) (string, bool), l harness.Launch) map[string]string {
+	out := maps.Clone(l.SecretEnv)
+	for _, n := range names {
+		if _, ok := l.Env[n]; ok {
+			continue
+		}
+		if _, ok := out[n]; ok {
+			continue
+		}
+		if v, ok := lookup(n); ok {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[n] = v
+		}
+	}
+	return out
 }
 
 // SecretsFile is the per-run secret file read (and unlinked) by the launcher shim.
