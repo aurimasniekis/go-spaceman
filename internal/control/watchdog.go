@@ -508,7 +508,7 @@ func (w *Watchdog) Pass(ctx context.Context) {
 	w.prune()
 }
 
-// stuckAtZero returns the worker runs that are running on a connected node, still at turn 0, and whose program never
+// stuckAtZero returns the worker runs that are running (as observed), still at turn 0, and whose program never
 // connected to SpaceMan for more than n: its MCP bridge never fetched the tool catalog (it does so when the program
 // starts it) and the run made no SpaceMan tool call. Turn 0 alone says nothing, since a worker is often in its first
 // turn for an hour. A run that reported a usage limit shows its program started, so it
@@ -555,6 +555,30 @@ func (w *Watchdog) stuckAtZero(runs []*fleet.Run, n time.Duration, now time.Time
 func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 	n := time.Duration(w.limit(ctx, spaceID, limits.WorkerStartWatchdog)) * w.sv.IdleUnit
 	if n <= 0 {
+		w.mu.Lock()
+		idle := true
+		for _, a := range w.acts {
+			if !a.began.IsZero() {
+				idle = false
+			}
+		}
+		w.mu.Unlock()
+		if idle {
+			return
+		}
+		runs, _, err := w.workers(ctx, spaceID)
+		// The check is off, but the records of running runs stay: pruning one would let a long-running run that began
+		// long ago be flagged as never started once the check is turned on.
+		if err == nil {
+			w.mu.Lock()
+			now := w.sv.clock.Now()
+			for _, r := range runs {
+				if a := w.acts[r.ID]; a != nil && r.Kind == agenttools.KindWorker && r.Desired == "running" && r.Observed == "running" {
+					a.looked = now
+				}
+			}
+			w.mu.Unlock()
+		}
 		return
 	}
 	runs, tasks, err := w.workers(ctx, spaceID)

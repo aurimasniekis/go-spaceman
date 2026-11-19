@@ -836,3 +836,21 @@ func TestWatchdogWorkerStartAfterRestart(t *testing.T) {
 		}
 	}
 }
+
+// While the start check is off, the records of running runs are kept: a run that fetched its catalog long ago is not
+// flagged as never started when the check is turned on after more than a day.
+func TestWatchdogWorkerStartCheckOffKeepsBegan(t *testing.T) {
+	r := startWorker("run_long")
+	e := newStartEnv(t, r)
+	e.call("run_long", proto.ToolCatalog)
+	e.lim[limits.WorkerStartWatchdog] = 0
+	for i := 0; i < 25; i++ {
+		e.pass(time.Hour)
+	}
+	e.lim[limits.WorkerStartWatchdog] = 10
+	e.pass(time.Minute)
+	e.pass(time.Hour)
+	if len(e.sent) != 0 {
+		t.Fatalf("flagged after the check was re-enabled: %v", e.sent)
+	}
+}

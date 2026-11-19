@@ -39,6 +39,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Turning the worker start check back on no longer flags long-running runs.** While `worker_start_watchdog_minutes`
+  is 0 the watchdog now keeps the start records of running runs, so a run that began long ago is not reported as
+  never started after the check is re-enabled.
+
 - **A close record numbered while the local disk failed is no longer sent twice.** The close reached central but not the
   disk, so a later recorder for the run (started from a stale snapshot) read an open recording and ended the run again.
   The agent now remembers, per run and in memory, that it numbered the close, and a later recorder does not add another. The mark does not survive an agent restart, so a close that is on central but
