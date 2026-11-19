@@ -7686,8 +7686,8 @@
 - **A worker that waits long.** A worker waiting for an answer that takes long (control asking a person or another
   space) can see the cycle "reminder, its message to control, notice to control" once per new turn control gives it.
   It stops when the task is set to `blocked`, which control or the worker can do.
-- **Background work.** A run reporting working with `status_kind` `background` (turn finished, shells, monitors or
-  sub-agents still running, ADR-0100) is busy, never a candidate. Where Claude Code reports plain `idle` while
+- **Background work.** A run reporting working with `status_kind` `background` (turn finished, shells or monitors still
+  running, ADR-0100) is busy, never a candidate. A running sub-agent reports plain `working`, which is busy too. Where Claude Code reports plain `idle` while
   background work runs, the check cannot tell: that worker can get a reminder and control a notice that are false. The
   reminder text says so, so the worker answers by messaging control.
 - **After a restart** the watchdog has no working time for a run: a message to control then counts as the run's last
