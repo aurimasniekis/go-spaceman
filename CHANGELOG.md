@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The agent's catch-up pass and capability reports are joined at shutdown.** `Run` started the recording catch-up
+  pass, the capability loop and the report after hello as untracked goroutines, so one could still be running after
+  `Run` returned (and, in tests, read package settings the caller restored next, a data race). They are tracked now and
+  `Run` waits for them, bounded, like its other background work.
 - **A capabilities report is written only on the connection it was checked against.** The agent now reads what it has
   sent, the protocol and the connection in one step and sends on that exact connection, so a reconnect in between makes
   the write fail instead of putting an older inventory on the new session.

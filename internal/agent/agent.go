@@ -346,7 +346,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}()
 	go func() { defer close(monitorDone); a.monitor(ctx) }()
 	go a.enforce(ctx)
-	go a.capsLoop(ctx)
+	a.goTrack(func() { a.capsLoop(ctx) })
 	go a.pruneLoop(ctx)
 	go func() {
 		if err := a.ServeBridge(ctx); err != nil {
@@ -560,7 +560,7 @@ func (a *Agent) session(ctx context.Context) error {
 				go a.resendHeldReports(hbCtx, held)
 			}
 			if startPass {
-				go a.catchUpRecordings()
+				a.goTrack(a.catchUpRecordings)
 			}
 			go a.heartbeatLoop(hbCtx)
 			go a.mem.resume(hbCtx)
@@ -568,7 +568,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.resendRoleRenames(hbCtx)
-			go a.capsAfterHello(hbCtx, helloCaps)
+			a.goTrack(func() { a.capsAfterHello(hbCtx, helloCaps) })
 			go a.reportAllHookData(hbCtx)
 			if len(follow) > 0 {
 				go a.sendFollowUp(hbCtx, conn, follow)
