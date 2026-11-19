@@ -329,10 +329,13 @@ type Manager struct {
 	retry time.Duration
 	// drainTimeout bounds each halt's drain (tests lower it).
 	drainTimeout time.Duration
-	conns        map[string]*connRun
-	subs         map[string]*subRun
-	limMu        sync.Mutex
-	lims         map[string]*limiter
+	// onHalt is a test seam: nil in production, called with the subscription's ID and its pulse subscription
+	// after each halt of a durable subscription.
+	onHalt func(id string, sub *pulse.Subscription)
+	conns  map[string]*connRun
+	subs   map[string]*subRun
+	limMu  sync.Mutex
+	lims   map[string]*limiter
 	// coreMu guards core, the running core subscriptions by their NATS subscription (read by NATS's error callback).
 	coreMu sync.Mutex
 	core   map[*nats.Subscription]*subRun
@@ -427,7 +430,7 @@ const defaultDrainTimeout = 5 * time.Second
 // old consumer's pending pull request after Stop returned: it is dropped unacknowledged, and the consumer started
 // next (after a resume or a reconfiguration) receives it only once AckWait expires. Drain returns once the
 // unsubscribe reached the server and every event delivered before it was handled and acknowledged; after
-// drainTimeout it cancels the handlers' context and gives up waiting. halt holds no lock a handler takes (stateMu,
+// the drain timeout (Manager.drainTimeout) it cancels the handlers' context and gives up waiting. halt holds no lock a handler takes (stateMu,
 // limMu, coreMu, the store writer), so a draining handler can always finish.
 func (r *subRun) halt(ctx context.Context) {
 	drain(ctx, r.sub, r.drainTimeout)
@@ -438,7 +441,7 @@ func (r *subRun) halt(ctx context.Context) {
 }
 
 // drain drains a durable subscription for at most timeout (see halt). It is safe on nil. ctx carries values
-// only: a shutdown has already cancelled it, and the subscription still gets its drainTimeout.
+// only: a shutdown has already cancelled it, and the subscription still gets its full drain timeout.
 func drain(ctx context.Context, sub *pulse.Subscription, timeout time.Duration) {
 	if timeout <= 0 {
 		timeout = defaultDrainTimeout
@@ -480,7 +483,7 @@ func (m *Manager) stopAll(ctx context.Context) {
 	var wg sync.WaitGroup
 	for id := range m.subs {
 		run := m.detachSub(id)
-		wg.Go(func() { run.halt(ctx) })
+		wg.Go(func() { m.halt(ctx, id, run) })
 	}
 	wg.Wait()
 	for id, c := range m.conns {
@@ -595,7 +598,15 @@ func errText(err error) string {
 
 func (m *Manager) stopSub(ctx context.Context, id string) {
 	if s := m.detachSub(id); s != nil {
-		s.halt(ctx)
+		m.halt(ctx, id, s)
+	}
+}
+
+// halt halts run and then reports it to the onHalt test seam.
+func (m *Manager) halt(ctx context.Context, id string, run *subRun) {
+	run.halt(ctx)
+	if m.onHalt != nil && run.sub != nil {
+		m.onHalt(id, run.sub)
 	}
 }
 
