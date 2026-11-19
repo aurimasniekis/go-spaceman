@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A launch that fails before its program starts ends the run under the observe lock too.** Its failed write now takes
+  the observe lock after the run's lock, like a stop, and the end work runs after the locks are released. A stop for a
+  run this node had no record of takes it too, so every write that ends a run takes the observe lock.
 - **An older capabilities inventory no longer overwrites a newer one at central.** The agent now remembers the newest
   capabilities generation it sent (a hello counts) and skips any report at or below it, with the check and the send
   as one step. Before, the report sent after a hello could read the cache, lose a race with the periodic/change

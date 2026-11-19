@@ -535,6 +535,42 @@ func TestReconcileRunnerEndTakesObserveLock(t *testing.T) {
 	}
 }
 
+// A launch's pre-start failure ends the run under the observe lock too: while an observe holds it mid-step, the failed
+// write waits, then the row is written as failed and the end work runs once.
+func TestLaunchFailTakesObserveLock(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	ctx := context.Background()
+	const runID = "run_failobs"
+	var ran atomic.Int32
+	a.onRunEndHooks = func(string) { ran.Add(1) }
+	unlockObs := a.observeLock(runID)
+	done := make(chan struct{})
+	go func() {
+		a.launch(ctx, proto.Command{CommandID: "cmd_" + runID, Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: runID, Generation: 1},
+			proto.LaunchPayload{Harness: "no-such-harness", Kind: "worker", Role: "implementor", InstanceID: "ins_cc"})
+		close(done)
+	}()
+	// The launch journals the run before it can fail it: wait for that row, then give the failed write time to land.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := a.j.getRun(ctx, runID); err == nil || time.Now().After(deadline) {
+			break
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if r := getRun(t, a, runID); r.State == proto.RunFailed {
+		t.Fatalf("the launch failed the run without the observe lock")
+	}
+	unlockObs()
+	<-done
+	a.drain(10 * time.Second)
+	if r := getRun(t, a, runID); r.State != proto.RunFailed {
+		t.Fatalf("state %s (%s / %s), want failed", r.State, r.Reason, r.Error)
+	}
+	if n := ran.Load(); n != 1 {
+		t.Fatalf("the end work ran %d times, want once", n)
+	}
+}
+
 // A stop before start (no terminal yet) ends the row under the observe lock too: it waits for an observe that is
 // between its read and its write, instead of ending the row underneath it.
 func TestStopBeforeStartTakesObserveLock(t *testing.T) {
