@@ -10,9 +10,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - **`harness.env_passthrough` in the agent configuration** names extra environment variables the agent copies from
   its own environment into Claude Code and Codex runs (default: none), for example `CLAUDE_CODE_TMPDIR`. Only exact
-  names are accepted; patterns, empty entries, and variables the agent sets itself or that carry credentials
-  (`SPACEMAN_*`, `HC_*`, `HOME`, `PATH`, `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, …) are refused, and the agent's own
-  value always wins. A profile's `claude_settings.env` stays the per-profile way to set Claude Code variables.
+  names are accepted; patterns and empty entries are refused. These are refused: the variables the agent sets itself
+  (`SPACEMAN_*`, `HC_*`, `HALLPASS_*`, `XDG_*`, `HOME`, `PATH`, `TERM`, `CLAUDE_CONFIG_*`); the agent's own and the
+  harness's credential variables (`ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, and every `CLAUDE_CODE_*` outside a short
+  safe list); model-provider credentials and endpoints (`AWS_*`, `GOOGLE_*`, `CLOUD_ML_*`, `VERTEX_*`, `AZURE_*`,
+  `OPENAI_*`, `CODEX_*`); proxy and TLS variables (`HTTPS_PROXY`, `NODE_OPTIONS`, `SSL_CERT_*`, …); and loader hooks
+  (`LD_*`, `BASH_ENV`, `ENV`). The agent's own value always wins. The operator remains responsible for any other names
+  they list. A profile's `claude_settings.env` stays the per-profile way to set Claude Code variables.
 
 - **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no

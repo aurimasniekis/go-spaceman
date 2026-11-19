@@ -129,7 +129,7 @@ var passthroughRefusedPrefixes = []string{"AWS_", "GOOGLE_", "CLOUD_ML_", "VERTE
 
 // PassthroughRefused reports whether harness.env_passthrough must refuse name: everything a gateway run's profile
 // can't set (claudeCredentialEnv: ANTHROPIC_*, every CLAUDE_CODE_* outside claudeSafeEnv, proxy and TLS variables),
-// other providers' families and the loader/shell hooks (LD_*, BASH_ENV). CLAUDE_CODE_TMPDIR and the other safe
+// other providers' families and the loader/shell hooks (LD_*, BASH_ENV, ENV). CLAUDE_CODE_TMPDIR and the other safe
 // switches pass.
 func PassthroughRefused(name string) bool {
 	if claudeCredentialEnv(name) || name == "BASH_ENV" || name == "ENV" {
