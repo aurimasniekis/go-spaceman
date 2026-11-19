@@ -29,6 +29,11 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   - From 2.1.326, a directory passed with `--add-dir` that is not trusted stops the session at "Adding a new directory …
     This session hasn't worked here before" (default answer: No, exit). The same key, `projects["<real path>"]
     .hasTrustDialogAccepted: true` for that directory, skips it (verified with 2.1.326; 2.1.325 does not ask).
+  - With `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set (any value), a new session first shows an interactive "Code Mode
+    (experimental)" opt-in dialog (default answer: No, start without it). It is skipped when `.claude.json` has both
+    `codeModeCaveatsAcceptedV1: true` and `codeModeAutoModeCaveatAcceptedV1: true`, which SpaceMan seeds only when the
+    profile's settings env sets the variable. A resumed session started without Code Mode keeps running without it.
+    (Read from the Claude Code 2.1.325 bundle and seen on a live run at 2.1.328; the seed itself is not yet run live.)
   - The startup notice says auto mode is the default permission mode in this version.
   - Inherited `CLAUDE_CODE_CHILD_SESSION` (set inside another Claude Code session) turns transcript saving off; the
     launcher shim removes inherited session markers.

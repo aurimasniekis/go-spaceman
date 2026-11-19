@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A run whose profile turns on Claude Code's Code Mode no longer stops at its opt-in dialog.** With
+  `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set in the profile's settings env, every new session first asked "Code Mode
+  (experimental)" in the terminal, and the unattended run waited there at turn 0. SpaceMan now records the Code Mode
+  caveats as accepted in the run's `.claude.json` when, and only when, the profile sets that env.
 - **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox
   only let a run write its workspace, so a run on Codex could not write the memory folders outside it. The run now
   gets write access to exactly those folders, and nothing else.
