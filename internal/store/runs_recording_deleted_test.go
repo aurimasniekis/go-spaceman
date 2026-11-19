@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 func TestRunsWithRecordingDeleted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s, err := Open(ctx, Options{DataDir: t.TempDir()})
+	s, err := Open(ctx, Options{DataDir: filepath.Join(t.TempDir(), "data")})
 	if err != nil {
 		t.Fatal(err)
 	}
