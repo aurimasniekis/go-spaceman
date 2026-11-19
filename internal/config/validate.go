@@ -129,6 +129,9 @@ func (c *Config) Validate() error {
 	default:
 		v.add("artifacts.backend must be \"local\" or \"s3\", got %q", c.Artifacts.Backend)
 	}
+	if d := c.Artifacts.RecordingReconcileInterval.D(); d != 0 {
+		v.durationRange("artifacts.recording_reconcile_interval", c.Artifacts.RecordingReconcileInterval, time.Hour, 168*time.Hour)
+	}
 	v.outbound(c.Events.Outbound, prod)
 	v.backups(c.Backups, prod)
 	v.limits(c)

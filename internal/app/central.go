@@ -943,6 +943,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
 	go c.uploadSpooledArtifacts(ctx)
+	go c.reconcileRecordings(ctx)
 	if err := c.Human.Recover(ctx); err != nil {
 		return fmt.Errorf("schedule human-action reminders: %w", err)
 	}
