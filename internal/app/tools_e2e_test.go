@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/runner"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
@@ -267,4 +268,58 @@ func messagesDeliveredToIdleRuns(t *testing.T, ctrlHarness, wrkHarness string) {
 	}
 	e.run.SetStatus(term(wrk.ID), "idle")
 	eventually(t, "notice typed into the worker", func() bool { return len(e.run.Inputs(term(wrk.ID))) == 1 })
+}
+
+// SM-COMM-003, ADR-0100: a control that has finished its turn but reports working because background tasks it started
+// still run (Claude Code: `working`, "… still running") sits at its prompt and takes input. A message to it is noticed
+// at once, not when the background tasks end; a control in the middle of a turn still gets nothing.
+func TestMessageNoticedToControlWaitingOnBackgroundTasks(t *testing.T) {
+	t.Parallel()
+	e := newFleetEnv(t)
+	e.enroll()
+	e.startAgent()
+	ctx := context.Background()
+	admin := audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "bgwait", Name: "Background", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	ctrl, _ := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: hns.KindClaude})
+	wrk, _ := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: hns.KindClaude})
+	eventually(t, "runs running", func() bool { return e.run1(ctrl.ID).Observed == "running" && e.run1(wrk.ID).Observed == "running" })
+	nctx, stop := context.WithCancel(ctx)
+	t.Cleanup(stop)
+	go e.c.Notifier.Run(nctx) // Serve runs it; the test central is not served
+	ct := e.run1(ctrl.ID).TerminalID
+	e.run.SetStatusReport(ct, runner.Status{State: "working", App: "claude-code", Message: "Reading the queue"})
+	eventually(t, "control working", func() bool { r := e.run1(ctrl.ID); return r.Status == "working" && r.StatusKind == "" })
+
+	send := func(subject string) {
+		t.Helper()
+		if res := e.bridgeCall(wrk.ID, e.runToken(wrk.ID), "spaceman_message_send", map[string]any{"to": "control", "subject": subject}); !res.OK {
+			t.Fatalf("send: %+v", res)
+		}
+	}
+	send("Started")
+	time.Sleep(300 * time.Millisecond)
+	if n := len(e.run.Inputs(ct)); n != 0 {
+		t.Fatalf("control in the middle of a turn got %d inputs", n)
+	}
+	// The turn ends while a background shell still runs: Claude Code keeps reporting working, with "… still running".
+	e.run.SetStatusReport(ct, runner.Status{State: "working", App: "claude-code", Message: "1 shell still running"})
+	// Before ADR-0100 the notice never came while the shell ran: the notifier saw a working run, and the node's
+	// idle gate refused it. The status report kicks the notifier (the minute sweep is the fallback).
+	eventuallyFor(t, "notice typed into control", 12*time.Second, func() bool { return len(e.run.Inputs(ct)) == 1 })
+	if notice := e.run.Inputs(ct)[0]; !strings.HasPrefix(notice, "SpaceMan: 1 new message") {
+		t.Fatalf("notice %q", notice)
+	}
+	// For everything else (control's idle stop, the watchdog, account switches) the run is still working, in the same
+	// turn: herdr-core counts a turn only when the program reports idle or done.
+	if r := e.run1(ctrl.ID); r.Status != "working" || r.StatusKind != runner.KindBackground || r.Turn != 0 {
+		t.Fatalf("control run status %q kind %q turn %d", r.Status, r.StatusKind, r.Turn)
+	}
 }

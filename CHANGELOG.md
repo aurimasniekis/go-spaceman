@@ -58,6 +58,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Messages and notifications now reach a control (or worker) that waits at its prompt while background tasks run.**
+  After a turn, Claude Code reports `working` ("1 shell still running") instead of `done` while background shells or
+  monitors it started are still running. SpaceMan took that for a turn in progress, so no terminal notice
+  was typed until the background work ended or the agent read its messages on its own. Workers' messages and
+  task-review notifications to control could wait for most of an hour. The node now reports such a run with the
+  status kind `background`. It takes idle-gated notices like a `done` run and is noticed as soon as it starts
+  waiting, while control's idle stop, account switches and the watchdog still treat it as working (ADR-0100).
+
 - **Turning the worker start check back on no longer flags long-running runs.** While `worker_start_watchdog_minutes`
   is 0 the watchdog now keeps the start records of running runs, so a run that began long ago is not reported as
   never started after the check is re-enabled.
