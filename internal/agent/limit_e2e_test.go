@@ -506,3 +506,112 @@ func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
 		t.Fatalf("run %+v", got)
 	}
 }
+
+// A node agent that restarts and adopts a run that is already working with an open limit starts the polling scan
+// itself: observe sees no status or turn change on an adopt, so nothing else would.
+func TestUsageLimitClearedForRunAdoptedWorking(t *testing.T) {
+	oldSettle, oldPoll := limitSettle, limitPoll
+	limitSettle, limitPoll = 10*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { limitSettle, limitPoll = oldSettle, oldPoll })
+	dir := t.TempDir()
+	a, f := ccAgent(t, dir, nil, nil)
+	fc := newWSCentral(t, proto.MinorUsageLimit)
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	stop := startAgent(t, a, fc, clk)
+	fc.next(t, proto.TypeHello)
+
+	const runID = "run_limit_adopt_working"
+	ccLaunch(a, runID)
+	row := getRun(t, a, runID)
+	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	at := clk.Now().Add(-time.Minute)
+	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	fc.collect(t, runID, 300*time.Millisecond)
+	reset := at.Add(5 * time.Hour).Truncate(time.Second)
+	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
+		t.Fatal(err)
+	}
+	rs := fc.collect(t, runID, 300*time.Millisecond)
+	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+	// The run starts working again; the agent stops before the continuation's records are written.
+	f.SetStatus(row.TerminalID, "working")
+	fc.collect(t, runID, 300*time.Millisecond)
+	stop()
+	if got := getRun(t, a, runID); got.Status != "working" || got.Limit.Kind == "" {
+		t.Fatalf("run before restart %+v", got)
+	}
+	if err := rt.AppendTranscript(transcript, rt.NoticeRecord(reset), rt.AutoContinueRecord(reset), rt.AssistantRecord("msg_continue", reset.Add(time.Second))); err != nil {
+		t.Fatal(err)
+	}
+
+	a2 := New(a.j, a.o)
+	a2.mem.base = context.Background()
+	t.Cleanup(func() { a2.drain(10 * time.Second) })
+	t.Cleanup(a2.stopRecorders)
+	a2.leases[ccSpace] = a.leases[ccSpace]
+	startAgent(t, a2, fc, clk)
+	hello := fc.helloRun(t, runID)
+	// The scan may run before or after the hello snapshot: the journal and the next report both show the clear.
+	deadline := time.Now().Add(3 * time.Second)
+	for getRun(t, a2, runID).Limit.Kind != "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	got := getRun(t, a2, runID)
+	if got.Status != "working" || got.Limit.Kind != "" || got.Limit.Since == nil || !got.Limit.Since.Equal(at) {
+		t.Fatalf("run %+v (hello limit %+v)", got, hello.Limit)
+	}
+}
+
+// A limited run that is idle is not polled: the polling scan belongs to working runs, and an idle run's next turn
+// start (a status change) kicks its own scan.
+func TestUsageLimitIdleRunIsNotPolled(t *testing.T) {
+	oldSettle, oldPoll := limitSettle, limitPoll
+	limitSettle, limitPoll = 10*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { limitSettle, limitPoll = oldSettle, oldPoll })
+	dir := t.TempDir()
+	a, f := ccAgent(t, dir, nil, nil)
+	fc := newWSCentral(t, proto.MinorUsageLimit)
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	startAgent(t, a, fc, clk)
+	fc.next(t, proto.TypeHello)
+
+	const runID = "run_limit_idle"
+	ccLaunch(a, runID)
+	row := getRun(t, a, runID)
+	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	at := clk.Now().Add(-time.Minute)
+	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	fc.collect(t, runID, 300*time.Millisecond)
+	f.SetStatus(row.TerminalID, "working")
+	f.SetStatus(row.TerminalID, "idle")
+	fc.collect(t, runID, 300*time.Millisecond)
+	reset := at.Add(5 * time.Hour).Truncate(time.Second)
+	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
+		t.Fatal(err)
+	}
+	rs := fc.collect(t, runID, 300*time.Millisecond)
+	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
+	if got := getRun(t, a, runID); got.Status != "idle" || got.Limit.Kind == "" {
+		t.Fatalf("run %+v", got)
+	}
+	// The continuation's records appear while the run stays idle: no scan is armed, so the limit stays open.
+	if err := rt.AppendTranscript(transcript, rt.NoticeRecord(reset), rt.AutoContinueRecord(reset), rt.AssistantRecord("msg_continue", reset.Add(time.Second))); err != nil {
+		t.Fatal(err)
+	}
+	if rs := fc.collect(t, runID, 500*time.Millisecond); len(rs) != 0 {
+		t.Fatalf("an idle run was scanned: %d reports, last %+v", len(rs), rs[len(rs)-1].Limit)
+	}
+	if got := getRun(t, a, runID); got.Limit.Kind == "" {
+		t.Fatalf("limit cleared without a scan: %+v", got.Limit)
+	}
+}

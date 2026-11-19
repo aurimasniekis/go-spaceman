@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **A run no longer shows "at usage limit" after the limit has reset and it carries on working.** The node looked for
   the end of a limit only when a turn ended, so a run that continued at the reset and then worked for a long turn kept
   its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
-  working, and every 30 seconds while it keeps working. This is a change to the node agent: it takes effect on a node
+  working (or is adopted already working after an agent restart), and every 30 seconds while it keeps working. This is a change to the node agent: it takes effect on a node
   once the agent is upgraded.
 - **A Telegram message no longer links to a URL it would itself refuse.** A link whose URL fit the 2048-byte limit as written
   but grew past it once normalised (each `#` in a fragment becomes `%23`) was emitted as a link entity, although the

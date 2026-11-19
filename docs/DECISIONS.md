@@ -5992,8 +5992,9 @@
   - `--resume` of a session under a different token works (live, fake API, 2.1.323); with two real claude.ai accounts
     it is **not verified** (K-16).
 - **Decision:**
-  1. **Detection on the node.** On the OSC 7501 status turning `idle` or `error`, and once at run end, the node agent
-     tail-scans the run's transcript from a persisted offset and reads only typed fields: `type`, `subtype`, `error`,
+  1. **Detection on the node.** On the OSC 7501 status turning `idle` or `error`, once at run end, and (amended
+     2026-11-19) while a run with an open limit is `working` (when it starts working, or when the agent adopts it
+     already working after a restart, then every 30 s), the node agent tail-scans the run's transcript from a persisted offset and reads only typed fields: `type`, `subtype`, `error`,
      `apiError`, `apiErrorStatus`, `quotaLimits.{resetsAt,rateLimitType,status}` (falling back to
      `apiErrorParams.rate_limit_info`), `usageLimitNote`, `origin.kind` and `timestamp`.
      - **Limit set** by a `usage_limit_reached` record, or an auto-continue arm record (wrap-up path), newer than the

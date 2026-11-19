@@ -741,11 +741,13 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		(prev.Status != row.Status || prev.Turn != row.Turn) {
 		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
-	// A run with an open limit that is working again (the auto-continuation after the reset, or any new turn) may have
-	// passed the record that ends the limit: scan for it now and while the turn runs, not only when the turn ends.
-	if row.State == proto.RunRunning && row.Harness == harness.KindClaude && row.Status == "working" && prev.Limit.Kind != "" &&
-		(prev.Status != row.Status || prev.Turn != row.Turn) {
-		a.limitKick(context.WithoutCancel(ctx), row.RunID)
+	// A run with an open limit that is working (the auto-continuation after the reset, any new turn, or one the agent
+	// adopted already working after a restart) may have passed the record that ends the limit: scan for it now and
+	// while the turn runs, not only when the turn ends. An observe that changes nothing (an adopt, a reconcile) arms
+	// a scan only if none is pending.
+	if row.State == proto.RunRunning && row.Harness == harness.KindClaude && row.Status == "working" && prev.Limit.Kind != "" {
+		unchanged := prev.Status == row.Status && prev.Turn == row.Turn
+		a.limitKickIn(context.WithoutCancel(ctx), row.RunID, limitSettle, unchanged)
 	}
 }
 

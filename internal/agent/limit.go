@@ -18,8 +18,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
-// Usage-limit detection (ADR-0079 decision 1). When a Claude Code run's status turns idle or error, and once when it
-// ends, the agent scans the run's transcript from the offset it reached last time and reads only typed fields. The
+// Usage-limit detection (ADR-0079 decision 1). When a Claude Code run's status turns idle or error, once when it
+// ends, and while a run with an open limit is working (when it starts working or is adopted so, then every limitPoll),
+// the agent scans the run's transcript from the offset it reached last time and reads only typed fields. The
 // limit it finds is journaled with that offset (a restarted agent resumes the scan and re-reports the same since) and
 // rides on every run report. Nothing read from the transcript is logged or sent except the allowlisted kind, the
 // reset epoch and the record's timestamp, all normalized (proto.RunLimit.Normalized).
