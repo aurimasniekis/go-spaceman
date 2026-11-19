@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
   working (or is adopted already working after an agent restart), and every 30 seconds while it keeps working. This is a change to the node agent: it takes effect on a node
   once the agent is upgraded.
+- **A run whose profile turns on Claude Code's Code Mode no longer stops at its opt-in dialog.** With
+  `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set in the profile's settings env, every new session first asked "Code Mode
+  (experimental)" in the terminal, and the unattended run waited there at turn 0. SpaceMan now records the Code Mode
+  caveats as accepted in the run's `.claude.json` when, and only when, the profile sets that env.
 - **A Telegram message no longer links to a URL it would itself refuse.** A link whose URL fit the 2048-byte limit as written
   but grew past it once normalised (each `#` in a fragment becomes `%23`) was emitted as a link entity, although the
   same check refuses the normalised URL. The limit is now checked on the URL that is emitted, so such a link is shown as text.
