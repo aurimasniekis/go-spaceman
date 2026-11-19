@@ -894,3 +894,23 @@ func TestWatchdogWorkerStartCheckOffPrunesEndedRun(t *testing.T) {
 		t.Fatal("record of an ended run kept for more than a day")
 	}
 }
+
+// A run that is still observed running but is no longer desired running (a stop in flight) is not kept alive by the
+// off check: its record is pruned after a day like an ended run's.
+func TestWatchdogWorkerStartCheckOffPrunesStoppedDesiredRun(t *testing.T) {
+	r := startWorker("run_stopping")
+	e := newStartEnv(t, r)
+	e.call("run_stopping", proto.ToolCatalog)
+	e.lim[limits.WorkerStartWatchdog] = 0
+	e.pass(time.Minute)
+	r.Desired = "stopped"
+	for i := 0; i < 25; i++ {
+		e.pass(time.Hour)
+	}
+	e.w.mu.Lock()
+	_, ok := e.w.acts["run_stopping"]
+	e.w.mu.Unlock()
+	if ok {
+		t.Fatal("record of a run no longer desired running kept for more than a day")
+	}
+}

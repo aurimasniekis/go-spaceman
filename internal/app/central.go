@@ -214,6 +214,10 @@ type Options struct {
 	// StoreReaders overrides the store's reader pool size (0 keeps the default, max(4, GOMAXPROCS)). Opening the store
 	// opens and checks every reader connection, which on a many-core host under the race detector takes seconds.
 	StoreReaders int
+	// MCPCatalog lets tests share the SpaceMan MCP catalog between centrals: it receives the function that builds the
+	// catalog and returns the catalog to use, so a test binary can build it once instead of once per central (the build
+	// marshals the whole API document, which takes seconds under the race detector). nil builds one per central.
+	MCPCatalog func(build func() (*spacemanmcp.Catalog, error)) (*spacemanmcp.Catalog, error)
 	// StaleRunGrace overrides the stale-run sweeper's grace period (tests; 0 keeps the default, ADR-0074).
 	StaleRunGrace time.Duration
 	// RecordingCreate creates the segment files of central's recording copies (tests inject a failing disk; nil uses
@@ -645,7 +649,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	m.ObserveFilesystem(metrics.VolumeData, cfg.DataDir)
 	// SpaceMan MCP servers (ADR-0063): SpaceMan's own API as gateway tools, run in process with each server's internal
 	// token. Built last, from the complete API.
-	if err := c.wireSpacemanMCP(); err != nil { //nolint:contextcheck // builds handlers; each request brings its own context
+	if err := c.wireSpacemanMCP(o.MCPCatalog); err != nil { //nolint:contextcheck // builds handlers; each request brings its own context
 		_ = st.Close()
 		return nil, fmt.Errorf("spaceman mcp: %w", err)
 	}
@@ -662,9 +666,18 @@ func (c *Central) SpacemanCatalog() *spacemanmcp.Catalog {
 
 // wireSpacemanMCP gives the gateway its SpaceMan MCP backend: the tool catalog generated from this build's API and the
 // in-process handler that runs the tools.
-func (c *Central) wireSpacemanMCP() error {
+func (c *Central) wireSpacemanMCP(shared func(build func() (*spacemanmcp.Catalog, error)) (*spacemanmcp.Catalog, error)) error {
 	d := c.APIDeps()
-	cat, err := spacemanmcp.Build(api.Register(http.NewServeMux(), d).OpenAPI(), d.RuleFor)
+	build := func() (*spacemanmcp.Catalog, error) {
+		return spacemanmcp.Build(api.Register(http.NewServeMux(), d).OpenAPI(), d.RuleFor)
+	}
+	var cat *spacemanmcp.Catalog
+	var err error
+	if shared != nil {
+		cat, err = shared(build)
+	} else {
+		cat, err = build()
+	}
 	if err != nil {
 		return err
 	}
