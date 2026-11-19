@@ -75,7 +75,9 @@ type HarnessConfig struct {
 	// EnvPassthrough names extra environment variables the agent copies from its own environment into harness
 	// processes (Claude Code and Codex), when the agent has them set. Default: none. Only exact names are accepted
 	// (no patterns; an entry must be a plain name of letters, digits and "_"). The config refuses names the agent sets
-	// itself (SPACEMAN_*, HC_*, HALLPASS_*, XDG_*, HOME, PATH, TERM, CLAUDE_CONFIG_*), anything a gateway run's profile
+	// or reserves itself (SPACEMAN_*, HC_*, HALLPASS_*, XDG_*, CLAUDE_CONFIG_*, HOME, PATH, TERM, COLORTERM, PWD, USER,
+	// LOGNAME, SHELL, CLAUDECODE, CLAUDE_PID, CLAUDE_EFFORT, DISABLE_AUTOUPDATER, DISABLE_UPDATES), credential variables
+	// (CLAUDE_CODE_OAUTH_TOKEN, HARBOR_PILOT_TOKEN), anything a gateway run's profile
 	// can't set (ANTHROPIC_*, every CLAUDE_CODE_* outside a short safe list such as CLAUDE_CODE_TMPDIR, proxy and TLS
 	// variables such as HTTPS_PROXY, NODE_OPTIONS, SSL_CERT_FILE and SSL_CERT_DIR), other providers' variables (AWS_*, GOOGLE_*,
 	// CLOUD_ML_*, VERTEX_*, AZURE_*, OPENAI_*, CODEX_*) and loader or shell hooks (LD_*, BASH_ENV, ENV): a run's credentials
