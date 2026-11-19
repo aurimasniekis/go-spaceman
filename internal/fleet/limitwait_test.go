@@ -784,8 +784,7 @@ func TestLeaseGrantWakesNodeOfflineWaits(t *testing.T) {
 		t.Fatalf("node away: %+v", w)
 	}
 
-	// A plain renewal: the lease is valid, so the wait keeps its retry time. (A valid lease with a wait put off as
-	// node_offline for another cause is what wakeWaitsOnNode, called after the hello, still nudges.)
+	// A plain renewal: the lease is valid, so the wait keeps its retry time.
 	e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(1000*time.Hour))
 	e.grantLease()
 	if got := e.wait(w.ID); got.ResumeAt != w.ResumeAt {
@@ -817,11 +816,11 @@ func TestLeaseGrantWakesNodeOfflineWaits(t *testing.T) {
 }
 
 // resumeOutcome files a CodeUnavailable refusal as node_offline only when it is about the node's lease; any other
-// (gateway upstream, Harbor Pilot budget status) is upstream_unavailable with its own, shorter retry.
+// (Harbor Pilot budget status) is upstream_unavailable with its own, shorter retry.
 func TestResumeOutcomeUnavailableCauses(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	lease := nodeNotConnectedError{apperr.New(apperr.CodeUnavailable, "the space's node is not connected")}
-	upstream := apperr.New(apperr.CodeUnavailable, "the upstream server is unavailable")
+	upstream := apperr.New(apperr.CodeUnavailable, "Harbor Pilot budget status is unavailable")
 	for _, tc := range []struct {
 		name   string
 		err    error
@@ -843,8 +842,8 @@ func TestResumeOutcomeUnavailableCauses(t *testing.T) {
 	}
 }
 
-// failingGateway refuses every launch before its transaction, as a gateway upstream error or a Harbor Pilot budget
-// refusal does.
+// failingGateway refuses every launch before its transaction, as Harbor Pilot's budget check does with
+// on_budget_status_unavailable: refuse.
 type failingGateway struct {
 	fakeGateway
 	err error
@@ -859,7 +858,7 @@ func TestLimitWaitGatewayRefusalIsUpstreamUnavailable(t *testing.T) {
 	e.limited("run_u", "worker", proto.LimitFiveHour, dur(time.Hour), e.clk.Now().Sub(e.t0), 1)
 	e.end("run_u", proto.RunExited, "exited")
 	w := e.waitOf("run_u")
-	g := &failingGateway{err: apperr.New(apperr.CodeUnavailable, "the upstream server is unavailable")}
+	g := &failingGateway{err: apperr.New(apperr.CodeUnavailable, "Harbor Pilot budget status is unavailable")}
 	e.svc.opts.Gateway = g
 	e.clk.Advance(time.Hour + 2*time.Minute)
 	e.due()
@@ -877,5 +876,33 @@ func TestLimitWaitGatewayRefusalIsUpstreamUnavailable(t *testing.T) {
 	e.clk.Advance(limitRetryUpstream)
 	if n := e.due(); n != 1 || e.wait(w.ID).State != WaitResumed {
 		t.Fatalf("after the gateway answered: %d, %+v", n, e.wait(w.ID))
+	}
+}
+
+// lapsingGateway lets the pre-launch check pass and then lapses the node's lease, so the refusal comes from LaunchRun's
+// own lease check rather than from the resume's earlier one.
+type lapsingGateway struct {
+	fakeGateway
+	lapse func()
+}
+
+func (g *lapsingGateway) PreLaunch(context.Context, string, string) error { g.lapse(); return nil }
+
+// A lease that lapses after the resume's own lease check is refused by LaunchRun as node-not-connected; the wait is
+// filed as node_offline (retried at limitRetryNode, woken by a hello), not as upstream_unavailable.
+func TestLimitWaitLaunchLeaseRefusalIsNodeOffline(t *testing.T) {
+	e := newParkEnv(t)
+	e.limited("run_l", "worker", proto.LimitFiveHour, dur(time.Hour), e.clk.Now().Sub(e.t0), 1)
+	e.end("run_l", proto.RunExited, "exited")
+	w := e.waitOf("run_l")
+	e.grantLease()
+	e.svc.opts.Gateway = &lapsingGateway{lapse: func() {
+		e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(time.Minute))
+	}}
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(1000*time.Hour))
+	e.due()
+	if w = e.wait(w.ID); w.State != WaitWaiting || w.LastError != WaitNodeOffline || w.ResumeAt != e.clk.Now().Add(limitRetryNode).UnixMicro() {
+		t.Fatalf("lease lapsed in LaunchRun: %+v", w)
 	}
 }

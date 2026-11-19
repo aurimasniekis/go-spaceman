@@ -74,8 +74,8 @@ const (
 	limitWaitBatch = 50
 	// Retry delays of a wait that couldn't resume yet.
 	limitRetryNode = 15 * time.Minute
-	// limitRetryUpstream is the retry of a launch refused as unavailable for a cause other than the node's lease (a gateway
-	// upstream error, Harbor Pilot budget status): usually brief, and nothing wakes it earlier.
+	// limitRetryUpstream is the retry of a launch refused as unavailable for a cause other than the node's lease (Harbor
+	// Pilot's budget status with on_budget_status_unavailable: refuse): usually brief, and nothing wakes it earlier.
 	limitRetryUpstream = 5 * time.Minute
 	limitRetrySoon     = 2 * time.Minute
 	limitRetryPaused   = time.Hour
@@ -137,7 +137,8 @@ type limitWaitJob struct {
 var errResumeAborted = errors.New("the wait's task moved")
 
 // errNodeNotConnected marks the launch refusal that is about the space's node having no valid execution lease, so a limit
-// wait can tell it from the other CodeUnavailable refusals (gateway upstream, Harbor Pilot budget status).
+// wait can tell it from the other CodeUnavailable refusals (Harbor Pilot budget status, or any
+// future pre-launch check).
 var errNodeNotConnected = errors.New("node not connected")
 
 // nodeNotConnectedError is that refusal: an apperr.Error (same code and text) that also matches errNodeNotConnected.
@@ -841,7 +842,7 @@ func resumeOutcome(err error, now time.Time) (at time.Time, reason string, cance
 		if errors.Is(err, errNodeNotConnected) {
 			return now.Add(limitRetryNode), WaitNodeOffline, false
 		}
-		// Not the lease: a gateway upstream error or Harbor Pilot's budget status, which a node hello doesn't fix.
+		// Not the lease: Harbor Pilot's budget status (or a future pre-launch check), which a node hello doesn't fix.
 		return now.Add(limitRetryUpstream), WaitUpstreamDown, false
 	case apperr.CodeConflict:
 		return now, WaitSuperseded, true
