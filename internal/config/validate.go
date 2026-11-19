@@ -367,6 +367,7 @@ func (c *AgentConfig) Validate() error {
 		v.add("capacity must be within 1..256")
 	}
 	v.claudeCode(c.Harness.Claude)
+	v.envPassthrough(c.Harness.EnvPassthrough)
 	v.logConfig(c.Log)
 	return v.err()
 }
@@ -388,6 +389,43 @@ func (v *validator) claudeCode(c ClaudeCodeConfig) {
 	v.durationRange("harness.claude.download_timeout", c.DownloadTimeout, 30*time.Second, 2*time.Hour)
 	if c.Manage && c.SelfUpdate {
 		v.add("harness.claude.self_update can't be on with harness.claude.manage: managed runs never update themselves")
+	}
+}
+
+// protectedPassthroughPrefixes and protectedPassthroughNames are variables harness.env_passthrough refuses: the ones
+// the agent sets for a run itself, the ones that locate state, and provider or gateway credentials.
+var protectedPassthroughPrefixes = []string{"SPACEMAN_", "HC_", "HALLPASS_", "XDG_", "ANTHROPIC_", "CODEX_", "CLAUDE_CONFIG_"}
+
+var protectedPassthroughNames = map[string]bool{
+	"HOME": true, "PATH": true, "TERM": true, "COLORTERM": true, "PWD": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"CLAUDE_CODE_OAUTH_TOKEN": true, "CLAUDECODE": true, "CLAUDE_PID": true, "CLAUDE_EFFORT": true,
+	"OPENAI_API_KEY": true, "HARBOR_PILOT_TOKEN": true, "DISABLE_AUTOUPDATER": true, "DISABLE_UPDATES": true,
+}
+
+func protectedPassthrough(name string) bool {
+	if protectedPassthroughNames[name] {
+		return true
+	}
+	for _, p := range protectedPassthroughPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *validator) envPassthrough(names []string) {
+	seen := map[string]bool{}
+	for _, n := range names {
+		switch {
+		case n == "" || strings.ContainsAny(n, "*=?[ \t\x00"):
+			v.add("harness.env_passthrough: %q is not an exact variable name (no empty entries, patterns, \"=\" or spaces)", n)
+		case protectedPassthrough(n):
+			v.add("harness.env_passthrough: %q is set by the agent or carries credentials and can't be passed through", n)
+		case seen[n]:
+			v.add("harness.env_passthrough: %q is listed twice", n)
+		}
+		seen[n] = true
 	}
 }
 

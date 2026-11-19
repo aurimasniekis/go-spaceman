@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **`harness.env_passthrough` in the agent configuration** names extra environment variables the agent copies from
+  its own environment into Claude Code and Codex runs (default: none), for example `CLAUDE_CODE_TMPDIR`. Only exact
+  names are accepted; patterns, empty entries, and variables the agent sets itself or that carry credentials
+  (`SPACEMAN_*`, `HC_*`, `HOME`, `PATH`, `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, …) are refused, and the agent's own
+  value always wins. A profile's `claude_settings.env` stays the per-profile way to set Claude Code variables.
+
 - **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
   credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.

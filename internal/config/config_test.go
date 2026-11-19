@@ -426,3 +426,25 @@ func TestAgentMemoryFastForward(t *testing.T) {
 		t.Fatal("SPACEMAN_AGENT_MEMORY_FAST_FORWARD=false did not turn the switch off")
 	}
 }
+
+func TestAgentEnvPassthroughValidation(t *testing.T) {
+	cfg := DefaultAgent()
+	cfg.Central.URL = "https://spaceman.example.com"
+	if len(cfg.Harness.EnvPassthrough) != 0 {
+		t.Fatalf("default = %v", cfg.Harness.EnvPassthrough)
+	}
+	cfg.Harness.EnvPassthrough = []string{"CLAUDE_CODE_TMPDIR", "MY_VAR"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", "FOO*", "A=B", "HOME", "SPACEMAN_RUN_ID", "HC_SESSION", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "XDG_STATE_HOME", "has space"} {
+		cfg.Harness.EnvPassthrough = []string{bad}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "harness.env_passthrough") {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+	cfg.Harness.EnvPassthrough = []string{"A", "A"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("duplicate accepted")
+	}
+}

@@ -72,6 +72,17 @@ type HarnessConfig struct {
 	// GitBinary is accepted but not read by this build: the agent runs "git" from PATH.
 	GitBinary string           `yaml:"git_binary"`
 	Claude    ClaudeCodeConfig `yaml:"claude"`
+	// EnvPassthrough names extra environment variables the agent copies from its own environment into harness
+	// processes (Claude Code and Codex), when the agent has them set. Default: none. Only exact names are accepted
+	// (no patterns; an entry that is empty or contains "*" or "=" is refused), and names the agent sets itself or that
+	// carry credentials (SPACEMAN_*, HC_*, HALLPASS_*, HOME, PATH, XDG_*, ANTHROPIC_*, CODEX_*, CLAUDE_CODE_OAUTH_TOKEN,
+	// CLAUDE_CONFIG_DIR, OPENAI_API_KEY and similar) are refused too: a run's credentials come from its account, never
+	// from the node's environment. The value reaches the harness through the launcher shim after its scrub of
+	// inherited variables, so a CLAUDE_CODE_* variable such as CLAUDE_CODE_TMPDIR can be passed. A profile's
+	// claude_settings.env is a separate, per-profile way to set variables for Claude Code only, applied by Claude Code
+	// itself from the profile's settings; use it for a value that differs per profile, and this option for a value
+	// every harness process on the node should inherit. Don't set the same name in both.
+	EnvPassthrough []string `yaml:"env_passthrough"`
 }
 
 // ClaudeCodeConfig configures node-managed Claude Code (ADR-0077): the node resolves a version, downloads it into a
