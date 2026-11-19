@@ -421,6 +421,9 @@ func (Claude) Build(c Context) (Launch, error) {
 		argv = append(argv, "--add-dir", c.MemoryDir)
 	}
 	for _, d := range c.ExtraDirs {
+		if d == c.MemoryDir {
+			continue
+		}
 		argv = append(argv, "--add-dir", d)
 	}
 	if p.SystemText != "" {
