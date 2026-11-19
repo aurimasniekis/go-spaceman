@@ -88,28 +88,27 @@ var capsAfterHelloRead func(proto.Capabilities)
 func (a *Agent) reportCapabilities(ctx context.Context, c proto.Capabilities, gen uint64) {
 	a.capsSendMu.Lock()
 	defer a.capsSendMu.Unlock()
+	// What was sent, whether the session takes a report, and which connection it is, are read in one hold: the report
+	// goes to exactly that connection, so a reconnect after this point makes the write fail instead of putting an older
+	// generation on the new session (before or after its hello). An older central only learns capabilities from hello.
 	a.mu.Lock()
-	sent := a.capsSent
+	sent, ok, conn := a.capsSent, a.connected && a.minor >= proto.MinorHarnessVersion, a.conn
 	a.mu.Unlock()
-	if gen <= sent || !a.protocolAtLeast(proto.MinorHarnessVersion) {
+	if gen <= sent || !ok {
 		return
 	}
-	if a.sendCapabilities(ctx, c) {
-		a.mu.Lock()
-		a.capsSent = max(a.capsSent, gen)
-		a.mu.Unlock()
+	if capsBeforeSend != nil {
+		capsBeforeSend()
 	}
+	if err := a.sendOn(ctx, conn, proto.TypeNodeCapabilities, proto.NodeCapabilities{Capabilities: c}); err != nil {
+		a.log.Debug("capabilities report not delivered; the next hello reports them", obs.Err(err))
+		return
+	}
+	a.mu.Lock()
+	a.capsSent = max(a.capsSent, gen)
+	a.mu.Unlock()
 }
 
-// sendCapabilities sends a node.capabilities report to a central that negotiated minor 11 or later; an older central
-// only learns capabilities from hello.
-func (a *Agent) sendCapabilities(ctx context.Context, c proto.Capabilities) bool {
-	if !a.protocolAtLeast(proto.MinorHarnessVersion) {
-		return false
-	}
-	if err := a.send(ctx, proto.TypeNodeCapabilities, proto.NodeCapabilities{Capabilities: c}); err != nil {
-		a.log.Debug("capabilities report not delivered; the next hello reports them", obs.Err(err))
-		return false
-	}
-	return true
-}
+// capsBeforeSend, when set, runs in reportCapabilities between reading the session and writing to it (tests reconnect
+// there).
+var capsBeforeSend func()

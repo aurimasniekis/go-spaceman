@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -521,4 +522,70 @@ loop:
 	if last != "newer" {
 		t.Fatalf("last report %q, want newer", last)
 	}
+}
+
+// A report read on session 1 is never written on session 2: a reconnect between the report's snapshot and its write
+// (forced with capsBeforeSend) makes the write fail on the old connection, and nothing reaches the new one.
+func TestCapabilitiesReportNeverCrossesSessions(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	fc1, fc2 := newWSCentral(t, proto.MinorHarnessVersion), newWSCentral(t, proto.MinorHarnessVersion)
+	dial := func(fc *wsCentral) *websocket.Conn {
+		u := "ws" + strings.TrimPrefix(fc.srv.URL, "http")
+		c, _, err := websocket.Dial(context.Background(), u, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.CloseNow() })
+		return c
+	}
+	conn1, conn2 := dial(fc1), dial(fc2)
+	a.mu.Lock()
+	a.conn, a.connected, a.minor = conn1, true, proto.MinorHarnessVersion
+	a.mu.Unlock()
+	capsBeforeSend = func() { // the full reconnect: the old session is closed, the new one is up
+		_ = conn1.CloseNow()
+		a.mu.Lock()
+		a.conn = conn2
+		a.mu.Unlock()
+	}
+	t.Cleanup(func() { capsBeforeSend = nil })
+	a.reportCapabilities(context.Background(), proto.Capabilities{OS: "session1"}, 5)
+	capsBeforeSend = nil
+	a.mu.Lock()
+	sent := a.capsSent
+	a.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("capsSent %d after a report that was not delivered", sent)
+	}
+	// A report taken on session 2 does go out, and is the first thing session 2's central sees.
+	a.reportCapabilities(context.Background(), proto.Capabilities{OS: "session2"}, 6)
+	if c := fc2.next(t, proto.TypeNodeCapabilities); c.OS != "session2" {
+		t.Fatalf("session 2 saw %q first, want session2", c.OS)
+	}
+	fc2.none(t, proto.TypeNodeCapabilities, 200*time.Millisecond)
+	fc1.none(t, proto.TypeNodeCapabilities, 50*time.Millisecond)
+}
+
+// A new connection that has not been welcomed yet takes no report, even with the old session's minor still recorded:
+// the report would otherwise go out before central has answered the hello (or before the hello itself).
+func TestCapabilitiesReportWaitsForWelcome(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	fc := newWSCentral(t, proto.MinorHarnessVersion)
+	u := "ws" + strings.TrimPrefix(fc.srv.URL, "http")
+	conn, _, err := websocket.Dial(context.Background(), u, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	a.mu.Lock()
+	a.conn, a.connected, a.minor = conn, false, proto.MinorHarnessVersion // session 2 dialled, session 1's minor kept
+	a.mu.Unlock()
+	a.reportCapabilities(context.Background(), proto.Capabilities{OS: "early"}, 5)
+	a.mu.Lock()
+	sent := a.capsSent
+	a.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("capsSent %d after a report on an unwelcomed connection", sent)
+	}
+	fc.none(t, proto.TypeNodeCapabilities, 200*time.Millisecond)
 }
