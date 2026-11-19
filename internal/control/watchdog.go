@@ -560,6 +560,7 @@ func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 		for _, a := range w.acts {
 			if !a.began.IsZero() {
 				idle = false
+				break
 			}
 		}
 		w.mu.Unlock()
@@ -569,7 +570,9 @@ func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 		runs, _, err := w.workers(ctx, spaceID)
 		// The check is off, but the records of running runs stay: pruning one would let a long-running run that began
 		// long ago be flagged as never started once the check is turned on.
-		if err == nil {
+		if err != nil {
+			w.sv.log.Warn("watchdog: read workers", slog.String("space.id", spaceID), obs.Err(err))
+		} else {
 			w.mu.Lock()
 			now := w.sv.clock.Now()
 			for _, r := range runs {
