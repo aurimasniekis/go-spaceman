@@ -15,12 +15,32 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   first turn, a run that waited at a usage limit and a run that started before central's last restart are never
   flagged. `spaceman_runs_list` shows each run's `turn`.
 
+- **A sweep removes leftover recordings of deleted runs.** A recording folder left on the local backend, and S3
+  objects of a run with no spool folder, were never removed after the run's recording was deleted or the run was
+  gone. Central now sweeps the recordings directory and the bucket at start and every
+  `artifacts.recording_reconcile_interval` (default 24h, `0s` turns it off). It removes only recordings of runs with
+  `recording_deleted_at` set, plus, with `artifacts.recording_reconcile_absent: true` (off by default, because a
+  restored older backup or a second central on the same bucket also looks like "absent"), runs the database confirms
+  absent whose recording has been untouched for 24h. A database or listing error skips the run, a run that exists is
+  never touched, and each pass is bounded (200 runs, continuing where the last stopped) and paced.
+
 - **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
   profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
   credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.
 
 ### Fixed
 
+- **A close record numbered while the local disk failed is no longer sent twice.** The close reached central but not the
+  disk, so a later recorder for the run (started from a stale snapshot) read an open recording and ended the run again.
+  The agent now remembers, per run and in memory, that it numbered the close, and a later recorder does not add another. The mark does not survive an agent restart, so a close that is on central but
+  not on disk, followed by a restart, can still be sent twice; closing that case needs central to report its last record.
+- **The agent's catch-up pass and capability reports are joined at shutdown.** `Run` started the recording catch-up
+  pass, the capability loop and the report after hello as untracked goroutines, so one could still be running after
+  `Run` returned (and, in tests, read package settings the caller restored next, a data race). They are tracked now and
+  `Run` waits for them, bounded, like its other background work.
+- **A capabilities report is written only on the connection it was checked against.** The agent now reads what it has
+  sent, the protocol and the connection in one step and sends on that exact connection, so a reconnect in between makes
+  the write fail instead of putting an older inventory on the new session.
 - **A launch that fails before its program starts ends the run under the observe lock too.** Its failed write now takes
   the observe lock after the run's lock, like a stop, and the end work runs after the locks are released. A stop for a
   run this node had no record of takes it too, so every write that ends a run takes the observe lock.

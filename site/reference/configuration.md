@@ -111,6 +111,8 @@ Selects the artifact store (SM-STORE-002, ADR-0048): where attachment content, c
 | `artifacts.s3.allow_private_network` | `false` | `SPACEMAN_ARTIFACTS_S3_ALLOW_PRIVATE_NETWORK` | Lets the endpoint resolve to a private, loopback or link-local address (self-hosted MinIO). |
 | `artifacts.s3.ca_file` | (empty) | `SPACEMAN_ARTIFACTS_S3_CA_FILE` | Adds trust roots (PEM) for the endpoint; verification is never disabled. |
 | `artifacts.space_quota_bytes` | `1073741824` | `SPACEMAN_ARTIFACTS_SPACE_QUOTA_BYTES` | Bounds the attachments stored per space (SM-ATT-002). |
+| `artifacts.recording_reconcile_interval` | `24h0m0s` | `SPACEMAN_ARTIFACTS_RECORDING_RECONCILE_INTERVAL` | The time between sweeps that remove stored recordings (local folders, spool folders and S3 objects) of runs whose recording was deleted or that no longer exist (1h to 168h, default 24h; 0 turns the sweep off). It also runs once at start. Each sweep is bounded and rate-limited, and never deletes on an error or touches the recording of a run that still exists. |
+| `artifacts.recording_reconcile_absent` | `false` | `SPACEMAN_ARTIFACTS_RECORDING_RECONCILE_ABSENT` | Also lets the sweep remove recordings of runs that are not in the database at all (and untouched for 24h). Off by default: an absent row is also what a restored older backup, or a second central using the same bucket, looks like, and the sweep would delete those runs' recordings. Without it only runs whose recording was deleted are swept. |
 
 ### `harness`
 

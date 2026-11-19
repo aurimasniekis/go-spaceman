@@ -7,13 +7,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/backup"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
+	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // openArtifacts builds the configured artifact store (SM-STORE-002, ADR-0048): directories in the data directory, or
@@ -79,5 +82,58 @@ func (c *Central) uploadSpooledArtifacts(ctx context.Context) {
 			"stop central and run `spaceman artifacts migrate --to s3`", slog.Int("attachments", len(l)), slog.String("dir", filepath.Clean(dir)))
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Warn("check the local attachment folder", obs.Err(err))
+	}
+}
+
+// Bounds of one recording reconcile pass: at most reconcileMaxRuns runs examined, a pause after every removal, and a
+// run absent from the database is only removed once its recording has been untouched for reconcileMinAge.
+const (
+	reconcileMaxRuns = 200
+	reconcilePace    = 100 * time.Millisecond
+	reconcileMinAge  = 24 * time.Hour
+)
+
+// runFate maps a run lookup to what the sweep may do: only a clean not-found is "absent"; any other error is returned
+// (the run is skipped) and a run whose recording was not deleted is kept.
+func runFate(r db.Run, err error) (fleet.RunFate, error) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return fleet.RunAbsent, nil
+	case err != nil:
+		return fleet.RunKeep, err
+	case r.RecordingDeletedAt.Valid:
+		return fleet.RunRecordingDeleted, nil
+	}
+	return fleet.RunKeep, nil
+}
+
+// reconcileRecordings removes stored recordings (local folders, spool folders, S3 objects) of runs whose recording
+// was deleted or that no longer exist: once at start, then every artifacts.recording_reconcile_interval. A database
+// error is never read as "absent": the run is skipped.
+func (c *Central) reconcileRecordings(ctx context.Context) {
+	interval := c.Cfg.Artifacts.RecordingReconcileInterval.D()
+	if interval <= 0 || c.Fleet == nil {
+		return
+	}
+	log := obs.Component(c.Log, "artifacts")
+	fate := func(ctx context.Context, runID string) (fleet.RunFate, error) {
+		r, err := c.Store.R().GetRun(ctx, runID)
+		return runFate(r, err)
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		res, err := c.Fleet.Recordings().Reconcile(ctx, fate, fleet.ReconcileOptions{MaxRuns: reconcileMaxRuns, MinAge: reconcileMinAge, Absent: c.Cfg.Artifacts.RecordingReconcileAbsent, Pace: reconcilePace})
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Warn("recording reconcile failed; retried at the next pass", obs.Err(err))
+		case res.Removed > 0:
+			log.Info("leftover recordings of deleted runs removed", slog.Int("removed", res.Removed), slog.Int("skipped", res.Skipped), slog.Bool("truncated", res.Truncated))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 	}
 }
