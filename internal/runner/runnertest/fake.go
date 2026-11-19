@@ -33,6 +33,9 @@ type Fake struct {
 	// OnKeys, when set, runs after Keys recorded keys (outside the lock): a test changes the screen there, as the
 	// program would after the answer.
 	OnKeys func(id string, keys []string)
+	// OnReadScreen, when set, runs after ReadScreen read a screen (outside the lock): a test changes something between
+	// the read and what the reader does next.
+	OnReadScreen func(id string)
 }
 
 type fakeProc struct {
@@ -449,12 +452,17 @@ func (f *Fake) SetScreen(id, text string) {
 // ReadScreen implements runner.Screen.
 func (f *Fake) ReadScreen(_ context.Context, id string) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	fp, ok := f.procs[id]
 	if !ok {
+		f.mu.Unlock()
 		return "", runner.ErrNotFound
 	}
-	return fp.screen, nil
+	text, hook := fp.screen, f.OnReadScreen
+	f.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
+	return text, nil
 }
 
 // Keys implements runner.Screen: it records the keys (KeysPressed) and then calls OnKeys.

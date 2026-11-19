@@ -119,7 +119,7 @@ type RunDialog struct {
 	Run
 	DialogID       string    `json:"dialog_id"` // the occurrence (dlg_…)
 	Dialog         string    `json:"dialog"`    // the registry entry's ID, or "unknown"
-	Signal         string    `json:"signal"`    // screen_prompt, never_list, answer_declined, answer_failed
+	Signal         string    `json:"signal"`    // screen_prompt, never_list, answer_declined, answer_failed, answer_withheld
 	HarnessVersion string    `json:"harness_version,omitempty"`
 	DetectedAt     time.Time `json:"detected_at"`
 }

@@ -28,12 +28,17 @@ import (
 // The watch is driven by the run's output, never by a poll: the recorder calls dialogOutput for every chunk, which
 // (re)arms a per-run quiet timer. When the output has been quiet for dialogQuiet and the program does not report
 // working, the screen is read once (runner.Screen) and classified (internal/dialog):
-//   - a known dialog with a safe answer is answered with named keys (terminal.keys: never free text), once; if it is
-//     still there at the next quiet read, it is flagged instead (answer_failed);
+//   - a known dialog with a safe answer is answered with named keys (terminal.keys: never free text), once, and only
+//     while the program has reported no status: startup dialogs come before any status, and a program that reports
+//     one is past them (its known dialog is flagged instead: answer_withheld). If the dialog is still there at the
+//     next quiet read, it is flagged (answer_failed);
 //   - an unknown dialog, one on the never-answer list, or a known one whose answer is not safe for this run is flagged:
 //     the run reports status blocked with kind dialog (blocked_on_dialog) and central is told once per occurrence,
 //     with a masked excerpt, so control and the operators can answer it from the takeover;
 //   - a screen without a dialog clears a flag.
+//
+// While a run is flagged its screen is read again on a backoff (dialogQuiet doubling up to dialogRecheckMax) even if
+// the screen stays quiet, so a flag ends when its dialog is gone (safe input is refused while it lasts).
 //
 // A program that itself reports blocked with a kind (OSC 7501 permission, question, auth) is never read or answered: it
 // is already shown as blocked, and permission prompts belong to the approval path. Nothing is read or typed while an
@@ -41,6 +46,9 @@ import (
 
 // dialogQuiet is how long a run's output must be quiet before its screen is read. A variable so tests can shorten it.
 var dialogQuiet = 10 * time.Second
+
+// dialogRecheckMax bounds the backoff of the re-reads of a flagged run's screen. A variable so tests can shorten it.
+var dialogRecheckMax = 5 * time.Minute
 
 // dialogPendingMax bounds the run.dialog messages kept while central is unreachable (oldest dropped first; an open
 // blocked occurrence is sent again from the watch itself on every welcome).
@@ -71,6 +79,11 @@ type dialogWatch struct {
 	blocked *proto.RunDialog
 	// secrets are values masked in excerpts (the run's secret env and token), known only to the process that launched it.
 	secrets []string
+	// secretsKnown is set when this process launched the run and so knows its secrets: a watch rebuilt after an agent
+	// restart does not, and then sends no excerpt at all (they are never written to disk for it).
+	secretsKnown bool
+	// backoff is the delay before the next re-read of a flagged run's screen (0: not flagged).
+	backoff time.Duration
 }
 
 // dialogs is the agent's watch state; the zero value is ready to use.
@@ -124,7 +137,8 @@ func (a *Agent) saveDialogLaunch(runID, kind, version string, dirs []string, bui
 		}
 	}
 	a.dlg.mu.Lock()
-	a.dlg.watchLocked(runID).secrets = keep
+	w := a.dlg.watchLocked(runID)
+	w.secrets, w.secretsKnown = keep, true
 	a.dlg.mu.Unlock()
 	return writeJSONFile(filepath.Join(a.runDir(runID), dialogContextFile), l)
 }
@@ -151,16 +165,39 @@ func (a *Agent) dialogOutput(ctx context.Context, runID string) {
 	}
 	a.dlg.mu.Lock()
 	defer a.dlg.mu.Unlock()
-	w := a.dlg.watchLocked(runID)
+	a.dialogArmLocked(ctx, runID, a.dlg.watchLocked(runID), dialogQuiet)
+}
+
+// dialogArmLocked (re)arms a run's timer to read its screen after delay (a.dlg.mu held).
+func (a *Agent) dialogArmLocked(ctx context.Context, runID string, w *dialogWatch, delay time.Duration) {
 	if w.timer != nil {
-		w.timer.Reset(dialogQuiet)
+		w.timer.Reset(delay)
 		return
 	}
-	w.timer = time.AfterFunc(dialogQuiet, func() {
+	w.timer = time.AfterFunc(delay, func() {
 		if ctx.Err() == nil {
 			a.track(func() { a.dialogCheck(ctx, runID) })
 		}
 	})
+}
+
+// dialogBackoff re-arms a flagged run's re-read, each one later than the one before up to dialogRecheckMax: a flag
+// ends when its dialog is gone even if the screen stays quiet.
+func (a *Agent) dialogBackoff(ctx context.Context, runID string) {
+	if ctx.Err() != nil {
+		return
+	}
+	a.dlg.mu.Lock()
+	defer a.dlg.mu.Unlock()
+	w := a.dlg.runs[runID]
+	if w == nil || w.blocked == nil {
+		if w != nil {
+			w.backoff = 0
+		}
+		return
+	}
+	w.backoff = min(max(2*w.backoff, dialogQuiet), dialogRecheckMax)
+	a.dialogArmLocked(ctx, runID, w, w.backoff)
 }
 
 // dialogRecheck reads the screen again after dialogQuiet even without new output (after an answer).
@@ -201,6 +238,7 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 	// One check at a time per run (the run's lock is not taken: a launch holds it while it observes).
 	unlock := a.runLock("dialog/" + runID)
 	defer unlock()
+	defer a.dialogBackoff(ctx, runID) // a run still flagged after this read is read again later
 	log := a.log.With(slog.String(obs.FieldRunID, runID))
 	row, err := a.j.getRun(ctx, runID)
 	if err != nil || row.State != proto.RunRunning || row.TerminalID == "" || row.Desired == "stopped" {
@@ -233,11 +271,22 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 	case dialog.Known:
 		a.dlg.mu.Lock()
 		w := a.dlg.watchLocked(runID)
-		again := w.answered == res.ID
+		again := w.answered == res.ID || w.blocked != nil && w.blocked.Dialog == res.ID
 		a.dlg.mu.Unlock()
+		if !again {
+			// Flagged by an earlier agent process (answer_failed) and still there.
+			open, ok := a.loadOpenDialog(row)
+			again = ok && open.Dialog == res.ID
+		}
 		if again {
 			// Answered and still there: SpaceMan does not try again, a person looks at it.
 			res.Kind, res.Signal = dialog.Unknown, dialog.SignalStuck
+			a.dialogFlag(ctx, row, res)
+			return
+		}
+		if p.Status.State != "" {
+			// The program reports a status, so it is past its startup dialogs: what looks like one is not answered.
+			res.Kind, res.Signal = dialog.Unknown, dialog.SignalWithheld
 			a.dialogFlag(ctx, row, res)
 			return
 		}
@@ -271,7 +320,12 @@ func (a *Agent) dialogFlag(ctx context.Context, row runRow, res dialog.Result) {
 	}
 	prev := w.blocked
 	d := proto.RunDialog{ID: ids.New(ids.Dialog), RunID: row.RunID, SpaceID: row.SpaceID, Generation: row.Generation, Outcome: proto.DialogBlocked,
-		Dialog: res.ID, Signal: res.Signal, Excerpt: excerpt(res.Lines, w.secrets), HarnessVersion: row.Bin.Version, DetectedAt: a.now().UTC()}
+		Dialog: res.ID, Signal: res.Signal, HarnessVersion: row.Bin.Version, DetectedAt: a.now().UTC()}
+	if w.secretsKnown {
+		// Without the run's secret values (an agent restart) no excerpt is sent: the token patterns alone miss short
+		// and prefix-less values such as the run token.
+		d.Excerpt = excerpt(res.Lines, w.secrets)
+	}
 	if prev == nil {
 		// Flagged before an agent restart and still there: the same occurrence.
 		if open, ok := a.loadOpenDialog(row); ok && open.Dialog == res.ID {

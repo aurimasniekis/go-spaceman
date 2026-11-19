@@ -15,6 +15,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/dialog"
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist/disttest"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -353,13 +354,13 @@ func TestDialogExcerptRedaction(t *testing.T) {
 		" Paste your key: sk-ant-api03-AbCdEfGhIjKlMnOp",
 		" gh token ghp_0123456789abcdefABCDEF0123",
 		" slack xoxb-1234-5678-abcdefgh",
-		" jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLXZhbHVl",
+		" jwt " + strings.Join([]string{"ey" + "JhbGciOiJIUzI1NiJ9", "ey" + "JzdWIiOiIxMjM0NTY3ODkwIn0", "c2lnbmF0dXJl" + "LXZhbHVl"}, "."),
 		" long " + strings.Repeat("A1b2", 12),
 		" the run's own value my-run-secret-value here",
 		" ❯ 1. Yes",
 	}
 	x := excerpt(lines, []string{"my-run-secret-value"})
-	for _, leak := range []string{"sk-ant", "ghp_", "xoxb-", "eyJhbGci", "A1b2A1b2", "my-run-secret-value"} {
+	for _, leak := range []string{"sk-ant", "ghp_", "xoxb-", "JhbGci", "A1b2A1b2", "my-run-secret-value"} {
 		if strings.Contains(x, leak) {
 			t.Fatalf("excerpt leaks %q:\n%s", leak, x)
 		}
@@ -374,5 +375,170 @@ func TestDialogExcerptRedaction(t *testing.T) {
 	x = excerpt(many, nil)
 	if len(x) > proto.DialogExcerptMax || !utf8.ValidString(x) || strings.Contains(x, "line 29") || !strings.HasPrefix(x, " line 30") {
 		t.Fatalf("bounds: %d bytes, valid %v, starts %q", len(x), utf8.ValidString(x), x[:12])
+	}
+}
+
+// screenWithCursorOn moves a fixture's selection cursor to the option starting with option.
+func screenWithCursorOn(t *testing.T, name, from, to string) string {
+	t.Helper()
+	s := fixture(t, name)
+	s = strings.Replace(s, "❯ "+from, "  "+from, 1)
+	s = strings.Replace(s, "  "+to, "❯ "+to, 1)
+	if !strings.Contains(s, "❯ "+to) {
+		t.Fatalf("no option %q in %s", to, name)
+	}
+	return s
+}
+
+// Dialog text in the transcript, above the program's idle prompt, gets no keys and no flag (it is not a dialog), and a
+// known dialog the screen does show while the program reports a status is flagged, not answered: startup dialogs come
+// before any status.
+func TestDialogNotAnsweredAtTheIdlePrompt(t *testing.T) {
+	codeModeYes := screenWithCursorOn(t, "claude-2.1.328-code-mode.txt", "No, start without it", "Yes, turn on Code Mode")
+	t.Run("transcript above the idle prompt", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		e.f.SetStatusReport(e.term, runner.Status{State: "idle", App: "claude-code"})
+		idle := fixture(t, "claude-2.1.328-main-idle.txt")
+		at := strings.Index(idle, "\n─")
+		e.show(idle[:at+1] + "⏺ The dialog read:\n\n" + codeModeYes + "\n" + idle[at+1:])
+		quiet()
+		if got, ds := e.f.KeysPressed(e.term), e.dialogs(); len(got) != 0 || len(ds) != 0 {
+			t.Fatalf("keys %v, dialogs %+v", got, ds)
+		}
+		if r := e.lastReport(); r.StatusKind == proto.StatusKindDialog {
+			t.Fatalf("flagged: %+v", r)
+		}
+	})
+	t.Run("known dialog while the program reports a status", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		e.f.SetStatusReport(e.term, runner.Status{State: "idle", App: "claude-code"})
+		e.show(fixture(t, "claude-2.1.328-code-mode.txt"))
+		waitFor(t, "flagged", func() bool { return len(e.dialogs()) > 0 })
+		quiet()
+		if got := e.f.KeysPressed(e.term); len(got) != 0 {
+			t.Fatalf("answered at a reported status: %v", got)
+		}
+		if ds := e.dialogs(); len(ds) != 1 || ds[0].Outcome != proto.DialogBlocked || ds[0].Dialog != "claude.code_mode_optin" ||
+			ds[0].Signal != dialog.SignalWithheld {
+			t.Fatalf("run.dialog %+v", ds)
+		}
+	})
+}
+
+// A flagged run's screen is read again even when it stays quiet: a flag whose dialog went away without output ends,
+// and the re-reads back off up to dialogRecheckMax.
+func TestDialogFlagRecheckedOnAQuietScreen(t *testing.T) {
+	old := dialogRecheckMax
+	dialogRecheckMax = 200 * time.Millisecond
+	t.Cleanup(func() { dialogRecheckMax = old })
+	e := newDialogEnv(t, nil)
+	e.show(fixture(t, "claude-unknown.txt"))
+	waitFor(t, "flagged", func() bool { return len(e.dialogs()) == 1 })
+	waitFor(t, "backoff at its bound", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		w := e.a.dlg.runs[e.run]
+		return w != nil && w.backoff == dialogRecheckMax
+	})
+	e.f.SetScreen(e.term, fixture(t, "claude-2.1.328-main-idle.txt")) // no output: only a re-read sees it
+	waitFor(t, "cleared", func() bool { return len(e.dialogs()) == 2 })
+	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:unknown", "cleared:unknown"}) {
+		t.Fatalf("outcomes %v", got)
+	}
+	e.a.dlg.mu.Lock()
+	b := e.a.dlg.runs[e.run].backoff
+	e.a.dlg.mu.Unlock()
+	if b != 0 {
+		t.Fatalf("backoff %v after the flag cleared", b)
+	}
+}
+
+// After an agent restart the run's secret values are unknown (they are never written down for the watch): a dialog
+// flagged then is sent without an excerpt, rather than with values the token patterns miss.
+func TestDialogNoExcerptAfterRestart(t *testing.T) {
+	token := fmt.Sprintf("runtok-%016x", time.Now().UnixNano()) // short and prefix-less: no token pattern masks it
+	e := newDialogEnv(t, func(p *proto.LaunchPayload) { p.RunToken = token })
+	shows := strings.Replace(fixture(t, "claude-unknown.txt"), "A feature this version asks about before it starts.", "token "+token, 1)
+	e.show(shows)
+	waitFor(t, "flagged", func() bool { return len(e.dialogs()) == 1 })
+	if x := e.dialogs()[0].Excerpt; x == "" || strings.Contains(x, token) || !strings.Contains(x, "[redacted]") {
+		t.Fatalf("before the restart: excerpt %q", x)
+	}
+	e.show(fixture(t, "claude-2.1.328-main-idle.txt"))
+	waitFor(t, "cleared", func() bool { return len(e.dialogs()) == 2 })
+	e.a.dlg.mu.Lock() // what a new agent process knows of the watch: nothing
+	for _, w := range e.a.dlg.runs {
+		if w.timer != nil {
+			w.timer.Stop()
+		}
+	}
+	e.a.dlg.runs = nil
+	e.a.dlg.mu.Unlock()
+	e.show(shows)
+	waitFor(t, "flagged again", func() bool { return len(e.dialogs()) == 3 })
+	if d := e.dialogs()[2]; d.Outcome != proto.DialogBlocked || d.Excerpt != "" {
+		t.Fatalf("after the restart: %+v", d)
+	}
+}
+
+// takeoverEnv sets an operator's takeover on the run (removed before the agent stops).
+func (e *dialogEnv) takeover() {
+	e.a.mu.Lock()
+	e.a.takeovers[e.run] = &takeover{}
+	e.a.mu.Unlock()
+}
+
+// Each takeover check holds on its own: an unknown dialog is not even flagged during a takeover (the check before the
+// read), and a takeover that starts while the screen is read stops the answer (the check before the keys).
+func TestDialogTakeoverChecks(t *testing.T) {
+	t.Run("before the read", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		e.takeover()
+		t.Cleanup(func() { e.a.mu.Lock(); delete(e.a.takeovers, e.run); e.a.mu.Unlock() })
+		e.show(fixture(t, "claude-unknown.txt"))
+		quiet()
+		if ds := e.dialogs(); len(ds) != 0 {
+			t.Fatalf("flagged during a takeover: %+v", ds)
+		}
+	})
+	t.Run("during the read", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		e.f.OnReadScreen = func(string) { e.takeover() }
+		t.Cleanup(func() { e.a.mu.Lock(); delete(e.a.takeovers, e.run); e.a.mu.Unlock() })
+		e.show(fixture(t, "claude-2.1.328-code-mode.txt"))
+		quiet()
+		if got, ds := e.f.KeysPressed(e.term), e.dialogs(); len(got) != 0 || len(ds) != 0 {
+			t.Fatalf("answered after a takeover began: keys %v, dialogs %+v", got, ds)
+		}
+	})
+}
+
+// A provisioned directory that is a symlink is accepted at its resolved path too (the program shows the real path).
+func TestDialogAddDirResolvedSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	link := filepath.Join(dir, "link")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{o: Options{DataDir: dir}}
+	run := ids.New(ids.Run)
+	if err := os.MkdirAll(a.runDir(run), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.saveDialogLaunch(run, "claude-code", "2.1.328", []string{link}, harness.Launch{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := a.dialogContext(runRow{RunID: run, Harness: "claude-code"})
+	resolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.Replace(fixture(t, "claude-2.1.328-add-dir.txt"), "/srv/spaceman/memory/spc_example/worker/instances/ins_example", resolved, 1)
+	if r := dialog.Classify(s, c); r.Kind != dialog.Known || r.Answer != "yes" {
+		t.Fatalf("resolved path %s with dirs %v: %+v", resolved, c.Dirs, r)
 	}
 }
