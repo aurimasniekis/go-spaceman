@@ -789,9 +789,10 @@ func (svc *Service) wakeWaits(ctx context.Context, spaceIDs []string, reason str
 }
 
 // wakeWaitsOnNode is called after a node's hello granted its leases: waits put off because the node was away resume now.
-// leaseFor wakes the waits of a space whose lapsed lease is granted again, but a wait is also put off with node_offline
-// when a resume was refused while the lease was still valid (the node not connected), and a plain renewal wakes nothing.
-// This covers that case, so it stays.
+// leaseFor wakes the waits of a space whose lapsed lease is granted again, but a plain renewal wakes nothing, and a wait
+// is also put off with node_offline when a launch is refused with CodeUnavailable for a cause other than the lease
+// (gateway upstream, Harbor Pilot budget status) or when the lease is granted again while the wait is mid-resume. The
+// hello's wake is the nudge for those, so it stays.
 func (svc *Service) wakeWaitsOnNode(ctx context.Context, nodeID string) {
 	sps, err := svc.s.R().ListSpacesByNode(ctx, nodeID)
 	if err != nil {

@@ -783,8 +783,8 @@ func TestLeaseGrantWakesNodeOfflineWaits(t *testing.T) {
 		t.Fatalf("node away: %+v", w)
 	}
 
-	// A plain renewal: the lease is valid, so the wait keeps its retry time. (A valid lease with a wait put off for the
-	// node is the case wakeWaitsOnNode, called after the hello, still covers.)
+	// A plain renewal: the lease is valid, so the wait keeps its retry time. (A valid lease with a wait put off as
+	// node_offline for another cause is what wakeWaitsOnNode, called after the hello, still nudges.)
 	e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(1000*time.Hour))
 	e.grantLease()
 	if got := e.wait(w.ID); got.ResumeAt != w.ResumeAt {
