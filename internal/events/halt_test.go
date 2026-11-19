@@ -103,7 +103,20 @@ func TestDrainTimeoutDoesNotSetRunningAfterPause(t *testing.T) {
 	}()
 	f.setSpaceState("spc_a", "paused") // the halt drains: the second event holds in the throttle until drainTimeout
 	eventually(t, "paused", pausedSeen.Load)
-	time.Sleep(time.Second) // the buffered events reach the handler with a cancelled context
+	// The buffered events reach the handler with a cancelled context asynchronously, after Drain returned. The
+	// halted subscription's Closed channel closes once its consumer is done, so wait for that instead of sleeping.
+	var halted *pulse.Subscription
+	eventually(t, "the halt reported", func() bool {
+		f.haltedMu.Lock()
+		defer f.haltedMu.Unlock()
+		halted = f.halted[stop.ID]
+		return halted != nil
+	})
+	select {
+	case <-halted.Closed():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the halted subscription did not close")
+	}
 	close(watchStop)
 	<-watchDone
 	if runningAfterPause.Load() {
@@ -115,5 +128,9 @@ func TestDrainTimeoutDoesNotSetRunningAfterPause(t *testing.T) {
 	// The cancelled calls must not count as throttled either (deterministic, unlike the state watch above).
 	if n := metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "durable", "origin", "live", "result", "rate_limited"); n != 0 {
 		t.Fatalf("rate_limited deliveries counted from cancelled handlers: %v", n)
+	}
+	// Nor as errors: the handler guard skips the metric when its ctx is cancelled.
+	if n := metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "durable", "origin", "live", "result", "error"); n != 0 {
+		t.Fatalf("error deliveries counted from cancelled handlers: %v", n)
 	}
 }

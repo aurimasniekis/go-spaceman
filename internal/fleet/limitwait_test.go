@@ -747,3 +747,70 @@ func TestLimitWaitResumeFailedRestartsFresh(t *testing.T) {
 		t.Fatal("an ordinary failure was parked")
 	}
 }
+
+// grantLease runs leaseFor for spc_a in its own transaction, the way a hello or a heartbeat does.
+func (e *parkEnv) grantLease() {
+	e.t.Helper()
+	err := e.s.W().TxNamed(e.ctx, "fleet.test_lease_for", func(tx *store.Tx) error {
+		sp, err := tx.Q.GetSpace(e.ctx, "spc_a")
+		if err != nil {
+			return err
+		}
+		_, err = e.svc.leaseFor(e.ctx, tx, sp)
+		return err
+	})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// A lease granted again after it lapsed (leaseFor, which a hello or a heartbeat reaches) brings a wait put off with
+// node_offline forward; a plain renewal of a valid lease does not touch it. And when the lease is renewed before the
+// deadline job ever saw it lapsed, the wait resumes on that pass: nothing was put off.
+func TestLeaseGrantWakesNodeOfflineWaits(t *testing.T) {
+	e := newParkEnv(t)
+	park := func(id string) db.LimitWait {
+		e.t.Helper()
+		e.limited(id, "worker", proto.LimitFiveHour, dur(time.Hour), e.clk.Now().Sub(e.t0), 1)
+		e.end(id, proto.RunExited, "exited")
+		return e.waitOf(id)
+	}
+	w := park("run_g")
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(time.Minute))
+	e.due()
+	if w = e.wait(w.ID); w.State != WaitWaiting || w.LastError != WaitNodeOffline || w.ResumeAt != e.clk.Now().Add(limitRetryNode).UnixMicro() {
+		t.Fatalf("node away: %+v", w)
+	}
+
+	// A plain renewal: the lease is valid, so the wait keeps its retry time. (A valid lease with a wait put off as
+	// node_offline for another cause is what wakeWaitsOnNode, called after the hello, still nudges.)
+	e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(1000*time.Hour))
+	e.grantLease()
+	if got := e.wait(w.ID); got.ResumeAt != w.ResumeAt {
+		t.Fatalf("a renewal moved the retry time: %d -> %d", w.ResumeAt, got.ResumeAt)
+	}
+	if n := e.due(); n != 0 {
+		t.Fatalf("resumed %d before the retry time", n)
+	}
+
+	// Lapsed, then granted again: the wait is due at once.
+	e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(time.Minute))
+	e.grantLease()
+	if got := e.wait(w.ID); got.ResumeAt > e.clk.Now().UnixMicro() {
+		t.Fatalf("a lapsed lease granted again left the wait at %d (now %d)", got.ResumeAt, e.clk.Now().UnixMicro())
+	}
+	if n := e.due(); n != 1 || e.wait(w.ID).State != WaitResumed {
+		t.Fatalf("after the grant: %d, %+v", n, e.wait(w.ID))
+	}
+
+	// Reverse order: the lease lapsed and is granted again before the deadline job looked. The wait was never put off, so
+	// the job's pass resumes it.
+	w = park("run_r")
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(time.Minute))
+	e.grantLease()
+	if n := e.due(); n != 1 || e.wait(w.ID).State != WaitResumed {
+		t.Fatalf("renewed before the job saw it lapsed: %d, %+v", n, e.wait(w.ID))
+	}
+}
