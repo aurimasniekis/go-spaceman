@@ -20,6 +20,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   The agent's own value always wins. The operator remains responsible for any other names
   they list. A profile's `claude_settings.env` stays the per-profile way to set Claude Code variables.
 
+- **The watchdog reminds workers that forget to hand back their task.** A live worker whose turn ended while its task
+  is still `running`, and that neither set the task to review or blocked nor messaged control, gets one reminder in
+  its terminal after `worker_idle_watchdog_minutes` (default 10; 0 turns it off). If the reminder's turn leaves the task
+  running, control gets one notification naming the run and the task as long again later. A worker waiting for a
+  person, at a usage limit or taken over is left alone; one whose message to control is still open is waiting for
+  control, so control is told instead. Each reminder is audited (`worker.watchdog_nudged`).
+
 - **The watchdog flags worker runs whose program never connected to SpaceMan.** A running worker run whose program
   has not loaded its SpaceMan tools (the MCP bridge fetches them when the program starts) and made no SpaceMan tool
   call `worker_start_watchdog_minutes` (default 10; 0 turns it off) after it started gets control one notification

@@ -144,7 +144,15 @@ this and reminds control.
   limit. The notice asks control to check the run's terminal, not to stop the run. Runs that started before central's
   last restart are not checked, because whether they connected is unknown.
 
-The four settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
+- **Workers that forget to hand back their task.** A live worker whose turn ended while its task is still `running`,
+  and that neither set the task to review or blocked nor messaged control, gets one reminder typed into its terminal
+  after `worker_idle_watchdog_minutes` (10 by default, 0 off). If the reminder's own turn leaves the task running too,
+  control gets one notification naming the run and the task as long again after it. A new turn, a change of the task
+  or a message from the worker starts over. A worker that is waiting for a person, at a usage limit or taken over is
+  left alone, and one whose message to control is still open (not acknowledged, or a request not answered) is waiting
+  for control: control is told instead of the worker being reminded. After central restarts, the clock starts again.
+
+The five settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
 
 ## Recovery
 

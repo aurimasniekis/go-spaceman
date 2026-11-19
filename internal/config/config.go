@@ -194,6 +194,10 @@ type LimitsConfig struct {
 	// (loading its SpaceMan tools or calling one) after it started before control is notified (0: off; default 10; at
 	// most 1440).
 	WorkerStartWatchdogMinutes int64 `yaml:"worker_start_watchdog_minutes"`
+	// WorkerIdleWatchdogMinutes is how long a live worker run may sit idle with its task still running, without handing
+	// it back or messaging control, before SpaceMan reminds it in its terminal; as long again and control is notified
+	// (0: off; default 10; at most 1440).
+	WorkerIdleWatchdogMinutes int64 `yaml:"worker_idle_watchdog_minutes"`
 	// TerminalCols is the width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the
 	// node's runner.terminal_size. A size applies only when terminal_rows is set too.
 	TerminalCols int64 `yaml:"terminal_cols"`

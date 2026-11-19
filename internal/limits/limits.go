@@ -65,6 +65,9 @@ const (
 	ControlWatchdogRestart = "control_watchdog_restart"
 	// Worker start watchdog: the minutes a live worker run's program may go without connecting to SpaceMan before control is told (0: off).
 	WorkerStartWatchdog = "worker_start_watchdog_minutes"
+	// Worker hand-back watchdog: the minutes a live worker may sit idle with its task still running before it is reminded
+	// to hand the task back, and as long again before control is told (0: off).
+	WorkerIdleWatchdog = "worker_idle_watchdog_minutes"
 	// A new run's terminal size (ADR-0075).
 	TerminalCols = "terminal_cols"
 	TerminalRows = "terminal_rows"
@@ -187,6 +190,9 @@ var Defs = []Def{
 	{Key: WorkerStartWatchdog, Label: "Worker start watchdog", Unit: "minutes", ZeroNone: true,
 		Scope:    "how long a running worker run's program may go without connecting to SpaceMan (loading its SpaceMan tools or calling one) after it started before control gets a notification naming the run and its task (0: off)",
 		Enforced: "control watchdog (one notification per run)", OnLower: "Applies from the watchdog's next pass.", Overridable: true},
+	{Key: WorkerIdleWatchdog, Label: "Worker hand-back watchdog", Unit: "minutes", ZeroNone: true,
+		Scope:    "how long a live worker run may sit idle (its turn ended) with its task still running, without handing it back (review or blocked) or messaging control, before SpaceMan types one reminder into its terminal; as long again unanswered and control gets one notification (0: off)",
+		Enforced: "control watchdog (never while the worker is working, waiting for a person, at a usage limit or taken over; once per idle stretch)", OnLower: "Applies from the watchdog's next pass.", Overridable: true},
 	{Key: TerminalCols, Label: "Terminal columns", Unit: "columns",
 		Scope: "the width new runs' terminals are held at (40-400; 0: the node's default size); applies only with terminal rows set too", ZeroNone: true,
 		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},

@@ -7642,6 +7642,53 @@
 - **`spaceman_runs_list`** shows `turn` only; the earlier `not_started` flag used turn 0 alone and is dropped.
 - **Not a security-relevant change.**
 
+#### ADR-0099 addendum — worker hand-back check (`worker_idle_watchdog_minutes`)
+
+- **Why.** Workers, smaller models especially, end their turn without calling `spaceman_task_set_status` or messaging
+  control. The run then sits idle with its task still `running` until a person notices and types a reminder.
+- **What.** A fifth limit, `worker_idle_watchdog_minutes` (`N`; default 10, 0 off, at most 1,440). A worker run is in
+  an *idle stretch* while all of these hold:
+  - the run is wanted and observed `running`, with no open usage limit;
+  - its program is `idle` or `done` (its turn ended) and none of its SpaceMan tool calls is in flight;
+  - the task assigned to it is `running` (not `review`, `blocked`, `done` or anything else);
+  - the run has no open human action it asked (`spaceman_human_ask`), and no operator has taken over its terminal.
+
+  When a stretch is `N` old, the watchdog types one idle-gated reminder into the worker's terminal through
+  `fleet.NudgeRun` (the same safe-input path as control's reminder, refused under a takeover or a usage limit and then
+  retried at the next pass), audited as `worker.watchdog_nudged` by `system:control-watchdog`. It names the task and
+  asks the worker to set it to review with a short result and message control, or to message control what it needs.
+  If the reminder's own turn ends with the task unchanged and no new message, control gets one notification `N` after
+  the reminder, naming the run and the task, deduplicated per stretch. Nothing more happens in that stretch.
+- **When a stretch ends.** The task changes (its status or any other edit: its version moves); the run sends control a
+  message; the run's turn counter advances, except for the one turn the reminder itself starts; the run stops being a
+  candidate before the reminder (it works again, asks a person, hits a usage limit, is taken over or ends); or the
+  check is turned off. A new stretch starts its clock at the first pass that sees it. While the reminder's turn runs,
+  the stretch is only paused.
+- **Waiting for control's answer.** A worker that asked control something and waits for the reply is not reminded:
+  control is told at `N` instead, that the worker probably waits for it. The worker counts as waiting when
+  - one of its messages to control (to `control`, or to a control run, as a reply to control's request is) is still
+    open: control has not acknowledged it, or it is a request control has not resolved (read durably from the messages
+    table, so it survives restarts); or
+  - it messaged control after the last pass that saw it working (its turn ended with that message), or a stretch
+    ended because it messaged control (it answered the reminder with a message).
+
+  The task suggested "the run's last message to control is newer than its last turn end". `Run.Turn` advances only
+  when a turn finishes and a worker usually does its whole task in one turn, so every message of that turn, including
+  the "started" line most workers send first, is newer than the previous turn end: the rule would never remind the
+  workers this check is for. The rules above keep the intent with what central can observe. A turn shorter than one
+  pass is never seen working, so a message in it counts as the last act: control is told instead of the worker being
+  reminded, the cautious side.
+- **Restarts of central.** Stretches live in memory only. After a restart nothing is known, so the clock starts at the
+  first pass that sees a stretch: the earliest reminder is `N` after the restart, the earliest notice `2N`. A notice
+  already sent before the restart can be sent once more for the same idle worker, with a new dedup key.
+- **Preemption.** An incident's preemption returns the task to `ready`, so its paused or finishing workers are never in
+  a stretch. A resumed task is `running` again and its worker is told to continue, which starts a turn.
+- **A worker that waits long.** A worker waiting for an answer that takes long (control asking a person or another
+  space) can see the cycle "reminder, its message to control, notice to control" once per new turn control gives it.
+  It stops when the task is set to `blocked`, which control or the worker can do.
+- **Not a security-relevant change:** no requirement, guarantee or default is relaxed. The reminder is safe input with
+  only the task's ID, refused during takeovers and usage limits like every notice.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
