@@ -448,3 +448,23 @@ func TestAgentEnvPassthroughValidation(t *testing.T) {
 		t.Error("duplicate accepted")
 	}
 }
+
+// artifacts.recording_reconcile_interval is 0 (sweep off) or within 1h..168h.
+func TestRecordingReconcileIntervalBounds(t *testing.T) {
+	for _, tc := range []struct {
+		d  time.Duration
+		ok bool
+	}{
+		{0, true}, {time.Hour, true}, {24 * time.Hour, true}, {168 * time.Hour, true},
+		{30 * time.Minute, false}, {169 * time.Hour, false}, {-time.Hour, false},
+	} {
+		cfg := Default()
+		cfg.Mode = ModeDevelopment
+		cfg.PublicURL = "http://127.0.0.1:8080"
+		cfg.Artifacts.RecordingReconcileInterval = Duration(tc.d)
+		err := cfg.Validate()
+		if tc.ok != (err == nil) || (!tc.ok && !strings.Contains(err.Error(), "recording_reconcile_interval")) {
+			t.Errorf("recording_reconcile_interval %s: %v", tc.d, err)
+		}
+	}
+}

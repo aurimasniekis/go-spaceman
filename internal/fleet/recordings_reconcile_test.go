@@ -250,3 +250,48 @@ func TestReconcileS3YoungAbsentKept(t *testing.T) {
 		t.Fatalf("%+v %v %v", res, err, srv.Keys("rec"))
 	}
 }
+
+// noFullList is a store whose full listing of the recordings namespace fails: with absent mode off the sweep must
+// list one folder per run instead.
+type noFullList struct{ *artifacts.S3 }
+
+func (n noFullList) List(ctx context.Context, prefix string) ([]artifacts.Info, error) {
+	if prefix == artifacts.NSRecordings+"/" {
+		return nil, errors.New("full listing must not be used")
+	}
+	return n.S3.List(ctx, prefix)
+}
+
+func TestReconcileS3FoldersOnlyWithoutAbsent(t *testing.T) {
+	srv := s3test.New(t, "AKIDTEST")
+	srv.PageSize = 2 // the folder listing pages too
+	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "rec", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",
+		CABundlePEM: srv.CAPEM(), AllowPrivateNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3 := artifacts.NewS3(cl, "rec", "pfx/")
+	r := newRecordings(t.TempDir(), noFullList{s3}, nil, inTheFuture)
+	defer r.Close()
+	ctx := context.Background()
+	for _, id := range []string{rcDeleted, rcAbsent, rcLive, rcBroken} {
+		for _, seg := range []int{1, 2, 3} {
+			b := []byte("seg")
+			h := sha256.Sum256(b)
+			if err := s3.Put(ctx, artifacts.RecordingKey(id, recording.SegmentName(seg)), bytes.NewReader(b), int64(len(b)), hex.EncodeToString(h[:])); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	res, err := r.Reconcile(ctx, reconcileFate, ReconcileOptions{MaxRuns: 100, MinAge: time.Hour})
+	if err != nil || res.Examined != 4 || res.Removed != 1 || res.Skipped != 2 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	left := map[string]bool{}
+	for _, k := range srv.Keys("rec") {
+		left[k[len("pfx/recordings/"):len("pfx/recordings/")+30]] = true
+	}
+	if len(left) != 3 || left[rcDeleted] || !left[rcAbsent] || !left[rcLive] || !left[rcBroken] {
+		t.Fatalf("bucket after the pass: %v", srv.Keys("rec"))
+	}
+}

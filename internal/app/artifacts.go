@@ -120,10 +120,19 @@ func (c *Central) reconcileRecordings(ctx context.Context) {
 		r, err := c.Store.R().GetRun(ctx, runID)
 		return runFate(r, err)
 	}
+	opts := fleet.ReconcileOptions{MaxRuns: reconcileMaxRuns, MinAge: reconcileMinAge, Absent: c.Cfg.Artifacts.RecordingReconcileAbsent, Pace: reconcilePace}
+	reconcileLoop(ctx, log, interval, func(ctx context.Context) (fleet.ReconcileResult, error) {
+		return c.Fleet.Recordings().Reconcile(ctx, fate, opts)
+	})
+}
+
+// reconcileLoop runs pass once at once and then every interval until ctx ends, logging what each pass did. A failed
+// pass is logged and retried at the next tick.
+func reconcileLoop(ctx context.Context, log *slog.Logger, interval time.Duration, pass func(context.Context) (fleet.ReconcileResult, error)) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
-		res, err := c.Fleet.Recordings().Reconcile(ctx, fate, fleet.ReconcileOptions{MaxRuns: reconcileMaxRuns, MinAge: reconcileMinAge, Absent: c.Cfg.Artifacts.RecordingReconcileAbsent, Pace: reconcilePace})
+		res, err := pass(ctx)
 		switch {
 		case err != nil && ctx.Err() == nil:
 			log.Warn("recording reconcile failed; retried at the next pass", obs.Err(err))
