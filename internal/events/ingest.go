@@ -329,10 +329,10 @@ type Manager struct {
 	retry time.Duration
 	// drainTimeout bounds each halt's drain (tests lower it).
 	drainTimeout time.Duration
-	conns map[string]*connRun
-	subs  map[string]*subRun
-	limMu sync.Mutex
-	lims  map[string]*limiter
+	conns        map[string]*connRun
+	subs         map[string]*subRun
+	limMu        sync.Mutex
+	lims         map[string]*limiter
 	// coreMu guards core, the running core subscriptions by their NATS subscription (read by NATS's error callback).
 	coreMu sync.Mutex
 	core   map[*nats.Subscription]*subRun
