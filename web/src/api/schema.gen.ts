@@ -8249,10 +8249,10 @@ export interface components {
             hold_until?: string;
             id: string;
             /**
-             * @description clarification: a person asked the requester for more information; the action stays pending
+             * @description clarification: a person asked the requester for more information; comment: a person commented on the pending action; the action stays pending
              * @enum {string}
              */
-            kind: "resolved" | "cancelled" | "expired" | "clarification";
+            kind: "resolved" | "cancelled" | "expired" | "clarification" | "comment";
             /** @description The requester's run */
             original_run?: string;
             /** Format: int64 */

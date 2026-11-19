@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A person's comment on a human action now reaches the agent that asked.** Only **Ask the requester** used to
+  notify it, so a "done" written with plain **Comment** went unseen until someone asked for clarification. A comment
+  on a pending action an agent asked now becomes a `comment` notice, routed and woken like a clarification (the
+  action stays pending and nothing needs an answer). The requester's own comments don't echo back, and comments on
+  final actions notify nobody. Migration 0067 allows the new notice kind.
 - **Dream runs can now write the role memories they link.** The `memory/<role>` links in a dream's workspace point
   at memory folders outside it, which Claude Code refused to write through. The run now gets write access to exactly
   those folders of its own space, and nothing else.
