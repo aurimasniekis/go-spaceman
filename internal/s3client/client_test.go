@@ -215,3 +215,17 @@ func TestRangeAndStat(t *testing.T) {
 		t.Fatal("stat error swallowed")
 	}
 }
+
+// With a delimiter, an object whose key ends in "/" and equals the prefix is an object, not a CommonPrefix; a deeper
+// key still rolls up into its folder.
+func TestListPrefixesFakeKeepsSlashObjects(t *testing.T) {
+	srv := s3test.New(t, "AKIDTEST")
+	c := client(t, srv, nil)
+	ctx := context.Background()
+	put(t, c, "dir/", []byte("marker"))
+	put(t, c, "dir/a/x", []byte("x"))
+	got, err := c.ListPrefixes(ctx, "dir/")
+	if err != nil || len(got) != 1 || got[0] != "dir/a/" {
+		t.Fatalf("prefixes %v %v", got, err)
+	}
+}

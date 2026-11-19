@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const auditPruneBoundary = `-- name: AuditPruneBoundary :one
@@ -505,6 +506,45 @@ func (q *Queries) RetainableTranscripts(ctx context.Context, arg RetainableTrans
 			return nil, err
 		}
 		items = append(items, run_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const runsWithRecordingDeleted = `-- name: RunsWithRecordingDeleted :many
+SELECT id FROM runs WHERE id IN (/*SLICE:ids*/?) AND recording_deleted_at IS NOT NULL
+`
+
+// Which of the given runs have their recording deleted. Looked up by primary key, so the cost follows the number of ids,
+// not the number of runs ever recorded. The recording reconcile sweep uses it to find leftover files.
+func (q *Queries) RunsWithRecordingDeleted(ctx context.Context, ids []string) ([]string, error) {
+	query := runsWithRecordingDeleted
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

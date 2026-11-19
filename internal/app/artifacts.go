@@ -85,7 +85,8 @@ func (c *Central) uploadSpooledArtifacts(ctx context.Context) {
 	}
 }
 
-// Bounds of one recording reconcile pass: at most reconcileMaxRuns runs examined, a pause after every removal, and a
+// Bounds of one recording reconcile pass: at most reconcileMaxRuns runs removed (examined one by one, with the absent
+// mode on), a pause after every removal, and a
 // run absent from the database is only removed once its recording has been untouched for reconcileMinAge.
 const (
 	reconcileMaxRuns = 200
@@ -120,7 +121,10 @@ func (c *Central) reconcileRecordings(ctx context.Context) {
 		r, err := c.Store.R().GetRun(ctx, runID)
 		return runFate(r, err)
 	}
-	opts := fleet.ReconcileOptions{MaxRuns: reconcileMaxRuns, MinAge: reconcileMinAge, Absent: c.Cfg.Artifacts.RecordingReconcileAbsent, Pace: reconcilePace}
+	opts := fleet.ReconcileOptions{MaxRuns: reconcileMaxRuns, MinAge: reconcileMinAge, Absent: c.Cfg.Artifacts.RecordingReconcileAbsent, Pace: reconcilePace,
+		Deleted: func(ctx context.Context, ids []string) ([]string, error) {
+			return c.Store.R().RunsWithRecordingDeleted(ctx, ids)
+		}}
 	reconcileLoop(ctx, log, interval, func(ctx context.Context) (fleet.ReconcileResult, error) {
 		return c.Fleet.Recordings().Reconcile(ctx, fate, opts)
 	})

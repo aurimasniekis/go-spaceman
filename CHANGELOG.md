@@ -42,10 +42,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- **The recording sweep finds leftovers with one query.** Instead of a database lookup per stored run, central asks
+  once per batch of 500 stored run IDs which of them have `recording_deleted_at` set (by primary key, so no new
+  index or migration is needed), so all leftovers are found in one pass and removed within ceil(leftovers/200)
+  passes, instead of up to ceil(N/200) passes for N stored runs. The 200 limit now bounds removals per pass. A
+  database error ends the pass with nothing deleted, and the opt-in
+  `recording_reconcile_absent` mode still uses the per-run check unchanged.
 - **The recording sweep lists one folder per run on S3.** With `artifacts.recording_reconcile_absent` off, the sweep
   no longer lists every segment object (memory grew with history); it lists the run folders with a `/` delimiter.
   Object ages are still read when absent mode is on. The reference now says that a removal also sets central's
-  in-memory deleted mark for the run, and that a leftover can wait up to ceil(N/200) sweeps when N runs are stored.
+  in-memory deleted mark for the run, and that with absent mode on a leftover can wait up to ceil(N/200) sweeps when
+  N runs are stored.
   A space purge whose recording delete fails still leaves a leftover only the opt-in absent mode removes; this is
   documented in the code.
 
