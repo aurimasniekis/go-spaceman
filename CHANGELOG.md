@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A parked run resumes as soon as its node's lease is renewed after a lapse.** When the usage-limit job looked
+  at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
+  the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
+
 ## [0.1.14] - 2026-11-19
 
 ### Added

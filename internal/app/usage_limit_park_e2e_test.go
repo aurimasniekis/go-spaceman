@@ -320,9 +320,14 @@ func TestUsageLimitControlResumeFailsRestartsFresh(t *testing.T) {
 	eventually(t, "control parked", func() bool { w, _ := e.c.Fleet.LimitWaitForRun(ctx, ctrl.ID); return w != nil })
 
 	clk.Set(reset.Add(2 * time.Minute))
-	n.send(t, proto.TypeHeartbeat, proto.Heartbeat{Leases: []proto.LeaseState{}}) // renews the lease at the new time
-	eventually(t, "lease renewed", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	// The wait's job may look between the clock moving and the lease renewal (any late kick does it): it puts the
+	// resume off because the lease has lapsed. Force that order; the renewal must bring the resume forward by itself.
 	e.c.Human.Kick()
+	eventually(t, "resume put off: lease lapsed", func() bool {
+		w, _ := e.c.Fleet.LimitWaitForRun(ctx, ctrl.ID)
+		return w != nil && w.LastError == fleet.WaitNodeOffline && w.State == fleet.WaitWaiting
+	})
+	n.send(t, proto.TypeHeartbeat, proto.Heartbeat{Leases: []proto.LeaseState{}}) // renews the lease at the new time
 	cmd, p := n.launchFor(t, ctrl.InstanceID, ctrl.ID)
 	if !p.Resume || p.SessionID != "ses-ctl" {
 		t.Fatalf("resume %+v", p)
