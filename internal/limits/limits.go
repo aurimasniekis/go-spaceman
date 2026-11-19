@@ -185,7 +185,7 @@ var Defs = []Def{
 		Scope:    "when the watchdog escalates, also stop control and start it again, resuming its session, within the supervisor's restart budget (default off)",
 		Enforced: "control watchdog", OnLower: "Turning it off never stops a running control.", Overridable: true},
 	{Key: WorkerStartWatchdog, Label: "Worker start watchdog", Unit: "minutes", ZeroNone: true,
-		Scope:    "how long a live worker run may stay at turn 0 after it started (its program never took the first turn) before control gets a notification naming the run and its task (0: off)",
+		Scope:    "how long a running worker run at turn 0 may show no activity (no SpaceMan tool call) after it started before control gets a notification naming the run and its task (0: off)",
 		Enforced: "control watchdog (one notification per run)", OnLower: "Applies from the watchdog's next pass.", Overridable: true},
 	{Key: TerminalCols, Label: "Terminal columns", Unit: "columns",
 		Scope: "the width new runs' terminals are held at (40-400; 0: the node's default size); applies only with terminal rows set too", ZeroNone: true,

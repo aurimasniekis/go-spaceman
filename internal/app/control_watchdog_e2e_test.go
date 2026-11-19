@@ -114,7 +114,7 @@ func TestControlWatchdog(t *testing.T) {
 	// Reminders that leave the backlog escalate: people are told, and with the restart on control starts again (no
 	// reminder goes into the terminal that is being stopped).
 	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 1, limits.Input{Values: map[string]int64{limits.ControlWatchdog: 1, limits.ControlWatchdogNudges: 1,
-		limits.ControlWatchdogRestart: 1}}); err != nil {
+		limits.ControlWatchdogRestart: 1, limits.WorkerStartWatchdog: 0}}); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "escalated", func() bool { e.c.Watchdog.Pass(ctx); s, _ := e.c.Watchdog.State(sp.ID); return s.Escalated })

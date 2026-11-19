@@ -496,13 +496,26 @@ func (w *Watchdog) Pass(ctx context.Context) {
 	w.prune()
 }
 
-// stuckAtZero returns the live worker runs that started more than n ago and are still at turn 0 (their program never
-// took its first turn), oldest first. A run waiting for a usage limit is not stuck.
-func stuckAtZero(runs []*fleet.Run, n time.Duration, now time.Time) []*fleet.Run {
+// stuckAtZero returns the worker runs that are running on a connected node, still at turn 0, and showed no activity for
+// more than n: no SpaceMan tool call since the run started (turn counts finished turns, and a worker is often in its
+// first turn for an hour). The clock starts at the later of the run's start and central's start, because tool calls
+// before a restart of central are unknown. A run waiting for a usage limit is not stuck. Oldest first.
+func (w *Watchdog) stuckAtZero(runs []*fleet.Run, n time.Duration, now time.Time) []*fleet.Run {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	var out []*fleet.Run
 	for _, r := range runs {
-		if r.Kind != agenttools.KindWorker || r.Desired != "running" || !fleet.Live(r.Observed) || r.Limit != nil || r.Turn != 0 ||
-			r.StartedAt == nil || now.Sub(*r.StartedAt) < n {
+		if r.Kind != agenttools.KindWorker || r.Desired != "running" || r.Observed != "running" || r.Limit != nil || r.Turn != 0 || r.StartedAt == nil {
+			continue
+		}
+		since := latest(*r.StartedAt, w.started)
+		if a := w.acts[r.ID]; a != nil {
+			if a.inflight > 0 {
+				continue
+			}
+			since = latest(since, a.at, a.turnAt)
+		}
+		if now.Sub(since) < n {
 			continue
 		}
 		out = append(out, r)
@@ -511,9 +524,9 @@ func stuckAtZero(runs []*fleet.Run, n time.Duration, now time.Time) []*fleet.Run
 	return out
 }
 
-// checkStarts tells control, once per run, about each worker run still at turn 0 a configurable time after it started
-// (limit worker_start_watchdog_minutes): a run can report "running" and "working" for hours without its program ever
-// taking a turn. Control is notified durably (deduplicated by run), so a restart of central does not repeat it.
+// checkStarts tells control, once per run, about each worker run at turn 0 with no activity for a configurable time
+// since it started (limit worker_start_watchdog_minutes): a run can report "running" and "working" for hours without
+// its program ever beginning. Control is notified durably (deduplicated by run), so a restart of central does not repeat it.
 func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 	n := time.Duration(w.limit(ctx, spaceID, limits.WorkerStartWatchdog)) * w.sv.IdleUnit
 	if n <= 0 {
@@ -528,7 +541,7 @@ func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 	for _, r := range runs {
 		live[r.ID] = true
 	}
-	for _, r := range stuckAtZero(runs, n, w.sv.clock.Now()) {
+	for _, r := range w.stuckAtZero(runs, n, w.sv.clock.Now()) {
 		w.mu.Lock()
 		done := w.unstarted[r.ID]
 		w.unstarted[r.ID] = true
@@ -541,9 +554,9 @@ func (w *Watchdog) checkStarts(ctx context.Context, spaceID string) {
 			task = "task " + t.ID + " (" + t.Title + ")"
 		}
 		mins := int64(w.sv.clock.Now().Sub(*r.StartedAt) / w.sv.IdleUnit)
-		w.tell(ctx, spaceID, "worker-not-started:"+r.ID, "Worker run "+r.ID+" has not started working",
-			fmt.Sprintf("Worker run %s (role %s, %s) was launched %d minutes ago and is still at turn 0: its program never took a first turn. "+
-				"Look at it with spaceman_runs_list (turn, not_started), then stop it with spaceman_worker_stop and launch the task again.", r.ID, r.Role, task, mins))
+		w.tell(ctx, spaceID, "worker-not-started:"+r.ID, "Worker run "+r.ID+" shows no activity since launch",
+			fmt.Sprintf("Worker run %s (role %s, %s) was launched %d minutes ago and has shown no activity since: no SpaceMan tool call and no finished turn. "+
+				"It may be a first long turn or a program that never began. Check its terminal (spaceman_runs_list for its status) before deciding whether to stop it.", r.ID, r.Role, task, mins))
 	}
 	// Forget runs that left the list, so the set stays small.
 	w.mu.Lock()

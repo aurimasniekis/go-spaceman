@@ -137,7 +137,13 @@ this and reminds control.
   state as of the last pass (one a minute): why it holds back, how many reminders were sent, whether it escalated and
   what waits. It is read-only, needs the permission to read runs, and starts over when central restarts.
 
-The three settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
+- **Workers that never began.** A worker run on a connected node that is still at turn 0 and has made no SpaceMan tool
+  call for `worker_start_watchdog_minutes` after it started (10 by default, 0 off) gets control one notification, once
+  per run. The turn counter only counts finished turns, so a healthy worker in a long first turn stays at 0; the notice
+  therefore asks control to check the run's terminal, not to stop it. After central restarts the clock starts at the
+  restart, because earlier tool calls are unknown.
+
+The four settings are [limits](./limits) of the space; lowering one applies from the watchdog's next pass.
 
 ## Recovery
 
