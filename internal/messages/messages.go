@@ -594,6 +594,22 @@ func (svc *Service) Unacknowledged(ctx context.Context, spaceID, runID, role str
 	return out, nil
 }
 
+// FromRunToControl returns when a run last sent control a message (to control, or to a control run of the space, as a
+// reply does; zero: never) and whether one of them is still open: control has not acknowledged it, or it is a request
+// control has not resolved. The worker
+// hand-back watchdog reads it (ADR-0099): a worker with an open message to control is waiting for control.
+func (svc *Service) FromRunToControl(ctx context.Context, spaceID, runID string) (time.Time, bool, error) {
+	r, err := svc.s.R().RunMessagesToControl(ctx, db.RunMessagesToControlParams{SpaceID: spaceID, RunID: runID})
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	var latest time.Time
+	if r.Latest > 0 {
+		latest = time.UnixMicro(r.Latest)
+	}
+	return latest, r.Open > 0, nil
+}
+
 // sentBy reports whether a run sent a message (a run never receives its own role or control broadcasts). A scheduled
 // message is the exception: it is a reminder its sender set for itself (ADR-0065).
 func sentBy(m db.Message, runID string) bool {

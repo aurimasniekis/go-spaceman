@@ -63,6 +63,9 @@ type Options struct {
 	// RecordingRetryAfter is the first wait before a recording whose disk failed is tried again; 0 is
 	// recording.DefaultRetryAfter (fault tests shorten it).
 	RecordingRetryAfter time.Duration
+	// EnvPassthrough names environment variables copied from the agent's own environment into harness processes
+	// (harness.env_passthrough; validated by the configuration). The agent's own values win over them.
+	EnvPassthrough []string
 	// Claude configures node-managed Claude Code (ADR-0077); the zero value keeps runs on HarnessBinaries.
 	Claude ClaudeOptions
 	// JournalRetention is how long the journal keeps an ended run (prune.go); 0 and anything below the Claude Code pin window
@@ -109,6 +112,10 @@ type Agent struct {
 	capsGen    uint64
 	capsStarts uint64
 	capsTaken  uint64
+	// capsSent is the newest generation sent to central (a hello counts), so an older one is never sent after it;
+	// capsSendMu makes reportCapabilities' check and send one step.
+	capsSent   uint64
+	capsSendMu sync.Mutex
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
@@ -131,14 +138,20 @@ type Agent struct {
 	// catching is set while the catch-up pass runs, on catchUpConn with catchUpCtx (the newest connection's);
 	// catchUpAgain asks it for another sweep; caughtUp are the runs it has caught up. connCtx is the current
 	// connection's context.
-	sentSeq      map[string]uint64
-	held         map[string]*heldRecords
-	catching     bool
-	catchUpAgain bool
-	catchUpGen   uint64 // counts requests: a sweep marks runs caught up only for the request it serves
-	catchUpConn  *websocket.Conn
-	catchUpCtx   context.Context
-	caughtUp     map[string]bool
+	sentSeq map[string]uint64
+	// closeNumbered are the runs whose close record this process numbered (and so sent or will send): a later recorder
+	// for the run must not end it again, whatever the local disk kept (record.go). It is in memory only and does not
+	// survive an agent restart; closing that case needs central to report its last record.
+	closeNumbered  map[string]bool
+	held           map[string]*heldRecords
+	catching       bool
+	catchUpSkipped bool // a sweep skipped a run central did not answer for (catchUpRun)
+	catchUpAgain   bool
+	catchUpWake    chan struct{} // wakes the pass's backoff sleep (wakeCatchUpLocked); created on first use
+	catchUpGen     uint64        // counts requests: a sweep marks runs caught up only for the request it serves
+	catchUpConn    *websocket.Conn
+	catchUpCtx     context.Context
+	caughtUp       map[string]bool
 	// finalSent and finalAcked are, per ended run, the journal update time of the final state this process sent to central
 	// and the one central acknowledged (prune.go); memory only.
 	finalSent, finalAcked map[string]int64
@@ -177,10 +190,24 @@ type Agent struct {
 	// launching counts the launches in flight by run ID, from before the run is journaled until its process is started and
 	// observed. The runner reconcile leaves those runs alone (reconcileRunner).
 	launching map[string]int
+	// endPending holds runs whose row was ended while their adopted program was still live: the monitor's finished
+	// event for the program runs their end-of-run work (observe), as the row's end already passed.
+	endPending sync.Map
 	// claudeStage, when set, runs at a managed Claude Code launch's stages ("acquired": the version is held;
 	// "recorded": the journal holds it and the hold is still taken; "released": the hold is released). Tests race GC
 	// and stops there.
 	claudeStage func(stage string, res dist.Resolution)
+	// beforeStartingWrite, when set, runs in a managed launch between the abandoned check and the starting write (tests).
+	beforeStartingWrite func()
+	// beforeFailWrite and beforeAdoptObserve, when set, run in a launch between its abandoned check and the lock
+	// that guards the write (a failure) or the observe (an adoption) (tests).
+	beforeFailWrite, beforeAdoptObserve func()
+	// beforeEnsureGuard runs in a launch before it takes the guard lock; onRunEndHooks runs at the start of runEndHooks.
+	// Test hooks.
+	beforeEnsureGuard func()
+	onRunEndHooks     func(runID string)
+	// beforeRecordAttach, when set, runs before each of a recorder's attachments (tests).
+	beforeRecordAttach func(runID string)
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time
@@ -326,7 +353,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}()
 	go func() { defer close(monitorDone); a.monitor(ctx) }()
 	go a.enforce(ctx)
-	go a.capsLoop(ctx)
+	a.goTrack(func() { a.capsLoop(ctx) })
 	go a.pruneLoop(ctx)
 	go func() {
 		if err := a.ServeBridge(ctx); err != nil {
@@ -481,6 +508,7 @@ func (a *Agent) session(ctx context.Context) error {
 	a.mu.Lock()
 	hello.Capabilities = a.caps
 	helloCaps := a.capsGen
+	a.capsSent = max(a.capsSent, helloCaps)
 	a.mu.Unlock()
 	for _, r := range runs {
 		// The hello carries no hook data (failure class, status-line reset): the minor is not negotiated yet, and a central
@@ -539,7 +567,7 @@ func (a *Agent) session(ctx context.Context) error {
 				go a.resendHeldReports(hbCtx, held)
 			}
 			if startPass {
-				go a.catchUpRecordings()
+				a.goTrack(a.catchUpRecordings)
 			}
 			go a.heartbeatLoop(hbCtx)
 			go a.mem.resume(hbCtx)
@@ -547,7 +575,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.resendRoleRenames(hbCtx)
-			go a.capsAfterHello(hbCtx, helloCaps)
+			a.goTrack(func() { a.capsAfterHello(hbCtx, helloCaps) })
 			go a.reportAllHookData(hbCtx)
 			if len(follow) > 0 {
 				go a.sendFollowUp(hbCtx, conn, follow)

@@ -56,7 +56,7 @@ func RegisterWatchdog(w *control.Watchdog) func(api huma.API, d *Deps) {
 			Summary: "A space's control watchdog state",
 			Description: "What the control watchdog (ADR-0099) saw at its last pass over the space: why it left control alone, or how many reminders it " +
 				"sent and whether it escalated, with the waiting work as counts. Read-only; the watchdog is configured with the " +
-				"control_watchdog_minutes, control_watchdog_nudges and control_watchdog_restart limits.", Tags: []string{"spaces"}},
+				"control_watchdog_minutes, control_watchdog_nudges, control_watchdog_restart, worker_start_watchdog_minutes and worker_idle_watchdog_minutes limits (the last two watch workers: one whose program never connected to SpaceMan, and an idle one whose task is still running).", Tags: []string{"spaces"}},
 			func(ctx context.Context, in *SpacePath) (*struct{ Body SpaceWatchdog }, error) {
 				st, ok := control.WatchState{}, false
 				if w != nil {

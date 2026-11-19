@@ -3581,14 +3581,14 @@ export interface paths {
         };
         /**
          * Replay a run's terminal recording
-         * @description Records are output (base64), size, gap, close and truncation markers in sequence order.
+         * @description Records are output (base64), size, gap, close and truncation markers in sequence order. A run whose recording was deleted returns 410 (code recording_deleted): its output is gone for good, so a client does not retry it.
          */
         get: operations["get-recording"];
         put?: never;
         post?: never;
         /**
          * Delete central's copy of a run's recording
-         * @description The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not affected.
+         * @description The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not deleted, but central then acknowledges its recording without storing it, so the node's journal prune may remove it.
          */
         delete: operations["delete-recording"];
         options?: never;
@@ -4298,7 +4298,7 @@ export interface paths {
         };
         /**
          * A space's control watchdog state
-         * @description What the control watchdog (ADR-0099) saw at its last pass over the space: why it left control alone, or how many reminders it sent and whether it escalated, with the waiting work as counts. Read-only; the watchdog is configured with the control_watchdog_minutes, control_watchdog_nudges and control_watchdog_restart limits.
+         * @description What the control watchdog (ADR-0099) saw at its last pass over the space: why it left control alone, or how many reminders it sent and whether it escalated, with the waiting work as counts. Read-only; the watchdog is configured with the control_watchdog_minutes, control_watchdog_nudges, control_watchdog_restart, worker_start_watchdog_minutes and worker_idle_watchdog_minutes limits (the last two watch workers: one whose program never connected to SpaceMan, and an idle one whose task is still running).
          */
         get: operations["get-space-watchdog"];
         put?: never;

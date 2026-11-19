@@ -110,6 +110,8 @@ func TestCatchUpShipsLargeRecordingInBoundedMessages(t *testing.T) {
 				}
 				seqs = append(seqs, r.Seq)
 			}
+			// Central answers every message with what it holds, the catch-up's empty probe included.
+			a.recordingAck(proto.RecordingAck{RunID: c.RunID, Seq: uint64(len(seqs))})
 			timer.Reset(stall)
 		case <-timer.C:
 			t.Fatalf("central received %d of %d records, then nothing for %s", len(seqs), n, stall)
@@ -129,6 +131,9 @@ type shipEnv struct {
 	a      *Agent
 	fc     *wsCentral
 	stored map[string][]uint64
+	// base is what central held of a run before this test's records (not in stored): the sequence it acknowledges
+	// and applies above.
+	base   map[string]uint64
 	writer map[string]*recording.Writer
 	// lose, when set, is asked about each recording message central receives: true loses it (not stored, not
 	// acknowledged), as if it went with its connection.
@@ -141,7 +146,9 @@ type shipEnv struct {
 
 func newShipEnv(t *testing.T) *shipEnv {
 	a, _ := ccAgent(t, t.TempDir(), nil, nil)
-	t.Cleanup(func() { sendRecordingHook, shipBatchHook = nil, nil })
+	oldProbe := seqProbeEvery
+	seqProbeEvery = 20 * time.Millisecond // the catch-up asks central for its sequence (an empty message) this often
+	t.Cleanup(func() { sendRecordingHook, shipBatchHook, seqProbeEvery = nil, nil, oldProbe })
 	return &shipEnv{t: t, a: a, stored: map[string][]uint64{}, writer: map[string]*recording.Writer{}}
 }
 
@@ -204,6 +211,48 @@ func (e *shipEnv) connect() {
 	}
 }
 
+// isBatch is a recording message with records in it (an empty one is the catch-up's probe for central's sequence).
+func isBatch(env proto.Envelope) bool {
+	if env.Type != proto.TypeRecording {
+		return false
+	}
+	var c proto.RecordingChunk
+	return env.Decode(&c) == nil && len(c.Records) > 0
+}
+
+// apply stores what a recording message holds, as central's writer does, and acknowledges what it holds (a message
+// lost by e.lose is neither).
+func (e *shipEnv) apply(env proto.Envelope) {
+	if env.Type != proto.TypeRecording {
+		return
+	}
+	var c proto.RecordingChunk
+	if err := env.Decode(&c); err != nil {
+		e.t.Fatal(err)
+	}
+	if e.lose != nil && e.lose(c) {
+		return
+	}
+	for _, raw := range c.Records {
+		var r recording.Record
+		_ = json.Unmarshal(raw, &r)
+		if r.Seq > e.top(c.RunID) {
+			e.stored[c.RunID] = append(e.stored[c.RunID], r.Seq)
+		}
+	}
+	// Central acknowledges what it stored (RecordingAck), as the real one does after applying a message, an
+	// empty one (the catch-up's probe for central's sequence) included.
+	e.a.recordingAck(proto.RecordingAck{RunID: c.RunID, Seq: e.top(c.RunID)})
+}
+
+// top is the highest sequence central holds of a run.
+func (e *shipEnv) top(id string) uint64 {
+	if s := e.stored[id]; len(s) > 0 {
+		return s[len(s)-1]
+	}
+	return e.base[id]
+}
+
 // drain applies the recording messages central has received until it holds want records of the run, or fails.
 func (e *shipEnv) drain(id string, want int) {
 	e.t.Helper()
@@ -211,27 +260,7 @@ func (e *shipEnv) drain(id string, want int) {
 	for len(e.stored[id]) < want {
 		select {
 		case env := <-e.fc.msgs:
-			if env.Type != proto.TypeRecording {
-				continue
-			}
-			var c proto.RecordingChunk
-			if err := env.Decode(&c); err != nil {
-				e.t.Fatal(err)
-			}
-			if e.lose != nil && e.lose(c) {
-				continue
-			}
-			for _, raw := range c.Records {
-				var r recording.Record
-				_ = json.Unmarshal(raw, &r)
-				if s := e.stored[c.RunID]; len(s) == 0 || r.Seq > s[len(s)-1] {
-					e.stored[c.RunID] = append(s, r.Seq)
-				}
-			}
-			// Central acknowledges what it stored (RecordingAck), as the real one does after applying a message.
-			if s := e.stored[c.RunID]; len(s) > 0 {
-				e.a.recordingAck(proto.RecordingAck{RunID: c.RunID, Seq: s[len(s)-1]})
-			}
+			e.apply(env)
 		case <-deadline:
 			e.t.Fatalf("central stored %d records of %s, want %d (last %v)", len(e.stored[id]), id, want, tailOf(e.stored[id]))
 		}
@@ -254,7 +283,13 @@ func (e *shipEnv) whole(id string, from, to uint64) {
 // idle waits until no catch-up pass runs.
 func (e *shipEnv) idle() {
 	e.t.Helper()
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		// Central keeps answering meanwhile: the pass asks it for its sequence and sends what it holds back.
+		select {
+		case env := <-e.fc.msgs:
+			e.apply(env)
+		case <-time.After(5 * time.Millisecond):
+		}
 		e.a.mu.Lock()
 		busy := e.a.catching
 		e.a.mu.Unlock()
@@ -393,6 +428,9 @@ func TestCatchUpOfTheOldConnectionDoesNotCountForTheNewOne(t *testing.T) {
 	e.add("run_x", 10)
 	lost := false
 	e.lose = func(c proto.RecordingChunk) bool {
+		if len(c.Records) == 0 {
+			return false // the catch-up's probe for central's sequence
+		}
 		if !lost {
 			lost = true
 			return true
@@ -424,7 +462,7 @@ func TestCatchUpAcrossAReconnect(t *testing.T) {
 	e.add("run_x", 600) // three batches
 	var dropped atomic.Bool
 	e.drop = func(env proto.Envelope) bool {
-		return env.Type == proto.TypeRecording && dropped.CompareAndSwap(false, true)
+		return isBatch(env) && dropped.CompareAndSwap(false, true)
 	}
 	var waited atomic.Bool
 	shipBatchHook = func(string, int) {
@@ -523,7 +561,7 @@ func TestLiveShipmentStaysOnItsConnection(t *testing.T) {
 	e.add("run_x", 10)
 	var armed atomic.Bool
 	e.drop = func(env proto.Envelope) bool {
-		return env.Type == proto.TypeRecording && armed.CompareAndSwap(true, false)
+		return isBatch(env) && armed.CompareAndSwap(true, false)
 	}
 	e.connect()
 	e.whole("run_x", 1, 10)
@@ -597,7 +635,7 @@ func TestLiveShipmentOnItsWayIsNotTakenForSent(t *testing.T) {
 	var seen atomic.Int32 // recording messages central received
 	var lose atomic.Bool
 	e.skip = func(env proto.Envelope) bool {
-		if env.Type != proto.TypeRecording {
+		if !isBatch(env) {
 			return false
 		}
 		seen.Add(1)
@@ -899,6 +937,7 @@ func TestCatchUpAfterRestartSkipsAcknowledged(t *testing.T) {
 	shipped := map[string]int{}
 	shipBatchHook = func(id string, _ int) { shipped[id]++ }
 	e := restartEnv(t, first)
+	e.base = map[string]uint64{"run_0": 600, "run_1": 300, "run_2": 600} // what central acknowledged before the restart
 	e.connect()
 	e.idle()
 	e.drain("run_2", 2)

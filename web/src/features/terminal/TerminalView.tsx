@@ -149,7 +149,7 @@ function catchingUp(term: Terminal): (backlog: number) => void {
   }
 }
 
-type LiveState = 'connecting' | 'live' | 'ended' | 'denied'
+type LiveState = 'connecting' | 'live' | 'ended' | 'denied' | 'deleted'
 
 /** How long a hidden tab keeps its live terminal stream before releasing the connection. */
 const HIDDEN_GRACE_MS = 5_000
@@ -193,6 +193,7 @@ function StatusBadges({ sum, live, typing, loading }: { sum: RecordingSummary; l
       {live === 'connecting' && <Badge color="owlYellow">Connecting…</Badge>}
       {live === 'ended' && <Badge color="gray">Stream ended</Badge>}
       {live === 'denied' && <Badge color="owlRed">Access lost</Badge>}
+      {live === 'deleted' && <Badge color="gray">Recording deleted</Badge>}
       {sum.cols > 0 && <Badge color="gray" variant="outline" data-testid="terminal-badge-size">{sum.cols}×{sum.rows}</Badge>}
       {sum.gaps > 0 && (
         <Tooltip label="The recorder re-attached or a viewer fell behind; output in between may be missing">
@@ -311,7 +312,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     // stops waiting (the load-earlier button comes back) rather than staying "reloading". A run that ended sends its
     // records and then the end at once, before the feed has drawn them: once the records queued reach the record the screen
     // ended on, the feed finishes the reload itself.
-    const over = (state: 'ended' | 'denied') => {
+    const over = (state: 'ended' | 'denied' | 'deleted') => {
       setState(state)
       if (reload.current !== null && !(state === 'ended' && !first && queued >= reloadUntil.current)) {
         reload.current = null
@@ -322,11 +323,17 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
       // The failure count is reset by the first record, not by the open: a stream that opens and closes with nothing keeps backing off.
       onOpen: () => setState('live'),
       onReconnecting: () => setState('connecting'),
+      statusOnClose: true,
       onClosed: (status) => {
         if (closed) return
         // Refused outright (the Mini App's stream is off for this space, or the viewer may not watch): never retried.
         if (status === 403 || status === 404) {
           over('denied')
+          return
+        }
+        // The run's recording was deleted: it stays gone, so it is never retried either.
+        if (status === 410) {
+          over('deleted')
           return
         }
         // The server answered with an error (central busy reading recordings answers 503, ADR-0081), which the browser
@@ -397,6 +404,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
         {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} />}
       </Group>
       {state === 'denied' && <Text c="owlRed" size="sm">The terminal is not available (the space has not enabled it, or your access ended).</Text>}
+      {state === 'deleted' && <Text c="dimmed" size="sm">Recording deleted: this run's terminal output is no longer kept, so it cannot be replayed.</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
       <Box pos="relative" style={{ minWidth: 0 }}>
         <Box ref={box} className="sm-terminal" data-earlier={earlier} data-reloading={reloading} style={{ overflow: 'auto', maxHeight: '70vh', overscrollBehavior: 'contain' }}>

@@ -87,6 +87,10 @@ type Options struct {
 	// OnRunIdle is called after a run's program reported idle or done (turn finished), or a usage limit cleared while it
 	// was idle: pending deliveries can go out.
 	OnRunIdle func(runID string)
+	// OnRunTakesNotice is called after a run's program started waiting at its prompt for background tasks (status
+	// working, kind proto.StatusKindBackground, ADR-0100): notices can go out, although the run is still working for
+	// everything else (control's idle stop is not armed).
+	OnRunTakesNotice func(runID string)
 	// OnRunLimitTx is called inside the report transaction when a run's usage limit changes window: ended is the limit
 	// that ended (nil: none) and opened the one that opened (nil: none); a newer window ends the old one and opens the
 	// new one in one call. A repeat or a reclassified limit (the same since) is no change. r is the run as the report

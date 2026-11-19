@@ -83,6 +83,8 @@ func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config
 	cfg.Limits.ControlAutostart, cfg.Limits.ControlIdleStopMinutes = 0, 0
 	// No watchdog reminders typed into control's terminal unless a test asks (ADR-0099).
 	cfg.Limits.ControlWatchdogMinutes = 0
+	// Nor into workers' terminals (the hand-back check).
+	cfg.Limits.WorkerIdleWatchdogMinutes = 0
 	for _, o := range opts {
 		o(cfg)
 	}
@@ -151,7 +153,7 @@ func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
 	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
 	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace, Clock: e.clk,
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, MCPCatalog: sharedMCPCatalog, StaleRunGrace: e.staleGrace, Clock: e.clk,
 		RecordingCreate: e.recCreate})
 	if err != nil {
 		e.t.Fatal(err)

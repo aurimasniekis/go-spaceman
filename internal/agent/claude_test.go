@@ -283,6 +283,23 @@ func TestManagedClaudeStopBeforeStart(t *testing.T) {
 	}
 }
 
+// A stop that lands between the managed launch's abandoned() check and its starting write ends the run: the write
+// re-checks under the run's lock instead of replacing the stopped row.
+func TestManagedClaudeStopBetweenCheckAndStartingWrite(t *testing.T) {
+	srv := disttest.New(t)
+	srv.Add("2.1.7", disttest.StubBinary("2.1.7"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.7")
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), nil)
+	a, f := ccAgent(t, dir, m, nil)
+	a.beforeStartingWrite = func() { a.stop(context.Background(), "run_window", "kill", 0, "test") }
+	ccLaunch(a, "run_window")
+	if r := getRun(t, a, "run_window"); r.State != proto.RunExited || r.Desired != "stopped" || r.TerminalID != "" {
+		t.Fatalf("state %s (%s / %s), desired %s, terminal %q", r.State, r.Reason, r.Error, r.Desired, r.TerminalID)
+	}
+	notStarted(t, f, "run_window")
+}
+
 // Review S1: the space's lease is revoked (fenced) while the launch waits for the download: the run does not start.
 func TestManagedClaudeLeaseLostDuringDownload(t *testing.T) {
 	srv := disttest.New(t)

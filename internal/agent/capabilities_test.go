@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -116,6 +117,22 @@ func (fc *wsCentral) next(t *testing.T, typ string) proto.Capabilities {
 	}
 }
 
+// drain discards messages until none has arrived for d. Messages that keep arriving past an overall deadline fail the
+// test: the agent is over-reporting, and waiting for quiet would hang until the binary timeout.
+func (fc *wsCentral) drain(t *testing.T, d time.Duration) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-fc.msgs:
+		case <-time.After(d):
+			return
+		case <-deadline:
+			t.Fatalf("messages still arriving after 2s: the agent is over-reporting")
+		}
+	}
+}
+
 // none fails when a message of type typ arrives within d.
 func (fc *wsCentral) none(t *testing.T, typ string, d time.Duration) {
 	t.Helper()
@@ -195,6 +212,17 @@ func TestCapabilitiesReReported(t *testing.T) {
 	if !got.Managed || got.CacheBytes <= hello.CacheBytes {
 		t.Fatalf("after the install %+v (hello %+v)", got, hello)
 	}
+	// A report can legitimately repeat. capsAfterHello re-sends the capabilities once the welcome arrives; it runs late,
+	// because the test doesn't wait for the welcome, so it re-sends caps that already include the change, overlapping
+	// the capsLoop send with the same content. Let the agent finish before asserting that nothing is reported without a
+	// change.
+	waitUntil(t, "the change detected and no detection pending", func() bool {
+		a.mu.Lock()
+		idle := a.capsStarts == a.capsTaken
+		a.mu.Unlock()
+		return len(m.Changes()) == 0 && idle
+	})
+	fc.drain(t, 100*time.Millisecond)
 	// Nothing changes: no report until the interval has passed on the agent's clock.
 	fc.none(t, proto.TypeNodeCapabilities, 100*time.Millisecond)
 	clk.Advance(proto.NodeCapabilitiesInterval)
@@ -435,4 +463,129 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// SM-HARN-008: capsAfterHello reads the cached generation and sends it later; capsLoop may take and report a newer
+// one in between. The older inventory must not land after the newer one (central keeps whichever arrives last).
+func TestCapabilitiesOlderGenerationNeverFollowsNewer(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	var osName atomic.Value
+	osName.Store("hello")
+	oldDetect := detectCapabilities
+	detectCapabilities = func(*Agent, context.Context) proto.Capabilities {
+		return proto.Capabilities{OS: osName.Load().(string)}
+	}
+	reached, release := make(chan struct{}), make(chan struct{})
+	capsAfterHelloRead = func(c proto.Capabilities) {
+		if c.OS == "older" {
+			close(reached)
+			<-release
+		}
+	}
+	t.Cleanup(func() { detectCapabilities, capsAfterHelloRead = oldDetect, nil })
+	hold := make(chan struct{})
+	fc := newHeldWSCentral(t, proto.MinorHarnessVersion, hold)
+	runAgent(t, a, fc)
+	if h := fc.next(t, proto.TypeHello); h.OS != "hello" {
+		t.Fatalf("hello %q", h.OS)
+	}
+	// The cache is taken again after the hello was built, before the welcome.
+	osName.Store("older")
+	a.takeCapabilities(context.Background())
+	close(hold)
+	select { // capsAfterHello has read the older generation and not sent it
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("capsAfterHello never read the older generation")
+	}
+	osName.Store("newer")
+	c, gen := a.takeCapabilities(context.Background())
+	a.reportCapabilities(context.Background(), c, gen) // what capsLoop does
+	close(release)
+	var last string
+	deadline := time.After(300 * time.Millisecond)
+loop:
+	for {
+		select {
+		case env := <-fc.msgs:
+			if env.Type == proto.TypeNodeCapabilities {
+				var n proto.NodeCapabilities
+				if err := env.Decode(&n); err != nil {
+					t.Fatal(err)
+				}
+				last = n.Capabilities.OS
+			}
+		case <-deadline:
+			break loop
+		}
+	}
+	if last != "newer" {
+		t.Fatalf("last report %q, want newer", last)
+	}
+}
+
+// A report read on session 1 is never written on session 2: a reconnect between the report's snapshot and its write
+// (forced with capsBeforeSend) makes the write fail on the old connection, and nothing reaches the new one.
+func TestCapabilitiesReportNeverCrossesSessions(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	fc1, fc2 := newWSCentral(t, proto.MinorHarnessVersion), newWSCentral(t, proto.MinorHarnessVersion)
+	dial := func(fc *wsCentral) *websocket.Conn {
+		u := "ws" + strings.TrimPrefix(fc.srv.URL, "http")
+		c, _, err := websocket.Dial(context.Background(), u, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.CloseNow() })
+		return c
+	}
+	conn1, conn2 := dial(fc1), dial(fc2)
+	a.mu.Lock()
+	a.conn, a.connected, a.minor = conn1, true, proto.MinorHarnessVersion
+	a.mu.Unlock()
+	capsBeforeSend = func() { // the full reconnect: the old session is closed, the new one is up
+		_ = conn1.CloseNow()
+		a.mu.Lock()
+		a.conn = conn2
+		a.mu.Unlock()
+	}
+	t.Cleanup(func() { capsBeforeSend = nil })
+	a.reportCapabilities(context.Background(), proto.Capabilities{OS: "session1"}, 5)
+	capsBeforeSend = nil
+	a.mu.Lock()
+	sent := a.capsSent
+	a.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("capsSent %d after a report that was not delivered", sent)
+	}
+	// A report taken on session 2 does go out, and is the first thing session 2's central sees.
+	a.reportCapabilities(context.Background(), proto.Capabilities{OS: "session2"}, 6)
+	if c := fc2.next(t, proto.TypeNodeCapabilities); c.OS != "session2" {
+		t.Fatalf("session 2 saw %q first, want session2", c.OS)
+	}
+	fc2.none(t, proto.TypeNodeCapabilities, 200*time.Millisecond)
+	fc1.none(t, proto.TypeNodeCapabilities, 50*time.Millisecond)
+}
+
+// A new connection that has not been welcomed yet takes no report, even with the old session's minor still recorded:
+// the report would otherwise go out before central has answered the hello (or before the hello itself).
+func TestCapabilitiesReportWaitsForWelcome(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	fc := newWSCentral(t, proto.MinorHarnessVersion)
+	u := "ws" + strings.TrimPrefix(fc.srv.URL, "http")
+	conn, _, err := websocket.Dial(context.Background(), u, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	a.mu.Lock()
+	a.conn, a.connected, a.minor = conn, false, proto.MinorHarnessVersion // session 2 dialled, session 1's minor kept
+	a.mu.Unlock()
+	a.reportCapabilities(context.Background(), proto.Capabilities{OS: "early"}, 5)
+	a.mu.Lock()
+	sent := a.capsSent
+	a.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("capsSent %d after a report on an unwelcomed connection", sent)
+	}
+	fc.none(t, proto.TypeNodeCapabilities, 200*time.Millisecond)
 }

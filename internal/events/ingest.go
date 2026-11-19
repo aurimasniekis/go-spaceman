@@ -368,6 +368,12 @@ func (m *Manager) throttle(ctx context.Context, subID, spaceID string, core bool
 	wctx, cancel := context.WithTimeout(ctx, throttleWait)
 	defer cancel()
 	if err := lim.l.Wait(wctx); err != nil {
+		if ctx.Err() != nil {
+			// Cancelled, not throttled: a halt whose drain timed out cancels the handlers, and the events still buffered
+			// then reach this point. They must neither report the subscription as running (the manager has just set
+			// paused or stopped) nor count as rate limited; the stream redelivers them.
+			return ctx.Err()
+		}
 		msg := fmt.Sprintf("throttled: over the ingestion rate of %d events per minute; events wait in the stream", n)
 		if core {
 			msg = fmt.Sprintf("throttled: over the ingestion rate of %d events per minute; core NATS messages over it are dropped", n)
@@ -405,14 +411,34 @@ type subRun struct {
 	failed atomic.Bool
 }
 
-func (r *subRun) halt() {
+// drainTimeout bounds how long halting a durable subscription waits for the events already delivered to it to be
+// handled and acknowledged (pulse Subscription.Drain). Handling one event is a few database writes, well under a
+// second; the bound only matters for a handler held by the ingestion rate limit (throttleWait), which the drain then
+// cancels: that event is negatively acknowledged and redelivered. It is below throttleWait so a pause or a
+// reconfiguration never waits on the rate limit, and well below the stream's AckWait, which a Stop would cost instead.
+const drainTimeout = 5 * time.Second
+
+// halt stops a running subscription. A durable consumer is drained, not stopped. Stop returns before the consumer
+// has unsubscribed (nats.go unsubscribes later and does not flush), so the server can still deliver an event to the
+// old consumer's pending pull request after Stop returned: it is dropped unacknowledged, and the consumer started
+// next (after a resume or a reconfiguration) receives it only once AckWait expires. Drain returns once the
+// unsubscribe reached the server and every event delivered before it was handled and acknowledged; after
+// drainTimeout it cancels the handlers' context and gives up waiting. halt holds no lock a handler takes (stateMu,
+// limMu, coreMu, the store writer), so a draining handler can always finish.
+func (r *subRun) halt(ctx context.Context) {
+	drain(ctx, r.sub)
 	r.stop()
-	if r.sub != nil {
-		r.sub.Stop()
-	}
 	if r.nsub != nil {
 		_ = r.nsub.Unsubscribe() // fails harmlessly when the connection was already closed
 	}
+}
+
+// drain drains a durable subscription for at most drainTimeout (see halt). It is safe on nil. ctx carries values
+// only: a shutdown has already cancelled it, and the subscription still gets its drainTimeout.
+func drain(ctx context.Context, sub *pulse.Subscription) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainTimeout)
+	defer cancel()
+	_ = sub.Drain(ctx) // on a timeout Drain already cancelled the handlers: nothing more to do
 }
 
 // NewManager returns the ingestion manager.
@@ -430,7 +456,7 @@ func NewManager(svc *Service, log *slog.Logger) *Manager {
 func (m *Manager) Run(ctx context.Context) {
 	t := time.NewTicker(m.retry)
 	defer t.Stop()
-	defer m.stopAll()
+	defer m.stopAll(ctx)
 	for {
 		m.reconcile(ctx)
 		select {
@@ -442,10 +468,14 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 }
 
-func (m *Manager) stopAll() {
+func (m *Manager) stopAll(ctx context.Context) {
+	// Halted together, so a shutdown waits at most one drainTimeout however many subscriptions run.
+	var wg sync.WaitGroup
 	for id := range m.subs {
-		m.stopSub(id)
+		run := m.detachSub(id)
+		wg.Go(func() { run.halt(ctx) })
 	}
+	wg.Wait()
 	for id, c := range m.conns {
 		if c.client != nil {
 			c.client.Close()
@@ -454,6 +484,9 @@ func (m *Manager) stopAll() {
 	}
 }
 
+// reconcile halts subscriptions one at a time (stopSub), so a pass can wait up to drainTimeout for each subscription
+// whose handler is held by the ingestion rate limit: K such subscriptions stall it for up to K*drainTimeout (stopAll
+// halts them together).
 func (m *Manager) reconcile(ctx context.Context) {
 	conns, err := m.svc.s.R().ListEventConnections(ctx)
 	if err != nil {
@@ -509,7 +542,7 @@ func (m *Manager) reconcile(ctx context.Context) {
 		}
 		if s.WhilePaused == PausedStop && paused[s.SpaceID] {
 			// Stopped until the space resumes (SM-EVT-014); a durable consumer keeps its position on the server.
-			m.stopSub(s.ID)
+			m.stopSub(ctx, s.ID)
 			m.svc.setState(s.ID, "paused", "")
 			continue
 		}
@@ -522,7 +555,7 @@ func (m *Manager) reconcile(ctx context.Context) {
 		if cur := m.subs[s.ID]; cur != nil && cur.key == key && !cur.failed.Load() {
 			continue
 		}
-		m.stopSub(s.ID)
+		m.stopSub(ctx, s.ID)
 		src := m.sources[s.Delivery]
 		if src == nil {
 			m.svc.setState(s.ID, "error", fmt.Sprintf("no inbound event source for delivery %q", s.Delivery))
@@ -539,7 +572,7 @@ func (m *Manager) reconcile(ctx context.Context) {
 	}
 	for id := range m.subs {
 		if !want[id] {
-			m.stopSub(id)
+			m.stopSub(ctx, id)
 			m.svc.setState(id, "stopped", "")
 		}
 	}
@@ -553,16 +586,26 @@ func errText(err error) string {
 	return err.Error()
 }
 
-func (m *Manager) stopSub(id string) {
-	if s := m.subs[id]; s != nil {
-		s.halt()
-		delete(m.subs, id)
-		if s.nsub != nil {
-			m.coreMu.Lock()
-			delete(m.core, s.nsub)
-			m.coreMu.Unlock()
-		}
+func (m *Manager) stopSub(ctx context.Context, id string) {
+	if s := m.detachSub(id); s != nil {
+		s.halt(ctx)
 	}
+}
+
+// detachSub removes a running subscription from the manager's maps and returns it (nil when none runs), for the
+// caller to halt.
+func (m *Manager) detachSub(id string) *subRun {
+	s := m.subs[id]
+	if s == nil {
+		return nil
+	}
+	delete(m.subs, id)
+	if s.nsub != nil {
+		m.coreMu.Lock()
+		delete(m.core, s.nsub)
+		m.coreMu.Unlock()
+	}
+	return s
 }
 
 func (m *Manager) connect(c db.EventConnection) (*pulse.Client, error) {
@@ -626,6 +669,9 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		if errors.As(err, &qe) {
 			return // expected and recorded in quarantine, not a subscription error
 		}
+		if errors.Is(err, context.Canceled) {
+			return // the handler was cancelled by a halt's drain timeout: not a subscription error, and the state is no longer ours
+		}
 		m.svc.setState(subID, "running", err.Error())
 	}))
 	sub, err := c.client.Subscribe(sctx, s.EffectiveSubject, func(hctx context.Context, e pulse.Event) error {
@@ -633,7 +679,9 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 			return m.svc.skipOwn(hctx, subID, fromPulse(e), e.Sequence)
 		}
 		if err := m.throttle(hctx, subID, spaceID, false); err != nil {
-			m.svc.observe(DeliveryDurable, OriginLive, "", err, -1)
+			if hctx.Err() == nil {
+				m.svc.observe(DeliveryDurable, OriginLive, "", err, -1)
+			}
 			return err // left in the stream: redelivered after a backoff
 		}
 		o := Origin{}
@@ -656,7 +704,7 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 			}
 			return tx.Q.MarkSubscriptionApplied(ctx, db.MarkSubscriptionAppliedParams{AppliedGeneration: s.CursorGeneration, ID: s.ID})
 		}); err != nil {
-			sub.Stop()
+			drain(ctx, sub)
 			stop()
 			return nil, err
 		}

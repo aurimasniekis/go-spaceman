@@ -3,16 +3,19 @@ package app_test
 import (
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/backup"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/s3client/s3test"
 )
 
@@ -155,6 +158,38 @@ func TestS3ArtifactStoreEndToEnd(t *testing.T) {
 	}
 	if recorded() != "" {
 		t.Fatal("deleted recording still reads")
+	}
+
+	// A deleted recording is not served, even if a spool folder an older release recreated is still there; the next
+	// start removes the folder instead of archiving it again.
+	if err := os.MkdirAll(spool, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spool, recording.SegmentName(1)), []byte("leftover"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rootSecret, _, err := e.c.Auth.IssueRootToken(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/recording", "/recording?tail=1024", "/recording/download", "/terminal"} {
+		req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/api/v1/spaces/"+sp.ID+"/runs/"+r.ID+path, nil)
+		req.Header.Set("Authorization", "Bearer "+rootSecret)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusGone {
+			t.Fatalf("GET %s of a deleted recording: %d, want 410", path, res.StatusCode)
+		}
+	}
+	app.UploadSpooledArtifacts(e.c, ctx)
+	if _, err := os.Stat(spool); !os.IsNotExist(err) {
+		t.Fatalf("leftover spool folder of a deleted recording kept: %v", err)
+	}
+	if k := segKeys(); len(k) != 0 {
+		t.Fatalf("leftover folder of a deleted recording was archived: %v", k)
 	}
 	s, _ := e.c.Fleet.GetSpace(ctx, sp.ID)
 	if _, err := e.c.Fleet.SetSpaceState(ctx, admin, sp.ID, s.Version, "archived", ""); err != nil {

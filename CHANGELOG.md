@@ -6,6 +6,142 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-11-19
+
+### Added
+
+- **`harness.env_passthrough` in the agent configuration** names extra environment variables the agent copies from
+  its own environment into Claude Code and Codex runs (default: none), for example `CLAUDE_CODE_TMPDIR`. Only exact
+  names are accepted; patterns and empty entries are refused. These are refused: the variables the agent sets or
+  reserves itself (`SPACEMAN_*`, `HC_*`, `HALLPASS_*`, `XDG_*`, `CLAUDE_CONFIG_*`, `HOME`, `PATH`, `TERM`, `COLORTERM`,
+  `PWD`, `USER`, `LOGNAME`, `SHELL`, `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `DISABLE_AUTOUPDATER`,
+  `DISABLE_UPDATES`); the agent's own and the harness's credential variables (`ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `HARBOR_PILOT_TOKEN`, and every `CLAUDE_CODE_*` outside a short safe list); model-provider credentials and endpoints
+  (`AWS_*`, `GOOGLE_*`, `CLOUD_ML_*`, `VERTEX_*`, `AZURE_*`, `OPENAI_*`, `CODEX_*`); proxy and TLS variables
+  (`HTTPS_PROXY`, `NODE_OPTIONS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, …); and loader hooks (`LD_*`, `BASH_ENV`, `ENV`).
+  The agent's own value always wins. The operator remains responsible for any other names
+  they list. A profile's `claude_settings.env` stays the per-profile way to set Claude Code variables.
+
+- **The watchdog reminds workers that forget to hand back their task.** A live worker whose turn ended while its task
+  is still `running`, and that neither set the task to review or blocked nor messaged control, gets one reminder in
+  its terminal after `worker_idle_watchdog_minutes` (default 10; 0 turns it off). If the reminder's turn leaves the task
+  running, control gets one notification naming the run and the task as long again later. A worker waiting for a
+  person, at a usage limit or taken over is left alone; one whose message to control is still open is waiting for
+  control, so control is told instead. Each reminder is audited (`worker.watchdog_nudged`).
+
+- **The watchdog flags worker runs whose program never connected to SpaceMan.** A running worker run whose program
+  has not loaded its SpaceMan tools (the MCP bridge fetches them when the program starts) and made no SpaceMan tool
+  call `worker_start_watchdog_minutes` (default 10; 0 turns it off) after it started gets control one notification
+  naming the run and its task, once per run. It asks control to check the run's terminal rather than stop it. A long
+  first turn, a run that waited at a usage limit and a run that started before central's last restart are never
+  flagged. `spaceman_runs_list` shows each run's `turn`.
+
+- **A sweep removes leftover recordings of deleted runs.** A recording folder left on the local backend, and S3
+  objects of a run with no spool folder, were never removed after the run's recording was deleted or the run was
+  gone. Central now sweeps the recordings directory and the bucket at start and every
+  `artifacts.recording_reconcile_interval` (default 24h, `0s` turns it off). It removes only recordings of runs with
+  `recording_deleted_at` set, plus, with `artifacts.recording_reconcile_absent: true` (off by default, because a
+  restored older backup or a second central on the same bucket also looks like "absent"), runs the database confirms
+  absent whose recording has been untouched for 24h. A database or listing error skips the run, a run that exists is
+  never touched, and each pass is bounded (200 runs, continuing where the last stopped) and paced.
+
+- **A gateway run's profile may set `CLAUDE_CODE_TMPDIR`.** It moves Claude Code's temp directory off `/tmp`, so a
+  profile's `claude_settings.env` can use it. It is on the gateway allowlist of output and UI switches: it carries no
+  credential or endpoint, and every other `CLAUDE_CODE_*` variable is still refused.
+
+### Changed
+
+- **The recording sweep finds leftovers with one query.** Instead of a database lookup per stored run, central asks
+  once per batch of 500 stored run IDs which of them have `recording_deleted_at` set (by primary key, so no new
+  index or migration is needed), so all leftovers are found in one pass and removed within ceil(leftovers/200)
+  passes, instead of up to ceil(N/200) passes for N stored runs. The 200 limit now bounds removals per pass. A
+  database error ends the pass with nothing deleted, and the opt-in
+  `recording_reconcile_absent` mode still uses the per-run check unchanged.
+- **The recording sweep lists one folder per run on S3.** With `artifacts.recording_reconcile_absent` off, the sweep
+  no longer lists every segment object (memory grew with history); it lists the run folders with a `/` delimiter.
+  Object ages are still read when absent mode is on. The reference now says that a removal also sets central's
+  in-memory deleted mark for the run, and that with absent mode on a leftover can wait up to ceil(N/200) sweeps when
+  N runs are stored.
+  A space purge whose recording delete fails still leaves a leftover only the opt-in absent mode removes; this is
+  documented in the code.
+
+### Fixed
+
+- **Pausing, disabling or reconfiguring an event subscription no longer delays an event by 30 seconds.** The ingestion
+  manager stopped a durable subscription immediately, so an event the server delivered during the stop stayed
+  unacknowledged, and the consumer started next (after the space resumed, or with the new configuration) received it
+  only once the 30-second acknowledgement timeout expired. Subscriptions are now drained: events already delivered are
+  handled and acknowledged first, for at most 5 seconds. The go-pulse SDK is updated to v0.1.7 for this
+  (it also moves go-jose from 4.1.4 to 4.1.6). Events already delivered when a `while_paused=stop` space pauses are
+  ingested during the drain. If the drain times out, the events still buffered no longer set the subscription back to
+  `running` or count as rate limited.
+
+- **Messages and notifications now reach a control (or worker) that waits at its prompt while background tasks run.**
+  After a turn, Claude Code reports `working` ("1 shell still running") instead of `done` while background shells or
+  monitors it started are still running. SpaceMan took that for a turn in progress, so no terminal notice
+  was typed until the background work ended or the agent read its messages on its own. Workers' messages and
+  task-review notifications to control could wait for most of an hour. The node now reports such a run with the
+  status kind `background`. It takes idle-gated notices like a `done` run and is noticed as soon as it starts
+  waiting, while control's idle stop, account switches and the watchdog still treat it as working (ADR-0100).
+
+- **Turning the worker start check back on no longer flags long-running runs.** While `worker_start_watchdog_minutes`
+  is 0 the watchdog now keeps the start records of running runs, so a run that began long ago is not reported as
+  never started after the check is re-enabled.
+
+- **A close record numbered while the local disk failed is no longer sent twice.** The close reached central but not the
+  disk, so a later recorder for the run (started from a stale snapshot) read an open recording and ended the run again.
+  The agent now remembers, per run and in memory, that it numbered the close, and a later recorder does not add another. The mark does not survive an agent restart, so a close that is on central but
+  not on disk, followed by a restart, can still be sent twice; closing that case needs central to report its last record.
+- **The agent's catch-up pass and capability reports are joined at shutdown.** `Run` started the recording catch-up
+  pass, the capability loop and the report after hello as untracked goroutines, so one could still be running after
+  `Run` returned (and, in tests, read package settings the caller restored next, a data race). They are tracked now and
+  `Run` waits for them, bounded, like its other background work.
+- **A capabilities report is written only on the connection it was checked against.** The agent now reads what it has
+  sent, the protocol and the connection in one step and sends on that exact connection, so a reconnect in between makes
+  the write fail instead of putting an older inventory on the new session.
+- **A launch that fails before its program starts ends the run under the observe lock too.** Its failed write now takes
+  the observe lock after the run's lock, like a stop, and the end work runs after the locks are released. A stop for a
+  run this node had no record of takes it too, so every write that ends a run takes the observe lock.
+- **An older capabilities inventory no longer overwrites a newer one at central.** The agent now remembers the newest
+  capabilities generation it sent (a hello counts) and skips any report at or below it, with the check and the send
+  as one step. Before, the report sent after a hello could read the cache, lose a race with the periodic/change
+  report of a newer generation, and land last, leaving central stale until the next change or the 30-minute report.
+  It also drops the duplicate identical reports.
+- **Live terminal output is no longer held through the recording catch-up's backoff.** While central left one run
+  unanswered the catch-up pass slept (1 s up to 30 s) with every run marked not caught up by a new request, so live
+  output waited for the sleep to end. A new request or the first answer for a run now wakes it.
+- **A stop can no longer be overwritten by a launch** (#272 and follow-ups). The managed Claude Code launch's `starting`
+  write, and now also a pre-start failure (download, build, credentials, secrets), check that the run was not stopped
+  and write under one lock, so a stop landing in between is kept. A launch re-delivered after a crash between starting
+  the program and journaling it re-checks the run under that lock before adopting the program: when the run was stopped
+  meanwhile, it stops the found program instead of recording it as running.
+- **A run stopped before it had a program now gets its end-of-run work** (follow-up to #273). The run-end work (forget
+  hook data, memory flush, final usage, deferred role renames, retiring the idle lease guard, removing saved
+  attachments) is one helper. It now also runs when a stop ends a run before start (the guard the launch may have
+  started is retired) and when a launch adopts a program of a run already stopped, which no longer leaks an idle guard
+  or the run's attachments. The wait for that program to go after its kill has tests, and `TestGatewayRevokedOnPurge`
+  no longer runs in parallel with the package's other tests, where it could pass the 500 ms write-lock limit.
+- **The run-end work runs exactly once, and an abandoned launch retires its guard** (follow-up to #276). A launch that
+  is abandoned after it started the space's lease guard retires it (a stop may have retired the guard before it was
+  started). The runner reconcile re-checks a pending or lost run under the run's lock before it ends it, so a
+  re-delivered launch or an observe is not overwritten and the end work does not run twice. Reading a run's previous row
+  and writing the new one in `observe` is one locked step, so two concurrent observes (the monitor and a stop) cannot
+  both see the run end.
+- **A deleted recording stays deleted** (#262, #263, #264). Late chunks that arrive after the recordings were closed, or
+  for a deleted recording, are dropped instead of recreating it; the deleted state is durable across restarts and
+  against an S3 archive racing a delete; and central stops serving a deleted recording (`410 Gone`) and cleans up
+  its leftovers at startup.
+- **The terminal treats a deleted recording as final** (#266). The web terminal handles a `410` for a recording as the
+  end of that recording, not as an error to retry.
+- **A recording ends with its close record when the program ended before the recorder attached.** A program that
+  exits between the agent adopting it (after a restart) and its recorder attaching, or between two attachments, can no
+  longer be attached; the recorder used to stop without a record, so neither the local recording nor central's copy
+  said the program had ended. It now records a gap (`finished`) and the program's close record, numbered above
+  central's sequence like any other. A second recorder started for a run whose close is already recorded writes
+  nothing more.
+- **Test flakes** (#262, #267). The recording-retention test and the control watchdog test wait for the event they
+  check instead of passing early.
+
 ## [0.1.13] - 2026-11-18
 
 The `v0.1.11` and `v0.1.12` tags were created but never released (their release runs stopped at the gates, so no
@@ -102,6 +238,12 @@ a run stopped before its launch reached the node. The Terraform provider 0.1.11 
   configuration; its help now says only the space role's own skills are cleared, not the template's.
 
 ### Fixed
+
+_The first entry below was added after the v0.1.13 release._
+
+- **A role rename that races a memory sync no longer leaves a second memory collection under the old name** (#274).
+  Central re-checks the rename inside the transaction that creates the collection, so a sync that passed the check
+  before the rename committed is answered `role renamed` instead of stranding a new collection under the old name.
 
 - **A run stopped before its launch reached the node no longer stays `pending` for ever** (#270). The node reports it ended
   ("stopped before start") so central closes it through the normal end path, and a launch that arrives after the stop
@@ -2228,7 +2370,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.13
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.7...v0.1.9

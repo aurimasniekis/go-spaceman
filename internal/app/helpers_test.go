@@ -4,12 +4,27 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/spacemanmcp"
 )
+
+// sharedMCPCatalog is app.Options.MCPCatalog for every central of the test binary: the SpaceMan MCP catalog is built
+// from the static API document, so it is built once. Building it per central marshalled the whole OpenAPI document in
+// every test, a third of the package's CPU under the race detector.
+var sharedMCPCatalog = func() func(func() (*spacemanmcp.Catalog, error)) (*spacemanmcp.Catalog, error) {
+	var once sync.Once
+	var cat *spacemanmcp.Catalog
+	var err error
+	return func(build func() (*spacemanmcp.Catalog, error)) (*spacemanmcp.Catalog, error) {
+		once.Do(func() { cat, err = build() })
+		return cat, err
+	}
+}()
 
 func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }
 

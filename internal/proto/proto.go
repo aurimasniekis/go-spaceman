@@ -332,8 +332,8 @@ type RunReport struct {
 	ExitCode   *int   `json:"exit_code,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	Error      string `json:"error,omitempty"`
-	Status     string `json:"status,omitempty"` // program-reported (OSC 7501): idle, working, done, blocked, error
-	StatusKind string `json:"status_kind,omitempty"`
+	Status     string `json:"status,omitempty"`      // program-reported (OSC 7501): idle, working, done, blocked, error
+	StatusKind string `json:"status_kind,omitempty"` // OSC 7501 kind (permission, question, auth) or StatusKindBackground
 	Turn       uint64 `json:"turn,omitempty"`
 	SessionID  string `json:"session_id,omitempty"` // harness conversation id when known
 	Adopted    bool   `json:"adopted,omitempty"`    // an existing process was adopted instead of launching
@@ -822,3 +822,8 @@ type TranscriptAck struct {
 	Done  bool   `json:"done"`
 	Error string `json:"error,omitempty"`
 }
+
+// StatusKindBackground is the status kind the node gives a run whose program reports working although its turn has
+// finished and it waits at its prompt for background tasks it started (runner.Classify, ADR-0100). Such a run takes
+// idle-gated notices; for everything else it is working. Any node may send it: an older central stores it like any kind.
+const StatusKindBackground = "background"

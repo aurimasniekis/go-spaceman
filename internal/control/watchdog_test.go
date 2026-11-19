@@ -546,8 +546,8 @@ func TestWatchdogToolsWrapper(t *testing.T) {
 		context.Background(), &fleet.RunPrincipal{RunID: "run_other"}, proto.ToolCatalog, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := e.w.acts["run_other"]; ok {
-		t.Fatal("the catalog call counted as activity")
+	if a := e.w.acts["run_other"]; a == nil || !a.at.IsZero() || a.tool != "" || a.began.IsZero() {
+		t.Fatalf("the catalog call counted as activity, or not as the program's start: %+v", a)
 	}
 }
 
@@ -729,5 +729,188 @@ func TestWatchStateStatus(t *testing.T) {
 		if got := tc.st.Status(); got != tc.want {
 			t.Errorf("%+v: %s, want %s", tc.st, got, tc.want)
 		}
+	}
+}
+
+// startEnv is a watchdog env with the worker start check at 10 minutes, central started before wdNow, and the
+// workers and notifications captured.
+type startEnv struct {
+	*wdEnv
+	runs   []*fleet.Run
+	sent   []string
+	dedups []string
+}
+
+func newStartEnv(t *testing.T, runs ...*fleet.Run) *startEnv {
+	e := &startEnv{wdEnv: newWDEnv(t), runs: runs}
+	e.lim[limits.WorkerStartWatchdog] = 10
+	e.w.workers = func(context.Context, string) ([]*fleet.Run, map[string]*queue.Task, error) {
+		return e.runs, map[string]*queue.Task{"run_stuck": {ID: "tsk_1", Title: "Review the thing"}}, nil
+	}
+	e.w.tell = func(_ context.Context, _, dedup, _, body string) {
+		e.dedups = append(e.dedups, dedup)
+		e.sent = append(e.sent, body)
+	}
+	return e
+}
+
+func startWorker(id string) *fleet.Run {
+	return &fleet.Run{ID: id, Kind: "worker", Role: "reviewer", Desired: "running", Observed: "running", Status: "working", StartedAt: tp(wdNow)}
+}
+
+// call runs one tool call of a run through the watchdog's dispatcher.
+func (e *startEnv) call(runID, tool string) {
+	e.t.Helper()
+	if _, err := e.w.Tools(func(context.Context, *fleet.RunPrincipal, string, json.RawMessage) (json.RawMessage, error) {
+		return nil, nil
+	})(
+		context.Background(), &fleet.RunPrincipal{RunID: runID}, tool, nil); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// A worker run whose program never connected to SpaceMan (no catalog fetch, no tool call) past
+// worker_start_watchdog_minutes gets control exactly one notification naming the run and its task. A run at turn 0
+// that fetched its catalog or made a tool call, one that took a turn, and one on a disconnected node get none.
+func TestWatchdogWorkerStuckAtZero(t *testing.T) {
+	stuck, fetched, called, moving, away := startWorker("run_stuck"), startWorker("run_fetched"), startWorker("run_called"), startWorker("run_moving"), startWorker("run_away")
+	away.Observed = "unknown"
+	moving.Turn = 1
+	e := newStartEnv(t, stuck, fetched, called, moving, away)
+	e.call("run_fetched", proto.ToolCatalog)
+	e.pass(9 * time.Minute)
+	if len(e.sent) != 0 {
+		t.Fatalf("before the threshold: %v", e.sent)
+	}
+	e.call("run_called", "spaceman_messages")
+	e.pass(2 * time.Minute)
+	e.pass(time.Minute)
+	if len(e.sent) != 1 || e.dedups[0] != "worker-not-started:run_stuck" || !strings.Contains(e.sent[0], "run_stuck") || !strings.Contains(e.sent[0], "tsk_1") ||
+		!strings.Contains(e.sent[0], "terminal") || strings.Contains(e.sent[0], "worker_stop") {
+		t.Fatalf("notifications %v %v", e.dedups, e.sent)
+	}
+	// A long first turn: hours at turn 0 with no tool call after the catalog fetch is never flagged.
+	e.pass(3 * time.Hour)
+	if len(e.sent) != 1 {
+		t.Fatalf("a long first turn was flagged: %v", e.dedups)
+	}
+}
+
+// A run that waited at a usage limit is not flagged when the limit clears: reporting the limit shows its program began.
+func TestWatchdogWorkerStartAfterLimit(t *testing.T) {
+	r := startWorker("run_limited")
+	r.Limit = &fleet.RunLimit{}
+	e := newStartEnv(t, r)
+	e.pass(time.Minute)
+	e.pass(2 * time.Hour)
+	r.Limit = nil
+	e.pass(time.Minute)
+	e.pass(time.Hour)
+	if len(e.sent) != 0 {
+		t.Fatalf("flagged after the limit cleared: %v", e.sent)
+	}
+}
+
+// A run that started before central did is unknown, not stuck: its catalog fetch, if any, came before the restart and
+// is not repeated. A run started after the restart is checked as usual.
+func TestWatchdogWorkerStartAfterRestart(t *testing.T) {
+	old, fresh := startWorker("run_old"), startWorker("run_new")
+	fresh.StartedAt = tp(wdNow.Add(10 * time.Minute))
+	e := newStartEnv(t, old, fresh)
+	e.w.started = wdNow.Add(5 * time.Minute) // central came up 5 minutes after the old run started
+	e.pass(15 * time.Minute)
+	if len(e.sent) != 0 {
+		t.Fatalf("flagged before a full interval: %v", e.sent)
+	}
+	e.pass(time.Hour)
+	if len(e.sent) != 1 || e.dedups[0] != "worker-not-started:run_new" {
+		t.Fatalf("notifications %v", e.dedups)
+	}
+	// Runs that ended, wait at a limit, or are control are not stuck.
+	for _, x := range []*fleet.Run{
+		{ID: "a", Kind: "worker", Desired: "running", Observed: "exited", StartedAt: tp(wdNow.Add(time.Hour))},
+		{ID: "b", Kind: "worker", Desired: "running", Observed: "running", Limit: &fleet.RunLimit{}, StartedAt: tp(wdNow.Add(time.Hour))},
+		{ID: "c", Kind: "control", Desired: "running", Observed: "running", StartedAt: tp(wdNow.Add(time.Hour))}} {
+		if got := e.w.stuckAtZero([]*fleet.Run{x}, 10*time.Minute, wdNow.Add(3*time.Hour)); len(got) != 0 {
+			t.Errorf("%s: not stuck: %+v", x.ID, got)
+		}
+	}
+}
+
+// While the start check is off, the records of running runs are kept: a run that fetched its catalog long ago is not
+// flagged as never started when the check is turned on after more than a day.
+func TestWatchdogWorkerStartCheckOffKeepsBegan(t *testing.T) {
+	r := startWorker("run_long")
+	e := newStartEnv(t, r)
+	e.call("run_long", proto.ToolCatalog)
+	e.lim[limits.WorkerStartWatchdog] = 0
+	for i := 0; i < 25; i++ {
+		e.pass(time.Hour)
+	}
+	e.lim[limits.WorkerStartWatchdog] = 10
+	e.pass(time.Minute)
+	e.pass(time.Hour)
+	if len(e.sent) != 0 {
+		t.Fatalf("flagged after the check was re-enabled: %v", e.sent)
+	}
+}
+
+// A run that never began is still flagged, once, when the check is turned back on after being off for over a day.
+func TestWatchdogWorkerStartCheckOffThenOnFlagsOnce(t *testing.T) {
+	// run_began has a record, so the off passes take the refresh branch rather than the idle early return.
+	e := newStartEnv(t, startWorker("run_stuck"), startWorker("run_began"))
+	e.call("run_began", proto.ToolCatalog)
+	e.lim[limits.WorkerStartWatchdog] = 0
+	for i := 0; i < 25; i++ {
+		e.pass(time.Hour)
+	}
+	if len(e.sent) != 0 {
+		t.Fatalf("flagged while the check was off: %v", e.sent)
+	}
+	e.lim[limits.WorkerStartWatchdog] = 10
+	e.pass(time.Minute)
+	e.pass(time.Hour)
+	e.pass(time.Hour)
+	if len(e.sent) != 1 || len(e.dedups) != 1 || e.dedups[0] != "worker-not-started:run_stuck" {
+		t.Fatalf("want exactly one notification, got %v %v", e.dedups, e.sent)
+	}
+}
+
+// A run that ended while the check was off is no longer refreshed, so its record is pruned after a day.
+func TestWatchdogWorkerStartCheckOffPrunesEndedRun(t *testing.T) {
+	r := startWorker("run_done")
+	e := newStartEnv(t, r)
+	e.call("run_done", proto.ToolCatalog)
+	e.lim[limits.WorkerStartWatchdog] = 0
+	e.pass(time.Minute)
+	r.Observed = "exited"
+	for i := 0; i < 25; i++ {
+		e.pass(time.Hour)
+	}
+	e.w.mu.Lock()
+	_, ok := e.w.acts["run_done"]
+	e.w.mu.Unlock()
+	if ok {
+		t.Fatal("record of an ended run kept for more than a day")
+	}
+}
+
+// A run that is still observed running but is no longer desired running (a stop in flight) is not kept alive by the
+// off check: its record is pruned after a day like an ended run's.
+func TestWatchdogWorkerStartCheckOffPrunesStoppedDesiredRun(t *testing.T) {
+	r := startWorker("run_stopping")
+	e := newStartEnv(t, r)
+	e.call("run_stopping", proto.ToolCatalog)
+	e.lim[limits.WorkerStartWatchdog] = 0
+	e.pass(time.Minute)
+	r.Desired = "stopped"
+	for i := 0; i < 25; i++ {
+		e.pass(time.Hour)
+	}
+	e.w.mu.Lock()
+	_, ok := e.w.acts["run_stopping"]
+	e.w.mu.Unlock()
+	if ok {
+		t.Fatal("record of a run no longer desired running kept for more than a day")
 	}
 }

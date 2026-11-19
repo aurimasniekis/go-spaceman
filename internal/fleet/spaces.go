@@ -314,6 +314,12 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 // upstream repositories (SM-SPACE-004); the node's folder is retained per the node's recovery policy. After the
 // commit, central's copies of the runs' recordings are deleted from the artifact store and OnSpacePurged deletes
 // their transcripts (ADR-0048); a failure there is logged and leaves objects no record points to.
+//
+// Known gap: the runs' rows (and with them recording_deleted_at) are deleted in the same transaction, so a recording
+// whose delete fails afterwards belongs to a run that is absent from the database. The default reconcile sweep only
+// removes recordings of runs that exist with recording_deleted_at set, so it keeps such a leftover; only the opt-in
+// artifacts.recording_reconcile_absent sweep (untouched for 24h) removes it. Deleting the recordings before the commit
+// would lose them when the commit fails, and no other order avoids the window without a schema change.
 func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string) error {
 	var runIDs []string
 	err := svc.s.W().TxNamed(ctx, "fleet.purge_space", func(tx *store.Tx) error {

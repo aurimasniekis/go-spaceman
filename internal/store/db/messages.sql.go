@@ -484,7 +484,8 @@ func (q *Queries) ListMessagesFor(ctx context.Context, arg ListMessagesForParams
 
 const listNoticeCandidates = `-- name: ListNoticeCandidates :many
 SELECT id, space_id, kind, role, harness, status, coalesce(started_at, created_at) AS since FROM runs
-WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done') AND limit_kind = ''
+WHERE desired = 'running' AND observed = 'running' AND limit_kind = ''
+  AND (status IN ('idle', 'done') OR (status = 'working' AND status_kind = 'background'))
 `
 
 type ListNoticeCandidatesRow struct {
@@ -497,8 +498,10 @@ type ListNoticeCandidatesRow struct {
 	Since   int64
 }
 
-// A run waiting for its usage limit to reset (limit_kind set) is no candidate: a notice would start a turn that fails at
-// once. Its items wait for the clear (ADR-0079 decision 3).
+// A candidate's program takes a notice (runner.Status.TakesNotice): it is idle or done, or it reports working only
+// because background tasks still run after its turn finished (status_kind 'background', ADR-0100). A run waiting for
+// its usage limit to reset (limit_kind set) is no candidate: a notice would start a turn that fails at once. Its items
+// wait for the clear (ADR-0079 decision 3).
 func (q *Queries) ListNoticeCandidates(ctx context.Context) ([]ListNoticeCandidatesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listNoticeCandidates)
 	if err != nil {
@@ -812,6 +815,34 @@ func (q *Queries) ResolveMessage(ctx context.Context, arg ResolveMessageParams) 
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const runMessagesToControl = `-- name: RunMessagesToControl :one
+SELECT CAST(coalesce(max(m.created_at), 0) AS INTEGER) AS latest,
+  CAST(coalesce(sum(CASE WHEN m.state IN ('stored', 'available') OR (m.kind = 'request' AND m.state <> 'resolved') THEN 1 ELSE 0 END), 0) AS INTEGER) AS open
+FROM messages m
+WHERE m.space_id = ?1 AND m.from_kind = 'run' AND m.from_id = ?2
+  AND (m.to_kind = 'control'
+    OR (m.to_kind = 'run' AND m.to_id IN (SELECT r.id FROM runs r WHERE r.space_id = ?1 AND r.kind = 'control')))
+`
+
+type RunMessagesToControlParams struct {
+	SpaceID string
+	RunID   string
+}
+
+type RunMessagesToControlRow struct {
+	Latest int64
+	Open   int64
+}
+
+// The newest message a run sent control (to control, or to one of the space's control runs, as a reply does), and how
+// many of them are still open: not acknowledged yet, or a request not resolved (the worker hand-back watchdog, ADR-0099).
+func (q *Queries) RunMessagesToControl(ctx context.Context, arg RunMessagesToControlParams) (RunMessagesToControlRow, error) {
+	row := q.db.QueryRowContext(ctx, runMessagesToControl, arg.SpaceID, arg.RunID)
+	var i RunMessagesToControlRow
+	err := row.Scan(&i.Latest, &i.Open)
+	return i, err
 }
 
 const setMessageDeliverAt = `-- name: SetMessageDeliverAt :exec

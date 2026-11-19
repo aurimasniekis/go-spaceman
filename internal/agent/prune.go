@@ -327,6 +327,7 @@ func (a *Agent) pruneRuns(ctx context.Context) int {
 		delete(a.seqFloor, r.RunID)
 		delete(a.lowers, r.RunID)
 		delete(a.sentSeq, r.RunID)
+		delete(a.closeNumbered, r.RunID)
 		delete(a.caughtUp, r.RunID)
 		a.mu.Unlock()
 	}

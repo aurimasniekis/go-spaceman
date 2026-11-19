@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,8 +30,13 @@ type seqCentral struct {
 	mute bool
 	// only, when set, limits what central keeps and acknowledges to that run: messages about other runs are ignored.
 	only string
-	// muted counts the recording messages lost while mute was set (the recorder's probes among them).
-	muted int
+	// muted counts the recording messages lost while mute was set (the recorder's probes among them), mutedRecs the
+	// records in them.
+	muted, mutedRecs int
+	// barrier, when set, is a sequence central must hold up to before it is sent anything above it: a record above
+	// it that arrives sooner is a jump over records central lacks (jumped counts them).
+	barrier uint64
+	jumped  int
 }
 
 // until applies the recording messages central receives until cond holds, or fails.
@@ -56,6 +63,7 @@ func (c *seqCentral) within(d time.Duration, cond func() bool) bool {
 			}
 			if c.mute {
 				c.muted++
+				c.mutedRecs += len(ch.Records)
 				continue
 			}
 			if c.only != "" && ch.RunID != c.only {
@@ -69,6 +77,9 @@ func (c *seqCentral) within(d time.Duration, cond func() bool) bool {
 				if r.Seq <= c.seq {
 					c.drops++
 					continue
+				}
+				if c.barrier > 0 && c.seq < c.barrier && r.Seq > c.barrier {
+					c.jumped++
 				}
 				c.seq = r.Seq
 				c.recs = append(c.recs, r)
@@ -221,26 +232,14 @@ func writeUntil(t *testing.T, a *Agent, c *seqCentral, term, out string) {
 func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 	const runID = "run_low"
 	a, c, term := restartedRecorderEnv(t, runID, 250, 300, 150)
+	c.barrier = 250
 	writeUntil(t, a, c, term, "after the restart")
-	c.until("the local records above 150 at central", func() bool {
-		n := 0
-		for _, r := range c.recs {
-			if r.Seq > 150 && r.Seq <= 250 {
-				n++
-			}
-		}
-		return n == 100
-	})
-	// The probe's lowered acknowledgement can restart the catch-up sweep mid-way, so a harmless re-ship may be dropped by
-	// central as a repeat: repeats are allowed, what must hold is that every record is at central, in order.
-	last := uint64(0)
-	for _, r := range c.recs {
-		if r.Seq > 150 && r.Seq <= 250 && r.Seq < last {
-			t.Fatalf("record %d reached central after %d", r.Seq, last)
-		}
-		if r.Seq <= 250 {
-			last = max(last, r.Seq)
-		}
+	c.until("the local records above 150 at central", func() bool { return c.seq >= 250 })
+	// Contiguous: 151..250 held in order, each once (central drops repeats, so anything else is a hole).
+	c.contiguous(151, 250)
+	// A repeat of 151..250 (the lowering starts a second sweep) is dropped by central and harmless; a jump is not.
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
 	}
 	for _, r := range c.recs {
 		if strings.Contains(string(r.Data), "after the restart") && r.Seq <= 300 {
@@ -254,57 +253,91 @@ func TestRestartedRecorderBelowTheSavedAcknowledgement(t *testing.T) {
 	}
 }
 
-// The lowered acknowledgement (central holds 150, the saved one says 300) arrives while the catch-up of the run is
-// already under way from the restored 300. That catch-up had nothing above 300 to re-ship; it must start again from
-// 150 rather than mark the run caught up and clear the mark the lowering set, or no later sweep re-ships 151..250 (a
-// silent hole at central, while the new output above 300 still arrives).
+// With probe-first (ADR-0097, v0.1.12) the catch-up of a run whose central sequence is unknown waits for central's answer
+// before it reads where to start: central holds 150, the saved acknowledgement says 300, and the catch-up begins from
+// the lowered 150, never from 300. Nothing above 250 reaches central before 151..250 do, queued new records included.
 func TestLoweredAckDuringTheRunsCatchUp(t *testing.T) {
 	const runID = "run_low"
-	var ag atomic.Pointer[Agent]
-	reached := make(chan struct{})
-	var once sync.Once
+	var mu sync.Mutex
+	var froms []uint64
 	catchUpRunHook = func(id string, from uint64) {
-		if id != runID || from != 300 {
-			return
-		}
-		once.Do(func() { close(reached) })
-		// Hold the catch-up, started from the restored acknowledgement, until central's lower answer is applied.
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-			a := ag.Load()
-			a.mu.Lock()
-			known := a.seqKnown[runID]
-			a.mu.Unlock()
-			if known {
-				return
-			}
+		if id == runID {
+			mu.Lock()
+			froms = append(froms, from)
+			mu.Unlock()
 		}
 	}
 	t.Cleanup(func() { catchUpRunHook = nil })
-	a, c, term := restartedRecorderEnvWith(t, runID, 250, 300, 150, nil, func(a *Agent) { ag.Store(a) })
-	// Central answers nothing (the probe among it) until the catch-up of the run has begun from 300.
-	select {
-	case <-reached:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the catch-up never began from the restored acknowledgement")
-	}
+	a, c, term := restartedRecorderEnv(t, runID, 250, 300, 150)
+	c.barrier = 250
 	writeUntil(t, a, c, term, "after the restart")
-	c.until("the local records above 150 at central", func() bool { return countBetween(c.recs, 150, 250) == 100 })
-	for i, r := range c.recs[150:250] {
-		if r.Seq != uint64(151+i) {
-			t.Fatalf("central holds %d after %d, want %d", r.Seq, 150+i, 151+i)
-		}
+	c.until("the local records above 150 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// Only the first begin is the one this test is about: the lowering asks for a second sweep, which may begin from
+	// the 250 central has acknowledged by then (it ships nothing above it).
+	if len(froms) == 0 {
+		t.Fatal("the catch-up never began")
+	}
+	if froms[0] != 150 {
+		t.Fatalf("the catch-up began from %d, want the lowered 150 (began from %v)", froms[0], froms)
 	}
 }
 
-// countBetween counts the records numbered above lo and up to hi.
-func countBetween(recs []recording.Record, lo, hi uint64) int {
-	n := 0
-	for _, r := range recs {
-		if r.Seq > lo && r.Seq <= hi {
-			n++
+// #254's restart on lowering is the guard for a lowering that arrives after the catch-up began from the restored
+// acknowledgement (no longer reachable through the first answer of a run, which the catch-up now waits for). Forced
+// here: the run's sequence counts as known (so the catch-up does not wait) with the saved 300 while central holds 150,
+// the catch-up begins from 300, and the lowering is applied meanwhile, with new records queued above (the recorder
+// numbers above 300). The catch-up must start again from 150 before anything above it goes out and before it marks
+// the run caught up: central must end up with 151..250 in order, and never see a record above 250 before them.
+func TestLoweringAfterTheCatchUpBeganRestartsIt(t *testing.T) {
+	const runID = "run_low3"
+	var ag atomic.Pointer[Agent]
+	var froms []uint64
+	var mu sync.Mutex
+	catchUpRunHook = func(id string, from uint64) {
+		if id != runID {
+			return
 		}
+		mu.Lock()
+		froms = append(froms, from)
+		first := len(froms) == 1
+		mu.Unlock()
+		if !first {
+			return
+		}
+		a := ag.Load()
+		a.mu.Lock()
+		a.seqKnown[runID] = false // central's answer has not been taken yet
+		a.mu.Unlock()
+		a.recordingAck(proto.RecordingAck{RunID: runID, Seq: 150})
 	}
-	return n
+	t.Cleanup(func() { catchUpRunHook = nil })
+	a, c, term := restartedRecorderEnvWith(t, runID, 250, 300, 150, nil, func(a *Agent) {
+		ag.Store(a)
+		a.mu.Lock()
+		if a.seqKnown == nil {
+			a.seqKnown = map[string]bool{}
+		}
+		a.seqKnown[runID] = true
+		a.mu.Unlock()
+	})
+	c.barrier = 250
+	writeUntil(t, a, c, term, "after the restart")
+	c.until("the local records above 150 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(froms) < 2 || froms[0] != 300 || froms[1] != 150 {
+		t.Fatalf("the catch-up began from %v, want 300 and then, restarted by the lowering, 150", froms)
+	}
 }
 
 // A program that ends while central is out of reach after the restart: its records, the close among them, wait for
@@ -319,15 +352,14 @@ func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
 	fake := a.o.Runner.(interface {
 		Output(id, data string)
 		Exit(id string, code int, reason string)
+		Observed(id string) int
 	})
-	// The recorder is attached once its gap record is kept back (it numbers nothing while central is silent).
-	waitFor(t, "recorder attached", func() bool {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.recorders[runID] != nil
-	})
+	// The output and the exit must come while the recorder's attachment is open (a finished terminal cannot be
+	// attached: TestRecorderClosesAProgramThatEndedBeforeItAttached). Neither a recorder in the map (it is entered
+	// before it attaches) nor a probe at central (the catch-up pass probes too, ADR-0097) says it is open.
+	waitFor(t, "recorder attached", func() bool { return fake.Observed(term) >= 1 })
 	// The recorder asks for central's sequence while it waits: once it has asked, it holds what follows back.
-	c.until("the recorder's first probe", func() bool { return c.muted >= 1 })
+	c.until("the first probe", func() bool { return c.muted >= 1 })
 	fake.Output(term, "last words\r\n")
 	fake.Exit(term, 0, "exited")
 	// After the exit the recorder keeps asking (it has the close record to ship): the probes that follow came from
@@ -344,6 +376,51 @@ func TestRestartedRecorderKeepsTheCloseUntilCentralAnswers(t *testing.T) {
 	}
 	if !c.has("last words") {
 		t.Fatal("the output before the exit did not reach central")
+	}
+	waitFor(t, "recorder ended", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.recorders[runID] == nil
+	})
+}
+
+// A program that ends after the restarted agent adopted it but before its recorder attached: a finished terminal
+// cannot be attached, so what it wrote meanwhile is missing, but the recording still ends with the program's close
+// record (after a gap), numbered above central's sequence once it is known, and the recorder ends.
+func TestRecorderClosesAProgramThatEndedBeforeItAttached(t *testing.T) {
+	const runID = "run_gone"
+	var once sync.Once
+	a, c, _ := restartedRecorderEnvWith(t, runID, 100, 100, 200, nil, func(a *Agent) {
+		fake := a.o.Runner.(interface {
+			Output(id, data string)
+			Exit(id string, code int, reason string)
+			LiveByLabel(k, v string) []runner.Process
+		})
+		a.beforeRecordAttach = func(id string) {
+			if id != runID {
+				return
+			}
+			once.Do(func() {
+				for _, p := range fake.LiveByLabel("spaceman.run", runID) {
+					fake.Output(p.ID, "unseen\r\n")
+					fake.Exit(p.ID, 3, "exited")
+				}
+			})
+		}
+	})
+	c.until("the close record at central", func() bool { return len(c.recs) > 200 && c.recs[len(c.recs)-1].Kind == recording.KindClose })
+	if c.drops > 0 {
+		t.Fatalf("central dropped %d records as repeats", c.drops)
+	}
+	got := c.recs[200:]
+	if len(got) != 2 || got[0].Kind != recording.KindGap || got[0].Seq != 201 || got[1].Seq != 202 {
+		t.Fatalf("records after the restart %+v, want a gap and the close numbered 201 and 202", got)
+	}
+	if got[1].ExitCode == nil || *got[1].ExitCode != 3 || got[1].Reason != "exited" {
+		t.Fatalf("close record %+v, want exit code 3, exited", got[1])
+	}
+	if recs := localAbove(t, a, runID, 200); len(recs) != 2 || recs[1].Kind != recording.KindClose {
+		t.Fatalf("the local recording above 200 holds %+v, want the gap and the close", recs)
 	}
 	waitFor(t, "recorder ended", func() bool {
 		a.mu.Lock()
@@ -423,6 +500,82 @@ func TestSeqGateBound(t *testing.T) {
 	}
 }
 
+// contiguous fails unless central's records from..to (sequence numbers) are held in order, each once.
+func (c *seqCentral) contiguous(from, to uint64) {
+	c.t.Helper()
+	if uint64(len(c.recs)) < to {
+		c.t.Fatalf("central holds %d records, want %d", len(c.recs), to)
+	}
+	for i, r := range c.recs[from-1 : to] {
+		if r.Seq != from+uint64(i) {
+			c.t.Fatalf("central holds %d at position %d, want %d", r.Seq, from+uint64(i), from+uint64(i))
+		}
+	}
+}
+
+// ADR-0097 addendum, residual: a catch-up that starts from the restored acknowledgement (300) must not ship anything
+// above it before central's sequence is known. An ended run has no recorder to ask, so its catch-up asks itself.
+// Central lost records above 150 it had acknowledged: with the local recording at 250 nothing is above 300, so
+// nothing would ever re-ship 151..250 if the catch-up took 300 for what central holds.
+func TestEndedRunCatchUpProbesBeforeShipping(t *testing.T) {
+	old := seqProbeEvery
+	seqProbeEvery = 20 * time.Millisecond
+	t.Cleanup(func() { seqProbeEvery = old })
+	const runID = "run_ended"
+	_, c, _ := restartedRecorderEnvWith(t, runID, 250, 300, 150, nil, func(a *Agent) {
+		ctx := context.Background()
+		row, err := a.j.getRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row.State, row.Desired = proto.RunExited, "stopped"
+		if err := a.j.updateRun(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	})
+	c.mute = true
+	// Central is out of reach: the catch-up asks and sends nothing else.
+	c.until("the catch-up's probes", func() bool { return c.muted >= 3 })
+	if c.mutedRecs > 0 {
+		t.Fatalf("%d records left the node before central's sequence was known", c.mutedRecs)
+	}
+	c.mute = false
+	c.barrier = 250
+	c.until("records 151..250 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+}
+
+// The same for a live run whose recorder numbers new records (above the restored 300) as soon as central answers, so
+// they are queued behind the catch-up while it still starts from the stale 300: nothing above 250 may reach central
+// before 151..250 do.
+func TestLoweredAckWithQueuedRecordsShipsTheGapFirst(t *testing.T) {
+	old := seqProbeEvery
+	seqProbeEvery = 20 * time.Millisecond
+	t.Cleanup(func() { seqProbeEvery = old })
+	const runID = "run_low2"
+	batches := 0
+	shipBatchHook = func(id string, batch int) {
+		if id == runID {
+			batches++
+		}
+	}
+	t.Cleanup(func() { shipBatchHook = nil })
+	a, c, term := restartedRecorderEnv(t, runID, 250, 300, 150)
+	c.barrier = 250
+	writeUntil(t, a, c, term, "after the restart")
+	c.until("records 151..250 at central", func() bool { return c.seq >= 250 })
+	c.contiguous(151, 250)
+	if c.jumped > 0 {
+		t.Fatalf("%d records reached central above 250 before 151..250 did", c.jumped)
+	}
+	if batches == 0 {
+		t.Fatal("the catch-up shipped nothing")
+	}
+}
+
 // A run this process launched (nothing on disk) already knows central's sequence: uncomparedRecording must not mark it
 // restored, or its first acknowledgement would be taken for a restored one and the run re-compared for nothing.
 func TestLaunchedRunIsNotMarkedUncompared(t *testing.T) {
@@ -437,5 +590,263 @@ func TestLaunchedRunIsNotMarkedUncompared(t *testing.T) {
 	}
 	if !a.restored["run_foreign"] {
 		t.Fatal("a run this process did not launch was not marked restored")
+	}
+}
+
+func endRuns(t *testing.T, ids ...string) func(a *Agent) {
+	return func(a *Agent) {
+		ctx := context.Background()
+		for _, id := range ids {
+			row, err := a.j.getRun(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.State, row.Desired = proto.RunExited, "stopped"
+			if err := a.j.updateRun(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func shortSeqWait(t *testing.T, wait time.Duration) {
+	oldP, oldW := seqProbeEvery, seqKnownWait
+	seqProbeEvery, seqKnownWait = 20*time.Millisecond, wait
+	t.Cleanup(func() { seqProbeEvery, seqKnownWait = oldP, oldW })
+}
+
+// A probe answer that comes after seqKnownWait, for an ended run with no saved acknowledgement: the late answer must
+// not make the sweep take the run for clean (the local records above it still have to be shipped).
+func TestLateProbeAnswerStillShipsTheRun(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	const runID = "run_late"
+	_, c, _ := restartedRecorderEnvWith(t, runID, 250, 0, 150, nil, endRuns(t, runID))
+	time.Sleep(350 * time.Millisecond) // central answers nothing until after seqKnownWait
+	if !c.within(5*time.Second, func() bool { return c.seq >= 250 }) {
+		t.Fatalf("central holds %d, want 250: records above the late answer were never shipped", c.seq)
+	}
+}
+
+// Central never answers one ended run (only=run_b): that run is skipped, the ended run after it still catches up.
+func TestUnansweredRunDoesNotBlockTheSweep(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	_, c, _ := restartedRecorderEnvWith(t, "run_b", 250, 0, 150, []string{"run_a"}, endRuns(t, "run_b", "run_a"))
+	if !c.within(8*time.Second, func() bool { return c.seq >= 250 }) {
+		t.Fatalf("central holds %d of run_b, want 250", c.seq)
+	}
+}
+
+// A run central never answers is retried after a backoff, not in a loop: over a few seconds the probes stay few.
+func TestUnansweredRunBacksOff(t *testing.T) {
+	shortSeqWait(t, 100*time.Millisecond)
+	_, c, _ := restartedRecorderEnvWith(t, "run_b", 20, 0, 0, []string{"run_a"}, endRuns(t, "run_b", "run_a"))
+	c.mute = true
+	c.within(2500*time.Millisecond, func() bool { return false })
+	// A sweep makes about 5-10 probes per run (100 ms wait, 20 ms apart); a hot loop would make over a hundred.
+	if c.muted < 3 || c.muted > 60 {
+		t.Fatalf("%d probes in 2.5 s: want a few sweeps separated by a backoff", c.muted)
+	}
+}
+
+// backoffSignal makes the catch-up pass report each backoff sleep it enters.
+func backoffSignal(t *testing.T) chan time.Duration {
+	ch := make(chan time.Duration, 16)
+	catchUpBackoffHook = func(d time.Duration) {
+		select {
+		case ch <- d:
+		default:
+		}
+	}
+	t.Cleanup(func() { catchUpBackoffHook = nil })
+	return ch
+}
+
+// untilBackoff applies central's messages until the pass enters a backoff sleep of at least min.
+func (c *seqCentral) untilBackoff(ch chan time.Duration, min time.Duration) {
+	c.t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case d := <-ch:
+			if d >= min {
+				return
+			}
+		default:
+		}
+		c.within(10*time.Millisecond, func() bool { return false }) // keeps applying central's messages
+	}
+	c.t.Fatal("the catch-up pass never entered its backoff sleep")
+}
+
+// While one ended run stays unanswered the pass sleeps in its backoff; a request for another pass (a relocation, a
+// lowered acknowledgement, a run launched meanwhile) must wake it, or the live run, marked not caught up by the
+// request, holds its output back until the backoff ends (up to 30 s). The request is made from the pass's own state
+// (it sleeps), not from the clock, so a slow setup (-race) cannot land it at the end of the sleep.
+func TestCatchUpRequestWakesTheBackoffSleep(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	const live = "run_live"
+	ch := backoffSignal(t)
+	// run_live is already caught up (central holds all 10 records); run_ended is never answered (only=run_live).
+	a, c, term := restartedRecorderEnvWith(t, live, 10, 10, 10, []string{"run_ended"}, endRuns(t, "run_ended"))
+	writeUntil(t, a, c, term, "warm up")
+	c.untilBackoff(ch, 2*time.Second) // the second sleep (the first lasts 1 s): long enough to still be going
+	a.startCatchUp()
+	asked := time.Now()
+	a.o.Runner.(interface{ Output(id, data string) }).Output(term, "after the request")
+	// The woken pass sweeps again first (about 0.5 s: the unanswered run is probed); the sleep it was woken from
+	// had about 2 s left.
+	ok := c.within(1200*time.Millisecond, func() bool { return c.has("after the request") })
+	if !ok {
+		t.Fatalf("live output still held %v after the request: the backoff sleep was not woken", time.Since(asked))
+	}
+}
+
+// The ended run central did not answer is skipped; its first answer, arriving during the backoff, must wake the pass
+// so the run's records reach central at once instead of after the backoff.
+func TestFirstAnswerWakesTheBackoffSleep(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	const ended = "run_ended"
+	ch := backoffSignal(t)
+	_, c, _ := restartedRecorderEnvWith(t, ended, 10, 0, 0, nil, endRuns(t, ended))
+	c.mute = true // central answers nothing: the run is skipped
+	c.untilBackoff(ch, time.Second)
+	c.mute = false
+	answered := time.Now()
+	c.a.recordingAck(proto.RecordingAck{RunID: ended, Seq: 0})
+	if !c.within(300*time.Millisecond, func() bool { return c.seq >= 10 }) {
+		t.Fatalf("central holds %d of 10 records %v after the first answer: the backoff sleep was not woken", c.seq, time.Since(answered))
+	}
+}
+
+// A recorder started again for a run whose close an earlier recorder of this process already recorded (a stale live
+// snapshot passed to observe does that) must not end the recording a second time: no further gap and no second close,
+// locally or at central.
+func TestSecondRecorderAfterTheCloseWritesNothing(t *testing.T) {
+	const runID = "run_dup"
+	a, c, term := restartedRecorderEnv(t, runID, 100, 100, 100)
+	fake := a.o.Runner.(interface {
+		Output(id, data string)
+		Exit(id string, code int, reason string)
+		Observed(id string) int
+	})
+	waitFor(t, "recorder attached", func() bool { return fake.Observed(term) >= 1 })
+	fake.Output(term, "bye\r\n")
+	fake.Exit(term, 0, "exited")
+	c.until("the close at central", func() bool { return len(c.recs) > 0 && c.recs[len(c.recs)-1].Kind == recording.KindClose })
+	ended := func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.recorders[runID] == nil
+	}
+	waitFor(t, "recorder ended", ended)
+	before := len(localAbove(t, a, runID, 0))
+	atCentral := len(c.recs)
+	row, err := a.j.getRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.startRecorder(context.Background(), row)
+	waitFor(t, "second recorder ended", ended)
+	// Anything the second recorder shipped would be in flight to central: give it the time a flush takes.
+	c.within(recording.FlushInterval+500*time.Millisecond, func() bool { return len(c.recs) != atCentral })
+	closes := 0
+	for _, r := range localAbove(t, a, runID, 0) {
+		if r.Kind == recording.KindClose {
+			closes++
+		}
+	}
+	if closes != 1 {
+		t.Fatalf("local recording holds %d closes, want one", closes)
+	}
+	if n := len(localAbove(t, a, runID, 0)); n != before {
+		t.Fatalf("the second recorder wrote %d records", n-before)
+	}
+	if len(c.recs) != atCentral {
+		t.Fatalf("central holds %d records after the second recorder, %d before: %+v", len(c.recs), atCentral, c.recs[atCentral:])
+	}
+}
+
+// A program that ended before the recorder's first attachment of an empty recording: the recording begins with its
+// open record (the size from the terminal), then the gap and the close.
+func TestRecorderOpensTheRecordingOfAProgramThatEndedBeforeItAttached(t *testing.T) {
+	const runID = "run_fresh"
+	var once sync.Once
+	a, c, _ := restartedRecorderEnvWith(t, runID, 0, 0, 0, nil, func(a *Agent) {
+		fake := a.o.Runner.(interface {
+			Exit(id string, code int, reason string)
+			LiveByLabel(k, v string) []runner.Process
+		})
+		a.beforeRecordAttach = func(id string) {
+			if id != runID {
+				return
+			}
+			once.Do(func() {
+				for _, p := range fake.LiveByLabel("spaceman.run", runID) {
+					fake.Exit(p.ID, 0, "exited")
+				}
+			})
+		}
+	})
+	c.until("the close record at central", func() bool { return len(c.recs) > 0 && c.recs[len(c.recs)-1].Kind == recording.KindClose })
+	if len(c.recs) != 3 || c.recs[0].Kind != recording.KindOpen || c.recs[0].RunID != runID || c.recs[1].Kind != recording.KindGap {
+		t.Fatalf("records at central %+v, want open, gap, close", c.recs)
+	}
+	if recs := localAbove(t, a, runID, 0); len(recs) != 3 || recs[0].Kind != recording.KindOpen {
+		t.Fatalf("the local recording holds %+v, want open, gap, close", recs)
+	}
+}
+
+// A close numbered while the local disk failed reached central but not the disk. A later recorder for the run (started
+// from a stale snapshot) reads an open recording on disk, and must still not end the run a second time.
+func TestSecondRecorderAfterCloseLostToDisk(t *testing.T) {
+	const runID = "run_dupclose"
+	var failing atomic.Bool
+	a, c, term := restartedRecorderEnvWith(t, runID, 100, 100, 100, nil, func(a *Agent) {
+		a.o.RecordingCreate = func(path string) (recording.File, error) {
+			if failing.Load() {
+				return nil, syscall.ENOSPC
+			}
+			return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		}
+	})
+	fake := a.o.Runner.(interface {
+		Output(id, data string)
+		Exit(id string, code int, reason string)
+		Observed(id string) int
+	})
+	waitFor(t, "recorder attached", func() bool { return fake.Observed(term) >= 1 })
+	failing.Store(true)
+	fake.Output(term, "bye\r\n")
+	fake.Exit(term, 0, "exited")
+	closes := func() int {
+		n := 0
+		for _, r := range c.recs {
+			if r.Kind == recording.KindClose {
+				n++
+			}
+		}
+		return n
+	}
+	c.until("the close", func() bool { return closes() > 0 })
+	waitFor(t, "recorder ended", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.recorders[runID] == nil })
+	for _, r := range localAbove(t, a, runID, 0) {
+		if r.Kind == recording.KindClose {
+			t.Fatal("the close was stored locally: the disk did not fail")
+		}
+	}
+	failing.Store(false)
+	row, _ := a.j.getRun(context.Background(), runID)
+	a.startRecorder(context.Background(), row) // registers the recorder before it returns
+	waitFor(t, "second recorder ended", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.recorders[runID] == nil })
+	// The disk works again: a second close would have been stored (and flushed) before the recorder returned.
+	for _, r := range localAbove(t, a, runID, 0) {
+		if r.Kind == recording.KindClose {
+			t.Fatal("the second recorder ended the run again")
+		}
+	}
+	// Anything it shipped was sent before it returned; give central a moment to read it.
+	c.within(500*time.Millisecond, func() bool { return closes() > 1 })
+	if n := closes(); n != 1 {
+		t.Fatalf("central holds %d close records, want 1", n)
 	}
 }

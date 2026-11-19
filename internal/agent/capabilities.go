@@ -59,8 +59,8 @@ func (a *Agent) capsLoop(ctx context.Context) {
 				continue
 			}
 		}
-		c, _ := a.takeCapabilities(ctx)
-		a.sendCapabilities(ctx, c)
+		c, gen := a.takeCapabilities(ctx)
+		a.reportCapabilities(ctx, c, gen)
 	}
 }
 
@@ -70,18 +70,45 @@ func (a *Agent) capsAfterHello(ctx context.Context, helloGen uint64) {
 	a.mu.Lock()
 	c, gen := a.caps, a.capsGen
 	a.mu.Unlock()
+	if capsAfterHelloRead != nil {
+		capsAfterHelloRead(c)
+	}
 	if gen != helloGen {
-		a.sendCapabilities(ctx, c)
+		a.reportCapabilities(ctx, c, gen)
 	}
 }
 
-// sendCapabilities sends a node.capabilities report to a central that negotiated minor 11 or later; an older central
-// only learns capabilities from hello.
-func (a *Agent) sendCapabilities(ctx context.Context, c proto.Capabilities) {
-	if !a.protocolAtLeast(proto.MinorHarnessVersion) {
+// capsAfterHelloRead, when set, runs in capsAfterHello between reading the cache and reporting it (tests hold the
+// goroutine there to let capsLoop report a newer generation first).
+var capsAfterHelloRead func(proto.Capabilities)
+
+// reportCapabilities sends generation gen of the capabilities unless that generation, or a newer one, was already
+// sent (a hello carries its own). The check and the send are one step under capsSendMu, so a report that read an older
+// generation and was slow to send can't land after a newer one and leave central with stale capabilities.
+func (a *Agent) reportCapabilities(ctx context.Context, c proto.Capabilities, gen uint64) {
+	a.capsSendMu.Lock()
+	defer a.capsSendMu.Unlock()
+	// What was sent, whether the session takes a report, and which connection it is, are read in one hold: the report
+	// goes to exactly that connection, so a reconnect after this point makes the write fail instead of putting an older
+	// generation on the new session (before or after its hello). An older central only learns capabilities from hello.
+	a.mu.Lock()
+	sent, ok, conn := a.capsSent, a.connected && a.minor >= proto.MinorHarnessVersion, a.conn
+	a.mu.Unlock()
+	if gen <= sent || !ok {
 		return
 	}
-	if err := a.send(ctx, proto.TypeNodeCapabilities, proto.NodeCapabilities{Capabilities: c}); err != nil {
-		a.log.Debug("capabilities report not delivered; the next hello reports them", obs.Err(err))
+	if capsBeforeSend != nil {
+		capsBeforeSend()
 	}
+	if err := a.sendOn(ctx, conn, proto.TypeNodeCapabilities, proto.NodeCapabilities{Capabilities: c}); err != nil {
+		a.log.Debug("capabilities report not delivered; the next hello reports them", obs.Err(err))
+		return
+	}
+	a.mu.Lock()
+	a.capsSent = max(a.capsSent, gen)
+	a.mu.Unlock()
 }
+
+// capsBeforeSend, when set, runs in reportCapabilities between reading the session and writing to it (tests reconnect
+// there).
+var capsBeforeSend func()

@@ -3,12 +3,12 @@ module github.com/aurimasniekis/go-spaceman
 go 1.27.4
 
 require (
-	github.com/aurimasniekis/go-pulse v0.1.3
+	github.com/aurimasniekis/go-pulse v0.1.7
 	github.com/casbin/casbin/v2 v2.135.0
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/danielgtaylor/huma/v2 v2.39.1
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/google/jsonschema-go v0.4.3
 	github.com/klauspost/compress v1.20.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0

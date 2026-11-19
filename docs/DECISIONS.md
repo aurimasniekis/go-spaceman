@@ -1880,9 +1880,14 @@
     SHA-256; then it is handed to the store. If the bucket refuses it, the transcript is kept as `<run>.jsonl` on the
     local disk, recorded as stored, served from there, and uploaded at the next start. The node is never asked to
     send it again.
-  - Deletes (an operator's, retention's and purge's) remove the objects as well as any local copy. Purging a space
+  - Deletes (an operator's, retention's and purge's) remove the objects as well as central's spooled copy. Purging a space
     now deletes its runs' recordings and transcripts after the purge commits, with either store; before, a purge left
     them in the data directory.
+  - A deleted recording stays deleted (addendum): central checks the run's `recording_deleted_at` as well as its
+    in-memory mark, so a node's catch-up after a restart of central or after the mark expired is acknowledged at the
+    chunk's highest sequence and stored nowhere. The node's own copy is therefore not independent of a delete: central's
+    ack tells the node that copy is fully shipped, and the agent's journal prune (which waits for a fully shipped
+    recording) may then remove it.
 - **Decision — credentials and isolation.** The bucket is configured like the backups' (`artifacts.s3`): keys come from
   files read at start, are never logged or put in an error, and `Location` shows only `s3://bucket/prefix`. TLS is always
   verified, a private-network endpoint needs `allow_private_network`, plain HTTP is development-only. The artifacts'
@@ -7387,6 +7392,39 @@
   `TestRestartedRecorderBelowTheSavedAcknowledgement` (finding 2),
   `TestRestartedRecorderKeepsTheCloseUntilCentralAnswers`, `TestSeqGateBound` (agent); `test/fault`
   `TestFaultRecordingDiskFullRestart`. Without the gate, the first test fails with records dropped as repeats.
+- **Residual closed (v0.1.12): a catch-up ships nothing before central's sequence is known.** Decision 4 lowered the
+  acknowledgement when the first answer was below the restored one, but a catch-up that started from the restored
+  value S shipped the local records above S before that answer arrived. Central stores any `Seq` above what it holds,
+  so it jumped from L to S+1, and the re-shipped L+1..S were then dropped as repeats: a silent hole. A run that
+  ended has no recorder, so nothing probed it, and central's loss below S was never detected at all (nothing local
+  above S, nothing shipped). `catchUpRun` now first checks `seqKnown` for the run; if it is not set it sends an empty
+  `recording` message itself (every central version answers it, as for the recorder's probe; every `seqProbeEvery`,
+  serving other runs' waiting live output meanwhile) and ships only once the answer arrived. It then reads the run's
+  acknowledgement again, so a lowered value is the starting point. Before the first probe the run is marked as not compared with central (`restored`), so a late answer cannot make a
+  sweep take it for clean. After `seqKnownWait` (10 s) without an answer that run is skipped: it is marked unshipped
+  (and stays `restored`), its kept-back records are untouched, the sweep goes on with the other runs, and the sweep
+  then ends with an error, so the pass retries after its backoff (1 s, doubling to 30 s) instead of looping. The
+  wait is per run, so a central that never answers for one run (decision 3's open failure, a Forbidden `GetRun`, no
+  recordings directory) neither numbers nor ships anything of that run and does not hold the later runs back within a sweep: it
+  delays only that run's own catch-up, once per retry, by up to `seqKnownWait`, and the sweep serves others' waiting live output
+  meanwhile. Across the backoff the pass would hold them (a live run marked not caught up by a new request, a
+  relocation or a lowered acknowledgement, kept its output back until the sleep ended, up to 30 s), so the sleep ends
+  early on such a request (`catchUpAgain`) and on the first answer central gives for a run (`catchUpWake`). Evidence: `TestEndedRunCatchUpProbesBeforeShipping`
+  (an ended run, central muted: no record leaves the node, then 151..250 arrive contiguously and nothing jumps),
+  `TestLoweredAckWithQueuedRecordsShipsTheGapFirst`, and `TestRestartedRecorderBelowTheSavedAcknowledgement` (live
+  records numbered above 300 are queued behind the catch-up; central never receives a record above 250 before
+  151..250). Cost: a repeat of 151..250 may follow (the lowering asks for a second sweep); central drops repeats.
+  **Relation to the restart on lowering (#254):** the catch-up's wait comes before it reads its starting point, and
+  the lowering is counted under the same lock that sets `seqKnown`, so the first answer of a run can no longer lower
+  the acknowledgement after a catch-up began. #254's restart (`lowers`, `errLowered`) therefore guards only a lowering
+  that reaches a run whose sequence counted as known, which no current path produces (a reconnect does not: `seqKnown` and `acked` are set, never cleared, except when a run is pruned from the journal, which has no catch-up left); it is kept as a guard and
+  exercised by forcing the state (`TestLoweringAfterTheCatchUpBeganRestartsIt`; `TestLoweredAckDuringTheRunsCatchUp`
+  now asserts that the catch-up begins from the lowered value). Only the final `loweredLocked` check of the guard is
+  covered by those tests; the per-batch check (a lowering forced between two batches) is not exercised by a test
+  (removing it changes no test result).
+  Evidence for the skip: `TestLateProbeAnswerStillShipsTheRun`, `TestUnansweredRunDoesNotBlockTheSweep`,
+  `TestUnansweredRunBacksOff` (they set `seqKnownWait` to a short value). The late-answer case is closed twice (the
+  `restored` mark and the unshipped mark); the test fails only when both are removed.
 
 ### ADR-0098 — A run an agent restart stopped is resumed, within a cap
 
@@ -7584,6 +7622,133 @@
   | W3 | Terraform provider: nothing new for the three limits beyond the generic space limits resource; check and document them. | W1 | Haiku |
   | W4 | Web: a badge on the space's control card when control is being nudged or was escalated, from W2's state. | W2 | Sonnet |
   | W5 | Docs site: a "Watchdog" section in the control guide, the three limits in the limits guide, TRACEABILITY evidence for SM-CTRL-008. | W1 | Haiku |
+
+#### ADR-0099 addendum — worker start check (`worker_start_watchdog_minutes`)
+
+- **What.** A fourth limit, `worker_start_watchdog_minutes` (default 10, 0 off, at most 1,440), makes the watchdog tell
+  control, once per run, about a worker run that is `running` on a connected node, at turn 0, and whose program has not
+  connected to SpaceMan that long after the run started. The notice asks control to check the run's terminal; it does
+  not tell control to stop the run.
+- **Connected, not turn or activity.** `Run.Turn` counts finished turns, and a worker gets its whole task as one
+  prompt, so a healthy worker can stay at turn 0 for an hour, and often makes its first SpaceMan tool call only at the
+  end. The program's MCP bridge fetches the run's tool catalog (`_catalog`) when the program starts it, and central ties
+  that fetch to the run by its token; so the check flags a run only when neither that fetch nor any SpaceMan tool call
+  was seen. Once either is seen the run is never flagged.
+- **Usage limits.** A run that reported a usage limit shows its program began: while its limit is open the watchdog
+  records that, so the run is not flagged when it resumes after the limit clears, however long it waited.
+- **Restarts of central.** The catalog is fetched once per program, so after a restart of central it is unknown whether
+  a run that started earlier connected. Such a run is never flagged; the check covers runs started after central did.
+- **Not flagged either.** A run whose node is not connected (`observed` is not `running`), and control.
+- **`spaceman_runs_list`** shows `turn` only; the earlier `not_started` flag used turn 0 alone and is dropped.
+- **Not a security-relevant change.**
+
+#### ADR-0099 addendum — worker hand-back check (`worker_idle_watchdog_minutes`)
+
+- **Why.** Workers, smaller models especially, end their turn without calling `spaceman_task_set_status` or messaging
+  control. The run then sits idle with its task still `running` until a person notices and types a reminder.
+- **What.** A fifth limit, `worker_idle_watchdog_minutes` (`N`; default 10, 0 off, at most 1,440). A worker run is in
+  an *idle stretch* while all of these hold:
+  - the run is wanted and observed `running`, with no open usage limit;
+  - its program is `idle` or `done` (its turn ended) and none of its SpaceMan tool calls is in flight;
+  - the task assigned to it is `running` (not `review`, `blocked`, `done` or anything else);
+  - the run has no open human action it asked (`spaceman_human_ask`), and no operator has taken over its terminal.
+
+  When a stretch is `N` old, the watchdog types one idle-gated reminder into the worker's terminal through
+  `fleet.NudgeRun` (the same safe-input path as control's reminder, refused under a takeover or a usage limit and then
+  retried at the next pass), audited as `worker.watchdog_nudged` by `system:control-watchdog`. It names the task and
+  asks the worker to set it to review with a short result and message control, or to message control what it needs.
+  If the reminder's own turn ends with the task unchanged and no new message, control gets one notification `N` after
+  the reminder, naming the run and the task, deduplicated per stretch. Nothing more happens in that stretch.
+- **When a stretch ends.** The task changes (its status or any other edit: its version moves); the run sends control a
+  message; the run's turn counter advances, except for the one turn the reminder itself starts; the run stops being a
+  candidate before the reminder (it works again, asks a person, hits a usage limit, is taken over or ends); or the
+  check is turned off. A new stretch starts its clock at the first pass that sees it. While the reminder's turn runs,
+  the stretch is only paused.
+- **Waiting for control's answer.** A worker that asked control something and waits for the reply is not reminded:
+  control is told at `N` instead, that the worker probably waits for it. The worker counts as waiting when
+  - one of its messages to control (to `control`, or to a control run, as a reply to control's request is) is still
+    open: control has not acknowledged it, or it is a request control has not resolved (read durably from the messages
+    table, so it survives restarts); or
+  - it messaged control after the last pass that saw it working (its turn ended with that message), or a stretch
+    ended because it messaged control (it answered the reminder with a message).
+
+  The task suggested "the run's last message to control is newer than its last turn end". `Run.Turn` advances only
+  when a turn finishes and a worker usually does its whole task in one turn, so every message of that turn, including
+  the "started" line most workers send first, is newer than the previous turn end: the rule would never remind the
+  workers this check is for. The rules above keep the intent with what central can observe. A turn shorter than one
+  pass is never seen working, so a message in it counts as the last act: control is told instead of the worker being
+  reminded, the cautious side.
+- **Restarts of central.** Stretches live in memory only. After a restart nothing is known, so the clock starts at the
+  first pass that sees a stretch: the earliest reminder is `N` after the restart, the earliest notice `2N`. A notice
+  already sent before the restart can be sent once more for the same idle worker, with a new dedup key.
+- **Preemption.** An incident's preemption returns the task to `ready`, so its paused or finishing workers are never in
+  a stretch. A resumed task is `running` again and its worker is told to continue, which starts a turn.
+- **A worker that waits long.** A worker waiting for an answer that takes long (control asking a person or another
+  space) can see the cycle "reminder, its message to control, notice to control" once per new turn control gives it.
+  It stops when the task is set to `blocked`, which control or the worker can do.
+- **Background work.** A run reporting working with `status_kind` `background` (turn finished, shells or monitors still
+  running, ADR-0100) is busy, never a candidate. A running sub-agent reports plain `working`, which is busy too. Where Claude Code reports plain `idle` while
+  background work runs, the check cannot tell: that worker can get a reminder and control a notice that are false. The
+  reminder text says so, so the worker answers by messaging control.
+- **After a restart** the watchdog has no working time for a run: a message to control then counts as the run's last
+  act, so the run waits for control (a notice) instead of being reminded.
+- **Replies to an ended control.** A reply addressed to a control run that has since ended still counts as open until it
+  is acknowledged or resolved; control starting again reads it through its inbox, so the worker is not reminded in the
+  meantime. Not changed.
+- The query for a run's messages to control uses `ix_messages_from` (migration 0066).
+- **Not a security-relevant change:** no requirement, guarantee or default is relaxed. The reminder is safe input with
+  only the task's ID, refused during takeovers and usage limits like every notice.
+
+### ADR-0100 — A program waiting at its prompt on background tasks takes notices
+
+- **Status:** Accepted, 2026-11-19 (bug fix for v0.1.12). Extends SM-COMM-003 and ADR-0052 (a `done` program is sent to
+  ungated). No migration and no new API operation; the node reports a new value of the existing `status_kind`, which
+  an older central stores like any other kind.
+- **Context:** messages and task-review notifications to control waited for up to 45 minutes while control sat at its
+  prompt. They became available only when control called `spaceman_messages` on its own; a later "run ended"
+  notification was typed within seconds. Control's run reported `working` the whole time, with only background
+  shells running. The cause is Claude Code's own status report (`docs/contracts/harnesses.md`, read from the 2.1.328
+  binary): after a turn has completed, while background shells or monitors the session started still run, it reports
+  OSC 7501 `state=working` with the message "… still running" (for example "1 shell still running") instead of
+  `done`. SpaceMan treated that as a turn in progress in both places that gate a notice: the notifier only considered
+  runs reporting `idle` or `done`, and the node's idle-gated send (`hc.Runner.Send`) typed ungated only for `done`. The program was at its prompt and would have taken the line, but the notice waited until the background
+  tasks ended. A control that keeps a background shell or monitor running was never woken. herdr-core keeps
+  Claude Code's per-task reports separate from the terminal's status (verified on hc 0.1.17), so the terminal's
+  status itself is `working`.
+- **Decision:**
+  1. **The node classifies the report.** `runner.Classify` gives a program status the kind `background`
+     (`proto.StatusKindBackground`) when it is `working`, has no kind, comes from `claude-code`, and its message is
+     exactly the count wording `^\d+ (shell|monitor)s?(, \d+ (shell|monitor)s?)* still running$`. The `msg` of a turn
+     in progress is free text (a task summary) that can end in " still running" too ("fork still running"), so a
+     suffix match would type an ungated notice into a running turn (review of PR #299); only the count wording, which
+     Claude Code generates from its task counts, is trusted. It reads only the program's own report, never screen text (SM-RUN-002). The hc runner
+     applies it to every terminal it reads, so the run's `status_kind` reaches central with the status.
+  2. **Such a program takes a notice.** `runner.Status.TakesNotice` is true for `idle`, `done` and
+     `working`/`background`. When herdr-core's `if: idle` gate refuses a send and a fresh read shows `done` or
+     `working`/`background`, the text is typed ungated, as for `done` (ADR-0052). The core still waits for a pause in
+     human typing before pressing Enter.
+  3. **The notifier picks it.** Notice candidates are live runs reporting `idle`, `done`, or `working` with kind
+     `background`. A run that starts waiting on background tasks wakes the notifier at once (fleet
+     `OnRunTakesNotice`); the one-minute sweep stays the fallback.
+  4. **Everything else still sees a working run.** Control's idle stop (ADR-0056), account switches at an idle point
+     (ADR-0090), the usage-limit scan, memory checkpoints and the control watchdog (ADR-0099) are unchanged: the turn
+     counter does not advance and the status stays `working`. Stopping or switching a run whose background work is
+     still running would cut that work off.
+- **Consequences:**
+  - A message, notification or human response to a run waiting on background tasks is noticed as soon as it arrives.
+    The notice starts a new turn while the background tasks keep running, which is what typing at the prompt does.
+  - The match depends on the wording of Claude Code's message. If a later version words it differently, its runs fall
+    back to the earlier behavior (no notice until the background work ends); `TestClassifyBackground` records the
+    known wordings, and a harness bump should check the contract note.
+  - The watchdog still counts control as busy while it waits on background tasks, so it does not nudge it then. With
+    notices delivered, new items reach control; nudging for older backlog in that state is left as a follow-up.
+  - A running background **agent** (a subagent, fork or workflow) makes Claude Code report plain `working`, the same
+    as a turn in progress, with no "still running" message. A run waiting at its prompt on one still gets no notice
+    until the agent finishes (it then starts a turn by itself, and reports `done` after it). Telling the two apart
+    would need another signal, such as Claude Code's `Stop` hook; that is left open.
+  - Codex is unaffected: no such report is known for it.
+- **Not a security-relevant change:** notices carry no content, and the input stays idle-gated: a program in the
+  middle of a turn is still refused.
 
 ## 2. Open items and unresolved contracts
 

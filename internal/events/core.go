@@ -66,11 +66,11 @@ func (m *Manager) startCore(ctx context.Context, c *connRun, s db.EventSubscript
 	}
 	run.nsub = nsub
 	if err := nc.FlushTimeout(subscribeCheck); err != nil {
-		run.halt()
+		run.halt(ctx)
 		return nil, fmt.Errorf("core subscribe: %w", err)
 	}
 	if last := nc.LastError(); last != nil && last != before && deniedSubscription(last, s.EffectiveSubject) { //nolint:errorlint // identity: a new error since subscribing
-		run.halt()
+		run.halt(ctx)
 		return nil, deniedError(s.EffectiveSubject)
 	}
 	m.coreMu.Lock()
@@ -101,7 +101,9 @@ func (m *Manager) handleCore(ctx context.Context, subID, spaceID string, msg *na
 	case m.svc.ownEvent(e):
 		err = m.svc.skipOwn(ctx, subID, fromPulse(e), 0)
 	case m.throttle(ctx, subID, spaceID, true) != nil:
-		m.svc.observe(DeliveryCore, OriginLive, "", errThrottled, -1)
+		if ctx.Err() == nil {
+			m.svc.observe(DeliveryCore, OriginLive, "", errThrottled, -1)
+		}
 		return // dropped: nothing could redeliver it
 	default:
 		// Always live: core NATS never redelivers, so a repeated ID is the source sending the message again.

@@ -18,6 +18,7 @@ type ObjectAPI interface {
 	GetRange(ctx context.Context, key string, off int64) (io.ReadCloser, int64, error)
 	Stat(ctx context.Context, key string) (s3client.Object, error)
 	List(ctx context.Context, prefix string) ([]s3client.Object, error)
+	ListPrefixes(ctx context.Context, prefix string) ([]string, error)
 	Delete(ctx context.Context, key string) error
 }
 
@@ -96,6 +97,23 @@ func (s *S3) List(ctx context.Context, prefix string) ([]Info, error) {
 		out = append(out, Info{Key: key, Size: o.Size, ModTime: o.LastModified.UTC()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
+}
+
+// ListPrefixes implements PrefixLister.
+func (s *S3) ListPrefixes(ctx context.Context, prefix string) ([]string, error) {
+	ps, err := s.api.ListPrefixes(ctx, s.prefix+prefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		name := strings.TrimSuffix(strings.TrimPrefix(p, s.prefix+prefix), "/")
+		if name != "" && !strings.Contains(name, "/") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
 	return out, nil
 }
 

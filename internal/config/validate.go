@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -127,6 +128,9 @@ func (c *Config) Validate() error {
 		}
 	default:
 		v.add("artifacts.backend must be \"local\" or \"s3\", got %q", c.Artifacts.Backend)
+	}
+	if d := c.Artifacts.RecordingReconcileInterval.D(); d != 0 {
+		v.durationRange("artifacts.recording_reconcile_interval", c.Artifacts.RecordingReconcileInterval, time.Hour, 168*time.Hour)
 	}
 	v.outbound(c.Events.Outbound, prod)
 	v.backups(c.Backups, prod)
@@ -263,6 +267,10 @@ var LimitRanges = map[string][2]int64{
 	"control_watchdog_minutes": {0, 1440},
 	"control_watchdog_nudges":  {0, 20},
 	"control_watchdog_restart": {0, 1},
+	// Worker start watchdog: minutes a worker's program may go without connecting to SpaceMan before control is told (0: off).
+	"worker_start_watchdog_minutes": {0, 1440},
+	// Worker hand-back watchdog: minutes an idle worker may keep its task running before it is reminded (0: off).
+	"worker_idle_watchdog_minutes": {0, 1440},
 	// A new run's terminal size (ADR-0075): 0 is the node's runner.terminal_size; otherwise the terminal size bounds
 	// (TerminalLimitFloor).
 	"terminal_cols": {0, proto.TerminalMaxCols},
@@ -299,8 +307,8 @@ func (c *Config) LimitValues() map[string]int64 {
 		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
 		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes,
 		"control_watchdog_minutes": l.ControlWatchdogMinutes, "control_watchdog_nudges": l.ControlWatchdogNudges,
-		"control_watchdog_restart": l.ControlWatchdogRestart,
-		"terminal_cols":            l.TerminalCols, "terminal_rows": l.TerminalRows,
+		"control_watchdog_restart": l.ControlWatchdogRestart, "worker_start_watchdog_minutes": l.WorkerStartWatchdogMinutes,
+		"worker_idle_watchdog_minutes": l.WorkerIdleWatchdogMinutes, "terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows,
 		"usage_limit_failover": l.UsageLimitFailover, "usage_limit_keep_alive_max_minutes": l.UsageLimitKeepAliveMaxMinutes,
 		"usage_limit_max_wait_hours": l.UsageLimitMaxWaitHours, "usage_limit_notify_after_hours": l.UsageLimitNotifyAfterHours,
 		"usage_limit_wait_if_reset_within": l.UsageLimitWaitIfResetWithin, "usage_limit_switch_max_per_day": l.UsageLimitSwitchMaxPerDay,
@@ -367,6 +375,7 @@ func (c *AgentConfig) Validate() error {
 		v.add("capacity must be within 1..256")
 	}
 	v.claudeCode(c.Harness.Claude)
+	v.envPassthrough(c.Harness.EnvPassthrough)
 	v.logConfig(c.Log)
 	return v.err()
 }
@@ -388,6 +397,45 @@ func (v *validator) claudeCode(c ClaudeCodeConfig) {
 	v.durationRange("harness.claude.download_timeout", c.DownloadTimeout, 30*time.Second, 2*time.Hour)
 	if c.Manage && c.SelfUpdate {
 		v.add("harness.claude.self_update can't be on with harness.claude.manage: managed runs never update themselves")
+	}
+}
+
+// protectedPassthroughPrefixes and protectedPassthroughNames are variables harness.env_passthrough refuses: the ones
+// the agent sets for a run itself, the ones that locate state, and provider or gateway credentials.
+var protectedPassthroughPrefixes = []string{"SPACEMAN_", "HC_", "HALLPASS_", "XDG_", "ANTHROPIC_", "CODEX_", "CLAUDE_CONFIG_"}
+
+var protectedPassthroughNames = map[string]bool{
+	"HOME": true, "PATH": true, "TERM": true, "COLORTERM": true, "PWD": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"CLAUDE_CODE_OAUTH_TOKEN": true, "CLAUDECODE": true, "CLAUDE_PID": true, "CLAUDE_EFFORT": true,
+	"OPENAI_API_KEY": true, "HARBOR_PILOT_TOKEN": true, "DISABLE_AUTOUPDATER": true, "DISABLE_UPDATES": true,
+}
+
+var passthroughNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func protectedPassthrough(name string) bool {
+	if protectedPassthroughNames[name] {
+		return true
+	}
+	for _, p := range protectedPassthroughPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *validator) envPassthrough(names []string) {
+	seen := map[string]bool{}
+	for _, n := range names {
+		switch {
+		case !passthroughNameRe.MatchString(n):
+			v.add("harness.env_passthrough: %q is not an exact variable name (letters, digits and _, not starting with a digit)", n)
+		case protectedPassthrough(n) || harness.PassthroughRefused(n):
+			v.add("harness.env_passthrough: %q is set by the agent, or is a credential, provider, proxy/TLS, loader or CLAUDE_CODE_* variable outside the safe list, and can't be passed through", n)
+		case seen[n]:
+			v.add("harness.env_passthrough: %q is listed twice", n)
+		}
+		seen[n] = true
 	}
 }
 

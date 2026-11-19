@@ -190,6 +190,14 @@ type LimitsConfig struct {
 	ControlWatchdogNudges int64 `yaml:"control_watchdog_nudges"`
 	// ControlWatchdogRestart also restarts control when the watchdog escalates (1: on; 0: off, the default).
 	ControlWatchdogRestart int64 `yaml:"control_watchdog_restart"`
+	// WorkerStartWatchdogMinutes is how long a running worker run's program may go without connecting to SpaceMan
+	// (loading its SpaceMan tools or calling one) after it started before control is notified (0: off; default 10; at
+	// most 1440).
+	WorkerStartWatchdogMinutes int64 `yaml:"worker_start_watchdog_minutes"`
+	// WorkerIdleWatchdogMinutes is how long a live worker run may sit idle with its task still running, without handing
+	// it back or messaging control, before SpaceMan reminds it in its terminal; as long again and control is notified
+	// (0: off; default 10; at most 1440).
+	WorkerIdleWatchdogMinutes int64 `yaml:"worker_idle_watchdog_minutes"`
 	// TerminalCols is the width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the
 	// node's runner.terminal_size. A size applies only when terminal_rows is set too.
 	TerminalCols int64 `yaml:"terminal_cols"`
@@ -394,6 +402,20 @@ type ArtifactsConfig struct {
 	S3 S3Config `yaml:"s3"`
 	// SpaceQuotaBytes bounds the attachments stored per space (SM-ATT-002).
 	SpaceQuotaBytes int64 `yaml:"space_quota_bytes"`
+	// RecordingReconcileInterval is the time between sweeps that remove stored recordings (local folders, spool
+	// folders and S3 objects) of runs whose recording was deleted or that no longer exist (1h to 168h, default 24h;
+	// 0 turns the sweep off). It also runs once at start. Each sweep is bounded and rate-limited, and never deletes
+	// on an error or touches the recording of a run that still exists. At most 200 stored runs are examined per
+	// sweep (kept runs count too; the next sweep continues after the last one and wraps), so with N stored runs a
+	// leftover can wait up to ceil(N/200) sweeps.
+	RecordingReconcileInterval Duration `yaml:"recording_reconcile_interval"`
+	// RecordingReconcileAbsent also lets the sweep remove recordings of runs that are not in the database at all (and
+	// untouched for 24h). Off by default: an absent row is also what a restored older backup, or a second central
+	// using the same bucket, looks like, and the sweep would delete those runs' recordings. Without it only runs
+	// whose recording was deleted are swept. Deleting a recording also sets the central's in-memory "deleted" mark
+	// for the run (fleet.Recordings.Delete), so central acks and drops later chunks for it and the node may prune its
+	// own copy. If absent mode ever becomes the default, it must delete the stored data without setting that mark.
+	RecordingReconcileAbsent bool `yaml:"recording_reconcile_absent"`
 }
 
 // S3Config configures an S3-compatible bucket. Secrets come from files, never inline values.

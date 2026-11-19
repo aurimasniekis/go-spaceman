@@ -861,7 +861,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if svc.opts.RecordingsDir == "" {
 			return nil
 		}
-		seq, err := svc.rec.apply(s.seq, c)
+		seq, err := svc.rec.applyRun(s.seq, c, r.RecordingDeletedAt.Valid)
 		// A message that could not be applied at all and leaves nothing known of what central holds (the recording
 		// could not be opened, nothing stored before) is not acknowledged: a node that probes for central's sequence
 		// would take an ack of 0 for one (ADR-0097, addendum). It asks again. Any other outcome is acked with what is

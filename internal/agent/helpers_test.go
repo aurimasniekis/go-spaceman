@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -327,4 +329,58 @@ func TestSpaceInstances(t *testing.T) {
 	if got := spaceInstances(space); !slices.Equal(got, []string{"ins_a", "ins_b"}) {
 		t.Fatalf("instances %v", got)
 	}
+}
+
+func TestPassthroughEnv(t *testing.T) {
+	env := map[string]string{"CLAUDE_CODE_TMPDIR": "/data/tmp", "OTHER": "x", "OWN": "node"}
+	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	l := harness.Launch{Env: map[string]string{"OWN": "agent"}, SecretEnv: map[string]string{"SECRET": "s"}}
+	got := passthroughEnv([]string{"CLAUDE_CODE_TMPDIR", "OWN", "SECRET", "MISSING"}, lookup, l)
+	want := map[string]string{"CLAUDE_CODE_TMPDIR": "/data/tmp", "SECRET": "s"}
+	if !maps.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got := passthroughEnv(nil, lookup, harness.Launch{}); len(got) != 0 {
+		t.Fatalf("default added %v", got)
+	}
+}
+
+// A passthrough variable reaches the harness process (through the launcher shim, after its scrub of CLAUDE_CODE_*
+// variables); a variable that is not listed does not.
+func TestPassthroughReachesHarnessProcess(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_TMPDIR", "/data/tmp")
+	t.Setenv("PASSED_VAR", "yes")
+	t.Setenv("NOT_LISTED", "no")
+	l := harness.Launch{}
+	l.SecretEnv = passthroughEnv([]string{"CLAUDE_CODE_TMPDIR", "PASSED_VAR"}, os.LookupEnv, l)
+	// The shim starts from the process environment of the program herdr-core runs; the node's own variables aren't
+	// forwarded there, only Launch.Env is. Model that by starting the shim with Launch.Env alone.
+	dir := t.TempDir()
+	if err := writeSecrets(dir, l.SecretEnv, ""); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestPassthroughShimHelper")
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "SM_SHIM_HELPER=1", "CLAUDE_CODE_TMPDIR=/node/own"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	s := string(out)
+	for _, w := range []string{"CLAUDE_CODE_TMPDIR=/data/tmp", "PASSED_VAR=yes"} {
+		if !strings.Contains(s, w) {
+			t.Errorf("harness env lacks %s:\n%s", w, s)
+		}
+	}
+	if strings.Contains(s, "NOT_LISTED") {
+		t.Errorf("unlisted variable reached the harness:\n%s", s)
+	}
+}
+
+// TestPassthroughShimHelper is the launcher shim running `env` (re-executed by TestPassthroughReachesHarnessProcess).
+func TestPassthroughShimHelper(t *testing.T) {
+	if os.Getenv("SM_SHIM_HELPER") == "" {
+		t.Skip("helper")
+	}
+	t.Fatal(LaunchShim(SecretsFile, []string{"env"})) // relative to the working directory the test set
 }

@@ -74,7 +74,7 @@ func newHarnessFull(t *testing.T, log *slog.Logger, mod func(*config.Config), pr
 		t.Fatal(err)
 	}
 	storetest.Seed(t, cfg.DataDir)
-	c, err := app.OpenCentral(context.Background(), cfg, log, app.Options{Clock: clk, Environ: []string{}})
+	c, err := app.OpenCentral(context.Background(), cfg, log, app.Options{Clock: clk, Environ: []string{}, StoreReaders: storetest.Readers, MCPCatalog: sharedMCPCatalog})
 	if err != nil {
 		t.Fatal(err)
 	}

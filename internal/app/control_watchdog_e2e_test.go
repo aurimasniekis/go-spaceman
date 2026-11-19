@@ -83,7 +83,17 @@ func TestControlWatchdog(t *testing.T) {
 	// Idle again with the message still waiting: the reminder names the backlog by count only.
 	e.run.SetStatus(term(ctrl.ID), "idle")
 	eventually(t, "control idle", func() bool { return e.run1(ctrl.ID).Status == "idle" })
-	eventually(t, "watchdog nudge", func() bool { e.c.Watchdog.Pass(ctx); return len(nudges()) == 1 })
+	// The pass queues the nudge and audits it in one transaction; the node types it into the terminal later. Passing
+	// again while it is in flight would, once the 1-minute gap (150 ms) has gone by on a loaded machine, send a second
+	// reminder legitimately, so pass until one is queued, then only wait for it to be typed.
+	eventually(t, "watchdog nudge queued", func() bool {
+		e.c.Watchdog.Pass(ctx)
+		return e.auditCount("control.watchdog_nudged", audit.OutcomeSuccess) >= 1
+	})
+	eventually(t, "watchdog nudge typed", func() bool { return len(nudges()) >= 1 })
+	if n := len(nudges()); n != 1 {
+		t.Fatalf("%d nudges typed", n)
+	}
 	if n := nudges()[0]; !strings.HasPrefix(n, "SpaceMan watchdog: 1 unacknowledged message waiting for you.") || strings.Contains(n, "Finished") {
 		t.Fatalf("nudge %q", n)
 	}

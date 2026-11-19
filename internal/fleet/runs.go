@@ -51,6 +51,8 @@ type Run struct {
 	StatusKind string `json:"status_kind,omitempty"`
 	Turn       int64  `json:"turn"`
 	Adopted    bool   `json:"adopted"`
+	// RecordingDeleted is set once central's copy of the recording was deleted; the recording is then not served.
+	RecordingDeleted bool `json:"-"`
 	// Limit is the run's open usage limit (ADR-0079): a live run with one is waiting for it to reset.
 	Limit *RunLimit `json:"limit,omitempty" doc:"The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset"`
 	// Failure is the latest non-limit failure class Claude Code reported for the run (node protocol 1.13 or later).
@@ -94,7 +96,7 @@ type LaunchSpec struct {
 func runFromRow(r db.Run) *Run {
 	out := &Run{ID: r.ID, SpaceID: r.SpaceID, NodeID: r.NodeID, Generation: r.Generation, Kind: r.Kind, Role: r.Role, Harness: r.Harness,
 		InstanceID: r.InstanceID, SessionID: r.SessionID, Desired: r.Desired, Observed: r.Observed, TerminalID: r.TerminalID, PID: r.Pid,
-		EndReason: r.EndReason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind, Turn: r.Turn, Adopted: r.Adopted == 1, Version: r.Version,
+		EndReason: r.EndReason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind, Turn: r.Turn, Adopted: r.Adopted == 1, RecordingDeleted: r.RecordingDeletedAt.Valid, Version: r.Version,
 		HarnessVersion: r.HarnessVersion, HarnessRequested: r.HarnessRequested, HarnessFallback: r.HarnessFallback,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), CreatedBy: r.CreatedBy, Manifest: json.RawMessage(r.ManifestJson), StartedAt: microsPtr(r.StartedAt), EndedAt: microsPtr(r.EndedAt), ObservedAt: microsPtr(r.ObservedAt)}
 	if r.ExitCode.Valid {
@@ -846,6 +848,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		svc.onReport(rep)
 	}
 	becameIdle, justEnded, skipped := false, false, false
+	takesNotice := false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:
 	default:
@@ -1030,6 +1033,8 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		// control's idle stop is armed again (ADR-0079 decision 3).
 		limitCleared := limitChanged && curLimit.kind != "" && nextLimit.kind == ""
 		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State || limitCleared)
+		takesNotice = !ended(rep.State) && rep.Status == "working" && rep.StatusKind == proto.StatusKindBackground &&
+			(r.Status != rep.Status || r.StatusKind != rep.StatusKind || r.Observed != rep.State || limitCleared)
 		justEnded = ended(rep.State) && !ended(r.Observed)
 		if !r.StartedAt.Valid && (rep.State == proto.RunRunning || (justEnded && rep.State == proto.RunExited)) {
 			if err := svc.runEvent(ctx, tx, r, outbox.RunStarted{Run: outboxRun(r), Adopted: rep.Adopted}); err != nil {
@@ -1101,6 +1106,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
 		svc.opts.OnRunIdle(rep.RunID)
+	}
+	if err == nil && takesNotice && svc.opts.OnRunTakesNotice != nil {
+		svc.opts.OnRunTakesNotice(rep.RunID)
 	}
 	if err == nil && justEnded && svc.opts.OnRunEnded != nil {
 		svc.opts.OnRunEnded(rep.RunID)
