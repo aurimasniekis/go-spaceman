@@ -7769,12 +7769,16 @@
      it (`internal/dialog`, pure).
   2. **Signals,** recorded with every event: `screen_known` (a registry match), `screen_prompt` (the heuristic below),
      `never_list`, `answer_declined` (a registry dialog whose answer is not safe for this run), `answer_failed` (answered
-     and still there). Structured first: a program that reports OSC 7501 `blocked` with a kind (`permission`,
+     and still there), `answer_withheld` (a registry dialog while the program reports a status, decision 6). Structured first: a program that reports OSC 7501 `blocked` with a kind (`permission`,
      `question`, `auth`) is not read at all; it is already shown as blocked and belongs to the approval path. Claude Code
      has no hook or notification type for its startup dialogs (they come before the session; `Notification` covers
      permission, idle and elicitation prompts), so the screen is the fallback.
   3. **What a dialog is.** A selection cursor (`❯`, Codex `›`) in front of option text, with a confirm footer ("Enter
-     to confirm", "Esc to cancel", "(y/n)", …) or a numbered option list. The block of options is the lines indented at
+     to confirm", "Esc to cancel", "(y/n)", …) or a numbered option list. **The dialog is the bottom of the screen:**
+     below its options there may be only blank lines, its footer, and the theme picker's preview (a box of `╌` rules
+     and its "Syntax theme:" hint). Options with a cursor higher up, above the program's prompt box (dialog text in the
+     transcript, a tool's output, a quoted file, typed text in the prompt box), are not a dialog: nothing is answered
+     or flagged. The block of options is the lines indented at
      least as far as the cursor's option; the dialog's own lines start below the nearest rule above them, so a banner or
      notice above (for example "Auto mode lets Claude handle permission prompts") is not part of it. A cursor block of
      two or more options without a footer or numbers (Claude Code's theme picker) counts only when a registry entry
@@ -7786,19 +7790,25 @@
      "credential", "OAuth", "authenticate"), and trust in MCP servers or hooks. Such a dialog is flagged, never answered,
      whatever an entry says.
   5. **The registry** (`dialog.Registry`): each entry has an ID, a harness, a version range (the oldest version it was
-     seen or read in; open above unless a version changes it), stable text that must all be on the dialog's lines, and an
-     answer function that returns named keys and a fixed answer word, or declines. Keys select an option by its text
+     seen or read in; open above unless a version changes it), stable text that must all be on the dialog's lines, its
+     exact option set where it has a fixed one, and an answer function that returns named keys and a fixed answer word, or declines. Keys select an option by its text
      relative to the cursor (`down`/`up`, then `enter`), so the answer does not depend on the default. Initial entries:
-     - `claude.theme_picker` (≥ 2.1.316): Enter (the default style).
+     - `claude.theme_picker` (≥ 2.1.316): selects "Auto (match terminal)", the default style, by name. Only the picker's
+       own layout (no footer, no numbers) offering "Dark mode" and "Light mode" matches; a numbered or footed dialog
+       that quotes its sentence is declined.
      - `claude.add_dir_trust` (≥ 2.1.326): "Yes, add it" only when the path the dialog shows (joined across wrapped
        lines, `~/` expanded with the run's home) equals a directory SpaceMan provisioned for the run (its working
-       directory, memory folder and a dream's linked memories, as given and as resolved). Any other path is flagged.
+       directory, memory folder and a dream's linked memories, as given and as resolved). Any other path is flagged, and
+       so is a path that is not already clean (`..`, `.`, doubled separators), since the program may resolve it
+       differently.
      - `claude.code_mode_optin` (≥ 2.1.325): "Yes, turn on Code Mode" only when the run's own profile settings env sets
        `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`; otherwise "No, start without it".
      The launch facts these depend on are saved in the run's directory at launch (`dialog.json`), so an agent restart
      keeps them; without them nothing that depends on them is answered.
   6. **Keystrokes** go through herdr-core `terminal.keys` only: named keys, never free text, and the core holds them while
-     a person types. A dialog is answered once. If the same registry dialog is still there at the next quiet read, it is
+     a person types. **A dialog is answered only while the program has reported no status:** startup dialogs come
+     before any status (decision context), so a program that reports one (`idle`, `blocked` without a kind, …) is past
+     them, and a registry dialog then is flagged (`answer_withheld`) instead. A dialog is answered once. If the same registry dialog is still there at the next quiet read, it is
      flagged (`answer_failed`) instead of answered again. Nothing is read or typed during a takeover.
   7. **Unknown dialogs flag the run.** The node reports the run with status `blocked` and status kind `dialog`
      (`proto.StatusKindDialog`, sent on every minor; an older central stores it like any kind). The API keeps the two
@@ -7806,7 +7816,9 @@
      `idle`/`done` fires: notices, control's idle stop, account switches at idle, the control watchdog (it treats
      `blocked` as waiting on a person). Safe (idle-gated) input is refused on the node while the flag is up, since it
      would answer the dialog; an operator's forced input and takeover still work. The flag clears when a quiet read
-     finds no dialog, the program reports `working`, its turn counter moves, or the run ends.
+     finds no dialog, the program reports `working`, its turn counter moves, or the run ends. While the flag is up the
+     screen is read again even if it stays quiet, on a backoff (10 s doubling up to 5 min), so a flag whose dialog went
+     away without output still ends.
   8. **Events.** Each occurrence has a node-made ID (`dlg_…`) and is sent once as `run.dialog` (minor 15), again after a
      reconnect while open or unsent; central records it once (`run_dialogs`, `ON CONFLICT DO NOTHING`). An open
      occurrence is also saved in the run's directory, so an agent restart that finds the same dialog keeps its ID, and
@@ -7819,7 +7831,9 @@
        looks the occurrence up by `dialog_id` (the notice and the run's `run_dialogs` row; an API list is a follow-up).
      - `cleared`: audit `run.dialog_cleared`, `run_dialogs.cleared_at`, and `evt.spaceman.fleet.run.dialog_cleared`.
   9. **The excerpt** is the dialog's last 20 lines, at most 2 KiB, with the run's secret values (its secret env and run
-     token, known to the agent process that launched it) and token-shaped strings masked. It is terminal output, so it
+     token, known to the agent process that launched it) and token-shaped strings masked. The secret values are kept in
+     memory only, so after an agent restart they are unknown and an occurrence flagged then carries **no excerpt** (fail
+     closed): token patterns alone miss short or prefix-less values such as the run token. It is terminal output, so it
      is never published (publishing-events rules) and never logged; it is stored with the occurrence and shown in the
      notice. Recordings already hold the full screen.
   10. **The seeds stay.** The registry is the safety net behind ADR-0021's seed and the `--add-dir` trust, not a
@@ -7835,8 +7849,10 @@
     provisions or the operator configured, one try, and every answer on the run's audit log.
   - Risk: the heuristic misses a dialog with an unusual layout (no cursor glyph, no footer, no numbers). The run then
     behaves as before; the registry and the heuristic grow from the flagged excerpts.
-  - Risk: a false flag (something at the plain prompt that looks like a dialog). It only withholds safe input until the
-    next quiet read without it, and an operator sees the excerpt.
+  - Risk: a false flag (something at the bottom of the screen that looks like a dialog). It only withholds safe input
+    until a re-read finds it gone (the backoff of decision 7), and an operator sees the excerpt.
+  - A secret that wraps across screen lines is not masked by value (values and patterns are matched on the joined
+    lines, not across a wrap); known limit.
   - The first answer waits for 10 s of quiet, so a startup dialog costs a run about that much.
   - Not covered yet (follow-ups): a `Notification` hook as a structured signal while a session runs, Codex entries,
     clearing open occurrences when a run ends, an API list of a run's dialogs and the UI badge.
