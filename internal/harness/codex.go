@@ -87,8 +87,10 @@ func (Codex) Build(c Context) (Launch, error) {
 		}
 		argv = append(argv, "-a", a)
 	}
-	// The role memory checkout and a dream's linked memory folders lie outside the workspace: --add-dir makes exactly
-	// those folders writable under workspace-write, without widening the sandbox (docs/contracts/harnesses.md).
+	// The role memory checkout and a dream's linked memory folders lie outside the workspace: --add-dir makes those
+	// folders writable under workspace-write without widening the sandbox. Under read-only it is ignored, under
+	// danger-full-access it is a no-op, and a .git inside a writable root stays read-only (read from upstream source,
+	// not run: docs/contracts/harnesses.md).
 	if c.MemoryDir != "" {
 		argv = append(argv, "--add-dir", c.MemoryDir)
 	}
