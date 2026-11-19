@@ -7405,9 +7405,11 @@
   (and stays `restored`), its kept-back records are untouched, the sweep goes on with the other runs, and the sweep
   then ends with an error, so the pass retries after its backoff (1 s, doubling to 30 s) instead of looping. The
   wait is per run, so a central that never answers for one run (decision 3's open failure, a Forbidden `GetRun`, no
-  recordings directory) neither numbers nor ships anything of that run and does not hold the later runs back: it
+  recordings directory) neither numbers nor ships anything of that run and does not hold the later runs back within a sweep: it
   delays only that run's own catch-up, once per retry, by up to `seqKnownWait`, and the sweep serves others' waiting live output
-  meanwhile. Evidence: `TestEndedRunCatchUpProbesBeforeShipping`
+  meanwhile. Across the backoff the pass would hold them (a live run marked not caught up by a new request, a
+  relocation or a lowered acknowledgement, kept its output back until the sleep ended, up to 30 s), so the sleep ends
+  early on such a request (`catchUpAgain`) and on the first answer central gives for a run (`catchUpWake`). Evidence: `TestEndedRunCatchUpProbesBeforeShipping`
   (an ended run, central muted: no record leaves the node, then 151..250 arrive contiguously and nothing jumps),
   `TestLoweredAckWithQueuedRecordsShipsTheGapFirst`, and `TestRestartedRecorderBelowTheSavedAcknowledgement` (live
   records numbered above 300 are queued behind the catch-up; central never receives a record above 250 before

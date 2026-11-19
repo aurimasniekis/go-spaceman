@@ -646,6 +646,76 @@ func TestUnansweredRunBacksOff(t *testing.T) {
 	}
 }
 
+// backoffSignal makes the catch-up pass report each backoff sleep it enters.
+func backoffSignal(t *testing.T) chan time.Duration {
+	ch := make(chan time.Duration, 16)
+	catchUpBackoffHook = func(d time.Duration) {
+		select {
+		case ch <- d:
+		default:
+		}
+	}
+	t.Cleanup(func() { catchUpBackoffHook = nil })
+	return ch
+}
+
+// untilBackoff applies central's messages until the pass enters a backoff sleep of at least min.
+func (c *seqCentral) untilBackoff(ch chan time.Duration, min time.Duration) {
+	c.t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case d := <-ch:
+			if d >= min {
+				return
+			}
+		default:
+		}
+		c.within(10*time.Millisecond, func() bool { return false }) // keeps applying central's messages
+	}
+	c.t.Fatal("the catch-up pass never entered its backoff sleep")
+}
+
+// While one ended run stays unanswered the pass sleeps in its backoff; a request for another pass (a relocation, a
+// lowered acknowledgement, a run launched meanwhile) must wake it, or the live run, marked not caught up by the
+// request, holds its output back until the backoff ends (up to 30 s). The request is made from the pass's own state
+// (it sleeps), not from the clock, so a slow setup (-race) cannot land it at the end of the sleep.
+func TestCatchUpRequestWakesTheBackoffSleep(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	const live = "run_live"
+	ch := backoffSignal(t)
+	// run_live is already caught up (central holds all 10 records); run_ended is never answered (only=run_live).
+	a, c, term := restartedRecorderEnvWith(t, live, 10, 10, 10, []string{"run_ended"}, endRuns(t, "run_ended"))
+	writeUntil(t, a, c, term, "warm up")
+	c.untilBackoff(ch, 2*time.Second) // the second sleep (the first lasts 1 s): long enough to still be going
+	a.startCatchUp()
+	asked := time.Now()
+	a.o.Runner.(interface{ Output(id, data string) }).Output(term, "after the request")
+	// The woken pass sweeps again first (about 0.5 s: the unanswered run is probed); the sleep it was woken from
+	// had about 2 s left.
+	ok := c.within(1200*time.Millisecond, func() bool { return c.has("after the request") })
+	if !ok {
+		t.Fatalf("live output still held %v after the request: the backoff sleep was not woken", time.Since(asked))
+	}
+}
+
+// The ended run central did not answer is skipped; its first answer, arriving during the backoff, must wake the pass
+// so the run's records reach central at once instead of after the backoff.
+func TestFirstAnswerWakesTheBackoffSleep(t *testing.T) {
+	shortSeqWait(t, 200*time.Millisecond)
+	const ended = "run_ended"
+	ch := backoffSignal(t)
+	_, c, _ := restartedRecorderEnvWith(t, ended, 10, 0, 0, nil, endRuns(t, ended))
+	c.mute = true // central answers nothing: the run is skipped
+	c.untilBackoff(ch, time.Second)
+	c.mute = false
+	answered := time.Now()
+	c.a.recordingAck(proto.RecordingAck{RunID: ended, Seq: 0})
+	if !c.within(300*time.Millisecond, func() bool { return c.seq >= 10 }) {
+		t.Fatalf("central holds %d of 10 records %v after the first answer: the backoff sleep was not woken", c.seq, time.Since(answered))
+	}
+}
+
 // A recorder started again for a run whose close an earlier recorder of this process already recorded (a stale live
 // snapshot passed to observe does that) must not end the recording a second time: no further gap and no second close,
 // locally or at central.
