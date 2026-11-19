@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/dialog"
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist/disttest"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
 	rt "github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
@@ -23,13 +24,14 @@ import (
 // dialogEnv is a node with one managed Claude Code 2.1.328 run, a central that welcomes at minor 15, and a log of what
 // the node sent it.
 type dialogEnv struct {
-	t    *testing.T
-	a    *Agent
-	f    *rt.Fake
-	run  string
-	term string
-	mu   sync.Mutex
-	got  []proto.Envelope
+	t     *testing.T
+	a     *Agent
+	f     *rt.Fake
+	run   string
+	space string
+	term  string
+	mu    sync.Mutex
+	got   []proto.Envelope
 }
 
 func fixture(t *testing.T, name string) string {
@@ -55,7 +57,11 @@ func newDialogEnv(t *testing.T, edit func(*proto.LaunchPayload)) *dialogEnv {
 	fc := newWSCentral(t, proto.MinorDialog)
 	startAgent(t, a, fc, clock.System{})
 	fc.next(t, proto.TypeHello)
-	e := &dialogEnv{t: t, a: a, f: f, run: "run_dialog"}
+	// Valid IDs, so commands for the run pass validation.
+	e := &dialogEnv{t: t, a: a, f: f, run: ids.New(ids.Run), space: ids.New(ids.Space)}
+	a.mu.Lock()
+	a.leases[e.space] = leaseRow{SpaceID: e.space, Generation: 1, ExpiresAt: time.Now().Add(time.Hour), Workdir: "cc"}
+	a.mu.Unlock()
 	go func() {
 		for env := range fc.msgs {
 			e.mu.Lock()
@@ -68,7 +74,7 @@ func newDialogEnv(t *testing.T, edit func(*proto.LaunchPayload)) *dialogEnv {
 	if edit != nil {
 		edit(&p)
 	}
-	a.launch(context.Background(), proto.Command{CommandID: "cmd_" + e.run, Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: e.run, Generation: 1}, p)
+	a.launch(context.Background(), proto.Command{CommandID: ids.New(ids.Command), Kind: proto.CmdLaunch, SpaceID: e.space, RunID: e.run, Generation: 1}, p)
 	r := getRun(t, a, e.run)
 	if r.State != proto.RunRunning || r.Bin.Version != "2.1.328" {
 		t.Fatalf("run %s (%s) version %q", r.State, r.Error, r.Bin.Version)
@@ -118,6 +124,19 @@ func (e *dialogEnv) lastReport() proto.RunReport {
 		}
 	}
 	return proto.RunReport{}
+}
+
+// ackReason is the reason of the node's ack of a command ("" until it arrives).
+func (e *dialogEnv) ackReason(cmd string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, env := range e.got {
+		var a proto.Ack
+		if env.Type == proto.TypeAck && env.Decode(&a) == nil && a.CommandID == cmd {
+			return a.Result + ": " + a.Reason
+		}
+	}
+	return ""
 }
 
 func (e *dialogEnv) outcomes() []string {
@@ -190,7 +209,10 @@ func TestDialogUnknownFlagsOnce(t *testing.T) {
 	e.a.dlg.mu.Unlock()
 	e.show(screen)
 	waitFor(t, "flagged", func() bool { return len(e.dialogs()) > 0 })
-	waitFor(t, "blocked report", func() bool { r := e.lastReport(); return r.Status == "blocked" && r.StatusKind == proto.StatusKindDialog })
+	waitFor(t, "blocked report", func() bool {
+		r := e.lastReport()
+		return r.Status == "blocked" && r.StatusKind == proto.StatusKindDialog
+	})
 	for range 3 {
 		e.f.Output(e.term, "\x1b[H")
 		quiet()
@@ -207,11 +229,13 @@ func TestDialogUnknownFlagsOnce(t *testing.T) {
 		t.Fatalf("excerpt %q", x)
 	}
 	// Safe input would answer the dialog: refused. Forced input (an operator's) is not.
-	e.a.command(context.Background(), proto.Command{CommandID: "cmd_in", Kind: proto.CmdInput, SpaceID: ccSpace, RunID: e.run, Generation: 1,
+	cmdIn := ids.New(ids.Command)
+	e.a.command(context.Background(), proto.Command{CommandID: cmdIn, IdempotencyKey: "in-1", Kind: proto.CmdInput, SpaceID: e.space, RunID: e.run, Generation: 1,
 		Payload: mustJSONT(t, proto.InputPayload{Text: "you have 1 message"})})
 	if in := e.f.Inputs(e.term); len(in) != 0 {
 		t.Fatalf("safe input reached a dialog: %v", in)
 	}
+	waitFor(t, "input refused", func() bool { return strings.Contains(e.ackReason(cmdIn), "waits at a dialog") })
 	// The dialog goes (an operator answered it): cleared, and the run reports its own status again.
 	e.f.SetStatusReport(e.term, runner.Status{State: "idle", App: "claude-code"})
 	e.show(fixture(t, "claude-2.1.328-main-idle.txt"))

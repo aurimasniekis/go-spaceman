@@ -65,7 +65,10 @@ func TestNeverAnswersPermissionOrToolApproval(t *testing.T) {
 	perm := screen(t, "claude-permission.txt")
 	// An entry that would match anything on the permission screen and answer Yes.
 	greedy := []Entry{{ID: "test.greedy", Harness: "claude-code", Text: []string{"Do you want to proceed?"},
-		Answer: func(d Dialog, _ Context) (Answer, bool) { k, ok := d.Select("Yes"); return Answer{Choice: "yes", Keys: k}, ok }}}
+		Answer: func(d Dialog, _ Context) (Answer, bool) {
+			k, ok := d.Select("Yes")
+			return Answer{Choice: "yes", Keys: k}, ok
+		}}}
 	if r := classify(greedy, perm, claude("2.1.328")); r.Kind != Unknown || r.Signal != SignalNever || len(r.Keys) != 0 {
 		t.Fatalf("permission dialog: %+v", r)
 	}

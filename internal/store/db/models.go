@@ -1207,6 +1207,22 @@ type RunCredential struct {
 	TokenEnc  []byte
 }
 
+type RunDialog struct {
+	ID             string
+	RunID          string
+	SpaceID        string
+	NodeID         string
+	Dialog         string
+	Signal         string
+	Outcome        string
+	Answer         string
+	Excerpt        string
+	HarnessVersion string
+	DetectedAt     int64
+	ClearedAt      sql.NullInt64
+	CreatedAt      int64
+}
+
 type RunGatewayCredential struct {
 	RunID        string
 	SpaceID      string

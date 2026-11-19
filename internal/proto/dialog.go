@@ -69,7 +69,7 @@ type RunDialog struct {
 }
 
 var (
-	reDialogWord       = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,63}$`)
+	reDialogWord = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,63}$`)
 )
 
 // Valid reports whether the message is well formed: an occurrence ID, a known outcome and fixed words, and an excerpt

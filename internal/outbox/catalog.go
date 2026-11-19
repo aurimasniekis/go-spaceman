@@ -75,6 +75,8 @@ var (
 	KBProposalAcceptedName = Name{"kb", "proposal", "accepted", 1}
 	XSpaceCreatedName      = Name{"xspace", "request", "created", 1}
 	XSpaceStateName        = Name{"xspace", "request", "state_changed", 1}
+	RunDialogDetectedName  = Name{"fleet", "run", "dialog_detected", 1}
+	RunDialogClearedName   = Name{"fleet", "run", "dialog_cleared", 1}
 )
 
 // Run describes a run in run lifecycle events.
@@ -108,6 +110,30 @@ type RunEnded struct {
 	// NodeReason is the node's own end reason when central recorded another (usage_limit, ADR-0079).
 	NodeReason string `json:"node_reason,omitempty"`
 	ExitCode   *int64 `json:"exit_code,omitempty"`
+}
+
+// RunDialog describes an interactive dialog the node recognised on a run's terminal (ADR-0102). It carries identifiers
+// and fixed words only: the dialog's screen text (the excerpt) stays in SpaceMan, on the run's notice, found by
+// dialog_id.
+type RunDialog struct {
+	Run
+	DialogID       string    `json:"dialog_id"` // the occurrence (dlg_…)
+	Dialog         string    `json:"dialog"`    // the registry entry's ID, or "unknown"
+	Signal         string    `json:"signal"`    // screen_prompt, never_list, answer_declined, answer_failed
+	HarnessVersion string    `json:"harness_version,omitempty"`
+	DetectedAt     time.Time `json:"detected_at"`
+}
+
+// RunDialogDetected: a run waits at an interactive dialog SpaceMan does not answer (blocked_on_dialog). Once per
+// occurrence.
+type RunDialogDetected struct {
+	RunDialog
+}
+
+// RunDialogCleared: the dialog of a RunDialogDetected is gone (a person answered it, or the program moved on).
+type RunDialogCleared struct {
+	RunDialog
+	ClearedAt time.Time `json:"cleared_at"`
 }
 
 // UsageLimit describes an account hold (ADR-0079): one exhausted account (or gateway) window as one space saw it.
@@ -310,6 +336,8 @@ type XSpaceRequestStateChanged struct {
 func (RunLaunched) eventName() Name            { return RunLaunchedName }
 func (RunStarted) eventName() Name             { return RunStartedName }
 func (RunEnded) eventName() Name               { return RunEndedName }
+func (RunDialogDetected) eventName() Name      { return RunDialogDetectedName }
+func (RunDialogCleared) eventName() Name       { return RunDialogClearedName }
 func (UsageLimitReached) eventName() Name      { return UsageLimitReachedName }
 func (UsageLimitCleared) eventName() Name      { return UsageLimitClearedName }
 func (AccountSwitchStarted) eventName() Name   { return SwitchStartedName }
@@ -379,6 +407,7 @@ func Catalog() []CatalogEntry {
 	can.Status, exp.Status = "cancelled", "expired"
 	code := int64(0)
 	reset := time.Date(2026, 11, 13, 18, 0, 0, 0, time.UTC)
+	dlg := RunDialog{Run: run, DialogID: "dlg_…", Dialog: "unknown", Signal: "screen_prompt", HarnessVersion: "2.1.328", DetectedAt: reset}
 	ul := UsageLimit{SpaceID: "spc_…", LimitID: "ulm_…", Scope: "account", AccountID: "acc_…", Kind: "five_hour", ResetsAt: &reset, RunID: "run_…"}
 	xs := XSpaceRequest{SpaceID: "spc_…", Side: "destination", RequestID: "xrq_…", SourceSpaceID: "spc_…", DestSpaceID: "spc_…", Kind: "question",
 		State: "pending", Depth: 1, CorrelationID: "xrq_…"}
@@ -388,6 +417,8 @@ func Catalog() []CatalogEntry {
 		{RunLaunchedName, RunLaunched{run}, "A launch was accepted and queued for the space's node."},
 		{RunStartedName, RunStarted{Run: run}, "The node reported the run running for the first time."},
 		{RunEndedName, RunEnded{Run: run, State: "exited", EndReason: "exited", ExitCode: &code}, "The run exited, failed or was lost."},
+		{RunDialogDetectedName, RunDialogDetected{dlg}, "A run waits at an interactive dialog SpaceMan does not answer (blocked_on_dialog); once per occurrence."},
+		{RunDialogClearedName, RunDialogCleared{RunDialog: dlg, ClearedAt: reset}, "The dialog of a run_dialog_detected is gone."},
 		{UsageLimitReachedName, UsageLimitReached{ul}, "A run's report opened a hold on its account in its space (once per hold)."},
 		{UsageLimitClearedName, UsageLimitCleared{UsageLimit: ul, ClearedBy: "run:run_…"}, "A hold on an account was cleared."},
 		{SwitchStartedName, AccountSwitchStarted{AccountSwitch{SpaceID: "spc_…", SwitchID: "asw_…", InstanceID: "ins_…", FromRunID: "run_…",
