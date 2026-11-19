@@ -119,7 +119,14 @@ func (c *threadsChat) question(t *testing.T, space, title string) (string, botap
 		ID string `json:"id"`
 	}
 	r.json(t, &a)
-	return a.ID, c.card(t, title)
+	card := c.card(t, title)
+	// The message is in the chat as soon as the send returns, but the notifier records the card (the mapping a reply
+	// is routed by) a moment later (cards.upsertOnce). Wait for it, so a reply sent at once finds its card.
+	eventuallyFor(t, "the card of "+title+" recorded", 10*time.Second, func() bool {
+		m, ok := c.e.h.c.TelegramNotify.Card(context.Background(), card.Chat.ID, card.MessageID)
+		return ok && m.Key.ID == a.ID
+	})
+	return a.ID, card
 }
 
 func (c *threadsChat) inboxItem(t *testing.T, space, title string) botapi.Message {
