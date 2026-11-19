@@ -575,7 +575,7 @@ func (a *Agent) startCatchUp() {
 	start := a.connected && a.startCatchUpLocked()
 	a.mu.Unlock()
 	if start {
-		go a.catchUpRecordings()
+		a.goTrack(a.catchUpRecordings)
 	}
 }
 
@@ -1105,7 +1105,7 @@ func (a *Agent) recordingAck(ack proto.RecordingAck) {
 			slog.String(obs.FieldRunID, ack.RunID), slog.Uint64("acknowledged", prev), slog.Uint64("holds", ack.Seq))
 	}
 	if start {
-		go a.catchUpRecordings()
+		a.goTrack(a.catchUpRecordings)
 	}
 }
 

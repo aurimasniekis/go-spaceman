@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The agent's catch-up pass and capability reports are joined at shutdown.** `Run` started the recording catch-up
+  pass, the capability loop and the report after hello as untracked goroutines, so one could still be running after
+  `Run` returned (and, in tests, read package settings the caller restored next, a data race). They are tracked now and
+  `Run` waits for them, bounded, like its other background work.
 - **A launch that fails before its program starts ends the run under the observe lock too.** Its failed write now takes
   the observe lock after the run's lock, like a stop, and the end work runs after the locks are released. A stop for a
   run this node had no record of takes it too, so every write that ends a run takes the observe lock.
