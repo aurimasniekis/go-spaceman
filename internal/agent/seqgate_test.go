@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -791,5 +793,52 @@ func TestRecorderOpensTheRecordingOfAProgramThatEndedBeforeItAttached(t *testing
 	}
 	if recs := localAbove(t, a, runID, 0); len(recs) != 3 || recs[0].Kind != recording.KindOpen {
 		t.Fatalf("the local recording holds %+v, want open, gap, close", recs)
+	}
+}
+
+// A close numbered while the local disk failed reached central but not the disk. A later recorder for the run (started
+// from a stale snapshot) reads an open recording on disk, and must still not end the run a second time.
+func TestSecondRecorderAfterCloseLostToDisk(t *testing.T) {
+	const runID = "run_dupclose"
+	var failing atomic.Bool
+	a, c, term := restartedRecorderEnvWith(t, runID, 100, 100, 100, nil, func(a *Agent) {
+		a.o.RecordingCreate = func(path string) (recording.File, error) {
+			if failing.Load() {
+				return nil, syscall.ENOSPC
+			}
+			return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		}
+	})
+	fake := a.o.Runner.(interface {
+		Output(id, data string)
+		Exit(id string, code int, reason string)
+		Observed(id string) int
+	})
+	waitFor(t, "recorder attached", func() bool { return fake.Observed(term) >= 1 })
+	failing.Store(true)
+	fake.Output(term, "bye\r\n")
+	fake.Exit(term, 0, "exited")
+	closes := func() int {
+		n := 0
+		for _, r := range c.recs {
+			if r.Kind == recording.KindClose {
+				n++
+			}
+		}
+		return n
+	}
+	c.until("the close", func() bool { return closes() > 0 })
+	waitFor(t, "recorder ended", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.recorders[runID] == nil })
+	for _, r := range localAbove(t, a, runID, 0) {
+		if r.Kind == recording.KindClose {
+			t.Fatal("the close was stored locally: the disk did not fail")
+		}
+	}
+	failing.Store(false)
+	row, _ := a.j.getRun(context.Background(), runID)
+	a.startRecorder(context.Background(), row)
+	c.within(3*time.Second, func() bool { return false })
+	if n := closes(); n != 1 {
+		t.Fatalf("central holds %d close records, want 1", n)
 	}
 }
