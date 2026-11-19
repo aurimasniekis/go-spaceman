@@ -228,8 +228,29 @@ func (s *recShipper) add(ctx context.Context, r recording.Record) {
 func (s *recShipper) number(r recording.Record) {
 	if stored, _ := s.w.AddRecord(r); stored.Seq != 0 {
 		s.batch = append(s.batch, stored)
+		if stored.Kind == recording.KindClose {
+			s.a.markCloseNumbered(s.row.RunID)
+		}
 	}
 	s.truncated()
+}
+
+// markCloseNumbered notes that this process numbered the run's close record. The local recording says the same only
+// while the disk stores it: a close numbered during a disk failure reaches central but not the disk, and a later
+// recorder that reads the disk alone would end the run a second time.
+func (a *Agent) markCloseNumbered(runID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closeNumbered == nil {
+		a.closeNumbered = map[string]bool{}
+	}
+	a.closeNumbered[runID] = true
+}
+
+func (a *Agent) closeWasNumbered(runID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.closeNumbered[runID]
 }
 
 // truncated adds the writer's trunc record (quota reached) after the records before it, so central's copy shows where
@@ -303,7 +324,7 @@ func (s *recShipper) diskState() {
 // ends with the program's close record: without it neither the local recording nor central's copy says the program
 // ended. Like every record, they wait in the gate while central's sequence is unknown (settle ships them).
 func (s *recShipper) finishedUnattached(ctx context.Context, first bool) {
-	if s.w.Closed() {
+	if s.w.Closed() || s.a.closeWasNumbered(s.row.RunID) {
 		return // an earlier recorder already ended it: a second gap and close would leave a stray segment
 	}
 	p, err := s.a.o.Runner.Get(ctx, s.row.TerminalID)

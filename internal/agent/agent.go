@@ -135,7 +135,11 @@ type Agent struct {
 	// catching is set while the catch-up pass runs, on catchUpConn with catchUpCtx (the newest connection's);
 	// catchUpAgain asks it for another sweep; caughtUp are the runs it has caught up. connCtx is the current
 	// connection's context.
-	sentSeq        map[string]uint64
+	sentSeq map[string]uint64
+	// closeNumbered are the runs whose close record this process numbered (and so sent or will send): a later recorder
+	// for the run must not end it again, whatever the local disk kept (record.go). It is in memory only and does not
+	// survive an agent restart; closing that case needs central to report its last record.
+	closeNumbered  map[string]bool
 	held           map[string]*heldRecords
 	catching       bool
 	catchUpSkipped bool // a sweep skipped a run central did not answer for (catchUpRun)

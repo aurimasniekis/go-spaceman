@@ -820,3 +820,29 @@ func TestStoredAfterRotationAndFailedSync(t *testing.T) {
 		t.Fatalf("reopened stored %d, want 2", w2.Stored())
 	}
 }
+
+func TestWriterClosed(t *testing.T) {
+	dir := t.TempDir()
+	c := &clk{t: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)}
+	w, err := Open(Options{Dir: dir, Now: c.now})
+	must(t, err)
+	if w.Closed() {
+		t.Fatal("a new recording is closed")
+	}
+	must(t, w.Add(Record{Kind: KindOpen, Cols: 80, Rows: 24, RunID: "run_x"}))
+	if w.Closed() {
+		t.Fatal("closed before a close record")
+	}
+	must(t, w.Add(Record{Kind: KindClose, Reason: "exited"}))
+	if !w.Closed() {
+		t.Fatal("not closed after a close record")
+	}
+	must(t, w.Close())
+
+	w2, err := Open(Options{Dir: dir, Now: c.now})
+	must(t, err)
+	if !w2.Closed() {
+		t.Fatal("a reopened recording that ends in a close is not closed")
+	}
+	must(t, w2.Close())
+}
