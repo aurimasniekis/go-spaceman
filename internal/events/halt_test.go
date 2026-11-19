@@ -103,6 +103,7 @@ func TestDrainTimeoutDoesNotSetRunningAfterPause(t *testing.T) {
 	}()
 	f.setSpaceState("spc_a", "paused") // the halt drains: the second event holds in the throttle until drainTimeout
 	eventually(t, "paused", pausedSeen.Load)
+	time.Sleep(300 * time.Millisecond) // the buffered events reach the handler with a cancelled context (asynchronously, after Drain returned)
 	close(watchStop)
 	<-watchDone
 	if runningAfterPause.Load() {

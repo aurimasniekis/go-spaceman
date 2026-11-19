@@ -37,8 +37,8 @@ func (s *Subscription) Drain(ctx context.Context) error // graceful, v0.1.6+
   - **Pause behaviour:** events already delivered to a `while_paused=stop` subscription when its space pauses are handled and
     acknowledged during the drain, so they are ingested although the space is paused; events not yet delivered wait in the
     stream until the space resumes. After a drain times out (5 s) the handlers run with a cancelled ctx: they set no
-    subscription state and count no throttle or error metric of their own (a handler cancelled mid-`Process` still counts an
-    error), and the stream redelivers their events.
+    subscription state and count no throttle or error metric of their own (a handler that reaches `Process` with a cancelled
+    ctx may still count an error), and the stream redelivers their events.
 - **Without `Durable`:** an ordered ephemeral consumer, no acks.
 - **With `Durable(name)`:**
   - The consumer is `<clientID>_<name>`, with explicit ack and a single `FilterSubject`.
