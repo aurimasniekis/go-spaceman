@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -401,5 +402,56 @@ func TestReconcileQueryIgnoredWithAbsent(t *testing.T) {
 	res, err := r.Reconcile(context.Background(), reconcileFate, opts)
 	if err != nil || calls != 0 || res.Removed != 2 {
 		t.Fatalf("%+v %v calls=%d", res, err, calls)
+	}
+}
+
+// failDelete fails the deletion of keys of the runs in bad.
+type failDelete struct {
+	artifacts.Store
+	bad map[string]bool
+}
+
+func (f failDelete) Delete(ctx context.Context, key string) error {
+	for id := range f.bad {
+		if strings.Contains(key, id) {
+			return errors.New("locked")
+		}
+	}
+	return f.Store.Delete(ctx, key)
+}
+
+// Leftovers whose removal keeps failing do not use up the MaxRuns budget every pass: later ones are reached.
+func TestReconcileQueryFailingDeletesDoNotStarve(t *testing.T) {
+	srv := s3test.New(t, "AKIDTEST")
+	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "rec", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",
+		CABundlePEM: srv.CAPEM(), AllowPrivateNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3 := artifacts.NewS3(cl, "rec", "")
+	ids := []string{"run_a" + strings.Repeat("a", 25), "run_b" + strings.Repeat("b", 25), "run_c" + strings.Repeat("c", 25), "run_d" + strings.Repeat("d", 25)}
+	st := failDelete{s3, map[string]bool{ids[0]: true, ids[1]: true}}
+	r := newRecordings(t.TempDir(), st, nil, inTheFuture)
+	defer r.Close()
+	b := []byte("seg")
+	h := sha256.Sum256(b)
+	for _, id := range ids {
+		if err := s3.Put(context.Background(), artifacts.RecordingKey(id, recording.SegmentName(1)), bytes.NewReader(b), 3, hex.EncodeToString(h[:])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var calls int
+	opts := ReconcileOptions{MaxRuns: 2, Deleted: deletedSet(&calls, nil, ids...)}
+	for range 2 {
+		if _, err := r.Reconcile(context.Background(), reconcileFate, opts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	left := map[string]bool{}
+	for _, k := range srv.Keys("rec") {
+		left[k[len("recordings/"):len("recordings/")+30]] = true
+	}
+	if len(left) != 2 || !left[ids[0]] || !left[ids[1]] {
+		t.Fatalf("bucket after two passes: %v", srv.Keys("rec"))
 	}
 }

@@ -42,6 +42,8 @@ type ReconcileOptions struct {
 	// Deleted, when set and Absent is off, picks the candidates: it returns which of the given run IDs have
 	// recording_deleted_at set. It is called with batches of at most deletedBatch IDs. Any error ends the pass with no
 	// deletes. A run it does not return is never touched. Ignored with Absent, which needs the per-run fate.
+	// The query is asked once at the start of a pass, so the run's recording must stay deleted for good (nothing
+	// clears recording_deleted_at); a flow that can undelete a recording must re-check before it removes anything.
 	Deleted func(ctx context.Context, runIDs []string) ([]string, error)
 	// Absent allows removing the recording of a run the database cleanly reports absent. Off, such a recording is kept:
 	// an absent row is also what a restored older backup or a second central on the same bucket looks like.
@@ -55,6 +57,8 @@ type ReconcileOptions struct {
 
 // ReconcileResult counts one pass.
 type ReconcileResult struct {
+	// Examined is the runs asked about in the database one by one (the fate walk) or, with the query, the stored runs
+	// checked in batches. Skipped is runs kept after an error: a failed lookup or a failed removal.
 	Examined, Removed, Skipped int
 	// Truncated is set when more runs were left than MaxRuns allows; the next pass continues (after the last one examined with
 	// the fate walk, with the remaining leftovers with the query).
@@ -146,13 +150,10 @@ func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Contex
 		}
 		sort.Strings(ids)
 		ids = slices.Compact(ids)
-		if opts.MaxRuns > 0 && len(ids) > opts.MaxRuns {
-			ids, res.Truncated = ids[:opts.MaxRuns], true
-		}
 	}
-	if !byQuery && opts.MaxRuns > 0 && len(ids) > opts.MaxRuns {
-		// Continue after the last run the previous pass examined (wrapping), so runs that are kept do not pin every
-		// pass to the same first MaxRuns.
+	if opts.MaxRuns > 0 && len(ids) > opts.MaxRuns {
+		// Continue after the last run the previous pass examined (wrapping), so runs that are kept (or, with the
+		// query, leftovers whose removal keeps failing) do not pin every pass to the same first MaxRuns.
 		r.mu.Lock()
 		after := r.reconcileAfter
 		r.mu.Unlock()
@@ -185,7 +186,7 @@ func (r *Recordings) Reconcile(ctx context.Context, fate func(ctx context.Contex
 			f, err = fate(ctx, id)
 		}
 		if err != nil {
-			r.log.Warn("recording reconcile: run not checked, recording kept", slog.String("run.id", id), obs.Err(err))
+			r.log.Warn("recording reconcile: run not checked or not removed, recording kept", slog.String("run.id", id), obs.Err(err))
 			res.Skipped++
 			continue
 		}
