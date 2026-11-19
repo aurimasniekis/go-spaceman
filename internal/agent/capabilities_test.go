@@ -565,3 +565,27 @@ func TestCapabilitiesReportNeverCrossesSessions(t *testing.T) {
 	fc2.none(t, proto.TypeNodeCapabilities, 200*time.Millisecond)
 	fc1.none(t, proto.TypeNodeCapabilities, 50*time.Millisecond)
 }
+
+// A new connection that has not been welcomed yet takes no report, even with the old session's minor still recorded:
+// the report would otherwise go out before central has answered the hello (or before the hello itself).
+func TestCapabilitiesReportWaitsForWelcome(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	fc := newWSCentral(t, proto.MinorHarnessVersion)
+	u := "ws" + strings.TrimPrefix(fc.srv.URL, "http")
+	conn, _, err := websocket.Dial(context.Background(), u, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	a.mu.Lock()
+	a.conn, a.connected, a.minor = conn, false, proto.MinorHarnessVersion // session 2 dialled, session 1's minor kept
+	a.mu.Unlock()
+	a.reportCapabilities(context.Background(), proto.Capabilities{OS: "early"}, 5)
+	a.mu.Lock()
+	sent := a.capsSent
+	a.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("capsSent %d after a report on an unwelcomed connection", sent)
+	}
+	fc.none(t, proto.TypeNodeCapabilities, 200*time.Millisecond)
+}
