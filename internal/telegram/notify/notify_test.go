@@ -338,17 +338,16 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 	e.t.Helper()
 	n := notify.New(e.options(m))
 	e.n = n
-	started := e.feed.latests.Load()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = n.Run(ctx); close(done) }()
-	// Run reads its start position first; wait for it.
-	deadline := time.Now().Add(10 * time.Second)
-	for e.feed.latests.Load() == started {
-		if time.Now().After(deadline) {
-			e.t.Fatal("notifier did not start")
-		}
-		time.Sleep(time.Millisecond)
+	// Run reads its start position first; wait until it has it. Latest counts the read when it is called, before it
+	// looks at the feed, so waiting for the count lets a change the test makes next land before the position is
+	// taken and be treated as history, never delivered.
+	select {
+	case <-n.Ready():
+	case <-time.After(10 * time.Second):
+		e.t.Fatal("notifier did not start")
 	}
 	return func() { cancel(); <-done }
 }
