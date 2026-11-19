@@ -389,6 +389,35 @@ func TestReconcileQueryErrorDeletesNothing(t *testing.T) {
 	}
 }
 
+// The first batch succeeds and a later one fails: nothing is deleted, not even what the first batch named.
+func TestReconcileQueryLaterBatchErrorDeletesNothing(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecordings(dir, nil, nil, inTheFuture)
+	defer r.Close()
+	var all []string
+	for i := range deletedBatch + 3 {
+		id := fmt.Sprintf("run_%026d", i)
+		all = append(all, id)
+		spool(t, dir, id)
+	}
+	var calls int
+	_, err := r.Reconcile(context.Background(), reconcileFate, ReconcileOptions{MaxRuns: 1000, Deleted: func(_ context.Context, ids []string) ([]string, error) {
+		calls++
+		if calls > 1 {
+			return nil, errDB
+		}
+		return ids, nil
+	}})
+	if !errors.Is(err, errDB) || calls != 2 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+	for _, id := range all {
+		if !exists(dir, id) {
+			t.Fatalf("%s was deleted although a later batch failed", id)
+		}
+	}
+}
+
 // With Absent on, the query is not used: the per-run fate decides, as before.
 func TestReconcileQueryIgnoredWithAbsent(t *testing.T) {
 	dir := t.TempDir()

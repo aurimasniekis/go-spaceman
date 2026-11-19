@@ -7689,6 +7689,57 @@
 - **Not a security-relevant change:** no requirement, guarantee or default is relaxed. The reminder is safe input with
   only the task's ID, refused during takeovers and usage limits like every notice.
 
+### ADR-0100 — A program waiting at its prompt on background tasks takes notices
+
+- **Status:** Accepted, 2026-11-19 (bug fix for v0.1.12). Extends SM-COMM-003 and ADR-0052 (a `done` program is sent to
+  ungated). No migration and no new API operation; the node reports a new value of the existing `status_kind`, which
+  an older central stores like any other kind.
+- **Context:** messages and task-review notifications to control waited for up to 45 minutes while control sat at its
+  prompt. They became available only when control called `spaceman_messages` on its own; a later "run ended"
+  notification was typed within seconds. Control's run reported `working` the whole time, with only background
+  shells running. The cause is Claude Code's own status report (`docs/contracts/harnesses.md`, read from the 2.1.328
+  binary): after a turn has completed, while background shells or monitors the session started still run, it reports
+  OSC 7501 `state=working` with the message "… still running" (for example "1 shell still running") instead of
+  `done`. SpaceMan treated that as a turn in progress in both places that gate a notice: the notifier only considered
+  runs reporting `idle` or `done`, and the node's idle-gated send (`hc.Runner.Send`) typed ungated only for `done`. The program was at its prompt and would have taken the line, but the notice waited until the background
+  tasks ended. A control that keeps a background shell or monitor running was never woken. herdr-core keeps
+  Claude Code's per-task reports separate from the terminal's status (verified on hc 0.1.17), so the terminal's
+  status itself is `working`.
+- **Decision:**
+  1. **The node classifies the report.** `runner.Classify` gives a program status the kind `background`
+     (`proto.StatusKindBackground`) when it is `working`, has no kind, comes from `claude-code`, and its message is
+     exactly the count wording `^\d+ (shell|monitor)s?(, \d+ (shell|monitor)s?)* still running$`. The `msg` of a turn
+     in progress is free text (a task summary) that can end in " still running" too ("fork still running"), so a
+     suffix match would type an ungated notice into a running turn (review of PR #299); only the count wording, which
+     Claude Code generates from its task counts, is trusted. It reads only the program's own report, never screen text (SM-RUN-002). The hc runner
+     applies it to every terminal it reads, so the run's `status_kind` reaches central with the status.
+  2. **Such a program takes a notice.** `runner.Status.TakesNotice` is true for `idle`, `done` and
+     `working`/`background`. When herdr-core's `if: idle` gate refuses a send and a fresh read shows `done` or
+     `working`/`background`, the text is typed ungated, as for `done` (ADR-0052). The core still waits for a pause in
+     human typing before pressing Enter.
+  3. **The notifier picks it.** Notice candidates are live runs reporting `idle`, `done`, or `working` with kind
+     `background`. A run that starts waiting on background tasks wakes the notifier at once (fleet
+     `OnRunTakesNotice`); the one-minute sweep stays the fallback.
+  4. **Everything else still sees a working run.** Control's idle stop (ADR-0056), account switches at an idle point
+     (ADR-0090), the usage-limit scan, memory checkpoints and the control watchdog (ADR-0099) are unchanged: the turn
+     counter does not advance and the status stays `working`. Stopping or switching a run whose background work is
+     still running would cut that work off.
+- **Consequences:**
+  - A message, notification or human response to a run waiting on background tasks is noticed as soon as it arrives.
+    The notice starts a new turn while the background tasks keep running, which is what typing at the prompt does.
+  - The match depends on the wording of Claude Code's message. If a later version words it differently, its runs fall
+    back to the earlier behavior (no notice until the background work ends); `TestClassifyBackground` records the
+    known wordings, and a harness bump should check the contract note.
+  - The watchdog still counts control as busy while it waits on background tasks, so it does not nudge it then. With
+    notices delivered, new items reach control; nudging for older backlog in that state is left as a follow-up.
+  - A running background **agent** (a subagent, fork or workflow) makes Claude Code report plain `working`, the same
+    as a turn in progress, with no "still running" message. A run waiting at its prompt on one still gets no notice
+    until the agent finishes (it then starts a turn by itself, and reports `done` after it). Telling the two apart
+    would need another signal, such as Claude Code's `Stop` hook; that is left open.
+  - Codex is unaffected: no such report is known for it.
+- **Not a security-relevant change:** notices carry no content, and the input stays idle-gated: a program in the
+  middle of a turn is still refused.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

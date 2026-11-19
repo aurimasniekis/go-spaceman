@@ -136,6 +136,21 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   `cache_read_input_tokens`); records of one request repeat while it streams (same `message.id`). A `cost-state` record
   carries `totalCostUSD`, `hasUnknownModelCost` and per-model `modelUsage`. Codex's equivalents are not verified.
 - **Status:** native OSC 7501 reporting (see herdr-core.md).
+  - **Background tasks after a turn (read from the 2.1.328 binary, 2026-11-19; consistent with a live control that
+    reported `working` at its prompt for most of an hour while only background shells ran; the per-task records were
+    seen live on a run):** when a turn has completed while background shells or monitors (`local_bash` tasks) the
+    session started still run, Claude Code reports `state=working` with `msg` "<N shells|N monitors> still running"
+    (for example "1 shell still running", "2 shells, 1 monitor still running") instead of `done`. The program is at its
+    prompt and takes input; it reports `done` once the tasks end, or starts a turn by itself to report a finished task.
+    A running background **agent** (`local_agent`, `remote_agent`, teammate or workflow task) instead makes the session
+    "busy": plain `working` with the turn's working detail, which SpaceMan cannot tell from a turn in progress. Claude
+    Code also sends one OSC 7501 report per running task with `id=<task>`, which herdr-core keeps under the terminal's
+    `records`, apart from its `status`. SpaceMan classifies the main report as status kind `background`
+    (`runner.Classify`, ADR-0100) only when `msg` is exactly the count wording, `^\d+ (shell|monitor)s?(, \d+
+    (shell|monitor)s?)* still running$`. The `msg` of a turn in progress is free text (a task summary), and a summary can
+    end in " still running" too ("fork still running"); matching the suffix alone would type a notice into a turn in
+    progress. Only the count wording is trusted because only it is generated from task counts, not written by the model.
+    `TestClassifyBackground` keeps the known wordings and the free-text look-alikes.
 - **Hidden flags:** `--channels`, `--dangerously-load-development-channels` (strings only, so **not** relied on until verified).
 - **Print mode:** `-p`, `--output-format stream-json`, `--max-budget-usd`. Used only by opt-in real tests, never for managed runs, which are interactive in hc.
 
