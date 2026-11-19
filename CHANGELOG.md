@@ -13,12 +13,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
   working, and every 30 seconds while it keeps working. This is a change to the node agent: it takes effect on a node
   once the agent is upgraded.
+- **A Telegram message no longer links to a URL it would itself refuse.** A link whose URL fit the 2048-byte limit as written
+  but grew past it once normalised (each `#` in a fragment becomes `%23`) was emitted as a link entity, although the
+  same check refuses the normalised URL. The limit is now checked on the URL that is emitted, so such a link is shown as text.
+  Found by the nightly `FuzzRender` run.
+- **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox
+  only let a run write its workspace, so a run on Codex could not write the memory folders outside it. The run now
+  gets write access to exactly those folders, and nothing else.
 - **Dream runs can now write the role memories they link.** The `memory/<role>` links in a dream's workspace point
   at memory folders outside it, which Claude Code refused to write through. The run now gets write access to exactly
   those folders of its own space, and nothing else.
 - **A parked run resumes as soon as its node's lease is renewed after a lapse.** When the usage-limit job looked
   at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
   the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
+
+- **A parked run's resume refused for a reason other than its node is no longer shown as `node_offline`.** A launch
+  refused as unavailable while the node's lease was valid (Harbor Pilot's budget status with `on_budget_status_unavailable: refuse`) was
+  recorded on the usage-limit wait as `node_offline`, and retried after 15 minutes (or at the node's next hello). Such a wait
+  now shows `upstream_unavailable` and is tried again after 5 minutes; a node hello leaves it alone.
 
 ## [0.1.14] - 2026-11-19
 

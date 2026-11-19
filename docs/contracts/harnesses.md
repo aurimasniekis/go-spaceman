@@ -160,6 +160,11 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
 - **Sandbox, approvals and workspace:**
   - Sandbox and approvals: `-s read-only|workspace-write|danger-full-access`, `-a on-request|never`.
   - Workspace: `-C/--cd`, `--add-dir`.
+  - **`--add-dir` (read from upstream `openai/codex` source and docs on `main`, not run: no binary was available):**
+    repeatable; each value becomes an extra writable root. SpaceMan passes the run's MemoryDir and the ExtraDirs (a dream's
+    linked memory folders) this way. Under `workspace-write` they are writable. Under `read-only` the flag is ignored with a
+    warning ("Ignoring --add-dir ..."). Under `danger-full-access` it is a no-op. A `.git` inside a writable root stays
+    read-only.
   - Must use `--no-daemon` under hc (per the hc manual).
 - **Sessions:** `codex resume [SESSION_ID]`, `codex exec [--json] [-o file]`, `codex exec resume`.
 - **Auth:**
