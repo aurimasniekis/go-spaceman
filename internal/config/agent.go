@@ -77,7 +77,7 @@ type HarnessConfig struct {
 	// (no patterns; an entry must be a plain name of letters, digits and "_"). The config refuses names the agent sets
 	// itself (SPACEMAN_*, HC_*, HALLPASS_*, XDG_*, HOME, PATH, TERM, CLAUDE_CONFIG_*), anything a gateway run's profile
 	// can't set (ANTHROPIC_*, every CLAUDE_CODE_* outside a short safe list such as CLAUDE_CODE_TMPDIR, proxy and TLS
-	// variables such as HTTPS_PROXY, NODE_OPTIONS and SSL_CERT_*), other providers' variables (AWS_*, GOOGLE_*,
+	// variables such as HTTPS_PROXY, NODE_OPTIONS, SSL_CERT_FILE and SSL_CERT_DIR), other providers' variables (AWS_*, GOOGLE_*,
 	// CLOUD_ML_*, VERTEX_*, AZURE_*, OPENAI_*, CODEX_*) and loader or shell hooks (LD_*, BASH_ENV, ENV): a run's credentials
 	// come from its account, never from the node's environment. The value reaches the harness through the launcher shim after its scrub of
 	// inherited variables, so a CLAUDE_CODE_* variable such as CLAUDE_CODE_TMPDIR can be passed. A profile's
