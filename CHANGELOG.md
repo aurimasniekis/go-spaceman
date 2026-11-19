@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A Telegram message no longer links to a URL it would itself refuse.** A link whose URL fit the 2048-byte limit as written
+  but grew past it once normalised (each `#` in a fragment becomes `%23`) was emitted as a link entity, although the
+  same check refuses the normalised URL. The limit is now checked on the URL that is emitted, so such a link is shown as text.
+  Found by the nightly `FuzzRender` run.
 - **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox
   only let a run write its workspace, so a run on Codex could not write the memory folders outside it. The run now
   gets write access to exactly those folders, and nothing else.
