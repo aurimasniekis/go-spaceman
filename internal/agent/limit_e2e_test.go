@@ -215,10 +215,17 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	a2.leases[ccSpace] = a.leases[ccSpace]
 	startAgent(t, a2, fc, clk)
 	wantOpen(t, "hello after restart", fc.helloRun(t, runID), proto.LimitFiveHour, reset, at)
-	// Reconcile of an adopted run sends no report of its own: the hello already carried the limit. The hello was
-	// received above, so anything reconcile sent would arrive after it and fail this.
-	if rs := fc.collect(t, runID, 300*time.Millisecond); len(rs) != 0 {
-		t.Fatalf("adopted run: %d reports after the hello, first %+v", len(rs), rs[0])
+	// The monitor's snapshot reconcile of an adopted run may or may not send one report after the hello (it races
+	// the hello), but never more, and any it sends repeats the limit still open and the run still running.
+	rs = fc.collect(t, runID, 300*time.Millisecond)
+	if len(rs) > 1 {
+		t.Fatalf("adopted run: %d reports after the hello, want at most 1", len(rs))
+	}
+	for _, r := range rs {
+		wantOpen(t, "adopted reconcile", r, proto.LimitFiveHour, reset, at)
+		if r.State != "running" {
+			t.Fatalf("adopted reconcile: state %q, want running", r.State)
+		}
 	}
 	if j := getRun(t, a2, runID).Limit; j.Offset != offset {
 		t.Fatalf("offset after restart %d, want %d", j.Offset, offset)

@@ -254,7 +254,7 @@ func TestFailureClearedAfterRestartOnTheWire(t *testing.T) {
 	row := getRun(t, a, runID)
 	f.SetStatus(row.TerminalID, "working")
 	fc.collectAtLeast(t, runID, 1, 500*time.Millisecond)
-	observe := func() []proto.RunReport {
+	observe := func(atLeast int) []proto.RunReport {
 		t.Helper()
 		p, err := f.Get(ctx, row.TerminalID)
 		if err != nil {
@@ -265,14 +265,14 @@ func TestFailureClearedAfterRestartOnTheWire(t *testing.T) {
 			t.Fatalf("journal status %q, want working before the observe", cur.Status)
 		}
 		a.observe(ctx, cur, *p, false)
-		return fc.collect(t, runID, 500*time.Millisecond)
+		return fc.collectAtLeast(t, runID, atLeast, 500*time.Millisecond)
 	}
 
 	a.mu.Lock()
 	a.failureClasses = nil // the restart: nothing held, status working in the journal
 	a.mu.Unlock()
 	cleared := false
-	for _, r := range observe() {
+	for _, r := range observe(1) {
 		cleared = cleared || r.FailureCleared && r.Failure == ""
 	}
 	if !cleared {
@@ -282,7 +282,8 @@ func TestFailureClearedAfterRestartOnTheWire(t *testing.T) {
 	a.mu.Lock()
 	a.failureClasses = map[string]string{runID: "overloaded"} // a late StopFailure, status still working
 	a.mu.Unlock()
-	for _, r := range observe() {
+	// Nothing to send here: a quiet window; the late class staying set is checked below.
+	for _, r := range observe(0) {
 		if r.FailureCleared {
 			t.Fatalf("a late class was cleared by a working observe: %+v", r)
 		}
