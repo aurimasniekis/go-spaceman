@@ -55,6 +55,7 @@
 | `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
 | `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |
 | `human-global` | Human actions | Needs you: pending actions across spaces with the nav badge and a reminded to-do | current |
+| `human-messages` | Human actions | Needs you → Messages: messages addressed to operators from every space, with unread filter and Acknowledge | current |
 | `human-space` | Human actions | A space's human actions, including a resolved one | current |
 | `human-search` | Human actions | A space's human actions searched and sorted by priority | current |
 | `human-clarify` | Human actions | A pending question with a clarification request to its requester | current |

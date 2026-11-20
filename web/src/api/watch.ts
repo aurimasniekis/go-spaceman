@@ -134,6 +134,7 @@ export function applyChange(qc: QueryClient, c: Change) {
       break
     case 'message':
       if (c.space_id) invalidate(qc, keys.messages(c.space_id))
+      invalidate(qc, keys.operatorMessages)
       break
     case 'prompt':
       invalidate(qc, keys.prompts)

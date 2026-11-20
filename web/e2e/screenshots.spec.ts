@@ -267,6 +267,7 @@ test('documentation screenshots', async ({ page, browser }) => {
   const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.\n/transcript\n' +
     '/call spaceman_kb_ask {"kb":"payments","kind":"context","question":"Are there rules about when settlement may retry?"}\n' +
     '/call spaceman_human_ask {"type":"question","title":"Is a retry budget of 5 per batch enough for month-end settlement?"}\n' +
+    '/call spaceman_message_send {"to":"operators","subject":"Settlement retry change is ready for your review","request":true,"body":"The retry budget now applies **per batch**. Tests pass; please confirm the rollout window."}\n' +
     '/write decisions.md # Decisions\\n\\n- 2026-11-02: settlement retries use a budget of 5 per batch, not per item.\\n- 2026-11-02: never retry inside the bank window (01:00-03:00 UTC).\\n\n' +
     '/write notes/settlement-client.md # Settlement client\\n\\nRetries live in `RetryBudget` (services/settlement/client/retry.go). The budget resets per batch.\\n')
   // Cross-space (ADR-0038): payments lets the docs site discover it and send questions and delegated work (replies as
@@ -956,6 +957,10 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/human')
     await expect(page.getByText('Review the wording of the refunds API reference')).toBeVisible()
     await expect(page.getByText('reminded', { exact: true }).first()).toBeVisible()
+  })
+  await capture(page, 'human-messages', async () => {
+    await page.goto('/human?tab=messages')
+    await expect(page.getByRole('listitem', { name: /Settlement retry change is ready for your review/ })).toBeVisible()
   })
   await capture(page, 'human-policies', async () => {
     await page.goto(`/spaces/${payments.id}/human`)
