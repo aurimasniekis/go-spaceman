@@ -330,7 +330,7 @@ func TestCommentOnAnEndedRequesterRoutesLikeAClarification(t *testing.T) {
 	if n := cm.Notifications[0]; n.TargetKind != TargetOperators || n.RouteReason != ReasonRequesterEnded || cm.Status != Open {
 		t.Fatalf("operators %+v (status %s)", n, cm.Status)
 	}
-	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+cm.ID+`' AND body LIKE '%The comment of human action%could not be delivered%'`) != 1 {
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+cm.ID+`' AND body LIKE '%The comment to human action%could not be delivered%'`) != 1 {
 		t.Fatal("no undeliverable message for the comment")
 	}
 }
