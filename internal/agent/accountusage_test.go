@@ -109,9 +109,9 @@ func TestStatusLineFillsWrapUpLimitOnTheWire(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.SetStatus(row.TerminalID, "idle")
-		// The idle status kicks the transcript scan; its limit report must be on the wire (and drained) before the hooks,
-		// or a scan slowed by -race lands in the window below and is counted as the hooks' report.
-		waitFor(t, "the scan's limit", func() bool { return getRun(t, a, "run_wrap").Limit.Kind != "" })
+		// The idle status kicks the transcript scan; its limit report must be seen on the wire before the hooks, or a scan
+		// slowed by -race lands in the window below and is counted as the hooks' report.
+		fc.awaitLimitReport(t, "run_wrap", 10*time.Second)
 		fc.collect(t, "run_wrap", 300*time.Millisecond)
 
 		reset := clk.Now().Add(2 * time.Hour)
@@ -144,6 +144,24 @@ func TestStatusLineFillsWrapUpLimitOnTheWire(t *testing.T) {
 		// The journal still holds the transcript's view: the fill is on the wire only.
 		if j := getRun(t, a, "run_wrap").Limit; j.ResetsAt != nil {
 			t.Fatalf("journal limit %+v", j)
+		}
+	}
+}
+
+// awaitLimitReport blocks until a report of runID carrying a limit is on the wire, or fails the test after timeout.
+func (fc *wsCentral) awaitLimitReport(t *testing.T, runID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case env := <-fc.msgs:
+			noTranscriptText(t, env)
+			var r proto.RunReport
+			if env.Type == proto.TypeRunReport && env.Decode(&r) == nil && r.RunID == runID && r.Limit != nil {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for the scan's limit report of %s", runID)
 		}
 	}
 }
