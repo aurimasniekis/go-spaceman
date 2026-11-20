@@ -13,8 +13,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   failed and lost runs, budget notices and the new categories; at most 20 per kind, with the full numbers in
   `item_counts`) and per-space counts for runs parked at a usage limit, open account limits, account switches that
   failed in the last 24 hours and incoming cross-space requests. Each needs its existing read permission, so a user
-  never sees another space's items. Human actions stay counted only. Existing fields are unchanged, but `total` now
-  includes the new categories.
+  never sees another space's items. Human actions stay counted only. Existing fields and `total` keep their meaning: the
+  new categories are not part of `total` (they are mostly information that clears by itself), and clients can sum
+  `item_counts` to include them. Harbor Pilot budget state is not included yet. The counts come from the items queries,
+  so a request makes twelve queries at most.
 - **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
   output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
   theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned

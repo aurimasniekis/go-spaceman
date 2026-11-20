@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
@@ -50,7 +51,7 @@ func TestAttentionOverHTTP(t *testing.T) {
 	seedAttentionRows(t, h, en.Node.ID, a.ID, b.ID)
 	var at api.Attention
 	root.do("GET", "/attention", nil).json(t, &at)
-	if len(at.Spaces) != 2 || at.Spaces[0].SpaceID != a.ID || at.Spaces[0].Total != 7 || !at.Spaces[0].NodeDisconnected || *at.Spaces[0].HumanPending != 1 || *at.Spaces[0].TasksBlocked != 1 {
+	if len(at.Spaces) != 2 || at.Spaces[0].SpaceID != a.ID || at.Spaces[0].Total != 3 || !at.Spaces[0].NodeDisconnected || *at.Spaces[0].HumanPending != 1 || *at.Spaces[0].TasksBlocked != 1 {
 		t.Fatalf("root spaces %+v", at.Spaces)
 	}
 	if at.Storage == nil || at.Storage.StoreState != "ok" || at.Storage.DiskTotal == 0 || at.Backups == nil || at.Backups.State != "none" || at.Outbox == nil {
@@ -205,6 +206,75 @@ func TestHumanSearchClarifyAttachmentsAndPrefsOverHTTP(t *testing.T) {
 	expect(t, op.do("PUT", "/auth/me/notification-preferences", set, "If-Match", `"0"`), 409)
 	set["min_priority"] = "p0"
 	expect(t, op.do("PUT", "/auth/me/notification-preferences", set, "If-Match", `"1"`), 422)
+}
+
+// Each new attention category is withheld on its own permission: a principal that reads a space but not its runs sees
+// no parked runs, account limits or failed switches, and one without xspace:read sees no incoming requests. No
+// built-in role lacks either permission, so the test removes them from the in-memory policy.
+func TestAttentionNewCategoriesNeedTheirOwnPermission(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	a, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "beta", Name: "Beta", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task queue.Task
+	root.do("POST", "/spaces/"+a.ID+"/tasks", map[string]any{"title": "Ship", "status": "ready"}).json(t, &task)
+	expect(t, root.do("POST", "/spaces/"+a.ID+"/tasks/"+task.ID+"/status", map[string]any{"status": "blocked", "reason": "waiting"}, "If-Match", `"1"`), 200)
+	seedAttentionRows(t, h, en.Node.ID, a.ID, b.ID)
+	expect(t, root.do("POST", "/users", map[string]any{"email": "vic@example.com", "display_name": "Vic", "password": "correct horse battery staple",
+		"grants": []map[string]string{{"role": "viewer", "domain": a.ID}}}), 201)
+	viewer := h.client()
+	viewer.bearer = loginAndIssueToken(t, h, "vic@example.com", []map[string]string{{"role": "viewer", "domain": a.ID}})
+
+	fetch := func(withhold ...authz.Permission) api.Attention {
+		t.Helper()
+		if err := h.c.Authz.Reload(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.c.Authz.WithholdForTest(withhold...); err != nil {
+			t.Fatal(err)
+		}
+		var at api.Attention
+		viewer.do("GET", "/attention", nil).json(t, &at)
+		return at
+	}
+	const all = "account_limit account_switch_failed run_parked task_blocked xspace_request"
+	if at := fetch(); attentionKinds(at.Items, a.ID) != all || at.Spaces[0].Total != 1 {
+		t.Fatalf("full reader %q %+v", attentionKinds(at.Items, a.ID), at.Spaces)
+	}
+	at := fetch(authz.RunRead)
+	if got := attentionKinds(at.Items, a.ID); got != "task_blocked xspace_request" {
+		t.Fatalf("without run:read: %q", got)
+	}
+	s := at.Spaces[0]
+	if s.RunsParked != nil || s.AccountLimits != nil || s.AccountSwitchFails != nil || s.XSpaceIncoming == nil {
+		t.Fatalf("without run:read, counts %+v", s)
+	}
+	if at.ItemCounts["run_parked"] != 0 || at.ItemCounts["account_limit"] != 0 || at.ItemCounts["account_switch_failed"] != 0 || at.ItemCounts["xspace_request"] != 1 {
+		t.Fatalf("without run:read, item counts %+v", at.ItemCounts)
+	}
+	at = fetch(authz.XSpaceRead)
+	if got := attentionKinds(at.Items, a.ID); got != "account_limit account_switch_failed run_parked task_blocked" {
+		t.Fatalf("without xspace:read: %q", got)
+	}
+	s = at.Spaces[0]
+	if s.XSpaceIncoming != nil || s.RunsParked == nil || s.AccountLimits == nil || s.AccountSwitchFails == nil || at.ItemCounts["xspace_request"] != 0 || at.ItemCounts["run_parked"] != 1 {
+		t.Fatalf("without xspace:read, counts %+v %+v", s, at.ItemCounts)
+	}
+	at = fetch(authz.RunRead, authz.XSpaceRead)
+	if got := attentionKinds(at.Items, a.ID); got != "task_blocked" || at.Spaces[0].Total != 1 {
+		t.Fatalf("without both: %q %+v", got, at.Spaces)
+	}
 }
 
 // attentionKinds lists the sorted distinct item kinds of one space.

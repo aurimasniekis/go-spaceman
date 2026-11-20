@@ -298,7 +298,7 @@ export interface paths {
         };
         /**
          * What needs a person
-         * @description One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, parked runs, open account limits, failed account switches, incoming cross-space requests, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. `items` names the newest of each kind (at most 20 per kind, counts in `item_counts`). Computed on request (no network I/O, one or two queries per category); clients refresh it when the change feed reports a change.
+         * @description One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, parked runs, open account limits, failed account switches, incoming cross-space requests, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. `items` names the newest of each kind (at most 20 per kind, counts in `item_counts`). Parked runs, account limits, failed switches and incoming requests are not part of `total`. Harbor Pilot budget state is not included yet. Computed on request (no network I/O, one query per category, twelve at most); clients refresh it when the change feed reports a change.
          */
         get: operations["get-attention"];
         put?: never;
@@ -5385,7 +5385,10 @@ export interface components {
             /** @description Readable spaces with at least one item, most items first */
             spaces: components["schemas"]["AttentionSpace"][];
             storage?: components["schemas"]["AttentionStorage"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Items that need a person; does not include parked runs, account limits, failed account switches or incoming cross-space requests
+             */
             total: number;
         };
         AttentionBackups: {
@@ -5498,7 +5501,7 @@ export interface components {
             tasks_failed?: number;
             /**
              * Format: int64
-             * @description Items in this space that need a person (the counts above, without the unassigned and overdue subsets)
+             * @description Items in this space that need a person (the counts above, without the unassigned and overdue subsets and without the parked, account-limit, account-switch and cross-space counts, which are watch information; sum item_counts to include them)
              */
             total: number;
             /**
