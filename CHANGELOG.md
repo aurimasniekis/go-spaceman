@@ -92,6 +92,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - **A body with several diagrams no longer freezes the page for over 2 s.** Queued diagram renders ran back to back as one
   long task; they now yield to the page between two renders (diagrams since v0.1.5).
+- **Two concurrent observes of a run no longer report out of order.** An observe sent the report it had built before
+  it waited for the send lock, so of two concurrent observes the one that sent last could send the older state. The
+  report is now read from the journal under the send lock, as the other report paths do.
 - **A dialog flag raised again after it cleared is read again after the quiet period.** A flag that cleared through
   the run's observed working status kept its re-read backoff, so a flag raised again with no output was only re-read
   up to five minutes later instead of after the first quiet period. The backoff now ends with the flag.
