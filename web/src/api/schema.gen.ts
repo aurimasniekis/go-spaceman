@@ -6916,6 +6916,8 @@ export interface components {
             /** @description The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core */
             grant: string;
             id: string;
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. An own event is ingested only at automation depth 0 (spaceman-depth absent), so nothing ingestion caused is ever ingested again, and event_depth still applies. */
+            ingest_own: boolean;
             last_error?: string;
             /** Format: date-time */
             last_event_at?: string;
@@ -12639,6 +12641,8 @@ export interface components {
             delivery?: "durable" | "core";
             /** @enum {string} */
             follow?: "pinned" | "latest";
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, and event_depth still applies. */
+            ingest_own?: boolean;
             name: string;
             /** @description Where the consumer starts; default new (no history). Core subscriptions accept only new. */
             start?: components["schemas"]["EventsCursor"];
@@ -12663,6 +12667,8 @@ export interface components {
             enabled: boolean;
             /** @enum {string} */
             follow?: "pinned" | "latest";
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, and event_depth still applies. Omitted: unchanged; a subject change keeps it only on an allowed subject. */
+            ingest_own?: boolean;
             name?: string;
             /** @description Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor. */
             start?: components["schemas"]["EventsCursor"];

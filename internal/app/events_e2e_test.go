@@ -230,3 +230,59 @@ func TestCoreSubscriptionEndToEnd(t *testing.T) {
 		return strings.Contains(scrape(), `spaceman_ingest_subscriptions{delivery="core",state="running"} 1`)
 	})
 }
+
+// ADR-0104 over HTTP: ingest_own is accepted for an allow-listed run dialog subject and shown on the subscription;
+// the API refuses it (422 validation_failed, naming the allow-list) for an inbox or task subject, and refuses an
+// update that keeps it while moving the subscription off the allow-list.
+func TestIngestOwnOverHTTP(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	nats := pulsetest.Start(t)
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	actor := audit.Actor{Type: audit.ActorUser, ID: "usr_test"}
+	en, _ := h.c.Fleet.CreateNode(ctx, actor, fleet.CreateNodeInput{Name: "node-a"})
+	sp, err := h.c.Fleet.CreateSpace(ctx, actor, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conn events.Connection
+	r := root.do("POST", "/event-connections", map[string]any{"name": "pulse", "url": nats.URL, "creds": string(nats.Creds("spaceman")), "enabled": true})
+	expect(t, r, 201)
+	r.json(t, &conn)
+	custom := func(subject string) map[string]any {
+		return map[string]any{"subject": subject, "title": "Dialog {{data.dialog_id}}", "body": "{{data | json}}", "variables": []any{}, "filters": []any{}}
+	}
+	for _, subject := range []string{"evt.spaceman.inbox.item.created", "evt.spaceman.queue.task.created", "evt.spaceman.fleet.run.*"} {
+		p := root.do("POST", "/spaces/"+sp.ID+"/subscriptions", map[string]any{"name": "own", "connection_id": conn.ID, "custom": custom(subject),
+			"ingest_own": true}).problem(t)
+		if p.Status != 422 || p.Code != "validation_failed" || !strings.Contains(p.Detail, "ingest_own is not allowed for subject "+subject) ||
+			!strings.Contains(p.Detail, "evt.spaceman.fleet.run.dialog_detected, evt.spaceman.fleet.run.dialog_cleared") {
+			t.Fatalf("%s: %+v", subject, p)
+		}
+	}
+
+	r = root.do("POST", "/spaces/"+sp.ID+"/subscriptions", map[string]any{"name": "dialogs", "connection_id": conn.ID,
+		"custom": custom("evt.spaceman.fleet.run.dialog_detected"), "ingest_own": true})
+	expect(t, r, 201)
+	var sub events.Subscription
+	r.json(t, &sub)
+	if !sub.IngestOwn || sub.Subject != "evt.spaceman.fleet.run.dialog_detected" {
+		t.Fatalf("subscription %+v", sub)
+	}
+	// Omitted on update: kept, so moving the subject to the inbox is refused; giving it up in the same update works.
+	p := root.do("PUT", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID, map[string]any{"enabled": true, "custom": custom("evt.spaceman.inbox.item.created"),
+		"start": map[string]any{"policy": "new", "replay": false, "generation": 0}}, "If-Match", `"1"`).problem(t)
+	if p.Status != 422 || !strings.Contains(p.Detail, "ingest_own is not allowed") {
+		t.Fatalf("subject change keeping ingest_own: %+v", p)
+	}
+	r = root.do("PUT", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID, map[string]any{"enabled": true, "custom": custom("evt.spaceman.inbox.item.created"),
+		"start": map[string]any{"policy": "new", "replay": false, "generation": 0}, "ingest_own": false}, "If-Match", `"1"`)
+	expect(t, r, 200)
+	r.json(t, &sub)
+	if sub.IngestOwn {
+		t.Fatalf("after opting out: %+v", sub)
+	}
+}

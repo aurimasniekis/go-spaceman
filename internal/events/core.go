@@ -97,9 +97,13 @@ func (m *Manager) handleCore(ctx context.Context, subID, spaceID string, msg *na
 		e.Time = m.svc.o.Clock.Now().UTC() // no ce-time: when SpaceMan received it
 	}
 	var err error
+	admitted := true
+	if m.svc.ownEvent(e) {
+		admitted, err = m.svc.admitOwn(ctx, subID, fromPulse(e), 0)
+	}
 	switch {
-	case m.svc.ownEvent(e):
-		err = m.svc.skipOwn(ctx, subID, fromPulse(e), 0)
+	case !admitted:
+		// Filtered (recorded by admitOwn) or not recorded (err).
 	case m.throttle(ctx, subID, spaceID, true) != nil:
 		if ctx.Err() == nil {
 			m.svc.observe(DeliveryCore, OriginLive, "", errThrottled, -1)
