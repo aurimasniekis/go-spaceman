@@ -57,8 +57,12 @@ ORDER BY r.harness;
 SELECT id, name FROM spaces WHERE id IN (SELECT value FROM json_each(sqlc.arg(ids))) ORDER BY id;
 
 -- name: ListBoundAccountNames :many
--- Names of the given accounts that are bound to at least one of the given spaces (or to any space when spaces is NULL).
+-- Names of the given accounts that are bound to at least one of the given spaces (or to any space when spaces is NULL),
+-- directly or through a role pool: the rule of ListAllAccountBindings (the account-windows view).
 SELECT a.id, a.name FROM accounts a
-WHERE a.id IN (SELECT value FROM json_each(sqlc.arg(ids))) AND EXISTS (SELECT 1 FROM space_accounts sa WHERE sa.account_id = a.id
-  AND (sqlc.narg(spaces) IS NULL OR sa.space_id IN (SELECT value FROM json_each(sqlc.narg(spaces)))))
+WHERE a.id IN (SELECT value FROM json_each(sqlc.arg(ids))) AND (
+  EXISTS (SELECT 1 FROM space_accounts sa WHERE sa.account_id = a.id
+    AND (sqlc.narg(spaces) IS NULL OR sa.space_id IN (SELECT value FROM json_each(sqlc.narg(spaces)))))
+  OR EXISTS (SELECT 1 FROM space_role_accounts ra WHERE ra.account_id = a.id
+    AND (sqlc.narg(spaces) IS NULL OR ra.space_id IN (SELECT value FROM json_each(sqlc.narg(spaces))))))
 ORDER BY a.id;

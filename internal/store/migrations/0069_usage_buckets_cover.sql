@@ -3,6 +3,10 @@
 -- of 200k rows); this index carries the counters, so the sum reads the index alone. It replaces the time index: its
 -- leading columns are the same (granularity, bucket_start), so the retention roll-up and pruning use it as before.
 --
+-- Cost: the index holds every column of the WITHOUT ROWID table, so it roughly doubles the ledger's size on disk, and
+-- because the counters are now index columns every usage upsert rewrites an index entry (before, only an insert did).
+-- Ledger volumes are small (one row per space, account, role, harness, model and bucket), so this is accepted (ADR-0103).
+--
 -- Rollback (additive, nothing else depends on it): DROP INDEX ix_usage_buckets_time_cover; then
 -- CREATE INDEX ix_usage_buckets_time ON usage_buckets (granularity, bucket_start);
 

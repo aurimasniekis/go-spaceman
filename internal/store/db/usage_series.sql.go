@@ -74,8 +74,11 @@ func (q *Queries) CountUnledgeredRuns(ctx context.Context, arg CountUnledgeredRu
 
 const listBoundAccountNames = `-- name: ListBoundAccountNames :many
 SELECT a.id, a.name FROM accounts a
-WHERE a.id IN (SELECT value FROM json_each(?1)) AND EXISTS (SELECT 1 FROM space_accounts sa WHERE sa.account_id = a.id
-  AND (?2 IS NULL OR sa.space_id IN (SELECT value FROM json_each(?2))))
+WHERE a.id IN (SELECT value FROM json_each(?1)) AND (
+  EXISTS (SELECT 1 FROM space_accounts sa WHERE sa.account_id = a.id
+    AND (?2 IS NULL OR sa.space_id IN (SELECT value FROM json_each(?2))))
+  OR EXISTS (SELECT 1 FROM space_role_accounts ra WHERE ra.account_id = a.id
+    AND (?2 IS NULL OR ra.space_id IN (SELECT value FROM json_each(?2)))))
 ORDER BY a.id
 `
 
@@ -89,7 +92,8 @@ type ListBoundAccountNamesRow struct {
 	Name string
 }
 
-// Names of the given accounts that are bound to at least one of the given spaces (or to any space when spaces is NULL).
+// Names of the given accounts that are bound to at least one of the given spaces (or to any space when spaces is NULL),
+// directly or through a role pool: the rule of ListAllAccountBindings (the account-windows view).
 func (q *Queries) ListBoundAccountNames(ctx context.Context, arg ListBoundAccountNamesParams) ([]ListBoundAccountNamesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listBoundAccountNames, arg.Ids, arg.Spaces)
 	if err != nil {

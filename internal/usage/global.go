@@ -163,7 +163,7 @@ func (svc *Service) GlobalSeries(ctx context.Context, q SeriesQuery, f Filter, s
 	}
 	r := svc.s.R()
 	// The totals of the range are summed while the page is read.
-	totals := svc.startTotals(ctx, db.SumUsageTotalsParams{Grans: p.Grans, FromUs: from, ToUs: to, Spaces: p.Spaces, Accounts: p.Accounts,
+	totals := svc.startTotals(ctx, bucketUS, db.SumUsageTotalsParams{Grans: p.Grans, FromUs: from, ToUs: to, Spaces: p.Spaces, Accounts: p.Accounts,
 		Models: p.Models, Roles: p.Roles, Harnesses: p.Harnesses})
 	// A page is read in windows of whole buckets that double in length until it is full: SQLite sorts each window's
 	// groups in a temporary B-tree, so a page sorts about as many rows as it returns, not the whole range's.
@@ -213,18 +213,33 @@ func (svc *Service) GlobalSeries(ctx context.Context, q SeriesQuery, f Filter, s
 // on a large range the sum is the slowest part of a page; reader connections run in parallel.
 const totalSlices = 4
 
-// startTotals starts summing the totals of the range, in totalSlices parallel reads over consecutive parts of it, and
-// returns a function that waits for them. The caller must call it before returning.
-func (svc *Service) startTotals(ctx context.Context, p db.SumUsageTotalsParams) func() (Row, error) {
+// sliceBounds splits [from, to) into totalSlices consecutive parts. Each interior boundary is rounded down to a whole
+// bucket: the retention roll-up replaces a day's hour rows by one day row in a single transaction, and the slices are
+// separate read transactions, so a boundary inside a bucket could count that day twice or drop its later hours.
+func sliceBounds(from, to, bucketUS int64) [totalSlices + 1]int64 {
+	var b [totalSlices + 1]int64
+	b[0], b[totalSlices] = from, to
+	span := to - from
+	for i := 1; i < totalSlices; i++ {
+		x := from + span*int64(i)/totalSlices
+		x -= ((x % bucketUS) + bucketUS) % bucketUS
+		b[i] = min(max(x, from), to)
+	}
+	return b
+}
+
+// startTotals starts summing the totals of the range, in totalSlices parallel reads over consecutive parts of it
+// (bucket-aligned, see sliceBounds), and returns a function that waits for them. The caller must call it before returning.
+func (svc *Service) startTotals(ctx context.Context, bucketUS int64, p db.SumUsageTotalsParams) func() (Row, error) {
 	var (
 		wg   sync.WaitGroup
 		res  [totalSlices]db.SumUsageTotalsRow
 		errs [totalSlices]error
 	)
-	span := p.ToUs - p.FromUs
+	bounds := sliceBounds(p.FromUs, p.ToUs, bucketUS)
 	for i := range totalSlices {
 		q := p
-		q.FromUs, q.ToUs = p.FromUs+span*int64(i)/totalSlices, p.FromUs+span*int64(i+1)/totalSlices
+		q.FromUs, q.ToUs = bounds[i], bounds[i+1]
 		wg.Go(func() { res[i], errs[i] = svc.s.R().SumUsageTotals(ctx, q) })
 	}
 	return func() (Row, error) {

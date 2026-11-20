@@ -109,6 +109,21 @@ func TestUsageSeriesAPIIsolation(t *testing.T) {
 		return tok
 	}
 	viewerA := mkToken("sera@example.com", []auth.GrantInput{{Role: authz.RoleViewer, Domain: spA.ID}})
+	// A user with a global grant whose token is narrowed to space A: the token's reach, not the user's, decides.
+	narrowedA := func() string {
+		t.Helper()
+		u, err := e.c.Auth.Create(ctx, audit.System, auth.CreateInput{Email: "sernarrow@example.com", DisplayName: "narrow",
+			Grants: []auth.GrantInput{{Role: authz.RoleAdmin, Domain: authz.Global}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, _ = e.c.Auth.Get(ctx, u.ID)
+		_, tok, err := e.c.Auth.CreateAPIToken(ctx, &auth.Principal{User: u}, "narrow", []auth.GrantInput{{Role: authz.RoleViewer, Domain: spA.ID}}, 24*time.Hour, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tok
+	}()
 	viewerC := mkToken("serc@example.com", []auth.GrantInput{{Role: authz.RoleViewer, Domain: spC.ID}})
 	adminAll := mkToken("seradm@example.com", []auth.GrantInput{{Role: authz.RoleAdmin, Domain: authz.Global}})
 
@@ -165,6 +180,20 @@ func TestUsageSeriesAPIIsolation(t *testing.T) {
 			for k, v := range f {
 				q[k] = v
 			}
+			for _, who := range []struct{ name, tok string }{{"viewer A", viewerA}, {"narrowed token", narrowedA}} {
+				if st, p, body := get(who.tok, q); st != http.StatusOK || p.GroupBy != group || p.Totals.In >= 1_000_000 {
+					t.Fatalf("%s %s: %d %s", who.name, name, st, body)
+				} else if len(p.Items) > 0 || p.Totals.In > 0 {
+					for _, b := range bOnly {
+						if strings.Contains(body, b) {
+							t.Fatalf("%s %s: response names %q of space B: %s", who.name, name, b, body)
+						}
+					}
+					if _, v, _ := get(viewerA, q); v.Totals.In != p.Totals.In {
+						t.Fatalf("%s %s: totals %d differ from viewer A's %d", who.name, name, p.Totals.In, v.Totals.In)
+					}
+				}
+			}
 			st, p, body := get(viewerA, q)
 			if st != http.StatusOK || p.GroupBy != group {
 				t.Fatalf("%s: %d %s", name, st, body)
@@ -205,6 +234,17 @@ func TestUsageSeriesAPIIsolation(t *testing.T) {
 	}
 	if _, p, body := get(viewerA, url.Values{"group_by": {"account"}}); p.Labels[accA] != "acc-only-a" || p.Labels[accS] != "acc-shared" || len(p.Items) != 3 {
 		t.Fatalf("viewer A by account: %s", body)
+	}
+	// The narrowed token sees exactly what viewer A sees, although its user holds a global grant.
+	if _, p, body := get(narrowedA, url.Values{"group_by": {"space"}}); p.Totals.In != 30 || len(p.Items) != 1 || p.Labels[spA.ID] != "Series A" || len(p.Labels) != 1 ||
+		len(p.NotCounted) != 1 || p.NotCounted[0].Runs != 1 {
+		t.Fatalf("narrowed token by space: %s", body)
+	}
+	if _, p, body := get(narrowedA, url.Values{"group_by": {"account"}}); p.Labels[accA] != "acc-only-a" || p.Labels[accS] != "acc-shared" || p.Labels[accB] != "" || len(p.Items) != 3 {
+		t.Fatalf("narrowed token by account: %s", body)
+	}
+	if st, p, body := get(narrowedA, url.Values{"space_id": {spB.ID}}); st != http.StatusOK || p.Totals.In != 0 || len(p.Items) != 0 || len(p.NotCounted) != 0 {
+		t.Fatalf("narrowed token naming space B: %d %s", st, body)
 	}
 	// The global reader sees both spaces and every Codex run.
 	if _, p, body := get(adminAll, url.Values{"group_by": {"space"}}); p.Totals.In != 30+4_000_000 || len(p.Items) != 2 || p.Labels[spB.ID] != "Series B" ||
@@ -263,8 +303,8 @@ func TestUsageSeriesAPIIsolation(t *testing.T) {
 		"cursor":            {"cursor": {"bogus"}},
 		"hours over 31days": {"from": {now.Add(-40 * 24 * time.Hour).Format(time.RFC3339)}},
 	} {
-		if st, _, body := get(viewerA, q); st != http.StatusUnprocessableEntity && st != http.StatusBadRequest {
-			t.Errorf("%s: %d %s", name, st, body)
+		if st, _, body := get(viewerA, q); st != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d, want 422: %s", name, st, body)
 		}
 	}
 	// 90 days of days is accepted.
