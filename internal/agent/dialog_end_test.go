@@ -182,3 +182,23 @@ func TestDialogKnownDialogRunEndsDuringAnswer(t *testing.T) {
 		t.Fatalf("outcomes %v", got)
 	}
 }
+
+// A run that ended while its screen was read is not flagged, even when its end hooks have not dropped the watch yet
+// (they wait for the run's dialog lock, which the check holds).
+func TestDialogEndedDuringReadIsNotFlaggedBeforeForget(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	var once sync.Once
+	var read atomic.Bool
+	e.f.OnReadScreen = func(string) {
+		once.Do(func() {
+			e.endRun() // the watch stays: runEndHooks would wait for the lock
+			read.Store(true)
+		})
+	}
+	e.show(fixture(t, "claude-unknown.txt"))
+	waitFor(t, "read", read.Load)
+	quiet()
+	if got := e.outcomes(); len(got) != 0 {
+		t.Fatalf("an ended run was flagged: %v", got)
+	}
+}

@@ -191,3 +191,19 @@ func TestRunEndClearsOpenDialogs(t *testing.T) {
 		t.Fatalf("%d audit events, want 2", n)
 	}
 }
+
+// A blocked or answered dialog that reaches central after its run ended is not recorded: the end closed what was open,
+// and a new open occurrence of an ended run would only be a notice nobody can act on.
+func TestRunDialogAfterRunEndIgnored(t *testing.T) {
+	e, told, send := newFleetDialogEnv(t)
+	e.report("run_d", "spc_a", 1, proto.RunExited, nil)
+	d := blockedDialog()
+	d.DetectedAt = e.t0
+	send(d, proto.MinorDialog)
+	a := proto.RunDialog{ID: ids.New(ids.Dialog), RunID: "run_d", SpaceID: "spc_a", Generation: 1, Outcome: proto.DialogAnswered,
+		Dialog: "claude.code_mode_optin", Signal: "screen_known", Answer: "no", DetectedAt: e.t0}
+	send(a, proto.MinorDialog)
+	if n := e.count(`SELECT count(*) FROM run_dialogs`); n != 0 || len(*told) != 0 {
+		t.Fatalf("%d rows, told %d", n, len(*told))
+	}
+}

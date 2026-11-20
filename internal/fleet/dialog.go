@@ -79,6 +79,9 @@ func (svc *Service) runDialog(ctx context.Context, nodeID string, d proto.RunDia
 		if r.NodeID != nodeID || r.SpaceID != d.SpaceID || r.Generation != d.Generation {
 			return nil
 		}
+		if d.Outcome != proto.DialogCleared && ended(r.Observed) {
+			return nil // a dialog message that reaches central after its run ended (the end already closed what was open)
+		}
 		actor := audit.Actor{Type: audit.ActorNode, ID: nodeID}
 		details := map[string]any{"space_id": r.SpaceID, "dialog_id": d.ID, "dialog": d.Dialog, "signal": d.Signal}
 		ev := outbox.RunDialog{Run: outboxRun(r), DialogID: d.ID, Dialog: d.Dialog, Signal: d.Signal, HarnessVersion: d.HarnessVersion,

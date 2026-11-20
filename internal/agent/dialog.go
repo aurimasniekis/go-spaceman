@@ -270,6 +270,11 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 		log.Debug("dialog watch: read the screen", obs.Err(err))
 		return
 	}
+	// The run may have ended while its screen was read. Its end hooks wait for this lock before they drop the watch, so
+	// the watch alone does not tell: the journal does. Nothing is flagged, answered or typed for an ended run.
+	if cur, err := a.j.getRun(ctx, runID); err == nil && ended(cur.State) {
+		return
+	}
 	res := dialog.Classify(text, a.dialogContext(row))
 	switch res.Kind {
 	case dialog.None:
