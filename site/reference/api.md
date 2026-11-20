@@ -172,6 +172,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
 | `GET` | `/account-kinds` | `list-account-kinds` | Supported credential kinds and the harness each one is for |
+| `GET` | `/account-windows` | `list-account-windows` | The usage windows and open limits of the accounts bound to the spaces you can read |
 | `GET` | `/accounts` | `list-accounts` | Harness accounts (never their secrets) |
 | `POST` | `/accounts` | `create-account` | Add a harness account |
 | `DELETE` | `/accounts/{account_id}` | `delete-account` | Delete an account and its bindings |

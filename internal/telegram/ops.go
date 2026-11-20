@@ -14,6 +14,7 @@ var Ops = map[string]api.TelegramClass{
 	"get-space-usage-series":     api.TelegramBoth,
 	"get-usage-series":           api.TelegramBoth,
 	"list-space-account-windows": api.TelegramBoth,
+	"list-account-windows":       api.TelegramBoth,
 	"get-account-usage":          api.TelegramBoth,
 	"get-account-windows":        api.TelegramBoth,
 	"get-space":                  api.TelegramBoth,

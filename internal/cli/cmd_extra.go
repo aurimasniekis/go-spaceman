@@ -229,6 +229,8 @@ func (a *App) usageCmd() *cobra.Command {
 		a.cmd(opts{use: "space", short: "A space's usage over time, grouped by role, account, model or harness", op: "get-space-usage-series", args: spaceArg(), paged: true,
 			query: append(usageQuery(), qs("group-by", "group_by", "role (default), account, model or harness")),
 			view:  view{items: "items", cols: usageCols, empty: "No usage in this range."}}),
+		a.cmd(opts{use: "windows", short: "The windows and open limits of every account bound to a space you can read", op: "list-account-windows",
+			view: view{items: "items", cols: windowCols, empty: "No accounts bound."}}),
 		a.cmd(opts{use: "account", short: "An account's usage over time in the spaces you can read, grouped by space, role or model", op: "get-account-usage",
 			args: pos("account"), paged: true, query: append(usageQuery(), qs("group-by", "group_by", "space (default), role or model")),
 			view: view{items: "items", cols: usageCols, empty: "No usage in this range."}}),

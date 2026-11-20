@@ -479,6 +479,7 @@ var Table = map[string]Entry{
 	"get-account-usage":          {Read, rRead},
 	"get-account-windows":        {Read, rRead},
 	"list-space-account-windows": {Read, rRead},
+	"list-account-windows":       {Read, rFiltered},
 
 	// Users. The step-up writes are excluded by their rule; these entries are what they fall back to.
 	"get-user":             {Excluded, rUsers},

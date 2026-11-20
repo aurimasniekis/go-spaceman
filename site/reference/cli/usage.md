@@ -9,6 +9,7 @@ Usage over time from the ledger: tokens first, cost as a list-price estimate.
 | [`spaceman usage account`](#spaceman-usage-account) | An account's usage over time in the spaces you can read, grouped by space, role or model |
 | [`spaceman usage all`](#spaceman-usage-all) | Usage over time across the spaces you can read, grouped by space, account, model, role or harness |
 | [`spaceman usage space`](#spaceman-usage-space) | A space's usage over time, grouped by role, account, model or harness |
+| [`spaceman usage windows`](#spaceman-usage-windows) | The windows and open limits of every account bound to a space you can read |
 
 ## spaceman usage account
 
@@ -80,4 +81,14 @@ API: `get-space-usage-series` ([HTTP API](../api)).
 | `--group-by` | string |  | role (default), account, model or harness |
 | `--limit` | integer |  | maximum number of items |
 | `--to` | string |  | end of the range, RFC 3339 (default: now) |
+
+## spaceman usage windows
+
+The windows and open limits of every account bound to a space you can read.
+
+```sh
+spaceman usage windows [flags]
+```
+
+API: `list-account-windows` ([HTTP API](../api)).
 

@@ -16,6 +16,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   isn't read as zero. A 90-day daily range works as before. The sums run in SQL, and migration 0069 replaces the
   ledger's time index with a covering one so they read the index alone (30 days of 200k rows by space: about 50 ms).
   See ADR-0103.
+- **One call lists the usage windows of every account you can see.** `GET /account-windows` (and `spaceman usage
+  windows`) returns each subscription account bound, directly or through a role pool, to a space you can read
+  (`run:read`), once, with its name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound
+  only to spaces you can't read is not listed and its name isn't disclosed. It reads stored state only and fetches
+  nothing from a provider. The Usage page will build on it.
+- **`GET /attention` names what needs a person and covers four more categories.** The response gains `items[]`
+  (kind, severity, space, title, since and a link target for blocked and failed tasks, quarantined events, unknown,
+  failed and lost runs, budget notices and the new categories; at most 20 per kind, with the full numbers in
+  `item_counts`) and per-space counts for runs parked at a usage limit, open account limits, account switches that
+  failed in the last 24 hours and incoming cross-space requests. Each needs its existing read permission, so a user
+  never sees another space's items. Human actions stay counted only. Existing fields and `total` keep their meaning: the
+  new categories are not part of `total` (they are mostly information that clears by itself), and clients can sum
+  `item_counts` to include them. Harbor Pilot budget state is not included yet. The counts come from the items queries,
+  so a request makes twelve queries at most.
 - **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
   output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
   theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned

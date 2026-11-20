@@ -77,6 +77,30 @@
         ],
         "type": "object"
       },
+      "AccountWindowsList": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AccountWindowsList.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageAccountState"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "AccountsAccount": {
         "additionalProperties": false,
         "properties": {
@@ -760,6 +784,21 @@
             "format": "date-time",
             "type": "string"
           },
+          "item_counts": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "Full number of items per kind in readable spaces, to tell a truncated list",
+            "type": "object"
+          },
+          "items": {
+            "description": "The newest items per kind in readable spaces (at most 20 per kind), newest first. Human actions are counted but not listed. Nodes and storage are in their own sections",
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "type": "array"
+          },
           "nodes": {
             "description": "Active nodes that are not connected (node:read)",
             "items": {
@@ -781,12 +820,15 @@
             "$ref": "#/components/schemas/AttentionStorage"
           },
           "total": {
+            "description": "Items that need a person; does not include parked runs, account limits, failed account switches or incoming cross-space requests",
             "format": "int64",
             "type": "integer"
           }
         },
         "required": [
           "spaces",
+          "items",
+          "item_counts",
           "total",
           "checked_at"
         ],
@@ -839,6 +881,60 @@
         "required": [
           "name",
           "status"
+        ],
+        "type": "object"
+      },
+      "AttentionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "task_blocked",
+              "task_failed",
+              "quarantine",
+              "run_unknown",
+              "run_failed",
+              "budget_notice",
+              "run_parked",
+              "account_limit",
+              "account_switch_failed",
+              "xspace_request"
+            ],
+            "type": "string"
+          },
+          "severity": {
+            "description": "act: someone has to do something; watch: it may resolve itself",
+            "enum": [
+              "act",
+              "watch"
+            ],
+            "type": "string"
+          },
+          "since": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/AttentionTarget"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "severity",
+          "id",
+          "space_id",
+          "title",
+          "since",
+          "target"
         ],
         "type": "object"
       },
@@ -901,6 +997,16 @@
       "AttentionSpace": {
         "additionalProperties": false,
         "properties": {
+          "account_limits": {
+            "description": "Open account usage limits as this space sees them",
+            "format": "int64",
+            "type": "integer"
+          },
+          "account_switches_failed": {
+            "description": "Account switches that failed in the last 24 hours",
+            "format": "int64",
+            "type": "integer"
+          },
           "budget_exceeded": {
             "format": "int64",
             "type": "integer"
@@ -939,6 +1045,11 @@
             "format": "int64",
             "type": "integer"
           },
+          "runs_parked": {
+            "description": "Runs parked at a usage limit or for a restart that still wait to come back",
+            "format": "int64",
+            "type": "integer"
+          },
           "runs_unknown": {
             "format": "int64",
             "type": "integer"
@@ -974,7 +1085,12 @@
             "type": "integer"
           },
           "total": {
-            "description": "Items in this space that need a person (the counts above, without the unassigned and overdue subsets)",
+            "description": "Items in this space that need a person (the counts above, without the unassigned and overdue subsets and without the parked, account-limit, account-switch and cross-space counts, which are watch information; sum item_counts to include them)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "xspace_incoming": {
+            "description": "Cross-space requests from other spaces waiting for a decision",
             "format": "int64",
             "type": "integer"
           }
@@ -1050,6 +1166,33 @@
           "disk_reserve_bytes",
           "below_reserve",
           "problem"
+        ],
+        "type": "object"
+      },
+      "AttentionTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "task",
+              "run",
+              "subscription",
+              "space_usage",
+              "space_budget",
+              "xspace_request"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "space_id"
         ],
         "type": "object"
       },
@@ -20164,6 +20307,41 @@
         ],
         "type": "object"
       },
+      "UsageAccountState": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "limits": {
+            "description": "Open usage limits, oldest first; empty when none",
+            "items": {
+              "$ref": "#/components/schemas/UsageLimit"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "windows": {
+            "description": "The latest 5-hour and 7-day windows; empty when no run has reported one",
+            "items": {
+              "$ref": "#/components/schemas/UsageWindow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "account_id",
+          "name",
+          "windows",
+          "limits"
+        ],
+        "type": "object"
+      },
       "UsageAccountWindows": {
         "additionalProperties": false,
         "properties": {
@@ -20275,6 +20453,28 @@
           "costs",
           "requests",
           "unknown_usage_requests"
+        ],
+        "type": "object"
+      },
+      "UsageLimit": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "seen_at": {
+            "description": "When a run first reported the limit",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "seen_at"
         ],
         "type": "object"
       },
@@ -21087,6 +21287,39 @@
         "summary": "Supported credential kinds and the harness each one is for",
         "tags": [
           "accounts"
+        ]
+      }
+    },
+    "/account-windows": {
+      "get": {
+        "description": "Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. An account bound only to other spaces is absent.",
+        "operationId": "list-account-windows",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountWindowsList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The usage windows and open limits of the accounts bound to the spaces you can read",
+        "tags": [
+          "accounts",
+          "usage"
         ]
       }
     },
@@ -21946,7 +22179,7 @@
     },
     "/attention": {
       "get": {
-        "description": "One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. Computed on request (one query per category); clients refresh it when the change feed reports a change.",
+        "description": "One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, parked runs, open account limits, failed account switches, incoming cross-space requests, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. `items` names the newest of each kind (at most 20 per kind, counts in `item_counts`). Parked runs, account limits, failed switches and incoming requests are not part of `total`. Harbor Pilot budget state is not included yet. Computed on request (no network I/O, one query per category, twelve at most); clients refresh it when the change feed reports a change.",
         "operationId": "get-attention",
         "parameters": [
           {

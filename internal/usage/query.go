@@ -352,3 +352,84 @@ func (svc *Service) SpaceWindows(ctx context.Context, spaceID string) ([]Account
 func (r Row) CursorKey() (string, string) {
 	return strconv.FormatInt(r.BucketStart.UnixMicro(), 10), "g:" + r.Group
 }
+
+// Limit is an open usage limit on an account (ADR-0079): the hold applies in every space bound to the account.
+type Limit struct {
+	Kind     string     `json:"kind"`
+	ResetsAt *time.Time `json:"resets_at,omitempty"`
+	SeenAt   time.Time  `json:"seen_at" doc:"When a run first reported the limit"`
+}
+
+// AccountState is one account's windows and open limits, for the cross-space view.
+type AccountState struct {
+	AccountID string   `json:"account_id"`
+	Name      string   `json:"name"`
+	Harness   string   `json:"harness,omitempty"`
+	Windows   []Window `json:"windows" doc:"The latest 5-hour and 7-day windows; empty when no run has reported one"`
+	Limits    []Limit  `json:"limits" doc:"Open usage limits, oldest first; empty when none"`
+}
+
+// AllAccountStates returns every account bound (to a space or a role pool) to at least one space that visible accepts,
+// once each, with its latest windows and open limits. It reads stored state only: no network and no probe. An account
+// whose bindings are all in other spaces is absent, so its name is never disclosed.
+func (svc *Service) AllAccountStates(ctx context.Context, visible func(spaceID string) bool) ([]AccountState, error) {
+	r := svc.s.R()
+	bs, err := r.ListAllAccountBindings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []AccountState{}
+	idx := map[string]int{}
+	for _, b := range bs {
+		if !visible(b.SpaceID) {
+			continue
+		}
+		i, ok := idx[b.AccountID]
+		if !ok {
+			i = len(out)
+			idx[b.AccountID] = i
+			out = append(out, AccountState{AccountID: b.AccountID, Name: b.AccountName, Windows: []Window{}, Limits: []Limit{}})
+		}
+		if out[i].Harness == "" {
+			out[i].Harness = b.Harness
+		}
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	ws, err := r.ListAllAccountWindows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range ws {
+		if i, ok := idx[w.AccountID]; ok {
+			out[i].Windows = append(out[i].Windows, windowOf(w.Kind, w.UsedPct, w.ResetsAt, w.ObservedAt))
+		}
+	}
+	ls, err := r.ListAllOpenAccountUsageLimits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range ls {
+		i, ok := idx[l.AccountID]
+		if !ok {
+			continue
+		}
+		lim := Limit{Kind: l.Kind, SeenAt: time.UnixMicro(l.SeenAt).UTC()}
+		if l.ResetsAt.Valid {
+			t := time.UnixMicro(l.ResetsAt.Int64).UTC()
+			lim.ResetsAt = &t
+		}
+		// A limit is stored once per space that saw it (ADR-0079), but the hold is the account's: list each kind once,
+		// so the count of spaces (some of them perhaps unreadable to the caller) isn't disclosed. Rows come oldest first,
+		// so the first sighting is kept, with the latest known reset.
+		if j := slices.IndexFunc(out[i].Limits, func(x Limit) bool { return x.Kind == lim.Kind }); j >= 0 {
+			if have := out[i].Limits[j].ResetsAt; lim.ResetsAt != nil && (have == nil || lim.ResetsAt.After(*have)) {
+				out[i].Limits[j].ResetsAt = lim.ResetsAt
+			}
+			continue
+		}
+		out[i].Limits = append(out[i].Limits, lim)
+	}
+	return out, nil
+}
