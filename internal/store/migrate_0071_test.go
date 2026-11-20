@@ -76,7 +76,7 @@ func TestAccountSwitchBackMigrationFrom0069(t *testing.T) {
 	}
 	var n int
 	for _, ix := range []string{"ux_account_switches_active", "ix_account_switches_space", "ix_account_switches_instance", "ix_account_switches_from_run",
-		"ix_account_switches_new_run", "ix_account_switches_to_account", "ix_account_switches_armed"} {
+		"ix_account_switches_new_run", "ix_account_switches_to_account", "ix_account_switches_armed", "ix_account_switches_finished"} {
 		if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, ix).Scan(&n); err != nil || n != 1 {
 			t.Errorf("index %s: %d %v", ix, n, err)
 		}

@@ -51,6 +51,7 @@ CREATE INDEX ix_account_switches_from_run ON account_switches (from_run_id);
 CREATE INDEX ix_account_switches_new_run ON account_switches (new_run_id) WHERE new_run_id <> '';
 CREATE INDEX ix_account_switches_to_account ON account_switches (to_account_id, created_at);
 CREATE INDEX ix_account_switches_armed ON account_switches (armed_until) WHERE state = 'pending';
+CREATE INDEX ix_account_switches_finished ON account_switches (state, updated_at);
 
 -- +goose Down
 SELECT 'forward-only migrations: restore the pre-migration snapshot instead';
