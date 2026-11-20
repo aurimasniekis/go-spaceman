@@ -12,6 +12,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/runner"
 )
 
 // openOccurrence is a flagged occurrence of a run, as dialogFlag would record it.
@@ -310,6 +311,7 @@ func TestDialogReportSendDoesNotHoldTheRunLock(t *testing.T) {
 func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 	e := newDialogEnv(t, nil)
 	old := getRun(t, e.a, e.run)
+	old.Status = "stale" // a state the run never holds, so no report of the monitor's can carry it
 	base := len(e.reportsFor())
 	e.a.limitSend.Lock() // another report is being sent
 	released := false
@@ -326,7 +328,15 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 		defer close(done)
 		e.a.dialogDrain(context.Background())
 	}()
-	time.Sleep(200 * time.Millisecond) // the drain has taken its row (before the fix) and waits for the lock
+	// The drain has taken its queued row (the queue is empty) and then waits for the lock.
+	waitFor(t, "the drain has taken its queued report", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		return len(e.a.dlg.reports) == 0
+	})
+	// The run moves on: the journal gets a newer state. The fake reports the same state, so a later monitor write
+	// cannot put the older one back.
+	e.f.SetStatusReport(e.term, runner.Status{State: "fresh"})
 	cur := getRun(t, e.a, e.run)
 	cur.Status = "fresh"
 	if err := e.a.j.updateRun(context.Background(), cur); err != nil {
@@ -334,13 +344,11 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 	}
 	release()
 	<-done
-	// The monitor reports on its own too, so look for the fresh state anywhere, and for the journal's original state
-	// (what the drain would send had it kept the row it took) nowhere.
-	// A report with either state ends the wait, so a revert fails at once instead of after the timeout.
-	waitFor(t, "the drain's report sent", func() bool { return sentEither(e.reportsFor()[base:], old.Status, "fresh") })
+	// The monitor reports on its own too, so look for the fresh state anywhere, and for the stale one nowhere.
+	waitFor(t, "fresh report sent", func() bool { return sentEither(e.reportsFor()[base:], "fresh") })
 	for _, r := range e.reportsFor()[base:] {
 		if r.Status == old.Status {
-			t.Fatalf("the journal's original state %q was sent after the row changed: %+v", old.Status, r)
+			t.Fatalf("the older state %q was sent after the row changed: %+v", old.Status, r)
 		}
 	}
 	waitFor(t, "fresh report sent", func() bool {
