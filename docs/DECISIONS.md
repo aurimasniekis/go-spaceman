@@ -510,7 +510,24 @@
 - **Consequences:**
   - The validator runs on the node with the node user's rights, like agent programs; configuring it needs kb:write.
   - A session resumed after sleep continues its conversation only where the harness supports resume.
-  - Knowledge branches must not be checked out where SpaceMan should move them.
+  - Knowledge branches must not be checked out in a linked worktree where SpaceMan should move them.
+  - **Amendment (2026-11-20, v0.1.16): the repository's own checkout may hold the target.** KB repositories are ordinary clones
+    with the default branch checked out, so "never moved when checked out anywhere" refused every acceptance. When the
+    target is checked out in the repository's own checkout, SpaceMan advances it with `git merge --ff-only` in that
+    checkout (the new tip always descends from the old one), after the validator passed and only if the checkout has no
+    modified or staged tracked files, no merge, cherry-pick or revert in progress, and HEAD and the branch are still the
+    commit the proposal was checked against. Untracked files alone do not block; the merge runs with
+    `--no-overwrite-ignore`, so an untracked or ignored file the new tip would overwrite fails the acceptance (naming
+    the checkout) and the ref does not move. A rebase of the target in the repository or any linked worktree refuses
+    the acceptance before any ref is moved, also on the plain ref-update path. After the merge HEAD and the branch must
+    both equal the new tip, else the proposal fails as moved; nothing is ever reset or forced. The merge passes
+    `--no-verify-signatures`: the merge commit SpaceMan builds is unsigned, so `merge.verifySignatures` in the
+    repository's config would fail every acceptance with a misleading reason; the commit was already vetted by the
+    session-branch check, the validator and the compare-and-swap. A dirty or moved checkout fails the proposal naming
+    the checkout and changes nothing. With no checkout holding the
+    target the ref moves alone as before. A target held by a linked worktree is still refused (its `.git` is a pointer
+    file, which the node's Git guard does not run in). Not security-relevant: no new authority, the node user already
+    owns the repository, hooks stay disabled.
 
 ### ADR-0027 — Dreams consolidate memory through ordinary checkouts; evidence advances only after a checkpoint
 - **Status:** Accepted, 2026-11-02.

@@ -87,6 +87,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Accepting a KB proposal no longer fails because the knowledge branch is checked out in the KB repository's own
+  checkout.** A repository cloned the normal way has its default branch checked out, so every acceptance was refused.
+  SpaceMan now fast-forwards that checkout together with the branch (files and index match the new tip), after the
+  KB's check passed and only if the checkout has no modified or staged tracked files, no merge, cherry-pick or revert
+  in progress, and is still at the commit the proposal was checked against. Untracked files alone do not block, but
+  a local file (untracked or ignored) that the new tip would overwrite is never replaced: the proposal fails naming
+  the checkout and the branch does not move. A rebase of the target in any worktree refuses the acceptance;
+  `merge.verifySignatures` no longer breaks it; a target that moved is reported as before; conflicts are still
+  conflicts. A target held by a linked worktree is still refused.
 - **A body with several diagrams no longer freezes the page for over 2 s.** Queued diagram renders ran back to back as one
   long task; they now yield to the page between two renders (diagrams since v0.1.5).
 - **Two concurrent observes of a run no longer report out of order.** An observe sent the report it had built before
