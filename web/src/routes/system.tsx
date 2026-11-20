@@ -15,7 +15,7 @@ function SystemPage() {
   const status = useSystemStatus(admin)
   return (
     <>
-      <PageHeader title="System" description="This SpaceMan instance: health, versions, activity and where it runs." />
+      <PageHeader hub="access" title="System" description="This SpaceMan instance: health, versions, activity and where it runs." />
       {me && !admin && <Alert color="owlYellow">The System page is for global administrators.</Alert>}
       <ErrorAlert error={status.error} />
       {status.data && <SystemView s={status.data} />}

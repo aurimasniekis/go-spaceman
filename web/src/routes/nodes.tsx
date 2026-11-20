@@ -51,7 +51,7 @@ function NodesPage() {
 
   return (
     <>
-      <PageHeader title="Nodes" description="Machines running spaceman-agent. Each space is pinned to one node."
+      <PageHeader hub="configuration" title="Nodes" description="Machines running spaceman-agent. Each space is pinned to one node."
         actions={admin && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>Add node</Button>} />
       <ErrorAlert error={nodes.error} />
       <DataTable view="nodes" data={nodes.data ?? []} getRowId={(n) => n.id} filterLabel="Filter nodes" caption="Nodes"

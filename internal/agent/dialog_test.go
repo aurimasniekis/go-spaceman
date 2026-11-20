@@ -446,12 +446,13 @@ func TestDialogFlagRecheckedOnAQuietScreen(t *testing.T) {
 	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:unknown", "cleared:unknown"}) {
 		t.Fatalf("outcomes %v", got)
 	}
-	e.a.dlg.mu.Lock()
-	b := e.a.dlg.runs[e.run].backoff
-	e.a.dlg.mu.Unlock()
-	if b != 0 {
-		t.Fatalf("backoff %v after the flag cleared", b)
-	}
+	// The backoff is reset by a deferred call after the cleared dialog is recorded: wait for it rather than race it.
+	waitFor(t, "backoff reset after the flag cleared", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		w := e.a.dlg.runs[e.run]
+		return w != nil && w.backoff == 0
+	})
 }
 
 // After an agent restart the run's secret values are unknown (they are never written down for the watch): a dialog
@@ -544,9 +545,11 @@ func TestDialogAddDirResolvedSymlink(t *testing.T) {
 	}
 }
 
-// endRun marks the run as exited in the journal, as an observation of its exit does.
+// endRun marks the run as exited in the journal, as an observation of its exit does: under the run's observe lock, so
+// an observation of the live program in flight (the monitor's) cannot write its stale running row over the end.
 func (e *dialogEnv) endRun() {
 	e.t.Helper()
+	defer e.a.observeLock(e.run)()
 	row := getRun(e.t, e.a, e.run)
 	row.State = proto.RunExited
 	if err := e.a.j.updateRun(context.Background(), row); err != nil {

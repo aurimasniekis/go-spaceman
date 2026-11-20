@@ -34,7 +34,7 @@ function AccountsPage() {
   }
   return (
     <>
-      <PageHeader title="Accounts" description="Credentials Claude Code and Codex runs use. They are sealed when saved and never shown again."
+      <PageHeader hub="integrations" title="Accounts" description="Credentials Claude Code and Codex runs use. They are sealed when saved and never shown again."
         actions={<Button leftSection={<IconPlus size={14} />} onClick={() => setAdding(true)}>Add account</Button>} />
       <ErrorAlert error={accounts.error} />
       <Card p={0}>

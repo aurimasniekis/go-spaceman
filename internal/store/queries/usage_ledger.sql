@@ -103,3 +103,25 @@ JOIN accounts a ON a.id = sa.account_id
 JOIN account_windows w ON w.account_id = sa.account_id
 WHERE sa.space_id = ?
 ORDER BY sa.harness, sa.created_at, w.account_id, w.kind;
+
+-- name: ListAllAccountBindings :many
+-- Every binding of an account to a space, directly or through a role pool, with the account's name. A pool account is
+-- also bound to the space, so the harness comes from that binding. For the cross-space account view, which keeps only
+-- the spaces the caller can read.
+SELECT sa.account_id, a.name AS account_name, sa.harness, sa.space_id
+FROM space_accounts sa
+JOIN accounts a ON a.id = sa.account_id
+UNION
+SELECT ra.account_id, a.name, coalesce(sa.harness, ''), ra.space_id
+FROM space_role_accounts ra
+JOIN accounts a ON a.id = ra.account_id
+LEFT JOIN space_accounts sa ON sa.space_id = ra.space_id AND sa.account_id = ra.account_id
+ORDER BY 1, 4;
+
+-- name: ListAllAccountWindows :many
+-- The latest windows of every account that has any.
+SELECT account_id, kind, used_pct, resets_at, observed_at FROM account_windows ORDER BY account_id, kind;
+
+-- name: ListAllOpenAccountUsageLimits :many
+-- Every open account-scope usage limit (a hold applies in every space bound to the account).
+SELECT account_id, kind, resets_at, seen_at FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL ORDER BY account_id, seen_at, id;

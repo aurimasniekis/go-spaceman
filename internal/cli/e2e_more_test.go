@@ -5,8 +5,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
@@ -135,6 +137,7 @@ func newGroupsAgainstCentral(t *testing.T, c *central, e env, adaID string) {
 	if u := e.obj(t, "space", "usage", s); u["known_runs"] == nil {
 		t.Fatalf("usage %v", u)
 	}
+	usageAllAgainstCentral(t, c, e, s, id1)
 	pr := e.obj(t, "prompt", "get", "reviewer")
 	v1 := str(pr["versions"].([]any)[0].(map[string]any), "id")
 	e.ok(t, "prompt", "draft", "reviewer", "--body", "Review with care.")
@@ -219,4 +222,34 @@ func newGroupsAgainstCentral(t *testing.T, c *central, e env, adaID string) {
 	if out := e.ok(t, "-o", "json", "watch", "--count", "2"); strings.Count(out, "\n") != 2 || !strings.Contains(out, `"resource_type"`) {
 		t.Fatalf("watch %s", out)
 	}
+}
+
+// usageAllAgainstCentral reads the cross-space ledger series (get-usage-series) through `usage all`: grouped by model,
+// filtered by repeated and comma-separated values, and the filter bound refused as a usage error.
+func usageAllAgainstCentral(t *testing.T, c *central, e env, space, account string) {
+	t.Helper()
+	sp := e.obj(t, "space", "get", space)
+	hour := c.c.Store.Now().Truncate(time.Hour).Add(-time.Hour).UnixMicro() // central's clock
+	ctx := context.Background()
+	for i, m := range []string{"model-a", "model-b", "model-c"} {
+		if err := c.c.Store.W().Exec(ctx, `INSERT INTO usage_buckets (space_id, account_id, role, harness, model, granularity, bucket_start,
+			input_tokens, output_tokens, requests, cost_usd) VALUES (?, ?, 'worker', 'claude-code', ?, 'hour', ?, ?, 1, 1, 0.5)`, str(sp, "id"), account, m, hour, 100*(i+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := e.obj(t, "usage", "all", "--group-by", "model", "--model", "model-a", "--model", "model-b,model-x", "--space-id", str(sp, "id"))
+	items := out["items"].([]any)
+	tot := out["totals"].(map[string]any)
+	if len(items) != 2 || str(items[0].(map[string]any), "group") != "model-a" || str(items[1].(map[string]any), "group") != "model-b" ||
+		tot["total_tokens"].(float64) != 302 || str(out, "group_by") != "model" {
+		t.Fatalf("usage all %v", out)
+	}
+	if out := e.ok(t, "usage", "all", "--group-by", "space", "--account", account); !strings.Contains(out, str(sp, "id")) {
+		t.Fatalf("usage all by space: %s", out)
+	}
+	many := make([]string, 51)
+	for i := range many {
+		many[i] = "m" + strconv.Itoa(i)
+	}
+	e.code(t, ExitAPI, "usage", "all", "--model", strings.Join(many, ","))
 }

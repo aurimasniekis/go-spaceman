@@ -6,8 +6,80 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- **A reworked Overview in the web UI.** From the top: the **top 5 items that need attention** (act before watch, each
+  linking to where it is handled, with "See all (N)" to `/attention`; this replaces the "Needs attention" tile), a
+  **Usage** summary (tokens today and over the last 7 days with the change against the 7 days before, a 14-day
+  sparkline, and the top 5 spaces and models; tokens only, no cost), and an **Accounts** strip with each account's
+  5-hour and 7-day window bars and any open limit (hidden when no account is bound). The Spaces table gains a
+  "tokens 7 d" figure. The page adds three requests (`/usage/series` by space and by model, `/account-windows`);
+  the Telegram Mini App home is unchanged. "Open Usage" links to `/usage`.
+- **The Attention page lists items.** `/attention` now shows the itemised rows from `GET /attention` grouped **Act now**
+  and **Watch**, each with what, where, since when and a link to the run, task, queue, usage page or cross-space page
+  that handles it, with filters by space and kind. Pending human actions collapse into one row that opens Needs you.
+  The installation cards (nodes, outbound events, backups, storage) stay below. The space overview's attention card also
+  counts parked runs, account limits, failed account switches and incoming cross-space requests. The Mini App keeps its
+  `/attention` page, with the web-only targets unlinked. `spaces[]` in the response now also lists a space whose only
+  rows are parked runs, account limits or switches, or cross-space requests (its `total` stays 0).
+
+- **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
+  (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
+  MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
+  Backups, System). Each page shows its hub's tabs under its header as plain links (the current one has
+  `aria-current`). An entry shows only if one of its tabs is visible to you. Every existing URL still loads directly,
+  and `/configuration`, `/integrations` and `/access` open the first tab you may see. Account is only in the user
+  menu now, and Attention is off the sidebar (`/attention` stays).
+- **A Usage page in the web UI (`/usage`, in the sidebar's Work group).** Token usage across every space you can read,
+  over 24 hours, 7, 30 or 90 days (90 days in daily buckets), grouped by space, account, model, role or harness. Select an
+  account, model or harness in the table to filter by it; the range, grouping and filters are in the URL, so a view can
+  be linked to and survives a reload. Names come from the response's labels, and a space row opens that space's Usage
+  page. A note lists the runs whose usage isn't counted (Codex, and runs with only Harbor Pilot figures) per harness, so
+  a missing figure isn't read as zero. An Accounts section shows each account's 5-hour and 7-day window and its open
+  usage limits (`GET /account-windows`). A space's own Usage page now offers the 90-day range as well.
+- **Usage across every space you can read: `GET /usage/series` (`get-usage-series`) and `spaceman usage all`.** Ledger
+  tokens per hour or day, grouped by space, account, model, role or harness, with filters on each (at most 50 values
+  per filter). Rows, totals, `labels` (space and account names) and `not_counted` cover only the spaces where you have
+  `run:read`; an account is named only when it is bound to one of them, directly or through a role pool. `not_counted` gives, per harness, the runs in
+  the range whose usage the ledger doesn't hold (Codex, and runs with only Harbor Pilot figures), so a missing figure
+  isn't read as zero. A 90-day daily range works as before. The sums run in SQL, and migration 0069 replaces the
+  ledger's time index with a covering one so they read the index alone (30 days of 200k rows by space: about 50 ms).
+  See ADR-0103.
+- **One list of the messages addressed to operators, across all spaces.** `GET /messages` (`list-operator-messages`)
+  returns the messages to operators from every space you hold `message:read` in, newest first, with the space's slug and
+  name on each item so a client can act through the per-space ack, reply and resolve operations. By default only open
+  messages (not yet acknowledged or resolved); `state=all`, `space` and `kind` filter, and `cursor` and `limit` (at most
+  200) page it. `unread_count` is the open count over all readable spaces, for a badge. Messages to control, roles and
+  runs, and other spaces' messages, never appear. CLI: `spaceman message inbox` (`--all` follows every page).
+
+- **One call lists the usage windows of every account you can see.** `GET /account-windows` (and `spaceman usage
+  windows`) returns each subscription account bound, directly or through a role pool, to a space you can read
+  (`run:read`), once, with its name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound
+  only to spaces you can't read is not listed and its name isn't disclosed. It reads stored state only and fetches
+  nothing from a provider. The Usage page will build on it.
+- **`GET /attention` names what needs a person and covers four more categories.** The response gains `items[]`
+  (kind, severity, space, title, since and a link target for blocked and failed tasks, quarantined events, unknown,
+  failed and lost runs, budget notices and the new categories; at most 20 per kind, with the full numbers in
+  `item_counts`) and per-space counts for runs parked at a usage limit, open account limits, account switches that
+  failed in the last 24 hours and incoming cross-space requests. Each needs its existing read permission, so a user
+  never sees another space's items. Human actions stay counted only. Existing fields and `total` keep their meaning: the
+  new categories are not part of `total` (they are mostly information that clears by itself), and clients can sum
+  `item_counts` to include them. Harbor Pilot budget state is not included yet. The counts come from the items queries,
+  so a request makes twelve queries at most.
+
 ### Fixed
 
+- **Usage page follow-ups.** The page keeps the last figures on screen (dimmed, busy) while a new range, grouping or
+  filter loads instead of blanking. With an account filter on, the Accounts table shows "—" for accounts outside it and
+  marks the column "(filtered)". Grouped by harness, the chart legend uses the display name ("Claude Code"), as the table
+  does. A selected row's toggle is named "Remove filter X". The "not counted" note links to the run pages.
+
+- **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
+  are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
+  for a reconnect, and the monitor loop doesn't wait out the write timeout.
+- **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
+  and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
+  the terminal column, and the divider runs from the header rule to the bottom edge of the window.
 - **A busy node can no longer stall a backup in `memory_flush` or make it fail.** Central queued the memory-flush
   request on each node's connection one after another, with no bound, and started its wait only afterwards. A node
   whose outbound queue stayed full held the flush far past its one-minute wait, and when the stall watchdog fired the

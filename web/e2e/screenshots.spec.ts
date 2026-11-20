@@ -447,7 +447,8 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'attention', async () => {
     await page.goto('/attention')
     await expect(page.getByRole('heading', { name: 'Attention' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Payments platform' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Act now' })).toBeVisible()
+    await expect(page.getByText(/human actions/).first()).toBeVisible()
     await expect(page.getByText('Storage', { exact: true })).toBeVisible()
   })
   // Relocation dialog (SM-SPACE-005). The second node is enrolled through the API only (no second agent runs in this
@@ -704,6 +705,58 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/usage`)
     await expect(page.getByTestId('usage-totals')).toContainText('Estimated cost')
     await expect(page.getByRole('table', { name: 'Usage by role' })).toBeVisible()
+  })
+  // The Overview's usage summary and accounts strip: the ledger and the windows of the stub harness are empty, so both
+  // are served with invented figures (two daily reads of /usage/series, by space and by model, over 14 days).
+  const grow = (d: number, group: string, tokens: number) => ({ bucket_start: stamp(today0 - d * dayMs).replace('.000Z', 'Z'), group, total_tokens: tokens, input_tokens: Math.round(tokens * 0.2),
+    output_tokens: Math.round(tokens * 0.05), cache_read_tokens: Math.round(tokens * 0.7), cache_write_tokens: Math.round(tokens * 0.05), reasoning_tokens: 0, requests: Math.round(tokens / 4000), total_cost_usd: 0 })
+  const days14 = Array.from({ length: 14 }, (_, i) => 13 - i)
+  const bySpace = days14.flatMap((d) => [grow(d, payments.id, 900_000 + ((d * 61) % 9) * 120_000 + (d < 7 ? 250_000 : 0)), grow(d, 'spc_shot_docs', 180_000 + ((d * 29) % 5) * 40_000)])
+  const byModel = days14.flatMap((d) => [grow(d, 'claude-sonnet-5-5', 700_000 + ((d * 61) % 9) * 90_000 + (d < 7 ? 200_000 : 0)), grow(d, 'claude-haiku-5-5', 380_000 + ((d * 29) % 5) * 70_000)])
+  const gseries = (items: ReturnType<typeof grow>[], groupBy: string) => ({ bucket: 'day', group_by: groupBy, from: stamp(today0 - 13 * dayMs), to: stamp(today0 + dayMs), items, labels: { [payments.id]: 'Payments platform', spc_shot_docs: 'Docs site' },
+    not_counted: [], cost_note: "The cost is the harness's own list-price estimate, not a bill; tokens are the primary unit.",
+    totals: { group: '', total_tokens: items.reduce((n, r) => n + r.total_tokens, 0), input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, requests: 0, total_cost_usd: 0 } })
+  await page.route(/\/api\/v1\/usage\/series/, (r) => {
+    const by = new URL(r.request().url()).searchParams.get('group_by')
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(by === 'model' ? gseries(byModel, 'model') : gseries(bySpace, 'space')) })
+  })
+  await stub('**/api/v1/account-windows', { items: [
+    { account_id: teamClaude.id, name: 'team-claude', harness: 'claude-code', limits: [], windows: [
+      { kind: 'five_hour', used_pct: 64, resets_at: stamp(at + 95 * 60_000), observed_at: stamp(at - 3 * 60_000) },
+      { kind: 'seven_day', used_pct: 41, resets_at: stamp(at + 4 * dayMs), observed_at: stamp(at - 3 * 60_000) }] },
+    { account_id: ciAnthropic.id, name: 'ci-anthropic', harness: 'claude-code', limits: [], windows: [
+      { kind: 'five_hour', used_pct: 92, resets_at: stamp(at + 40 * 60_000), observed_at: stamp(at - 12 * 60_000) },
+      { kind: 'seven_day', used_pct: 73, resets_at: stamp(at + 3 * dayMs), observed_at: stamp(at - 12 * 60_000) }] },
+  ] })
+  await capture(page, 'overview', async () => {
+    await page.goto('/')
+    await expect(page.getByTestId('usage-summary')).toContainText('Payments platform')
+    await expect(page.getByTestId('account-windows-strip')).toContainText('team-claude')
+    await expect(page.getByTestId('attention-top')).toBeVisible()
+  })
+  // The all-spaces Usage page: invented figures for two spaces, a Codex run count that the ledger does not hold, and the
+  // accounts' windows (served by stubs, like the space page above).
+  const ledgerId = 'spc_shot_ledger'
+  const gitems = [6, 5, 4, 3, 2, 1, 0].flatMap((d) => [urow(d, payments.id, 520_000 + ((d * 53) % 7) * 80_000, 1.9 + d * 0.1), urow(d, ledgerId, 140_000 + (d % 3) * 60_000, 0.5)])
+  const gsum = (k: 'total_tokens' | 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_write_tokens' | 'requests' | 'total_cost_usd') => gitems.reduce((n, r) => n + r[k], 0)
+  await stub(new RegExp('/api/v1/usage/series'), { bucket: 'day', group_by: 'space', from: stamp(today0 - 6 * dayMs), to: stamp(today0 + dayMs), items: gitems,
+    labels: { [payments.id]: 'Payments', [ledgerId]: 'Ledger' }, not_counted: [{ harness: 'codex', runs: 4, harbor_pilot_runs: 1 }],
+    cost_note: "The cost is the harness's own list-price estimate, not a bill; tokens are the primary unit.",
+    totals: { group: '', total_tokens: gsum('total_tokens'), input_tokens: gsum('input_tokens'), output_tokens: gsum('output_tokens'), cache_read_tokens: gsum('cache_read_tokens'),
+      cache_write_tokens: gsum('cache_write_tokens'), reasoning_tokens: 0, requests: gsum('requests'), total_cost_usd: gsum('total_cost_usd') } })
+  await stub('**/api/v1/account-windows', { items: [
+    { account_id: teamClaude.id, name: 'team-claude', harness: 'claude-code', limits: [], windows: [
+      { kind: 'five_hour', used_pct: 64, resets_at: stamp(at + 95 * 60_000), observed_at: stamp(at - 4 * 60_000) },
+      { kind: 'seven_day', used_pct: 41, resets_at: stamp(at + 4 * dayMs), observed_at: stamp(at - 3 * 60_000) }] },
+    { account_id: ciAnthropic.id, name: 'ci-anthropic', harness: 'claude-code', limits: [{ kind: 'five_hour', seen_at: stamp(at - 20 * 60_000), resets_at: stamp(at + 2 * 3600_000) }], windows: [
+      { kind: 'five_hour', used_pct: 93, resets_at: stamp(at + 2 * 3600_000), observed_at: stamp(at - 12 * 60_000) }] },
+  ] })
+  await capture(page, 'usage-page', async () => {
+    await page.goto('/usage')
+    await expect(page.getByTestId('usage-totals')).toContainText('Estimated cost')
+    await expect(page.getByRole('table', { name: 'Usage by space' })).toContainText('Ledger')
+    await expect(page.getByTestId('usage-not-counted')).toContainText('4 Codex runs')
+    await expect(page.getByTestId('usage-account-team-claude')).toContainText('64 % used')
   })
   await page.unrouteAll({ behavior: 'ignoreErrors' })
   await capture(page, 'human-types', async () => {

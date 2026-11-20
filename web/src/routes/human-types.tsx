@@ -25,7 +25,7 @@ function HumanTypesPage() {
   const current = types.data?.find((t) => t.id === open) ?? null
   return (
     <>
-      <PageHeader title="Human action types" description="Custom request types for people: what is asked (request schema), how it is answered (response schema) and how it can end (outcomes). Spaces enable them."
+      <PageHeader hub="configuration" title="Human action types" description="Custom request types for people: what is asked (request schema), how it is answered (response schema) and how it can end (outcomes). Spaces enable them."
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New type</Button>} />
       <ErrorAlert error={types.error} />
       <Card p={0}>

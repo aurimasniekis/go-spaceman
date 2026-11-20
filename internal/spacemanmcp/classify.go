@@ -94,6 +94,7 @@ var Table = map[string]Entry{
 	"get-event-template":         {Read, rFiltered},
 	"preview-event-template":     {Read, rFiltered},
 	"get-attention":              {Read, rFiltered},
+	"list-operator-messages":     {Read, rFiltered},
 	"list-account-kinds":         {Read, rFiltered},
 	"list-limit-definitions":     {Read, rFiltered},
 	"list-pending-human-actions": {Read, rFiltered},
@@ -473,11 +474,14 @@ var Table = map[string]Entry{
 	// Usage.
 	"get-run-usage":   {Read, rRead},
 	"get-space-usage": {Read, rRead},
+	// The cross-space ledger series (ADR-0103): filtered to the spaces the token reads.
+	"get-usage-series": {Read, rFiltered},
 	// The usage ledger (ADR-0090): numbers and IDs only.
 	"get-space-usage-series":     {Read, rRead},
 	"get-account-usage":          {Read, rRead},
 	"get-account-windows":        {Read, rRead},
 	"list-space-account-windows": {Read, rRead},
+	"list-account-windows":       {Read, rFiltered},
 
 	// Users. The step-up writes are excluded by their rule; these entries are what they fall back to.
 	"get-user":             {Excluded, rUsers},

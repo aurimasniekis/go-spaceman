@@ -25,7 +25,7 @@ function McpServersPage() {
   const current = servers.data?.find((s) => s.id === open) ?? null
   return (
     <>
-      <PageHeader title="MCP servers" description="External MCP servers agents reach through SpaceMan. Each run gets its own upstream session; headers are sealed and never shown again."
+      <PageHeader hub="integrations" title="MCP servers" description="External MCP servers agents reach through SpaceMan. Each run gets its own upstream session; headers are sealed and never shown again."
         actions={canWrite && (
           <Group gap="xs">
             <Button variant="default" leftSection={<IconPlus size={14} />} onClick={() => setAddingSpaceman(true)}>Add SpaceMan MCP</Button>
