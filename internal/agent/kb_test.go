@@ -115,8 +115,7 @@ func TestKBAcceptMergeCommitInCheckedOutTarget(t *testing.T) {
 
 func TestKBAcceptRefusesDirtyCheckout(t *testing.T) {
 	for name, dirty := range map[string]func(t *testing.T, repo string){
-		"modified":  func(t *testing.T, repo string) { writeFile(t, filepath.Join(repo, "a.md"), "edited\n") },
-		"untracked": func(t *testing.T, repo string) { writeFile(t, filepath.Join(repo, "new.md"), "x\n") },
+		"modified": func(t *testing.T, repo string) { writeFile(t, filepath.Join(repo, "a.md"), "edited\n") },
 		"staged": func(t *testing.T, repo string) {
 			writeFile(t, filepath.Join(repo, "a.md"), "edited\n")
 			gitRun(t, repo, "add", "a.md")
@@ -178,7 +177,7 @@ func TestKBAcceptTargetHeldBySecondaryWorktree(t *testing.T) {
 	gitRun(t, f.repo, "worktree", "add", "-q", held, "main")
 	c := f.propose(t, "c.md", "c\n")
 	before := gitRun(t, f.repo, "rev-parse", "main")
-	if res := f.accept(c); res.Result != proto.KBFailed || !strings.Contains(res.Detail, held) {
+	if res := f.accept(c); res.Result != proto.KBFailed || !strings.Contains(res.Detail, held) || !strings.Contains(res.Detail, "linked worktree") {
 		t.Fatalf("result %+v", res)
 	}
 	if gitRun(t, f.repo, "rev-parse", "main") != before {
@@ -194,5 +193,148 @@ func TestKBAcceptTargetNotCheckedOut(t *testing.T) {
 	c := f.propose(t, "c.md", "c\n")
 	if res := f.accept(c); res.Result != proto.KBMerged || gitRun(t, f.repo, "rev-parse", "main") != c {
 		t.Fatalf("result %+v", res)
+	}
+}
+
+// Untracked files alone do not block an acceptance; they stay as they were.
+func TestKBAcceptUntrackedFileDoesNotBlock(t *testing.T) {
+	f := newKBFixture(t)
+	c := f.propose(t, "c.md", "c\n")
+	writeFile(t, filepath.Join(f.repo, "new.md"), "x\n")
+	if res := f.accept(c); res.Result != proto.KBMerged {
+		t.Fatalf("result %+v", res)
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.repo, "new.md")); string(b) != "x\n" {
+		t.Fatalf("untracked file changed: %q", b)
+	}
+}
+
+// A local file the new tip would overwrite (untracked or ignored) is never replaced: the acceptance fails, naming the
+// checkout, and the ref does not move.
+func TestKBAcceptNeverOverwritesLocalFile(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, f *kbFixture){
+		"untracked": func(t *testing.T, f *kbFixture) {},
+		"ignored": func(t *testing.T, f *kbFixture) {
+			writeFile(t, filepath.Join(f.repo, ".git", "info", "exclude"), "c.md\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newKBFixture(t)
+			c := f.propose(t, "c.md", "c\n")
+			setup(t, f)
+			writeFile(t, filepath.Join(f.repo, "c.md"), "mine\n")
+			before := gitRun(t, f.repo, "rev-parse", "main")
+			res := f.accept(c)
+			if res.Result != proto.KBFailed || !strings.Contains(res.Detail, f.repo) {
+				t.Fatalf("result %+v", res)
+			}
+			if gitRun(t, f.repo, "rev-parse", "main") != before || gitRun(t, f.repo, "rev-parse", "HEAD") != before {
+				t.Fatal("ref moved")
+			}
+			if b, _ := os.ReadFile(filepath.Join(f.repo, "c.md")); string(b) != "mine\n" {
+				t.Fatalf("local file overwritten: %q", b)
+			}
+		})
+	}
+}
+
+func TestKBAcceptRefusesStatesInProgress(t *testing.T) {
+	for _, state := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
+		t.Run(state, func(t *testing.T) {
+			f := newKBFixture(t)
+			c := f.propose(t, "c.md", "c\n")
+			before := gitRun(t, f.repo, "rev-parse", "main")
+			writeFile(t, filepath.Join(f.repo, ".git", state), before+"\n")
+			res := f.accept(c)
+			if res.Result != proto.KBFailed || !strings.Contains(res.Detail, state) || !strings.Contains(res.Detail, f.repo) {
+				t.Fatalf("result %+v", res)
+			}
+			if gitRun(t, f.repo, "rev-parse", "main") != before {
+				t.Fatal("main moved")
+			}
+		})
+	}
+}
+
+// A rebase of the target in any worktree refuses the acceptance, including when the primary checkout looks detached
+// (which used to send the proposal down the plain update-ref path).
+func TestKBAcceptRefusesRebaseOnTarget(t *testing.T) {
+	for _, kind := range []string{"rebase-merge", "rebase-apply"} {
+		for _, where := range []string{"primary", "primary-detached", "linked"} {
+			t.Run(kind+"/"+where, func(t *testing.T) {
+				f := newKBFixture(t)
+				c := f.propose(t, "c.md", "c\n")
+				before := gitRun(t, f.repo, "rev-parse", "main")
+				dir, wantPath := filepath.Join(f.repo, ".git"), f.repo
+				switch where {
+				case "primary-detached":
+					gitRun(t, f.repo, "checkout", "-q", "--detach")
+				case "linked":
+					gitRun(t, f.repo, "checkout", "-q", "--detach")
+					dir, wantPath = gitRun(t, f.sessDir, "rev-parse", "--absolute-git-dir"), f.sessDir
+				}
+				writeFile(t, filepath.Join(dir, kind, "head-name"), "refs/heads/main\n")
+				res := f.accept(c)
+				if res.Result != proto.KBFailed || !strings.Contains(res.Detail, "rebase") || !strings.Contains(res.Detail, wantPath) {
+					t.Fatalf("result %+v", res)
+				}
+				if gitRun(t, f.repo, "rev-parse", "main") != before {
+					t.Fatal("main moved under a rebase")
+				}
+			})
+		}
+	}
+	// A rebase of another branch does not matter.
+	f := newKBFixture(t)
+	c := f.propose(t, "c.md", "c\n")
+	writeFile(t, filepath.Join(f.repo, ".git", "rebase-merge", "head-name"), "refs/heads/other\n")
+	if res := f.accept(c); res.Result != proto.KBMerged {
+		t.Fatalf("result %+v", res)
+	}
+}
+
+// Hooks in the KB repository never run, and merge.verifySignatures does not turn an acceptance into a failure.
+func TestKBAcceptIgnoresHooksAndVerifySignatures(t *testing.T) {
+	f := newKBFixture(t)
+	gitRun(t, f.repo, "config", "merge.verifySignatures", "true")
+	c := f.propose(t, "c.md", "c\n")
+	writeFile(t, filepath.Join(f.repo, "b.md"), "b2\n")
+	gitRun(t, f.repo, "commit", "-q", "-am", "main moves")
+	// Installed only now, so the fixture's own commits cannot trip them.
+	marker := filepath.Join(f.space, "hook-ran")
+	for _, h := range []string{"post-merge", "pre-merge-commit", "post-checkout", "reference-transaction", "pre-commit"} {
+		p := filepath.Join(f.repo, ".git", "hooks", h)
+		writeFile(t, p, "#!/bin/sh\necho "+h+" >> "+marker+"\n")
+		if err := os.Chmod(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := f.accept(c); res.Result != proto.KBMerged {
+		t.Fatalf("result %+v", res)
+	}
+	f.mustBeConsistent(t, f.repo)
+	if b, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("a hook ran: %s", b)
+	}
+}
+
+// The target moving while the KB's check runs fails the acceptance and changes nothing.
+func TestKBAcceptTargetMovesDuringValidator(t *testing.T) {
+	f := newKBFixture(t)
+	c := f.propose(t, "c.md", "c\n")
+	mover := filepath.Join(f.space, "move.sh")
+	writeFile(t, mover, "#!/bin/sh\ngit -c user.name=x -c user.email=x@example.test -C "+f.repo+" commit -q --allow-empty --no-verify -m moved\n")
+	if err := os.Chmod(mover, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	res := f.accept(c, mover)
+	if res.Result != proto.KBFailed || !strings.Contains(res.Detail, "moved while the proposal was checked") {
+		t.Fatalf("result %+v", res)
+	}
+	if gitRun(t, f.repo, "log", "-1", "--format=%s", "main") != "moved" {
+		t.Fatal("main was changed by the acceptance")
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, "c.md")); err == nil {
+		t.Fatal("working tree changed")
 	}
 }

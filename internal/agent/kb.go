@@ -61,6 +61,10 @@ func (a *Agent) kbAccept(ctx context.Context, c proto.Command, p proto.KBAcceptP
 	if old == "" {
 		return fail("the base branch %s does not exist", p.Target)
 	}
+	// A rebase of the target in any worktree makes its checkout look detached, so the ref would move under it.
+	if msg := rebaseOnTarget(ctx, g, repo, p.Target); msg != "" {
+		return fail("%s", msg)
+	}
 	next := p.Commit
 	id := &memory.Identity{Name: "SpaceMan KB acceptance", Email: "kb@spaceman.invalid"}
 	if !g.IsAncestor(ctx, repo, old, p.Commit) {
@@ -88,15 +92,31 @@ func (a *Agent) kbAccept(ctx context.Context, c proto.Command, p proto.KBAcceptP
 			return fail("the KB's check failed: %v\n%s", err, msg)
 		}
 	}
+	if msg := rebaseOnTarget(ctx, g, repo, p.Target); msg != "" {
+		return fail("%s", msg)
+	}
 	if held != "" {
 		// The checkout is checked again right before the move: it may have changed while the validator ran.
 		if msg := checkoutReady(ctx, g, held, p.Target, old); msg != "" {
 			return fail("%s", msg)
 		}
 		// next descends from old, so this only moves the branch (compare-and-swap through the index lock) and brings
-		// the files and the index along; it refuses to touch anything it would overwrite.
-		if _, err := g.Run(ctx, held, nil, "merge", "--ff-only", "--quiet", next); err != nil {
+		// the files and the index along. --no-overwrite-ignore keeps an ignored local file the new tree adds (git
+		// otherwise replaces it silently); an untracked file in the way fails the merge and moves nothing.
+		// --no-verify-signatures: merge.verifySignatures in the repository's config would make git refuse the merge
+		// commit SpaceMan builds (it is unsigned) with a reason that has nothing to do with the checkout. The proposal
+		// was already vetted (session branch, validator, compare-and-swap), and the setting is only ever disabled for
+		// this one fast-forward, never changed. Surfacing git's reason instead would make every acceptance fail in
+		// such a repository.
+		if _, err := g.Run(ctx, held, nil, "merge", "--ff-only", "--quiet", "--no-overwrite-ignore", "--no-verify-signatures", next); err != nil {
+			if g.RevParse(ctx, repo, "refs/heads/"+p.Target) == old {
+				return fail("cannot advance the checkout %s of %s; files there would be overwritten or the checkout changed, nothing was moved: %v", held, p.Target, err)
+			}
 			return fail("%s moved while the proposal was checked, or its checkout %s changed; accept it again", p.Target, held)
+		}
+		// Both must now be the new tip; anything else means another writer moved them. Nothing is reset or forced.
+		if g.RevParse(ctx, held, "HEAD") != next || g.RevParse(ctx, repo, "refs/heads/"+p.Target) != next {
+			return fail("%s moved while the proposal was checked; accept it again", p.Target)
 		}
 	} else if _, err := g.Run(ctx, repo, nil, "update-ref", "refs/heads/"+p.Target, next, old); err != nil {
 		return fail("%s moved while the proposal was checked; accept it again", p.Target)
@@ -136,13 +156,48 @@ func sameDir(a, b string) bool {
 	return err1 == nil && err2 == nil && os.SameFile(x, y)
 }
 
-// checkoutReady reports why a checkout cannot be advanced from old ("" when it can): it must still be at old and have
-// no uncommitted, staged or untracked changes. Nothing is changed.
+// rebaseOnTarget reports a rebase of the branch in progress in the repository or any linked worktree ("" when none).
+// The state files are read directly: a linked worktree is not a place the Git guard runs in.
+func rebaseOnTarget(ctx context.Context, g *memory.Git, repo, branch string) string {
+	out, err := g.Run(ctx, repo, nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return fmt.Sprintf("cannot find the git directory of the repository: %v", err)
+	}
+	common := strings.TrimSpace(out)
+	dirs := []string{common}
+	if ents, err := os.ReadDir(filepath.Join(common, "worktrees")); err == nil {
+		for _, e := range ents {
+			dirs = append(dirs, filepath.Join(common, "worktrees", e.Name()))
+		}
+	}
+	for _, d := range dirs {
+		for _, sub := range []string{"rebase-merge", "rebase-apply"} {
+			b, err := os.ReadFile(filepath.Join(d, sub, "head-name")) //nolint:gosec // git's own state file under the repository's git dir
+			if err == nil && strings.TrimSpace(string(b)) == "refs/heads/"+branch {
+				where := filepath.Dir(d)                                           // the repository's own checkout
+				if b, err := os.ReadFile(filepath.Join(d, "gitdir")); err == nil { //nolint:gosec // git's own pointer file under the repository's git dir
+					where = filepath.Dir(strings.TrimSpace(string(b))) // a linked worktree's .git file
+				}
+				return fmt.Sprintf("a rebase of %s is in progress in %s; finish or abort it, then accept the proposal again", branch, where)
+			}
+		}
+	}
+	return ""
+}
+
+// checkoutReady reports why a checkout cannot be advanced from old ("" when it can): HEAD and the branch must both
+// still be at old, no merge, cherry-pick or revert may be in progress, and there must be no uncommitted or staged
+// change to tracked files. Untracked files alone do not block; the merge itself refuses to overwrite one. Nothing is changed.
 func checkoutReady(ctx context.Context, g *memory.Git, dir, branch, old string) string {
-	if head := g.RevParse(ctx, dir, "HEAD"); head != old {
+	if head := g.RevParse(ctx, dir, "HEAD"); head != old || g.RevParse(ctx, dir, "refs/heads/"+branch) != old {
 		return fmt.Sprintf("%s moved while the proposal was checked; accept it again", branch)
 	}
-	st, err := g.Run(ctx, dir, nil, "status", "--porcelain", "--untracked-files=all")
+	for _, state := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
+		if g.RevParse(ctx, dir, state) != "" {
+			return fmt.Sprintf("a %s is in progress in the checkout %s of %s; finish or abort it, then accept the proposal again", state, dir, branch)
+		}
+	}
+	st, err := g.Run(ctx, dir, nil, "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
 		return fmt.Sprintf("cannot read the state of the checkout %s of %s: %v", dir, branch, err)
 	}

@@ -16,7 +16,7 @@ is a good starting point, but SpaceMan needs no particular layout.
 | Field | Meaning |
 |---|---|
 | Repository | A Git repository folder inside the space, e.g. `repos/payments-kb`. It is one of the space's [repositories](./repositories): a folder not listed yet is added (role kb, never cloned by SpaceMan); give that repository a URL to have the node clone it. |
-| Knowledge branch | Where accepted knowledge lives. It may be checked out in the repository's own checkout: SpaceMan fast-forwards that checkout with the branch when it has no uncommitted changes, and otherwise fails the acceptance. It must not be checked out in a linked worktree. |
+| Knowledge branch | Where accepted knowledge lives. It may be checked out in the repository's own checkout: SpaceMan fast-forwards that checkout with the branch when it has no uncommitted changes to tracked files and no merge, cherry-pick, revert or rebase in progress, and otherwise fails the acceptance. Untracked files do not block, but one the new commit would overwrite fails it and is left alone. It must not be checked out in a linked worktree. |
 | Sessions run as | A space role whose template is of kind **kb** (its profile, prompt and model apply) |
 | Entry instructions | What a session reads first, e.g. "Follow AGENTS.md. You are a consumer: answer and propose, never accept." |
 | Write policy | **Read-only** (answers only), **Reviewed** (a person accepts proposals) or **Serialized** (proposals are accepted one at a time after the check) |
