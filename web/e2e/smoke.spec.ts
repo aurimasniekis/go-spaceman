@@ -103,7 +103,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // An account: runs cannot start until the space has one (SM-ACCT-003). The stub harness ignores the credential.
   await expect(page.getByText('No account is bound, so runs cannot start.')).toBeVisible()
-  await page.getByRole('link', { name: 'Accounts' }).click()
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Accounts' }).click()
   await page.getByRole('button', { name: 'Add account' }).click()
   await page.getByLabel('Name').fill('team-codex')
   await page.getByRole('textbox', { name: 'Kind' }).click()
