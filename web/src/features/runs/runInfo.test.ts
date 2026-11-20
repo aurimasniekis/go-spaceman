@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Run } from '@/api/client'
-import { agentMessageBody, formatDuration, runLabels, runStateText, runTitle, runTone, sortRuns } from './runInfo'
+import { agentMessageBody, isBlockedOnDialog, formatDuration, runLabels, runStateText, runTitle, runTone, sortRuns } from './runInfo'
 
 const base = { id: 'run_1', role: 'control', kind: 'control', harness: 'claude-code', observed: 'running', desired: 'running', turn: 0,
   created_at: '2026-11-06T10:00:00Z', started_at: '2026-11-06T10:00:00Z' } as unknown as Run
@@ -29,6 +29,17 @@ describe('run display', () => {
     expect(runStateText(run({ status: 'idle', failure: 'authentication_failed' }), now)).toBe('idle · authentication failed')
     expect(runStateText(run({ status: 'working', failure: 'overloaded' }), now)).not.toContain('overloaded')
     expect(runStateText(run({ observed: 'exited', ended_at: '2026-11-06T10:10:30Z', end_reason: 'usage_limit' }), now)).toBe('exited 2m ago · usage limit')
+  })
+  it('says blocked on dialog instead of waiting for input', () => {
+    const blocked = run({ status: 'blocked', status_kind: 'dialog' })
+    expect(isBlockedOnDialog(blocked)).toBe(true)
+    expect(runTone(blocked)).toBe('attention')
+    expect(runStateText(blocked, now)).toBe('blocked on dialog')
+    // Other blocked kinds, and a run that is gone, are not blocked on a dialog.
+    expect(isBlockedOnDialog(run({ status: 'blocked', status_kind: 'question' }))).toBe(false)
+    expect(runStateText(run({ status: 'blocked', status_kind: 'question' }), now)).toBe('waiting for input')
+    expect(isBlockedOnDialog(run({ status: 'blocked', status_kind: 'dialog', observed: 'exited' }))).toBe(false)
+    expect(isBlockedOnDialog(run({ status: 'blocked', status_kind: 'dialog', observed: 'unknown' }))).toBe(false)
   })
   it('formats durations in their two largest units', () => {
     expect(formatDuration(45_000)).toBe('45s')

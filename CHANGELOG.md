@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **A run blocked on a dialog says so in the web UI.** The run header and the space overview show a "blocked on dialog"
+  badge, in place of the generic "waiting for input", for a run whose status is `blocked` with kind `dialog`. It links
+  to the space's messages, where the notice explains the signal and shows the screen when the node sent one. A test now
+  covers the notice text for an unknown dialog, a withheld answer and a dialog without a screen excerpt.
 - **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
   output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
   theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned
