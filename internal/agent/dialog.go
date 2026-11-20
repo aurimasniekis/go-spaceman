@@ -416,7 +416,8 @@ func (a *Agent) dialogClearLocked(ctx context.Context, row runRow) {
 	var prev *proto.RunDialog
 	if w := a.dlg.runs[row.RunID]; w != nil {
 		prev = w.blocked
-		w.blocked, w.answered = nil, ""
+		// The backoff ends with the flag: a flag raised again starts its re-reads from dialogQuiet, not from this one.
+		w.blocked, w.answered, w.backoff = nil, "", 0
 	}
 	a.dlg.mu.Unlock()
 	if prev == nil {

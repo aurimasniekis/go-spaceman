@@ -62,6 +62,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A dialog flag raised again after it cleared is read again after the quiet period.** A flag that cleared through
+  the run's observed working status kept its re-read backoff, so a flag raised again with no output was only re-read
+  up to five minutes later instead of after the first quiet period. The backoff now ends with the flag.
+
 - **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
   are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
   for a reconnect, and the monitor loop doesn't wait out the write timeout.

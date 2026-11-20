@@ -455,6 +455,47 @@ func TestDialogFlagRecheckedOnAQuietScreen(t *testing.T) {
 	})
 }
 
+// A flag that clears through the observed working status (dialogObserved, not a read) and comes back with no output
+// is read again after dialogQuiet, not after the backoff the flag had reached: the clear ends the backoff.
+func TestDialogReflagAfterObservedClearRereadsAfterQuiet(t *testing.T) {
+	old := dialogRecheckMax
+	dialogRecheckMax = 400 * time.Millisecond
+	t.Cleanup(func() { dialogRecheckMax = old })
+	e := newDialogEnv(t, nil)
+	e.show(fixture(t, "claude-unknown.txt"))
+	waitFor(t, "flagged", func() bool { return len(e.dialogs()) == 1 })
+	waitFor(t, "backoff at its bound", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		w := e.a.dlg.runs[e.run]
+		return w != nil && w.backoff == dialogRecheckMax
+	})
+	// The program reports working: the observe path clears the flag. The screen still shows the dialog, so the re-read
+	// that is already armed flags it again with no output.
+	row := getRun(t, e.a, e.run)
+	row.Status, row.StatusKind = "working", ""
+	e.a.dialogObserved(context.Background(), row, row)
+	waitFor(t, "cleared", func() bool { return len(e.dialogs()) == 2 })
+	waitFor(t, "flagged again", func() bool { return len(e.dialogs()) == 3 })
+	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:unknown", "cleared:unknown", "blocked:unknown"}) {
+		t.Fatalf("outcomes %v", got)
+	}
+	// The re-read of the new flag comes after dialogQuiet: the backoff restarts from the quiet period, not from the old
+	// flag's bound.
+	waitFor(t, "backoff of the new flag", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		w := e.a.dlg.runs[e.run]
+		return w != nil && w.backoff != 0
+	})
+	e.a.dlg.mu.Lock()
+	b := e.a.dlg.runs[e.run].backoff
+	e.a.dlg.mu.Unlock()
+	if b != dialogQuiet {
+		t.Fatalf("the new flag re-reads after %v, want dialogQuiet %v (the old backoff was %v)", b, dialogQuiet, dialogRecheckMax)
+	}
+}
+
 // After an agent restart the run's secret values are unknown (they are never written down for the watch): a dialog
 // flagged then is sent without an excerpt, rather than with values the token patterns miss.
 func TestDialogNoExcerptAfterRestart(t *testing.T) {
