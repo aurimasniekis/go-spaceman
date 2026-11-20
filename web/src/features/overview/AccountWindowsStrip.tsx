@@ -23,7 +23,7 @@ function Bar({ account, kind, used, stale }: { account: string; kind: string; us
 
 /**
  * One compact row per account: its 5-hour and 7-day window bars and any open usage limit (plan §2.2). An observation
- * that is old or past its reset is marked "?" and dimmed. Hidden when no account is bound to a readable space.
+ * that is old or past its reset is marked "?" and dimmed. Hidden when no account is bound to a readable space, and when the read fails or is still loading: the strip is optional, so a failure says nothing here (the Usage page reports it).
  */
 export function AccountWindowsStrip({ accounts, now = Date.now() }: { accounts: AccountState[]; now?: number }) {
   if (accounts.length === 0) return null
@@ -31,7 +31,7 @@ export function AccountWindowsStrip({ accounts, now = Date.now() }: { accounts: 
     <Card data-testid="account-windows-strip">
       <Group justify="space-between" mb={6} wrap="nowrap">
         <Text fw={600}>Accounts</Text>
-        <AnchorLink to={'/usage' as never} size="sm">Details in Usage</AnchorLink>
+        <AnchorLink to="/usage" size="sm">Details in Usage</AnchorLink>
       </Group>
       <Stack gap={10} component="ul" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {accounts.map((a) => (

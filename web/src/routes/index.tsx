@@ -2,14 +2,14 @@ import { Card, Group, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, type ReactNode } from 'react'
-import { runsQuery, useAllAccountWindows, useAttention, useGlobalUsage, useMe, useNodes, useSpaces } from '@/api/queries'
+import { runsQuery, useAllAccountWindows, useAttention, useMe, useNodes, useSpaces, useUsageSeries } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { NodeState, RunState, SpaceState } from '@/components/StatusBadge'
 import { AccountWindowsStrip } from '@/features/overview/AccountWindowsStrip'
 import { AttentionTop } from '@/features/overview/AttentionTop'
-import { overviewRange } from '@/features/overview/summary'
+import { overviewRange, summarize } from '@/features/overview/summary'
 import { UsageSummary } from '@/features/overview/UsageSummary'
 import { compact } from '@/features/usage/series'
 import { hasGlobal } from '@/lib/access'
@@ -46,14 +46,10 @@ function Overview() {
   // Two daily reads and the accounts' windows: the three requests Overview adds (plan §2.2); attention is the existing query.
   const day = Math.floor(Date.now() / 86_400_000)
   const range = useMemo(() => overviewRange(), [day]) // eslint-disable-line react-hooks/exhaustive-deps
-  const bySpace = useGlobalUsage('space', range.from, range.to)
-  const byModel = useGlobalUsage('model', range.from, range.to)
+  const bySpace = useUsageSeries(undefined, { bucket: 'day', group_by: 'space', ...range })
+  const byModel = useUsageSeries(undefined, { bucket: 'day', group_by: 'model', ...range })
   const windows = useAllAccountWindows()
-  const tokens7d = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of bySpace.data?.items ?? []) if (Date.parse(r.bucket_start ?? '') >= Date.parse(range.from) + 7 * 86_400_000) m.set(r.group, (m.get(r.group) ?? 0) + r.total_tokens)
-    return m
-  }, [bySpace.data, range.from])
+  const tokens7d = useMemo(() => summarize(bySpace.data?.items ?? [], range.from).weekByGroup, [bySpace.data, range.from])
 
   return (
     <>
@@ -65,8 +61,8 @@ function Overview() {
         {showNodes && <Stat label="Nodes" value={`${connected}/${nodes.data?.length ?? 0}`} hint="connected" />}
       </SimpleGrid>
       <Stack gap="md" mb="md">
-        <AttentionTop items={attention.data?.items ?? []} total={attention.data?.total ?? 0} spaceName={name} loading={attention.isLoading} />
-        <UsageSummary bySpace={bySpace.data} byModel={byModel.data} from={range.from} />
+        <AttentionTop items={attention.data?.items} total={attention.data?.total} spaceName={name} loading={attention.isLoading} error={attention.error} />
+        <UsageSummary bySpace={bySpace.data} byModel={byModel.data} from={range.from} loading={bySpace.isLoading || byModel.isLoading} error={bySpace.error ?? byModel.error} />
         <AccountWindowsStrip accounts={windows.data ?? []} />
       </Stack>
       <SimpleGrid cols={{ base: 1, md: showNodes ? 2 : 1 }}>

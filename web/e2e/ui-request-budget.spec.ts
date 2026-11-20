@@ -60,6 +60,8 @@ test('a fresh tab makes a few requests per endpoint, whatever the change history
   const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
   test.info().annotations.push({ type: 'requests', description: top.map(([p, n]) => `${n}× ${p}`).join(', ') })
   for (const [path, max] of Object.entries(BUDGET)) expect(counts.get(path) ?? 0, `requests to ${path}`).toBeLessThanOrEqual(max)
+  // A lower bound, so the spec fails if the Overview stops issuing the reads it budgets for.
+  expect(counts.get('/api/v1/usage/series') ?? 0, 'requests to /api/v1/usage/series').toBeGreaterThan(0)
   const total = [...counts.values()].reduce((a, b) => a + b, 0)
   expect(total, 'API requests over the whole journey').toBeLessThan(120)
 })

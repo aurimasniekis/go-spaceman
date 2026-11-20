@@ -12,11 +12,13 @@ export function overviewRange(now = Date.now()): { from: string; to: string } {
 export type Summary = {
   today: number
   week: number
-  /** The 7 days before the last 7, for the delta; undefined when that period has no usage (a percentage of zero says nothing). */
+  /** The 7 days before the last 7, for the delta (0 when that period has no usage; `delta` then returns undefined). */
   previous: number
   /** 14 daily totals, oldest first. */
   days: number[]
   top: { group: string; tokens: number }[]
+  /** Tokens of every group over the last 7 days. */
+  weekByGroup: Map<string, number>
 }
 
 /** Sums daily rows into today, the last 7 days, the 7 before them and a 14-day sparkline; the top groups are over the last 7 days. */
@@ -33,6 +35,7 @@ export function summarize(rows: UsageRow[], from: string, top = 5): Summary {
   const sum = (a: number[]) => a.reduce((n, v) => n + v, 0)
   return {
     today: days[13], week: sum(days.slice(7)), previous: sum(days.slice(0, 7)), days,
+    weekByGroup: groups,
     top: [...groups.entries()].filter(([, t]) => t > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, top).map(([group, tokens]) => ({ group, tokens })),
   }
 }

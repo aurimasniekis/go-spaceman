@@ -281,6 +281,14 @@ one, and never a bill. Only usage that runs reported is counted, and buckets are
 
 <Shot name="space-usage-page" alt="A space's Usage page: tokens per day stacked by role over the last seven days, the totals with an estimated cost, and a table per role" caption="A space's token usage" />
 
+The sidebar's **Usage** page (`/usage`) shows the same across every space you can read, over 24 hours, 7, 30 or 90 days,
+grouped by space, account, model, role or harness. Select an account, model or harness in the table to filter by it; the
+range, grouping and filters are in the URL. Runs whose usage the ledger does not hold (Codex, and runs with only Harbor
+Pilot figures) are listed as **not counted**, because their usage is missing, not zero. An **Accounts** section shows each
+account's 5-hour and 7-day window and its open usage limits.
+
+<Shot name="usage-page" alt="The Usage page across spaces: tokens per day stacked by space, totals with an estimated cost, a note on runs that are not counted, a table per space and the accounts' windows" caption="Usage across spaces" />
+
 ## What you can do
 
 Usually nothing: if the work can wait, the waits bring it back. Otherwise:

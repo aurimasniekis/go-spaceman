@@ -49,7 +49,7 @@ function basePrefs(): Record<string, unknown> {
 }
 
 /** The fixtures a test can replace: the queue's tasks, the scheduled messages to control and the space's attention counts. */
-type Fixtures = { terminalWatch?: boolean; prefs?: Record<string, unknown>; putStatus?: number; role?: string; path: string; tasks?: unknown[]; scheduled?: unknown[]; attention?: Record<string, unknown>; humanPending?: { items: unknown[]; counts: Record<string, number>; total: number } }
+type Fixtures = { terminalWatch?: boolean; prefs?: Record<string, unknown>; putStatus?: number; role?: string; path: string; tasks?: unknown[]; scheduled?: unknown[]; attention?: Record<string, unknown>; attentionItems?: unknown[]; humanPending?: { items: unknown[]; counts: Record<string, number>; total: number } }
 
 async function launch(page: Page, o: Fixtures) {
   const moves: unknown[] = []
@@ -96,7 +96,7 @@ async function launch(page: Page, o: Fixtures) {
     if (p === `/spaces/${SPACE}`) return route.fulfill(json({ id: SPACE, name: 'Pages space', state: 'active', version: 1, goals: 'Ship it', lease: { valid: true, state: 'valid', generation: 1 } }))
     if (p === '/attention') {
       const space = { space_id: SPACE, name: 'Pages space', slug: 'p', state: 'active', total: 0, ...o.attention }
-      return route.fulfill(json({ total: space.total, checked_at: now, spaces: [space] }))
+      return route.fulfill(json({ total: space.total, checked_at: now, spaces: [space], items: o.attentionItems ?? [], item_counts: {} }))
     }
     if (p === '/human-actions') return route.fulfill(json(o.humanPending ?? { items: [], counts: {}, total: 0 }))
     if (p === `/spaces/${SPACE}/runs`) return route.fulfill(json({ items: [run] }))
@@ -242,6 +242,27 @@ test('the space overview names the web-only counts without links in the Mini App
   // Exact name: the Mini App header's "‹ All spaces" back link to the start page is fine; the web's /attention link is not.
   await expect(page.getByRole('link', { name: 'All spaces', exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: '1 blocked tasks' })).toBeVisible()
+  await clean(page)
+})
+
+test('/attention in the Mini App groups the items and leaves the web-only targets unlinked', async ({ page }) => {
+  const item = (id: string, kind: string, severity: string, title: string, target: Record<string, string>) => ({ id, kind, severity, title, since: now, space_id: SPACE, target: { space_id: SPACE, ...target } })
+  await launch(page, {
+    path: '/attention',
+    attention: { total: 2, human_pending: 2, tasks_blocked: 1 },
+    attentionItems: [
+      item('i1', 'task_blocked', 'act', 'Blocked deploy task', { type: 'task', id: T(1) }),
+      item('i2', 'account_limit', 'watch', 'Account limit reached: five_hour', { type: 'space_usage' }),
+      item('i3', 'run_parked', 'watch', 'Run parked at a usage limit: implementor', { type: 'run', id: run.id }),
+    ],
+  })
+  await expect(page.getByRole('heading', { name: 'Act now' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Watch' })).toBeVisible()
+  await expect(page.getByText('2 human actions')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Blocked deploy task' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Run parked at a usage limit: implementor' })).toBeVisible()
+  await expect(page.getByText('Account limit reached: five_hour')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Account limit reached: five_hour' })).toHaveCount(0)
   await clean(page)
 })
 

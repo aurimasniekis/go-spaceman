@@ -35,6 +35,17 @@ describe('AttentionTop', () => {
     expect(screen.getByRole('link', { name: 'Item 6' }).getAttribute('href')).toBe('/spaces/spc_1/queue')
     expect(await axeViolations(container)).toEqual([])
   })
+  it('shows loading and error states, never "all clear" or a count of 0', async () => {
+    const { unmount } = await view(<AttentionTop loading spaceName={() => ''} />)
+    expect(screen.getByText('Loading…')).toBeTruthy()
+    expect(screen.queryByText('Nothing needs you right now.')).toBeNull()
+    expect(screen.getByRole('link', { name: 'See all' })).toBeTruthy()
+    unmount()
+    await view(<AttentionTop error={new Error('boom')} spaceName={() => ''} />)
+    expect(screen.getByText('boom')).toBeTruthy()
+    expect(screen.queryByText('Nothing needs you right now.')).toBeNull()
+    expect(screen.queryByRole('link', { name: /See all \(/ })).toBeNull()
+  })
   it('says so when nothing needs attention', async () => {
     await view(<AttentionTop items={[]} total={0} spaceName={() => ''} />)
     expect(screen.getByText('Nothing needs you right now.')).toBeTruthy()
@@ -85,5 +96,18 @@ describe('AccountWindowsStrip', () => {
     expect(screen.getByText('at a limit')).toBeTruthy()
     expect(screen.getByText('No window reported yet')).toBeTruthy()
     expect(await axeViolations(container)).toEqual([])
+  })
+})
+
+describe('UsageSummary states', () => {
+  it('shows a placeholder while loading and the error on failure, no figures', async () => {
+    const r = overviewRange()
+    const { unmount } = await view(<UsageSummary from={r.from} loading />)
+    expect(screen.getByText('Loading…')).toBeTruthy()
+    for (const t of ['Today', 'Last 7 days', 'No usage', 'no earlier period to compare']) expect(screen.queryByText(t)).toBeNull()
+    unmount()
+    await view(<UsageSummary from={r.from} error={new Error('usage broke')} />)
+    expect(screen.getByText('usage broke')).toBeTruthy()
+    expect(screen.queryByText('No usage')).toBeNull()
   })
 })

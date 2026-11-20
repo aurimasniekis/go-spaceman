@@ -1,6 +1,7 @@
 import { Card, Group, SimpleGrid, Stack, Text } from '@mantine/core'
 import type { GlobalUsageSeries } from '@/api/client'
 import { AnchorLink } from '@/components/AnchorLink'
+import { ErrorAlert } from '@/components/ErrorAlert'
 import { compact, groupLabel } from '@/features/usage/series'
 import { delta, summarize } from './summary'
 
@@ -41,18 +42,22 @@ function TopList({ title, rows }: { title: string; rows: { group: string; tokens
 /**
  * Tokens today and over the last 7 days (with the change against the 7 days before), a 14-day sparkline and the top 5
  * spaces and models (plan §2.2, Q7: tokens only, never a cost). `bySpace` and `byModel` are the two daily reads.
+ * While they load, or when one fails, it shows a placeholder or the error and no figures, so that a read that
+ * did not happen cannot pass for a quiet week.
  */
-export function UsageSummary({ bySpace, byModel, from }: { bySpace?: GlobalUsageSeries; byModel?: GlobalUsageSeries; from: string }) {
+export function UsageSummary({ bySpace, byModel, from, loading, error }: { bySpace?: GlobalUsageSeries; byModel?: GlobalUsageSeries; from: string; loading?: boolean; error?: unknown }) {
   const s = summarize(bySpace?.items ?? [], from)
   const m = summarize(byModel?.items ?? [], from)
   const d = delta(s.week, s.previous)
   const names = bySpace?.labels
+  const ready = bySpace !== undefined && byModel !== undefined && !error
   return (
     <Card data-testid="usage-summary">
       <Group justify="space-between" mb={6} wrap="nowrap">
         <Text fw={600}>Usage</Text>
-        <AnchorLink to={'/usage' as never} size="sm">Open Usage</AnchorLink>
+        <AnchorLink to="/usage" size="sm">Open Usage</AnchorLink>
       </Group>
+      {!ready ? (error ? <ErrorAlert error={error} title="Usage is unavailable" /> : <Text size="sm" c="dimmed" role="status">{loading ? 'Loading…' : '—'}</Text>) : (<>
       <SimpleGrid cols={{ base: 1, sm: 2 }} mb="sm">
         <Group gap="xl" wrap="nowrap" align="flex-start">
           <div>
@@ -63,7 +68,12 @@ export function UsageSummary({ bySpace, byModel, from }: { bySpace?: GlobalUsage
             <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Last 7 days</Text>
             <Text fw={600} size="xl" title={`${s.week.toLocaleString('en-US')} tokens`}>{compact(s.week)}</Text>
             <Text size="xs" c="dimmed" data-testid="usage-delta">
-              {d ? `${d.up ? '▲' : d.pct === 0 ? '' : '▼'} ${d.pct} % vs the 7 days before` : 'no earlier period to compare'}
+              {d ? (
+                <>
+                  {d.pct !== 0 && <span aria-hidden>{d.up ? '▲' : '▼'} </span>}
+                  <span>{d.pct === 0 ? 'unchanged' : `${d.up ? 'up' : 'down'} ${d.pct} %`} vs the 7 days before</span>
+                </>
+              ) : 'no earlier period to compare'}
             </Text>
           </div>
         </Group>
@@ -74,6 +84,7 @@ export function UsageSummary({ bySpace, byModel, from }: { bySpace?: GlobalUsage
         <TopList title="Top models (7 d)" rows={m.top.map((r) => ({ ...r, group: groupLabel(r.group) }))} />
       </SimpleGrid>
       <Text size="xs" c="dimmed" mt="xs">Tokens only. Runs whose harness books no usage are not counted.</Text>
+      </>)}
     </Card>
   )
 }
