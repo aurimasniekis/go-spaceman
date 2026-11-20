@@ -96,7 +96,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   test with 600 instance folders across 4 collections, a reconnect used to run about 26,800 git processes and every
   acknowledgement another 4,200 to 5,600. Now the first reports after a reconnect check every folder once (about 8,400
   processes, while git refreshes the indexes), and 40 acknowledgements after that run 88: their own head check, plus
-  one report. The uncheckpointed-file and local-commit counts (SM-MEM-004) can be up to one interval old.
+  one report. The uncheckpointed-file and local-commit counts (SM-MEM-004) can be up to one interval old. The fingerprint
+  also covers each file's inode and change time, so a same-size rewrite that keeps the modification time (`cp -p`,
+  `rsync -a`) is seen, and cached entries of renamed or removed collections and instances are dropped. An instance
+  whose unpublished commits cannot be counted (it diverged and lacks the new shared head's objects) is now never
+  reported clean and never cached: before, the count failed as 0, the backup flush skipped the instance and a backup or
+  relocation could go ahead without its commits. It is now checkpointed, and until then it counts as having
+  unacknowledged commits.
 - **A shutdown during a backup no longer logs a checkpoint warning for every role-memory instance.** Each backup's
   memory flush walked every instance of a space and kept going after the connection or the agent stopped, so each
   remaining instance failed at once with `context canceled`, logged a warning and recorded the error. Overlapping

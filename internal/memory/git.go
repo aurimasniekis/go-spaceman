@@ -397,17 +397,23 @@ func (g *Git) IsAncestor(ctx context.Context, dir, a, b string) bool {
 }
 
 // Count returns the number of commits in b that are not in a ("" for a counts all of b).
+// It is 0 when git fails; use CountErr where a failure must not read as "none".
 func (g *Git) Count(ctx context.Context, dir, a, b string) int {
+	n, _ := g.CountErr(ctx, dir, a, b)
+	return n
+}
+
+// CountErr is Count that reports git's failure (an unknown object, say) instead of counting 0.
+func (g *Git) CountErr(ctx context.Context, dir, a, b string) (int, error) {
 	spec := b
 	if a != "" {
 		spec = a + ".." + b
 	}
 	out, err := g.Run(ctx, dir, nil, "rev-list", "--count", spec)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	n, _ := strconv.Atoi(strings.TrimSpace(out))
-	return n
+	return strconv.Atoi(strings.TrimSpace(out))
 }
 
 // InitBare creates a bare repository with main as its default branch.

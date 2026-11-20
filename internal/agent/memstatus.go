@@ -86,10 +86,13 @@ func (m *memManager) reportStatus(ctx context.Context) {
 	var cols [][2]string
 	if all {
 		cols = m.collections(ctx)
+		m.pruneStatus(cols)
 	} else {
 		for _, k := range dirty {
 			if exists(filepath.Join(m.shared(k[0], k[1]), "HEAD")) && !m.a.j.orphanedRole(ctx, k[0], k[1]) {
 				cols = append(cols, k)
+			} else {
+				m.forgetStatus(filepath.Join(m.root, k[0], k[1], "instances"), nil) // removed or renamed
 			}
 		}
 		if len(cols) == 0 {
@@ -127,11 +130,31 @@ func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (unc
 	}
 	uncheckpointed = len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
 	// Commits an instance has not published (it diverged and is waiting for its next checkpoint).
+	countFailed := false
 	if head != "" {
-		localCommits = m.git.Count(ctx, inst, head, "HEAD")
+		n, err := m.git.CountErr(ctx, inst, head, "HEAD")
+		if err != nil {
+			// An idle instance has not fetched the shared head yet: bring its objects in (what a checkpoint does first)
+			// and count again.
+			shared := filepath.Join(filepath.Dir(filepath.Dir(inst)), "shared.git")
+			if _, ferr := m.git.RunCheckout(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); ferr == nil {
+				n, err = m.git.CountErr(ctx, inst, head, "HEAD")
+			}
+		}
+		if err != nil {
+			// Typically the instance diverged and lacks the new shared head's objects. Never read that as clean: count
+			// everything the checkout has (an upper bound, at least 1) so the flush checkpoints it and the space is
+			// not clean until it is published. Not cached.
+			countFailed = true
+			n, err = m.git.CountErr(ctx, inst, "", "HEAD")
+			if err != nil || n < 1 {
+				n = 1
+			}
+		}
+		localCommits = n
 	}
 	// Cached only when nothing changed while git ran (git status may rewrite the index: the next report counts again).
-	if post, ok := statusStamp(inst, head); cacheable && ok && post == pre {
+	if post, ok := statusStamp(inst, head); cacheable && ok && !countFailed && post == pre {
 		m.statusMu.Lock()
 		m.instStatus[inst] = instStatus{stamp: pre, uncheckpointed: uncheckpointed, localCommits: localCommits}
 		m.statusMu.Unlock()
@@ -150,8 +173,23 @@ func (m *memManager) forgetStatus(instances string, seen map[string]bool) {
 	}
 }
 
+// pruneStatus drops the cached status of every instance outside the given collections (renamed or removed ones).
+func (m *memManager) pruneStatus(cols [][2]string) {
+	keep := map[string]bool{}
+	for _, k := range cols {
+		keep[filepath.Join(m.root, k[0], k[1], "instances")] = true
+	}
+	m.statusMu.Lock()
+	defer m.statusMu.Unlock()
+	for p := range m.instStatus {
+		if !keep[filepath.Dir(p)] {
+			delete(m.instStatus, p)
+		}
+	}
+}
+
 // statusStamp fingerprints what an instance's status depends on: every work tree entry (path, type, size, modification
-// time), the checkout's index, HEAD, refs and the configuration files that change what git ignores, and the shared
+// time, inode, change time), the checkout's index, HEAD, refs and the configuration files that change what git ignores, and the shared
 // head. It costs one lstat per file and no git. cacheable is false when the folder cannot be read or a file changed
 // within statusRacy.
 func statusStamp(inst, head string) (uint64, bool) {
@@ -169,7 +207,12 @@ func statusStamp(inst, head string) (uint64, bool) {
 		_, _ = h.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], uint64(fi.ModTime().UnixNano())) //nolint:gosec // only hashed
 		_, _ = h.Write(buf[:])
-		if fi.ModTime().After(racy) {
+		ino, ctime := fileIdentity(fi)
+		binary.LittleEndian.PutUint64(buf[:], ino)
+		_, _ = h.Write(buf[:])
+		binary.LittleEndian.PutUint64(buf[:], uint64(ctime)) //nolint:gosec // only hashed
+		_, _ = h.Write(buf[:])
+		if fi.ModTime().After(racy) || time.Unix(0, ctime).After(racy) {
 			recent = true
 		}
 	}
