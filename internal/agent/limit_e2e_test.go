@@ -213,10 +213,18 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	t.Cleanup(func() { a2.drain(10 * time.Second) })
 	t.Cleanup(a2.stopRecorders)
 	a2.leases[ccSpace] = a.leases[ccSpace]
+	reconciled := make(chan struct{}, 4)
+	a2.snapshotReconciled = func() { reconciled <- struct{}{} }
 	startAgent(t, a2, fc, clk)
 	wantOpen(t, "hello after restart", fc.helloRun(t, runID), proto.LimitFiveHour, reset, at)
 	// The monitor's snapshot reconcile of an adopted run may or may not send one report after the hello (it races
 	// the hello), but never more, and any it sends repeats the limit still open and the run still running.
+	// Wait for that reconcile to finish first, so nothing of it can land in the clear step below.
+	select {
+	case <-reconciled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the monitor's snapshot reconcile did not finish")
+	}
 	rs = fc.collect(t, runID, 300*time.Millisecond)
 	if len(rs) > 1 {
 		t.Fatalf("adopted run: %d reports after the hello, want at most 1", len(rs))
