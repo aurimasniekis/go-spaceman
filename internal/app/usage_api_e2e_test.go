@@ -262,6 +262,11 @@ func TestListAccountWindowsPerSpace(t *testing.T) {
 				return err
 			}
 		}
+		// The same window seen exhausted in space B (one row per space): still one limit, with the later reset.
+		if _, err := tx.SQL.ExecContext(ctx, `INSERT INTO usage_limits (id, space_id, scope, account_id, kind, resets_at, source, seen_at, created_at, updated_at)
+			VALUES ('ul_wl_c', ?, 'account', ?, 'five_hour', ?, 'transcript', ?, 0, 0)`, spB, shared, now.Add(3*time.Hour).UnixMicro(), now.Add(time.Minute).UnixMicro()); err != nil {
+			return err
+		}
 		// A role pool binding of the pooled account to space B (space C's own binding is what the viewer of C reads).
 		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES (?, 'worker', ?, 100, 0, 'test')`, spB, pooled)
 		return err
@@ -321,6 +326,8 @@ func TestListAccountWindowsPerSpace(t *testing.T) {
 	sh := m[shared]
 	if sh.Name != "acct-shared" || sh.Harness != "claude-code" || len(sh.Windows) != 2 || len(sh.Limits) != 1 || sh.Limits[0].Kind != "five_hour" || sh.Limits[0].ResetsAt == nil {
 		t.Errorf("shared account: %+v", sh)
+	} else if !sh.Limits[0].SeenAt.Equal(time.UnixMicro(now.UnixMicro()).UTC()) || !sh.Limits[0].ResetsAt.Equal(time.UnixMicro(now.Add(3*time.Hour).UnixMicro()).UTC()) {
+		t.Errorf("shared limit: %+v, want the first sighting with the latest reset", sh.Limits[0])
 	}
 	for _, leak := range []string{"acct-only-b", "acct-pooled", "acct-unbound", onlyB, pooled, loose} {
 		if strings.Contains(body, leak) {
@@ -342,6 +349,23 @@ func TestListAccountWindowsPerSpace(t *testing.T) {
 	// A user who reads only a space with no bound account sees an empty list, not an error; no token is refused.
 	if st, m, body := list(mkToken("wlz@example.com", authz.RoleViewer, mkSpace("wld"))); st != http.StatusOK || len(m) != 0 {
 		t.Errorf("no readable space: %d %s", st, body)
+	}
+	// A token narrowed to A by a user who also views B reads A's accounts only: B's own account stays hidden.
+	{
+		u, err := e.c.Auth.Create(ctx, audit.System, auth.CreateInput{Email: "wlab@example.com", DisplayName: "wlab",
+			Grants: []auth.GrantInput{{Role: authz.RoleViewer, Domain: spA}, {Role: authz.RoleViewer, Domain: spB}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, _ = e.c.Auth.Get(ctx, u.ID)
+		_, tok, err := e.c.Auth.CreateAPIToken(ctx, &auth.Principal{User: u}, "wl-narrow", []auth.GrantInput{{Role: authz.RoleViewer, Domain: spA}}, 24*time.Hour, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, m, body := list(tok)
+		if st != http.StatusOK || len(m) != 1 || m[shared].AccountID == "" || strings.Contains(body, "acct-only-b") || strings.Contains(body, "acct-pooled") {
+			t.Errorf("narrowed token: %d %v %s", st, keys(m), body)
+		}
 	}
 	if st, _, _ := list(""); st != http.StatusUnauthorized {
 		t.Errorf("anonymous: %d", st)

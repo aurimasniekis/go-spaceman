@@ -409,6 +409,15 @@ func (svc *Service) AllAccountStates(ctx context.Context, visible func(spaceID s
 			t := time.UnixMicro(l.ResetsAt.Int64).UTC()
 			lim.ResetsAt = &t
 		}
+		// A limit is stored once per space that saw it (ADR-0079), but the hold is the account's: list each kind once,
+		// so the count of spaces (some of them perhaps unreadable to the caller) isn't disclosed. Rows come oldest first,
+		// so the first sighting is kept, with the latest known reset.
+		if j := slices.IndexFunc(out[i].Limits, func(x Limit) bool { return x.Kind == lim.Kind }); j >= 0 {
+			if have := out[i].Limits[j].ResetsAt; lim.ResetsAt != nil && (have == nil || lim.ResetsAt.After(*have)) {
+				out[i].Limits[j].ResetsAt = lim.ResetsAt
+			}
+			continue
+		}
 		out[i].Limits = append(out[i].Limits, lim)
 	}
 	return out, nil
