@@ -4,7 +4,7 @@ import { useAccountSwitches, useSpaceAccounts } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { LimitTime } from '@/features/limits/LimitTime'
 import { limitKindLabel } from '@/features/limits/usageLimit'
-import { reasonLabel, switchesOfRun } from './switches'
+import { isSwitchBack, reasonLabel, switchesOfRun } from './switches'
 
 /**
  * The account switch a run belongs to, on its page (ADR-0090): "Moved to account B (5-hour limit on A, resets …) → the
@@ -22,7 +22,15 @@ export function RunSwitchNotice({ spaceId, runId }: { spaceId: string; runId: st
       {from && (
         <Alert color={from.state === 'failed' ? 'owlRed' : 'owlBlue'} variant="light" icon={<IconArrowsExchange size={16} />}>
           <Text size="sm">
-            {from.state === 'fell_back' ? (
+            {isSwitchBack(from) && from.state !== 'cancelled' ? (
+              from.state === 'fell_back' ? (
+                <>Not switched back: this run stayed on account <b>{name(from.from_account_id)}</b>{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
+              ) : (
+                <>{from.state === 'pending' || from.state === 'parked' ? 'Switching back' : 'Switched back'} to its original account <b>{name(from.to_account_id)}</b> (it reset; was on {name(from.from_account_id)}){' '}
+                  {from.new_run_id ? <>→ <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: from.new_run_id }} size="sm">the new run</AnchorLink></> : <>(the new run has not started yet)</>}
+                  {from.state === 'failed' && from.reason ? `. It failed because ${reasonLabel(from.reason)}` : ''}.</>
+              )
+            ) : from.state === 'fell_back' ? (
               <>No switch: this run waited at its limit instead{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
             ) : from.state === 'cancelled' ? (
               <>A switch to another account was cancelled{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
@@ -38,7 +46,7 @@ export function RunSwitchNotice({ spaceId, runId }: { spaceId: string; runId: st
       {into && (
         <Alert color="owlBlue" variant="light" icon={<IconArrowsExchange size={16} />}>
           <Text size="sm">
-            Continued from <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: into.from_run_id }} size="sm">the run</AnchorLink> on account <b>{name(into.from_account_id)}</b>, which reached its {limitKindLabel(into.limit_kind)}.
+            Continued from <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: into.from_run_id }} size="sm">the run</AnchorLink> on account <b>{name(into.from_account_id)}</b>{isSwitchBack(into) ? ', switched back to its original account after its reset.' : <>, which reached its {limitKindLabel(into.limit_kind)}.</>}
           </Text>
         </Alert>
       )}

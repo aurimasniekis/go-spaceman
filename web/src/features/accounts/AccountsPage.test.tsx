@@ -37,7 +37,7 @@ function limit(key: string, unit: string, over: Partial<Limits['limits'][number]
 const limits = {
   version: 3, on_lower: 'drain',
   limits: [limit('usage_limit_failover', 'switch', { default: 1, value: 1 }), limit('usage_limit_wait_if_reset_within', 'minutes', { default: 15, value: 15 }),
-    limit('usage_limit_switch_max_per_day', 'count', { default: 6, value: 6, override: 4 }), limit('usage_limit_min_headroom_percent', 'percent', { zero_means_none: true })],
+    limit('usage_limit_switch_max_per_day', 'count', { default: 6, value: 6, override: 4 }), limit('usage_limit_switch_back', 'switch', { default: 1, value: 1, label: 'Switch back after a reset' }), limit('usage_limit_min_headroom_percent', 'percent', { zero_means_none: true })],
 } as unknown as Limits
 
 function mount(me: Me, ui: ReactNode, seed: (qc: QueryClient) => void) {
@@ -123,6 +123,27 @@ describe('failover settings', () => {
   })
 })
 
+describe('switch-back setting', () => {
+  it('shows the toggle and saves it as an override through the limits API', async () => {
+    const put = vi.spyOn(api, 'PUT').mockResolvedValue({ data: limits, response: new Response() } as never)
+    mount(admin, <FailoverSettingsCard spaceId={SPACE} />, (qc) => qc.setQueryData(keys.limits(SPACE), limits))
+    const toggle = await screen.findByRole('textbox', { name: /Switch back to the original account/ })
+    expect((toggle as HTMLInputElement).value).toMatch(/^Default/)
+    Element.prototype.scrollIntoView = vi.fn()
+    fireEvent.click(toggle)
+    const list = document.getElementById(toggle.getAttribute('aria-controls') ?? '') as HTMLElement
+    fireEvent.click(await within(list).findByText('Off'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const [, init] = put.mock.calls[put.mock.calls.length - 1] as unknown as [string, { body: { values: Record<string, number> } }]
+    expect(init.body.values).toEqual({ usage_limit_switch_max_per_day: 4, usage_limit_switch_back: 0 })
+  })
+  it('keeps the toggle read-only for a viewer', async () => {
+    mount(viewer, <FailoverSettingsCard spaceId={SPACE} />, (qc) => qc.setQueryData(keys.limits(SPACE), limits))
+    expect(await screen.findByRole('textbox', { name: /Switch back to the original account/ })).toBeDisabled()
+  })
+})
+
 describe('account windows', () => {
   it('shows each window with its percentage, reset and age, and flags an old observation', async () => {
     const recent = new Date(Date.now() - 5 * 60_000).toISOString()
@@ -156,6 +177,24 @@ describe('account switches', () => {
     expect(within(card).getAllByRole('link', { name: 'new run' })).toHaveLength(1)
     expect(card.textContent).not.toMatch(/acc_|asw_|run_/)
     expect(await axeViolations(view.container)).toEqual([])
+  })
+  it('shows a switch-back distinctly from a usage-limit move', async () => {
+    mount(viewer, <AccountSwitchesCard spaceId={SPACE} />, (qc) => qc.setQueryData(keys.accountSwitches(SPACE), [
+      sw({ id: 'asw_3', cause: 'switch_back', limit_kind: '', from_account_id: 'acc_b', to_account_id: 'acc_a', origin_account_id: 'acc_a' }),
+      sw({ id: 'asw_4', cause: 'switch_back', limit_kind: '', state: 'fell_back', reason: 'no_eligible_account', from_account_id: 'acc_b', to_account_id: 'acc_a', new_run_id: '' }),
+      sw({ cause: 'usage_limit' })]))
+    const card = await screen.findByTestId('account-switches')
+    expect(card).toHaveTextContent('spare-pro → team-max')
+    expect(within(card).getAllByText('Switched back').length).toBeGreaterThanOrEqual(2)
+    expect(card).toHaveTextContent('original account reset')
+    expect(card).toHaveTextContent('Stayed on its account')
+    expect(card).toHaveTextContent('Moved')
+    expect(within(card).getAllByRole('link', { name: 'previous run' })).toHaveLength(2)
+  })
+  it('words a switch-back on the run page', async () => {
+    mount(viewer, <RunSwitchNotice spaceId={SPACE} runId="run_b" />, (qc) => qc.setQueryData(keys.accountSwitches(SPACE),
+      [sw({ cause: 'switch_back', limit_kind: '', from_account_id: 'acc_b', to_account_id: 'acc_a' })]))
+    expect(await screen.findByTestId('run-switch')).toHaveTextContent('switched back to its original account after its reset')
   })
   it('says so when no run has switched', async () => {
     mount(viewer, <AccountSwitchesCard spaceId={SPACE} />, (qc) => qc.setQueryData(keys.accountSwitches(SPACE), []))
