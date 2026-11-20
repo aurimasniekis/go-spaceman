@@ -219,3 +219,16 @@ func TestPlainCommentNotifiesRequester(t *testing.T) {
 		t.Fatalf("final action notified: %+v", a.Notifications)
 	}
 }
+
+// SM-HUM-006: the echo check skips only the requester's own run. A requester recorded without a run is notified by a
+// person's comment (an empty run never matches the person's empty run), and the comment stays pending.
+func TestCommentNotifiesARequesterWithoutARun(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	q := f.create(CreateInput{Type: TypeTodo, Title: "No run", Requester: Requester{Kind: "agent", ID: "ins_9", Role: "worker"}})
+	a, err := f.svc.Comment(f.ctx, op, "spc_a", q.ID, CommentInput{Body: "done"})
+	must(t, err)
+	if a.Status != Open || len(a.Notifications) != 1 || a.Notifications[0].Kind != NoticeComment {
+		t.Fatalf("requester without a run: %+v / %+v", a.Status, a.Notifications)
+	}
+}
