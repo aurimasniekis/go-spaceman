@@ -202,6 +202,22 @@ func (r *Runner) Send(ctx context.Context, id, text string, ifIdle bool) error {
 	return mapErr(r.c.Call(ctx, "terminal.send", params, nil))
 }
 
+// ReadScreen returns the terminal's visible screen (terminal.read with no history lines, docs/contracts/herdr-core.md).
+func (r *Runner) ReadScreen(ctx context.Context, id string) (string, error) {
+	var out struct {
+		Text string `json:"text"`
+	}
+	if err := r.c.Call(ctx, "terminal.read", map[string]any{"terminal": id, "lines": 0}, &out); err != nil {
+		return "", mapErr(err)
+	}
+	return out.Text, nil
+}
+
+// Keys presses named keys (terminal.keys). The core applies the same quiet rule as send: keys wait while a person types.
+func (r *Runner) Keys(ctx context.Context, id string, keys []string) error {
+	return mapErr(r.c.Call(ctx, "terminal.keys", map[string]any{"terminal": id, "keys": keys}, nil))
+}
+
 // Remove deletes a finished terminal record.
 func (r *Runner) Remove(ctx context.Context, id string) error {
 	return mapErr(r.c.Call(ctx, "terminal.rm", map[string]any{"terminal": id}, nil))
@@ -404,5 +420,8 @@ func (r *Runner) decodeEvent(line []byte) (runner.Event, bool) {
 	return ev, true
 }
 
-var _ runner.Runner = (*Runner)(nil)
+var (
+	_ runner.Runner = (*Runner)(nil)
+	_ runner.Screen = (*Runner)(nil)
+)
 var _ io.Closer = (*Runner)(nil)

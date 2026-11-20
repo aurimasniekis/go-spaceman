@@ -97,6 +97,8 @@ The Pulse client needs a `publish:evt.spaceman.>` grant and nothing else.
 | `evt.spaceman.fleet.run.launched` | `spaceman.fleet.run_launched.v1` |
 | `evt.spaceman.fleet.run.started` | `spaceman.fleet.run_started.v1` |
 | `evt.spaceman.fleet.run.ended` | `spaceman.fleet.run_ended.v1` |
+| `evt.spaceman.fleet.run.dialog_detected` | `spaceman.fleet.run_dialog_detected.v1` (ADR-0102) |
+| `evt.spaceman.fleet.run.dialog_cleared` | `spaceman.fleet.run_dialog_cleared.v1` (ADR-0102) |
 | `evt.spaceman.queue.task.created` | `spaceman.queue.task_created.v1` |
 | `evt.spaceman.queue.task.status_changed` | `spaceman.queue.task_status_changed.v1` |
 | `evt.spaceman.inbox.item.created` | `spaceman.inbox.item_created.v1` |

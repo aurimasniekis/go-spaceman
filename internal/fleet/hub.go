@@ -843,6 +843,15 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			_ = s.send(proto.TypeMemoryRenamedAck, svc.now(), ack)
 		}
 		return nil
+	case proto.TypeRunDialog:
+		if s.minor < proto.MinorDialog {
+			return apperr.New(apperr.CodeInvalid, "run.dialog needs protocol minor %d", proto.MinorDialog)
+		}
+		var d proto.RunDialog
+		if err := env.Decode(&d); err != nil {
+			return err
+		}
+		return svc.runDialog(ctx, s.nodeID, d)
 	case proto.TypeTakeoverEnded:
 		var m proto.TakeoverEnded
 		if err := env.Decode(&m); err != nil {

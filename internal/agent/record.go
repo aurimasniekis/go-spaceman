@@ -421,6 +421,7 @@ func (a *Agent) pump(ctx context.Context, s *recShipper, st runner.Stream, flush
 				return false
 			default:
 				s.add(ctx, recording.Record{Kind: recording.KindOut, Data: c.data})
+				a.dialogOutput(ctx, s.row.RunID) // the dialog watch reads the screen once the output goes quiet (ADR-0102)
 			}
 		}
 	}

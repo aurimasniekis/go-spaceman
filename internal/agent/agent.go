@@ -180,6 +180,8 @@ type Agent struct {
 	repoLocks map[string]*sync.Mutex
 	// takeovers are the runs whose terminal an operator has taken over (SM-UI-004), by run ID.
 	takeovers map[string]*takeover
+	// dlg is the terminal dialog watch (ADR-0102).
+	dlg dialogs
 	// sizeWant is central's set of run terminal sizes and holds the attaches that keep them (ADR-0075), by run ID;
 	// holdsStopped is set at shutdown.
 	sizeWant     map[string]proto.TerminalSize
@@ -238,7 +240,7 @@ type Agent struct {
 // agentMaxMinor is the newest protocol minor this agent implements, advertised in the hello. It is a literal on purpose:
 // advertising proto.MaxMinor would claim every minor central adds later, before this agent speaks it (ADR-0093). Raise it
 // together with the code that handles the new minor.
-const agentMaxMinor = 14
+const agentMaxMinor = 15
 
 // helloMaxMinor is the minor the hello advertises; a variable only so a test can tell it apart from proto.MaxMinor.
 var helloMaxMinor = agentMaxMinor
@@ -575,6 +577,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
 			go a.resendRoleRenames(hbCtx)
+			go a.resendDialogs(hbCtx)
 			a.goTrack(func() { a.capsAfterHello(hbCtx, helloCaps) })
 			go a.reportAllHookData(hbCtx)
 			if len(follow) > 0 {
@@ -778,7 +781,7 @@ func (a *Agent) sendReport(ctx context.Context, r runRow) {
 	}
 	minor := a.minor
 	a.mu.Unlock()
-	if err := a.send(ctx, proto.TypeRunReport, a.withHookData(r.report(a.now())).ForMinor(minor)); err != nil {
+	if err := a.send(ctx, proto.TypeRunReport, a.withHookData(a.withDialog(r).report(a.now())).ForMinor(minor)); err != nil {
 		a.log.Debug("run report deferred until reconnect", slog.String(obs.FieldRunID, r.RunID))
 	}
 }
