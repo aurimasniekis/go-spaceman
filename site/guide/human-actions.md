@@ -10,6 +10,10 @@ counted.
 
 <Shot name="human-global" alt="Needs you page listing a blocking question, an approval, two to-dos and an informational message across two spaces" caption="Everything waiting for a person, across spaces" />
 
+The **Messages** tab next to the list shows the messages agents sent to operators from every space you can read. Acknowledge one in place, or open it to reply or resolve; filter by unread or all, space and kind.
+
+<Shot name="human-messages" alt="Needs you, Messages tab, listing a request from a run in the payments space with its unread badge and an Acknowledge button" caption="Messages to operators from every space" />
+
 ## Agents ask here, not in the terminal
 
 An agent that needs a person asks with `spaceman_human_ask`. The request is kept, shows up under **Needs you**, reminds

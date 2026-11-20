@@ -266,6 +266,12 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ hasText: 'Payments platform' })).toBeVisible()
   await shot(page, 'human-global')
+  // The Messages tab lists messages to operators from every space (none yet here).
+  await page.getByRole('tab', { name: 'Messages' }).click()
+  await expect(page).toHaveURL(/\/human\?tab=messages/)
+  await expect(page.getByText('No unread messages.')).toBeVisible()
+  await page.getByRole('tab', { name: 'Actions' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Payments platform' })).toBeVisible()
   await page.getByRole('listitem').filter({ hasText: 'Which region' }).click()
   await page.getByRole('radio', { name: 'eu-west-1' }).check()
   await shot(page, 'human-form-default')

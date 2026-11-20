@@ -54,6 +54,8 @@ export const keys = {
   rolePools: (space: string) => ['role-pools', space] as const,
   accountWindows: (space: string) => ['account-windows', space] as const,
   spaceUsage: (space: string, bucket: string, groupBy: string, from: string, to: string) => ['space-usage', space, bucket, groupBy, from, to] as const,
+  /** Messages to operators across every readable space (Needs you → Messages); the change feed refreshes it. */
+  operatorMessages: ['operator-messages'] as const,
   messages: (space: string) => ['messages', space] as const,
   /** Under keys.messages, so invalidating a space's messages refreshes it too. */
   scheduledMessages: (space: string) => ['messages', space, 'scheduled'] as const,
@@ -473,6 +475,25 @@ export const useMessages = (space: string) =>
   useQuery({
     queryKey: keys.messages(space),
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space } }, signal })),
+  })
+
+export interface OperatorMessageFilters { state: 'open' | 'all'; space: string; kind: string }
+
+/** Messages addressed to operators from every readable space, newest first, paged by cursor. */
+export const useOperatorMessages = (f: OperatorMessageFilters) =>
+  useInfiniteQuery({
+    queryKey: [...keys.operatorMessages, 'list', f] as const,
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ signal, pageParam }) => unwrap(await api.GET('/messages', {
+      params: { query: { state: f.state, space: f.space || undefined, kind: (f.kind || undefined) as never, cursor: pageParam, limit: 50 } }, signal })),
+    getNextPageParam: (last) => last.next_cursor || undefined,
+  })
+
+/** How many messages to operators are still open across every readable space (the Messages tab's badge). */
+export const useOperatorUnread = () =>
+  useQuery({
+    queryKey: [...keys.operatorMessages, 'unread'] as const,
+    queryFn: async ({ signal }) => unwrap(await api.GET('/messages', { params: { query: { state: 'open', limit: 1 } }, signal })).unread_count,
   })
 
 /** A space's pending scheduled messages to control, earliest first: the server's list, not a filter of the newest messages (ADR-0065). */

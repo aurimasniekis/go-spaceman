@@ -1,19 +1,44 @@
-import { Button, Checkbox, Group, Text } from '@mantine/core'
+import { Badge, Button, Checkbox, Group, Tabs, Text, VisuallyHidden } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { IconFilter } from '@tabler/icons-react'
-import { createFileRoute } from '@tanstack/react-router'
-import { useHumanPendingSearch, useSpaces } from '@/api/queries'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useHumanPendingSearch, useOperatorUnread, useSpaces } from '@/api/queries'
 import { isMiniApp } from '@/api/session'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { ActionFilters, useActionFilters } from '@/features/human/ActionFilters'
 import { ActionList } from '@/features/human/ActionList'
+import { OperatorMessages } from '@/features/messages/OperatorMessages'
 import { useView } from '@/lib/viewPrefs'
 
-export const Route = createFileRoute('/human')({ component: HumanPage })
+export const Route = createFileRoute('/human')({
+  component: HumanPage,
+  // ?tab=messages opens the cross-space Messages tab; anything else is the actions list.
+  validateSearch: (s: Record<string, unknown>): { tab?: 'messages' } => ({ tab: s.tab === 'messages' ? 'messages' : undefined }),
+})
+
+/** Needs you: the actions list and, next to it, the messages addressed to operators from every space. */
+function HumanPage() {
+  const tab = Route.useSearch().tab ?? 'actions'
+  const navigate = useNavigate({ from: '/human' })
+  const unread = useOperatorUnread().data ?? 0
+  return (
+    <>
+      <PageHeader title="Needs you" description="Questions, approvals, to-dos and messages waiting for a person across your spaces. Search, filter and sort them." />
+      <Tabs value={tab} onChange={(v) => void navigate({ search: { tab: v === 'messages' ? 'messages' : undefined } })} keepMounted={false}>
+        <Tabs.List mb="sm">
+          <Tabs.Tab value="actions">Actions</Tabs.Tab>
+          <Tabs.Tab value="messages" rightSection={unread > 0 ? <Badge size="xs" color="owlYellow" circle={unread < 10}>{unread}<VisuallyHidden> unread</VisuallyHidden></Badge> : undefined}>Messages</Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="actions"><ActionsTab /></Tabs.Panel>
+        <Tabs.Panel value="messages"><OperatorMessages /></Tabs.Panel>
+      </Tabs>
+    </>
+  )
+}
 
 /** Everything waiting for a person, across the spaces you can read (SM-HUI-001), searched and filtered on the server. */
-function HumanPage() {
+function ActionsTab() {
   const filters = useActionFilters('human.global')
   const pending = useHumanPendingSearch(filters.query)
   const spaces = useSpaces()
@@ -28,7 +53,6 @@ function HumanPage() {
   const readable = (spaces.data ?? []).filter((s) => pending.data?.counts[s.id] !== undefined || filters.f.space === s.id)
   return (
     <>
-      <PageHeader title="Needs you" description="Questions, approvals, to-dos and messages waiting for a person across your spaces. Search, filter and sort them." />
       <ErrorAlert error={pending.error} />
       {mini && (
         <Group mb="xs">

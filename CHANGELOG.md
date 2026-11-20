@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Messages tab under Needs you.** `/human?tab=messages` lists the messages addressed to operators from every space you
+  can read, using `GET /messages`. Each row shows the space (linked), kind, sender, subject, age and state; you can
+  acknowledge inline, or open one to reply, acknowledge or resolve through the per-space operations. Filter by unread or
+  all, space and kind. The tab shows the unread count and refreshes live from the change feed. The per-space Messages page
+  is unchanged.
 - **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
   (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
   MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
