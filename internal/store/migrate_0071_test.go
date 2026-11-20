@@ -6,14 +6,24 @@ import (
 	"testing"
 )
 
-// 0071 rebuilds account_switches for switching back (ADR-0105): a database at 0069 upgrades and keeps its switches with
+// 0071 rebuilds account_switches for switching back (ADR-0105): a database at 0069 or 0070 upgrades and keeps its switches with
 // every column, a usage-limit switch gets its from account as its origin and any other cause none, the cause
 // switch_back is accepted, an unknown cause still refused, and the switches still go with their space.
-func TestAccountSwitchBackMigrationFrom0069(t *testing.T) {
+func TestAccountSwitchBackMigration(t *testing.T) {
 	t.Parallel()
+	for _, from := range []string{"0069", "0070"} {
+		t.Run("from"+from, func(t *testing.T) {
+			t.Parallel()
+			testAccountSwitchBackMigration(t, from)
+		})
+	}
+}
+
+func testAccountSwitchBackMigration(t *testing.T, start string) {
+	t.Helper()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
-	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0069")})
+	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, start)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +45,7 @@ func TestAccountSwitchBackMigrationFrom0069(t *testing.T) {
 		}
 	}
 	if _, err := s.wdb.ExecContext(ctx, ins, "asw_3", "switch_back"); err == nil {
-		t.Fatal("0069 already accepts switch_back")
+		t.Fatalf("%s already accepts switch_back", start)
 	}
 	_ = s.Close()
 
