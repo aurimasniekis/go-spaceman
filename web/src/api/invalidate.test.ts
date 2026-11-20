@@ -2,7 +2,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './client'
 import { keys, runsQuery } from './queries'
-import { applyChange, INVALIDATE_WINDOW_MS, refresh } from './watch'
+import { applyChange, INVALIDATE_WINDOW_MS, refresh, USAGE_SERIES_WINDOW_MS } from './watch'
 
 const runChange = (space: string, i: number) => ({ seq: i, at: 0, space_id: space, resource_type: 'run', resource_id: `run_${i}`, action: 'updated' })
 
@@ -145,5 +145,18 @@ describe('change-feed invalidation', () => {
     expect(stale(keys.usageLimits('spc_b'))).toBe(true)
     expect(stale(keys.limitWaits('spc_a'))).toBe(true)
     expect(stale(keys.limitWaits('spc_b'))).toBe(false)
+  })
+
+  it('refetches the all-spaces usage series once per window, however many runs change', async () => {
+    const qc = new QueryClient()
+    qc.setQueryData(keys.usageSeries('', 'q'), {})
+    qc.setQueryData(keys.usageSeries('spc_a', 'q'), {})
+    for (let i = 0; i < 100; i++) applyChange(qc, runChange('spc_a', i))
+    await vi.advanceTimersByTimeAsync(INVALIDATE_WINDOW_MS)
+    const stale = (k: readonly unknown[]) => qc.getQueryState(k)?.isInvalidated
+    expect(stale(keys.usageSeries('', 'q'))).toBe(false) // not on every change
+    await vi.advanceTimersByTimeAsync(USAGE_SERIES_WINDOW_MS)
+    expect(stale(keys.usageSeries('', 'q'))).toBe(true)
+    expect(stale(keys.usageSeries('spc_a', 'q'))).toBe(false)
   })
 })
