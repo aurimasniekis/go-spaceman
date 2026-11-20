@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
   working (or is adopted already working after an agent restart), and every 30 seconds while it keeps working. This is a change to the node agent: it takes effect on a node
   once the agent is upgraded.
+- **A person's comment on a human action now reaches the agent that asked.** Only **Ask the requester** used to
+  notify it, so a "done" written with plain **Comment** went unseen until someone asked for clarification. A comment
+  on a pending action an agent asked now becomes a `comment` notice, routed and woken like a clarification (the
+  action stays pending and nothing needs an answer). The requester's own comments don't echo back, and comments on
+  final actions notify nobody. Migration 0067 allows the new notice kind.
 - **A run whose profile turns on Claude Code's Code Mode no longer stops at its opt-in dialog.** With
   `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set in the profile's settings env, every new session first asked "Code Mode
   (experimental)" in the terminal, and the unattended run waited there at turn 0. SpaceMan now records the Code Mode
@@ -30,7 +35,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **A parked run resumes as soon as its node's lease is renewed after a lapse.** When the usage-limit job looked
   at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
   the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
-
 - **A parked run's resume refused for a reason other than its node is no longer shown as `node_offline`.** A launch
   refused as unavailable while the node's lease was valid (Harbor Pilot's budget status with `on_budget_status_unavailable: refuse`) was
   recorded on the usage-limit wait as `node_offline`, and retried after 15 minutes (or at the node's next hello). Such a wait

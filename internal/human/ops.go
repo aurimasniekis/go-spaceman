@@ -263,9 +263,22 @@ func (svc *Service) AddComment(ctx context.Context, actor audit.Actor, spaceID, 
 	return svc.Comment(ctx, actor, spaceID, id, CommentInput{Body: body, Label: label})
 }
 
-// Comment adds a plain comment with optional attachments.
+// Comment adds a plain comment with optional attachments. A person's comment on a pending action an agent asked
+// is also delivered to that agent as a durable, routed notification of kind NoticeComment, through the same routing
+// and wake as a clarification request, so "done" written as a comment is not missed. It is still discussion: the action
+// stays pending and nothing needs an answer. The requester's own comments (an agent actor, or the requester's run) do
+// not notify it, so they never echo back; operator requesters read comments in the UI.
 func (svc *Service) Comment(ctx context.Context, actor audit.Actor, spaceID, id string, in CommentInput) (*Action, error) {
-	return svc.comment(ctx, actor, spaceID, id, CommentPlain, in, nil)
+	a, err := svc.comment(ctx, actor, spaceID, id, CommentPlain, in, func(tx *store.Tx, r db.HumanAction) error {
+		if r.RequesterKind == "agent" && pending(r.Status) && actor.Type != audit.ActorAgent && (r.RequesterRun == "" || actor.Run != r.RequesterRun) {
+			return svc.notify(ctx, tx, r, NoticeComment)
+		}
+		return nil
+	})
+	if err == nil {
+		svc.notified()
+	}
+	return a, err
 }
 
 // RequestClarification asks the requester for more information (SM-HUM-006). The action stays pending and keeps its
@@ -307,6 +320,9 @@ func (svc *Service) ReplyAsRequester(ctx context.Context, actor audit.Actor, spa
 
 // NoticeClarification is the notification kind of a clarification request.
 const NoticeClarification = "clarification"
+
+// NoticeComment is the notification kind of a person's plain comment on a pending action the agent asked.
+const NoticeComment = "comment"
 
 func (svc *Service) comment(ctx context.Context, actor audit.Actor, spaceID, id, kind string, in CommentInput, extra func(*store.Tx, db.HumanAction) error) (*Action, error) {
 	body := strings.TrimSpace(in.Body)

@@ -8319,12 +8319,13 @@
             "type": "string"
           },
           "kind": {
-            "description": "clarification: a person asked the requester for more information; the action stays pending",
+            "description": "clarification: a person asked the requester for more information; comment: a person commented on the pending action; the action stays pending",
             "enum": [
               "resolved",
               "cancelled",
               "expired",
-              "clarification"
+              "clarification",
+              "comment"
             ],
             "type": "string"
           },
