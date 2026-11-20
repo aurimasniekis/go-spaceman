@@ -10,18 +10,21 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccessRouteImport } from './routes/access'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ApprovalPoliciesRouteImport } from './routes/approval-policies'
 import { Route as AttentionRouteImport } from './routes/attention'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as BackupsRouteImport } from './routes/backups'
+import { Route as ConfigurationRouteImport } from './routes/configuration'
 import { Route as CrossSpaceRouteImport } from './routes/cross-space'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as GitKeysRouteImport } from './routes/git-keys'
 import { Route as HarborPilotRouteImport } from './routes/harbor-pilot'
 import { Route as HumanRouteImport } from './routes/human'
 import { Route as HumanTypesRouteImport } from './routes/human-types'
+import { Route as IntegrationsRouteImport } from './routes/integrations'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as McpServersRouteImport } from './routes/mcp-servers'
 import { Route as NodesRouteImport } from './routes/nodes'
@@ -36,6 +39,7 @@ import { Route as SpacesRouteImport } from './routes/spaces'
 import { Route as SystemRouteImport } from './routes/system'
 import { Route as TerminalsRouteImport } from './routes/terminals'
 import { Route as TokensRouteImport } from './routes/tokens'
+import { Route as UsageRouteImport } from './routes/usage'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as EventsIndexRouteImport } from './routes/events.index'
 import { Route as PromptsIndexRouteImport } from './routes/prompts.index'
@@ -71,6 +75,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AccessRoute = AccessRouteImport.update({
+  id: '/access',
+  path: '/access',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AccountRoute = AccountRouteImport.update({
   id: '/account',
   path: '/account',
@@ -101,6 +110,11 @@ const BackupsRoute = BackupsRouteImport.update({
   path: '/backups',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConfigurationRoute = ConfigurationRouteImport.update({
+  id: '/configuration',
+  path: '/configuration',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CrossSpaceRoute = CrossSpaceRouteImport.update({
   id: '/cross-space',
   path: '/cross-space',
@@ -129,6 +143,11 @@ const HumanRoute = HumanRouteImport.update({
 const HumanTypesRoute = HumanTypesRouteImport.update({
   id: '/human-types',
   path: '/human-types',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IntegrationsRoute = IntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -199,6 +218,11 @@ const TerminalsRoute = TerminalsRouteImport.update({
 const TokensRoute = TokensRouteImport.update({
   id: '/tokens',
   path: '/tokens',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsageRoute = UsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsersRoute = UsersRouteImport.update({
@@ -355,18 +379,21 @@ const SpacesSpaceIdInboxItemIdDiagramRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/access': typeof AccessRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/attention': typeof AttentionRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
+  '/configuration': typeof ConfigurationRoute
   '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
   '/git-keys': typeof GitKeysRoute
   '/harbor-pilot': typeof HarborPilotRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
+  '/integrations': typeof IntegrationsRoute
   '/login': typeof LoginRoute
   '/mcp-servers': typeof McpServersRoute
   '/nodes': typeof NodesRoute
@@ -381,6 +408,7 @@ export interface FileRoutesByFullPath {
   '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
+  '/usage': typeof UsageRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
@@ -413,17 +441,20 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/access': typeof AccessRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/attention': typeof AttentionRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
+  '/configuration': typeof ConfigurationRoute
   '/cross-space': typeof CrossSpaceRoute
   '/git-keys': typeof GitKeysRoute
   '/harbor-pilot': typeof HarborPilotRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
+  '/integrations': typeof IntegrationsRoute
   '/login': typeof LoginRoute
   '/mcp-servers': typeof McpServersRoute
   '/nodes': typeof NodesRoute
@@ -437,6 +468,7 @@ export interface FileRoutesByTo {
   '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
+  '/usage': typeof UsageRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/events': typeof EventsIndexRoute
@@ -467,18 +499,21 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/access': typeof AccessRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/attention': typeof AttentionRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
+  '/configuration': typeof ConfigurationRoute
   '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
   '/git-keys': typeof GitKeysRoute
   '/harbor-pilot': typeof HarborPilotRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
+  '/integrations': typeof IntegrationsRoute
   '/login': typeof LoginRoute
   '/mcp-servers': typeof McpServersRoute
   '/nodes': typeof NodesRoute
@@ -493,6 +528,7 @@ export interface FileRoutesById {
   '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
+  '/usage': typeof UsageRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
@@ -527,18 +563,21 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/access'
     | '/account'
     | '/accounts'
     | '/approval-policies'
     | '/attention'
     | '/audit'
     | '/backups'
+    | '/configuration'
     | '/cross-space'
     | '/events'
     | '/git-keys'
     | '/harbor-pilot'
     | '/human'
     | '/human-types'
+    | '/integrations'
     | '/login'
     | '/mcp-servers'
     | '/nodes'
@@ -553,6 +592,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/terminals'
     | '/tokens'
+    | '/usage'
     | '/users'
     | '/prompts/$promptId'
     | '/spaces/$spaceId'
@@ -585,17 +625,20 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/access'
     | '/account'
     | '/accounts'
     | '/approval-policies'
     | '/attention'
     | '/audit'
     | '/backups'
+    | '/configuration'
     | '/cross-space'
     | '/git-keys'
     | '/harbor-pilot'
     | '/human'
     | '/human-types'
+    | '/integrations'
     | '/login'
     | '/mcp-servers'
     | '/nodes'
@@ -609,6 +652,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/terminals'
     | '/tokens'
+    | '/usage'
     | '/users'
     | '/prompts/$promptId'
     | '/events'
@@ -638,18 +682,21 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/access'
     | '/account'
     | '/accounts'
     | '/approval-policies'
     | '/attention'
     | '/audit'
     | '/backups'
+    | '/configuration'
     | '/cross-space'
     | '/events'
     | '/git-keys'
     | '/harbor-pilot'
     | '/human'
     | '/human-types'
+    | '/integrations'
     | '/login'
     | '/mcp-servers'
     | '/nodes'
@@ -664,6 +711,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/terminals'
     | '/tokens'
+    | '/usage'
     | '/users'
     | '/prompts/$promptId'
     | '/spaces/$spaceId'
@@ -697,18 +745,21 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccessRoute: typeof AccessRoute
   AccountRoute: typeof AccountRoute
   AccountsRoute: typeof AccountsRoute
   ApprovalPoliciesRoute: typeof ApprovalPoliciesRoute
   AttentionRoute: typeof AttentionRoute
   AuditRoute: typeof AuditRoute
   BackupsRoute: typeof BackupsRoute
+  ConfigurationRoute: typeof ConfigurationRoute
   CrossSpaceRoute: typeof CrossSpaceRoute
   EventsRoute: typeof EventsRouteWithChildren
   GitKeysRoute: typeof GitKeysRoute
   HarborPilotRoute: typeof HarborPilotRoute
   HumanRoute: typeof HumanRoute
   HumanTypesRoute: typeof HumanTypesRoute
+  IntegrationsRoute: typeof IntegrationsRoute
   LoginRoute: typeof LoginRoute
   McpServersRoute: typeof McpServersRoute
   NodesRoute: typeof NodesRoute
@@ -723,6 +774,7 @@ export interface RootRouteChildren {
   SystemRoute: typeof SystemRoute
   TerminalsRoute: typeof TerminalsRoute
   TokensRoute: typeof TokensRoute
+  UsageRoute: typeof UsageRoute
   UsersRoute: typeof UsersRoute
   PromptsPromptIdRoute: typeof PromptsPromptIdRoute
   PromptsIndexRoute: typeof PromptsIndexRoute
@@ -735,6 +787,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/access': {
+      id: '/access'
+      path: '/access'
+      fullPath: '/access'
+      preLoaderRoute: typeof AccessRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/account': {
@@ -779,6 +838,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BackupsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/configuration': {
+      id: '/configuration'
+      path: '/configuration'
+      fullPath: '/configuration'
+      preLoaderRoute: typeof ConfigurationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/cross-space': {
       id: '/cross-space'
       path: '/cross-space'
@@ -819,6 +885,13 @@ declare module '@tanstack/react-router' {
       path: '/human-types'
       fullPath: '/human-types'
       preLoaderRoute: typeof HumanTypesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations': {
+      id: '/integrations'
+      path: '/integrations'
+      fullPath: '/integrations'
+      preLoaderRoute: typeof IntegrationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -917,6 +990,13 @@ declare module '@tanstack/react-router' {
       path: '/tokens'
       fullPath: '/tokens'
       preLoaderRoute: typeof TokensRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/usage': {
+      id: '/usage'
+      path: '/usage'
+      fullPath: '/usage'
+      preLoaderRoute: typeof UsageRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/users': {
@@ -1226,18 +1306,21 @@ const SpacesRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccessRoute: AccessRoute,
   AccountRoute: AccountRoute,
   AccountsRoute: AccountsRoute,
   ApprovalPoliciesRoute: ApprovalPoliciesRoute,
   AttentionRoute: AttentionRoute,
   AuditRoute: AuditRoute,
   BackupsRoute: BackupsRoute,
+  ConfigurationRoute: ConfigurationRoute,
   CrossSpaceRoute: CrossSpaceRoute,
   EventsRoute: EventsRouteWithChildren,
   GitKeysRoute: GitKeysRoute,
   HarborPilotRoute: HarborPilotRoute,
   HumanRoute: HumanRoute,
   HumanTypesRoute: HumanTypesRoute,
+  IntegrationsRoute: IntegrationsRoute,
   LoginRoute: LoginRoute,
   McpServersRoute: McpServersRoute,
   NodesRoute: NodesRoute,
@@ -1252,6 +1335,7 @@ const rootRouteChildren: RootRouteChildren = {
   SystemRoute: SystemRoute,
   TerminalsRoute: TerminalsRoute,
   TokensRoute: TokensRoute,
+  UsageRoute: UsageRoute,
   UsersRoute: UsersRoute,
   PromptsPromptIdRoute: PromptsPromptIdRoute,
   PromptsIndexRoute: PromptsIndexRoute,

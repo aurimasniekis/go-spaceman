@@ -133,3 +133,20 @@ FROM messages m
 WHERE m.space_id = sqlc.arg(space_id) AND m.from_kind = 'run' AND m.from_id = sqlc.arg(run_id)
   AND (m.to_kind = 'control'
     OR (m.to_kind = 'run' AND m.to_id IN (SELECT r.id FROM runs r WHERE r.space_id = sqlc.arg(space_id) AND r.kind = 'control')));
+
+-- Operator inbox across spaces (GET /messages): messages to operators in the given spaces (a JSON array of the caller's
+-- readable space IDs), newest first, keyset-paged on (created_at, id). only_open = 1 keeps the open ones (stored,
+-- available). kind is '' for any kind. to_id = '' lets the index reach state. The spaces come as JSON because sqlc expands
+-- a slice into positional parameters and mixes badly with the numbered ones.
+-- name: ListOperatorMessages :many
+SELECT * FROM messages
+WHERE to_kind = 'operators' AND to_id = ''
+  AND space_id IN (SELECT value FROM json_each(sqlc.arg(spaces)))
+  AND (sqlc.arg(only_open) = 0 OR state IN ('stored', 'available'))
+  AND (sqlc.arg(kind) = '' OR kind = sqlc.arg(kind))
+  AND (created_at, id) < (CAST(sqlc.arg(after_created) AS INTEGER), CAST(sqlc.arg(after_id) AS TEXT))
+ORDER BY created_at DESC, id DESC LIMIT sqlc.arg(lim);
+
+-- name: CountOperatorMessagesIn :one
+SELECT count(*) FROM messages
+WHERE to_kind = 'operators' AND to_id = '' AND state IN ('stored', 'available') AND space_id IN (SELECT value FROM json_each(sqlc.arg(spaces)));

@@ -7,6 +7,7 @@ package messages
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -735,4 +736,64 @@ func (svc *Service) ControlNotifiedTx(ctx context.Context, tx *store.Tx, spaceID
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// OperatorQuery selects operator-addressed messages across a set of spaces (the caller's readable ones).
+type OperatorQuery struct {
+	Spaces []string
+	// All includes acknowledged and resolved messages; otherwise only open ones (stored, available).
+	All  bool
+	Kind string
+	// AfterCreated and AfterID are the position after which the page starts (the zero value: the newest).
+	AfterCreated int64
+	AfterID      string
+	Limit        int
+}
+
+// ListOperator returns one page of messages to operators, newest first, ordered by (created_at, id) so a page never
+// repeats or skips a message. It returns at most Limit+1 rows' worth of lookahead: the second result reports a next page.
+func (svc *Service) ListOperator(ctx context.Context, q OperatorQuery) ([]*Message, bool, error) {
+	limit := min(max(q.Limit, 1), 200)
+	if len(q.Spaces) == 0 {
+		return []*Message{}, false, nil
+	}
+	after := q.AfterCreated
+	if after == 0 {
+		after = 1<<63 - 1
+	}
+	var onlyOpen int64 = 1
+	if q.All {
+		onlyOpen = 0
+	}
+	rows, err := svc.s.R().ListOperatorMessages(ctx, db.ListOperatorMessagesParams{Spaces: spaceList(q.Spaces), OnlyOpen: onlyOpen, Kind: q.Kind,
+		AfterCreated: after, AfterID: q.AfterID, Lim: int64(limit) + 1})
+	if err != nil {
+		return nil, false, err
+	}
+	more := len(rows) > limit
+	if more {
+		rows = rows[:limit]
+	}
+	out := make([]*Message, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fromRow(r))
+	}
+	if _, err := svc.withAttachments(ctx, out...); err != nil {
+		return nil, false, err
+	}
+	return out, more, nil
+}
+
+// OperatorUnread counts the open messages to operators (stored, available) in the given spaces.
+func (svc *Service) OperatorUnread(ctx context.Context, spaces []string) (int64, error) {
+	if len(spaces) == 0 {
+		return 0, nil
+	}
+	return svc.s.R().CountOperatorMessagesIn(ctx, spaceList(spaces))
+}
+
+// spaceList is the JSON array the operator queries take their space IDs as.
+func spaceList(ids []string) string {
+	b, _ := json.Marshal(ids)
+	return string(b)
 }

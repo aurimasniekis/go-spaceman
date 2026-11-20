@@ -337,6 +337,12 @@ func TestAPITokensOverHTTP(t *testing.T) {
 // loginAndIssueToken signs in (enrolling TOTP), steps up and creates an API token with grants.
 func loginAndIssueToken(t *testing.T, h *harness, email string, grants []map[string]string) string {
 	t.Helper()
+	return loginAndIssueTokens(t, h, email, grants)[0]
+}
+
+// loginAndIssueTokens signs the user in once (MFA enrolled) and issues one token per grant set.
+func loginAndIssueTokens(t *testing.T, h *harness, email string, grantSets ...[]map[string]string) []string {
+	t.Helper()
 	ui := h.client()
 	r := ui.do("POST", "/auth/login", map[string]string{"email": email, "password": "correct horse battery staple"})
 	expect(t, r, 200)
@@ -354,14 +360,18 @@ func loginAndIssueToken(t *testing.T, h *harness, email string, grants []map[str
 	expect(t, r, 200)
 	r.json(t, &me)
 	ui.csrf = me.CSRFToken
-	r = ui.do("POST", "/tokens", map[string]any{"name": "automation", "grants": grants, "never_expires": true})
-	expect(t, r, 201)
-	var ct api.CreatedToken
-	r.json(t, &ct)
-	if !strings.HasPrefix(ct.Secret, auth.APITokenPrefix) {
-		t.Fatalf("created token %+v", ct)
+	var secrets []string
+	for i, grants := range grantSets {
+		r = ui.do("POST", "/tokens", map[string]any{"name": fmt.Sprintf("automation-%d", i), "grants": grants, "never_expires": true})
+		expect(t, r, 201)
+		var ct api.CreatedToken
+		r.json(t, &ct)
+		if !strings.HasPrefix(ct.Secret, auth.APITokenPrefix) {
+			t.Fatalf("created token %+v", ct)
+		}
+		secrets = append(secrets, ct.Secret)
 	}
-	return ct.Secret
+	return secrets
 }
 
 // Every registered operation has an authorization rule (fail closed otherwise).
