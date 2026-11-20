@@ -45,6 +45,7 @@ const (
 // Fixed reasons a wait records in last_error (never raw error text).
 const (
 	WaitNodeOffline     = "node_offline"
+	WaitUpstreamDown    = "upstream_unavailable"
 	WaitSpacePaused     = "space_paused"
 	WaitSpaceRelocating = "space_relocating"
 	WaitSpaceFull       = "space_full"
@@ -72,10 +73,13 @@ const (
 	// limitWaitBatch bounds the releases, parks and recoveries per round.
 	limitWaitBatch = 50
 	// Retry delays of a wait that couldn't resume yet.
-	limitRetryNode   = 15 * time.Minute
-	limitRetrySoon   = 2 * time.Minute
-	limitRetryPaused = time.Hour
-	limitRetryFailed = 10 * time.Minute
+	limitRetryNode = 15 * time.Minute
+	// limitRetryUpstream is the retry of a launch refused as unavailable for a cause other than the node's lease (Harbor
+	// Pilot's budget status with on_budget_status_unavailable: refuse): usually brief, and nothing wakes it earlier.
+	limitRetryUpstream = 5 * time.Minute
+	limitRetrySoon     = 2 * time.Minute
+	limitRetryPaused   = time.Hour
+	limitRetryFailed   = 10 * time.Minute
 	// limitResumingStale is how long a wait may stay resuming before it is taken for stuck (a resume takes seconds).
 	limitResumingStale = 10 * time.Minute
 )
@@ -131,6 +135,18 @@ type limitWaitJob struct {
 
 // errResumeAborted ends a resume's launch transaction without a run: the wait's task moved meanwhile.
 var errResumeAborted = errors.New("the wait's task moved")
+
+// errNodeNotConnected marks the launch refusal that is about the space's node having no valid execution lease, so a limit
+// wait can tell it from the other CodeUnavailable refusals (Harbor Pilot budget status, or any
+// future pre-launch check).
+var errNodeNotConnected = errors.New("node not connected")
+
+// nodeNotConnectedError is that refusal: an apperr.Error (same code and text) that also matches errNodeNotConnected.
+type nodeNotConnectedError struct{ err *apperr.Error }
+
+func (e nodeNotConnectedError) Error() string      { return e.err.Error() }
+func (e nodeNotConnectedError) Unwrap() error      { return e.err }
+func (nodeNotConnectedError) Is(target error) bool { return target == errNodeNotConnected }
 
 // parkKind reports whether runs of a kind are parked and resumed. KB support and dreamer runs are started on demand
 // by their own schedulers, so they are neither stopped at the keep-alive nor brought back.
@@ -789,6 +805,10 @@ func (svc *Service) wakeWaits(ctx context.Context, spaceIDs []string, reason str
 }
 
 // wakeWaitsOnNode is called after a node's hello granted its leases: waits put off because the node was away resume now.
+// leaseFor wakes the waits of a space whose lapsed lease is granted again, but a plain renewal wakes nothing, and a wait
+// is also put off with node_offline when the lease is granted again while the wait is mid-resume. The hello's wake is
+// the nudge for that, so it stays. (A launch refused as unavailable for another cause is upstream_unavailable and is not
+// woken by a hello.)
 func (svc *Service) wakeWaitsOnNode(ctx context.Context, nodeID string) {
 	sps, err := svc.s.R().ListSpacesByNode(ctx, nodeID)
 	if err != nil {
@@ -819,7 +839,11 @@ func resumeOutcome(err error, now time.Time) (at time.Time, reason string, cance
 	case apperr.CodeRateLimited:
 		return now.Add(limitRetrySoon), WaitSpaceFull, false
 	case apperr.CodeUnavailable:
-		return now.Add(limitRetryNode), WaitNodeOffline, false
+		if errors.Is(err, errNodeNotConnected) {
+			return now.Add(limitRetryNode), WaitNodeOffline, false
+		}
+		// Not the lease: Harbor Pilot's budget status (or a future pre-launch check), which a node hello doesn't fix.
+		return now.Add(limitRetryUpstream), WaitUpstreamDown, false
 	case apperr.CodeConflict:
 		return now, WaitSuperseded, true
 	}
@@ -1020,6 +1044,8 @@ func waitReasonText(reason string) string {
 		return "the space is relocating"
 	case WaitNodeOffline:
 		return "the space's node is not connected"
+	case WaitUpstreamDown:
+		return "an upstream service the launch needs is unavailable"
 	}
 	return reason
 }

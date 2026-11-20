@@ -24,7 +24,7 @@ import (
 // of a space can read the inbox, so copying the response there would widen who sees it.
 
 // responseItemKind is the only notification kind that produces an item: a person's actual response. Cancellations,
-// expiries and clarification requests stay notifications.
+// expiries, clarification requests and comments stay notifications.
 const responseItemKind = "resolved"
 
 // responseItem adds the inbox item of a's response inside tx (deduplicated per action, so routing it again, or the

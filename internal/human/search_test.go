@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -175,5 +176,63 @@ func TestActionAttachments(t *testing.T) {
 	must(t, err)
 	if len(r.ResponseAttachments) != 2 || len(r.Attachments) != 1 {
 		t.Fatalf("response attachments: %+v / %+v", r.ResponseAttachments, r.Attachments)
+	}
+}
+
+// A person's plain comment on a pending action an agent asked reaches that agent as a "comment" notice (it is not a
+// response and the action stays pending); the requester's own comments, operator requesters and final actions do not
+// notify.
+func TestPlainCommentNotifiesRequester(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	q := f.create(CreateInput{Type: TypeTodo, Title: "Rotate the key"})
+	a, err := f.svc.Comment(f.ctx, op, "spc_a", q.ID, CommentInput{Body: "done", Label: "Op"})
+	must(t, err)
+	if a.Status != Open || a.Outcome != "" || len(a.Comments) != 1 || a.Comments[0].Kind != CommentPlain {
+		t.Fatalf("comment: %+v", a)
+	}
+	if len(a.Notifications) != 1 || a.Notifications[0].Kind != NoticeComment || a.Notifications[0].TargetRun != "run_1" {
+		t.Fatalf("notification: %+v", a.Notifications)
+	}
+	// The requester's own comments never echo back: an agent actor, or its run acting through a user's authority.
+	for _, who := range []audit.Actor{{Type: audit.ActorAgent, ID: "run_1"}, {Type: audit.ActorUser, ID: "usr_op", Run: "run_1"}} {
+		a, err = f.svc.Comment(f.ctx, who, "spc_a", q.ID, CommentInput{Body: "noted"})
+		must(t, err)
+		if len(a.Notifications) != 1 {
+			t.Fatalf("own comment by %+v notified: %+v", who, a.Notifications)
+		}
+	}
+	// An operator requester reads comments in the UI.
+	o := f.create(CreateInput{Type: TypeTodo, Title: "op", Requester: Requester{Kind: "operator", ID: "usr_op"}})
+	a, err = f.svc.Comment(f.ctx, op, "spc_a", o.ID, CommentInput{Body: "hello"})
+	must(t, err)
+	if len(a.Notifications) != 0 {
+		t.Fatalf("operator requester: %+v", a.Notifications)
+	}
+	// A comment on a final action explains a decision afterwards and notifies nobody.
+	r, err := f.svc.Respond(f.ctx, op, "spc_a", q.ID, 0, RespondInput{Outcome: "completed"})
+	must(t, err)
+	n := len(r.Notifications)
+	a, err = f.svc.Comment(f.ctx, op, "spc_a", q.ID, CommentInput{Body: "late note"})
+	must(t, err)
+	if len(a.Notifications) != n {
+		t.Fatalf("final action notified: %+v", a.Notifications)
+	}
+}
+
+// SM-HUM-006: the echo check skips only the requester's own run. A person's comment (whose run is empty too) must still
+// notify a requester recorded without a run. Such a requester has no live run, so the notice is routed as an ended
+// requester; with no successor, control or operators' fallback here, that is the operators. The comment stays pending.
+func TestCommentNotifiesARequesterWithoutARun(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	q := f.create(CreateInput{Type: TypeTodo, Title: "No run", Requester: Requester{Kind: "agent", ID: "ins_9", Role: "worker"}})
+	a, err := f.svc.Comment(f.ctx, op, "spc_a", q.ID, CommentInput{Body: "done"})
+	must(t, err)
+	if a.Status != Open || len(a.Notifications) != 1 || a.Notifications[0].Kind != NoticeComment {
+		t.Fatalf("requester without a run: %+v / %+v", a.Status, a.Notifications)
+	}
+	if n := a.Notifications[0]; n.TargetKind != TargetOperators || n.RouteReason != ReasonRequesterEnded {
+		t.Fatalf("routed %+v", n)
 	}
 }

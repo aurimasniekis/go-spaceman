@@ -66,9 +66,10 @@ var Ops = map[string]api.TelegramClass{
 	// Signed single-purpose download links for attachments (§3.4.3): the Mini App mints, /tg-dl/ redeems.
 	"create-telegram-download-link": api.TelegramMiniApp,
 	// Runs (Q3: stop, never launch).
-	"list-runs": api.TelegramBoth,
-	"get-run":   api.TelegramBoth,
-	"stop-run":  api.TelegramBoth,
+	"list-runs":        api.TelegramBoth,
+	"get-run":          api.TelegramBoth,
+	"list-run-dialogs": api.TelegramExcluded,
+	"stop-run":         api.TelegramBoth,
 
 	// Everything else is excluded: administration, configuration, catalogs, memory and knowledge, cross-space
 	// links, recordings and transcripts, terminal takeover and input, launching runs, approvals' own pages, node and

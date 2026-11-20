@@ -177,3 +177,16 @@ isolated core, with a program that prints `stty size` in a loop.
   `terminal.send` was delivered about 1 s later (the quiet rule counts typed keys, S-5, S-6).
 → ADR-0075: the node holds a run's size through `runner.Takeover` plus RESIZE, never writes to it, and records sizes
 from its own resizes and from these events.
+
+### S-8: reading a startup dialog and answering it with keys (2026-11-19, hc 0.1.17, isolated core)
+Method: Claude Code 2.1.328 started under `hc run --bg` in an isolated core (own `HC_SESSION`, XDG directories and short
+`socket`, `HC_TERMINAL_*` unset), with a fresh config directory and no credentials; `hc read`, `hc get` and `hc keys` by
+hand. The screens are fixtures in `internal/dialog/testdata`.
+- **`terminal.read` with `lines: 0` returns the visible screen** (`how: screen`, `complete: true`), lines trimmed of
+  trailing blanks only as Claude Code draws them; the selection cursor is `❯` before the option text.
+- **A program at a startup dialog reports no status:** `status: null`, `reported: false`, turn 0 for the theme picker, the
+  login choice and the add-dir dialog. Once Claude Code's main screen is up it reports `idle` (`reported: true`).
+- **`terminal.keys` answers a selection dialog:** `down`, `enter` moved from the default "No, exit" to "Yes, add it" and
+  confirmed it; `enter` alone took the theme picker's default.
+→ ADR-0102: the node reads the screen with `terminal.read` and answers known dialogs with `terminal.keys` only.
+

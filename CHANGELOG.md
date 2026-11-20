@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-20
+
+### Added
+
+- **A run blocked on a dialog says so in the web UI.** The run header and the space overview show a "blocked on dialog"
+  badge, in place of the generic "waiting for input", for a run whose status is `blocked` with kind `dialog`. It links
+  to the space's messages, where the notice explains the signal and shows the screen when the node sent one. A test now
+  covers the notice text for an unknown dialog, a withheld answer and a dialog without a screen excerpt.
+- **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
+  output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
+  theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned
+  on only when the profile sets it), once and with named keys. It never answers permission, tool-approval or login
+  dialogs. Any other dialog shows the run as `blocked_on_dialog` (in `spaceman_runs_list` too, instead of idle). The
+  operators and control get a notice with the screen (secrets masked), and `evt.spaceman.fleet.run.dialog_detected` is
+  published. Every answer is logged on the run. Node protocol minor 15. See ADR-0102.
+
+### Fixed
+
+- **A run's terminal dialog no longer outlives the run, and its history has an API.** A run that ends with a
+  `blocked_on_dialog` flag open (it was lost, its launch failed, or the agent restarted over it) now has the flag closed:
+  the node sends `cleared` on every path that ends a run, and central closes whatever is still open when it records the
+  end, publishing `evt.spaceman.fleet.run.dialog_cleared` once. A clear from the observe path can no longer overtake the
+  `blocked` it ends and leave the occurrence open on central. `GET /spaces/{space_id}/runs/{run_id}/dialogs`
+  (`list-run-dialogs`, `spaceman run dialogs`) lists a run's recognised dialogs, newest first, without their screen text.
+  The watchdog does not treat a control or a worker blocked on a dialog as stalled and does not type a reminder into it.
+  The node-side part takes effect once the agent is upgraded.
+- **A comment on a human action shows without a page reload.** The action's detail view was keyed by the listed version
+  and neither a post nor the change feed refreshed it. Posting now updates it at once, and a `human_action` change (an
+  agent's reply, another person's comment) refetches the open action through the existing change feed.
+- **A run no longer shows "at usage limit" after the limit has reset and it carries on working.** The node looked for
+  the end of a limit only when a turn ended, so a run that continued at the reset and then worked for a long turn kept
+  its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
+  working (or is adopted already working after an agent restart), and every 30 seconds while it keeps working. This is a change to the node agent: it takes effect on a node
+  once the agent is upgraded.
+- **A person's comment on a human action now reaches the agent that asked.** Only **Ask the requester** used to
+  notify it, so a "done" written with plain **Comment** went unseen until someone asked for clarification. A comment
+  on a pending action an agent asked now becomes a `comment` notice, routed and woken like a clarification (the
+  action stays pending and nothing needs an answer). The requester's own comments don't echo back, and comments on
+  final actions notify nobody. Migration 0067 allows the new notice kind.
+- **A run whose profile turns on Claude Code's Code Mode no longer stops at its opt-in dialog.** With
+  `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set in the profile's settings env, every new session first asked "Code Mode
+  (experimental)" in the terminal, and the unattended run waited there at turn 0. SpaceMan now records the Code Mode
+  caveats as accepted in the run's `.claude.json` when, and only when, the profile sets that env.
+- **A Telegram message no longer links to a URL it would itself refuse.** A link whose URL fit the 2048-byte limit as written
+  but grew past it once normalised (each `#` in a fragment becomes `%23`) was emitted as a link entity, although the
+  same check refuses the normalised URL. The limit is now checked on the URL that is emitted, so such a link is shown as text.
+  Found by the nightly `FuzzRender` run.
+- **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox
+  only let a run write its workspace, so a run on Codex could not write the memory folders outside it. The run now
+  gets write access to exactly those folders, and nothing else.
+- **Dream runs can now write the role memories they link.** The `memory/<role>` links in a dream's workspace point
+  at memory folders outside it, which Claude Code refused to write through. The run now gets write access to exactly
+  those folders of its own space, and nothing else.
+- **A parked run resumes as soon as its node's lease is renewed after a lapse.** When the usage-limit job looked
+  at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
+  the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
+- **A parked run's resume refused for a reason other than its node is no longer shown as `node_offline`.** A launch
+  refused as unavailable while the node's lease was valid (Harbor Pilot's budget status with `on_budget_status_unavailable: refuse`) was
+  recorded on the usage-limit wait as `node_offline`, and retried after 15 minutes (or at the node's next hello). Such a wait
+  now shows `upstream_unavailable` and is tried again after 5 minutes; a node hello leaves it alone.
+
 ## [0.1.14] - 2026-11-19
 
 ### Added
@@ -2370,7 +2431,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...HEAD
+[0.1.15]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.13
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10

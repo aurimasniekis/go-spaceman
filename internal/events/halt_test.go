@@ -68,7 +68,15 @@ func TestHaltDoesNotStrandAnEventDeliveredDuringTheStop(t *testing.T) {
 func TestDrainTimeoutDoesNotSetRunningAfterPause(t *testing.T) {
 	t.Parallel()
 	f := newFx(t)
-	f.svc.o.RateFor = func(context.Context, string) int64 { return 6 } // one per 10 s, burst 1: later events wait in throttle
+	// One per 10 s, burst 1: later events wait in throttle. RateFor runs first in every handler call, so it sees the
+	// handler's context: count the calls that arrive cancelled, which is the path the guard under test handles.
+	var cancelledCalls atomic.Int64
+	f.svc.o.RateFor = func(ctx context.Context, _ string) int64 {
+		if ctx.Err() != nil {
+			cancelledCalls.Add(1)
+		}
+		return 6
+	}
 	stop, err := f.svc.CreateSubscription(f.ctx, admin, "spc_a", SubscriptionInput{Name: "stopped", ConnectionID: f.conn.ID, TemplateVersionID: f.issue.Versions[0].ID,
 		Vars: map[string]string{"account_key": "example-org", "repository": "example-org/tool"}, WhilePaused: PausedStop})
 	must(t, err)
@@ -78,42 +86,34 @@ func TestDrainTimeoutDoesNotSetRunningAfterPause(t *testing.T) {
 		f.publish(issueSubject, issueType, issuePayload(t, ""), "late-"+string(rune('a'+i)))
 	}
 	eventually(t, "the first event admitted", func() bool { return f.outcomes("spc_a", stop.ID)[OutcomeAccepted] == 1 })
-	// Watch the state without sleeping: reconcile rewrites paused every retry, so a late "running" lasts only until then.
-	var pausedSeen, runningAfterPause atomic.Bool
-	watchDone := make(chan struct{})
-	watchStop := make(chan struct{})
-	go func() {
-		defer close(watchDone)
-		for {
-			select {
-			case <-watchStop:
-				return
-			default:
-			}
-			f.svc.stateMu.Lock()
-			st := f.svc.states[stop.ID].state
-			f.svc.stateMu.Unlock()
-			if st == "paused" {
-				pausedSeen.Store(true)
-			} else if st == "running" && pausedSeen.Load() {
-				runningAfterPause.Store(true)
-			}
-			time.Sleep(50 * time.Microsecond)
-		}
-	}()
+	f.svc.stateMu.Lock()
+	before := f.svc.states[stop.ID]
+	f.svc.stateMu.Unlock()
 	f.setSpaceState("spc_a", "paused") // the halt drains: the second event holds in the throttle until drainTimeout
-	eventually(t, "paused", pausedSeen.Load)
-	time.Sleep(time.Second) // the buffered events reach the handler with a cancelled context
-	close(watchStop)
-	<-watchDone
-	if runningAfterPause.Load() {
-		t.Fatal("a late handler call set the subscription to running after the halt paused it")
+	// The halt reports once its consumer has closed, which is after every late handler call. The state recorded then is
+	// what the halt left, before the manager writes paused: a late write shows here every time, not only when a sample
+	// happens to land in the window.
+	eventually(t, "the halt reported", func() bool {
+		f.haltedMu.Lock()
+		defer f.haltedMu.Unlock()
+		return f.halted[stop.ID] != nil
+	})
+	f.haltedMu.Lock()
+	left := f.haltState[stop.ID]
+	f.haltedMu.Unlock()
+	if left != before {
+		t.Fatalf("a late handler call changed the state during the halt: %+v, want the state from before it (%+v)", left, before)
 	}
-	if s := state(); s != "paused" {
-		t.Fatalf("state after the halt: %q, want paused", s)
+	if n := cancelledCalls.Load(); n == 0 {
+		t.Fatal("no handler call reached throttle with a cancelled context: the drain-timeout path was not exercised")
 	}
-	// The cancelled calls must not count as throttled either (deterministic, unlike the state watch above).
+	eventually(t, "paused", func() bool { return state() == "paused" })
+	// The cancelled calls must not count as throttled either (deterministic).
 	if n := metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "durable", "origin", "live", "result", "rate_limited"); n != 0 {
 		t.Fatalf("rate_limited deliveries counted from cancelled handlers: %v", n)
+	}
+	// Nor as errors: the handler guard skips the metric when its ctx is cancelled.
+	if n := metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "durable", "origin", "live", "result", "error"); n != 0 {
+		t.Fatalf("error deliveries counted from cancelled handlers: %v", n)
 	}
 }

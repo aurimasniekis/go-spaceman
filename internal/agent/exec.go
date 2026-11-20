@@ -167,6 +167,11 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			a.ack(ctx, c, proto.AckRejected, "an operator has taken over the terminal; input is paused")
 			return
 		}
+		// Safe input never goes into a dialog the run is flagged at (ADR-0102): it would answer it.
+		if !p.Force && a.dialogBlocked(c.RunID) {
+			a.ack(ctx, c, proto.AckRejected, "the program waits at a dialog; input not delivered (safe input)")
+			return
+		}
 		// Under the instance's input gate: a fast-forward of its memory checkout (ADR-0094) finishes first.
 		if err := a.mem.deliverInput(r, func() error { return a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force) }); err != nil {
 			reason := "send failed"
@@ -405,13 +410,15 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 		work = dir
 	}
+	var dreamMem []string // role memory checkouts a dream's memory/<role> links point at
 	if p.Dream != nil {
-		dir, err := a.prepareDream(ctx, c.SpaceID, space, c.RunID, p.InstanceID, *p.Dream)
+		dir, links, err := a.prepareDream(ctx, c.SpaceID, space, c.RunID, p.InstanceID, *p.Dream)
 		if err != nil {
 			fail("prepare the dream", err)
 			return
 		}
 		work = dir
+		dreamMem = links
 	}
 	rd := a.runDir(c.RunID)
 	for _, d := range []string{rd, work, filepath.Join(space, "instances", p.InstanceID)} {
@@ -514,7 +521,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		bin = res.Path
 	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
-		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir,
+		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir, ExtraDirs: dreamMem,
 		AutoMemoryDir: autoMem, SelfUpdate: selfUpdate})
 	if err != nil {
 		fail("build launch", err)
@@ -563,6 +570,13 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	built.SecretEnv = passthroughEnv(a.o.EnvPassthrough, os.LookupEnv, built) // before the secrets file the shim reads
+	secretValues := []string{p.RunToken}
+	for _, v := range built.SecretEnv {
+		secretValues = append(secretValues, v)
+	}
+	if err := a.saveDialogLaunch(c.RunID, p.Harness, row.Bin.Version, append([]string{work, memDir}, dreamMem...), built, secretValues); err != nil {
+		log.Warn("dialog watch: save the launch context", obs.Err(err)) // the watch then answers nothing that depends on it
+	}
 	a.rememberRunToken(c.RunID, p.RunToken)
 	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
 		fail("write secret file", err)
@@ -711,6 +725,7 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	if row.Status == "working" {
 		a.failureEnded(row.RunID, prev.Status != "working")
 	}
+	a.dialogObserved(ctx, prev, row)
 	a.report(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
@@ -739,6 +754,14 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		(prev.Status != row.Status || prev.Turn != row.Turn) {
 		a.limitKick(context.WithoutCancel(ctx), row.RunID)
 	}
+	// A run with an open limit that is working (the auto-continuation after the reset, any new turn, or one the agent
+	// adopted already working after a restart) may have passed the record that ends the limit: scan for it now and
+	// while the turn runs, not only when the turn ends. An observe that changes nothing (an adopt, a reconcile) arms
+	// a scan only if none is pending.
+	if row.State == proto.RunRunning && row.Harness == harness.KindClaude && row.Status == "working" && prev.Limit.Kind != "" {
+		unchanged := prev.Status == row.Status && prev.Turn == row.Turn
+		a.limitKickIn(context.WithoutCancel(ctx), row.RunID, limitSettle, unchanged)
+	}
 }
 
 // runEndHooks does what a run's end leaves to do: forget its hook data, scan its transcript for a usage limit, flush
@@ -752,6 +775,11 @@ func (a *Agent) runEndHooks(ctx context.Context, row runRow, started bool) {
 	}
 	bctx := context.WithoutCancel(ctx)
 	a.forgetHookData(row.RunID)
+	// A flag the run's end leaves open ends first, so central is told (the paths that end a run without observing its
+	// exit, a failed launch and the runner reconcile, never reached dialogObserved). Central also closes what is still
+	// open when it records the end; a clear it already recorded is not published twice.
+	a.dialogClear(ctx, row)
+	a.dialogForget(row.RunID)
 	if started {
 		if row.Harness == harness.KindClaude {
 			a.goTrack(func() { a.limitScan(bctx, row.RunID, true) })

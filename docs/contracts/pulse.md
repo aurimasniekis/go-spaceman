@@ -33,11 +33,12 @@ func (s *Subscription) Drain(ctx context.Context) error // graceful, v0.1.6+
   so the durable consumer redelivers it only after AckWait (30 s by default). `Drain` stops requesting events, lets the
   delivered ones be handled and acked/nakked/termed, and returns when the consumer is closed. If its ctx ends first, it
   cancels the handlers' ctx, stops and returns `ctx.Err()`. It is safe on nil, on a stopped subscription and when called
-  twice. SpaceMan halts durable subscriptions with a bounded `Drain` (`internal/events` `drainTimeout`).
+  twice. SpaceMan halts durable subscriptions with a bounded `Drain` (`internal/events` `defaultDrainTimeout`).
   - **Pause behaviour:** events already delivered to a `while_paused=stop` subscription when its space pauses are handled and
     acknowledged during the drain, so they are ingested although the space is paused; events not yet delivered wait in the
     stream until the space resumes. After a drain times out (5 s) the handlers run with a cancelled ctx: they set no
-    subscription state and count no metric, and the stream redelivers their events.
+    subscription state and count no throttle or error metric of their own (a handler that reaches `Process` with a cancelled
+    ctx may still count an error), and the stream redelivers their events.
 - **Without `Durable`:** an ordered ephemeral consumer, no acks.
 - **With `Durable(name)`:**
   - The consumer is `<clientID>_<name>`, with explicit ack and a single `FilterSubject`.
@@ -96,6 +97,8 @@ The Pulse client needs a `publish:evt.spaceman.>` grant and nothing else.
 | `evt.spaceman.fleet.run.launched` | `spaceman.fleet.run_launched.v1` |
 | `evt.spaceman.fleet.run.started` | `spaceman.fleet.run_started.v1` |
 | `evt.spaceman.fleet.run.ended` | `spaceman.fleet.run_ended.v1` |
+| `evt.spaceman.fleet.run.dialog_detected` | `spaceman.fleet.run_dialog_detected.v1` (ADR-0102) |
+| `evt.spaceman.fleet.run.dialog_cleared` | `spaceman.fleet.run_dialog_cleared.v1` (ADR-0102) |
 | `evt.spaceman.queue.task.created` | `spaceman.queue.task_created.v1` |
 | `evt.spaceman.queue.task.status_changed` | `spaceman.queue.task_status_changed.v1` |
 | `evt.spaceman.inbox.item.created` | `spaceman.inbox.item_created.v1` |

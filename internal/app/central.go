@@ -407,6 +407,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Notifier.Kick() // waiting on background tasks at its prompt (ADR-0100): messages may be noticed
 			}
 		},
+		OnRunDialog: func(ctx context.Context, r db.Run, d fleet.RunDialog) {
+			c.notifyRunDialog(ctx, r, d) // blocked_on_dialog: control and the operators are told once (ADR-0102)
+		},
 		OnRunLimitTx: func(ctx context.Context, tx *store.Tx, r *fleet.Run, ended, opened *fleet.RunLimit) error {
 			if c.Supervisor == nil {
 				return nil

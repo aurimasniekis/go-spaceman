@@ -207,7 +207,8 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 
 ### SM-RUN — Runner adapter
 - SM-RUN-001 Start, inspect, attach, read, input, resize, stop, kill, process identity, attachment recovery, stream continuity and gap reporting.
-- SM-RUN-002 Uses only verified herdr-core APIs. Never screen-text heuristics for agent status.
+- SM-RUN-002 Uses only verified herdr-core APIs. Never screen-text heuristics for agent status. The one exception (ADR-0102): screen
+  text may flag a run `blocked_on_dialog` (withholding automation) and answer an exact registry dialog that is not on the never-answer list.
 - SM-RUN-003 Managed worker creation goes only through SpaceMan.
 - SM-RUN-004 **A usage limit never loses a run's session.** When a run reaches its account's usage limit, SpaceMan keeps it alive
   until the reset or parks it and resumes the same session after the reset; it never treats the limit as a failure (ADR-0079).
@@ -630,3 +631,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-08 | A System page like Hallpass's, plus a version API, for v0.1.0. | SM-OBS-006 (ADR-0067) |
 | 2026-11-13 | A native Telegram bot and Mini App: a linked person handles spaces, inbox, queue and "needs you" from Telegram as their own SpaceMan user, never wider and never step-up; notifications without fan-out; the Mini App on its own cookieless host; every setting through the API and Terraform, the token write-only; digests in each user's own timezone. Design in ADR-0083 (Proposed, security-relevant change; operator answers 2026-11-14). | SM-TG-001…014 |
 | 2026-11-15 | Account switching: a usage limit moves a run to another account of its pool (the same session, resumed) unless the reset is near (then the run waits); per-run usage logged per account, role and space; a launch-time headroom gate, off by default. Design in ADR-0090 (Accepted, security-relevant change; operator answers 2026-11-15). | SM-ACCT-003 (amended), SM-ACCT-007, SM-RUN-007, SM-OBS-007 |
+| 2026-11-19 | Interactive dialogs on a run's terminal: known startup dialogs are answered from a registry, unknown ones flag the run `blocked_on_dialog`, notify control and the operators and publish `run.dialog_detected`; permission, tool-approval and login dialogs are never answered. | SM-RUN-002 (amended, ADR-0102) |

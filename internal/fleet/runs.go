@@ -239,7 +239,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		lease, err := tx.Q.GetLease(ctx, spaceID)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && (lease.State != "active" || !tx.Now.Before(time.UnixMicro(lease.ExpiresAt)) || lease.NodeID != sp.NodeID)) {
-			return apperr.New(apperr.CodeUnavailable, "the space's node is not connected (no valid execution lease); no new work starts until it reconnects")
+			return nodeNotConnectedError{apperr.New(apperr.CodeUnavailable, "the space's node is not connected (no valid execution lease); no new work starts until it reconnects")}
 		} else if err != nil {
 			return err
 		}
@@ -1043,6 +1043,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		}
 		if justEnded {
 			if err := svc.endRunTakeoverTx(ctx, tx, r); err != nil {
+				return err
+			}
+			if err := svc.clearRunDialogsTx(ctx, tx, r); err != nil {
 				return err
 			}
 			// A run that ends, or is lost or swept, while at its limit is parked: it comes back at the reset (ADR-0079

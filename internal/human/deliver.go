@@ -167,11 +167,11 @@ func (svc *Service) rerouted(ctx context.Context, tx *store.Tx, actor audit.Acto
 	}
 	if rt.kind == TargetOperators {
 		mid := ids.New(ids.Message)
-		body := fmt.Sprintf("The %s of human action %s (%q) could not be delivered: it was for run %s, and %s. No successor role run or control run "+
+		body := fmt.Sprintf("The %s to human action %s (%q) could not be delivered: it was for run %s, and %s. No successor role run or control run "+
 			"can take it. Open the action in Needs you or the space's human actions to send it to control once control runs.",
-			kind, a.ID, a.Title, a.RequesterRun, reasonText(reason))
+			undeliveredNoun(kind), a.ID, a.Title, a.RequesterRun, reasonText(reason))
 		if err := tx.Q.InsertMessage(ctx, db.InsertMessageParams{ID: mid, SpaceID: a.SpaceID, FromKind: "system", FromLabel: "SpaceMan", ToKind: "operators",
-			Kind: "notification", Subject: "A human response could not be delivered", Body: body, CorrelationID: a.ID, DedupKey: "undeliverable:" + nid,
+			Kind: "notification", Subject: undeliverableSubject(kind), Body: body, CorrelationID: a.ID, DedupKey: "undeliverable:" + nid,
 			CreatedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
@@ -187,6 +187,27 @@ func (svc *Service) rerouted(ctx context.Context, tx *store.Tx, actor audit.Acto
 	_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "human_action.rerouted", Target: audit.Target{Type: "human_action", ID: a.ID},
 		Details: map[string]any{"space_id": a.SpaceID, "notification_id": nid, "original_run": a.RequesterRun, "from": from, "to": rt.String(), "reason": reason}})
 	return err
+}
+
+// undeliveredNoun names the kind of an undelivered item for the operator message's body and subject. Anything else
+// (a person's resolution, a cancellation, an expiry) is a response.
+func undeliveredNoun(kind string) string {
+	switch kind {
+	case NoticeComment:
+		return "comment"
+	case NoticeClarification:
+		return "clarification"
+	default:
+		return "response"
+	}
+}
+
+// undeliverableSubject is the subject of the operator message for an undelivered item of kind.
+func undeliverableSubject(kind string) string {
+	if noun := undeliveredNoun(kind); noun != "response" {
+		return "A " + noun + " could not be delivered"
+	}
+	return "A human response could not be delivered"
 }
 
 func reasonText(reason string) string {

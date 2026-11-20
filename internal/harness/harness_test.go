@@ -555,3 +555,147 @@ func TestClaudeTrustsMemoryDir(t *testing.T) {
 		t.Fatalf("trusted projects %v, want %v", projects, want)
 	}
 }
+
+// TestClaudeAllowsExtraDirs: a dream's linked role memory checkouts lie outside its workspace, so each is passed with
+// --add-dir and trusted, exactly those and nothing else.
+func TestClaudeAllowsExtraDirs(t *testing.T) {
+	c := ctxFor(proto.LaunchPayload{Kind: "dreamer"})
+	c.ExtraDirs = []string{"/data/memory/spc_a/reviewer/instances/ins_1", "/data/memory/spc_a/worker/instances/ins_1"}
+	l, err := Claude{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var added []string
+	for i, a := range l.Argv {
+		if a == "--add-dir" && i+1 < len(l.Argv) {
+			added = append(added, l.Argv[i+1])
+		}
+	}
+	if !reflect.DeepEqual(added, c.ExtraDirs) {
+		t.Fatalf("--add-dir %v, want %v", added, c.ExtraDirs)
+	}
+	projects, _ := l.MergeJSON["/data/spaces/spc_a/instances/ins_1/claude/.claude.json"]["projects"].(map[string]any)
+	want := map[string]any{"/data/spaces/spc_a/work": map[string]any{"hasTrustDialogAccepted": true}}
+	for _, d := range c.ExtraDirs {
+		want[d] = map[string]any{"hasTrustDialogAccepted": true}
+	}
+	if !reflect.DeepEqual(projects, want) {
+		t.Fatalf("trusted projects %v, want %v", projects, want)
+	}
+	// The memory dir is passed with its own --add-dir; an extra dir equal to it must not add a second one.
+	c.MemoryDir = "/data/memory/spc_a/dreamer/instances/ins_1"
+	c.ExtraDirs = []string{c.MemoryDir, "/data/memory/spc_a/reviewer/instances/ins_1"}
+	if l, err = (Claude{}).Build(c); err != nil {
+		t.Fatal(err)
+	}
+	added = nil
+	for i, a := range l.Argv {
+		if a == "--add-dir" && i+1 < len(l.Argv) {
+			added = append(added, l.Argv[i+1])
+		}
+	}
+	if n := strings.Count(strings.Join(added, "\n"), c.MemoryDir); n != 1 {
+		t.Fatalf("--add-dir %s appears %d times, want 1 (--add-dir %v)", c.MemoryDir, n, added)
+	}
+	if want := []string{c.MemoryDir, c.ExtraDirs[1]}; !reflect.DeepEqual(added, want) {
+		t.Fatalf("--add-dir %v, want %v", added, want)
+	}
+}
+
+// A Codex run gets its role memory checkout and a dream's linked memory folders as extra writable roots (--add-dir,
+// which widens workspace-write by exactly those folders), each once, and none when there are none.
+func TestCodexBuildWritableRoots(t *testing.T) {
+	c := ctxFor(proto.LaunchPayload{Prompt: "dream", Settings: map[string]string{"sandbox": "workspace-write"}})
+	c.Binary = "codex"
+	c.MemoryDir = "/data/memory/own"
+	c.ExtraDirs = []string{"/data/memory/own", "/data/memory/other"}
+	l, err := Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sandbox stays what the settings asked for: --add-dir must not change -s.
+	var got []string
+	sandbox := ""
+	for i, a := range l.Argv {
+		if a == "--add-dir" {
+			got = append(got, l.Argv[i+1])
+		}
+		if a == "-s" && i+1 < len(l.Argv) {
+			sandbox = l.Argv[i+1]
+		}
+	}
+	if sandbox != "workspace-write" {
+		t.Fatalf("sandbox %q, want workspace-write: %v", sandbox, l.Argv)
+	}
+	if !reflect.DeepEqual(got, []string{"/data/memory/own", "/data/memory/other"}) {
+		t.Fatalf("add-dir %v in %v", got, l.Argv)
+	}
+	// On resume the roots must come before "resume <id>", as -s and -a do (codex reads root flags only there).
+	r := ctxFor(proto.LaunchPayload{Prompt: "dream", Resume: true, SessionID: "019a2b3c-4d5e-7f00", Settings: map[string]string{"sandbox": "workspace-write"}})
+	r.Binary = "codex"
+	r.MemoryDir = "/data/memory/own"
+	r.ExtraDirs = []string{"/data/memory/own", "/data/memory/other"}
+	l, err = Codex{}.Build(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume := -1
+	for i, a := range l.Argv {
+		if a == "resume" {
+			resume = i
+		}
+	}
+	if resume < 0 {
+		t.Fatalf("no resume in %v", l.Argv)
+	}
+	var beforeResume []string
+	for i, a := range l.Argv {
+		if a == "--add-dir" && i < resume {
+			beforeResume = append(beforeResume, l.Argv[i+1])
+		}
+	}
+	if !reflect.DeepEqual(beforeResume, []string{"/data/memory/own", "/data/memory/other"}) {
+		t.Fatalf("--add-dir before resume %v, want both roots: %v", beforeResume, l.Argv)
+	}
+	c.MemoryDir, c.ExtraDirs = "", nil
+	l, err = Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(l.Argv, " "), "--add-dir") {
+		t.Fatalf("unexpected --add-dir: %v", l.Argv)
+	}
+}
+
+// A profile that turns Code Mode on in its settings env gets the Code Mode caveats recorded as accepted in .claude.json,
+// so the run doesn't stop at Claude Code's interactive opt-in dialog; without the env nothing is pre-accepted.
+func TestClaudeCodeModeSeed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cs   proto.ClaudeSettings
+		want bool
+	}{
+		"no env":         {proto.ClaudeSettings{}, false},
+		"other env only": {proto.ClaudeSettings{"env": map[string]any{"CLAUDE_CODE_TMPDIR": "/tmp/x"}}, false},
+		"empty value":    {proto.ClaudeSettings{"env": map[string]any{ClaudeCodeModeEnv: ""}}, true},
+		"code mode on":   {proto.ClaudeSettings{"env": map[string]any{ClaudeCodeModeEnv: "1"}}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, err := Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: tc.cs}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var seed map[string]any
+			for _, s := range l.MergeJSON {
+				seed = s
+			}
+			if seed["hasCompletedOnboarding"] != true {
+				t.Fatalf("seed lost first-run state: %v", seed)
+			}
+			for _, k := range ClaudeCodeModeAcceptedKeys {
+				if got := seed[k] == true; got != tc.want {
+					t.Fatalf("%s = %v, want accepted=%v (seed %v)", k, seed[k], tc.want, seed)
+				}
+			}
+		})
+	}
+}

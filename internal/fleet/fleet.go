@@ -91,6 +91,9 @@ type Options struct {
 	// working, kind proto.StatusKindBackground, ADR-0100): notices can go out, although the run is still working for
 	// everything else (control's idle stop is not armed).
 	OnRunTakesNotice func(runID string)
+	// OnRunDialog is called after the commit that recorded a run waiting at a dialog SpaceMan does not answer
+	// (ADR-0102), once per occurrence: control and the operators are told, with the excerpt. Nil: nobody is told.
+	OnRunDialog func(ctx context.Context, r db.Run, d RunDialog)
 	// OnRunLimitTx is called inside the report transaction when a run's usage limit changes window: ended is the limit
 	// that ended (nil: none) and opened the one that opened (nil: none); a newer window ends the old one and opens the
 	// new one in one call. A repeat or a reclassified limit (the same since) is no change. r is the run as the report

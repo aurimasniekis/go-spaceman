@@ -1,0 +1,9 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Code Mode (experimental)
+
+ Claude writes and runs code to call its tools instead of calling them one at a time.
+
+ ❯ No, start without it
+   Yes, turn on Code Mode
+
+ Enter to confirm · Esc to start without it

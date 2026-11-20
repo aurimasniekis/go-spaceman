@@ -29,6 +29,12 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   - From 2.1.326, a directory passed with `--add-dir` that is not trusted stops the session at "Adding a new directory …
     This session hasn't worked here before" (default answer: No, exit). The same key, `projects["<real path>"]
     .hasTrustDialogAccepted: true` for that directory, skips it (verified with 2.1.326; 2.1.325 does not ask).
+  - With `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set (any value), a new session first shows an interactive "Code Mode
+    (experimental)" opt-in dialog (default answer: No, start without it). It is skipped when `.claude.json` has both
+    `codeModeCaveatsAcceptedV1: true` and `codeModeAutoModeCaveatAcceptedV1: true`, which SpaceMan seeds only when the
+    profile's settings env sets the variable. A resumed session started without Code Mode keeps running without it.
+    Gateway runs refuse the variable (it is not in the gateway's safe env list), so they never start in Code Mode.
+    (Read from the Claude Code 2.1.325 bundle and seen on a live run at 2.1.328; the seed itself is not yet run live.)
   - The startup notice says auto mode is the default permission mode in this version.
   - Inherited `CLAUDE_CODE_CHILD_SESSION` (set inside another Claude Code session) turns transcript saving off; the
     launcher shim removes inherited session markers.
@@ -160,6 +166,11 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
 - **Sandbox, approvals and workspace:**
   - Sandbox and approvals: `-s read-only|workspace-write|danger-full-access`, `-a on-request|never`.
   - Workspace: `-C/--cd`, `--add-dir`.
+  - **`--add-dir` (read from upstream `openai/codex` source and docs on `main`, not run: no binary was available):**
+    repeatable; each value becomes an extra writable root. SpaceMan passes the run's MemoryDir and the ExtraDirs (a dream's
+    linked memory folders) this way. Under `workspace-write` they are writable. Under `read-only` the flag is ignored with a
+    warning ("Ignoring --add-dir ..."). Under `danger-full-access` it is a no-op. A `.git` inside a writable root stays
+    read-only.
   - Must use `--no-daemon` under hc (per the hc manual).
 - **Sessions:** `codex resume [SESSION_ID]`, `codex exec [--json] [-o file]`, `codex exec resume`.
 - **Auth:**
@@ -628,6 +639,21 @@ Quota board).
 - Opt-in check: `SPACEMAN_REAL=1 go test -tags real ./test/real -run TestRealClaudeStatusLineWrapper` (needs `claude`, `go`
   and `script`). It covers the status line only; a live `StopFailure` was not triggered (it needs an API error), so that
   hook is *tested (simulated)*, not externally verified.
+
+## Startup dialogs (2.1.328, live, no credentials, 2026-11-19)
+
+Seen in an isolated herdr-core (herdr-core.md S-8) and kept as fixtures in `internal/dialog/testdata`; the registry of
+ADR-0102 matches on the stable lines quoted here.
+- **Theme picker** (fresh config directory): "Choose the text style that looks best with your terminal", options
+  "✔ Auto (match terminal)", "Dark mode", …, no confirm footer and no numbers. The `.claude.json` seed skips it.
+- **Login method** (no credentials): "Select login method:", numbered options. Never answered (login).
+- **Adding a new directory** (`--add-dir` of an untrusted folder, from 2.1.326): "Adding a new directory:", the path on
+  the next lines (wrapped when long), "This session hasn't worked here before. Is this a directory you created or one
+  you trust?", options "No, exit" (default) and "Yes, add it", footer "Enter to confirm · Esc to cancel".
+- **Code Mode (experimental)** opt-in: "❯ No, start without it / Yes, turn on Code Mode … Enter to confirm · Esc to start
+  without it" (recorded on a live run; its body text is not captured). Not reproduced here: it comes after login.
+- Before its main screen Claude Code reports no OSC 7501 status at all; the main screen's plain prompt is a `❯` with
+  nothing after it.
 
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |
