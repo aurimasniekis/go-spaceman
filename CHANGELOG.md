@@ -100,6 +100,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgement another 4,200 to 5,600. Now the first reports after a reconnect check every folder once (about 8,400
   processes, while git refreshes the indexes), and 40 acknowledgements after that run 88: their own head check, plus
   one report. The uncheckpointed-file and local-commit counts (SM-MEM-004) can be up to one interval old.
+- **A shutdown during a backup no longer logs a checkpoint warning for every role-memory instance.** Each backup's
+  memory flush walked every instance of a space and kept going after the connection or the agent stopped, so each
+  remaining instance failed at once with `context canceled`, logged a warning and recorded the error. Overlapping
+  flushes (each backup sends its own) multiplied that. Flushes of a space now take turns, stop quietly when their context
+  ends, and skip instances with nothing to checkpoint, so an ended instance's checkout costs no git. In a test with 8
+  overlapping flushes of 40 instances, a cancellation used to log 320 warnings; now it logs none.
 - **A body with several diagrams no longer freezes the page for over 2 s.** Queued diagram renders ran back to back as one
   long task; they now yield to the page between two renders (diagrams since v0.1.5).
 - **Two concurrent observes of a run no longer report out of order.** An observe sent the report it had built before

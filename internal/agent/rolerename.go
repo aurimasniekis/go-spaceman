@@ -390,13 +390,16 @@ func (m *memManager) forget(spaceID, role string) {
 func (m *memManager) checkpointAll(ctx context.Context, spaceID, role string) {
 	insts, _ := os.ReadDir(filepath.Join(m.root, spaceID, role, "instances"))
 	for _, i := range insts {
+		if ctx.Err() != nil {
+			return // stopping: the changes move with the folder, unwarned
+		}
 		if !i.IsDir() || !exists(filepath.Join(m.instance(spaceID, role, i.Name()), ".git")) {
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
 		_, err := m.publish(pctx, spaceID, role, i.Name(), "rename")
 		cancel()
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			m.a.log.Warn("memory checkpoint before a role rename failed; the changes move with the folder", slog.String(obs.FieldSpaceID, spaceID),
 				slog.String("memory.role", role), slog.String("memory.instance", i.Name()), obs.Err(err))
 		}

@@ -72,11 +72,15 @@ type memManager struct {
 	reportMu    sync.Mutex
 	// statusSent, when set (tests), sees each status report as it is sent.
 	statusSent func(proto.MemoryStatus)
+
+	// flushing holds one slot per space: flushes of a space's memory (backup, relocation) take turns (memflush.go).
+	flushing map[string]chan struct{}
 }
 
 func newMemManager(a *Agent) *memManager {
 	m := &memManager{a: a, base: context.Background(), root: filepath.Join(a.o.DataDir, "memory"), locks: map[string]*sync.Mutex{}, timers: map[string]*time.Timer{},
-		syncs: map[string]*time.Timer{}, waiting: map[string]string{}, statusDirty: map[string][2]string{}, instStatus: map[string]instStatus{}}
+		syncs: map[string]*time.Timer{}, waiting: map[string]string{}, statusDirty: map[string][2]string{}, instStatus: map[string]instStatus{},
+		flushing: map[string]chan struct{}{}}
 	if g, err := memory.NewGit(); err == nil {
 		m.git = g
 	} else {
@@ -231,6 +235,9 @@ func (m *memManager) checkpoint(ctx context.Context, spaceID, role, instance, re
 
 // checkpointErr is checkpoint reporting whether the changes reached the shared history.
 func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return err // stopping (the connection or the agent ended): no git, no record, no warning
+	}
 	inst := m.instance(spaceID, role, instance)
 	if !exists(filepath.Join(inst, ".git")) {
 		return nil // no checkout: nothing to checkpoint
@@ -245,6 +252,12 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	published, err := m.publish(pctx, spaceID, role, instance, reason)
 	cancel()
 	unlock()
+	if err != nil && ctx.Err() != nil {
+		// Stopped while git ran: the changes stay in the files for the next checkpoint. Not a failure worth a warning
+		// or a recorded error (a shutdown would otherwise log one per instance).
+		log.Debug("memory checkpoint stopped", obs.Err(err))
+		return ctx.Err()
+	}
 	st, _ := m.a.j.memory(ctx, spaceID, role)
 	now := m.a.now()
 	st.LastCheckpoint = &now
