@@ -24,7 +24,9 @@ export function OperatorMessages() {
   /** The opened message is kept as an object: acknowledging it drops it from the Unread list but the drawer stays open. */
   const [opened, setOpened] = useState<OperatorMessage | null>(null)
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
-  const current = opened ? (items.find((m) => m.id === opened.id) ?? opened) : null
+  // The ack/resolve response updates `opened` at once; a list row only wins when it is newer (the refetch landed).
+  const listed = opened ? items.find((m) => m.id === opened.id) : undefined
+  const current = opened ? (listed && listed.version >= opened.version ? listed : opened) : null
   const canWrite = (m: OperatorMessage) => atLeast(roleIn(me, m.space_id), 'operator')
   const ack = async (m: OperatorMessage) => {
     try {
@@ -70,7 +72,7 @@ export function OperatorMessages() {
         {list.hasNextPage && <Button variant="default" size="xs" loading={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Load more</Button>}
       </Stack>
       <Drawer opened={current !== null} onClose={() => setOpened(null)} position="right" size="lg" title="Message">
-        {current && <MessageDetail spaceId={current.space_id} m={current} canWrite={canWrite(current)} />}
+        {current && <MessageDetail spaceId={current.space_id} m={current} canWrite={canWrite(current)} onChange={(u) => setOpened({ ...current, ...u })} />}
       </Drawer>
     </>
   )

@@ -25,7 +25,8 @@ export function party(kind: string, id?: string, label?: string) {
 }
 
 /** One message with its acknowledge, resolve, cancel and reply controls; shared by the space page and Needs you → Messages. */
-export function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; canWrite: boolean }) {
+/** `onChange` gets the message the server returns after acknowledge, cancel or resolve, for a parent that holds the opened message itself. */
+export function MessageDetail({ spaceId, m, canWrite, onChange }: { spaceId: string; m: Message; canWrite: boolean; onChange?: (m: Message) => void }) {
   const qc = useQueryClient()
   const path = { space_id: spaceId, message_id: m.id }
   const [replyKey, setReplyKey] = useState(0)
@@ -40,7 +41,8 @@ export function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Me
   })
   const act = async (fn: () => Promise<unknown>, what: string) => {
     try {
-      await fn()
+      const res = await fn()
+      if (onChange && res && typeof res === 'object' && 'id' in res && (res as Message).id === m.id) onChange(res as Message)
       void qc.invalidateQueries({ queryKey: keys.messages(spaceId) })
       void qc.invalidateQueries({ queryKey: keys.operatorMessages })
     } catch (e) {
