@@ -145,7 +145,8 @@ Notes from using it:
 - **`--single-process`.** Don't add it to `SM_CHROMIUM_ARGS` for the app's e2e: the journey breaks with it. Only the site
   targets (Mermaid check, axe audit) add it themselves.
 - **First-run journey.** `smoke.spec.ts` sets the stack up (root token, first user) and works once per stack; run it on
-  a fresh stack (`make e2e-down`, then up), not repeatedly. Other specs seed what they need.
+  a fresh stack (`make e2e-down`, then up), not repeatedly. A guard test in it fails when another spec's file name sorts
+  before `smoke.spec.ts`, because with one worker the files run in name order. Other specs seed what they need.
 - **Cleanup.** `make e2e`, `make screenshots` and a failing or interrupted `dev-stack.sh up` stop everything they
   started on success, failure, Ctrl-C and `kill`: central, the agent, devpulse, devmcp, the stub harness, the stack's own
   herdr-core core, and anything else with the stack's directory in its command line. A process that ignores SIGTERM for

@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { expect, test, type Page } from '@playwright/test'
 
@@ -32,6 +33,22 @@ async function openHubTab(page: Page, hub: 'Configuration' | 'Integrations' | 'A
 }
 
 test.describe.configure({ mode: 'serial' })
+
+// Specs that run only from their own drivers (see testIgnore in playwright.config.ts), each on a stack of its own.
+const separateDrivers = new Set(['demo.spec.ts', 'screenshots.spec.ts', 'site-a11y.spec.ts'])
+
+/**
+ * The first-run journey needs a stack nobody has set up yet, and every other spec creates its own users. With one worker
+ * Playwright runs the files in name order, so smoke runs first only while no other spec's name sorts before it. A
+ * Playwright setup project would also make the loop (scripts/e2e-loop.sh), which reuses a stack, rerun the journey on an
+ * already set-up stack; this guard keeps the ordering explicit without that.
+ */
+test('runs before every other spec (first-run journey needs an untouched stack)', () => {
+  const self = 'smoke.spec.ts'
+  const specs = readdirSync(dirname(fileURLToPath(import.meta.url))).filter((n) => n.endsWith('.spec.ts') && !separateDrivers.has(n))
+  expect(specs).toContain(self)
+  expect(specs.filter((n) => n < self), 'specs that would run before smoke.spec.ts: rename them or move the first-run journey').toEqual([])
+})
 
 test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
   test.setTimeout(480_000)
