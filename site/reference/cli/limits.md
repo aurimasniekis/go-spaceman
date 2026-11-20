@@ -15,7 +15,7 @@ Aliases: `limit`.
 | [`spaceman limits release`](#spaceman-limits-release) | Give up on a run parked at a usage limit; its task goes back to the queue |
 | [`spaceman limits resume`](#spaceman-limits-resume) | Resume a run parked at a usage limit now (the usual launch checks apply) |
 | [`spaceman limits set`](#spaceman-limits-set) | Override a space's limits (keys not given keep their override) |
-| [`spaceman limits switches`](#spaceman-limits-switches) | A space's account switches: runs moved to another account of their pool at a usage limit |
+| [`spaceman limits switches`](#spaceman-limits-switches) | A space's account switches: runs moved to another account of their pool at a usage limit, and moved back after its reset |
 | [`spaceman limits waits`](#spaceman-limits-waits) | A space's runs parked at a usage limit, waiting to resume |
 
 ## spaceman limits clear
@@ -126,7 +126,7 @@ spaceman limits set --space payments --set concurrent_runs=3 --unset tool_calls_
 
 ## spaceman limits switches
 
-A space's account switches: runs moved to another account of their pool at a usage limit.
+A space's account switches: runs moved to another account of their pool at a usage limit, and moved back after its reset.
 
 ```sh
 spaceman limits switches [flags]

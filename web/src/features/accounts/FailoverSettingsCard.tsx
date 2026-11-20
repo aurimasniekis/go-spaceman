@@ -9,8 +9,8 @@ import { limitValue } from '@/features/limits/format'
 import { atLeast, roleIn } from '@/lib/access'
 import { notifyError, notifyOk } from '@/lib/notify'
 
-/** The limits that steer account switching (ADR-0090), in the order the card shows them. */
-export const FAILOVER_KEYS = ['usage_limit_failover', 'usage_limit_wait_if_reset_within', 'usage_limit_switch_max_per_day', 'usage_limit_min_headroom_percent'] as const
+/** The limits that steer account switching (ADR-0090, ADR-0105), in the order the card shows them. */
+export const FAILOVER_KEYS = ['usage_limit_failover', 'usage_limit_wait_if_reset_within', 'usage_limit_switch_max_per_day', 'usage_limit_switch_back', 'usage_limit_min_headroom_percent'] as const
 
 type Draft = Record<string, number | ''>
 
@@ -57,11 +57,11 @@ export function FailoverSettingsCard({ spaceId }: { spaceId: string }) {
   }
   const set = (k: string, v: number | '') => setDraft((d) => ({ ...d, [k]: v }))
   const field = (x: Limit) => {
-    const label = x.key === 'usage_limit_wait_if_reset_within' ? 'Wait instead of switching when the reset is within (minutes)'
+    const label = x.key === 'usage_limit_switch_back' ? 'Switch back to the original account after its reset' : x.key === 'usage_limit_wait_if_reset_within' ? 'Wait instead of switching when the reset is within (minutes)'
       : x.key === 'usage_limit_min_headroom_percent' ? 'Launch headroom: skip an account with less than this much free (%)' : x.label
     if (x.unit === 'switch') {
       return (
-        <Select key={x.key} label={x.label} description={x.scope} allowDeselect={false} disabled={!canWrite} value={String(current(x))}
+        <Select key={x.key} label={x.key === 'usage_limit_switch_back' ? label : x.label} description={x.key === 'usage_limit_switch_back' ? 'Only between turns, and only with failover on. At most once per 6 hours per agent; moves count toward the daily limit.' : x.scope} allowDeselect={false} disabled={!canWrite} value={String(current(x))}
           data={[{ value: '', label: `Default (${limitValue(x.default, x.unit)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }]}
           onChange={(v) => set(x.key, v === '1' ? 1 : v === '0' ? 0 : '')} />
       )

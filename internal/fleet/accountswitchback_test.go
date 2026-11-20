@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,20 @@ func TestSwitchBackAfterResetAtIdle(t *testing.T) {
 	if sw = e.switchOf(run); sw.State != SwitchSucceeded {
 		t.Fatalf("switch-back %+v, want succeeded", sw)
 	}
+	// The API view carries the cause and the origin (what the CLI and the web show).
+	var view *AccountSwitch
+	if all, err := e.svc.AccountSwitches(e.ctx, "spc_a"); err != nil {
+		t.Fatal(err)
+	} else {
+		for i := range all {
+			if all[i].ID == sw.ID {
+				view = &all[i]
+			}
+		}
+	}
+	if view == nil || view.Cause != "switch_back" || view.OriginAccountID != "acc_1" || view.ToAccountID != "acc_1" || view.LimitKind != "" {
+		t.Fatalf("API view of the switch-back %+v", view)
+	}
 	// Home again: nothing more to do.
 	e.clk.Advance(time.Minute)
 	e.report(home, "working", 1, nil)
@@ -269,6 +284,12 @@ func TestSwitchBackNotWhen(t *testing.T) {
 			func(e *backEnv, _ string) {
 				e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(1000*time.Hour))
 			}},
+		{"lease on another node", func(e *backEnv, _ string) {
+			e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_2', 'n2', 'active', 0, 't', 0)`)
+			e.exec(`UPDATE execution_leases SET node_id = 'nod_2' WHERE space_id = 'spc_a'`)
+		}, func(e *backEnv, _ string) {
+			e.exec(`UPDATE execution_leases SET node_id = 'nod_1' WHERE space_id = 'spc_a'`)
+		}},
 		{"space paused", func(e *backEnv, _ string) { e.exec(`UPDATE spaces SET state = 'paused' WHERE id = 'spc_a'`) },
 			func(e *backEnv, _ string) { e.exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_a'`) }},
 		{"moved for another cause", func(e *backEnv, _ string) {
@@ -434,6 +455,41 @@ func TestSwitchBackCandidatesSkipSpacesWithItOff(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].RunID != run {
 		t.Fatalf("candidates %+v, want only %s", rows, run)
+	}
+}
+
+// The candidates never exceed maxLimitRows: a first page of spaces with switching back off and eligible runs of one space
+// is followed by a page of eligible runs, and the total stops at the cap.
+func TestSwitchBackCandidatesCappedAtMaxLimitRows(t *testing.T) {
+	e := newBackEnv(t)
+	e.svc.opts.UsageLimitSettings = func(_ context.Context, _ *db.Queries, space string) UsageLimitSettings {
+		return UsageLimitSettings{Failover: true, KeepAliveMax: e.keepMax, WaitIfResetWithin: e.within, SwitchMaxPerDay: e.budget, SwitchBack: space == "spc_b"}
+	}
+	seed := func(id, space string) {
+		e.exec(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, turn, status, desired, observed, launch_json,
+			created_at, created_by, updated_at, observed_at) VALUES (?, ?, 'nod_1', 1, 'worker', 'implementor', 'claude-code', ?, 's', 1, 'idle', 'running', 'running',
+			'{"account_ref":"acc_2"}', 0, 't', 0, 0)`, id, space, "ins_"+id)
+		e.exec(`INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, to_account_id, cause, limit_kind,
+			state, origin_account_id, created_at, updated_at) VALUES (?, ?, ?, 'implementor', 'worker', 'claude-code', 'run_old', 'acc_1', 'acc_2', 'usage_limit',
+			'5h', 'succeeded', 'acc_1', 1, 1)`, "asw_"+id, space, "ins_"+id)
+	}
+	// The first page (maxLimitRows rows) holds 50 runs of spc_a, which is off, then 150 of spc_b; the next page holds
+	// maxLimitRows more of spc_b. Without the cap the total would be 350.
+	for i := range 50 {
+		seed(fmt.Sprintf("run_a%03d", i), "spc_a")
+	}
+	for i := range maxLimitRows - 50 {
+		seed(fmt.Sprintf("run_b%03d", i), "spc_b")
+	}
+	for i := range maxLimitRows {
+		seed(fmt.Sprintf("run_c%03d", i), "spc_b")
+	}
+	rows, err := e.svc.switchBackCandidates(e.ctx, e.s.R())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != maxLimitRows {
+		t.Fatalf("%d candidates, want exactly maxLimitRows (%d)", len(rows), maxLimitRows)
 	}
 }
 

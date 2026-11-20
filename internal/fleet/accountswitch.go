@@ -77,32 +77,33 @@ var SwitchActor = audit.Actor{Type: audit.ActorSystem, ID: "account-switch"}
 
 // AccountSwitch is a run's move to another account of its pool at a usage limit (ADR-0090).
 type AccountSwitch struct {
-	ID            string     `json:"id"`
-	SpaceID       string     `json:"space_id"`
-	InstanceID    string     `json:"instance_id"`
-	Role          string     `json:"role"`
-	RunKind       string     `json:"run_kind" enum:"control,worker,kb,dreamer,diagnostic"`
-	Harness       string     `json:"harness" enum:"claude-code,codex"`
-	FromRunID     string     `json:"from_run_id"`
-	NewRunID      string     `json:"new_run_id,omitempty"`
-	FromAccountID string     `json:"from_account_id"`
-	ToAccountID   string     `json:"to_account_id,omitempty"`
-	Cause         string     `json:"cause" enum:"usage_limit,operator"`
-	LimitKind     string     `json:"limit_kind"`
-	LimitResetsAt *time.Time `json:"limit_resets_at,omitempty"`
-	UsageLimitID  string     `json:"usage_limit_id,omitempty"`
-	LimitWaitID   string     `json:"limit_wait_id,omitempty"`
-	State         string     `json:"state" enum:"pending,parked,resumed,succeeded,failed,fell_back,cancelled"`
-	Reason        string     `json:"reason,omitempty"`
-	ArmedUntil    *time.Time `json:"armed_until,omitempty"`
-	Version       int64      `json:"version"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID              string     `json:"id"`
+	SpaceID         string     `json:"space_id"`
+	InstanceID      string     `json:"instance_id"`
+	Role            string     `json:"role"`
+	RunKind         string     `json:"run_kind" enum:"control,worker,kb,dreamer,diagnostic"`
+	Harness         string     `json:"harness" enum:"claude-code,codex"`
+	FromRunID       string     `json:"from_run_id"`
+	NewRunID        string     `json:"new_run_id,omitempty"`
+	FromAccountID   string     `json:"from_account_id"`
+	ToAccountID     string     `json:"to_account_id,omitempty"`
+	Cause           string     `json:"cause" enum:"usage_limit,operator,switch_back" doc:"usage_limit: moved away from an account at its limit; operator: moved by a person; switch_back: moved back to the account a chain of usage-limit switches started from, after its reset (ADR-0105)"`
+	OriginAccountID string     `json:"origin_account_id,omitempty" doc:"The account the chain of usage-limit switches started from; a switch_back moves the run there"`
+	LimitKind       string     `json:"limit_kind" doc:"The limit that caused a usage_limit switch; empty for a switch_back"`
+	LimitResetsAt   *time.Time `json:"limit_resets_at,omitempty"`
+	UsageLimitID    string     `json:"usage_limit_id,omitempty"`
+	LimitWaitID     string     `json:"limit_wait_id,omitempty"`
+	State           string     `json:"state" enum:"pending,parked,resumed,succeeded,failed,fell_back,cancelled"`
+	Reason          string     `json:"reason,omitempty"`
+	ArmedUntil      *time.Time `json:"armed_until,omitempty"`
+	Version         int64      `json:"version"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 func accountSwitchFromRow(r db.AccountSwitch) AccountSwitch {
 	return AccountSwitch{ID: r.ID, SpaceID: r.SpaceID, InstanceID: r.InstanceID, Role: r.Role, RunKind: r.RunKind, Harness: r.Harness,
-		FromRunID: r.FromRunID, NewRunID: r.NewRunID, FromAccountID: r.FromAccountID, ToAccountID: r.ToAccountID, Cause: r.Cause,
+		FromRunID: r.FromRunID, NewRunID: r.NewRunID, FromAccountID: r.FromAccountID, ToAccountID: r.ToAccountID, Cause: r.Cause, OriginAccountID: r.OriginAccountID,
 		LimitKind: r.LimitKind, LimitResetsAt: microsPtr(r.LimitResetsAt), UsageLimitID: r.UsageLimitID, LimitWaitID: r.LimitWaitID,
 		State: r.State, Reason: r.Reason, ArmedUntil: microsPtr(r.ArmedUntil), Version: r.Version,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC()}

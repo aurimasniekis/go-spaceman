@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Account switch-back: a run a usage limit moved goes back to its original account after the reset.** Once the
+  account a run was moved away from has reset, the run returns to it (in one move, even after several), only at an idle
+  point and only while usage-limit failover is on. At most one switch-back per agent instance in 6 hours; it counts
+  toward `usage_limit_switch_max_per_day`. The per-space limit `usage_limit_switch_back` (0 or 1, default 1) is
+  readable and writable through the limits API (`GET`/`PUT /spaces/{id}/limits`), `spaceman limits` and the Accounts
+  page's Account switching card. An account switch now reports `cause: switch_back` and an `origin_account_id` in the
+  API and OpenAPI; a limit wait gains the cause `switch_back`. The web account switches list and a run's page show
+  "Switched back", and `spaceman limits switches` has a `CAUSE` column. The guide's
+  usage limits page explains when a run moves back and what never triggers it. ADR-0105.
 - **Ingest your own run dialog events: `ingest_own` on a subscription.** A subscription can now turn this
   installation's own `evt.spaceman.fleet.run.dialog_detected` (or `dialog_cleared`) into inbox items, for example to
   raise an item when a run is stopped at a dialog. Set `ingest_own: true` on create or update (CLI `--ingest-own`).
