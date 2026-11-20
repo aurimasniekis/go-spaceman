@@ -104,15 +104,16 @@ func newLedger(t *testing.T) *ledgerFx {
 			VALUES ('%s', 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', 'ins_1', '%s', 'running', 'running', '%s', '{}', 0, 't', 0)`, id, session, launch)
 	}
 	qs = append(qs, run(lrA, "acc_1", "sess-1"), run(lrB, "acc_2", "sess-1"), run(lrC, "acc_1", "sess-1"), run(lrD, "", ""))
-	if err := s.W().TxNamed(ctx, "seed", func(tx *store.Tx) error {
-		for _, q := range qs {
-			if _, err := tx.SQL.ExecContext(ctx, q); err != nil {
-				return fmt.Errorf("%s: %w", q, err)
-			}
+	// One transaction per statement: the fixture's setup is not what the write-lock guard (HP-DB-004) is for, and a single
+	// transaction of all of them, which also opens the WAL, held the lock past the bound on a machine under load. Each
+	// of these holds it for a fraction of that, and the bound stays as it is for the code under test.
+	for _, q := range qs {
+		if err := s.W().TxNamed(ctx, "seed", func(tx *store.Tx) error {
+			_, err := tx.SQL.ExecContext(ctx, q)
+			return err
+		}); err != nil {
+			t.Fatalf("%s: %v", q, err)
 		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 	return &ledgerFx{svc: New(s, audit.NewWriter(kr), changefeed.New(nil), t.TempDir(), nil, nil), ctx: ctx, clk: clk, s: s}
 }
