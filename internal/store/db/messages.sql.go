@@ -107,6 +107,18 @@ func (q *Queries) CountOperatorMessages(ctx context.Context, spaceID string) (in
 	return count, err
 }
 
+const countOperatorMessagesIn = `-- name: CountOperatorMessagesIn :one
+SELECT count(*) FROM messages
+WHERE to_kind = 'operators' AND to_id = '' AND state IN ('stored', 'available') AND space_id IN (SELECT value FROM json_each(?1))
+`
+
+func (q *Queries) CountOperatorMessagesIn(ctx context.Context, spaces interface{}) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOperatorMessagesIn, spaces)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countScheduledMessages = `-- name: CountScheduledMessages :one
 SELECT count(*) FROM messages WHERE space_id = ?1 AND state = 'stored' AND deliver_at > ?2
 `
@@ -519,6 +531,85 @@ func (q *Queries) ListNoticeCandidates(ctx context.Context) ([]ListNoticeCandida
 			&i.Harness,
 			&i.Status,
 			&i.Since,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOperatorMessages = `-- name: ListOperatorMessages :many
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages
+WHERE to_kind = 'operators' AND to_id = ''
+  AND space_id IN (SELECT value FROM json_each(?1))
+  AND (?2 = 0 OR state IN ('stored', 'available'))
+  AND (?3 = '' OR kind = ?3)
+  AND (created_at, id) < (CAST(?4 AS INTEGER), CAST(?5 AS TEXT))
+ORDER BY created_at DESC, id DESC LIMIT ?6
+`
+
+type ListOperatorMessagesParams struct {
+	Spaces       interface{}
+	OnlyOpen     interface{}
+	Kind         interface{}
+	AfterCreated int64
+	AfterID      string
+	Lim          int64
+}
+
+// Operator inbox across spaces (GET /messages): messages to operators in the given spaces (a JSON array of the caller's
+// readable space IDs), newest first, keyset-paged on (created_at, id). only_open = 1 keeps the open ones (stored,
+// available). kind is ” for any kind. to_id = ” lets the index reach state. The spaces come as JSON because sqlc expands
+// a slice into positional parameters and mixes badly with the numbered ones.
+func (q *Queries) ListOperatorMessages(ctx context.Context, arg ListOperatorMessagesParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, listOperatorMessages,
+		arg.Spaces,
+		arg.OnlyOpen,
+		arg.Kind,
+		arg.AfterCreated,
+		arg.AfterID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.FromKind,
+			&i.FromID,
+			&i.FromLabel,
+			&i.ToKind,
+			&i.ToID,
+			&i.Kind,
+			&i.Subject,
+			&i.Body,
+			&i.CorrelationID,
+			&i.ReplyTo,
+			&i.DedupKey,
+			&i.State,
+			&i.AvailableAt,
+			&i.DeliveredVia,
+			&i.NoticeCommand,
+			&i.NoticedAt,
+			&i.AcknowledgedAt,
+			&i.AcknowledgedBy,
+			&i.ResolvedAt,
+			&i.Resolution,
+			&i.CreatedAt,
+			&i.Version,
+			&i.DeliverAt,
 		); err != nil {
 			return nil, err
 		}

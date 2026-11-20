@@ -135,7 +135,8 @@ func TestHardExclusions(t *testing.T) {
 	// rules that are.
 	filtered := []string{"list-spaces", "list-event-connections", "get-event-connection", "list-event-templates",
 		"get-event-template", "preview-event-template", "get-attention", "list-account-kinds", "list-limit-definitions",
-		"list-pending-human-actions", "get-restore-state", "list-space-telegram", "list-account-windows"}
+		"list-pending-human-actions", "get-restore-state", "list-space-telegram", "list-account-windows", "get-usage-series",
+		"list-operator-messages"}
 	for _, id := range filtered {
 		if tl, ok := c.Tool(strings.ReplaceAll(id, "-", "_")); !ok || tl.Class != spacemanmcp.Read {
 			t.Errorf("%s: %+v, want a read tool", id, tl)

@@ -29,7 +29,7 @@ function RolesPage() {
   const profileName = (id?: string) => profiles.data?.find((p) => p.id === id)?.name ?? ''
   return (
     <>
-      <PageHeader title="Roles & profiles" description="Role templates define what a role does (its prompt and memory conventions); harness profiles define how it runs (harness, model, settings). Spaces configure roles from them." />
+      <PageHeader hub="configuration" title="Roles & profiles" description="Role templates define what a role does (its prompt and memory conventions); harness profiles define how it runs (harness, model, settings). Spaces configure roles from them." />
       <Tabs defaultValue="templates">
         <Tabs.List mb="sm"><Tabs.Tab value="templates">Role templates</Tabs.Tab><Tabs.Tab value="profiles">Harness profiles</Tabs.Tab></Tabs.List>
         <Tabs.Panel value="templates">

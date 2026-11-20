@@ -11,7 +11,7 @@ import { RestoreBanner } from '@/features/backup/RestoreBanner'
 import { NotificationWatcher } from '@/features/notifications/NotificationWatcher'
 import { hasGlobal } from '@/lib/access'
 import { datetime } from '@/lib/format'
-import { visibleNav } from '@/lib/nav'
+import { onPath, visibleHubs, visibleNav } from '@/lib/nav'
 import { notifyError } from '@/lib/notify'
 import { signOut } from '@/lib/signout'
 import { Logo } from './Logo'
@@ -97,9 +97,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname })
   const me = useMe().data
   const items = visibleNav(me)
+  const hubItems = visibleHubs(me)
   const pending = useHumanPending(!!me && !me.limited).data?.total ?? 0
   const width = collapsed ? 52 : 200
-  const groups = ['Work', 'Fleet', 'Configuration', 'Integrations', 'Access'] as const
 
   return (
     <AppShell header={{ height: 40 }} navbar={{ width, breakpoint: 'sm', collapsed: { mobile: !mobileOpen } }} padding="md">
@@ -129,24 +129,32 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <AppShell.Navbar p={6} aria-label="Main navigation">
         <AppShell.Section grow component={ScrollArea}>
           <Stack gap={8}>
-            {groups.map((g) => (
-              <Stack key={g} gap={1}>
-                {!collapsed && items.some((n) => n.group === g) && <Text size="xs" c="dimmed" fw={600} tt="uppercase" px={8} pt={4}>{g}</Text>}
-                {items
-                  .filter((n) => n.group === g)
-                  .map((n) => {
-                    const active = n.to === '/' ? path === '/' : path === n.to || path.startsWith(`${n.to}/`)
-                    const link = (
-                      <NavLink key={n.to} component={Link} to={n.to} active={active} label={collapsed ? undefined : n.label}
-                        leftSection={<n.icon size={16} stroke={1.6} />} onClick={closeMobile}
-                        // Collapsed links show no text, so they are named; expanded ones are named by their visible text (axe).
-                        aria-label={collapsed ? (n.pendingBadge && pending > 0 ? `${n.label}, ${pending} pending` : n.label) : undefined}
-                        rightSection={n.pendingBadge && pending > 0 && !collapsed ? <Badge size="xs" color="owlYellow" circle={pending < 10}>{pending}<VisuallyHidden> pending</VisuallyHidden></Badge> : undefined} />
-                    )
-                    return collapsed ? <Tooltip key={n.to} label={n.label} position="right">{link}</Tooltip> : link
-                  })}
+            <Stack gap={1}>
+              {!collapsed && <Text size="xs" c="dimmed" fw={600} tt="uppercase" px={8} pt={4}>Work</Text>}
+              {items.map((n) => {
+                const link = (
+                  <NavLink key={n.to} component={Link} to={n.to} active={onPath(path, n.to)} label={collapsed ? undefined : n.label}
+                    leftSection={<n.icon size={16} stroke={1.6} />} onClick={closeMobile}
+                    // Collapsed links show no text, so they are named; expanded ones are named by their visible text (axe).
+                    aria-label={collapsed ? (n.pendingBadge && pending > 0 ? `${n.label}, ${pending} pending` : n.label) : undefined}
+                    rightSection={n.pendingBadge && pending > 0 && !collapsed ? <Badge size="xs" color="owlYellow" circle={pending < 10}>{pending}<VisuallyHidden> pending</VisuallyHidden></Badge> : undefined} />
+                )
+                return collapsed ? <Tooltip key={n.to} label={n.label} position="right">{link}</Tooltip> : link
+              })}
+            </Stack>
+            {hubItems.length > 0 && (
+              <Stack gap={1}>
+                {!collapsed && <Text size="xs" c="dimmed" fw={600} tt="uppercase" px={8} pt={4}>Settings</Text>}
+                {hubItems.map((h) => {
+                  // A hub is active on any of its pages; it opens on the first tab the user may see.
+                  const link = (
+                    <NavLink key={h.key} component={Link} to={h.tabs[0].to} active={h.tabs.some((t) => onPath(path, t.to))} label={collapsed ? undefined : h.label}
+                      leftSection={<h.icon size={16} stroke={1.6} />} onClick={closeMobile} aria-label={collapsed ? h.label : undefined} />
+                  )
+                  return collapsed ? <Tooltip key={h.key} label={h.label} position="right">{link}</Tooltip> : link
+                })}
               </Stack>
-            ))}
+            )}
           </Stack>
         </AppShell.Section>
         <AppShell.Section visibleFrom="sm">
