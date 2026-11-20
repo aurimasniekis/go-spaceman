@@ -153,7 +153,7 @@ type Comment struct {
 // and why.
 type Notification struct {
 	ID             string     `json:"id"`
-	Kind           string     `json:"kind" enum:"resolved,cancelled,expired,clarification" doc:"clarification: a person asked the requester for more information; the action stays pending"`
+	Kind           string     `json:"kind" enum:"resolved,cancelled,expired,clarification,comment" doc:"clarification: a person asked the requester for more information; comment: a person commented on the pending action; the action stays pending"`
 	TargetKind     string     `json:"target_kind" enum:"run,instance,control,operators" doc:"run: one run; instance: the next run of the requester's agent instance; control: the space's control; operators: no agent can take it (undeliverable)"`
 	TargetRun      string     `json:"target_run,omitempty"`
 	TargetRole     string     `json:"target_role,omitempty"`

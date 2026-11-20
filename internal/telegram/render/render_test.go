@@ -51,6 +51,8 @@ func TestAllowedURL(t *testing.T) {
 		"https://exa mple.com":         "",
 		"https://example.com/\x00":     "",
 		"https://example.com/" + strings.Repeat("a", maxURL): "",
+		// Short enough as written, but the fragment's '#' are re-escaped to %23, so the emitted URL would exceed maxURL.
+		"http://0.a#]" + strings.Repeat("#", 700): "",
 	} {
 		got, ok := AllowedURL(raw)
 		if ok != (want != "") || got != want {

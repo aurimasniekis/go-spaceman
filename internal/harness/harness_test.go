@@ -666,3 +666,36 @@ func TestCodexBuildWritableRoots(t *testing.T) {
 		t.Fatalf("unexpected --add-dir: %v", l.Argv)
 	}
 }
+
+// A profile that turns Code Mode on in its settings env gets the Code Mode caveats recorded as accepted in .claude.json,
+// so the run doesn't stop at Claude Code's interactive opt-in dialog; without the env nothing is pre-accepted.
+func TestClaudeCodeModeSeed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cs   proto.ClaudeSettings
+		want bool
+	}{
+		"no env":         {proto.ClaudeSettings{}, false},
+		"other env only": {proto.ClaudeSettings{"env": map[string]any{"CLAUDE_CODE_TMPDIR": "/tmp/x"}}, false},
+		"empty value":    {proto.ClaudeSettings{"env": map[string]any{ClaudeCodeModeEnv: ""}}, true},
+		"code mode on":   {proto.ClaudeSettings{"env": map[string]any{ClaudeCodeModeEnv: "1"}}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, err := Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: tc.cs}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var seed map[string]any
+			for _, s := range l.MergeJSON {
+				seed = s
+			}
+			if seed["hasCompletedOnboarding"] != true {
+				t.Fatalf("seed lost first-run state: %v", seed)
+			}
+			for _, k := range ClaudeCodeModeAcceptedKeys {
+				if got := seed[k] == true; got != tc.want {
+					t.Fatalf("%s = %v, want accepted=%v (seed %v)", k, seed[k], tc.want, seed)
+				}
+			}
+		})
+	}
+}

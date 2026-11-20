@@ -7750,6 +7750,23 @@
 - **Not a security-relevant change:** notices carry no content, and the input stays idle-gated: a program in the
   middle of a turn is still refused.
 
+### ADR-0101 — A person's plain comment on a pending action notifies the agent that asked
+
+- **Status:** Accepted, 2026-11-19 (bug fix for v0.1.12). Amends ADR-0046, which left a plain comment out of the notices.
+  Migration 0067; the existing `kind` of a human-action notification (API schema and the `spaceman_messages` notice)
+  gains the value `comment`.
+- **Context:** an operator wrote "done" in a human action's thread with **Comment**. The agent that asked never saw it
+  and acted only when the operator used **Ask the requester**. Only `RequestClarification` created a notification;
+  `Service.Comment` (`internal/human/ops.go`) stored the comment and nothing else.
+- **Decision:** a plain comment on a pending action whose requester is an agent creates a `comment` notification
+  through `notify`, so it takes the routing, hold and wake of a response and of a clarification (live run, else the
+  role's next run or control). Nothing is notified when the actor is an agent, when the actor acts for the requester's
+  own run (no echo), when the requester is an operator, or when the action is already final. A comment is never a
+  response; the action stays pending; the text is read with `spaceman_human_get` (comments were already included).
+  **Ask the requester** stays the explicit clarification, answered with `spaceman_human_reply`.
+- **Consequences:** migration 0067 rebuilds `human_notifications` to allow the kind; `internal/human`
+  `TestPlainCommentNotifiesRequester`. An agent requester gets one notice per comment.
+
 ### ADR-0102 — Interactive dialogs on a run's terminal: known ones are answered, unknown ones flag the run (security-relevant change)
 
 - **Status:** Accepted, 2026-11-19 (v0.1.12). **Security-relevant change:** it narrows SM-RUN-002 ("never screen-text

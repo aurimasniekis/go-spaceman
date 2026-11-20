@@ -18,6 +18,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A person's comment on a human action now reaches the agent that asked.** Only **Ask the requester** used to
+  notify it, so a "done" written with plain **Comment** went unseen until someone asked for clarification. A comment
+  on a pending action an agent asked now becomes a `comment` notice, routed and woken like a clarification (the
+  action stays pending and nothing needs an answer). The requester's own comments don't echo back, and comments on
+  final actions notify nobody. Migration 0067 allows the new notice kind.
+- **A run whose profile turns on Claude Code's Code Mode no longer stops at its opt-in dialog.** With
+  `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set in the profile's settings env, every new session first asked "Code Mode
+  (experimental)" in the terminal, and the unattended run waited there at turn 0. SpaceMan now records the Code Mode
+  caveats as accepted in the run's `.claude.json` when, and only when, the profile sets that env.
+- **A Telegram message no longer links to a URL it would itself refuse.** A link whose URL fit the 2048-byte limit as written
+  but grew past it once normalised (each `#` in a fragment becomes `%23`) was emitted as a link entity, although the
+  same check refuses the normalised URL. The limit is now checked on the URL that is emitted, so such a link is shown as text.
+  Found by the nightly `FuzzRender` run.
 - **Codex runs can now write their role memory (workspace-write), and dream runs the role memories they link.** The Codex sandbox
   only let a run write its workspace, so a run on Codex could not write the memory folders outside it. The run now
   gets write access to exactly those folders, and nothing else.
@@ -27,7 +40,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **A parked run resumes as soon as its node's lease is renewed after a lapse.** When the usage-limit job looked
   at a due resume while the node's lease had lapsed, it put the resume off for 15 minutes, and only a new hello from
   the node brought it forward; a heartbeat that renewed the lapsed lease did not. The renewal now brings it forward too.
-
 - **A parked run's resume refused for a reason other than its node is no longer shown as `node_offline`.** A launch
   refused as unavailable while the node's lease was valid (Harbor Pilot's budget status with `on_budget_status_unavailable: refuse`) was
   recorded on the usage-limit wait as `node_offline`, and retried after 15 minutes (or at the node's next hello). Such a wait
