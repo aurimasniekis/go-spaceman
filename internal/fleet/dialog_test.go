@@ -167,7 +167,7 @@ func TestRunEndClearsOpenDialogs(t *testing.T) {
 	if e.report("run_d", "spc_a", 1, proto.RunExited, nil); e.count(`SELECT count(*) FROM run_dialogs WHERE cleared_at IS NULL AND outcome = 'blocked'`) != 0 {
 		t.Fatal("a blocked dialog is still open after its run ended")
 	}
-	if n := e.count(cleared + ` AND json_extract(payload_json, '$.dialog_id') = ?`, open.ID); n != 1 {
+	if n := e.count(cleared+` AND json_extract(payload_json, '$.dialog_id') = ?`, open.ID); n != 1 {
 		t.Fatalf("%d dialog_cleared rows for the open dialog, want 1", n)
 	}
 	if n := e.count(cleared); n != 2 {
