@@ -2,7 +2,6 @@ import { Alert, Badge, Card, CloseButton, Group, Loader, SegmentedControl, Simpl
 import { IconInfoCircle } from '@tabler/icons-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAllAccountWindows, useSpaces, useUsageSeries } from '@/api/queries'
-import type { GlobalUsageSeries } from '@/api/client'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { AccountWindowsTable } from './AccountWindowsTable'
@@ -47,15 +46,15 @@ export function UsageExplorer({ spaceId, search, onSearch, names }: {
     ...(everywhere ? { space_id: st.space.length ? st.space : undefined, account_id: st.account.length ? st.account : undefined, model: st.model.length ? st.model : undefined, harness: st.harness.length ? st.harness : undefined } : {}),
   })
   const windows = useAllAccountWindows(everywhere)
-  // Keep the last answer on screen while the next one loads, so a change of range, grouping or filter does not blank the
-  // page. It is shown with its own grouping and bucket, since those describe the data and not the controls.
-  const last = useRef<{ data: GlobalUsageSeries; group: GroupBy; bucket: 'hour' | 'day' } | null>(null)
-  if (usage.data) last.current = { data: usage.data, group: st.group, bucket: r.bucket }
-  const shown = last.current
-  const d = shown?.data
-  const group = shown?.group ?? st.group
-  const bucket = shown?.bucket ?? r.bucket
-  const stale = !usage.data && !!d && usage.isFetching
+  // The query keeps the last answer as placeholder while the next one loads, so a change of range, grouping or filter does
+  // not blank the page. A placeholder is shown with its own grouping and bucket, since those describe the data and not the
+  // controls. After a failed load there is no placeholder: the error shows and the old figures are gone.
+  const fresh = useRef<{ group: GroupBy; bucket: 'hour' | 'day' } | null>(null)
+  if (usage.data && !usage.isPlaceholderData) fresh.current = { group: st.group, bucket: r.bucket }
+  const d = usage.data
+  const stale = usage.isPlaceholderData
+  const group = stale ? (fresh.current?.group ?? st.group) : st.group
+  const bucket = stale ? (fresh.current?.bucket ?? r.bucket) : r.bucket
   const loading = !d && usage.isPending
   const known = useMemo(() => ({ ...names, ...Object.fromEntries((windows.data ?? []).map((a) => [a.account_id, a.name])), ...d?.labels }), [names, windows.data, d?.labels])
   const rows = useMemo(() => (d ? perGroup(d.items) : []), [d])
@@ -147,7 +146,7 @@ export function UsageExplorer({ spaceId, search, onSearch, names }: {
       {everywhere && (
         <>
           <ErrorAlert error={windows.error} />
-          {windows.data && <AccountWindowsTable items={windows.data} tokens={tokens} filtered={filtered} onlyAccounts={st.account.length ? st.account : undefined} />}
+          {windows.data && <AccountWindowsTable items={windows.data} tokens={tokens} filtered={filtered} onlyAccounts={!stale && st.account.length ? st.account : undefined} />}
         </>
       )}
     </Stack>

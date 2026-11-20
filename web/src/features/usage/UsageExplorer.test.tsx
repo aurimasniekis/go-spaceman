@@ -141,8 +141,43 @@ describe('Usage explorer follow-ups', () => {
     fireEvent.click(toggle)
     expect(await screen.findByRole('button', { name: 'Remove filter team-max' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Filter by team-max' })).toBeNull()
-    expect(screen.getByRole('columnheader', { name: 'Tokens in range (filtered)' })).toBeInTheDocument()
+    expect(await screen.findByRole('columnheader', { name: 'Tokens in range (filtered)' })).toBeInTheDocument()
     expect(screen.getByTestId('usage-account-team-max')).toHaveTextContent('500')
+  })
+  it('on a space page, shows the not-counted note from the all-spaces series with a link to the run pages', async () => {
+    const calls: string[] = []
+    vi.spyOn(api, 'GET').mockImplementation(((path: string) => {
+      calls.push(path)
+      if (path === '/spaces/{space_id}/usage/series') return Promise.resolve({ data: page([row(14, 'worker', 100)]), response: new Response() })
+      if (path === '/usage/series') return Promise.resolve({ data: page([], { not_counted: [{ harness: 'codex', runs: 2, harbor_pilot_runs: 0 }] }), response: new Response() })
+      return new Promise(() => {})
+    }) as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MantineProvider theme={theme}><QueryClientProvider client={qc}><UsageExplorer spaceId="spc_1" search={{}} onSearch={() => {}} /></QueryClientProvider></MantineProvider>)
+    const note = await screen.findByTestId('usage-not-counted')
+    expect(note).toHaveTextContent('2 Codex runs')
+    expect(within(note).getByRole('link', { name: 'run pages' })).toHaveAttribute('href', '/spaces/spc_1/runs')
+    expect(calls).toContain('/usage/series')
+  })
+  it('drops the old figures when the reload fails, and does not mark accounts against stale data', async () => {
+    let n = 0
+    vi.spyOn(api, 'GET').mockImplementation(((path: string) => {
+      if (path === '/usage/series') {
+        n++
+        if (n === 1) return Promise.resolve({ data: page([row(14, 'spc_1', 1200)], { labels: { spc_1: 'Payments' } }), response: new Response() })
+        return Promise.resolve({ data: undefined, error: { title: 'boom', status: 500 }, response: new Response(null, { status: 500 }) })
+      }
+      if (path === '/account-windows') return Promise.resolve({ data: windows, response: new Response() })
+      if (path === '/spaces') return Promise.resolve({ data: { items: [] }, response: new Response() })
+      return new Promise(() => {})
+    }) as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MantineProvider theme={theme}><QueryClientProvider client={qc}><Harness initial={{}} seen={[]} /></QueryClientProvider></MantineProvider>)
+    await screen.findByTestId('usage-totals')
+    fireEvent.click(screen.getByRole('radio', { name: 'Last 90 days' }))
+    await waitFor(() => expect(screen.queryByTestId('usage-totals')).toBeNull())
+    expect(screen.queryByRole('table', { name: 'Usage by space' })).toBeNull()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
   })
   it('shows — in the accounts table for an account the filter excludes', async () => {
     setup(() => page([row(14, 'acc_other', 500)], { group_by: 'account' }), { group: 'account', account: 'acc_other' })
