@@ -120,7 +120,9 @@ func TestIngestOwnScopedToSubscriptionSpace(t *testing.T) {
 	core := f.subscribeOwn("dialogs-core-own", dialogSubject, true, DeliveryCore)
 	src := f.nats.Conn("core-source")
 	t.Cleanup(src.Close)
-	hdr := func(id string) map[string]string { return map[string]string{outbox.HeaderOrigin: ownOrigin, "Nats-Msg-Id": id} }
+	hdr := func(id string) map[string]string {
+		return map[string]string{outbox.HeaderOrigin: ownOrigin, "Nats-Msg-Id": id}
+	}
 
 	f.publishOwnData("evt-other", `{"space_id":"spc_b","run_id":"run_9","dialog_id":"dlg_9"}`)
 	f.corePublish(src, dialogSubject, []byte(`{"space_id":"spc_b","run_id":"run_9","dialog_id":"dlg_9"}`), hdr("evt-other-core"))
