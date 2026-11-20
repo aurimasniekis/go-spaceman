@@ -36,6 +36,7 @@ type feed struct {
 	reads   atomic.Int64 // After calls
 	latests atomic.Int64
 	failAt  atomic.Int64 // the After call (1-based) that fails once; 0: none
+	served  atomic.Int64 // After calls that finished reading their rows
 }
 
 func (f *feed) Latest(context.Context) (int64, error) {
@@ -56,6 +57,7 @@ func (f *feed) After(_ context.Context, after int64, limit int) ([]changefeed.Ch
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	defer f.served.Add(1)
 	var out []changefeed.Change
 	for _, r := range f.rows {
 		if r.Seq > after {
@@ -432,6 +434,15 @@ func TestBudget(t *testing.T) {
 	e := newEnv(t, 5)
 	stop := e.run(e.maps)
 	defer stop()
+	// Run closes Ready and then reads the window it resumed from (here empty) on its own, not on a ring. Changes added
+	// while that read is under way are split across it and the ring's window, and a key in both is read twice: wait for
+	// the startup read to finish, so the 1000 changes are all one window. (Production reads each key once per window;
+	// there is no cache between windows, and none is claimed.)
+	for deadline := time.Now().Add(10 * time.Second); e.feed.served.Load() < 1; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the notifier did not read the feed at start")
+		}
+	}
 	began := time.Now()
 
 	for i := range 1000 {
