@@ -1,5 +1,5 @@
 import { keepPreviousData, queryOptions, useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { api, unwrap } from './client'
+import { api, unwrap, type GlobalUsageSeries, type UsageRow } from './client'
 import { isMiniApp, setSession } from './session'
 
 /** Query keys, shared by the watch feed's invalidation. */
@@ -53,7 +53,8 @@ export const keys = {
   accountSwitches: (space: string) => ['account-switches', space] as const,
   rolePools: (space: string) => ['role-pools', space] as const,
   accountWindows: (space: string) => ['account-windows', space] as const,
-  spaceUsage: (space: string, bucket: string, groupBy: string, from: string, to: string) => ['space-usage', space, bucket, groupBy, from, to] as const,
+  usageSeries: (space: string, params: string) => ['usage-series', space, params] as const,
+  allAccountWindows: ['account-windows', 'all'] as const,
   /** Messages to operators across every readable space (Needs you → Messages); the change feed refreshes it. */
   operatorMessages: ['operator-messages'] as const,
   messages: (space: string) => ['messages', space] as const,
@@ -446,17 +447,33 @@ export const useAccountWindows = (space: string) =>
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/account-windows', { params: { path: { space_id: space } }, signal })).items,
   })
 
-/** A space's token usage over time from the ledger. Tokens are the primary unit; cost is the harness's own list-price estimate. */
-export const useSpaceUsage = (space: string, bucket: 'hour' | 'day', groupBy: 'role' | 'account' | 'model' | 'harness', from: string, to: string) =>
+/** The query of a usage series: one space (its own endpoint) or every readable space (`/usage/series`), narrowed by filters. */
+export interface UsageQuery {
+  bucket: 'hour' | 'day'
+  group_by: 'space' | 'account' | 'model' | 'role' | 'harness'
+  from: string
+  to: string
+  space_id?: string[]
+  account_id?: string[]
+  model?: string[]
+  harness?: string[]
+}
+
+/**
+ * Token usage over time from the ledger. Tokens are the primary unit; cost is the harness's own list-price estimate.
+ * With `space` it reads that space's series, otherwise the series of every space the caller reads (labels and the
+ * not-counted runs come with it; a single space has none).
+ */
+export const useUsageSeries = (space: string | undefined, q: UsageQuery) =>
   useQuery({
-    queryKey: keys.spaceUsage(space, bucket, groupBy, from, to),
-    queryFn: async ({ signal }) => {
+    queryKey: keys.usageSeries(space ?? '', JSON.stringify(q)),
+    queryFn: async ({ signal }): Promise<GlobalUsageSeries> => {
       // One page holds a whole range for any normal space; follow the cursor so totals and rows never disagree.
-      const items = [] as NonNullable<Awaited<ReturnType<typeof usagePage>>>['items']
-      let first: Awaited<ReturnType<typeof usagePage>> | undefined
+      const items: UsageRow[] = []
+      let first: GlobalUsageSeries | undefined
       let cursor: string | undefined
       for (let i = 0; i < 20; i++) {
-        const page = await usagePage(space, { bucket, group_by: groupBy, from, to, cursor, limit: 200 }, signal)
+        const page = await usagePage(space, q, cursor, signal)
         first ??= page
         items.push(...page.items)
         cursor = page.next_cursor
@@ -466,9 +483,22 @@ export const useSpaceUsage = (space: string, bucket: 'hour' | 'day', groupBy: 'r
     },
   })
 
-async function usagePage(space: string, query: { bucket: 'hour' | 'day'; group_by: 'role' | 'account' | 'model' | 'harness'; from: string; to: string; cursor?: string; limit: number }, signal: AbortSignal) {
-  return unwrap(await api.GET('/spaces/{space_id}/usage/series', { params: { path: { space_id: space }, query }, signal }))
+async function usagePage(space: string | undefined, q: UsageQuery, cursor: string | undefined, signal: AbortSignal): Promise<GlobalUsageSeries> {
+  if (space) {
+    const group_by = q.group_by === 'space' ? 'role' : q.group_by
+    const page = unwrap(await api.GET('/spaces/{space_id}/usage/series', { params: { path: { space_id: space }, query: { bucket: q.bucket, group_by, from: q.from, to: q.to, cursor, limit: 200 } }, signal }))
+    return { ...page, labels: {}, not_counted: [] } as GlobalUsageSeries
+  }
+  return unwrap(await api.GET('/usage/series', { params: { query: { ...q, cursor, limit: 200 } }, signal }))
 }
+
+/** The latest windows and open usage limits of every account bound to a space the caller reads. */
+export const useAllAccountWindows = (enabled = true) =>
+  useQuery({
+    enabled,
+    queryKey: keys.allAccountWindows,
+    queryFn: async ({ signal }) => unwrap(await api.GET('/account-windows', { signal })).items,
+  })
 
 /** A space's recent messages and how many wait for operators. */
 export const useMessages = (space: string) =>

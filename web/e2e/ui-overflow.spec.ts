@@ -148,7 +148,7 @@ const DIALOGS: Dialog[] = [
 ]
 
 const PAGES = (w: World): string[] => [
-  '/', '/attention', '/human', '/human?tab=messages', '/terminals', '/spaces', '/nodes', '/prompts', `/prompts/${w.prompt}`, '/roles', '/skills', '/approval-policies', '/human-types',
+  '/', '/attention', '/human', '/human?tab=messages', '/terminals', '/spaces', '/usage', '/usage?group=model&range=90d', '/nodes', '/prompts', `/prompts/${w.prompt}`, '/roles', '/skills', '/approval-policies', '/human-types',
   '/cross-space', '/events', `/events/templates/${w.template}`, '/mcp-servers', '/accounts', '/git-keys', '/harbor-pilot', '/users', '/sign-in-providers',
   '/tokens', '/audit', '/backups', '/system', '/account',
   space(w), `${space(w)}/terminals`, `${space(w)}/inbox`, `${space(w)}/inbox/${w.item}`, `${space(w)}/queue`, `${space(w)}/human`, `${space(w)}/messages`,

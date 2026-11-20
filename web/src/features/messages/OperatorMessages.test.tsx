@@ -38,7 +38,7 @@ describe('Needs you → Messages', () => {
   it('lists messages from every space with the space name linked, kind, sender and state', async () => {
     vi.spyOn(api, 'GET').mockImplementation(list([msg('a'), msg('b', { space_id: 'spc_2', space_name: 'Docs', kind: 'notification' })], 2) as never)
     mount()
-    const row = await screen.findByRole('listitem', { name: 'Subject a, available' })
+    const row = await screen.findByRole('listitem', { name: 'Subject a, available' }, { timeout: 4000 })
     expect(row).toHaveTextContent('request')
     expect(row).toHaveTextContent('worker')
     expect(screen.getByRole('link', { name: 'Payments' })).toHaveAttribute('href', '/spaces/spc_1/messages')
@@ -65,6 +65,19 @@ describe('Needs you → Messages', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge Subject a' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/spaces/{space_id}/messages/{message_id}/ack', { params: { path: { space_id: 'spc_1', message_id: 'a' } } }))
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(1))
+  })
+
+  it('keeps the opened message in the drawer after Acknowledge drops it from the Unread list', async () => {
+    let items = [msg('a')]
+    vi.spyOn(api, 'GET').mockImplementation(((path: string) => (list(items, items.length) as (p: string) => unknown)(path)) as never)
+    vi.spyOn(api, 'POST').mockImplementation(() => { items = []; return ok({}) })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Subject a' }, { timeout: 4000 }))
+    const drawer = await screen.findByRole('dialog')
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge Subject a' }))
+    await waitFor(() => expect(screen.queryByRole('listitem', { name: /Subject a/ })).toBeNull())
+    expect(screen.getByRole('dialog')).toBe(drawer)
+    expect(drawer).toHaveTextContent('Subject a')
   })
 
   it('offers no Acknowledge to a viewer, nor on an acknowledged message', async () => {

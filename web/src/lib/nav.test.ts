@@ -40,7 +40,7 @@ describe('settings hubs', () => {
     expect(new Set(all).size).toBe(all.length)
     expect(all).toHaveLength(18)
     expect([...all, ...visibleNav(me('admin')).map((n) => n.to)]).not.toEqual(expect.arrayContaining(['/account']))
-    expect(visibleNav(me('admin')).map((n) => n.to)).toEqual(['/', '/human', '/terminals', '/spaces'])
+    expect(visibleNav(me('admin')).map((n) => n.to)).toEqual(['/', '/human', '/terminals', '/spaces', '/usage'])
   })
 
   it('takes the first visible tab as the entry target', () => {

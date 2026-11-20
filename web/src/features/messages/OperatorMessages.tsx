@@ -21,9 +21,10 @@ export function OperatorMessages() {
   const spaces = useSpaces()
   const me = useMe().data
   const qc = useQueryClient()
-  const [open, setOpen] = useState<string | null>(null)
+  /** The opened message is kept as an object: acknowledging it drops it from the Unread list but the drawer stays open. */
+  const [opened, setOpened] = useState<OperatorMessage | null>(null)
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
-  const current = items.find((m) => m.id === open) ?? null
+  const current = opened ? (items.find((m) => m.id === opened.id) ?? opened) : null
   const canWrite = (m: OperatorMessage) => atLeast(roleIn(me, m.space_id), 'operator')
   const ack = async (m: OperatorMessage) => {
     try {
@@ -53,8 +54,8 @@ export function OperatorMessages() {
               </Text>
               <Badge variant="light" color={m.kind === 'request' ? 'owlYellow' : m.kind === 'notification' ? 'gray' : 'owlBlue'}>{m.kind}</Badge>
               <Text size="xs" c="dimmed" truncate>{party(m.from_kind, m.from_id, m.from_label)} <IconArrowRight size={10} /> operators</Text>
-              <Text size="sm" style={{ flex: '1 1 200px', minWidth: 0, cursor: 'pointer' }} truncate role="button" tabIndex={0}
-                onClick={() => setOpen(m.id)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(m.id) }}>{m.subject}</Text>
+              <Text size="sm" component="button" type="button" ta="left" truncate onClick={() => setOpened(m)}
+                style={{ flex: '1 1 200px', minWidth: 0, cursor: 'pointer', background: 'none', border: 0, padding: 0, color: 'inherit', font: 'inherit' }}>{m.subject}</Text>
               <Text size="xs" c="dimmed" w={70} ta="right">{ago(m.created_at)}</Text>
               <Badge color={stateColor[m.state]} variant="light">{m.state}</Badge>
               {canWrite(m) && m.state !== 'acknowledged' && m.state !== 'resolved' && (
@@ -68,7 +69,7 @@ export function OperatorMessages() {
         )}
         {list.hasNextPage && <Button variant="default" size="xs" loading={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Load more</Button>}
       </Stack>
-      <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size="lg" title="Message">
+      <Drawer opened={current !== null} onClose={() => setOpened(null)} position="right" size="lg" title="Message">
         {current && <MessageDetail spaceId={current.space_id} m={current} canWrite={canWrite(current)} />}
       </Drawer>
     </>

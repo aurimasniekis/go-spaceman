@@ -207,6 +207,9 @@ func TestGatewayRevokedOnRelocationAndRunsEnded(t *testing.T) {
 	e.run("run_2", "unknown")
 	e.run("run_done", proto.RunExited)
 	e.exec(`UPDATE run_gateway_credentials SET token_enc = NULL WHERE run_id = 'run_done'`) // its end path ran already
+	// run_1 waits at a dialog: ending it closes the occurrence and publishes dialog_cleared once (clearRunDialogsTx).
+	e.exec(`INSERT INTO run_dialogs (id, run_id, space_id, node_id, dialog, signal, outcome, detected_at, created_at)
+		VALUES ('dlg_1', 'run_1', 'spc_a', 'nod_1', 'unknown', 'screen_prompt', 'blocked', 1, 1)`)
 	e.exec(`UPDATE spaces SET desired_node_id = 'nod_2', state = 'paused' WHERE id = 'spc_a'`)
 	e.exec(`INSERT INTO relocations (id, space_id, source_node_id, dest_node_id, mode, state, generation_before, created_at, created_by, updated_at)
 		VALUES ('rel_1', 'spc_a', 'nod_1', 'nod_2', 'source_unavailable', 'finalizing', 1, 0, 't', 0)`)
@@ -230,6 +233,12 @@ func TestGatewayRevokedOnRelocationAndRunsEnded(t *testing.T) {
 	}
 	if e.ended.Load() != 2 {
 		t.Fatalf("OnRunEnded called %d times, want 2", e.ended.Load())
+	}
+	if n := e.count(`SELECT count(*) FROM run_dialogs WHERE id = 'dlg_1' AND cleared_at IS NOT NULL`); n != 1 {
+		t.Fatal("finalizeRelocation left the run's open dialog open")
+	}
+	if n := e.count(`SELECT count(*) FROM event_outbox WHERE type = ? AND correlation_id = 'run_1'`, outbox.RunDialogClearedName.Type()); n != 1 {
+		t.Fatalf("%d dialog_cleared events for the run, want 1", n)
 	}
 	if n := e.count(`SELECT count(*) FROM event_outbox WHERE type = ? AND correlation_id = 'run_done'`, outbox.RunEndedName.Type()); n != 0 {
 		t.Fatal("an already ended run was ended again")
