@@ -7765,9 +7765,10 @@
   response; the action stays pending; the text is read with `spaceman_human_get` (comments were already included).
   **Ask the requester** stays the explicit clarification, answered with `spaceman_human_reply`.
 - **Routing order** (the same for a comment, a clarification and a response). While the requester's run is live, the
-  notice goes to that run. Once it has ended: (1) when the policy is `next_launch`, the next run of the requester's
-  agent instance, within the hold; (2) else a live run of the policy's successor role; (3) else control, when one is
-  wanted or can be started; (4) else the operators, who get a message that it could not be delivered. The default
+  notice goes to that run. A run that is missing, in another space, or ended counts as ended, and then: (1) when the
+  policy is `next_launch` and the requester has a valid agent-instance ID, the next run of that instance, within the
+  hold; (2) else a live run (running, starting or pending) of the policy's successor role; (3) else control, when one
+  is wanted or can be started; (4) else the operators, who get a message that it could not be delivered. The default
   `reroute` policy skips step (1).
 - **Consequences:** migration 0067 rebuilds `human_notifications` to allow the kind; `internal/human`
   `TestPlainCommentNotifiesRequester`, `TestCommentNotifiesARequesterWithoutARun` and

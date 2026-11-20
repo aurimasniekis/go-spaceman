@@ -265,9 +265,18 @@ func TestCommentOnAnEndedRequesterRoutesLikeAClarification(t *testing.T) {
 		}
 	}
 
-	// 1. The requester's run ended: the next run of its agent instance (next_launch) gets it, once one starts.
+	// A live successor role and a live control exist from the start, so each stage shows which step wins.
+	f.run("run_ctl", "control", "control", "ins_c", "running", "running")
+	f.run("run_rev", "worker", "reviewer", "ins_r", "running", "running")
+	gone := Requester{Kind: "agent", ID: "ins_9", Role: "worker", Run: "run_gone"}
+	f.run("run_gone", "worker", "worker", "ins_9", "running", "running")
+	f.end("run_gone")
+
+	// 1. The requester's run ended: next_launch keeps it for the next run of its agent instance, ahead of the live
+	// successor and control, once that run starts.
 	inst := ids.New(ids.Instance)
-	f.policy("", TypeTodo, PolicyFields{MaxReminders: 1, RequesterEnded: EndedNextLaunch, HoldMinutes: 30, WakeIdle: false, RatePerRunHour: 30, RatePerSpaceHour: 300})
+	f.policy("", TypeTodo, PolicyFields{MaxReminders: 1, RequesterEnded: EndedNextLaunch, HoldMinutes: 30, SuccessorRole: "reviewer", WakeIdle: false,
+		RatePerRunHour: 30, RatePerSpaceHour: 300})
 	f.run("run_k1", "worker", "worker", inst, "running", "running")
 	f.end("run_k1")
 	cm, cl := ask(Requester{Kind: "agent", ID: inst, Role: "worker", Run: "run_k1"})
@@ -281,12 +290,9 @@ func TestCommentOnAnEndedRequesterRoutesLikeAClarification(t *testing.T) {
 		t.Fatalf("the instance's next run %+v", n)
 	}
 
-	// 2. Without a next run: a live run of the successor role takes it, before control.
-	gone := Requester{Kind: "agent", ID: "ins_9", Role: "worker", Run: "run_gone"}
+	// 2. reroute (the default): the live successor role takes it, before control.
 	f.policy("", TypeTodo, PolicyFields{MaxReminders: 1, RequesterEnded: EndedReroute, HoldMinutes: 60, SuccessorRole: "reviewer", WakeIdle: true,
 		RatePerRunHour: 30, RatePerSpaceHour: 300})
-	f.run("run_ctl", "control", "control", "ins_c", "running", "running")
-	f.run("run_rev", "worker", "reviewer", "ins_r", "running", "running")
 	cm, cl = ask(gone)
 	sameRoute(cm, cl)
 	if n := cm.Notifications[0]; n.TargetKind != TargetRun || n.TargetRun != "run_rev" || n.RouteReason != ReasonRequesterEnded {

@@ -220,8 +220,9 @@ func TestPlainCommentNotifiesRequester(t *testing.T) {
 	}
 }
 
-// SM-HUM-006: the echo check skips only the requester's own run. A requester recorded without a run is notified by a
-// person's comment (an empty run never matches the person's empty run), and the comment stays pending.
+// SM-HUM-006: the echo check skips only the requester's own run. A person's comment (whose run is empty too) must still
+// notify a requester recorded without a run. Such a requester has no live run, so the notice is routed as an ended
+// requester; with no successor, control or operators' fallback here, that is the operators. The comment stays pending.
 func TestCommentNotifiesARequesterWithoutARun(t *testing.T) {
 	t.Parallel()
 	f := newFx(t)
@@ -230,5 +231,8 @@ func TestCommentNotifiesARequesterWithoutARun(t *testing.T) {
 	must(t, err)
 	if a.Status != Open || len(a.Notifications) != 1 || a.Notifications[0].Kind != NoticeComment {
 		t.Fatalf("requester without a run: %+v / %+v", a.Status, a.Notifications)
+	}
+	if n := a.Notifications[0]; n.TargetKind != TargetOperators || n.RouteReason != ReasonRequesterEnded {
+		t.Fatalf("routed %+v", n)
 	}
 }
