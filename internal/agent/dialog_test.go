@@ -459,7 +459,7 @@ func TestDialogFlagRecheckedOnAQuietScreen(t *testing.T) {
 // is read again after dialogQuiet, not after the backoff the flag had reached: the clear ends the backoff.
 func TestDialogReflagAfterObservedClearRereadsAfterQuiet(t *testing.T) {
 	old := dialogRecheckMax
-	dialogRecheckMax = 400 * time.Millisecond
+	dialogRecheckMax = 800 * time.Millisecond // 16 dialogQuiet (set by newDialogEnv): above the doublings a re-read can make before the check below
 	t.Cleanup(func() { dialogRecheckMax = old })
 	e := newDialogEnv(t, nil)
 	e.show(fixture(t, "claude-unknown.txt"))
@@ -480,8 +480,9 @@ func TestDialogReflagAfterObservedClearRereadsAfterQuiet(t *testing.T) {
 	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:unknown", "cleared:unknown", "blocked:unknown"}) {
 		t.Fatalf("outcomes %v", got)
 	}
-	// The re-read of the new flag comes after dialogQuiet: the backoff restarts from the quiet period, not from the old
-	// flag's bound.
+	// The new flag's re-reads start from dialogQuiet, not from the old flag's bound. Its backoff is checked against that
+	// bound, not against dialogQuiet itself: a re-read that has already run doubles it, and a loaded run can have run
+	// several by the time this reads it.
 	waitFor(t, "backoff of the new flag", func() bool {
 		e.a.dlg.mu.Lock()
 		defer e.a.dlg.mu.Unlock()
@@ -491,8 +492,8 @@ func TestDialogReflagAfterObservedClearRereadsAfterQuiet(t *testing.T) {
 	e.a.dlg.mu.Lock()
 	b := e.a.dlg.runs[e.run].backoff
 	e.a.dlg.mu.Unlock()
-	if b != dialogQuiet {
-		t.Fatalf("the new flag re-reads after %v, want dialogQuiet %v (the old backoff was %v)", b, dialogQuiet, dialogRecheckMax)
+	if b >= dialogRecheckMax {
+		t.Fatalf("the new flag's backoff is %v, want below the old flag's bound %v (dialogQuiet %v)", b, dialogRecheckMax, dialogQuiet)
 	}
 }
 
