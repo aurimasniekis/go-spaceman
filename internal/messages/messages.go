@@ -765,11 +765,7 @@ func (svc *Service) ListOperator(ctx context.Context, q OperatorQuery) ([]*Messa
 	if q.All {
 		onlyOpen = 0
 	}
-	kind := "%"
-	if q.Kind != "" {
-		kind = q.Kind
-	}
-	rows, err := svc.s.R().ListOperatorMessages(ctx, db.ListOperatorMessagesParams{Spaces: spaceList(q.Spaces), OnlyOpen: onlyOpen, KindLike: kind,
+	rows, err := svc.s.R().ListOperatorMessages(ctx, db.ListOperatorMessagesParams{Spaces: spaceList(q.Spaces), OnlyOpen: onlyOpen, Kind: q.Kind,
 		AfterCreated: after, AfterID: q.AfterID, Lim: int64(limit) + 1})
 	if err != nil {
 		return nil, false, err
