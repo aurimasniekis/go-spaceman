@@ -1,7 +1,7 @@
 # Plan: Usage page, Overview and Attention rework, settings hubs in the sidebar
 
-- **Status:** planning only, with no code changes. The product questions in §7 are open. The ADR number and requirement
-  IDs used here (ADR-0103, SM-UI-008, SM-UI-009) are proposals for control to confirm (§7, Q0).
+- **Status:** accepted 2026-11-20. The operator answered §7 with "all recommended" (see §8). ADR-0103, SM-UI-008,
+  SM-UI-009 and, if needed, migration 0069 are confirmed free.
 - **Goal:** an operator UI batch for release v0.1.16.
   1. A cross-space **Usage** page built from the usage ledger, broken down per space, account, model, role and harness.
   2. An **Overview** page that leads with usage and with what needs a person.
@@ -413,3 +413,20 @@ Nothing is expensive to undo.
 - **Q7 — Money on Overview:** tokens only, or also the "≈ $" estimate? And a delta against the previous period: yes or
   no?
 - **Q8 — Ranges:** add 90 days (daily) on the Usage page? The ledger keeps 730 days of daily rows.
+
+## 8. Decisions (2026-11-20)
+
+The operator accepted every recommended option:
+
+- **Q0:** ADR-0103, SM-UI-008, SM-UI-009 and, if the UI-T1 benchmark needs an index, migration 0069.
+- **Q1:** the page is called **Usage**.
+- **Q2:** (a) `/attention` stays as the full itemised list, off the sidebar, with the top 5 items on Overview.
+- **Q3:** (A) every existing URL stays; `/configuration`, `/integrations` and `/access` are entry routes with tabs.
+  UI-T7b is not needed.
+- **Q4:** keep "Access"; Account leaves the sidebar (it stays in the user menu); API tokens go under Access and Nodes
+  under Configuration.
+- **Q5:** Codex and Harbor Pilot usage is shown as "not counted" in v0.1.16.
+- **Q6:** Usage is visible to anyone with `run:read`, filtered to their spaces; account names show for accounts bound
+  to those spaces.
+- **Q7:** Overview shows tokens only, with a delta against the previous period.
+- **Q8:** Usage offers a 90-day (daily) range.
