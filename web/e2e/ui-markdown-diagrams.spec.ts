@@ -102,7 +102,8 @@ test('auto-rendered diagrams stay within their main-thread budget each; large on
     return [ms(w.__tasks.filter((x) => x.end > from && x.end <= to)), ms(w.__tasks.filter((x) => x.end > to))]
   }, [t0, since])
   console.log('long tasks while warming up (ms):', JSON.stringify(warmTasks))
-  // The first use of each kind (its chunks) is measured apart: the probe showed every task under 140 ms.
+  // The first use of each kind (its chunks) is measured apart: the probe saw tasks of up to 151 ms, so the bound is
+  // WARM_TASK_MS.
   expect(Math.max(0, ...warmTasks), 'longest main-thread task of a first use').toBeLessThan(WARM_TASK_MS)
   console.log('long tasks while rendering the auto-rendered diagrams (ms):', JSON.stringify(tasks))
   expect(Math.max(0, ...tasks), 'longest main-thread task of an auto-rendered diagram').toBeLessThan(DIAGRAM_TASK_MS)

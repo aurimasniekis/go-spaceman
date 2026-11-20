@@ -25,11 +25,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   ingested only for the subscription's own space (its `data.space_id`) and at automation depth 0, so SpaceMan's events about an ingestion's items and tasks are never ingested, and `event_depth`, the rate
   limit and deduplication still apply. Other subscriptions keep filtering own events. Migration 0070 adds the column
   (off for existing subscriptions). ADR-0104.
-- **Messages tab under Needs you.** `/human?tab=messages` lists the messages addressed to operators from every space you
-  can read, using `GET /messages`. Each row shows the space (linked), kind, sender, subject, age and state; you can
-  acknowledge inline, or open one to reply, acknowledge or resolve through the per-space operations. Filter by unread or
-  all, space and kind. The tab shows the unread count and refreshes live from the change feed. The per-space Messages page
-  is unchanged.
 - **A reworked Overview in the web UI.** From the top: the **top 5 items that need attention** (act before watch, each
   linking to where it is handled, with "See all (N)" to `/attention`; this replaces the "Needs attention" tile), a
   **Usage** summary (tokens today and over the last 7 days with the change against the 7 days before, a 14-day
@@ -44,13 +39,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   counts parked runs, account limits, failed account switches and incoming cross-space requests. The Mini App keeps its
   `/attention` page, with the web-only targets unlinked. `spaces[]` in the response now also lists a space whose only
   rows are parked runs, account limits or switches, or cross-space requests (its `total` stays 0).
-- **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
-  (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
-  MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
-  Backups, System). Each page shows its hub's tabs under its header as plain links (the current one has
-  `aria-current`). An entry shows only if one of its tabs is visible to you. Every existing URL still loads directly,
-  and `/configuration`, `/integrations` and `/access` open the first tab you may see. Account is only in the user
-  menu now, and Attention is off the sidebar (`/attention` stays).
+- **`GET /attention` names what needs a person and covers four more categories.** The response gains `items[]`
+  (kind, severity, space, title, since and a link target for blocked and failed tasks, quarantined events, unknown,
+  failed and lost runs, budget notices and the new categories; at most 20 per kind, with the full numbers in
+  `item_counts`) and per-space counts for runs parked at a usage limit, open account limits, account switches that
+  failed in the last 24 hours and incoming cross-space requests. Each needs its existing read permission, so a user
+  never sees another space's items. Human actions stay counted only. Existing fields and `total` keep their meaning: the
+  new categories are not part of `total` (they are mostly information that clears by itself), and clients can sum
+  `item_counts` to include them. Harbor Pilot budget state is not included yet. The counts come from the items queries,
+  so a request makes twelve queries at most.
 - **A Usage page in the web UI (`/usage`, in the sidebar's Work group).** Token usage across every space you can read,
   over 24 hours, 7, 30 or 90 days (90 days in daily buckets), grouped by space, account, model, role or harness. Select an
   account, model or harness in the table to filter by it; the range, grouping and filters are in the URL, so a view can
@@ -61,32 +58,33 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **Usage across every space you can read: `GET /usage/series` (`get-usage-series`) and `spaceman usage all`.** Ledger
   tokens per hour or day, grouped by space, account, model, role or harness, with filters on each (at most 50 values
   per filter). Rows, totals, `labels` (space and account names) and `not_counted` cover only the spaces where you have
-  `run:read`; an account is named only when it is bound to one of them, directly or through a role pool. `not_counted` gives, per harness, the runs in
-  the range whose usage the ledger doesn't hold (Codex, and runs with only Harbor Pilot figures), so a missing figure
-  isn't read as zero. A 90-day daily range works as before. The sums run in SQL, and migration 0069 replaces the
-  ledger's time index with a covering one so they read the index alone (30 days of 200k rows by space: about 50 ms).
-  See ADR-0103.
-- **One list of the messages addressed to operators, across all spaces.** `GET /messages` (`list-operator-messages`)
-  returns the messages to operators from every space you hold `message:read` in, newest first, with the space's slug and
-  name on each item so a client can act through the per-space ack, reply and resolve operations. By default only open
-  messages (not yet acknowledged or resolved); `state=all`, `space` and `kind` filter, and `cursor` and `limit` (at most
-  200) page it. `unread_count` is the open count over all readable spaces, for a badge. Messages to control, roles and
-  runs, and other spaces' messages, never appear. CLI: `spaceman message inbox` (`--all` follows every page).
-
-- **One call lists the usage windows of every account you can see.** `GET /account-windows` (and `spaceman usage
-  windows`) returns each subscription account bound, directly or through a role pool, to a space you can read
-  (`run:read`), once, with its name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound
-  only to spaces you can't read is not listed and its name isn't disclosed. It reads stored state only and fetches
-  nothing from a provider. The Usage page will build on it.
-- **`GET /attention` names what needs a person and covers four more categories.** The response gains `items[]`
-  (kind, severity, space, title, since and a link target for blocked and failed tasks, quarantined events, unknown,
-  failed and lost runs, budget notices and the new categories; at most 20 per kind, with the full numbers in
-  `item_counts`) and per-space counts for runs parked at a usage limit, open account limits, account switches that
-  failed in the last 24 hours and incoming cross-space requests. Each needs its existing read permission, so a user
-  never sees another space's items. Human actions stay counted only. Existing fields and `total` keep their meaning: the
-  new categories are not part of `total` (they are mostly information that clears by itself), and clients can sum
-  `item_counts` to include them. Harbor Pilot budget state is not included yet. The counts come from the items queries,
-  so a request makes twelve queries at most.
+  `run:read`; an account is named only when it is bound to one of them, directly or through a role pool. `not_counted`
+  gives, per harness, the runs in the range whose usage the ledger doesn't hold (Codex, and runs with only Harbor
+  Pilot figures), so a missing figure isn't read as zero. A 90-day daily range works as before. The sums run in SQL,
+  and migration 0069 replaces the ledger's time index with a covering one so they read the index alone (30 days of
+  200k rows by space: about 50 ms). See ADR-0103. `GET /account-windows` (and `spaceman usage windows`) returns each
+  subscription account bound, directly or through a role pool, to a space you can read (`run:read`), once, with its
+  name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound only to spaces you can't read
+  is not listed and its name isn't disclosed. It reads stored state only and fetches nothing from a provider. The
+  Usage page will build on it.
+- **One list of the messages addressed to operators, across all spaces, and a Messages tab under Needs you.** `GET
+  /messages` (`list-operator-messages`) returns the messages to operators from every space you hold `message:read` in,
+  newest first, with the space's slug and name on each item so a client can act through the per-space ack, reply and
+  resolve operations. By default only open messages (not yet acknowledged or resolved); `state=all`, `space` and
+  `kind` filter, and `cursor` and `limit` (at most 200) page it. `unread_count` is the open count over all readable
+  spaces, for a badge. Messages to control, roles and runs, and other spaces' messages, never appear. CLI: `spaceman
+  message inbox` (`--all` follows every page). `/human?tab=messages` lists the messages addressed to operators from
+  every space you can read, using `GET /messages`. Each row shows the space (linked), kind, sender, subject, age and
+  state; you can acknowledge inline, or open one to reply, acknowledge or resolve through the per-space operations.
+  Filter by unread or all, space and kind. The tab shows the unread count and refreshes live from the change feed. The
+  per-space Messages page is unchanged.
+- **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
+  (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
+  MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
+  Backups, System). Each page shows its hub's tabs under its header as plain links (the current one has
+  `aria-current`). An entry shows only if one of its tabs is visible to you. Every existing URL still loads directly,
+  and `/configuration`, `/integrations` and `/access` open the first tab you may see. Account is only in the user
+  menu now, and Attention is off the sidebar (`/attention` stays).
 
 ### Fixed
 
@@ -98,13 +96,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **A dialog flag raised again after it cleared is read again after the quiet period.** A flag that cleared through
   the run's observed working status kept its re-read backoff, so a flag raised again with no output was only re-read
   up to five minutes later instead of after the first quiet period. The backoff now ends with the flag.
-
-- **Replying to a request in the Messages drawer shows it resolved.** A reply resolves the request on the server, but the
-  open drawer kept the request's old state (and its Acknowledge and Resolve buttons) until the list refetched, which
-  under the Unread filter never brought it back. The drawer now re-reads the request after the reply.
-- **A late re-read no longer reopens or replaces the Messages drawer.** The re-read after a reply, acknowledge or resolve
-  could land after you had closed the drawer or opened another message, and it reopened the closed one or replaced the
-  new one. It now updates only the message still open.
+- **The Messages drawer shows a reply's result, and a late re-read no longer reopens or replaces it.** A reply
+  resolves the request on the server, but the open drawer kept the request's old state (and its Acknowledge and
+  Resolve buttons) until the list refetched, which under the Unread filter never brought it back. The drawer now
+  re-reads the request after the reply. The re-read after a reply, acknowledge or resolve could land after you had
+  closed the drawer or opened another message, and it reopened the closed one or replaced the new one. It now updates
+  only the message still open.
 - **The Attention page's summary line matches its rows.** It said "N items need a person" from the server's total, which
   leaves out failed account switches and cross-space requests that are listed under Act now, so it could read 0 above
   rows. It now counts the Act now rows (human actions included) and the Watch rows.
