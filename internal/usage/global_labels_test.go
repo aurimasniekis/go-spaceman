@@ -89,3 +89,30 @@ func TestGlobalSeriesAccountLabelRule(t *testing.T) {
 		t.Fatalf("labels %v", all.Labels)
 	}
 }
+
+// An account bound only through a role pool in space B, with ledger rows in space A, gets no label for a reader of A:
+// the role-pool branch of the label rule filters on the readable spaces, as the direct branch does.
+func TestGlobalSeriesAccountLabelRulePoolInOtherSpace(t *testing.T) {
+	t.Parallel()
+	f := newGlobalFx(t, []string{"spc_a", "spc_b"}, []string{"acc_poolb"}, nil)
+	if err := f.s.W().TxNamed(f.ctx, "seed.pool", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(f.ctx, `INSERT INTO space_role_accounts (space_id, role, account_id, priority, created_at, created_by) VALUES ('spc_b', 'r', 'acc_poolb', 100, 0, 't')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	at := globalNow.Add(-2 * time.Hour).Truncate(time.Hour).UnixMicro()
+	f.add(t, []db.UsageBucket{{SpaceID: "spc_a", AccountID: "acc_poolb", Role: "r", Harness: "claude-code", Model: "m", Granularity: GranHour, BucketStart: at, InputTokens: 5, Requests: 1}})
+	q := SeriesQuery{GroupBy: "account", Bucket: GranHour}
+	p := f.allPages(t, q, Filter{}, Scope{Spaces: []string{"spc_a"}}, 10)
+	if len(p.Rows) != 1 {
+		t.Fatalf("rows: %+v", p.Rows)
+	}
+	if _, ok := p.Labels["acc_poolb"]; ok {
+		t.Fatalf("an account bound only through a role pool in space B is named to a reader of A: %v", p.Labels)
+	}
+	// A reader of both spaces does see the name.
+	if all := f.allPages(t, q, Filter{}, Scope{Spaces: []string{"spc_a", "spc_b"}}, 10); all.Labels["acc_poolb"] != "name of acc_poolb" {
+		t.Fatalf("labels %v", all.Labels)
+	}
+}
