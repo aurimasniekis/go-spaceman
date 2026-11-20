@@ -120,6 +120,50 @@ describe('Needs you → Messages', () => {
     expect(within(drawer).queryByRole('button', { name: 'Resolve' })).toBeNull()
   })
 
+  /** Sends a reply to request "a" whose request re-read waits for `release`, so the test decides when it lands. */
+  async function sendReplyWithHeldReread() {
+    let release!: () => void
+    const reread = new Promise<void>((r) => { release = r })
+    const items = [msg('a'), msg('b')]
+    vi.spyOn(api, 'GET').mockImplementation(((path: string) =>
+      path === '/spaces/{space_id}/messages/{message_id}' ? reread.then(() => ok(msg('a', { state: 'resolved', version: 2, resolution: 'replied: r1' })))
+        : (list(items, items.length) as (p: string) => unknown)(path)) as never)
+    const post = vi.spyOn(api, 'POST').mockImplementation(() => ok(msg('r1', { kind: 'reply', from_kind: 'operator', to_kind: 'run' })))
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Subject a' }, { timeout: 4000 }))
+    const drawer = await screen.findByRole('dialog')
+    const box = await within(drawer).findByRole('textbox', { name: 'Reply' })
+    fireEvent.input(box, { target: { textContent: 'on it' } })
+    box.textContent = 'on it'
+    fireEvent.input(box)
+    fireEvent.click(await within(drawer).findByRole('button', { name: 'Send reply' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/spaces/{space_id}/messages/{message_id}/reply', expect.anything()))
+    return release
+  }
+
+  it('a late re-read after a reply does not reopen the drawer the operator closed', async () => {
+    const release = await sendReplyWithHeldReread()
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    release()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('a late re-read after a reply does not replace the message the operator opened next', async () => {
+    const release = await sendReplyWithHeldReread()
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    fireEvent.click(await screen.findByRole('button', { name: 'Subject b' }, { timeout: 4000 }))
+    const drawer = await screen.findByRole('dialog')
+    await waitFor(() => expect(drawer).toHaveTextContent('Subject b'))
+    release()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(screen.getByRole('dialog')).toBe(drawer)
+    expect(drawer).toHaveTextContent('Subject b')
+    expect(drawer).not.toHaveTextContent('Subject a')
+  })
+
   it('offers no Acknowledge to a viewer, nor on an acknowledged message', async () => {
     vi.spyOn(api, 'GET').mockImplementation(list([msg('v', { space_id: 'spc_2' }), msg('d', { state: 'acknowledged' })], 0) as never)
     mount()
