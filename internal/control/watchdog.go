@@ -159,6 +159,9 @@ func assess(o observation, n time.Duration, now time.Time) verdict {
 	case c.Limit != nil || o.Parked:
 		v.Guard = guardLimit
 	case c.Status == "blocked" || o.HumanOpen > 0 && waitsOnAsk(o):
+		// Blocked covers every program prompt, a terminal dialog SpaceMan does not answer included (blocked_on_dialog,
+		// ADR-0102): control is waiting for a person at its terminal, not stalled, and a nudge typed into it would answer
+		// the dialog.
 		v.Guard = guardHuman
 	case o.Act.inflight > 0 || c.Status != "idle" && c.Status != "done":
 		v.Guard = guardBusy

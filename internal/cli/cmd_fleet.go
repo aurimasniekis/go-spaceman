@@ -324,6 +324,8 @@ func (a *App) runCmd() *cobra.Command {
 			query: []qflag{limitFlag(), qs("include", "include", "also return what lists leave out: manifest, prompt (comma-separated)")},
 			view:  view{items: "items", cols: runCols, empty: "No runs."}}),
 		a.cmd(opts{use: "get", short: "Show a run", op: "get-run", scoped: true, args: pos("run")}),
+		a.cmd(opts{use: "dialogs", short: "A run's terminal dialogs, newest first (answered by SpaceMan, or flagged and when cleared)", op: "list-run-dialogs",
+			scoped: true, args: pos("run"), query: []qflag{limitFlag()}, view: view{items: "items", empty: "No dialogs."}}),
 		a.cmd(opts{use: "launch", short: "Launch a run on the space's node", op: "launch-run", scoped: true, idem: true,
 			example: "spaceman run launch --space payments --role worker --prompt-file task.md",
 			form: func(f *form) {

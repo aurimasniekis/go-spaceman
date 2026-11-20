@@ -387,9 +387,10 @@ var Table = map[string]Entry{
 	"save-space-role":         {Dangerous, rSpaceRole},
 
 	// Runs.
-	"get-run":    {Read, rRead},
-	"launch-run": {Write, rLaunch},
-	"list-runs":  {Read, rRead},
+	"get-run":          {Read, rRead},
+	"launch-run":       {Write, rLaunch},
+	"list-runs":        {Read, rRead},
+	"list-run-dialogs": {Read, rRead},
 	// Usage-limit holds and parked runs' waits (ADR-0079): identifiers, kinds and times only.
 	"list-space-usage-limits":     {Read, rRead},
 	"list-space-limit-waits":      {Read, rRead},
@@ -477,6 +478,7 @@ var Table = map[string]Entry{
 	"get-account-usage":          {Read, rRead},
 	"get-account-windows":        {Read, rRead},
 	"list-space-account-windows": {Read, rRead},
+	"list-account-windows":       {Read, rFiltered},
 
 	// Users. The step-up writes are excluded by their rule; these entries are what they fall back to.
 	"get-user":             {Excluded, rUsers},

@@ -77,6 +77,30 @@
         ],
         "type": "object"
       },
+      "AccountWindowsList": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AccountWindowsList.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageAccountState"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "AccountsAccount": {
         "additionalProperties": false,
         "properties": {
@@ -6041,6 +6065,56 @@
         ],
         "type": "object"
       },
+      "FleetRunDialog": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "cleared_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "detected_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "dialog": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "harness_version": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "signal": {
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "space_id",
+          "dialog",
+          "signal",
+          "outcome",
+          "detected_at"
+        ],
+        "type": "object"
+      },
       "FleetRunLimit": {
         "additionalProperties": false,
         "properties": {
@@ -11490,6 +11564,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/CatalogRoleTemplate"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-run-dialogsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-run-dialogsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetRunDialog"
             },
             "type": "array"
           }
@@ -20207,6 +20305,41 @@
         ],
         "type": "object"
       },
+      "UsageAccountState": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "limits": {
+            "description": "Open usage limits, oldest first; empty when none",
+            "items": {
+              "$ref": "#/components/schemas/UsageLimit"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "windows": {
+            "description": "The latest 5-hour and 7-day windows; empty when no run has reported one",
+            "items": {
+              "$ref": "#/components/schemas/UsageWindow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "account_id",
+          "name",
+          "windows",
+          "limits"
+        ],
+        "type": "object"
+      },
       "UsageAccountWindows": {
         "additionalProperties": false,
         "properties": {
@@ -20318,6 +20451,28 @@
           "costs",
           "requests",
           "unknown_usage_requests"
+        ],
+        "type": "object"
+      },
+      "UsageLimit": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "seen_at": {
+            "description": "When a run first reported the limit",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "seen_at"
         ],
         "type": "object"
       },
@@ -21106,6 +21261,39 @@
         "summary": "Supported credential kinds and the harness each one is for",
         "tags": [
           "accounts"
+        ]
+      }
+    },
+    "/account-windows": {
+      "get": {
+        "description": "Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. An account bound only to other spaces is absent.",
+        "operationId": "list-account-windows",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountWindowsList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The usage windows and open limits of the accounts bound to the spaces you can read",
+        "tags": [
+          "accounts",
+          "usage"
         ]
       }
     },
@@ -29530,7 +29718,7 @@
     },
     "/spaces/{space_id}/human-actions/{action_id}/comments": {
       "post": {
-        "description": "Comments are discussion and never count as a response.",
+        "description": "Comments are discussion and never count as a response. A comment on a pending action an agent asked is also a durable comment notice to that agent, routed like a response; the action stays pending.",
         "operationId": "comment-human-action",
         "parameters": [
           {
@@ -33775,6 +33963,72 @@
           }
         },
         "summary": "Get a run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/dialogs": {
+      "get": {
+        "description": "The interactive dialogs the node recognised on the run's terminal (ADR-0102): the ones SpaceMan answered, and the ones it flagged (blocked_on_dialog) with when each was cleared. The screen excerpt is not included.",
+        "operationId": "list-run-dialogs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many of the newest dialogs to list",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many of the newest dialogs to list",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-run-dialogsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A run's terminal dialogs, newest first",
         "tags": [
           "runs"
         ]

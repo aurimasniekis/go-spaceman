@@ -259,6 +259,8 @@ func TestHandbackGuards(t *testing.T) {
 		"no task":   func(e *hbEnv) { e.task.AssigneeRun, e.task.ID = "", "" },
 		"ended":     func(e *hbEnv) { e.run.Observed = "exited" },
 		"control":   func(e *hbEnv) { e.run.Kind = "control" },
+		// Waiting at a terminal dialog (blocked_on_dialog): a person answers it, and a reminder typed in would answer it.
+		"dialog": func(e *hbEnv) { e.run.Status, e.run.StatusKind = "blocked", proto.StatusKindDialog },
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newHBEnv(t)

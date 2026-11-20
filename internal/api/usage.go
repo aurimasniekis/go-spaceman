@@ -24,8 +24,10 @@ var UsageRules = map[string]Rule{
 	// of an account bound to such a space.
 	"get-space-usage-series":     InSpace(authz.RunRead),
 	"list-space-account-windows": InSpace(authz.RunRead),
-	"get-account-usage":          Global(authz.AccountRead),
-	"get-account-windows":        Global(authz.AccountRead),
+	// The cross-space list is filtered per account by canSeeAccount (run:read in a space the account is bound to).
+	"list-account-windows": FilteredRead(),
+	"get-account-usage":    Global(authz.AccountRead),
+	"get-account-windows":  Global(authz.AccountRead),
 	// Deleting a transcript is as irreversible as deleting a recording, so it needs the same step-up (SR-L06).
 	"delete-transcript": {Perm: authz.RecordingDelete, Space: true, Reauth: true, MFA: true},
 }
@@ -84,6 +86,11 @@ func pageSeries(s *usage.Series, p Page) (*UsageSeriesPage, error) {
 		out.Items = append(out.Items, r)
 	}
 	return out, nil
+}
+
+// AccountWindowsList is the accounts bound to the spaces the caller can read, with their windows and open limits.
+type AccountWindowsList struct {
+	Items []usage.AccountState `json:"items"`
 }
 
 // SpaceAccountWindows is the latest windows of a space's bound accounts.
@@ -190,6 +197,19 @@ func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 				}
 				return &struct{ Body SpaceAccountWindows }{Body: SpaceAccountWindows{Items: l}}, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "list-account-windows", Method: http.MethodGet, Path: "/account-windows",
+			Summary: "The usage windows and open limits of the accounts bound to the spaces you can read",
+			Description: "Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, " +
+				"harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. " +
+				"An account bound only to other spaces is absent.", Tags: []string{"accounts", "usage"}},
+			func(ctx context.Context, _ *struct{}) (*struct{ Body AccountWindowsList }, error) {
+				p := PrincipalFrom(ctx)
+				l, err := svc.AllAccountStates(ctx, func(spaceID string) bool { return d.canSeeAccount(p, spaceID) })
+				if err != nil {
+					return nil, d.fail(ctx, "usage.account_windows", err)
+				}
+				return &struct{ Body AccountWindowsList }{Body: AccountWindowsList{Items: l}}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "delete-transcript", Method: http.MethodDelete, Path: "/spaces/{space_id}/runs/{run_id}/transcript",
 			Summary: "Delete a run's stored transcript", Tags: tags, DefaultStatus: http.StatusNoContent},
 			func(ctx context.Context, in *struct {
@@ -231,4 +251,11 @@ func TranscriptDownload(svc *usage.Service) RawRoute {
 // canReadRuns reports whether the principal may read runs (and so their usage) in a space.
 func (d *Deps) canReadRuns(p *auth.Principal, spaceID string) bool {
 	return d.Authz != nil && p != nil && d.Authz.AllowedAll(p.Subjects(), spaceID, authz.RunRead)
+}
+
+// canSeeAccount is the one visibility rule of the cross-space account view: an account, its name and its limit state
+// are shown when it is bound to a space where the caller may read runs. Making the view admin-only is a change to this
+// function (and to the rule above), nothing else.
+func (d *Deps) canSeeAccount(p *auth.Principal, boundSpaceID string) bool {
+	return d.canReadRuns(p, boundSpaceID)
 }

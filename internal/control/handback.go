@@ -106,6 +106,8 @@ func (w *Watchdog) handbackRun(ctx context.Context, spaceID string, r *fleet.Run
 	// Working includes a finished turn with background shells or monitors still running (reported as working with
 	// status_kind background) and a running sub-agent (reported as plain working): no reminder then. Where the program
 	// reports plain idle while background work runs, the check cannot tell (ADR-0099 addendum).
+	// A worker flagged as waiting at a terminal dialog (status blocked, kind dialog: blocked_on_dialog, ADR-0102) counts
+	// as working too: a person must answer the dialog, and a reminder typed into it would answer it.
 	working := r.Status != "idle" && r.Status != "done"
 	if a := w.acts[r.ID]; a != nil && a.inflight > 0 {
 		working = true
