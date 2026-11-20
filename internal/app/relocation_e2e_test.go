@@ -77,7 +77,7 @@ func (n *node) start() {
 	}
 	a := agent.New(j, agent.Options{DataDir: n.dir, CentralURL: n.e.srv.URL, Credential: n.cred, Runner: n.run,
 		RunnerInfo: proto.RunnerInfo{Kind: "fake", CoreID: "fakecore"}, HarnessBinaries: map[string]string{hns.KindClaude: "/usr/bin/true", hns.KindCodex: "/usr/bin/true"},
-		AgentBinary: "/usr/bin/true", BridgeSocket: n.bridge, ReconnectMax: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
+		AgentBinary: "/usr/bin/true", BridgeSocket: n.bridge, ReconnectMax: 200 * time.Millisecond, MemoryStatusInterval: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
 	n.cancel, n.j, n.done = cancel, j, make(chan struct{})
 	go func() { _ = a.Run(ctx); close(n.done) }()
 }

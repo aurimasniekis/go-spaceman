@@ -64,6 +64,9 @@ type Options struct {
 	// RecordingRetryAfter is the first wait before a recording whose disk failed is tried again; 0 is
 	// recording.DefaultRetryAfter (fault tests shorten it).
 	RecordingRetryAfter time.Duration
+	// MemoryStatusInterval is the shortest time between two role-memory status reports; 0 is 30 s (end-to-end tests
+	// shorten it).
+	MemoryStatusInterval time.Duration
 	// EnvPassthrough names environment variables copied from the agent's own environment into harness processes
 	// (harness.env_passthrough; validated by the configuration). The agent's own values win over them.
 	EnvPassthrough []string

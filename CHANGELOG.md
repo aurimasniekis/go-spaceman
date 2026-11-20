@@ -96,9 +96,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   number of folders times the number of live runs. Status reports are now coalesced: at most one every 30 s, holding
   only the collections that changed (every collection after a reconnect), and never sent inline on an event. An
   instance's counts are cached under a fingerprint of its files and refs, so an unchanged checkout costs no git. In a
-  test with 600 instance folders across 4 collections, 4 acknowledgements used to run 16,860 git processes. Now 40
-  acknowledgements run 88: their own head check, plus one report. The uncheckpointed-file and local-commit counts
-  (SM-MEM-004) can be up to one interval old.
+  test with 600 instance folders across 4 collections, a reconnect used to run about 26,800 git processes and every
+  acknowledgement another 4,200 to 5,600. Now the first reports after a reconnect check every folder once (about 8,400
+  processes, while git refreshes the indexes), and 40 acknowledgements after that run 88: their own head check, plus
+  one report. The uncheckpointed-file and local-commit counts (SM-MEM-004) can be up to one interval old.
 - **A body with several diagrams no longer freezes the page for over 2 s.** Queued diagram renders ran back to back as one
   long task; they now yield to the page between two renders (diagrams since v0.1.5).
 - **Two concurrent observes of a run no longer report out of order.** An observe sent the report it had built before

@@ -25,7 +25,8 @@ import (
 //
 // The counts central shows may so be up to one interval old.
 
-// statusInterval is the shortest time between two status reports. A variable so tests can shorten it.
+// statusInterval is the shortest time between two status reports unless Options.MemoryStatusInterval sets one. A
+// variable so tests can shorten it.
 var statusInterval = 30 * time.Second
 
 // statusRacy is how recent a file's modification may be for its checkout's counts to be cached: an edit within the
@@ -60,7 +61,11 @@ func (m *memManager) markStatus(mark func()) {
 	if m.statusTimer != nil {
 		return // a report is due: it takes this change too
 	}
-	delay := time.Until(m.statusLast.Add(statusInterval))
+	every := statusInterval
+	if m.a.o.MemoryStatusInterval > 0 {
+		every = m.a.o.MemoryStatusInterval
+	}
+	delay := time.Until(m.statusLast.Add(every))
 	m.statusTimer = time.AfterFunc(max(delay, 0), func() { m.a.track(func() { m.reportStatus(m.base) }) })
 }
 

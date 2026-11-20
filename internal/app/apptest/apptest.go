@@ -224,7 +224,7 @@ func (e *Env) StartAgent() {
 	}
 	o := agent.Options{DataDir: e.AgentDir, CentralURL: e.AgentURL(), Credential: e.Cred, Runner: e.Runner,
 		RunnerInfo: proto.RunnerInfo{Kind: "fake", CoreID: "fakecore"}, HarnessBinaries: map[string]string{hns.KindClaude: "/usr/bin/true", hns.KindCodex: "/usr/bin/true"},
-		AgentBinary: "/usr/bin/true", BridgeSocket: e.bridge, ReconnectMax: 200 * time.Millisecond, Capacity: 4, Log: Log()}
+		AgentBinary: "/usr/bin/true", BridgeSocket: e.bridge, ReconnectMax: 200 * time.Millisecond, MemoryStatusInterval: 200 * time.Millisecond, Capacity: 4, Log: Log()}
 	if e.AgentOptions != nil {
 		e.AgentOptions(&o)
 	}
