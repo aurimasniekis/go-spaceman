@@ -74,6 +74,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Replying to a request in the Messages drawer shows it resolved.** A reply resolves the request on the server, but the
+  open drawer kept the request's old state (and its Acknowledge and Resolve buttons) until the list refetched, which
+  under the Unread filter never brought it back. The drawer now re-reads the request after the reply.
 - **The Attention page's summary line matches its rows.** It said "N items need a person" from the server's total, which
   leaves out failed account switches and cross-space requests that are listed under Act now, so it could read 0 above
   rows. It now counts the Act now rows (human actions included) and the Watch rows.
