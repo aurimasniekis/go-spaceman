@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // MessageRules are the authorization rules of the message operations.
@@ -20,6 +22,8 @@ var MessageRules = map[string]Rule{
 	"reply-message":   InSpace(authz.MessageWrite),
 	"resolve-message": InSpace(authz.MessageWrite),
 	"cancel-message":  InSpace(authz.MessageWrite),
+	// The operator inbox across spaces: only messages to operators in spaces where the caller has message:read.
+	"list-operator-messages": FilteredRead(),
 }
 
 // MessagePath identifies a message.
@@ -34,6 +38,70 @@ type MessageList struct {
 	OperatorsPending int64               `json:"operators_pending" doc:"Messages to operators not yet acknowledged or resolved"`
 }
 
+// OperatorMessage is a message to operators with the space it is in, so a client can link to it and act through the
+// per-space ack, reply and resolve operations.
+type OperatorMessage struct {
+	messages.Message
+	SpaceSlug string `json:"space_slug"`
+	SpaceName string `json:"space_name"`
+}
+
+// OperatorMessageList is a page of the operator inbox.
+type OperatorMessageList struct {
+	Items       []OperatorMessage `json:"items" doc:"Newest first"`
+	NextCursor  string            `json:"next_cursor,omitempty"`
+	UnreadCount int64             `json:"unread_count" doc:"Open messages to operators (not acknowledged or resolved) in all spaces you can read, whatever the filters"`
+}
+
+func (d *Deps) listOperatorMessages(ctx context.Context, svc *messages.Service, spaceFilter, state, kind string, p Page) (*OperatorMessageList, error) {
+	after, id, err := DecodeCursor(p.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	var afterCreated int64
+	if p.Cursor != "" {
+		if afterCreated, err = strconv.ParseInt(after, 10, 64); err != nil || afterCreated <= 0 {
+			return nil, apperr.New(apperr.CodeInvalid, "invalid cursor")
+		}
+	}
+	spaces, err := d.Store.R().ListSpaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pr := PrincipalFrom(ctx)
+	byID := map[string]db.Space{}
+	var readable, selected []string
+	for _, sp := range spaces {
+		if d.Authz == nil || pr == nil || !d.Authz.AllowedAll(pr.Subjects(), sp.ID, authz.MessageRead) {
+			continue
+		}
+		byID[sp.ID] = sp
+		readable = append(readable, sp.ID)
+		if spaceFilter == "" || spaceFilter == sp.ID || spaceFilter == sp.Slug {
+			selected = append(selected, sp.ID)
+		}
+	}
+	unread, err := svc.OperatorUnread(ctx, readable)
+	if err != nil {
+		return nil, err
+	}
+	l, more, err := svc.ListOperator(ctx, messages.OperatorQuery{Spaces: selected, All: state == "all", Kind: kind,
+		AfterCreated: afterCreated, AfterID: id, Limit: p.limit()})
+	if err != nil {
+		return nil, err
+	}
+	out := &OperatorMessageList{Items: make([]OperatorMessage, 0, len(l)), UnreadCount: unread}
+	for _, m := range l {
+		sp := byID[m.SpaceID]
+		out.Items = append(out.Items, OperatorMessage{Message: *m, SpaceSlug: sp.Slug, SpaceName: sp.Name})
+	}
+	if more && len(l) > 0 {
+		last := l[len(l)-1]
+		out.NextCursor = EncodeCursor(strconv.FormatInt(last.CreatedAt.UnixMicro(), 10), last.ID)
+	}
+	return out, nil
+}
+
 func operatorFrom(ctx context.Context) messages.From {
 	a := Actor(ctx)
 	return messages.From{Kind: "operator", ID: a.ID, Label: actorLabel(ctx)}
@@ -43,6 +111,23 @@ func operatorFrom(ctx context.Context) messages.From {
 func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
 		tags := []string{"messages"}
+		huma.Register(api, huma.Operation{OperationID: "list-operator-messages", Method: http.MethodGet, Path: "/messages",
+			Summary: "Messages addressed to operators, across the spaces you can read",
+			Description: "Only messages to operators in spaces where you have message:read (never messages to control, roles or runs), newest first. " +
+				"By default only open messages (not acknowledged or resolved). Act on an item through the per-space ack, reply and resolve operations.",
+			Tags: tags},
+			func(ctx context.Context, in *struct {
+				Page
+				State string `query:"state" enum:"open,all" default:"open" doc:"open: not yet acknowledged or resolved"`
+				Space string `query:"space" maxLength:"64" doc:"Only this space (ID or slug)"`
+				Kind  string `query:"kind" enum:",message,request,reply,notification" maxLength:"16"`
+			}) (*struct{ Body *OperatorMessageList }, error) {
+				l, err := d.listOperatorMessages(ctx, svc, in.Space, in.State, in.Kind, in.Page)
+				if err != nil {
+					return nil, d.fail(ctx, "messages.list_operator", err)
+				}
+				return &struct{ Body *OperatorMessageList }{Body: l}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "list-messages", Method: http.MethodGet, Path: "/spaces/{space_id}/messages",
 			Summary: "A space's recent messages between agents, control and operators", Tags: tags},
 			func(ctx context.Context, in *struct {
