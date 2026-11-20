@@ -100,9 +100,10 @@ func TestRunDialogNoticeTexts(t *testing.T) {
 	toOps, toControl := 0, 0
 	for _, m := range msgs.Items {
 		if strings.Contains(m.Body, "occurrence `dlg_ctl`") {
-			if m.ToKind == "operators" {
+			switch m.ToKind {
+			case "operators":
 				toOps++
-			} else if m.ToKind == "control" {
+			case "control":
 				toControl++
 			}
 		}
