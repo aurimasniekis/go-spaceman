@@ -427,7 +427,7 @@ type HumanNotice struct {
 	ActionID      string    `json:"action_id"`
 	Title         string    `json:"title"`
 	Type          string    `json:"type"`
-	Kind          string    `json:"kind" doc:"resolved, cancelled or expired"`
+	Kind          string    `json:"kind" doc:"resolved, cancelled, expired, clarification or comment (the last two leave the action pending)"`
 	Outcome       string    `json:"outcome,omitempty"`
 	At            time.Time `json:"at"`
 	OriginalRun   string    `json:"original_run,omitempty" doc:"The run that asked"`

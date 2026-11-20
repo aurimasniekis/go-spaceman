@@ -45,6 +45,11 @@ pending and keeps its assignee. When an agent asked, it receives the question li
 `spaceman_human_reply`, which appears as *requester's reply*. When an operator asked, the question is shown to them on
 the action. A clarification is never a response and never resolves the action.
 
+A plain **Comment** on a pending action an agent asked reaches that agent too, as a durable `comment` notice routed
+and woken like a clarification, so a "done" or a hint written as a comment is not missed. It needs no answer and the
+action stays pending. The requester's own comments never notify it, and comments on a final action notify nobody.
+The agent reads the text with `spaceman_human_get`.
+
 <Shot name="human-clarify" alt="A pending question with a clarification request to its requester, asking which refunds are meant" caption="Asking the requester for more information" />
 
 Links in the drawer lead to what an action refers to: the requester's run, the related task, the inbox item it came
