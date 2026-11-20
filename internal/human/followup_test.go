@@ -89,9 +89,6 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND body NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("no operator message (or it carries the response)")
 	}
-	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND subject = 'A human response could not be delivered'`) != 1 {
-		t.Fatal("operator message subject does not name the undelivered kind")
-	}
 	if f.count(`SELECT count(*) FROM audit_events WHERE action = 'human_action.rerouted'`) != 1 ||
 		f.count(`SELECT count(*) FROM event_outbox WHERE type = 'spaceman.human.action_rerouted.v1' AND payload_json NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("reroute not audited or published")
@@ -119,6 +116,16 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 	got := f.get(c.ID).Notifications[0]
 	if got.TargetKind != TargetControl || got.RouteReason != ReasonRunEnded || got.RoutedFrom != "run:run_rev" || got.OriginalRun != "run_gone" || got.RouteCount != 2 {
 		t.Fatalf("after successor ended %+v", got)
+	}
+
+	// A comment on a pending question nobody can take is undeliverable too: its operator message names the comment.
+	f.end("run_ctl")
+	cm := f.create(CreateInput{Type: TypeQuestion, Title: "cm", Requester: Requester{Kind: "agent", ID: "ins_4", Role: "worker", Run: "run_gone"}})
+	if _, err := f.svc.Comment(f.ctx, op, "spc_a", cm.ID, CommentInput{Body: "more detail"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+cm.ID+`' AND subject = 'A comment could not be delivered'`) != 1 {
+		t.Fatal("operator message subject does not name the undelivered comment")
 	}
 }
 
