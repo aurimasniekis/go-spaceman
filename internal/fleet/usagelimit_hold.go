@@ -48,6 +48,9 @@ type UsageLimitSettings struct {
 	// MinHeadroomPercent is the launch-time headroom gate (ADR-0090 decision 4): a new run is not started on an
 	// account when a window with known usage leaves less than this percentage free. 0: off.
 	MinHeadroomPercent int
+	// SwitchBack moves a run that a usage limit moved to another account back to its chain's origin account once that
+	// account has reset, at an idle point (ADR-0105). It applies only with Failover on.
+	SwitchBack bool
 }
 
 // HoldTarget is what a launch would use that a usage-limit hold can hold: an account, or the gateway references of a
