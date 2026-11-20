@@ -7877,6 +7877,82 @@
   - Not covered yet (follow-ups): a `Notification` hook as a structured signal while a session runs, Codex entries,
     clearing open occurrences when a run ends, an API list of a run's dialogs and the UI badge.
 
+### ADR-0103 — Operator UI: a cross-space Usage page, an itemised Attention list, and settings hubs
+
+- **Status:** Accepted, 2026-11-20 (v0.1.16). Not a security-relevant change: the two new operations are read-only and
+  filtered per space by the existing `run:read` rule, no write path, permission or default changes, and nothing
+  unreadable is revealed. Builds on the usage ledger (`usage_buckets`), the account windows and the token-first display
+  of ADR-0090. Plan: `docs/plans/2026-11-20-usage-overview-settings-ui.md` (§6 draft, §8 decisions). Requirements:
+  SM-UI-008, SM-UI-009, SM-UI-010 (addition), and SM-UI-003's evidence changes.
+- **Context:**
+  - The usage ledger books only Claude Code usage. Codex reports no usage, and Harbor Pilot read-back fills `run_usage`
+    but not the buckets. The only usage view is per space (`/spaces/{id}/usage`). There is no cross-space series and no
+    cross-account window list, and the Overview shows no usage.
+  - `/attention` gives per-space counts and cards but names no item. It largely repeats Needs you, and it does not cover
+    runs parked at a usage limit, open account limits, failed account switches or incoming cross-space requests.
+  - The sidebar has 24 entries in five groups. Configuration, Integrations and Access are headings, not pages.
+- **Decision:**
+  1. **Usage page.** `/usage`, in the Work group, named **Usage** (not Spend or Cost: tokens come first and cost appears
+     only as "≈ $", ADR-0090). Anyone with `run:read` in at least one space sees it. Rows and totals cover only those
+     spaces, and account names show only for accounts bound to them. Ranges are 24 h, 7 d, 30 d and 90 d (90 d on daily
+     buckets). Group by space, account, model, role or harness, with filter chips. The state lives in URL search params.
+     An Accounts section shows each account's 5-hour and 7-day windows and open limits. A **not counted** note gives,
+     per harness, the runs whose usage the ledger does not book (Codex, Harbor Pilot read-back). It is a count, never a
+     zero, so unknown is not shown as nothing (SM-REC-005).
+  2. **API.** Two read-only operations, both `FilteredRead()` with per-space filtering:
+     - `get-usage-series` (`GET /usage/series`): `group_by` is space, account, model, role or harness. Filters are
+       optional, repeatable and bounded (at most 50 values each). The aggregation runs in SQL over `usage_buckets`, not
+       as a Go fold, because a global range reads every space's rows. It returns `labels` for spaces and accounts the
+       caller reads, and `not_counted`.
+     - `list-account-windows` (`GET /account-windows`): the latest windows and open usage limits of every account bound to
+       a readable space.
+     - CLI `spaceman usage all` and `spaceman usage windows`. No migration is planned. A covering index would be migration
+       **0069**, and only if the UI-T1 benchmark shows it is needed.
+  3. **Overview.** From top to bottom: the top five Attention items, linking to `/attention` with "See all (N)"; a usage
+     summary (tokens today and in 7 days, a 14-day sparkline, the top five spaces and models, and a delta against the
+     previous period of the same length, tokens only, ADR-0103 Q7); an Accounts strip, hidden without accounts; then the
+     existing Active runs, Spaces and Nodes. It adds at most three cached requests. The Mini App home is unchanged.
+  4. **Attention.** `/attention` stays a route and becomes the full itemised list. It leaves the sidebar, and Overview
+     shows its top items. `GET /attention` gains an additive `items[]`: `kind`, `severity` (`act` or `watch`), `space_id`,
+     `title`, `since` and a `target`. The server stores no URLs; the web maps a target to a route. There are at most 20
+     items per kind, beside the full counts, and the existing counts stay for the Mini App. The new categories are runs
+     parked at a usage limit, open account usage limits, failed account switches in the last 24 h, and incoming
+     cross-space requests. Each sits behind its existing read permission. Harbor Pilot budget items come only from cached
+     status, or are left out. Titles written by agents are untrusted: rendered as plain text and truncated. Pending human
+     actions collapse into one row that links to Needs you.
+  5. **Settings hubs.** The sidebar becomes:
+     - **Work:** Overview, Needs you, Usage, Terminals, Spaces.
+     - Then **Configuration**, **Integrations** and **Access**. Each is shown when at least one of its tabs is visible to
+       the user. Nodes move under Configuration and API tokens under Access (§8, Q4). That replaces the "Fleet: Nodes"
+       line of plan §2.4. Account leaves the sidebar and stays in the user menu.
+     - Each hub page shows a `HubTabs` bar of links, with `aria-current` on the active one.
+     - **URLs, option A:** every existing page keeps its URL. `/configuration`, `/integrations` and `/access` are entry
+       routes that redirect to the first tab the user may see. Nested URLs (option B) are not taken, so UI-T7b is not
+       needed. `/settings` is not used, because the Mini App owns it.
+  6. **Operator messages (accepted addition, SM-UI-010).** Needs you lists operator messages across the spaces the caller
+     can read, as the page already describes them. The API for them today is per space, `GET /spaces/{space_id}/messages`.
+     A cross-space `GET /messages` is not part of plan §3 and is not added by this ADR. It would need its own review of
+     the read rule.
+- **Alternatives:**
+  - Naming the page Spend or Consumption: rejected, a cost-like name, which ADR-0090 avoids.
+  - Usage for admins only: rejected. The rule is the one `get-account-usage` already uses (per space, `run:read`).
+  - Folding Attention into Overview and redirecting `/attention` to `/`, or keeping it in the sidebar with a count badge:
+    rejected. The itemised list stays a route and leaves the sidebar (Q2 a).
+  - Nested `/configuration/<tab>` URLs with redirects from the old paths: rejected. It costs redirects for 18 paths and
+    the detail routes, with no visible gain over option A.
+  - Booking Codex and Harbor Pilot usage into the ledger now: deferred. It needs its own ADR, and the page shows them as
+    not counted in the meantime (Q5).
+- **Consequences:**
+  - Two read operations and two CLI commands. No new permission, and no change to what a person can see beyond the
+    per-space rules above. Nothing is relaxed.
+  - Usage totals leave out Codex and Harbor Pilot runs until a follow-up ADR books them, and the page says so.
+  - Attention items carry agent-written text. It is untrusted and rendered as text (SM-UI-005).
+  - Existing URLs, Mini App deep links (`attention`, `needs`), banners and Go redirects (`oidc.go`) keep working.
+    Nav-pinning tests (`upgrade-navigation`, `ui-overflow`, `smoke`, `ui-request-budget`) change with the sidebar.
+    The hub work (UI-T7) lands before the pages that also edit `nav.ts`, or they are rebased onto it.
+  - Migration 0069 is reserved, not used. Requirement rows SM-UI-008, SM-UI-009 and SM-UI-010 stay `todo` until their
+    tasks land. SM-UI-003's evidence changes: Attention lists items, not only counts.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
