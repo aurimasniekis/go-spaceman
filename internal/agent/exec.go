@@ -775,6 +775,10 @@ func (a *Agent) runEndHooks(ctx context.Context, row runRow, started bool) {
 	}
 	bctx := context.WithoutCancel(ctx)
 	a.forgetHookData(row.RunID)
+	// A flag the run's end leaves open ends first, so central is told (the paths that end a run without observing its
+	// exit, a failed launch and the runner reconcile, never reached dialogObserved). Central also closes what is still
+	// open when it records the end; a clear it already recorded is not published twice.
+	a.dialogClear(ctx, row)
 	a.dialogForget(row.RunID)
 	if started {
 		if row.Harness == harness.KindClaude {

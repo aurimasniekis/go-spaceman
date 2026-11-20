@@ -22,6 +22,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   new categories are not part of `total` (they are mostly information that clears by itself), and clients can sum
   `item_counts` to include them. Harbor Pilot budget state is not included yet. The counts come from the items queries,
   so a request makes twelve queries at most.
+
+### Fixed
+
+- **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
+  and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
+  the terminal column, and the divider runs from the header rule to the bottom edge of the window.
+
+## [0.1.15] - 2026-11-20
+
+### Added
+
+- **A run blocked on a dialog says so in the web UI.** The run header and the space overview show a "blocked on dialog"
+  badge, in place of the generic "waiting for input", for a run whose status is `blocked` with kind `dialog`. It links
+  to the space's messages, where the notice explains the signal and shows the screen when the node sent one. A test now
+  covers the notice text for an unknown dialog, a withheld answer and a dialog without a screen excerpt.
 - **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
   output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
   theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned
@@ -32,9 +47,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
-- **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
-  and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
-  the terminal column, and the divider runs from the header rule to the bottom edge of the window.
+- **A run's terminal dialog no longer outlives the run, and its history has an API.** A run that ends with a
+  `blocked_on_dialog` flag open (it was lost, its launch failed, or the agent restarted over it) now has the flag closed:
+  the node sends `cleared` on every path that ends a run, and central closes whatever is still open when it records the
+  end, publishing `evt.spaceman.fleet.run.dialog_cleared` once. A clear from the observe path can no longer overtake the
+  `blocked` it ends and leave the occurrence open on central. `GET /spaces/{space_id}/runs/{run_id}/dialogs`
+  (`list-run-dialogs`, `spaceman run dialogs`) lists a run's recognised dialogs, newest first, without their screen text.
+  The watchdog does not treat a control or a worker blocked on a dialog as stalled and does not type a reminder into it.
+  The node-side part takes effect once the agent is upgraded.
+- **A comment on a human action shows without a page reload.** The action's detail view was keyed by the listed version
+  and neither a post nor the change feed refreshed it. Posting now updates it at once, and a `human_action` change (an
+  agent's reply, another person's comment) refetches the open action through the existing change feed.
 - **A run no longer shows "at usage limit" after the limit has reset and it carries on working.** The node looked for
   the end of a limit only when a turn ended, so a run that continued at the reset and then worked for a long turn kept
   its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
@@ -2431,7 +2454,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...HEAD
+[0.1.15]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.13
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10

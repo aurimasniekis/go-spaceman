@@ -236,7 +236,7 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 		return
 	}
 	// One check at a time per run (the run's lock is not taken: a launch holds it while it observes).
-	unlock := a.runLock("dialog/" + runID)
+	unlock := a.dialogLock(runID)
 	defer unlock()
 	defer a.dialogBackoff(ctx, runID) // a run still flagged after this read is read again later
 	log := a.log.With(slog.String(obs.FieldRunID, runID))
@@ -244,7 +244,7 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 	if err == nil && ended(row.State) {
 		// A run that is no longer running keeps no watch, and nothing re-arms its timer. Its flag ends first, so central
 		// is told (the observation of the end may not have got to it yet).
-		a.dialogClear(ctx, row)
+		a.dialogClearLocked(ctx, row)
 		a.dialogForget(runID)
 	}
 	if err != nil || row.State != proto.RunRunning || row.TerminalID == "" || row.Desired == "stopped" {
@@ -259,7 +259,7 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 		// The program reports its own permission, question or auth prompt: shown as blocked already, never answered.
 		return
 	case p.Status.State == "working" && p.Status.Kind != runner.KindBackground:
-		a.dialogClear(ctx, row)
+		a.dialogClearLocked(ctx, row)
 		return
 	}
 	if a.takenOver(runID) {
@@ -270,10 +270,15 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 		log.Debug("dialog watch: read the screen", obs.Err(err))
 		return
 	}
+	// The run may have ended while its screen was read. Its end hooks wait for this lock before they drop the watch, so
+	// the watch alone does not tell: the journal does. Nothing is flagged, answered or typed for an ended run.
+	if cur, err := a.j.getRun(ctx, runID); err == nil && ended(cur.State) {
+		return
+	}
 	res := dialog.Classify(text, a.dialogContext(row))
 	switch res.Kind {
 	case dialog.None:
-		a.dialogClear(ctx, row)
+		a.dialogClearLocked(ctx, row)
 	case dialog.Known:
 		a.dlg.mu.Lock()
 		w := a.dlg.runs[runID]
@@ -300,7 +305,7 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 			a.dialogFlag(ctx, row, res)
 			return
 		}
-		a.dialogClear(ctx, row)
+		a.dialogClearLocked(ctx, row)
 		if a.takenOver(runID) { // an operator took the terminal over while the screen was read
 			return
 		}
@@ -322,7 +327,9 @@ func (a *Agent) dialogCheck(ctx context.Context, runID string) {
 	}
 }
 
-// dialogFlag marks a run as waiting at a dialog SpaceMan does not answer: one occurrence per dialog until it clears.
+// dialogFlag marks a run as waiting at a dialog SpaceMan does not answer: one occurrence per dialog until it clears. The
+// run's dialog lock is held (dialogCheck): it spans the whole flag, from the state change to the run.dialog sends, so a
+// clear from the observe path (dialogClear takes the same lock) cannot send cleared before the blocked it ends.
 func (a *Agent) dialogFlag(ctx context.Context, row runRow, res dialog.Result) {
 	a.dlg.mu.Lock()
 	w := a.dlg.runs[row.RunID]
@@ -376,8 +383,19 @@ func (a *Agent) loadOpenDialog(row runRow) (proto.RunDialog, bool) {
 	return d, true
 }
 
-// dialogClear ends a run's flag (its dialog is gone, or the program works again).
+// dialogLock locks one run's dialog state changes (a flag and a clear send their run.dialog messages under it, so they
+// reach central in the order they happened). Not the run's own lock: a launch holds that while it observes.
+func (a *Agent) dialogLock(runID string) func() { return a.runLock("dialog/" + runID) }
+
+// dialogClear ends a run's flag (its dialog is gone, or the program works again), after a flag in progress finished.
+// Callers that hold the run's dialog lock (dialogCheck) call dialogClearLocked.
 func (a *Agent) dialogClear(ctx context.Context, row runRow) {
+	defer a.dialogLock(row.RunID)()
+	a.dialogClearLocked(ctx, row)
+}
+
+// dialogClearLocked is dialogClear with the run's dialog lock held.
+func (a *Agent) dialogClearLocked(ctx context.Context, row runRow) {
 	a.dlg.mu.Lock()
 	var prev *proto.RunDialog
 	if w := a.dlg.runs[row.RunID]; w != nil {

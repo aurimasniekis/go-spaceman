@@ -350,7 +350,8 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				return humanResult(a), nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "comment-human-action", Method: http.MethodPost, Path: "/spaces/{space_id}/human-actions/{action_id}/comments",
-			Summary: "Comment on a human action", Description: "Comments are discussion and never count as a response.", Tags: tags, DefaultStatus: http.StatusCreated},
+			Summary: "Comment on a human action", Description: "Comments are discussion and never count as a response. A comment on a pending action an agent asked is also " +
+				"a durable comment notice to that agent, routed like a response; the action stays pending.", Tags: tags, DefaultStatus: http.StatusCreated},
 			func(ctx context.Context, in *struct {
 				HumanActionPath
 				Body HumanCommentInput

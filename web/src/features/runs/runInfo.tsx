@@ -31,6 +31,9 @@ export function runTone(r: Run): Tone {
   return 'idle'
 }
 
+/** The run's tone is attention and the program says it waits at a dialog (so a starting or offline run is not). */
+export const isBlockedOnDialog = (r: Run) => runTone(r) === 'attention' && r.status_kind === 'dialog'
+
 const TONE_COLOR: Record<Tone, string> = {
   working: 'var(--mantine-color-owlGreen-5)', idle: 'var(--mantine-color-owlBlue-5)', attention: 'var(--mantine-color-owlYellow-5)',
   starting: 'var(--mantine-color-dimmed)', ended: 'var(--mantine-color-dimmed)', failed: 'var(--mantine-color-owlRed-5)',
@@ -88,6 +91,7 @@ export function runStateText(r: Run, now = Date.now()): string {
       return `${r.observed === 'exited' ? 'exited' : r.observed}${at}${r.end_reason ? ` · ${endReasonText(r.end_reason)}` : ''}`
     }
     case 'attention':
+      if (isBlockedOnDialog(r)) return 'blocked on dialog'
       return r.status_kind === 'permission' ? 'waiting for permission' : r.status_kind === 'auth' ? 'needs sign-in' : 'waiting for input'
     default: {
       if (r.takeover) return 'taken over'

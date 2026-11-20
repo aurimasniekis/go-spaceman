@@ -21,7 +21,8 @@ import { notifications } from '@mantine/notifications'
 import { changeListeners, type Change } from '@/api/watch'
 import { closeButtonProps, notifyError, notifyOk } from '@/lib/notify'
 import { RunLimitBadge } from '@/features/limits/LimitTime'
-import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText, agentMessageBody } from './runInfo'
+import { RunDialogBadge } from './RunDialogBadge'
+import { harnessLabel, isBlockedOnDialog, isEnded, kindLabel, RunDot, runDuration, runStateText, agentMessageBody } from './runInfo'
 import { type Dependency, dependencyText, runHarnessVersion } from './harnessVersion'
 
 /** A clock that ticks every second, for live durations. */
@@ -134,7 +135,9 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
           <Title order={3} data-testid="run-header-role" style={{ minWidth: '4ch', flexShrink: 100, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.role}</Title>
           {!narrow && <Text size="sm" c="dimmed" truncate style={{ minWidth: 0, flexShrink: 1 }}>{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text>}
           {r.turn > 0 && <Badge variant="light" color="gray" data-testid="run-header-turn" style={{ flexShrink: 0, overflow: 'visible' }}>#{r.turn}</Badge>}
-          <Text size="sm" data-testid="run-header-state" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{runStateText(r, now)}</Text>
+          {isBlockedOnDialog(r)
+            ? <RunDialogBadge run={r} testId="run-header-state" />
+            : <Text size="sm" data-testid="run-header-state" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{runStateText(r, now)}</Text>}
           {!narrow && <RunLimitBadge run={r} now={now} />}
           {r.adopted && <Tooltip label="Adopted from the node after a restart"><Badge color="gray" variant="outline" style={{ flexShrink: 0 }}>adopted</Badge></Tooltip>}
         </Group>
