@@ -28,10 +28,11 @@ UPDATE account_switches SET state = sqlc.arg(state), to_account_id = sqlc.arg(to
   limit_wait_id = sqlc.arg(limit_wait_id), reason = sqlc.arg(reason), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
 
--- The switches an instance used since a time (the daily budget): every switch that moved, or was set to move, a run.
+-- The switches an instance used since a time (the daily budget): every switch that moved, or was set to move, a run. A
+-- switch-back that fell back at the claim counts too: it had already stopped the run, which was restarted where it was.
 -- name: CountAccountSwitchesSince :one
 SELECT count(*) FROM account_switches WHERE space_id = ? AND instance_id = ? AND created_at > ?
-  AND state IN ('pending', 'parked', 'resumed', 'succeeded', 'failed');
+  AND (state IN ('pending', 'parked', 'resumed', 'succeeded', 'failed') OR (cause = 'switch_back' AND state = 'fell_back'));
 
 -- name: ListAccountSwitchesBySpace :many
 SELECT * FROM account_switches WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?;
@@ -49,17 +50,18 @@ SELECT CAST(coalesce(min(armed_until), 0) AS INTEGER) AS at FROM account_switche
 SELECT * FROM account_switches WHERE space_id = ? AND instance_id = ? AND state NOT IN ('fell_back', 'cancelled')
 ORDER BY created_at DESC, id DESC LIMIT 1;
 
--- The newest switch-back of an instance that moved, or was set to move, its run (the ping-pong guard, ADR-0105).
+-- The newest switch-back of an instance that moved, or was set to move, its run (the ping-pong guard, ADR-0105). One that
+-- fell back at the claim counts: it had already stopped the run, which was restarted where it was.
 -- name: GetNewestSwitchBackOfInstance :one
-SELECT * FROM account_switches WHERE space_id = ? AND instance_id = ? AND cause = 'switch_back' AND state NOT IN ('fell_back', 'cancelled')
+SELECT * FROM account_switches WHERE space_id = ? AND instance_id = ? AND cause = 'switch_back' AND state <> 'cancelled'
 ORDER BY created_at DESC, id DESC LIMIT 1;
 
 -- Live runs between turns whose instance's newest switch moved it at a usage limit: the runs that may go back to their
--- chain's origin account (ADR-0105). The rest of the decision is made per run.
+-- chain's origin account (ADR-0105), after the run id given, a page at a time. The rest of the decision is made per run.
 -- name: ListSwitchBackCandidates :many
 SELECT r.id AS run_id, s.origin_account_id FROM runs r
 JOIN account_switches s ON s.id = (SELECT s2.id FROM account_switches s2 WHERE s2.space_id = r.space_id AND s2.instance_id = r.instance_id
     AND s2.state NOT IN ('fell_back', 'cancelled') ORDER BY s2.created_at DESC, s2.id DESC LIMIT 1)
-WHERE r.observed = 'running' AND r.desired = 'running' AND r.status IN ('idle', 'done') AND r.limit_kind = ''
+WHERE r.id > ? AND r.observed = 'running' AND r.desired = 'running' AND r.status IN ('idle', 'done') AND r.limit_kind = ''
   AND s.cause = 'usage_limit' AND s.state IN ('succeeded', 'failed') AND s.origin_account_id <> '' AND s.origin_account_id <> s.to_account_id
 ORDER BY r.id LIMIT ?;

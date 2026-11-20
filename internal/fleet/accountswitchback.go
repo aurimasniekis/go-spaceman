@@ -207,31 +207,43 @@ func (svc *Service) switchBackAtIdleTx(ctx context.Context, tx *store.Tx, runID,
 }
 
 // switchBackCandidates lists the runs that may go back to their origin account, in spaces with switching back on.
+// The setting is per space, so it is applied page by page: pages of maxLimitRows are read until that many candidates
+// of spaces with it on are found, so spaces with it off never use up the limit.
 func (svc *Service) switchBackCandidates(ctx context.Context, q *db.Queries) ([]db.ListSwitchBackCandidatesRow, error) {
-	rows, err := q.ListSwitchBackCandidates(ctx, maxLimitRows)
-	if err != nil || len(rows) == 0 {
-		return nil, err
-	}
+	return svc.switchBackCandidatesPage(ctx, q, maxLimitRows)
+}
+
+func (svc *Service) switchBackCandidatesPage(ctx context.Context, q *db.Queries, page int64) ([]db.ListSwitchBackCandidatesRow, error) {
 	on := map[string]bool{}
-	out := rows[:0]
-	for _, c := range rows {
-		r, err := q.GetRun(ctx, c.RunID)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		} else if err != nil {
+	var out []db.ListSwitchBackCandidatesRow
+	after := ""
+	for {
+		rows, err := q.ListSwitchBackCandidates(ctx, db.ListSwitchBackCandidatesParams{ID: after, Limit: page})
+		if err != nil {
 			return nil, err
 		}
-		v, ok := on[r.SpaceID]
-		if !ok {
-			ul := svc.ulSettings(ctx, q, r.SpaceID)
-			v = ul.Failover && ul.SwitchBack
-			on[r.SpaceID] = v
+		for _, c := range rows {
+			after = c.RunID
+			r, err := q.GetRun(ctx, c.RunID)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+			v, ok := on[r.SpaceID]
+			if !ok {
+				ul := svc.ulSettings(ctx, q, r.SpaceID)
+				v = ul.Failover && ul.SwitchBack
+				on[r.SpaceID] = v
+			}
+			if v {
+				out = append(out, c)
+			}
 		}
-		if v {
-			out = append(out, c)
+		if int64(len(rows)) < page || int64(len(out)) >= maxLimitRows {
+			return out, nil
 		}
 	}
-	return out, nil
 }
 
 // switchBackRuns is the limit-wait job's switch-back pass: a run whose origin's reset (plus slack) passed since the last

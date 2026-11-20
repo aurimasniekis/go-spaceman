@@ -12,7 +12,7 @@ import (
 
 const countAccountSwitchesSince = `-- name: CountAccountSwitchesSince :one
 SELECT count(*) FROM account_switches WHERE space_id = ? AND instance_id = ? AND created_at > ?
-  AND state IN ('pending', 'parked', 'resumed', 'succeeded', 'failed')
+  AND (state IN ('pending', 'parked', 'resumed', 'succeeded', 'failed') OR (cause = 'switch_back' AND state = 'fell_back'))
 `
 
 type CountAccountSwitchesSinceParams struct {
@@ -21,7 +21,8 @@ type CountAccountSwitchesSinceParams struct {
 	CreatedAt  int64
 }
 
-// The switches an instance used since a time (the daily budget): every switch that moved, or was set to move, a run.
+// The switches an instance used since a time (the daily budget): every switch that moved, or was set to move, a run. A
+// switch-back that fell back at the claim counts too: it had already stopped the run, which was restarted where it was.
 func (q *Queries) CountAccountSwitchesSince(ctx context.Context, arg CountAccountSwitchesSinceParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countAccountSwitchesSince, arg.SpaceID, arg.InstanceID, arg.CreatedAt)
 	var count int64
@@ -184,7 +185,7 @@ func (q *Queries) GetNewestAccountSwitchOfInstance(ctx context.Context, arg GetN
 }
 
 const getNewestSwitchBackOfInstance = `-- name: GetNewestSwitchBackOfInstance :one
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE space_id = ? AND instance_id = ? AND cause = 'switch_back' AND state NOT IN ('fell_back', 'cancelled')
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE space_id = ? AND instance_id = ? AND cause = 'switch_back' AND state <> 'cancelled'
 ORDER BY created_at DESC, id DESC LIMIT 1
 `
 
@@ -193,7 +194,8 @@ type GetNewestSwitchBackOfInstanceParams struct {
 	InstanceID string
 }
 
-// The newest switch-back of an instance that moved, or was set to move, its run (the ping-pong guard, ADR-0105).
+// The newest switch-back of an instance that moved, or was set to move, its run (the ping-pong guard, ADR-0105). One that
+// fell back at the claim counts: it had already stopped the run, which was restarted where it was.
 func (q *Queries) GetNewestSwitchBackOfInstance(ctx context.Context, arg GetNewestSwitchBackOfInstanceParams) (AccountSwitch, error) {
 	row := q.db.QueryRowContext(ctx, getNewestSwitchBackOfInstance, arg.SpaceID, arg.InstanceID)
 	var i AccountSwitch
@@ -471,10 +473,15 @@ const listSwitchBackCandidates = `-- name: ListSwitchBackCandidates :many
 SELECT r.id AS run_id, s.origin_account_id FROM runs r
 JOIN account_switches s ON s.id = (SELECT s2.id FROM account_switches s2 WHERE s2.space_id = r.space_id AND s2.instance_id = r.instance_id
     AND s2.state NOT IN ('fell_back', 'cancelled') ORDER BY s2.created_at DESC, s2.id DESC LIMIT 1)
-WHERE r.observed = 'running' AND r.desired = 'running' AND r.status IN ('idle', 'done') AND r.limit_kind = ''
+WHERE r.id > ? AND r.observed = 'running' AND r.desired = 'running' AND r.status IN ('idle', 'done') AND r.limit_kind = ''
   AND s.cause = 'usage_limit' AND s.state IN ('succeeded', 'failed') AND s.origin_account_id <> '' AND s.origin_account_id <> s.to_account_id
 ORDER BY r.id LIMIT ?
 `
+
+type ListSwitchBackCandidatesParams struct {
+	ID    string
+	Limit int64
+}
 
 type ListSwitchBackCandidatesRow struct {
 	RunID           string
@@ -482,9 +489,9 @@ type ListSwitchBackCandidatesRow struct {
 }
 
 // Live runs between turns whose instance's newest switch moved it at a usage limit: the runs that may go back to their
-// chain's origin account (ADR-0105). The rest of the decision is made per run.
-func (q *Queries) ListSwitchBackCandidates(ctx context.Context, limit int64) ([]ListSwitchBackCandidatesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listSwitchBackCandidates, limit)
+// chain's origin account (ADR-0105), after the run id given, a page at a time. The rest of the decision is made per run.
+func (q *Queries) ListSwitchBackCandidates(ctx context.Context, arg ListSwitchBackCandidatesParams) ([]ListSwitchBackCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSwitchBackCandidates, arg.ID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

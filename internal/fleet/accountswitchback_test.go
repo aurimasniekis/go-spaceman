@@ -245,6 +245,30 @@ func TestSwitchBackNotWhen(t *testing.T) {
 			e.exec(`INSERT INTO run_takeovers (id, run_id, space_id, holder, started_at, expires_at) VALUES ('tko_1', ?, 'spc_a', 'usr_1', 0, ?)`,
 				run, e.clk.Now().Add(time.Hour).UnixMicro())
 		}, func(e *backEnv, _ string) { e.exec(`UPDATE run_takeovers SET ended_at = 1 WHERE id = 'tko_1'`) }},
+		{"active switch of the instance", func(e *backEnv, run string) {
+			// An older row in an active state: the newest switch is still the usage-limit one, so only the active-switch guard holds it.
+			e.exec(`INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, cause, limit_kind, state,
+				created_at, updated_at) VALUES ('asw_act', 'spc_a', ?, 'implementor', 'worker', 'claude-code', 'run_old', 'acc_1', 'operator', '', 'pending', 0, 0)`,
+				e.instance(run))
+		}, func(e *backEnv, _ string) {
+			e.exec(`UPDATE account_switches SET state = 'cancelled' WHERE id = 'asw_act'`)
+		}},
+		{"active limit wait of the instance", func(e *backEnv, run string) {
+			e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, launch_json, resume_at, state, created_at, updated_at)
+				VALUES ('lwt_act', 'spc_a', ?, 'worker', 'implementor', 'nod_1', ?, 'claude-code', '{}', 0, 'waiting', 0, 0)`, run, e.instance(run))
+		}, func(e *backEnv, _ string) { e.exec(`DELETE FROM limit_waits WHERE id = 'lwt_act'`) }},
+		{"lease revoked", func(e *backEnv, _ string) {
+			e.exec(`UPDATE execution_leases SET state = 'revoked' WHERE space_id = 'spc_a'`)
+		},
+			func(e *backEnv, _ string) {
+				e.exec(`UPDATE execution_leases SET state = 'active' WHERE space_id = 'spc_a'`)
+			}},
+		{"lease expired", func(e *backEnv, _ string) {
+			e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(-time.Minute))
+		},
+			func(e *backEnv, _ string) {
+				e.exec(`UPDATE execution_leases SET expires_at = ? WHERE space_id = 'spc_a'`, e.us(1000*time.Hour))
+			}},
 		{"space paused", func(e *backEnv, _ string) { e.exec(`UPDATE spaces SET state = 'paused' WHERE id = 'spc_a'`) },
 			func(e *backEnv, _ string) { e.exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_a'`) }},
 		{"moved for another cause", func(e *backEnv, _ string) {
@@ -340,6 +364,76 @@ func TestSwitchBackOriginGoneAtResume(t *testing.T) {
 	}
 	if w := e.waitOf(run); w.SwitchToAccountID != "" || w.State != WaitResumed || w.NewRunID != next {
 		t.Fatalf("wait %+v", w)
+	}
+}
+
+// A switch-back that falls back at the claim has already stopped and restarted the run: it counts toward the ping-pong
+// guard and the daily switch budget like one that moved it.
+func TestSwitchBackFellBackCounts(t *testing.T) {
+	e := newBackEnv(t)
+	run := e.movedAway()
+	e.afterReset()
+	e.report(run, "working", 1, nil)
+	e.report(run, "idle", 2, nil)
+	e.endRun(run, proto.RunExited, "stopped", 2)
+	e.hold("ulm_y", "spc_a", "acc_1", "", proto.LimitUnknown, nil, nil)
+	e.clk.Advance(limitRetrySoon)
+	if n := e.due(); n != 1 {
+		t.Fatalf("resumed %d", n)
+	}
+	if sw := e.switchOf(run); sw.State != SwitchFellBack {
+		t.Fatalf("switch-back %+v, want fell_back", sw)
+	}
+	next, _ := e.launchOf(e.instance("run_w"))
+	e.inst[next] = e.instance("run_w")
+	e.exec(`UPDATE runs SET observed = 'running' WHERE id = ?`, next)
+	e.report(next, "working", 0, nil)
+	e.report(next, "idle", 1, nil)
+	e.exec(`UPDATE usage_limits SET cleared_at = 1 WHERE id = 'ulm_y'`)
+	// Within the guard: not again.
+	e.report(next, "working", 1, nil)
+	e.report(next, "idle", 2, nil)
+	if n := e.backs(next); n != 0 {
+		t.Fatalf("switched back within the guard of a fallen-back switch-back: %d", n)
+	}
+	// Past the guard the budget still holds: the switch away and the fallen-back switch-back are two of the day's.
+	e.clk.Advance(switchBackMinGap)
+	e.budget = 2
+	e.report(next, "working", 2, nil)
+	e.report(next, "idle", 3, nil)
+	if n := e.backs(next); n != 0 {
+		t.Fatalf("switched back with the budget spent by a fallen-back switch-back: %d", n)
+	}
+	e.budget = 3
+	e.report(next, "working", 3, nil)
+	e.report(next, "idle", 4, nil)
+	if sw := e.switchOf(next); sw.Cause != SwitchCauseSwitchBack || sw.State != SwitchParked {
+		t.Fatalf("not switched back with budget left: %+v", sw)
+	}
+}
+
+// Spaces with switching back off don't use up the candidate page: a run of a space with it on is found however many
+// runs of other spaces sort before it.
+func TestSwitchBackCandidatesSkipSpacesWithItOff(t *testing.T) {
+	e := newBackEnv(t)
+	run := e.movedAway()
+	e.svc.opts.UsageLimitSettings = func(_ context.Context, _ *db.Queries, space string) UsageLimitSettings {
+		return UsageLimitSettings{Failover: true, KeepAliveMax: e.keepMax, WaitIfResetWithin: e.within, SwitchMaxPerDay: e.budget, SwitchBack: space == "spc_a"}
+	}
+	for _, id := range []string{"run_000", "run_001", "run_002"} {
+		e.exec(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, turn, status, desired, observed, launch_json,
+			created_at, created_by, updated_at, observed_at) VALUES (?, 'spc_b', 'nod_1', 1, 'worker', 'implementor', 'claude-code', ?, 's', 1, 'idle', 'running', 'running',
+			'{"account_ref":"acc_2"}', 0, 't', 0, 0)`, id, "ins_"+id)
+		e.exec(`INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, to_account_id, cause, limit_kind,
+			state, origin_account_id, created_at, updated_at) VALUES (?, 'spc_b', ?, 'implementor', 'worker', 'claude-code', 'run_old', 'acc_1', 'acc_2', 'usage_limit',
+			'5h', 'succeeded', 'acc_1', 1, 1)`, "asw_"+id, "ins_"+id)
+	}
+	rows, err := e.svc.switchBackCandidatesPage(e.ctx, e.s.R(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].RunID != run {
+		t.Fatalf("candidates %+v, want only %s", rows, run)
 	}
 }
 

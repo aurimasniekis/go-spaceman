@@ -8108,7 +8108,8 @@
      (failover off means SpaceMan moves no run between accounts). Turning it off starts no new switch-back; one already
      parked resumes on the account the run was on. No column: limits are key-value.
   7. **No flapping.** At most one switch-back per instance in 6 hours (longer than a five-hour window), counted from its
-     newest switch-back that moved or was set to move the run. Switch-backs count toward
+     newest switch-back that moved or was set to move the run, including one that fell back at the claim (decision 5): it had
+     already stopped the run, which restarted where it was. Switch-backs, those included, count toward
      `usage_limit_switch_max_per_day`, and none starts when that budget is spent. If the origin limits again, the
      ordinary ADR-0090 switch away applies and starts a new chain at the origin.
   8. **Recorded like any switch.** The `account_switches` row (cause `switch_back`) with its change records; audit
@@ -8127,6 +8128,10 @@
   the reset when that is the last thing missing. Idle control and workers waiting for a reply get one extra turn (the
   note) on the origin. An idle point reported just before the program starts another turn (a notice typed in) can still
   have that turn interrupted by the stop; the session is resumed, as with ADR-0090's idle point.
+- **Known inconsistency, left as is:** the takeover check here (`GetActiveTakeover`, which does not look at the expiry)
+  and the idle-point code's `activeTakeover(now)` (which ignores an expired takeover) can disagree for a takeover that
+  has expired but not been ended: it keeps a switch-back from starting until the takeover is ended. That errs on the
+  side of not moving the run; it is not changed here.
 
 ## 2. Open items and unresolved contracts
 
