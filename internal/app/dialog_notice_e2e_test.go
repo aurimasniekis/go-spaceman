@@ -13,10 +13,11 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
-// ADR-0102 end to end through the in-app messages: a run blocked on a dialog tells the operators (and control) once,
+// ADR-0102, the notice and its texts as the in-app messages show them (notifyRunDialog called directly; the hub wiring
+// is TestRunDialogOverTheNodeConnection): a run blocked on a dialog tells the operators (and control) once,
 // in words that fit the signal. An unknown dialog, a withheld answer and a dialog without an excerpt (the node agent
 // restarted) each get their own text, and a repeat of an occurrence sends nothing more.
-func TestRunDialogNoticeOverHTTP(t *testing.T) {
+func TestRunDialogNoticeTexts(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()

@@ -17,8 +17,6 @@ export const harnessLabel = (h: Run['harness'] | string) => HARNESS_LABEL[h as R
 /** "control #4": the role and the turn (once it has one). */
 export const runTitle = (r: Run) => (r.turn > 0 ? `${r.role} #${r.turn}` : r.role)
 
-/** Blocked at an interactive dialog on its terminal that SpaceMan does not answer (ADR-0102): status blocked, kind dialog. */
-
 export type Tone = 'working' | 'idle' | 'attention' | 'starting' | 'ended' | 'failed' | 'offline'
 
 /** The run's tone: what the status dot shows. */

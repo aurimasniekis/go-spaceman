@@ -22,8 +22,9 @@ import { notifyError } from '@/lib/notify'
 
 export const Route = createFileRoute('/spaces/$spaceId/messages')({
   component: MessagesPage,
-  // ?view=system opens SpaceMan's own notices (a run's dialog notice is one); anything else is the default view.
-  validateSearch: (s: Record<string, unknown>): { view?: 'system' } => (s.view === 'system' ? { view: 'system' } : {}),
+  // ?view=system opens SpaceMan's own notices (a run's dialog notice is one); anything else is the default view. The key is
+  // set to undefined rather than left out: the router keeps unvalidated search params, so a stray value would get through.
+  validateSearch: (s: Record<string, unknown>): { view?: 'system' } => ({ view: s.view === 'system' ? 'system' : undefined }),
 })
 
 const stateColor: Record<Message['state'], string> = { stored: 'gray', available: 'owlBlue', acknowledged: 'owlPurple', resolved: 'owlGreen' }
