@@ -99,50 +99,56 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
     )
   }
   return (
-    <Stack gap={0} style={{ height: 'calc(100vh - 72px)' }}>
+    // The header (40px) and the page padding above and below the workspace; the sidebar divider bleeds into that bottom padding.
+    <Stack gap={0} style={{ height: 'calc(100vh - 40px - 2 * var(--mantine-spacing-md))' }}>
       <Box style={{ display: 'grid', gridTemplateColumns: tree && !narrow ? '260px minmax(0, 1fr)' : 'minmax(0, 1fr)', gap: 'var(--mantine-spacing-md)', flex: 1, minHeight: 0 }}>
+        {/* The divider runs the full height of the workspace: it bleeds into the page padding above and below (the content
+            keeps its place through the matching padding), so it meets the header rule and the bottom edge of the window. */}
         {tree && !narrow && (
-          <Stack gap="xs" style={{ minHeight: 0, borderRight: '1px solid var(--mantine-color-default-border)', paddingRight: 'var(--mantine-spacing-sm)' }}>
+          <Stack gap="xs" style={{ minHeight: 0, marginBlock: 'calc(-1 * var(--mantine-spacing-md))', paddingBlock: 'var(--mantine-spacing-md)', borderRight: '1px solid var(--mantine-color-default-border)', paddingRight: 'var(--mantine-spacing-sm)' }}>
             {sidebar}
           </Stack>
         )}
-        {/* Scrolls when the terminal (70vh) and its controls are taller than the column, by whatever the screen height leaves. */}
-        <Stack gap="xs" data-scroll-region style={{ minWidth: 0, minHeight: 0, overflow: 'auto' }}>
-          {current ? (
-            <>
-              <Group justify="space-between" wrap="nowrap">
-                {narrow ? (
-                  // One control for the space name and the space list, instead of a second header with its own toggle.
-                  <Button variant="subtle" color="gray" px={4} fw={600} size="sm" aria-label={`Space: ${currentName ?? ''}. Choose a space or agent`}
-                    leftSection={<IconLayoutSidebarLeftExpand size={16} />} rightSection={<IconChevronDown size={14} />} onClick={() => setDrawer(true)}
-                    styles={{ root: { minWidth: 0, maxWidth: '100%' }, inner: { minWidth: 0 }, label: { minWidth: 0 } }}>
-                    {/* Mantine's label is a flex box, where text-overflow has no effect: truncate an inner block. */}
-                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentName}</span>
-                  </Button>
-                ) : (
-                  <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-                    {!tree && (
-                      <Tooltip label="Show the space list">
-                        <ActionIcon aria-label="Show the space list" onClick={toggleTree}><IconLayoutSidebarLeftExpand size={16} /></ActionIcon>
-                      </Tooltip>
-                    )}
-                    <Text fw={600} truncate>{currentName}</Text>
-                  </Group>
-                )}
-                <AnchorLink to="/spaces/$spaceId" params={{ spaceId: current }} size="sm" style={{ flexShrink: 0 }}>
-                  <Group gap={4} wrap="nowrap">Open space <IconExternalLink size={12} /></Group>
-                </AnchorLink>
-              </Group>
-              <SpaceTerminals key={current} spaceId={current} runId={runId} mode={mode} onSelect={(r) => onSelect(current, r)} onMode={onMode} />
-            </>
-          ) : <Text size="sm" c="dimmed">Choose a space.</Text>}
+        {/* The footer belongs to this column, so the divider beside it runs down past the footer's rule. */}
+        <Stack gap={0} style={{ minWidth: 0, minHeight: 0 }}>
+          {/* Scrolls when the terminal (70vh) and its controls are taller than the column, by whatever the screen height leaves. */}
+          <Stack gap="xs" data-scroll-region style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+            {current ? (
+              <>
+                <Group justify="space-between" wrap="nowrap">
+                  {narrow ? (
+                    // One control for the space name and the space list, instead of a second header with its own toggle.
+                    <Button variant="subtle" color="gray" px={4} fw={600} size="sm" aria-label={`Space: ${currentName ?? ''}. Choose a space or agent`}
+                      leftSection={<IconLayoutSidebarLeftExpand size={16} />} rightSection={<IconChevronDown size={14} />} onClick={() => setDrawer(true)}
+                      styles={{ root: { minWidth: 0, maxWidth: '100%' }, inner: { minWidth: 0 }, label: { minWidth: 0 } }}>
+                      {/* Mantine's label is a flex box, where text-overflow has no effect: truncate an inner block. */}
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentName}</span>
+                    </Button>
+                  ) : (
+                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                      {!tree && (
+                        <Tooltip label="Show the space list">
+                          <ActionIcon aria-label="Show the space list" onClick={toggleTree}><IconLayoutSidebarLeftExpand size={16} /></ActionIcon>
+                        </Tooltip>
+                      )}
+                      <Text fw={600} truncate>{currentName}</Text>
+                    </Group>
+                  )}
+                  <AnchorLink to="/spaces/$spaceId" params={{ spaceId: current }} size="sm" style={{ flexShrink: 0 }}>
+                    <Group gap={4} wrap="nowrap">Open space <IconExternalLink size={12} /></Group>
+                  </AnchorLink>
+                </Group>
+                <SpaceTerminals key={current} spaceId={current} runId={runId} mode={mode} onSelect={(r) => onSelect(current, r)} onMode={onMode} />
+              </>
+            ) : <Text size="sm" c="dimmed">Choose a space.</Text>}
+          </Stack>
+          <Group gap="md" px="xs" py={4} mt="xs" style={{ flexShrink: 0, borderTop: '1px solid var(--mantine-color-default-border)' }}>
+            <Text size="xs" c="dimmed">{allLive.length} {allLive.length === 1 ? 'agent' : 'agents'} running in {visible.length} {visible.length === 1 ? 'space' : 'spaces'}</Text>
+            {attention > 0 && <AnchorLink to="/human" size="xs" c="owlYellow">{attention} waiting for input →</AnchorLink>}
+            {!narrow && <Text size="xs" c="dimmed" ml="auto">[ and ] switch agents</Text>}
+          </Group>
         </Stack>
       </Box>
-      <Group gap="md" px="xs" py={4} mt="xs" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
-        <Text size="xs" c="dimmed">{allLive.length} {allLive.length === 1 ? 'agent' : 'agents'} running in {visible.length} {visible.length === 1 ? 'space' : 'spaces'}</Text>
-        {attention > 0 && <AnchorLink to="/human" size="xs" c="owlYellow">{attention} waiting for input →</AnchorLink>}
-        {!narrow && <Text size="xs" c="dimmed" ml="auto">[ and ] switch agents</Text>}
-      </Group>
       {narrow && (
         <Drawer opened={drawer} onClose={() => setDrawer(false)} title="Terminals" position="left" size="85%">
           <Stack gap="xs">{sidebar}</Stack>

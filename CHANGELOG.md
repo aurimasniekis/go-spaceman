@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
+  and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
+  the terminal column, and the divider runs from the header rule to the bottom edge of the window.
 - **A run no longer shows "at usage limit" after the limit has reset and it carries on working.** The node looked for
   the end of a limit only when a turn ended, so a run that continued at the reset and then worked for a long turn kept
   its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
