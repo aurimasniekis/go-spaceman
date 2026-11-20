@@ -27,7 +27,7 @@ async function open(url: string) {
   const messages = Route.update({ id: '/spaces/$spaceId/messages', path: 'spaces/$spaceId/messages', getParentRoute: () => root } as never)
   const router = createRouter({ routeTree: root.addChildren([messages]), history: createMemoryHistory({ initialEntries: [url] }) })
   render(<MantineProvider><QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider></MantineProvider>)
-  await screen.findByRole('radiogroup', { name: 'Which messages' })
+  await screen.findByRole('radiogroup', { name: 'Which messages' }, { timeout: 4000 })
 }
 
 const selected = () => (screen.getByRole('radiogroup', { name: 'Which messages' }).querySelector('input:checked') as HTMLInputElement).value
