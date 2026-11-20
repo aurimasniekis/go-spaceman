@@ -90,6 +90,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The node agent no longer floods the node with `git` processes when it reports memory status.** Each checkpoint,
+  acknowledgement, failed sync and reconnect made the agent check every role-memory instance folder on the node with
+  git, ended instances included. That is about seven git processes per folder per event, so the rate grew with the
+  number of folders times the number of live runs. Status reports are now coalesced: at most one every 30 s, holding
+  only the collections that changed (every collection after a reconnect), and never sent inline on an event. An
+  instance's counts are cached under a fingerprint of its files and refs, so an unchanged checkout costs no git. In a
+  test with 600 instance folders across 4 collections, 4 acknowledgements used to run 16,860 git processes. Now 40
+  acknowledgements run 88: their own head check, plus one report. The uncheckpointed-file and local-commit counts
+  (SM-MEM-004) can be up to one interval old.
 - **A body with several diagrams no longer freezes the page for over 2 s.** Queued diagram renders ran back to back as one
   long task; they now yield to the page between two renders (diagrams since v0.1.5).
 - **Two concurrent observes of a run no longer report out of order.** An observe sent the report it had built before

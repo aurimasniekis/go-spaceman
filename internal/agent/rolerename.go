@@ -362,7 +362,7 @@ func (a *Agent) roleRenamedAck(ctx context.Context, ack proto.MemoryRenamedAck) 
 	}
 	if r.State == renameDone && ack.Result == proto.MemoryRenameOK && a.mem.git != nil {
 		a.mem.scheduleSync(r.SpaceID, r.To, 0)
-		a.mem.sendStatus(ctx)
+		a.mem.statusChanged(r.SpaceID, r.To)
 	}
 }
 

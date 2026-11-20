@@ -1,0 +1,205 @@
+package agent
+
+import (
+	"context"
+	"encoding/binary"
+	"hash/fnv"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
+)
+
+// Memory status reporting (SM-MEM-004) is coalesced and cached. A status costs git in every instance checkout (status
+// and rev-list, each behind the checkout guard's own git calls), so reporting every collection on every checkpoint,
+// acknowledgement and failed sync made the node's git execs grow with the number of instance folders times the number
+// of events. Instead:
+//
+//   - an event only marks its collection changed; one report goes out per statusInterval at most, holding the changed
+//     collections (all of them after a reconnect), never inline on an event;
+//   - an instance's counts are cached under a fingerprint of its files (names, sizes, modification times, the checkout's
+//     index, HEAD and refs) and the shared head, so an unchanged checkout (an ended instance's, typically) costs no git.
+//
+// The counts central shows may so be up to one interval old.
+
+// statusInterval is the shortest time between two status reports. A variable so tests can shorten it.
+var statusInterval = 30 * time.Second
+
+// statusRacy is how recent a file's modification may be for its checkout's counts to be cached: an edit within the
+// file system's timestamp granularity could leave size and time unchanged (git's "racy" entries). A variable so tests
+// can turn it off.
+var statusRacy = 2 * time.Second
+
+// instStatus is the cached status of one instance checkout.
+type instStatus struct {
+	stamp          uint64
+	uncheckpointed int
+	localCommits   int
+}
+
+// statusChanged marks a collection's status as changed; it is reported within statusInterval.
+func (m *memManager) statusChanged(spaceID, role string) {
+	m.markStatus(func() { m.statusDirty[colKey(spaceID, role)] = [2]string{spaceID, role} })
+}
+
+// statusChangedAll marks every collection on disk as changed (the node connected again).
+func (m *memManager) statusChangedAll() {
+	m.markStatus(func() { m.statusAll = true })
+}
+
+func (m *memManager) markStatus(mark func()) {
+	if m.git == nil {
+		return
+	}
+	m.statusMu.Lock()
+	defer m.statusMu.Unlock()
+	mark()
+	if m.statusTimer != nil {
+		return // a report is due: it takes this change too
+	}
+	delay := time.Until(m.statusLast.Add(statusInterval))
+	m.statusTimer = time.AfterFunc(max(delay, 0), func() { m.a.track(func() { m.reportStatus(m.base) }) })
+}
+
+// reportStatus sends the status of the collections that changed since the last report. Reports never overlap.
+func (m *memManager) reportStatus(ctx context.Context) {
+	m.reportMu.Lock()
+	defer m.reportMu.Unlock()
+	m.statusMu.Lock()
+	dirty, all := m.statusDirty, m.statusAll
+	m.statusDirty, m.statusAll, m.statusTimer, m.statusLast = map[string][2]string{}, false, nil, time.Now()
+	m.statusMu.Unlock()
+	m.a.mu.Lock()
+	ok := m.a.connected && m.a.minor >= proto.MinorMemory
+	m.a.mu.Unlock()
+	if !ok {
+		return // reported in full again on reconnect (resume)
+	}
+	var cols [][2]string
+	if all {
+		cols = m.collections(ctx)
+	} else {
+		for _, k := range dirty {
+			if exists(filepath.Join(m.shared(k[0], k[1]), "HEAD")) && !m.a.j.orphanedRole(ctx, k[0], k[1]) {
+				cols = append(cols, k)
+			}
+		}
+		if len(cols) == 0 {
+			return
+		}
+	}
+	st := proto.MemoryStatus{Collections: []proto.MemoryCollectionStatus{}}
+	for _, k := range cols {
+		st.Collections = append(st.Collections, m.statusOf(ctx, k[0], k[1]))
+	}
+	if m.statusSent != nil {
+		m.statusSent(st)
+	}
+	_ = m.a.send(ctx, proto.TypeMemoryStatus, st)
+}
+
+// instanceStatus is an instance checkout's uncheckpointed changes and the commits it has not published, from the cache
+// when nothing in the checkout changed. ok is false for a folder that is not a checkout of its own.
+func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (uncheckpointed, localCommits int, ok bool) {
+	pre, cacheable := statusStamp(inst, head)
+	if cacheable {
+		m.statusMu.Lock()
+		c, hit := m.instStatus[inst]
+		m.statusMu.Unlock()
+		if hit && c.stamp == pre {
+			return c.uncheckpointed, c.localCommits, true
+		}
+	}
+	out, err := m.git.RunCheckout(ctx, inst, nil, "status", "--porcelain")
+	if err != nil {
+		m.statusMu.Lock()
+		delete(m.instStatus, inst)
+		m.statusMu.Unlock()
+		return 0, 0, false // not a checkout of its own: nothing is counted, and no git runs there
+	}
+	uncheckpointed = len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
+	// Commits an instance has not published (it diverged and is waiting for its next checkpoint).
+	if head != "" {
+		localCommits = m.git.Count(ctx, inst, head, "HEAD")
+	}
+	// Cached only when nothing changed while git ran (git status may rewrite the index: the next report counts again).
+	if post, ok := statusStamp(inst, head); cacheable && ok && post == pre {
+		m.statusMu.Lock()
+		m.instStatus[inst] = instStatus{stamp: pre, uncheckpointed: uncheckpointed, localCommits: localCommits}
+		m.statusMu.Unlock()
+	}
+	return uncheckpointed, localCommits, true
+}
+
+// forgetStatus drops the cached status of a collection's instances that are no longer on disk.
+func (m *memManager) forgetStatus(instances string, seen map[string]bool) {
+	m.statusMu.Lock()
+	defer m.statusMu.Unlock()
+	for p := range m.instStatus {
+		if filepath.Dir(p) == instances && !seen[p] {
+			delete(m.instStatus, p)
+		}
+	}
+}
+
+// statusStamp fingerprints what an instance's status depends on: every work tree entry (path, type, size, modification
+// time), the checkout's index, HEAD, refs and the configuration files that change what git ignores, and the shared
+// head. It costs one lstat per file and no git. cacheable is false when the folder cannot be read or a file changed
+// within statusRacy.
+func statusStamp(inst, head string) (uint64, bool) {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(head))
+	racy := time.Now().Add(-statusRacy)
+	recent := false
+	var buf [8]byte
+	add := func(rel string, fi fs.FileInfo) {
+		_, _ = h.Write([]byte(rel))
+		_, _ = h.Write([]byte{0})
+		binary.LittleEndian.PutUint64(buf[:], uint64(fi.Mode()))
+		_, _ = h.Write(buf[:])
+		binary.LittleEndian.PutUint64(buf[:], uint64(fi.Size())) //nolint:gosec // a size is never negative
+		_, _ = h.Write(buf[:])
+		binary.LittleEndian.PutUint64(buf[:], uint64(fi.ModTime().UnixNano())) //nolint:gosec // only hashed
+		_, _ = h.Write(buf[:])
+		if fi.ModTime().After(racy) {
+			recent = true
+		}
+	}
+	walk := func(dir string, skipGit bool) error {
+		return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(inst, p)
+			if skipGit && rel == ".git" {
+				return filepath.SkipDir
+			}
+			fi, err := d.Info()
+			if err != nil {
+				return err
+			}
+			add(rel, fi)
+			return nil
+		})
+	}
+	if err := walk(inst, true); err != nil {
+		return 0, false
+	}
+	git := filepath.Join(inst, ".git")
+	for _, f := range []string{"HEAD", "index", "packed-refs", "config", filepath.Join("info", "exclude")} {
+		fi, err := os.Lstat(filepath.Join(git, f))
+		switch {
+		case err == nil:
+			add(filepath.Join(".git", f), fi)
+		case !os.IsNotExist(err):
+			return 0, false
+		}
+	}
+	if err := walk(filepath.Join(git, "refs"), false); err != nil && !os.IsNotExist(err) {
+		return 0, false
+	}
+	return h.Sum64(), !recent
+}
