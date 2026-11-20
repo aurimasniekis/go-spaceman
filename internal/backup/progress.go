@@ -36,6 +36,10 @@ const (
 	DefaultMaxDuration = time.Hour
 	// recordTimeout bounds recording the outcome and retention after the work itself ended.
 	recordTimeout = 2 * time.Minute
+	// DefaultMemoryFlushTimeout bounds the role-memory flush before a backup when the service is not given a bound.
+	DefaultMemoryFlushTimeout = 2 * time.Minute
+	// memoryFlushAbandonGrace is how long a backup still waits for a memory flush to return after its bound passed.
+	memoryFlushAbandonGrace = 5 * time.Second
 )
 
 // Progress is where a running backup or verification is.
@@ -131,6 +135,18 @@ func (t *tracker) file() {
 	}
 	t.mu.Lock()
 	t.files++
+	t.last, t.lastAt = time.Now(), t.clk.Now()
+	t.mu.Unlock()
+}
+
+// ReportProgress records progress of the backup whose context ctx is (a node answered the memory flush, or the wait
+// for it ended). It does nothing outside a backup.
+func ReportProgress(ctx context.Context) {
+	t := trackerFrom(ctx)
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
 	t.last, t.lastAt = time.Now(), t.clk.Now()
 	t.mu.Unlock()
 }

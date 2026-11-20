@@ -63,8 +63,12 @@ type ServiceOptions struct {
 	FirstDelay time.Duration
 	// PrepareMemory asks the connected nodes to checkpoint and sync role memory before each backup and reports, within
 	// its own bounded wait, which spaces' memory is possibly stale (SM-MEM-005). It runs outside any transaction; nil
-	// records that no flush was attempted.
+	// records that no flush was attempted. It may report progress with ReportProgress(ctx).
 	PrepareMemory func(ctx context.Context) *MemoryFlush
+	// MemoryFlushTimeout bounds the memory-flush stage (default DefaultMemoryFlushTimeout, and at most half of
+	// StallTimeout and of MaxDuration). The stage runs under its own context: when the bound passes, the backup goes on
+	// without waiting further, and the flush can never fail the backup (ADR-0091).
+	MemoryFlushTimeout time.Duration
 	// StallTimeout fails a backup or verification whose current stage makes no progress for this long, and
 	// MaxDuration one that runs longer than this in total (ADR-0091; defaults DefaultStallTimeout and
 	// DefaultMaxDuration).
@@ -110,6 +114,9 @@ func NewService(st *store.Store, kek keyring.KeyWrapper, aw *audit.Writer, ch *c
 	}
 	if o.MaxDuration <= 0 {
 		o.MaxDuration = DefaultMaxDuration
+	}
+	if o.MemoryFlushTimeout <= 0 {
+		o.MemoryFlushTimeout = DefaultMemoryFlushTimeout
 	}
 	return &Service{st: st, kek: kek, audit: aw, changes: ch, o: o, wake: make(chan struct{}, 1), base: context.Background(), startedAt: o.Clock.Now()}
 }
@@ -324,23 +331,28 @@ func (s *Service) untrack() {
 	s.mu.Unlock()
 }
 
-// create makes backup id and records the outcome. It runs outside any transaction. The work runs under a watchdog
-// (ADR-0091): a stage without progress for StallTimeout, or a run longer than MaxDuration, fails the backup with a
-// StalledError naming the stage. The outcome is recorded under its own bounded context, so a stopped backup is still
-// marked failed, and the caller releases busy when create returns.
+// create makes backup id and records the outcome. It runs outside any transaction. The role-memory flush runs first,
+// under its own bounded context, and never fails the backup. The rest of the work runs under a watchdog (ADR-0091): a
+// stage without progress for StallTimeout, or a run longer than MaxDuration, fails the backup with a StalledError
+// naming the stage. The outcome is recorded under its own bounded context, so a stopped backup is still marked failed,
+// and the caller releases busy when create returns.
 func (s *Service) create(base context.Context, id string, actor audit.Actor) {
 	log := s.o.Log.With(slog.String("backup.id", id))
 	tr := s.track(id, log)
 	defer s.untrack()
-	ctx, stop := watch(withTracker(base, tr), tr, s.o.StallTimeout, s.o.MaxDuration)
-	defer stop()
+	started := time.Now()
 	var m *Manifest
-	// Role memory first, before the database snapshot: central then holds what the nodes had (SM-MEM-005).
+	// Role memory first, before the database snapshot: central then holds what the nodes had (SM-MEM-005). The
+	// watchdog starts after it, so that nothing the flush waits on can stop the snapshot.
 	tr.enter(StageMemoryFlush)
-	flush := s.prepareMemory(ctx)
+	flush := s.prepareMemory(withTracker(base, tr), log)
 	if n := len(flush.Stale); n > 0 {
 		log.Warn("role memory possibly stale in this backup", slog.Int("spaces", n))
 	}
+	// The overall limit counts the flush too; the flush is bounded to half of it, so the rest keeps at least half.
+	total := max(s.o.MaxDuration-time.Since(started), s.o.MaxDuration/2)
+	ctx, stop := watch(withTracker(base, tr), tr, s.o.StallTimeout, total)
+	defer stop()
 	err := func() error {
 		staging := s.o.Target.StagingDir()
 		if err := os.MkdirAll(staging, 0o700); err != nil {
@@ -417,12 +429,36 @@ func (s *Service) create(base context.Context, id string, actor audit.Actor) {
 	tr.end()
 }
 
-// prepareMemory runs the PrepareMemory hook, or records that none is configured.
-func (s *Service) prepareMemory(ctx context.Context) *MemoryFlush {
+// memoryFlushBound is how long the memory-flush stage may take: MemoryFlushTimeout, and at most half of the stall and
+// overall limits.
+func (s *Service) memoryFlushBound() time.Duration {
+	return min(s.o.MemoryFlushTimeout, s.o.StallTimeout/2, s.o.MaxDuration/2)
+}
+
+// prepareMemory runs the PrepareMemory hook under its own context, bounded by memoryFlushBound, or records that none is
+// configured. It always returns: when the hook does not return within a short grace after its context ended, the
+// backup goes on without its result and records the flush as unfinished.
+func (s *Service) prepareMemory(base context.Context, log *slog.Logger) *MemoryFlush {
 	if s.o.PrepareMemory == nil {
 		return &MemoryFlush{Note: "no node connection: role memory was not flushed before the snapshot", Flushed: []string{}, Stale: []StaleMemory{}}
 	}
-	f := s.o.PrepareMemory(ctx)
+	bound := s.memoryFlushBound()
+	ctx, cancel := context.WithTimeout(base, bound)
+	defer cancel()
+	ch := make(chan *MemoryFlush, 1)
+	go func() { ch <- s.o.PrepareMemory(ctx) }()
+	var f *MemoryFlush
+	select {
+	case f = <-ch:
+	case <-ctx.Done():
+		select {
+		case f = <-ch:
+			log.Warn("role memory flush reached its bound", slog.Duration("bound", bound))
+		case <-time.After(min(bound, memoryFlushAbandonGrace)):
+			log.Warn("role memory flush did not end in time: the backup goes on without it", slog.Duration("bound", bound))
+			f = &MemoryFlush{Attempted: true, Note: fmt.Sprintf("the role-memory flush did not finish within %s: role memory is possibly stale", bound)}
+		}
+	}
 	if f == nil {
 		f = &MemoryFlush{Note: "role memory was not flushed before the snapshot", Flushed: []string{}, Stale: []StaleMemory{}}
 	}

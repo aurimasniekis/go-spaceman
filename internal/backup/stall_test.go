@@ -97,13 +97,17 @@ func TestServiceStalledStageFailsAndReleasesBusy(t *testing.T) {
 	}
 }
 
-// The overall limit stops a backup even while its stage keeps reporting progress, here a memory flush that never
-// returns on its own.
+// The overall limit stops a backup even while no stage reaches the stall limit, here an upload that blocks. A memory
+// flush that never returns on its own is stopped at its own bound (half of the overall limit) and does not fail the
+// backup: the run fails in the upload stage.
 func TestServiceMaxDurationFailsBackup(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: backup.LocalTarget{Dir: filepath.Join(t.TempDir(), "b")},
-		Sources: f.sources(), StallTimeout: time.Hour, MaxDuration: 300 * time.Millisecond,
+	hang := &atomic.Bool{}
+	hang.Store(true)
+	tgt := hangingTarget{LocalTarget: backup.LocalTarget{Dir: filepath.Join(t.TempDir(), "b")}, hang: hang, entered: make(chan struct{}, 1)}
+	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: tgt,
+		Sources: f.sources(), StallTimeout: time.Hour, MaxDuration: 10 * time.Second,
 		PrepareMemory: func(ctx context.Context) *backup.MemoryFlush {
 			<-ctx.Done()
 			return &backup.MemoryFlush{Attempted: true, Note: "stopped"}
@@ -114,7 +118,7 @@ func TestServiceMaxDurationFailsBackup(t *testing.T) {
 	st, err := svc.Status(f.ctx)
 	must(t, err)
 	it := item(t, st, r.ID)
-	if st.Busy || it.State != backup.StateFailed || !strings.Contains(it.Error, "stage memory_flush") || !strings.Contains(it.Error, "limit") {
+	if st.Busy || it.State != backup.StateFailed || !strings.Contains(it.Error, "stage upload") || !strings.Contains(it.Error, "limit") {
 		t.Fatalf("busy %v item %+v", st.Busy, it)
 	}
 }
