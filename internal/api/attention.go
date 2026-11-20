@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -27,6 +28,10 @@ const (
 	AttentionRunWindow = 24 * time.Hour
 	// AttentionBudgetWindow is how far back budget notices count (the budget window).
 	AttentionBudgetWindow = 24 * time.Hour
+	// AttentionSwitchWindow is how far back failed account switches count.
+	AttentionSwitchWindow = 24 * time.Hour
+	// AttentionItemsPerKind caps the items listed per kind (the counts stay complete).
+	AttentionItemsPerKind = 20
 	// AttentionQuotaPercent is the attachment-storage share of a space's quota that counts as near the limit.
 	AttentionQuotaPercent = 90
 )
@@ -83,9 +88,33 @@ type AttentionSpace struct {
 	StorageBytes   *int64 `json:"storage_bytes,omitempty"`
 	StorageQuota   *int64 `json:"storage_quota_bytes,omitempty" doc:"0: no quota"`
 	StorageNear    bool   `json:"storage_near_quota,omitempty" doc:"Attachment storage is at least 90% of the quota"`
+	// Parked runs, account limits, failed account switches (run:read) and incoming cross-space requests (xspace:read).
+	RunsParked         *int64 `json:"runs_parked,omitempty" doc:"Runs parked at a usage limit or for a restart that still wait to come back"`
+	AccountLimits      *int64 `json:"account_limits,omitempty" doc:"Open account usage limits as this space sees them"`
+	AccountSwitchFails *int64 `json:"account_switches_failed,omitempty" doc:"Account switches that failed in the last 24 hours"`
+	XSpaceIncoming     *int64 `json:"xspace_incoming,omitempty" doc:"Cross-space requests from other spaces waiting for a decision"`
 	// NodeDisconnected: the space's node is enrolled but not connected, so no new work starts (space:read).
 	NodeDisconnected bool  `json:"node_disconnected,omitempty"`
 	Total            int64 `json:"total" doc:"Items in this space that need a person (the counts above, without the unassigned and overdue subsets)"`
+}
+
+// AttentionTarget says where an item lives, so a client can link to it. Type is one of task, run, subscription,
+// space_usage, space_budget or xspace_request; ID is that resource's ID (empty for the space pages).
+type AttentionTarget struct {
+	Type    string `json:"type" enum:"task,run,subscription,space_usage,space_budget,xspace_request"`
+	ID      string `json:"id,omitempty"`
+	SpaceID string `json:"space_id"`
+}
+
+// AttentionItem names one thing that needs a person. Titles are fixed words or the item's own title, never body text.
+type AttentionItem struct {
+	Kind     string          `json:"kind" enum:"task_blocked,task_failed,quarantine,run_unknown,run_failed,budget_notice,run_parked,account_limit,account_switch_failed,xspace_request"`
+	Severity string          `json:"severity" enum:"act,watch" doc:"act: someone has to do something; watch: it may resolve itself"`
+	ID       string          `json:"id"`
+	SpaceID  string          `json:"space_id"`
+	Title    string          `json:"title"`
+	Since    time.Time       `json:"since"`
+	Target   AttentionTarget `json:"target"`
 }
 
 // AttentionOutbox is outbound publication trouble (system:read).
@@ -128,16 +157,38 @@ type AttentionStorage struct {
 // Attention is the summary of everything that needs a person, across the spaces and installation areas the caller may
 // read (SM-UI-003).
 type Attention struct {
-	Spaces    []AttentionSpace  `json:"spaces" doc:"Readable spaces with at least one item, most items first"`
-	Nodes     []AttentionNode   `json:"nodes,omitempty" doc:"Active nodes that are not connected (node:read)"`
-	Outbox    *AttentionOutbox  `json:"outbox,omitempty"`
-	Backups   *AttentionBackups `json:"backups,omitempty"`
-	Storage   *AttentionStorage `json:"storage,omitempty"`
-	Total     int64             `json:"total"`
-	CheckedAt time.Time         `json:"checked_at"`
+	Spaces     []AttentionSpace  `json:"spaces" doc:"Readable spaces with at least one item, most items first"`
+	Nodes      []AttentionNode   `json:"nodes,omitempty" doc:"Active nodes that are not connected (node:read)"`
+	Outbox     *AttentionOutbox  `json:"outbox,omitempty"`
+	Backups    *AttentionBackups `json:"backups,omitempty"`
+	Storage    *AttentionStorage `json:"storage,omitempty"`
+	Items      []AttentionItem   `json:"items" doc:"The newest items per kind in readable spaces (at most 20 per kind), newest first. Human actions are counted but not listed. Nodes and storage are in their own sections"`
+	ItemCounts map[string]int64  `json:"item_counts" doc:"Full number of items per kind in readable spaces, to tell a truncated list"`
+	Total      int64             `json:"total"`
+	CheckedAt  time.Time         `json:"checked_at"`
 }
 
 func i64(v int64) *int64 { return &v }
+
+func micros(v int64) time.Time { return time.UnixMicro(v).UTC() }
+
+// capItems keeps the newest AttentionItemsPerKind items of each kind, newest first.
+func capItems(items []AttentionItem) []AttentionItem {
+	slices.SortStableFunc(items, func(a, b AttentionItem) int {
+		if c := a.Since.Compare(b.Since); c != 0 {
+			return -c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	out := make([]AttentionItem, 0, len(items))
+	per := map[string]int{}
+	for _, it := range items {
+		if per[it.Kind]++; per[it.Kind] <= AttentionItemsPerKind {
+			out = append(out, it)
+		}
+	}
+	return out
+}
 
 func microsTime(v int64) *time.Time {
 	if v == 0 {
@@ -153,8 +204,8 @@ func RegisterAttention(src *AttentionSources) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "get-attention", Method: http.MethodGet, Path: "/attention",
 			Summary: "What needs a person", Tags: []string{"system"},
 			Description: "One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, " +
-				"budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage " +
-				"problems. Each category is included only where you may read it. Computed on request (one query per category); clients refresh it " +
+				"parked runs, open account limits, failed account switches, incoming cross-space requests, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage " +
+				"problems. Each category is included only where you may read it. `items` names the newest of each kind (at most 20 per kind, counts in `item_counts`). Computed on request (no network I/O, one or two queries per category); clients refresh it " +
 				"when the change feed reports a change."},
 			func(ctx context.Context, in *struct {
 				Space string `query:"space" maxLength:"64" doc:"Only this space (and no installation-wide sections)"`
@@ -195,6 +246,16 @@ func (d *Deps) attention(ctx context.Context, src *AttentionSources, only string
 		return s
 	}
 	q := d.Store.R()
+	var items []AttentionItem
+	counts := map[string]int64{}
+	// add records an item of a space the caller may read with the permission its category needs.
+	add := func(perm authz.Permission, it AttentionItem) bool {
+		if get(it.SpaceID, perm) == nil {
+			return false
+		}
+		items = append(items, it)
+		return true
+	}
 	hum, err := q.AttentionHuman(ctx, sql.NullInt64{Int64: now.UnixMicro(), Valid: true})
 	if err != nil {
 		return nil, err
@@ -213,7 +274,21 @@ func (d *Deps) attention(ctx context.Context, src *AttentionSources, only string
 		if s := get(r.SpaceID, authz.QueueRead); s != nil {
 			s.TasksBlocked, s.TasksFailed = i64(r.Blocked), i64(r.Failed)
 			s.Total += r.Blocked + r.Failed
+			counts["task_blocked"] += r.Blocked
+			counts["task_failed"] += r.Failed
 		}
+	}
+	taskItems, err := q.AttentionTaskItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range taskItems {
+		kind := "task_blocked"
+		if r.Status == "failed" {
+			kind = "task_failed"
+		}
+		add(authz.QueueRead, AttentionItem{Kind: kind, Severity: "act", ID: r.ID, SpaceID: r.SpaceID, Title: r.Title, Since: micros(r.Since),
+			Target: AttentionTarget{Type: "task", ID: r.ID, SpaceID: r.SpaceID}})
 	}
 	quar, err := q.AttentionQuarantine(ctx)
 	if err != nil {
@@ -223,9 +298,19 @@ func (d *Deps) attention(ctx context.Context, src *AttentionSources, only string
 		if s := get(r.SpaceID, authz.SubscriptionRead); s != nil {
 			s.QuarantineOpen = i64(r.Open)
 			s.Total += r.Open
+			counts["quarantine"] += r.Open
 		}
 	}
-	runs, err := q.AttentionRuns(ctx, sql.NullInt64{Int64: now.Add(-AttentionRunWindow).UnixMicro(), Valid: true})
+	quarItems, err := q.AttentionQuarantineItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range quarItems {
+		add(authz.SubscriptionRead, AttentionItem{Kind: "quarantine", Severity: "act", ID: r.ID, SpaceID: r.SpaceID, Title: "Quarantined event", Since: micros(r.Since),
+			Target: AttentionTarget{Type: "subscription", ID: r.SubscriptionID, SpaceID: r.SpaceID}})
+	}
+	runSince := sql.NullInt64{Int64: now.Add(-AttentionRunWindow).UnixMicro(), Valid: true}
+	runs, err := q.AttentionRuns(ctx, runSince)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +318,21 @@ func (d *Deps) attention(ctx context.Context, src *AttentionSources, only string
 		if s := get(r.SpaceID, authz.RunRead); s != nil {
 			s.RunsUnknown, s.RunsFailed = i64(r.Unknown), i64(r.Failed)
 			s.Total += r.Unknown + r.Failed
+			counts["run_unknown"] += r.Unknown
+			counts["run_failed"] += r.Failed
 		}
+	}
+	runItems, err := q.AttentionRunItems(ctx, runSince)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range runItems {
+		kind, sev, title := "run_failed", "watch", "Run "+r.Observed+": "+r.Role
+		if r.Observed == "unknown" {
+			kind, sev = "run_unknown", "act"
+		}
+		add(authz.RunRead, AttentionItem{Kind: kind, Severity: sev, ID: r.ID, SpaceID: r.SpaceID, Title: title, Since: micros(r.Since),
+			Target: AttentionTarget{Type: "run", ID: r.ID, SpaceID: r.SpaceID}})
 	}
 	budgets, err := q.AttentionBudgets(ctx, now.Add(-AttentionBudgetWindow).UnixMicro())
 	if err != nil {
@@ -243,7 +342,92 @@ func (d *Deps) attention(ctx context.Context, src *AttentionSources, only string
 		if s := get(r.SpaceID, authz.SpaceConfigRead); s != nil {
 			s.BudgetWarnings, s.BudgetExceeded = i64(r.Warnings), i64(r.Exceeded)
 			s.Total += r.Warnings + r.Exceeded
+			counts["budget_notice"] += r.Warnings + r.Exceeded
 		}
+	}
+	budgetItems, err := q.AttentionBudgetItems(ctx, now.Add(-AttentionBudgetWindow).UnixMicro())
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range budgetItems {
+		sev := "watch"
+		if r.Level == "exceeded" {
+			sev = "act"
+		}
+		add(authz.SpaceConfigRead, AttentionItem{Kind: "budget_notice", Severity: sev, ID: r.ID, SpaceID: r.SpaceID, Title: "Budget " + r.Level + ": " + r.Budget,
+			Since: micros(r.Since), Target: AttentionTarget{Type: "space_budget", SpaceID: r.SpaceID}})
+	}
+	parked, err := q.AttentionParkedRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range parked {
+		s := get(r.SpaceID, authz.RunRead)
+		if s == nil {
+			continue
+		}
+		if s.RunsParked == nil {
+			s.RunsParked = i64(r.Total)
+			s.Total += r.Total
+			counts["run_parked"] += r.Total
+		}
+		title := "Run parked at a usage limit: " + r.Role
+		if r.Cause != "" {
+			title = "Run parked for a restart: " + r.Role
+		}
+		add(authz.RunRead, AttentionItem{Kind: "run_parked", Severity: "watch", ID: r.ID, SpaceID: r.SpaceID, Title: title, Since: micros(r.Since),
+			Target: AttentionTarget{Type: "run", ID: r.RunID, SpaceID: r.SpaceID}})
+	}
+	limits, err := q.AttentionAccountLimits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range limits {
+		s := get(r.SpaceID, authz.RunRead)
+		if s == nil {
+			continue
+		}
+		if s.AccountLimits == nil {
+			s.AccountLimits = i64(r.Total)
+			s.Total += r.Total
+			counts["account_limit"] += r.Total
+		}
+		add(authz.RunRead, AttentionItem{Kind: "account_limit", Severity: "watch", ID: r.ID, SpaceID: r.SpaceID, Title: "Account limit reached: " + r.Kind,
+			Since: micros(r.Since), Target: AttentionTarget{Type: "space_usage", SpaceID: r.SpaceID}})
+	}
+	switches, err := q.AttentionAccountSwitches(ctx, now.Add(-AttentionSwitchWindow).UnixMicro())
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range switches {
+		s := get(r.SpaceID, authz.RunRead)
+		if s == nil {
+			continue
+		}
+		if s.AccountSwitchFails == nil {
+			s.AccountSwitchFails = i64(r.Total)
+			s.Total += r.Total
+			counts["account_switch_failed"] += r.Total
+		}
+		add(authz.RunRead, AttentionItem{Kind: "account_switch_failed", Severity: "act", ID: r.ID, SpaceID: r.SpaceID, Title: "Account switch failed: " + r.Role,
+			Since: micros(r.Since), Target: AttentionTarget{Type: "run", ID: r.FromRunID, SpaceID: r.SpaceID}})
+	}
+	incoming, err := q.AttentionXSpaceIncoming(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range incoming {
+		s := get(r.SpaceID, authz.XSpaceRead)
+		if s == nil {
+			continue
+		}
+		if s.XSpaceIncoming == nil {
+			s.XSpaceIncoming = i64(r.Total)
+			s.Total += r.Total
+			counts["xspace_request"] += r.Total
+		}
+		add(authz.XSpaceRead, AttentionItem{Kind: "xspace_request", Severity: "act", ID: r.ID, SpaceID: r.SpaceID, Title: r.Title, Since: micros(r.Since),
+			Target: AttentionTarget{Type: "xspace_request", ID: r.ID, SpaceID: r.SpaceID}})
 	}
 	bytes, err := q.AttentionAttachmentBytes(ctx)
 	if err != nil {
@@ -277,7 +461,7 @@ func (d *Deps) attention(ctx context.Context, src *AttentionSources, only string
 			}
 		}
 	}
-	out := &Attention{Spaces: []AttentionSpace{}, CheckedAt: now.UTC()}
+	out := &Attention{Spaces: []AttentionSpace{}, Items: capItems(items), ItemCounts: counts, CheckedAt: now.UTC()}
 	for _, id := range order {
 		if s := byID[id]; s.Total > 0 || only != "" {
 			out.Spaces = append(out.Spaces, *s)

@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **`GET /attention` names what needs a person and covers four more categories.** The response gains `items[]`
+  (kind, severity, space, title, since and a link target for blocked and failed tasks, quarantined events, unknown,
+  failed and lost runs, budget notices and the new categories; at most 20 per kind, with the full numbers in
+  `item_counts`) and per-space counts for runs parked at a usage limit, open account limits, account switches that
+  failed in the last 24 hours and incoming cross-space requests. Each needs its existing read permission, so a user
+  never sees another space's items. Human actions stay counted only. Existing fields are unchanged, but `total` now
+  includes the new categories.
 - **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
   output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
   theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned
