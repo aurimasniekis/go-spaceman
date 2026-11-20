@@ -34,7 +34,7 @@ function ApprovalPoliciesPage() {
   }
   return (
     <>
-      <PageHeader title="Approval policies" description="Operations SpaceMan runs only after a person approves them, bound to the exact arguments, the requesting run, an expiry and a number of uses."
+      <PageHeader hub="configuration" title="Approval policies" description="Operations SpaceMan runs only after a person approves them, bound to the exact arguments, the requesting run, an expiry and a number of uses."
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setAdding(true)}>Add policy</Button>} />
       <Alert color="owlBlue" variant="light" icon={<IconInfoCircle size={16} />} mb="md">
         Policies cover what SpaceMan itself controls: built-in agent tools (<code>spaceman.&lt;tool&gt;</code>) and tools of MCP servers behind the gateway

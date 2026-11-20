@@ -174,7 +174,9 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // Events: a Pulse connection (devpulse), a GitHub issues subscription, a published go-pulse-github event that arrives
   // in the inbox, rendered as untrusted text.
-  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Events' }).click()
+  // Events is a tab of the Integrations hub, which opens on it.
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Integrations' }).click()
+  await expect(page.getByRole('main').getByRole('navigation', { name: 'Integrations sections' }).getByRole('link', { name: 'Events' })).toHaveAttribute('aria-current', 'page')
   await page.getByRole('tab', { name: 'Connections' }).click()
   await page.getByRole('button', { name: 'Add connection' }).click()
   await page.getByLabel('Name').fill('dev-pulse')

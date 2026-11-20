@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
+  (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
+  MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
+  Backups, System). Each page shows its hub's tabs under its header as plain links (the current one has
+  `aria-current`). An entry shows only if one of its tabs is visible to you. Every existing URL still loads directly,
+  and `/configuration`, `/integrations` and `/access` open the first tab you may see. Account is only in the user
+  menu now, and Attention is off the sidebar (`/attention` stays).
+
 - **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
   output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
   theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned

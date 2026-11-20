@@ -52,7 +52,7 @@ function UsersPage() {
 
   return (
     <>
-      <PageHeader title="Users" description="People who sign in to SpaceMan, with their role grants."
+      <PageHeader hub="access" title="Users" description="People who sign in to SpaceMan, with their role grants."
         actions={admin && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New user</Button>} />
       <ErrorAlert error={users.error} />
       <Card p={0}>
