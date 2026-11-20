@@ -103,6 +103,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   never fails the backup: the backup goes on and names the spaces whose memory is possibly stale. Each node's outcome is
   logged and counts as progress on the backup status; a flush hook that outlives its bound can no longer report progress in
   a later stage and hide a real stall, and nodes are never told to wait longer than the flush has left. See the ADR-0091 amendment.
+- **A run's exit code and reason are no longer lost when a repeated launch adopts its program after the run ended.** The
+  agent recorded the found program's terminal on the ended run from a row it had read before waiting for the kill, without
+  the lock that run-ending writes share, so a finished event observed meanwhile had its exit code and reason overwritten
+  (the run stayed ended). The write now re-reads the row under that lock.
 
 ## [0.1.15] - 2026-11-20
 
