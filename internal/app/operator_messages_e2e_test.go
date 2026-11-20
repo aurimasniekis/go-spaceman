@@ -134,3 +134,89 @@ func TestOperatorMessagesOverHTTP(t *testing.T) {
 	}
 	expect(t, h.client().do("GET", "/messages", nil), 401)
 }
+
+// A token narrowed to space A, held by a user who can also read space B, sees only A: with no filter, with B named by
+// slug or ID, and through a cursor taken under one filter and reused under another. Malformed cursors are refused.
+func TestOperatorMessagesNarrowedToken(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	a, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "beta", Name: "Beta", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := messages.From{Kind: "run", ID: "run_e2e", Label: "agent"}
+	for _, s := range []struct{ space, subject string }{{a.ID, "a1"}, {a.ID, "a2"}, {b.ID, "b1"}, {b.ID, "b2"}, {b.ID, "b3"}} {
+		if _, _, err := h.c.Messages.Send(ctx, admin, s.space, from, messages.SendInput{To: "operators", Kind: "message", Subject: s.subject, Body: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expect(t, root.do("POST", "/users", map[string]any{"email": "wes@example.com", "display_name": "Wes", "password": "correct horse battery staple",
+		"grants": []map[string]string{{"role": "viewer", "domain": a.ID}, {"role": "viewer", "domain": b.ID}}}), 201)
+
+	// The user's own grants reach both spaces; the token is narrowed to A.
+	tokens := loginAndIssueTokens(t, h, "wes@example.com",
+		[]map[string]string{{"role": "viewer", "domain": a.ID}, {"role": "viewer", "domain": b.ID}},
+		[]map[string]string{{"role": "viewer", "domain": a.ID}})
+	wide := h.client()
+	wide.bearer = tokens[0]
+	if l := listOperator(t, wide, "?limit=200"); len(l.Items) != 5 || l.UnreadCount != 5 {
+		t.Fatalf("wide token items %d unread %d, want 5 and 5", len(l.Items), l.UnreadCount)
+	}
+	narrow := h.client()
+	narrow.bearer = tokens[1]
+	for _, q := range []string{"?limit=200", "?space=alpha", "?space=beta", "?space=" + b.ID, "?state=all&space=beta", "?state=all&space=" + b.ID} {
+		l := listOperator(t, narrow, q)
+		if l.UnreadCount != 2 {
+			t.Fatalf("%s: unread_count %d, want 2 (space A only)", q, l.UnreadCount)
+		}
+		for _, it := range l.Items {
+			if it.SpaceID != a.ID {
+				t.Fatalf("%s: narrowed token saw %+v", q, it.Message)
+			}
+		}
+	}
+	if l := listOperator(t, narrow, "?space=beta"); len(l.Items) != 0 {
+		t.Fatalf("space=beta returned %d items to a token narrowed to A", len(l.Items))
+	}
+
+	// A cursor from the A-only view, reused without the filter or with B named, still reaches only A.
+	first := listOperator(t, narrow, "?space=alpha&limit=1")
+	if len(first.Items) != 1 || first.NextCursor == "" {
+		t.Fatalf("first page %+v", first)
+	}
+	for _, q := range []string{"?cursor=" + first.NextCursor, "?space=beta&cursor=" + first.NextCursor, "?state=all&limit=200&cursor=" + first.NextCursor} {
+		for _, it := range listOperator(t, narrow, q).Items {
+			if it.SpaceID != a.ID {
+				t.Fatalf("%s: a reused cursor revealed %+v", q, it.Message)
+			}
+		}
+	}
+	// The same cursor from the wide token's view is just a position; the narrow token still can't read past it into B.
+	wideFirst := listOperator(t, wide, "?limit=1")
+	for _, it := range listOperator(t, narrow, "?cursor="+wideFirst.NextCursor+"&state=all&limit=200").Items {
+		if it.SpaceID != a.ID {
+			t.Fatalf("a cursor taken with wider access revealed %+v", it.Message)
+		}
+	}
+
+	// Malformed cursors: not base64, a non-numeric key, an empty id.
+	for _, c := range []string{"garbage", api.EncodeCursor("not-a-number", "msg_x"), api.EncodeCursor("1", ""), api.EncodeCursor("-5", "msg_x")} {
+		expect(t, narrow.do("GET", "/messages?cursor="+c, nil), 422)
+	}
+}
+
+func listOperator(t *testing.T, c *client, query string) api.OperatorMessageList {
+	t.Helper()
+	var l api.OperatorMessageList
+	c.do("GET", "/messages"+query, nil).json(t, &l)
+	return l
+}
