@@ -23,9 +23,15 @@ import { Api, env, startAgent } from './stack'
  */
 // SM_E2E_CPU_THROTTLE measures at another rate (the bounds are for 4×); SM_E2E_CACHE_DISABLED=1 also disables the cache.
 const THROTTLE = Number(process.env.SM_E2E_CPU_THROTTLE ?? 4)
-const LONG_TASK_MS = 200
+// The catch-up's tasks measure about 150-200 ms when the host is idle, and up to about 215 ms when the node is busy with
+// other gates (CPU throttling slows the page, not the Playwright process, but the browser itself still shares cores). The
+// bound is that 200 ms plus a 50% margin for load: far under the 900-1500 ms the unfixed code produced, so a regression
+// still fails it while a busy host does not.
+const LONG_TASK_BASE_MS = 200
+const LONG_TASK_MS = Math.round(LONG_TASK_BASE_MS * 1.5)
 const INPUT_MS = 1_000
-const PAGE_TASK_MS = 300
+// Spaces' first render measures 140-190 ms idle and was seen at 393 ms on a busy node: the same 50% margin as above on 300 ms.
+const PAGE_TASK_MS = 450
 const ROUTE_TASK_MS = 500
 /** How long the home page gets to settle (its own render and queries) before a sidebar item is clicked. */
 const SETTLE_MS = 4_000
