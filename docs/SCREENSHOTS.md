@@ -9,6 +9,7 @@
 
 | Shot name | Guide(s) | UI area | Status |
 |---|---|---|---|
+| `overview` | Observability | The reworked Overview: the top attention items, usage tokens with the delta and top spaces and models, and the accounts strip (usage and windows are invented figures served for the shot) | current |
 | `landing-overview` | Site landing | Overview | current |
 | `setup-bootstrap` | Try it locally, Sign-in and access | First-run setup with the root token | current |
 | `setup-mfa` | Sign-in and access | TOTP enrollment on first sign-in | current |

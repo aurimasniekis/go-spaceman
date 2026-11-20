@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **A reworked Overview in the web UI.** From the top: the **top 5 items that need attention** (act before watch, each
+  linking to where it is handled, with "See all (N)" to `/attention`; this replaces the "Needs attention" tile), a
+  **Usage** summary (tokens today and over the last 7 days with the change against the 7 days before, a 14-day
+  sparkline, and the top 5 spaces and models; tokens only, no cost), and an **Accounts** strip with each account's
+  5-hour and 7-day window bars and any open limit (hidden when no account is bound). The Spaces table gains a
+  "tokens 7 d" figure. The page adds three requests (`/usage/series` by space and by model, `/account-windows`);
+  the Telegram Mini App home is unchanged. "Open Usage" links to `/usage`.
 - **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
   (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
   MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,

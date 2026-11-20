@@ -52,7 +52,9 @@ export const keys = {
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
   accountSwitches: (space: string) => ['account-switches', space] as const,
   rolePools: (space: string) => ['role-pools', space] as const,
+  allAccountWindows: ['account-windows', 'all'] as const,
   accountWindows: (space: string) => ['account-windows', space] as const,
+  globalUsage: (groupBy: string, from: string, to: string) => ['usage-all', groupBy, from, to] as const,
   spaceUsage: (space: string, bucket: string, groupBy: string, from: string, to: string) => ['space-usage', space, bucket, groupBy, from, to] as const,
   messages: (space: string) => ['messages', space] as const,
   /** Under keys.messages, so invalidating a space's messages refreshes it too. */
@@ -443,6 +445,39 @@ export const useAccountWindows = (space: string) =>
     queryKey: keys.accountWindows(space),
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/account-windows', { params: { path: { space_id: space } }, signal })).items,
   })
+
+/** The latest 5-hour and 7-day windows and open limits of every account bound to a space the caller reads (one request). */
+export const useAllAccountWindows = (enabled = true) =>
+  useQuery({
+    queryKey: keys.allAccountWindows, enabled,
+    queryFn: async ({ signal }) => unwrap(await api.GET('/account-windows', { signal })).items,
+  })
+
+/** Pages of the global series that one read follows at most; a normal installation needs one (200 rows). */
+const GLOBAL_USAGE_PAGES = 5
+
+/** Daily tokens across every readable space, grouped by space or model (the Overview's usage summary). */
+export const useGlobalUsage = (groupBy: 'space' | 'model', from: string, to: string) =>
+  useQuery({
+    queryKey: keys.globalUsage(groupBy, from, to),
+    queryFn: async ({ signal }) => {
+      const items = [] as NonNullable<Awaited<ReturnType<typeof globalUsagePage>>>['items']
+      let first: Awaited<ReturnType<typeof globalUsagePage>> | undefined
+      let cursor: string | undefined
+      for (let i = 0; i < GLOBAL_USAGE_PAGES; i++) {
+        const page = await globalUsagePage({ bucket: 'day', group_by: groupBy, from, to, cursor, limit: 200 }, signal)
+        first ??= page
+        items.push(...page.items)
+        cursor = page.next_cursor
+        if (!cursor) break
+      }
+      return { ...first!, items, next_cursor: cursor }
+    },
+  })
+
+async function globalUsagePage(query: { bucket: 'day'; group_by: 'space' | 'model'; from: string; to: string; cursor?: string; limit: number }, signal: AbortSignal) {
+  return unwrap(await api.GET('/usage/series', { params: { query }, signal }))
+}
 
 /** A space's token usage over time from the ledger. Tokens are the primary unit; cost is the harness's own list-price estimate. */
 export const useSpaceUsage = (space: string, bucket: 'hour' | 'day', groupBy: 'role' | 'account' | 'model' | 'harness', from: string, to: string) =>

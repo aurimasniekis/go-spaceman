@@ -705,6 +705,34 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByTestId('usage-totals')).toContainText('Estimated cost')
     await expect(page.getByRole('table', { name: 'Usage by role' })).toBeVisible()
   })
+  // The Overview's usage summary and accounts strip: the ledger and the windows of the stub harness are empty, so both
+  // are served with invented figures (two daily reads of /usage/series, by space and by model, over 14 days).
+  const grow = (d: number, group: string, tokens: number) => ({ bucket_start: stamp(today0 - d * dayMs).replace('.000Z', 'Z'), group, total_tokens: tokens, input_tokens: Math.round(tokens * 0.2),
+    output_tokens: Math.round(tokens * 0.05), cache_read_tokens: Math.round(tokens * 0.7), cache_write_tokens: Math.round(tokens * 0.05), reasoning_tokens: 0, requests: Math.round(tokens / 4000), total_cost_usd: 0 })
+  const days14 = Array.from({ length: 14 }, (_, i) => 13 - i)
+  const bySpace = days14.flatMap((d) => [grow(d, payments.id, 900_000 + ((d * 61) % 9) * 120_000 + (d < 7 ? 250_000 : 0)), grow(d, 'spc_shot_docs', 180_000 + ((d * 29) % 5) * 40_000)])
+  const byModel = days14.flatMap((d) => [grow(d, 'claude-sonnet-5-5', 700_000 + ((d * 61) % 9) * 90_000 + (d < 7 ? 200_000 : 0)), grow(d, 'claude-haiku-5-5', 380_000 + ((d * 29) % 5) * 70_000)])
+  const gseries = (items: ReturnType<typeof grow>[], groupBy: string) => ({ bucket: 'day', group_by: groupBy, from: stamp(today0 - 13 * dayMs), to: stamp(today0 + dayMs), items, labels: { [payments.id]: 'Payments platform', spc_shot_docs: 'Docs site' },
+    not_counted: [], cost_note: "The cost is the harness's own list-price estimate, not a bill; tokens are the primary unit.",
+    totals: { group: '', total_tokens: items.reduce((n, r) => n + r.total_tokens, 0), input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, requests: 0, total_cost_usd: 0 } })
+  await page.route(/\/api\/v1\/usage\/series/, (r) => {
+    const by = new URL(r.request().url()).searchParams.get('group_by')
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(by === 'model' ? gseries(byModel, 'model') : gseries(bySpace, 'space')) })
+  })
+  await stub('**/api/v1/account-windows', { items: [
+    { account_id: teamClaude.id, name: 'team-claude', harness: 'claude-code', limits: [], windows: [
+      { kind: 'five_hour', used_pct: 64, resets_at: stamp(at + 95 * 60_000), observed_at: stamp(at - 3 * 60_000) },
+      { kind: 'seven_day', used_pct: 41, resets_at: stamp(at + 4 * dayMs), observed_at: stamp(at - 3 * 60_000) }] },
+    { account_id: ciAnthropic.id, name: 'ci-anthropic', harness: 'claude-code', limits: [], windows: [
+      { kind: 'five_hour', used_pct: 92, resets_at: stamp(at + 40 * 60_000), observed_at: stamp(at - 12 * 60_000) },
+      { kind: 'seven_day', used_pct: 73, resets_at: stamp(at + 3 * dayMs), observed_at: stamp(at - 12 * 60_000) }] },
+  ] })
+  await capture(page, 'overview', async () => {
+    await page.goto('/')
+    await expect(page.getByTestId('usage-summary')).toContainText('Payments platform')
+    await expect(page.getByTestId('account-windows-strip')).toContainText('team-claude')
+    await expect(page.getByTestId('attention-top')).toBeVisible()
+  })
   await page.unrouteAll({ behavior: 'ignoreErrors' })
   await capture(page, 'human-types', async () => {
     await page.goto('/human-types')

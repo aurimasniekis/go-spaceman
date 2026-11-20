@@ -19,6 +19,9 @@ const BUDGET: Record<string, number> = {
   '/api/v1/spaces': 4,
   '/api/v1/nodes': 4,
   '/api/v1/attention': 4,
+  // The Overview adds three reads (plan §2.2): the daily series by space and by model, and the accounts' windows.
+  '/api/v1/usage/series': 4, // two (space, model), each refreshed once when the feed connects
+  '/api/v1/account-windows': 2,
 }
 
 test('a fresh tab makes a few requests per endpoint, whatever the change history', async ({ page, context }) => {
