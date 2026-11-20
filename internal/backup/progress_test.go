@@ -65,7 +65,7 @@ func TestReportProgress(t *testing.T) {
 	tr.enter(StageMemoryFlush)
 	before := tr.progress().LastProgressAt
 	clk.Advance(time.Minute)
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	_, idle := tr.idle()
 	ReportProgress(withTracker(context.Background(), tr))
 	if p := tr.progress(); !p.LastProgressAt.Equal(before.Add(time.Minute)) || p.Stage != StageMemoryFlush {
@@ -75,4 +75,13 @@ func TestReportProgress(t *testing.T) {
 		t.Fatalf("idle %s, was %s", d, idle)
 	}
 	ReportProgress(context.Background())
+
+	// Once the backup has left the memory-flush stage, a late report (an abandoned flush hook) changes nothing.
+	tr.enter(StageSnapshot)
+	at := tr.progress().LastProgressAt
+	clk.Advance(time.Minute)
+	ReportProgress(withTracker(context.Background(), tr))
+	if p := tr.progress(); !p.LastProgressAt.Equal(at) {
+		t.Fatalf("a report in stage %s moved the progress: %+v (was %s)", p.Stage, p, at)
+	}
 }

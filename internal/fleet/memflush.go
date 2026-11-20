@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -82,6 +83,10 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration, progres
 		wait = time.Minute
 	}
 	wait = min(wait, proto.MemoryFlushMaxWait*time.Second)
+	// A caller's deadline shorter than the wait bounds it too: nodes are not told to wait longer than the call can.
+	if dl, ok := ctx.Deadline(); ok {
+		wait = max(min(wait, time.Until(dl)), time.Second)
+	}
 	bound := wait + flushGrace(wait)
 	dctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
@@ -210,7 +215,7 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration, progres
 			default:
 				detail = "the request could not be queued in time: the node's outbound queue is full"
 			}
-			if ctx.Err() != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				detail = "the backup was stopped"
 			}
 			stale(w.node, w.name, w.spaces, FlushTimedOut, detail)

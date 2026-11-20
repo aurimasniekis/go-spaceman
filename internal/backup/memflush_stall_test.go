@@ -31,16 +31,16 @@ func succeededWithStaleMemory(t *testing.T, f *fixture, svc *backup.Service, dir
 }
 
 // SM-MEM-005, ADR-0091: a memory flush that waits until it is stopped (a node that never answers) cannot fail the
-// backup. The flush is stopped by its own bound (at most half the stall limit), which the snapshot does not share: the
+// backup. The flush is stopped by its own bound (MemoryFlushTimeout), which the snapshot does not share: the
 // backup goes on, succeeds and records the space as possibly stale. Before the fix the flush ran under the backup's
 // watchdog, which stopped the run in stage memory_flush and failed the snapshot ("open database …: context canceled").
-// The stall limit is long enough for the snapshot under the race detector on a loaded machine.
+// The stall limit is far above the flush bound (MemoryFlushTimeout), so load cannot make the watchdog the one to stop it.
 func TestServiceMemoryFlushStallDoesNotFailBackup(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	dir := filepath.Join(t.TempDir(), "backups")
 	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: backup.LocalTarget{Dir: dir}, Sources: f.sources(),
-		StallTimeout: 10 * time.Second,
+		StallTimeout: time.Minute, MemoryFlushTimeout: 300 * time.Millisecond,
 		PrepareMemory: func(ctx context.Context) *backup.MemoryFlush {
 			<-ctx.Done()
 			return &backup.MemoryFlush{Attempted: true, Flushed: []string{},
@@ -74,7 +74,7 @@ func TestServiceMemoryFlushHookStuck(t *testing.T) {
 	must(t, err)
 	<-reported
 	waitIdle(t, svc)
-	if d := time.Since(start); d > 20*time.Second {
+	if d := time.Since(start); d > 2*time.Minute {
 		t.Fatalf("the backup took %s", d)
 	}
 	succeededWithStaleMemory(t, f, svc, dir, b.ID, "did not finish within 300ms", 0)

@@ -15,7 +15,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its wait plus a short grace: requests are queued concurrently and give up at the deadline, and a node that cannot be
   reached in time is reported as `timed_out`. The flush runs under its own bounded context, outside the watchdog, so it
   never fails the backup: the backup goes on and names the spaces whose memory is possibly stale. Each node's outcome is
-  logged and counts as progress on the backup status. See the ADR-0091 amendment.
+  logged and counts as progress on the backup status; a flush hook that outlives its bound can no longer report progress in
+  a later stage and hide a real stall, and nodes are never told to wait longer than the flush has left. See the ADR-0091 amendment.
 
 ## [0.1.15] - 2026-11-20
 

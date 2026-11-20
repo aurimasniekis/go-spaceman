@@ -39,7 +39,7 @@ func waitIdle(t *testing.T, svc *backup.Service) {
 	go func() { svc.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(2 * time.Minute):
 		t.Fatal("the backup is still running: nothing bounded the stuck stage")
 	}
 }
@@ -52,7 +52,7 @@ func TestServiceStalledStageFailsAndReleasesBusy(t *testing.T) {
 	hang := &atomic.Bool{}
 	hang.Store(true)
 	tgt := hangingTarget{LocalTarget: backup.LocalTarget{Dir: filepath.Join(t.TempDir(), "backups")}, hang: hang, entered: make(chan struct{}, 1)}
-	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: tgt, Sources: f.sources(), StallTimeout: 10 * time.Second})
+	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: tgt, Sources: f.sources(), StallTimeout: 30 * time.Second})
 	first, err := svc.Start(f.ctx, admin, backup.TriggerManual)
 	must(t, err)
 	select {
@@ -107,7 +107,7 @@ func TestServiceMaxDurationFailsBackup(t *testing.T) {
 	hang.Store(true)
 	tgt := hangingTarget{LocalTarget: backup.LocalTarget{Dir: filepath.Join(t.TempDir(), "b")}, hang: hang, entered: make(chan struct{}, 1)}
 	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: tgt,
-		Sources: f.sources(), StallTimeout: time.Hour, MaxDuration: 10 * time.Second,
+		Sources: f.sources(), StallTimeout: time.Hour, MaxDuration: 40 * time.Second, MemoryFlushTimeout: 300 * time.Millisecond,
 		PrepareMemory: func(ctx context.Context) *backup.MemoryFlush {
 			<-ctx.Done()
 			return &backup.MemoryFlush{Attempted: true, Note: "stopped"}
@@ -120,5 +120,42 @@ func TestServiceMaxDurationFailsBackup(t *testing.T) {
 	it := item(t, st, r.ID)
 	if st.Busy || it.State != backup.StateFailed || !strings.Contains(it.Error, "stage upload") || !strings.Contains(it.Error, "limit") {
 		t.Fatalf("busy %v item %+v", st.Busy, it)
+	}
+}
+
+// An abandoned flush hook that keeps reporting progress after its bound must not mask a stall in a later stage: here
+// the hook reports in a loop and the backup still fails as stalled (the stage that stalls first does not matter; before the
+// fix, no stage could stall).
+func TestServiceAbandonedFlushHookCannotMaskStall(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	hang := &atomic.Bool{}
+	hang.Store(true)
+	tgt := hangingTarget{LocalTarget: backup.LocalTarget{Dir: filepath.Join(t.TempDir(), "b")}, hang: hang, entered: make(chan struct{}, 1)}
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: tgt, Sources: f.sources(),
+		StallTimeout: 4 * time.Second, MaxDuration: time.Hour, MemoryFlushTimeout: 300 * time.Millisecond,
+		PrepareMemory: func(ctx context.Context) *backup.MemoryFlush {
+			go func() {
+				for {
+					select {
+					case <-stop:
+						return
+					case <-time.After(20 * time.Millisecond):
+						backup.ReportProgress(ctx)
+					}
+				}
+			}()
+			select {} // ignores its context: abandoned at the bound
+		}})
+	r, err := svc.Start(f.ctx, admin, backup.TriggerManual)
+	must(t, err)
+	waitIdle(t, svc)
+	st, err := svc.Status(f.ctx)
+	must(t, err)
+	it := item(t, st, r.ID)
+	if it.State != backup.StateFailed || !strings.Contains(it.Error, "no progress") {
+		t.Fatalf("item %+v", it)
 	}
 }

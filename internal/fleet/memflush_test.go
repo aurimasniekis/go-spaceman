@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -88,5 +89,34 @@ func TestFlushMemoryBusyNodeFullQueue(t *testing.T) {
 	}
 	if n := len(progress); n != 2 {
 		t.Fatalf("progress reported %d times, want once per node", n)
+	}
+}
+
+// A caller's deadline shorter than the wait caps what nodes are told to wait, and a node that does not answer is
+// reported as timed out with the wait as the reason, not as a stopped backup.
+func TestFlushMemoryCapsWaitToContextDeadline(t *testing.T) {
+	t.Parallel()
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'quiet', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES
+		('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+	e.exec(`INSERT INTO memory_collections (id, space_id, role, created_at, updated_at) VALUES ('mco_a', 'spc_a', 'implementor', 0, 0)`)
+	s := flushSession(e, "nod_1", 8)
+	ctx, cancel := context.WithTimeout(e.ctx, 2*time.Second)
+	defer cancel()
+	res, err := e.svc.FlushMemory(ctx, time.Minute, nil)
+	if err != nil || len(res) != 1 {
+		t.Fatalf("results: %+v %v", res, err)
+	}
+	if r := res[0]; r.Flushed || r.Reason != FlushTimedOut || !strings.Contains(r.Detail, "no answer within") {
+		t.Fatalf("result: %+v", r)
+	}
+	env, err := proto.Decode(<-s.out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req proto.MemoryFlush
+	if env.Decode(&req) != nil || req.WaitSeconds < 1 || req.WaitSeconds > 2 {
+		t.Fatalf("request: %+v", req)
 	}
 }

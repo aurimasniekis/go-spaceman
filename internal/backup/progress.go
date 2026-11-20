@@ -147,8 +147,11 @@ func ReportProgress(ctx context.Context) {
 		return
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stage != StageMemoryFlush {
+		return // an abandoned flush hook must not mask a stall in a later stage
+	}
 	t.last, t.lastAt = time.Now(), t.clk.Now()
-	t.mu.Unlock()
 }
 
 // touch records progress within a file (bytes moved).
