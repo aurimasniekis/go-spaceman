@@ -17,4 +17,10 @@ describe('reasonLabel', () => {
     expect(reasonLabel('something_new')).toBe('something new')
     expect(reasonLabel()).toBe('')
   })
+  it('words a switch-back with its own wording where it has one', () => {
+    expect(reasonLabel('no_eligible_account', 'switch_back')).toBe('its original account was not available any more')
+    expect(reasonLabel('no_eligible_account', 'usage_limit')).toBe('no other account of the pool was free')
+    expect(reasonLabel('no_eligible_account')).toBe('no other account of the pool was free')
+    expect(reasonLabel('reset_near', 'switch_back')).toBe('the limit was about to reset')
+  })
 })

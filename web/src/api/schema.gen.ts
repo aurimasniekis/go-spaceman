@@ -6996,8 +6996,11 @@ export interface components {
         FleetAccountSwitch: {
             /** Format: date-time */
             armed_until?: string;
-            /** @enum {string} */
-            cause: "usage_limit" | "operator";
+            /**
+             * @description usage_limit: moved away from an account at its limit; operator: moved by a person; switch_back: moved back to the account a chain of usage-limit switches started from, after its reset (ADR-0105)
+             * @enum {string}
+             */
+            cause: "usage_limit" | "operator" | "switch_back";
             /** Format: date-time */
             created_at: string;
             from_account_id: string;
@@ -7006,11 +7009,14 @@ export interface components {
             harness: "claude-code" | "codex";
             id: string;
             instance_id: string;
+            /** @description The limit that caused a usage_limit switch; empty for a switch_back */
             limit_kind: string;
             /** Format: date-time */
             limit_resets_at?: string;
             limit_wait_id?: string;
             new_run_id?: string;
+            /** @description The account the chain of usage-limit switches started from; a switch_back moves the run there */
+            origin_account_id?: string;
             reason?: string;
             role: string;
             /** @enum {string} */
@@ -7153,10 +7159,10 @@ export interface components {
             /** Format: int64 */
             attempts: number;
             /**
-             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098)
+             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098); switch_back, the run was parked to move back to its original account (ADR-0105)
              * @enum {string}
              */
-            cause?: "agent_restart";
+            cause?: "agent_restart" | "switch_back";
             /** Format: date-time */
             created_at: string;
             /** @enum {string} */

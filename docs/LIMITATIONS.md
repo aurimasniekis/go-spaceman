@@ -283,6 +283,12 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Pool order ignores utilisation.** The resolver orders by priority, then the fewest live runs, then binding order. The
   windows are recorded and shown, and the headroom gate can refuse an account, but they don't rank the pool.
 - **Claude Code only.** Codex runs are not moved; a Codex run at its limit waits as before.
+- **Switch-back is simulated only (ADR-0105).** A run a usage limit moved goes back to its original account after the
+  reset, at an idle point (`usage_limit_switch_back`, on by default). Tested with a fake harness, a scripted node and a
+  fake clock; real two-account evidence is K-17. It costs a restart and an uncached first request, and an idle point
+  reported just before the program starts another turn can still have that turn interrupted by the stop. A run an
+  operator moved, a run through Harbor Pilot and a run at a dialog or under takeover are never moved back; one
+  switch-back per instance in 6 hours.
 - **A move ends the old process.** Background shells and subagents end with it, and the new run's prompt cache starts
   cold (an extra uncached request).
 - **A move can misattribute the last tokens of the old run.** A report that is lost or late is booked with the next

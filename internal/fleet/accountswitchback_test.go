@@ -147,6 +147,20 @@ func TestSwitchBackAfterResetAtIdle(t *testing.T) {
 	if sw = e.switchOf(run); sw.State != SwitchSucceeded {
 		t.Fatalf("switch-back %+v, want succeeded", sw)
 	}
+	// The API view carries the cause and the origin (what the CLI and the web show).
+	var view *AccountSwitch
+	if all, err := e.svc.AccountSwitches(e.ctx, "spc_a"); err != nil {
+		t.Fatal(err)
+	} else {
+		for i := range all {
+			if all[i].ID == sw.ID {
+				view = &all[i]
+			}
+		}
+	}
+	if view == nil || view.Cause != "switch_back" || view.OriginAccountID != "acc_1" || view.ToAccountID != "acc_1" || view.LimitKind != "" {
+		t.Fatalf("API view of the switch-back %+v", view)
+	}
 	// Home again: nothing more to do.
 	e.clk.Advance(time.Minute)
 	e.report(home, "working", 1, nil)
