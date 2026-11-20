@@ -8,17 +8,18 @@ page adds the view across spaces.
 
 - **Range**: 24 hours, 7 days, 30 days or 90 days. The 90-day range uses daily buckets.
 - **Group by**: space, account, model, role or harness. The chart and the table follow the grouping.
-- **Filters**: select an account, model, harness or space in the table to filter by it. A selected row's toggle is named
-  "Remove filter" with its value.
+- **Filters**: select an account, model or harness in the table to filter by it. A selected row's toggle is named
+  "Remove filter" with its value. Grouped by space, a row instead links to that space's Usage page; it does not filter.
 - **Totals**: tokens (input and output, cache) and an **estimated cost**, labelled as an estimate.
 - **Accounts**: each account bound to a space you can read, with its 5-hour and 7-day usage windows (used percentage and
-  when they reset), its open usage limits and its tokens in the range. With an account filter on, accounts outside the
-  filter show a dash.
+  when they reset) and its open usage limits. Its tokens in the range appear only when the page is grouped by account. With
+  an account filter on, accounts outside the filter show a dash.
 - **Not counted**: the runs in the range whose usage is not in the ledger, counted per harness: Codex, and runs that only
-  have Harbor Pilot figures. The note links to those runs. A missing figure is shown as unknown, not as zero.
+  have Harbor Pilot figures. On a space's own Usage page, the note links to that space's run pages. A missing figure is
+  shown as unknown, not as zero.
 
-The range, grouping and filters are in the page's address. A view can be linked to and survives a reload. A space row
-opens that space's [Usage page](/guide/usage), which also offers the 90-day range.
+The range, grouping and filters are in the page's address. A view can be linked to and survives a reload. When grouped by
+space, a space row opens that space's [Usage page](/guide/usage), which also offers the 90-day range.
 
 ## Who sees what
 

@@ -16,7 +16,7 @@ The rows are grouped in two:
 Pending human actions are one row, **Human actions**, that opens [Needs you](/guide/human-actions). The Act now count
 includes them.
 
-<Shot name="attention" alt="The Attention page: two spaces with pending human actions and quarantined events, outbound events, backups and central's storage with the data disk's free space" caption="The Attention page" />
+<Shot name="attention" alt="The Attention page: one space with pending human actions and quarantined events, outbound events, backups and central's storage with the data disk's free space" caption="The Attention page" />
 
 ## Filters and limits
 

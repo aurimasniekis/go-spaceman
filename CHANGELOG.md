@@ -65,8 +65,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   200k rows by space: about 50 ms). See ADR-0103. `GET /account-windows` (and `spaceman usage windows`) returns each
   subscription account bound, directly or through a role pool, to a space you can read (`run:read`), once, with its
   name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound only to spaces you can't read
-  is not listed and its name isn't disclosed. It reads stored state only and fetches nothing from a provider. The
-  Usage page will build on it.
+  is not listed and its name isn't disclosed. It reads stored state only and fetches nothing from a provider.
 - **One list of the messages addressed to operators, across all spaces, and a Messages tab under Needs you.** `GET
   /messages` (`list-operator-messages`) returns the messages to operators from every space you hold `message:read` in,
   newest first, with the space's slug and name on each item so a client can act through the per-space ack, reply and
