@@ -41,6 +41,18 @@ describe('mermaid', () => {
     expect(svg).toContain('link')
   })
 
+  it('yields to the page between two queued renders', async () => {
+    const order: string[] = []
+    m.render.mockImplementation(async (_id: string, src: string) => {
+      order.push(src)
+      // A task queued while the first render runs must get its turn before the second render starts.
+      if (src === 'r1') setTimeout(() => order.push('turn'))
+      return { svg: '<svg><text>x</text></svg>' }
+    })
+    await Promise.all([renderMermaid('r1', 'light'), renderMermaid('r2', 'light')])
+    expect(order).toEqual(['r1', 'turn', 'r2'])
+  })
+
   it('rejects oversized sources without calling mermaid', async () => {
     await expect(renderMermaid('graph TD\n' + 'A-->B\n'.repeat(5000), 'light')).rejects.toThrow(/longer than 10000/)
     // 4,000 bare node IDs fit in 10,000 characters but took 7 seconds: the statement count is capped too.
