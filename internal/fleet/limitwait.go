@@ -131,6 +131,8 @@ type limitWaitJob struct {
 	recoverAt time.Time
 	// spacedUntil holds the next resume round back after one that hit limitResumeBatch.
 	spacedUntil time.Time
+	// backFull is when the switch-back pass last looked at every candidate, backPass when it last ran (ADR-0105).
+	backFull, backPass time.Time
 }
 
 // errResumeAborted ends a resume's launch transaction without a run: the wait's task moved meanwhile.
@@ -224,8 +226,12 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 
 // parkWithTx is parkTx, for an account switch (sw, ADR-0090) when sw is set: the wait is due at once and resumes on
 // the switch's target account, and the switch is parked with it.
+//
+// A switch-back (ADR-0105) parks a run that is at no limit: its wait has the cause switch_back, starts its own release
+// time and attempts, and holds no usage limit.
 func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim limitState, why string, sw *db.AccountSwitch) (*db.LimitWait, error) {
-	if !parkKind(r.Kind) || lim.kind == "" {
+	back := sw != nil && sw.Cause == SwitchCauseSwitchBack
+	if !parkKind(r.Kind) || lim.kind == "" && !back {
 		return nil, nil
 	}
 	if _, err := tx.Q.GetLimitWaitByRun(ctx, r.ID); err == nil {
@@ -244,12 +250,18 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	now := tx.Now
 	w := db.LimitWait{ID: ids.New(ids.LimitWait), SpaceID: r.SpaceID, RunID: r.ID, RunKind: r.Kind, Role: r.Role, NodeID: r.NodeID,
 		InstanceID: r.InstanceID, Harness: r.Harness, LaunchJson: r.LaunchJson, State: WaitWaiting, Version: 1, CreatedAt: now.UnixMicro(), UpdatedAt: now.UnixMicro()}
+	if back {
+		w.Cause = WaitCauseSwitchBack
+	}
 	prev, err := tx.Q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: r.ID})
 	repark := err == nil
 	switch {
 	case repark:
-		// The task isn't carried: the lookup below finds it only while it is still this run's.
-		w.Attempts, w.ReleaseAt = prev.Attempts, prev.ReleaseAt
+		// The task isn't carried: the lookup below finds it only while it is still this run's. A switch-back is not a
+		// new wait for the same limit: its release time and attempts start afresh.
+		if !back {
+			w.Attempts, w.ReleaseAt = prev.Attempts, prev.ReleaseAt
+		}
 		// The resumed run was launched with the resume note: a later fresh session needs the original prompt.
 		var spec, first LaunchSpec
 		if json.Unmarshal([]byte(r.LaunchJson), &spec) == nil && json.Unmarshal([]byte(prev.LaunchJson), &first) == nil {
@@ -278,7 +290,7 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 		}
 	}
 	var hold *db.UsageLimit
-	if scope, account, gw, ok := limitScope(r, lim.kind); ok {
+	if scope, account, gw, ok := limitScope(r, lim.kind); ok && lim.kind != "" {
 		if u, err := tx.Q.GetOpenUsageLimit(ctx, db.GetOpenUsageLimitParams{SpaceID: r.SpaceID, Scope: scope, AccountID: account, GatewayRef: gw, Kind: lim.kind}); err == nil {
 			hold, w.UsageLimitID = &u, u.ID
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -515,6 +527,11 @@ func (svc *Service) NextLimitWait(ctx context.Context) (time.Time, error) {
 	if armed > 0 {
 		earlier(time.UnixMicro(armed))
 	}
+	back, err := svc.nextSwitchBack(ctx, q, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	earlier(back)
 	runs, err := q.ListLimitedLiveRuns(ctx, maxLimitRows)
 	if err != nil {
 		return time.Time{}, err
@@ -564,6 +581,9 @@ func (svc *Service) LimitWaitsDue(ctx context.Context) (int, error) {
 	done += n
 	errs = append(errs, err)
 	n, err = svc.parkDueRuns(ctx, now)
+	done += n
+	errs = append(errs, err)
+	n, err = svc.switchBackRuns(ctx, now)
 	done += n
 	errs = append(errs, err)
 	n, err = svc.resumeDueWaits(ctx, now)
@@ -935,8 +955,13 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 			return svc.deferWaitTx(ctx, tx, w, at, reason)
 		}
 		// A switch's target is re-resolved (ADR-0090 §3.4 step 4): held or gone, the next eligible account takes its
-		// place; none left, the run waits for its reset. An operator's "resume now" goes on either way.
-		if goOn, err := svc.switchResumeCheckTx(ctx, tx, &w); err != nil {
+		// place; none left, the run waits for its reset. An operator's "resume now" goes on either way. A switch-back
+		// goes only to its origin, or stays on the run's account (ADR-0105).
+		check := svc.switchResumeCheckTx
+		if w.Cause == WaitCauseSwitchBack {
+			check = svc.switchBackResumeCheckTx
+		}
+		if goOn, err := check(ctx, tx, &w); err != nil {
 			return err
 		} else if !goOn && !manual {
 			return nil
@@ -994,8 +1019,11 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 			return svc.resumedTx(ctx, tx, actor, w, runID, fresh)
 		}
 		resumeKey := "usage_limit_resume"
-		if w.Cause == WaitCauseRestart {
+		switch w.Cause {
+		case WaitCauseRestart:
 			resumeKey = "agent_restart_resume"
+		case WaitCauseSwitchBack:
+			resumeKey = "switch_back_resume"
 		}
 		in.manifest = map[string]any{resumeKey: map[string]any{"limit_wait_id": w.ID, "parked_run_id": w.RunID, "session_resumed": in.SessionID != "",
 			"relocated": fresh}}
@@ -1066,6 +1094,20 @@ const (
 	restartFreshPrompt = "The node's agent restarted and stopped your previous process, and that session could not be resumed (the space moved to " +
 		"another node, or the session was never started), so this is a fresh session. Continue the task from the state of the workspace; check " +
 		"spaceman_messages first."
+	// switchBackPrompt and switchBackFreshPrompt are a switch-back's (ADR-0105); switchBackStayPrompt and
+	// switchBackStayFreshPrompt a switch-back whose origin could no longer take the run, so it stays on its account.
+	switchBackPrompt = "SpaceMan moved this session back to its original subscription account, whose usage limit has reset. Nothing else " +
+		"changed: continue what you were doing without repeating completed work, and if you were waiting (for a reply, a review or a person), " +
+		"keep waiting. Check spaceman_messages first."
+	switchBackFreshPrompt = "SpaceMan moved you back to your original subscription account, whose usage limit has reset. Your previous " +
+		"session could not be resumed (the space moved to another node, or resuming it failed), so this is a fresh session. Continue the task " +
+		"from the state of the workspace; check spaceman_messages first."
+	switchBackStayPrompt = "SpaceMan stopped this session to move it back to its original subscription account, but that account could no " +
+		"longer take it, so the session continues on the same account. Nothing else changed: continue what you were doing, and if you were " +
+		"waiting, keep waiting. Check spaceman_messages first."
+	switchBackStayFreshPrompt = "SpaceMan stopped your previous session to move it back to its original subscription account, and that " +
+		"session could not be resumed (the space moved to another node, or resuming it failed), so this is a fresh session on the same " +
+		"account. Continue the task from the state of the workspace; check spaceman_messages first."
 	freshPrompt = "SpaceMan paused your previous session at a usage limit, and the limit has reset. That session could not be resumed (the " +
 		"space moved to another node, or resuming it failed), so this is a fresh session. Continue the task from the state of the workspace; " +
 		"check spaceman_messages first."
@@ -1081,12 +1123,18 @@ func waitLaunch(w db.LimitWait, fresh bool) (LaunchInput, error) {
 	in := LaunchInput{Kind: w.RunKind, Role: w.Role, Harness: w.Harness, InstanceID: w.InstanceID, Model: spec.Model, Settings: spec.Settings,
 		Workspace: spec.Workspace, Worktree: spec.Worktree, AccountRef: spec.AccountRef, Prompt: resumePrompt, RequirePoolMember: true}
 	again := freshPrompt
-	if w.Cause == WaitCauseRestart {
+	switch w.Cause {
+	case WaitCauseRestart:
 		in.Prompt, again = restartPrompt, restartFreshPrompt
+	case WaitCauseSwitchBack:
+		in.Prompt, again = switchBackStayPrompt, switchBackStayFreshPrompt
 	}
 	if w.SwitchToAccountID != "" {
 		// An account switch (ADR-0090): the launch names the target; the launch transaction still resolves it.
 		in.AccountRef, in.Prompt, again = w.SwitchToAccountID, switchPrompt, switchFreshPrompt
+		if w.Cause == WaitCauseSwitchBack {
+			in.Prompt, again = switchBackPrompt, switchBackFreshPrompt
+		}
 	}
 	switch {
 	case fresh || w.SessionID == "":
@@ -1217,8 +1265,11 @@ func (svc *Service) ControlParked(ctx context.Context, spaceID string) (bool, er
 
 // releaseReason is the status reason a released wait gives its task.
 func releaseReason(w db.LimitWait) string {
-	if w.Cause == WaitCauseRestart {
+	switch w.Cause {
+	case WaitCauseRestart:
 		return "its run was stopped by an agent restart and could not be resumed"
+	case WaitCauseSwitchBack:
+		return "its run was stopped to move back to its original account and could not be resumed"
 	}
 	return "its run waited for a usage limit to reset for too long"
 }

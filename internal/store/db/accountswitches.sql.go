@@ -30,7 +30,7 @@ func (q *Queries) CountAccountSwitchesSince(ctx context.Context, arg CountAccoun
 }
 
 const getAccountSwitch = `-- name: GetAccountSwitch :one
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at FROM account_switches WHERE id = ?
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE id = ?
 `
 
 func (q *Queries) GetAccountSwitch(ctx context.Context, id string) (AccountSwitch, error) {
@@ -59,12 +59,13 @@ func (q *Queries) GetAccountSwitch(ctx context.Context, id string) (AccountSwitc
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginAccountID,
 	)
 	return i, err
 }
 
 const getActiveAccountSwitch = `-- name: GetActiveAccountSwitch :one
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at FROM account_switches WHERE space_id = ? AND instance_id = ? AND state IN ('pending', 'parked', 'resumed')
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE space_id = ? AND instance_id = ? AND state IN ('pending', 'parked', 'resumed')
 `
 
 type GetActiveAccountSwitchParams struct {
@@ -98,12 +99,13 @@ func (q *Queries) GetActiveAccountSwitch(ctx context.Context, arg GetActiveAccou
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginAccountID,
 	)
 	return i, err
 }
 
 const getLatestAccountSwitchByRun = `-- name: GetLatestAccountSwitchByRun :one
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at FROM account_switches WHERE from_run_id = ? ORDER BY created_at DESC, id DESC LIMIT 1
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE from_run_id = ? ORDER BY created_at DESC, id DESC LIMIT 1
 `
 
 // The newest switch decided for a run (any state).
@@ -133,12 +135,98 @@ func (q *Queries) GetLatestAccountSwitchByRun(ctx context.Context, fromRunID str
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginAccountID,
+	)
+	return i, err
+}
+
+const getNewestAccountSwitchOfInstance = `-- name: GetNewestAccountSwitchOfInstance :one
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE space_id = ? AND instance_id = ? AND state NOT IN ('fell_back', 'cancelled')
+ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+type GetNewestAccountSwitchOfInstanceParams struct {
+	SpaceID    string
+	InstanceID string
+}
+
+// The newest switch of an instance that moved, or was set to move, a run (fell_back and cancelled ones moved nothing):
+// the switch that put the instance on its account, or the one moving it now (ADR-0105).
+func (q *Queries) GetNewestAccountSwitchOfInstance(ctx context.Context, arg GetNewestAccountSwitchOfInstanceParams) (AccountSwitch, error) {
+	row := q.db.QueryRowContext(ctx, getNewestAccountSwitchOfInstance, arg.SpaceID, arg.InstanceID)
+	var i AccountSwitch
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.InstanceID,
+		&i.Role,
+		&i.RunKind,
+		&i.Harness,
+		&i.FromRunID,
+		&i.NewRunID,
+		&i.FromAccountID,
+		&i.ToAccountID,
+		&i.Cause,
+		&i.LimitKind,
+		&i.LimitResetsAt,
+		&i.LimitSince,
+		&i.UsageLimitID,
+		&i.LimitWaitID,
+		&i.State,
+		&i.Reason,
+		&i.ArmedUntil,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OriginAccountID,
+	)
+	return i, err
+}
+
+const getNewestSwitchBackOfInstance = `-- name: GetNewestSwitchBackOfInstance :one
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE space_id = ? AND instance_id = ? AND cause = 'switch_back' AND state NOT IN ('fell_back', 'cancelled')
+ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+type GetNewestSwitchBackOfInstanceParams struct {
+	SpaceID    string
+	InstanceID string
+}
+
+// The newest switch-back of an instance that moved, or was set to move, its run (the ping-pong guard, ADR-0105).
+func (q *Queries) GetNewestSwitchBackOfInstance(ctx context.Context, arg GetNewestSwitchBackOfInstanceParams) (AccountSwitch, error) {
+	row := q.db.QueryRowContext(ctx, getNewestSwitchBackOfInstance, arg.SpaceID, arg.InstanceID)
+	var i AccountSwitch
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.InstanceID,
+		&i.Role,
+		&i.RunKind,
+		&i.Harness,
+		&i.FromRunID,
+		&i.NewRunID,
+		&i.FromAccountID,
+		&i.ToAccountID,
+		&i.Cause,
+		&i.LimitKind,
+		&i.LimitResetsAt,
+		&i.LimitSince,
+		&i.UsageLimitID,
+		&i.LimitWaitID,
+		&i.State,
+		&i.Reason,
+		&i.ArmedUntil,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OriginAccountID,
 	)
 	return i, err
 }
 
 const getPendingAccountSwitchByRun = `-- name: GetPendingAccountSwitchByRun :one
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at FROM account_switches WHERE from_run_id = ? AND state = 'pending'
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE from_run_id = ? AND state = 'pending'
 `
 
 // The switch armed for a run that is waiting for its idle point.
@@ -168,12 +256,13 @@ func (q *Queries) GetPendingAccountSwitchByRun(ctx context.Context, fromRunID st
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginAccountID,
 	)
 	return i, err
 }
 
 const getResumedAccountSwitchByNewRun = `-- name: GetResumedAccountSwitchByNewRun :one
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at FROM account_switches WHERE new_run_id = ? AND state = 'resumed'
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE new_run_id = ? AND state = 'resumed'
 `
 
 // The switch that started a run, while it is not yet verified.
@@ -203,6 +292,7 @@ func (q *Queries) GetResumedAccountSwitchByNewRun(ctx context.Context, newRunID 
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginAccountID,
 	)
 	return i, err
 }
@@ -210,30 +300,31 @@ func (q *Queries) GetResumedAccountSwitchByNewRun(ctx context.Context, newRunID 
 const insertAccountSwitch = `-- name: InsertAccountSwitch :exec
 
 INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, to_account_id, cause, limit_kind,
-  limit_resets_at, limit_since, usage_limit_id, state, reason, armed_until, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  limit_resets_at, limit_since, usage_limit_id, state, reason, armed_until, created_at, updated_at, origin_account_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertAccountSwitchParams struct {
-	ID            string
-	SpaceID       string
-	InstanceID    string
-	Role          string
-	RunKind       string
-	Harness       string
-	FromRunID     string
-	FromAccountID string
-	ToAccountID   string
-	Cause         string
-	LimitKind     string
-	LimitResetsAt sql.NullInt64
-	LimitSince    sql.NullInt64
-	UsageLimitID  string
-	State         string
-	Reason        string
-	ArmedUntil    sql.NullInt64
-	CreatedAt     int64
-	UpdatedAt     int64
+	ID              string
+	SpaceID         string
+	InstanceID      string
+	Role            string
+	RunKind         string
+	Harness         string
+	FromRunID       string
+	FromAccountID   string
+	ToAccountID     string
+	Cause           string
+	LimitKind       string
+	LimitResetsAt   sql.NullInt64
+	LimitSince      sql.NullInt64
+	UsageLimitID    string
+	State           string
+	Reason          string
+	ArmedUntil      sql.NullInt64
+	CreatedAt       int64
+	UpdatedAt       int64
+	OriginAccountID string
 }
 
 // Account switches (ADR-0090, plan T3). Keep this file ASCII (sqlc offsets).
@@ -258,12 +349,13 @@ func (q *Queries) InsertAccountSwitch(ctx context.Context, arg InsertAccountSwit
 		arg.ArmedUntil,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.OriginAccountID,
 	)
 	return err
 }
 
 const listAccountSwitchesBySpace = `-- name: ListAccountSwitchesBySpace :many
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at FROM account_switches WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
 `
 
 type ListAccountSwitchesBySpaceParams struct {
@@ -303,6 +395,7 @@ func (q *Queries) ListAccountSwitchesBySpace(ctx context.Context, arg ListAccoun
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OriginAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -318,7 +411,7 @@ func (q *Queries) ListAccountSwitchesBySpace(ctx context.Context, arg ListAccoun
 }
 
 const listArmedAccountSwitchesDue = `-- name: ListArmedAccountSwitchesDue :many
-SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at FROM account_switches WHERE state = 'pending' AND armed_until <= ? ORDER BY armed_until, id LIMIT ?
+SELECT id, space_id, instance_id, role, run_kind, harness, from_run_id, new_run_id, from_account_id, to_account_id, cause, limit_kind, limit_resets_at, limit_since, usage_limit_id, limit_wait_id, state, reason, armed_until, version, created_at, updated_at, origin_account_id FROM account_switches WHERE state = 'pending' AND armed_until <= ? ORDER BY armed_until, id LIMIT ?
 `
 
 type ListArmedAccountSwitchesDueParams struct {
@@ -359,7 +452,47 @@ func (q *Queries) ListArmedAccountSwitchesDue(ctx context.Context, arg ListArmed
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OriginAccountID,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSwitchBackCandidates = `-- name: ListSwitchBackCandidates :many
+SELECT r.id AS run_id, s.origin_account_id FROM runs r
+JOIN account_switches s ON s.id = (SELECT s2.id FROM account_switches s2 WHERE s2.space_id = r.space_id AND s2.instance_id = r.instance_id
+    AND s2.state NOT IN ('fell_back', 'cancelled') ORDER BY s2.created_at DESC, s2.id DESC LIMIT 1)
+WHERE r.observed = 'running' AND r.desired = 'running' AND r.status IN ('idle', 'done') AND r.limit_kind = ''
+  AND s.cause = 'usage_limit' AND s.state IN ('succeeded', 'failed') AND s.origin_account_id <> '' AND s.origin_account_id <> s.to_account_id
+ORDER BY r.id LIMIT ?
+`
+
+type ListSwitchBackCandidatesRow struct {
+	RunID           string
+	OriginAccountID string
+}
+
+// Live runs between turns whose instance's newest switch moved it at a usage limit: the runs that may go back to their
+// chain's origin account (ADR-0105). The rest of the decision is made per run.
+func (q *Queries) ListSwitchBackCandidates(ctx context.Context, limit int64) ([]ListSwitchBackCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSwitchBackCandidates, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSwitchBackCandidatesRow{}
+	for rows.Next() {
+		var i ListSwitchBackCandidatesRow
+		if err := rows.Scan(&i.RunID, &i.OriginAccountID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

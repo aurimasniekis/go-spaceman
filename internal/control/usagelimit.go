@@ -131,6 +131,43 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 		_, err := sv.msgs.NotifyControlTx(ctx, tx, w.SpaceID, key, subject, body)
 		return err
 	}
+	if w.Cause == fleet.WaitCauseSwitchBack {
+		// A run moved back to its original account after that account's reset (ADR-0105): told once, at its resume.
+		how := "with its session"
+		if ev.Fresh {
+			how = "in a fresh session (its session could not be carried over), with its original prompt"
+		}
+		switch ev.Change {
+		case fleet.LimitWaitResumed:
+			if sw := ev.Switch; sw != nil {
+				key, subject = "account-switch:"+sw.ID, fmt.Sprintf("%s run moved back to its original account", w.Role)
+				body = fmt.Sprintf("Run %s (%s, %s) was on account %s because of a usage limit on account %s, which has reset; at its idle point "+
+					"SpaceMan continued it as run %s on account %s, on the same instance, %s.%s Don't relaunch or reassign it. The switch is %s.",
+					w.RunID, w.RunKind, w.Role, accountName(ctx, tx, sw.FromAccountID), accountName(ctx, tx, sw.ToAccountID), ev.NewRunID,
+					accountName(ctx, tx, sw.ToAccountID), how, taskNow(task, ev.NewRunID), sw.ID)
+				break
+			}
+			key, subject = "limit-wait-resumed:"+w.ID, fmt.Sprintf("%s run restarted on the same account", w.Role)
+			body = fmt.Sprintf("Run %s (%s, %s) was stopped to move back to its original account, which could no longer take it; SpaceMan "+
+				"continued it as run %s on the same account and instance, %s.%s Don't relaunch or reassign it.",
+				w.RunID, w.RunKind, w.Role, ev.NewRunID, how, taskNow(task, ev.NewRunID))
+		case fleet.LimitWaitReleased:
+			key, subject = "limit-wait-released:"+w.ID, fmt.Sprintf("%s run given up while moving back to its original account", w.Role)
+			body = fmt.Sprintf("Run %s (%s, %s) was stopped to move back to its original account and was not resumed; SpaceMan gave up on it (%s).%s",
+				w.RunID, w.RunKind, w.Role, w.LastError, task)
+			if ev.TaskStatus == "ready" {
+				body += " The task is back in the queue, ready and unassigned: launch a worker for it."
+			}
+		case fleet.LimitWaitResumeFailed:
+			key, subject = "limit-wait-resume-failed:"+w.ID, fmt.Sprintf("%s run's resume failed; restarted fresh", w.Role)
+			body = fmt.Sprintf("Run %s (%s, %s), moved back to its original account, ended before its first turn: resuming its session failed. "+
+				"SpaceMan starts it again now in a fresh session with its original prompt, on the same instance.%s", w.RunID, w.RunKind, w.Role, task)
+		default:
+			return nil
+		}
+		_, err := sv.msgs.NotifyControlTx(ctx, tx, w.SpaceID, key, subject, body)
+		return err
+	}
 	switch ev.Change {
 	case fleet.LimitWaitParked:
 		// An account switch's park is told with its resume (one message per switch, ADR-0090).

@@ -86,6 +86,9 @@ const (
 	// UsageLimitMinHeadroomPercent gates launches: a new run skips an account with less than this percentage of a known
 	// window left (0: off). Running agents are never moved for it.
 	UsageLimitMinHeadroomPercent = "usage_limit_min_headroom_percent"
+	// UsageLimitSwitchBack moves a run that a usage limit moved to another account back to its original account once
+	// that account has reset, at an idle point (ADR-0105; 1: on, the default).
+	UsageLimitSwitchBack = "usage_limit_switch_back"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -220,6 +223,9 @@ var Defs = []Def{
 	{Key: UsageLimitMinHeadroomPercent, Label: "Launch headroom gate", Unit: "percent",
 		Scope:    "a new agent (a launch or a fresh resume) does not start on an account when a window with known usage leaves less than this percentage free; it uses the next eligible account of its pool, or the launch is refused until the earliest reset. An account with no known usage is not refused, a running agent is never moved because of it (0: off)",
 		Enforced: "launches and resumes (account choice)", OnLower: "Applies to launches from then on; running agents are untouched.", Overridable: true},
+	{Key: UsageLimitSwitchBack, Label: "Switch back after a reset", Unit: "switch",
+		Scope:    "with usage-limit failover on, a run that a usage limit moved to another account of its pool goes back to the account it was moved away from once that account's limit has reset and it is eligible again, at the run's next idle point between turns (never mid-turn; at most once per agent instance in 6 hours)",
+		Enforced: "run reports and the usage-limit job (switch-back decision)", OnLower: "Turning it off starts no new switch-back; one already under way resumes the run on the account it was on.", Overridable: true},
 }
 
 const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."

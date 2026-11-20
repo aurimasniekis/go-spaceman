@@ -230,6 +230,10 @@ type LimitsConfig struct {
 	// window usage leaves less than this percentage free (0-100, default 0: off; ADR-0090 decision 4). Running agents
 	// are never moved because of it.
 	UsageLimitMinHeadroomPercent int64 `yaml:"usage_limit_min_headroom_percent"`
+	// UsageLimitSwitchBack moves a run that a usage limit moved to another account back to the account it was moved
+	// away from once that account has reset, at the run's next idle point (1: on, the default; 0: off; applies only with
+	// usage_limit_failover on; ADR-0105).
+	UsageLimitSwitchBack int64 `yaml:"usage_limit_switch_back"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual

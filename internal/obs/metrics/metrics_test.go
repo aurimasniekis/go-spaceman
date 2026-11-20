@@ -42,7 +42,7 @@ func exercise(m *Metrics) {
 	m.RunStarted(HarnessCodex, RunAdopted)
 	m.RunEnded(HarnessClaude, RunLeaseExpired)
 	m.RunReconciledStale(StaleNotOnNode)
-	m.AccountSwitch(SwitchStarted)
+	m.AccountSwitch(SwitchCauseUsageLimit, SwitchStarted)
 	m.IngestProcessed(IngestCore, IngestLive, IngestCreated, time.Millisecond)
 	m.SetIngestPending(map[IngestDelivery]int64{IngestDurable: 3}, 1)
 	m.IngestCoreDropped(2)
@@ -126,7 +126,7 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_runs_started_total":                    "counter:harness,result",
 		"spaceman_runs_ended_total":                      "counter:harness,reason",
 		"spaceman_runs_reconciled_stale_total":           "counter:reason",
-		"spaceman_account_switches_total":                "counter:result",
+		"spaceman_account_switches_total":                "counter:cause,result",
 		"spaceman_gateway_revocations_failed":            "gauge:",
 		"spaceman_storage_filesystem_size_bytes":         "gauge:volume",
 		"spaceman_storage_filesystem_avail_bytes":        "gauge:volume",
@@ -209,7 +209,7 @@ func TestEnumLabelsNormalized(t *testing.T) {
 	m.RunStarted(Harness(planted), RunStartResult(planted))
 	m.RunEnded(Harness(planted), RunEndReason(planted))
 	m.RunReconciledStale(StaleReason(planted))
-	m.AccountSwitch(SwitchResult(planted))
+	m.AccountSwitch(SwitchCause(planted), SwitchResult(planted))
 	m.StoreTx("x", 0, TxResult(planted))
 	m.OIDCLogin(planted, LoginOutcome(planted))
 	m.UserLogin(LoginMethod(planted), LoginOutcome(planted))

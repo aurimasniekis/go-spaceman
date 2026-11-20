@@ -2,8 +2,8 @@
 
 -- name: InsertAccountSwitch :exec
 INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, to_account_id, cause, limit_kind,
-  limit_resets_at, limit_since, usage_limit_id, state, reason, armed_until, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  limit_resets_at, limit_since, usage_limit_id, state, reason, armed_until, created_at, updated_at, origin_account_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetAccountSwitch :one
 SELECT * FROM account_switches WHERE id = ?;
@@ -42,3 +42,24 @@ SELECT * FROM account_switches WHERE state = 'pending' AND armed_until <= ? ORDE
 
 -- name: NextArmedAccountSwitch :one
 SELECT CAST(coalesce(min(armed_until), 0) AS INTEGER) AS at FROM account_switches WHERE state = 'pending';
+
+-- The newest switch of an instance that moved, or was set to move, a run (fell_back and cancelled ones moved nothing):
+-- the switch that put the instance on its account, or the one moving it now (ADR-0105).
+-- name: GetNewestAccountSwitchOfInstance :one
+SELECT * FROM account_switches WHERE space_id = ? AND instance_id = ? AND state NOT IN ('fell_back', 'cancelled')
+ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- The newest switch-back of an instance that moved, or was set to move, its run (the ping-pong guard, ADR-0105).
+-- name: GetNewestSwitchBackOfInstance :one
+SELECT * FROM account_switches WHERE space_id = ? AND instance_id = ? AND cause = 'switch_back' AND state NOT IN ('fell_back', 'cancelled')
+ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- Live runs between turns whose instance's newest switch moved it at a usage limit: the runs that may go back to their
+-- chain's origin account (ADR-0105). The rest of the decision is made per run.
+-- name: ListSwitchBackCandidates :many
+SELECT r.id AS run_id, s.origin_account_id FROM runs r
+JOIN account_switches s ON s.id = (SELECT s2.id FROM account_switches s2 WHERE s2.space_id = r.space_id AND s2.instance_id = r.instance_id
+    AND s2.state NOT IN ('fell_back', 'cancelled') ORDER BY s2.created_at DESC, s2.id DESC LIMIT 1)
+WHERE r.observed = 'running' AND r.desired = 'running' AND r.status IN ('idle', 'done') AND r.limit_kind = ''
+  AND s.cause = 'usage_limit' AND s.state IN ('succeeded', 'failed') AND s.origin_account_id <> '' AND s.origin_account_id <> s.to_account_id
+ORDER BY r.id LIMIT ?;
