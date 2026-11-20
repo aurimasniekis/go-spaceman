@@ -207,12 +207,14 @@ func (svc *Service) switchBackAtIdleTx(ctx context.Context, tx *store.Tx, runID,
 }
 
 // switchBackCandidates lists the runs that may go back to their origin account, in spaces with switching back on.
-// The setting is per space, so it is applied page by page: pages of maxLimitRows are read until that many candidates
+// The setting is per space, so it is applied page by page: pages of maxLimitRows are read until maxLimitRows candidates
 // of spaces with it on are found, so spaces with it off never use up the limit.
 func (svc *Service) switchBackCandidates(ctx context.Context, q *db.Queries) ([]db.ListSwitchBackCandidatesRow, error) {
 	return svc.switchBackCandidatesPage(ctx, q, maxLimitRows)
 }
 
+// switchBackCandidatesPage reads the candidates page by page, a page of page rows at a time, and returns at most
+// maxLimitRows of them.
 func (svc *Service) switchBackCandidatesPage(ctx context.Context, q *db.Queries, page int64) ([]db.ListSwitchBackCandidatesRow, error) {
 	on := map[string]bool{}
 	var out []db.ListSwitchBackCandidatesRow
@@ -223,7 +225,6 @@ func (svc *Service) switchBackCandidatesPage(ctx context.Context, q *db.Queries,
 			return nil, err
 		}
 		for _, c := range rows {
-			after = c.RunID
 			r, err := q.GetRun(ctx, c.RunID)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
@@ -238,11 +239,15 @@ func (svc *Service) switchBackCandidatesPage(ctx context.Context, q *db.Queries,
 			}
 			if v {
 				out = append(out, c)
+				if int64(len(out)) >= maxLimitRows {
+					return out, nil
+				}
 			}
 		}
-		if int64(len(rows)) < page || int64(len(out)) >= maxLimitRows {
+		if len(rows) == 0 || int64(len(rows)) < page {
 			return out, nil
 		}
+		after = rows[len(rows)-1].RunID
 	}
 }
 
