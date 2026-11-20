@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **A reworked Overview in the web UI.** From the top: the **top 5 items that need attention** (act before watch, each
+  linking to where it is handled, with "See all (N)" to `/attention`; this replaces the "Needs attention" tile), a
+  **Usage** summary (tokens today and over the last 7 days with the change against the 7 days before, a 14-day
+  sparkline, and the top 5 spaces and models; tokens only, no cost), and an **Accounts** strip with each account's
+  5-hour and 7-day window bars and any open limit (hidden when no account is bound). The Spaces table gains a
+  "tokens 7 d" figure. The page adds three requests (`/usage/series` by space and by model, `/account-windows`);
+  the Telegram Mini App home is unchanged. "Open Usage" links to `/usage`.
 - **The Attention page lists items.** `/attention` now shows the itemised rows from `GET /attention` grouped **Act now**
   and **Watch**, each with what, where, since when and a link to the run, task, queue, usage page or cross-space page
   that handles it, with filters by space and kind. Pending human actions collapse into one row that opens Needs you.
@@ -65,6 +72,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **The Attention page's summary line matches its rows.** It said "N items need a person" from the server's total, which
   leaves out failed account switches and cross-space requests that are listed under Act now, so it could read 0 above
   rows. It now counts the Act now rows (human actions included) and the Watch rows.
+- **Usage page follow-ups.** The page keeps the last figures on screen (dimmed, busy) while a new range, grouping or
+  filter loads instead of blanking. With an account filter on, the Accounts table shows "—" for accounts outside it and
+  marks the column "(filtered)". Grouped by harness, the chart legend uses the display name ("Claude Code"), as the table
+  does. A selected row's toggle is named "Remove filter X". The "not counted" note links to the run pages.
 - **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
   are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
   for a reconnect, and the monitor loop doesn't wait out the write timeout.

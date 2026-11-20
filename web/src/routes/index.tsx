@@ -1,12 +1,17 @@
 import { Card, Group, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import type { ReactNode } from 'react'
-import { runsQuery, useAttention, useMe, useNodes, useSpaces } from '@/api/queries'
+import { useMemo, type ReactNode } from 'react'
+import { runsQuery, useAllAccountWindows, useAttention, useMe, useNodes, useSpaces, useUsageSeries } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { NodeState, RunState, SpaceState } from '@/components/StatusBadge'
+import { AccountWindowsStrip } from '@/features/overview/AccountWindowsStrip'
+import { AttentionTop } from '@/features/overview/AttentionTop'
+import { overviewRange, summarize } from '@/features/overview/summary'
+import { UsageSummary } from '@/features/overview/UsageSummary'
+import { compact } from '@/features/usage/series'
 import { hasGlobal } from '@/lib/access'
 import { ago } from '@/lib/format'
 import { isMiniApp } from '@/api/session'
@@ -38,6 +43,13 @@ function Overview() {
   const name = (id: string) => list.find((s) => s.id === id)?.name ?? id
   const connected = (nodes.data ?? []).filter((n) => n.connected).length
   const attention = useAttention()
+  // Two daily reads and the accounts' windows: the three requests Overview adds (plan §2.2); attention is the existing query.
+  const day = Math.floor(Date.now() / 86_400_000)
+  const range = useMemo(() => overviewRange(), [day]) // eslint-disable-line react-hooks/exhaustive-deps
+  const bySpace = useUsageSeries(undefined, { bucket: 'day', group_by: 'space', ...range })
+  const byModel = useUsageSeries(undefined, { bucket: 'day', group_by: 'model', ...range })
+  const windows = useAllAccountWindows()
+  const tokens7d = useMemo(() => summarize(bySpace.data?.items ?? [], range.from).weekByGroup, [bySpace.data, range.from])
 
   return (
     <>
@@ -46,10 +58,13 @@ function Overview() {
       <SimpleGrid cols={{ base: 2, sm: 4 }} mb="md">
         <Stat label="Spaces" value={list.length} hint={`${list.filter((s) => s.state === 'paused').length} paused`} />
         <Stat label="Active runs" value={active.length} hint={`${active.filter((r) => r.status === 'working').length} working`} />
-        <Stat label="Needs attention" value={attention.data?.total ?? '—'}
-          hint={<AnchorLink to="/attention" size="xs">human actions, tasks, runs, storage…</AnchorLink>} />
         {showNodes && <Stat label="Nodes" value={`${connected}/${nodes.data?.length ?? 0}`} hint="connected" />}
       </SimpleGrid>
+      <Stack gap="md" mb="md">
+        <AttentionTop items={attention.data?.items} total={attention.data?.total} spaceName={name} loading={attention.isLoading} error={attention.error} />
+        <UsageSummary bySpace={bySpace.data} byModel={byModel.data} from={range.from} loading={bySpace.isLoading || byModel.isLoading} error={bySpace.error ?? byModel.error} />
+        <AccountWindowsStrip accounts={windows.data ?? []} />
+      </Stack>
       <SimpleGrid cols={{ base: 1, md: showNodes ? 2 : 1 }}>
         <Stack gap="xs">
           <Text fw={600}>Active runs</Text>
@@ -79,6 +94,7 @@ function Overview() {
                   <Table.Tr key={s.id}>
                     <Table.Td><AnchorLink to="/spaces/$spaceId" params={{ spaceId: s.id }} size="sm">{s.name}</AnchorLink></Table.Td>
                     <Table.Td><SpaceState space={s} /></Table.Td>
+                    <Table.Td ta="right"><Text size="xs" c="dimmed" title="Tokens, last 7 days">{bySpace.data ? `${compact(tokens7d.get(s.id) ?? 0)} tok 7 d` : '—'}</Text></Table.Td>
                   </Table.Tr>
                 ))}
                 {spaces.isSuccess && list.length === 0 && <Table.Tr><Table.Td><Text size="sm" c="dimmed" ta="center" p="md">No spaces yet.</Text></Table.Td></Table.Tr>}

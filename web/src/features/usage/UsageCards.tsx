@@ -3,6 +3,7 @@ import { IconDownload } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, unwrap } from '@/api/client'
 import { useMe } from '@/api/queries'
+import { AnchorLink } from '@/components/AnchorLink'
 import { atLeast, roleIn } from '@/lib/access'
 
 const n = (v?: number | null) => (v == null ? 'unknown' : v.toLocaleString('en-US'))
@@ -98,6 +99,7 @@ export function SpaceUsageCard({ spaceId }: { spaceId: string }) {
         <Stat label="Runs with known usage" value={String(d.known_runs)} hint={`${d.unknown_runs} unknown`} />
         <Stat label="Harness estimates" value={d.estimated_runs > 0 ? `$${d.estimated_usd.toFixed(2)}` : 'none'} hint={d.estimated_runs > 0 ? `from ${d.estimated_runs} run(s), at list prices` : undefined} />
       </SimpleGrid>
+      <AnchorLink to="/spaces/$spaceId/usage" params={{ spaceId }} size="sm" mt="xs" display="inline-block">Usage over time</AnchorLink>
       {d.unknown_runs > 0 && (
         <Alert color="owlYellow" variant="light" mt="xs" p="xs">
           <Text size="xs">Totals cover runs with known usage only. {d.unknown_runs} run(s) have unknown usage (not zero): their harness kept no records SpaceMan can read.</Text>
