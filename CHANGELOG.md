@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A comment on a human action shows without a page reload.** The action's detail view was keyed by the listed version
+  and neither a post nor the change feed refreshed it. Posting now updates it at once, and a `human_action` change (an
+  agent's reply, another person's comment) refetches the open action through the existing change feed.
 - **A run no longer shows "at usage limit" after the limit has reset and it carries on working.** The node looked for
   the end of a limit only when a turn ended, so a run that continued at the reset and then worked for a long turn kept
   its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts

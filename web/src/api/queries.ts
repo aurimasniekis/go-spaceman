@@ -39,6 +39,8 @@ export const keys = {
   inboxItem: (space: string, id: string) => ['inbox-item', space, id] as const,
   human: (space: string) => ['human', space] as const,
   humanPending: ['human', 'pending'] as const,
+  /** One human action read in full (comments, notifications); the linked-action query shares the prefix. */
+  humanAction: (space: string, id: string) => ['human-action', space, id] as const,
   accounts: ['accounts'] as const,
   gitKeys: ['git-ssh-keys'] as const,
   harborPilot: ['harbor-pilot'] as const,
