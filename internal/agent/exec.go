@@ -1055,34 +1055,42 @@ func (a *Agent) monitor(ctx context.Context) {
 			continue
 		}
 		for ev := range evs {
-			switch ev.Kind {
-			case "snapshot", "missed", "restarted", "lost":
-				if err := a.reconcileRunner(ctx); err != nil {
-					a.log.Warn("runner reconcile", obs.Err(err))
-				}
-				if ev.Kind == "snapshot" && a.snapshotReconciled != nil {
-					a.snapshotReconciled()
-				}
-			case "size":
-				// The recording notes every size change (an operator's resize, a takeover, a hold that closed), so
-				// replay redraws at the size the output was drawn for (ADR-0075).
-				if cols, rows, ok := runnerSize(ev.Data); ok && ev.TerminalID != "" {
-					if row, err := a.j.runByTerminal(ctx, ev.TerminalID); err == nil {
-						a.recordSize(row.RunID, cols, rows)
-					}
-				}
-			case "finished", "status", "turn":
-				if ev.TerminalID == "" {
-					continue
-				}
-				row, err := a.j.runByTerminal(ctx, ev.TerminalID)
-				if err != nil {
-					continue
-				}
-				if p, err := a.o.Runner.Get(ctx, ev.TerminalID); err == nil {
-					a.observe(ctx, row, *p, false)
-				}
+			a.handleEvent(ctx, ev)
+			if h := a.eventHandled.Load(); h != nil {
+				(*h)(ev)
 			}
+		}
+	}
+}
+
+// handleEvent applies one runner event to the run states.
+func (a *Agent) handleEvent(ctx context.Context, ev runner.Event) {
+	switch ev.Kind {
+	case "snapshot", "missed", "restarted", "lost":
+		if err := a.reconcileRunner(ctx); err != nil {
+			a.log.Warn("runner reconcile", obs.Err(err))
+		}
+		if ev.Kind == "snapshot" && a.snapshotReconciled != nil {
+			a.snapshotReconciled()
+		}
+	case "size":
+		// The recording notes every size change (an operator's resize, a takeover, a hold that closed), so
+		// replay redraws at the size the output was drawn for (ADR-0075).
+		if cols, rows, ok := runnerSize(ev.Data); ok && ev.TerminalID != "" {
+			if row, err := a.j.runByTerminal(ctx, ev.TerminalID); err == nil {
+				a.recordSize(row.RunID, cols, rows)
+			}
+		}
+	case "finished", "status", "turn":
+		if ev.TerminalID == "" {
+			return
+		}
+		row, err := a.j.runByTerminal(ctx, ev.TerminalID)
+		if err != nil {
+			return
+		}
+		if p, err := a.o.Runner.Get(ctx, ev.TerminalID); err == nil {
+			a.observe(ctx, row, *p, false)
 		}
 	}
 }

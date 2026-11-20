@@ -12,6 +12,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/runner"
 )
 
 // openOccurrence is a flagged occurrence of a run, as dialogFlag would record it.
@@ -310,6 +311,7 @@ func TestDialogReportSendDoesNotHoldTheRunLock(t *testing.T) {
 func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 	e := newDialogEnv(t, nil)
 	old := getRun(t, e.a, e.run)
+	old.Status = "stale" // a state the run never holds, so no report of the monitor's can carry it
 	base := len(e.reportsFor())
 	e.a.limitSend.Lock() // another report is being sent
 	released := false
@@ -326,7 +328,15 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 		defer close(done)
 		e.a.dialogDrain(context.Background())
 	}()
-	time.Sleep(200 * time.Millisecond) // the drain has taken its row (before the fix) and waits for the lock
+	// The drain has taken its queued row (the queue is empty) and then waits for the lock.
+	waitFor(t, "the drain has taken its queued report", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		return len(e.a.dlg.reports) == 0
+	})
+	// The run moves on: the journal gets a newer state. The fake reports the same state, so a later monitor write
+	// cannot put the older one back.
+	e.f.SetStatusReport(e.term, runner.Status{State: "fresh"})
 	cur := getRun(t, e.a, e.run)
 	cur.Status = "fresh"
 	if err := e.a.j.updateRun(context.Background(), cur); err != nil {
@@ -334,18 +344,13 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 	}
 	release()
 	<-done
-	// The monitor reports on its own too, so look for the fresh state anywhere, and for the journal's original state
-	// (what the drain would send had it kept the row it took) nowhere.
-	// A report with either state ends the wait, so a revert fails at once instead of after the timeout.
-	waitFor(t, "the drain's report sent", func() bool { return sentEither(e.reportsFor()[base:], old.Status, "fresh") })
+	// The monitor reports on its own too, so look for the fresh state anywhere, and for the stale one nowhere.
+	waitFor(t, "fresh report sent", func() bool { return sentEither(e.reportsFor()[base:], "fresh") })
 	for _, r := range e.reportsFor()[base:] {
 		if r.Status == old.Status {
-			t.Fatalf("the journal's original state %q was sent after the row changed: %+v", old.Status, r)
+			t.Fatalf("the older state %q was sent after the row changed: %+v", old.Status, r)
 		}
 	}
-	waitFor(t, "fresh report sent", func() bool {
-		return slices.ContainsFunc(e.reportsFor(), func(r proto.RunReport) bool { return r.Status == "fresh" })
-	})
 }
 
 // sentEither is whether a report carries one of the statuses (the monitor's own reports carry others, or none).
@@ -358,6 +363,26 @@ func sentEither(rs []proto.RunReport, statuses ...string) bool {
 func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	e := newDialogEnv(t, nil)
 	ctx := context.Background()
+	// The monitor may still be handling the status event of newDialogEnv's cleared status, and its observe writes the
+	// journal. Events are handled in order, so send one more clearing event (marked by its message) and wait until the
+	// monitor's hook reports it handled: every earlier event, and its journal write, is finished by then, and nothing
+	// emits another event after it, so the row write below can only be this observe's. A monitor that never reports
+	// the event (the hook renamed or removed) fails the wait instead of passing.
+	const marker = "monitor-sync"
+	synced := make(chan struct{})
+	var once sync.Once
+	hook := func(ev runner.Event) {
+		if ev.Kind == "status" && ev.TerminalID == e.term && ev.Process != nil && ev.Process.Status.Message == marker {
+			once.Do(func() { close(synced) })
+		}
+	}
+	e.a.eventHandled.Store(&hook)
+	e.f.SetStatusReport(e.term, runner.Status{Message: marker})
+	select {
+	case <-synced:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the monitor did not report handling the clearing status event (is the eventHandled hook still called?)")
+	}
 	got, err := e.f.Get(ctx, e.term)
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +408,9 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 		defer close(done)
 		e.a.observe(ctx, getRun(t, e.a, e.run), p, false)
 	}()
-	time.Sleep(200 * time.Millisecond) // the observe has written its row and waits for the lock
+	// The observe's own row write (its older state) must land before the concurrent update below, or the observe would
+	// overwrite that update with the older state it had built. Only this observe writes it now.
+	waitFor(t, "the observe's row written", func() bool { return getRun(t, e.a, e.run).Status == orig })
 	cur := getRun(t, e.a, e.run)
 	cur.Status = "fresh" // a concurrent observe wrote a newer state
 	if err := e.a.j.updateRun(ctx, cur); err != nil {
@@ -391,7 +418,7 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	}
 	release()
 	<-done
-	waitFor(t, "the observe's report sent", func() bool { return sentEither(e.reportsFor()[base:], orig, "fresh", "working") })
+	waitFor(t, "the observe's report sent", func() bool { return sentEither(e.reportsFor()[base:], orig, "fresh") })
 	for _, r := range e.reportsFor()[base:] {
 		if r.Status == orig {
 			t.Fatalf("the observe's own older state %q was sent: %+v", orig, r)
