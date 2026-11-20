@@ -4,9 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -355,26 +353,6 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 	}
 }
 
-// monitorIdle is whether every agent monitor is waiting for its next event, with none being handled. A goroutine that
-// waits to receive is parked only while its channel is empty, so no event is queued either.
-func monitorIdle() bool {
-	buf := make([]byte, 1<<20)
-	for {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			buf = buf[:n]
-			break
-		}
-		buf = make([]byte, 2*len(buf))
-	}
-	for g := range strings.SplitSeq(string(buf), "\n\n") {
-		if strings.Contains(g, "agent.(*Agent).monitor(") && !strings.Contains(g, "[chan receive") {
-			return false
-		}
-	}
-	return true
-}
-
 // sentEither is whether a report carries one of the statuses (the monitor's own reports carry others, or none).
 func sentEither(rs []proto.RunReport, statuses ...string) bool {
 	return slices.ContainsFunc(rs, func(r proto.RunReport) bool { return slices.Contains(statuses, r.Status) })
@@ -385,6 +363,26 @@ func sentEither(rs []proto.RunReport, statuses ...string) bool {
 func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	e := newDialogEnv(t, nil)
 	ctx := context.Background()
+	// The monitor may still be handling the status event of newDialogEnv's cleared status, and its observe writes the
+	// journal. Events are handled in order, so send one more clearing event (marked by its message) and wait until the
+	// monitor's hook reports it handled: every earlier event, and its journal write, is finished by then, and nothing
+	// emits another event after it, so the row write below can only be this observe's. A monitor that never reports
+	// the event (the hook renamed or removed) fails the wait instead of passing.
+	const marker = "monitor-sync"
+	synced := make(chan struct{})
+	var once sync.Once
+	hook := func(ev runner.Event) {
+		if ev.Kind == "status" && ev.TerminalID == e.term && ev.Process != nil && ev.Process.Status.Message == marker {
+			once.Do(func() { close(synced) })
+		}
+	}
+	e.a.eventHandled.Store(&hook)
+	e.f.SetStatusReport(e.term, runner.Status{Message: marker})
+	select {
+	case <-synced:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the monitor did not report handling the clearing status event (is the eventHandled hook still called?)")
+	}
 	got, err := e.f.Get(ctx, e.term)
 	if err != nil {
 		t.Fatal(err)
@@ -395,10 +393,6 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	if orig == "" || getRun(t, e.a, e.run).Status == orig {
 		t.Fatalf("status %q must be set and differ from the journal's", orig)
 	}
-	// The monitor may still be handling the status event of newDialogEnv's cleared status, and its observe writes the
-	// journal. Nothing emits another event now, so once it waits for the next one it writes nothing more, and the
-	// row write below can only be this observe's. (Before the lock below: an observe waiting for it is not idle.)
-	waitFor(t, "the run's monitor is idle", monitorIdle)
 	base := len(e.reportsFor())
 	e.a.limitSend.Lock() // another report is being sent
 	released := false

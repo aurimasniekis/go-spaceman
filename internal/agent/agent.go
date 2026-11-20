@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -231,8 +232,11 @@ type Agent struct {
 	// snapshotReconciled, when set, runs after the monitor has handled a runner "snapshot" event. Tests wait on it so a late
 	// reconcile cannot send a report into a later step.
 	snapshotReconciled func()
-	limitTimers        map[string]*time.Timer
-	limitFiles         map[string]os.FileInfo
+	// eventHandled, when set, runs after the monitor has handled any runner event (never blocking it). It is atomic
+	// because tests set it while the monitor already runs. Tests wait on it to know an event's observe has finished.
+	eventHandled atomic.Pointer[func(runner.Event)]
+	limitTimers  map[string]*time.Timer
+	limitFiles   map[string]os.FileInfo
 	// statusSnaps are the latest status-line snapshots and failureClasses the latest non-limit StopFailure class of
 	// each run, by run ID (hooks.go); both are dropped when the run ends.
 	statusSnaps    map[string]StatusObservation
