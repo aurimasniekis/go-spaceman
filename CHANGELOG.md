@@ -136,6 +136,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   disk, so a later recorder for the run (started from a stale snapshot) read an open recording and ended the run again.
   The agent now remembers, per run and in memory, that it numbered the close, and a later recorder does not add another. The mark does not survive an agent restart, so a close that is on central but
   not on disk, followed by a restart, can still be sent twice; closing that case needs central to report its last record.
+
+- **A comment on a human action shows without a page reload.** The action's detail view was keyed by the listed version
+  and neither a post nor the change feed refreshed it. Posting now updates it at once, and a `human_action` change (an
+  agent's reply, another person's comment) refetches the open action through the existing change feed.
 - **The agent's catch-up pass and capability reports are joined at shutdown.** `Run` started the recording catch-up
   pass, the capability loop and the report after hello as untracked goroutines, so one could still be running after
   `Run` returned (and, in tests, read package settings the caller restored next, a data race). They are tracked now and
