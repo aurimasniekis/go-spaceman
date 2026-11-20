@@ -77,6 +77,30 @@
         ],
         "type": "object"
       },
+      "AccountWindowsList": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AccountWindowsList.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageAccountState"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "AccountsAccount": {
         "additionalProperties": false,
         "properties": {
@@ -20207,6 +20231,41 @@
         ],
         "type": "object"
       },
+      "UsageAccountState": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "limits": {
+            "description": "Open usage limits, oldest first; empty when none",
+            "items": {
+              "$ref": "#/components/schemas/UsageLimit"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "windows": {
+            "description": "The latest 5-hour and 7-day windows; empty when no run has reported one",
+            "items": {
+              "$ref": "#/components/schemas/UsageWindow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "account_id",
+          "name",
+          "windows",
+          "limits"
+        ],
+        "type": "object"
+      },
       "UsageAccountWindows": {
         "additionalProperties": false,
         "properties": {
@@ -20318,6 +20377,28 @@
           "costs",
           "requests",
           "unknown_usage_requests"
+        ],
+        "type": "object"
+      },
+      "UsageLimit": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "seen_at": {
+            "description": "When a run first reported the limit",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "seen_at"
         ],
         "type": "object"
       },
@@ -21106,6 +21187,39 @@
         "summary": "Supported credential kinds and the harness each one is for",
         "tags": [
           "accounts"
+        ]
+      }
+    },
+    "/account-windows": {
+      "get": {
+        "description": "Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. An account bound only to other spaces is absent.",
+        "operationId": "list-account-windows",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountWindowsList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The usage windows and open limits of the accounts bound to the spaces you can read",
+        "tags": [
+          "accounts",
+          "usage"
         ]
       }
     },

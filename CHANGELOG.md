@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **One call lists the usage windows of every account you can see.** `GET /account-windows` (and `spaceman usage
+  windows`) returns each subscription account bound, directly or through a role pool, to a space you can read
+  (`run:read`), once, with its name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound
+  only to spaces you can't read is not listed and its name isn't disclosed. It reads stored state only and fetches
+  nothing from a provider. The Usage page will build on it.
 - **`GET /attention` names what needs a person and covers four more categories.** The response gains `items[]`
   (kind, severity, space, title, since and a link target for blocked and failed tasks, quarantined events, unknown,
   failed and lost runs, budget notices and the new categories; at most 20 per kind, with the full numbers in
