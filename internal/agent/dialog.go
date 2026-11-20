@@ -92,6 +92,10 @@ type dialogs struct {
 	runs map[string]*dialogWatch
 	// pending is the ordered queue of run.dialog messages not yet sent (mu).
 	pending []proto.RunDialog
+	// reports are the runs whose report waits to be sent (mu): a flag and a clear change what a report says (blocked on
+	// a dialog), and send it from dialogDrain once the run's dialog lock is released, never under it. A report is read
+	// from the journal and the watch when it is sent, so one send covers every change queued before it.
+	reports map[string]runRow
 	// sendMu serialises the sends of pending: dialogDrain and the whole of resendDialogs hold it, so messages reach
 	// central in the order they were queued, across a reconnect too. Taken after a run's dialog lock is released,
 	// never under it, and before mu.
@@ -376,7 +380,7 @@ func (a *Agent) dialogFlag(ctx context.Context, row runRow, res dialog.Result) {
 	}
 	a.log.Warn("dialog watch: the run waits at a dialog SpaceMan does not answer", slog.String(obs.FieldRunID, row.RunID),
 		slog.String("dialog", res.ID), slog.String("signal", res.Signal))
-	a.report(ctx, row)
+	a.dialogQueueReport(row)
 	a.dialogQueue(d)
 }
 
@@ -427,7 +431,7 @@ func (a *Agent) dialogClearLocked(ctx context.Context, row runRow) {
 	if cur, err := a.j.getRun(ctx, row.RunID); err == nil {
 		row = cur
 	}
-	a.report(ctx, row)
+	a.dialogQueueReport(row)
 	c := *prev
 	c.Outcome, c.Excerpt, c.DetectedAt = proto.DialogCleared, "", a.now().UTC()
 	a.dialogQueue(c)
@@ -463,9 +467,29 @@ func (a *Agent) dialogQueue(d proto.RunDialog) {
 	}
 }
 
-// dialogDrain sends the queue in order. A message that cannot be sent stays queued, with all after it, for the next
-// welcome (resendDialogs).
+// dialogQueueReport queues a run's report for dialogDrain (called under the run's dialog lock).
+func (a *Agent) dialogQueueReport(row runRow) {
+	a.dlg.mu.Lock()
+	defer a.dlg.mu.Unlock()
+	if a.dlg.reports == nil {
+		a.dlg.reports = map[string]runRow{}
+	}
+	a.dlg.reports[row.RunID] = row
+}
+
+// dialogDrain sends the queued reports, then the queue of messages in order. A message that cannot be sent stays queued,
+// with all after it, for the next welcome (resendDialogs). Never called under a run's dialog lock.
 func (a *Agent) dialogDrain(ctx context.Context) {
+	a.dlg.mu.Lock()
+	reports := a.dlg.reports
+	a.dlg.reports = nil
+	a.dlg.mu.Unlock()
+	for id, row := range reports {
+		if cur, err := a.j.getRun(ctx, id); err == nil {
+			row = cur
+		}
+		a.report(ctx, row) // withDialog gives it the flag as it is now
+	}
 	a.dlg.sendMu.Lock()
 	defer a.dlg.sendMu.Unlock()
 	a.drainLocked(ctx)
@@ -485,7 +509,7 @@ func (a *Agent) drainLocked(ctx context.Context) (map[string]bool, bool) {
 			return sent, true
 		}
 		d := a.dlg.pending[0]
-		a.dlg.pending = slices.Clone(a.dlg.pending[1:])
+		a.dlg.pending = a.dlg.pending[1:]
 		a.dlg.mu.Unlock()
 		if err := a.send(ctx, proto.TypeRunDialog, d); err != nil {
 			a.dlg.mu.Lock()
@@ -517,9 +541,13 @@ func (a *Agent) resendDialogs(ctx context.Context) {
 		}
 	}
 	a.dlg.mu.Unlock()
-	for _, d := range out {
+	for i, d := range out {
 		if a.send(ctx, proto.TypeRunDialog, d) != nil {
-			return // an open occurrence is still in its watch: the next welcome sends it again
+			// Back at the front of the queue, so a cleared queued meanwhile (or later) still follows its blocked.
+			a.dlg.mu.Lock()
+			a.dlg.pending = append(slices.Clone(out[i:]), a.dlg.pending...)
+			a.dlg.mu.Unlock()
+			return
 		}
 	}
 }

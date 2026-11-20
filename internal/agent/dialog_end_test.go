@@ -261,3 +261,34 @@ func TestDialogSendDoesNotHoldTheRunLock(t *testing.T) {
 	<-done
 	waitFor(t, "cleared sent", func() bool { return slices.Equal(e.outcomes(), []string{"cleared:unknown"}) })
 }
+
+// A blocked whose second-phase send in resendDialogs fails (it was open, not queued) is kept in the queue, so the
+// cleared that follows it still goes out after it on the next welcome.
+func TestDialogResendFailureKeepsBlockedAheadOfCleared(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	d := openOccurrence(e.run, e.space)
+	e.a.dlg.mu.Lock()
+	e.a.dlg.watchLocked(e.run).blocked = &d
+	e.a.dlg.mu.Unlock()
+	e.a.mu.Lock()
+	conn := e.a.conn
+	e.a.conn = nil // the connection dropped right after the welcome: the resend's send fails
+	e.a.mu.Unlock()
+	e.a.resendDialogs(context.Background())
+	if got, want := pendingOutcomes(e.a), []string{proto.DialogBlocked + ":" + d.ID}; !slices.Equal(got, want) {
+		t.Fatalf("queue %v after the failed resend, want %v", got, want)
+	}
+	row := getRun(t, e.a, e.run)
+	row.Status = "working"
+	e.a.dialogObserved(context.Background(), row, row) // the flag clears before the next welcome
+	e.a.mu.Lock()
+	e.a.conn = conn
+	e.a.mu.Unlock()
+	e.a.resendDialogs(context.Background())
+	want := []string{"blocked:unknown", "cleared:unknown"}
+	waitFor(t, "both sent", func() bool { return slices.Equal(e.outcomes(), want) })
+	quiet()
+	if got := e.outcomes(); !slices.Equal(got, want) {
+		t.Fatalf("sent %v, want %v once, in order", got, want)
+	}
+}
