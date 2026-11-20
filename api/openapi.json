@@ -29485,7 +29485,7 @@
     },
     "/spaces/{space_id}/human-actions/{action_id}/comments": {
       "post": {
-        "description": "Comments are discussion and never count as a response.",
+        "description": "Comments are discussion and never count as a response. A comment on a pending action an agent asked is also a durable comment notice to that agent, routed like a response; the action stays pending.",
         "operationId": "comment-human-action",
         "parameters": [
           {

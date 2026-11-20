@@ -2444,7 +2444,7 @@ export interface paths {
         put?: never;
         /**
          * Comment on a human action
-         * @description Comments are discussion and never count as a response.
+         * @description Comments are discussion and never count as a response. A comment on a pending action an agent asked is also a durable comment notice to that agent, routed like a response; the action stays pending.
          */
         post: operations["comment-human-action"];
         delete?: never;
