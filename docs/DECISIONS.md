@@ -7967,6 +7967,59 @@
   - Migration 0069 is reserved, not used. Requirement rows SM-UI-008, SM-UI-009 and SM-UI-010 stay `todo` until their
     tasks land. SM-UI-003's evidence changes: Attention lists items, not only counts.
 
+### ADR-0104 — A subscription may ingest this installation's own run dialog events (ingest_own) (security-relevant change)
+
+- **Status:** Accepted, 2026-11-20 (v0.1.16). **Security-relevant change:** it relaxes the SM-EVT-016 loop guard "an
+  installation never ingests its own events" (ADR-0015, ADR-0049) for one narrow, opt-in case. Migration 0070
+  (`event_subscriptions.ingest_own`). Builds on ADR-0049 (automation depth) and ADR-0102 (run dialog events).
+- **Context:** ingestion drops every event whose `spaceman-origin` is this installation's `source`
+  (`ownEvent`, recorded as `filtered`). So an installation cannot subscribe to its own
+  `evt.spaceman.fleet.run.dialog_detected` to raise an inbox item when one of its runs is stopped at a dialog, though
+  that is the event's main use. The guard exists because ingestion publishes events of its own (the item's
+  `inbox.item.created`, the events of tasks made from it): ingesting those would feed itself.
+- **Decision:**
+  1. **A per-subscription boolean `ingest_own`** (default false) in the API, the OpenAPI spec (and so the MCP
+     catalog, which is built from it) and the CLI (`--ingest-own`). An installation-level allow-list was the
+     alternative. The flag was chosen because it is explicit where it acts: the operator turns it on for one
+     subscription, it shows on that subscription and its audit records, and every other subscription keeps the old
+     behaviour, including one on the same subject.
+  2. **A hard-coded subject allow-list.** Create and update accept `ingest_own` only when the subscription's effective
+     subject is exactly one of `evt.spaceman.fleet.run.dialog_detected` and `evt.spaceman.fleet.run.dialog_cleared`
+     (`events.OwnIngestSubjects`, built from the outbox catalog names). NATS wildcards cannot say `dialog_*`, and
+     `evt.spaceman.fleet.run.*` would also cover the run lifecycle, so wildcards are refused. Anything else, such as
+     `inbox.*` and `task.*`, is refused with `validation_failed` (HTTP 422): "ingest_own is not allowed for subject
+     S: a subscription may ingest this SpaceMan's own events only when its subject is exactly one of
+     evt.spaceman.fleet.run.dialog_detected, evt.spaceman.fleet.run.dialog_cleared; events that ingestion can itself
+     cause, such as inbox and task events, are never ingested as own". An update is checked against the subject it
+     leaves, so a subject change cannot carry the flag off the list. SpaceMan's own dialog answers
+     (`run.dialog_answered`) are audit records, not published, so they are not on the list.
+  3. **Ingestion checks again, per event.** An own event is admitted only when the subscription's current row has
+     `ingest_own`, the event's subject is on the allow-list (whatever the subscription's filter), and its
+     `spaceman-depth` is absent or 0. Everything an ingestion causes (the item, tasks made from it, their events)
+     carries depth 1 or more (ADR-0049), so an own event that an ingestion led to is never ingested again, even on a
+     subscription forced past the API check. Such an event is recorded as `filtered` with its own detail. Durable and
+     core NATS subscriptions use the same check (`admitOwn`).
+  4. **Every other guard still applies.** An admitted event goes through the rate limit, `event_depth`, the
+     template's filters, deduplication (subscription and event ID) and quarantine like any other. Its item has depth 1.
+- **Alternatives considered:**
+  - An installation-level allow-list in the configuration: rejected. It is invisible on the subscription, applies to
+    every space at once, and needs a restart to change.
+  - Allowing `evt.spaceman.fleet.run.*` and filtering per event: rejected. The flag would then sit on a subscription
+    whose filter covers subjects it must not ingest.
+  - No depth condition, relying on the subject list alone: rejected as a single layer. The depth condition holds even
+    if the list is widened by mistake.
+- **Consequences:**
+  - An operator can turn a run stopped at a dialog into an inbox item in the same installation.
+  - Residual: a run carries no automation depth (ADR-0049, LIMITATIONS), so a dialog event of a run working on an
+    ingested item still has depth 0. A chain item → control → run → dialog → item is possible. It is not a loop of
+    ingestion alone: each step needs a real dialog on a real terminal, each occurrence is published once
+    (`dialog_id`) and becomes one item per subscription, and the run, tool-call and budget limits bound control.
+  - Evidence (simulated, in-process NATS): `internal/events` `TestOwnDialogEventIngestedOnlyWithOptIn`,
+    `TestOwnDialogEventIngestedOnCore`, `TestIngestOwnRefusedOffTheAllowList`, `TestIngestOwnCannotLoop` (the
+    item's own event, relayed by the real outbox code, is filtered); `internal/app` `TestIngestOwnOverHTTP`;
+    `internal/store` `TestSubscriptionIngestOwnMigrationFrom0069`. Not yet seen against a real pulsed.
+  - The Terraform provider's `ingest_own` attribute is a separate change.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

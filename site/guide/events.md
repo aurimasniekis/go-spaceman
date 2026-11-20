@@ -297,10 +297,33 @@ publishes about the new item, A ingests that, and so on). SpaceMan bounds such a
   `spaceman-depth` is not a number.
 - **Reprocess** ingests a quarantined event anyway (a person's decision). The item gets the next depth, so the chain
   continues from there and is stopped again at the next installation.
-- Each installation still drops its own events (by `spaceman-origin`, [Publishing SpaceMan events](/guide/publishing-events)).
+- Each installation still drops its own events (by `spaceman-origin`, [Publishing SpaceMan events](/guide/publishing-events)),
+  except where a subscription opts in with **Ingest own events**, below.
 
 The depth follows the links SpaceMan records itself: an event, its item, tasks made from the item, and their events. A
 run, a human action or another change that control makes on its own judgement starts a new chain at depth 0.
+
+### Ingest own events
+
+A subscription can ingest events this installation published itself, for one purpose: turning a run that is stopped
+at an interactive dialog into an inbox item. Set `ingest_own` (`--ingest-own` in the CLI) on a subscription whose
+subject is exactly one of:
+
+| Subject | When |
+|---|---|
+| `evt.spaceman.fleet.run.dialog_detected` | A run waits at a dialog SpaceMan does not answer |
+| `evt.spaceman.fleet.run.dialog_cleared` | That dialog is gone |
+
+Anything else is refused when you create or update the subscription (`validation_failed`, HTTP 422), including
+wildcards such as `evt.spaceman.fleet.run.*` and every event ingestion can itself cause, such as inbox and task events.
+An update that changes the subject keeps the flag only on one of these subjects; turn it off in the same update to move
+elsewhere.
+
+Even with the flag, SpaceMan ingests one of its own events only at automation depth 0 (no `spaceman-depth`): an event
+that an ingestion led to is still filtered, so ingestion can never feed itself. Everything else applies as usual: the
+rate limit, `event_depth`, the template's filters, deduplication and quarantine. Each dialog occurrence becomes one
+item per subscription. Subscriptions without the flag, including others on the same subject, keep filtering own events
+(ADR-0104).
 
 <Shot name="events-quarantine" alt="Quarantined alert missing a required field, with reprocess and discard" caption="A quarantined event" />
 
