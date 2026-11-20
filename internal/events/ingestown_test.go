@@ -236,3 +236,28 @@ func TestIngestOwnCannotLoop(t *testing.T) {
 		t.Fatalf("items %d, want only the first dialog's", n)
 	}
 }
+
+// ADR-0104: a subscription that follows a template's latest version keeps ingest_own when a new version moves it.
+func TestIngestOwnSurvivesTemplateFollow(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	def := *dialogDef(dialogSubject)
+	tm, err := f.svc.CreateTemplate(f.ctx, admin, "run-dialogs", "Run dialogs", "", def)
+	must(t, err)
+	v1, _, err := f.svc.Publish(f.ctx, admin, tm.Versions[0].ID)
+	must(t, err)
+	s, err := f.svc.CreateSubscription(f.ctx, admin, "spc_a", SubscriptionInput{Name: "dialogs", ConnectionID: f.conn.ID, TemplateVersionID: v1.ID,
+		Follow: "latest", IngestOwn: true})
+	must(t, err)
+	def.Title = "Run {{data.run_id}} is waiting at a dialog"
+	v2, err := f.svc.SaveDraft(f.ctx, admin, tm.ID, def, "better title")
+	must(t, err)
+	if _, held, err := f.svc.Publish(f.ctx, admin, v2.ID); err != nil || len(held) != 0 {
+		t.Fatalf("publish v2: %v %v", held, err)
+	}
+	g, err := f.svc.GetSubscription(f.ctx, "spc_a", s.ID)
+	must(t, err)
+	if g.Template.VersionID != v2.ID || !g.IngestOwn {
+		t.Fatalf("follower after the move: version %s ingest_own %v", g.Template.VersionID, g.IngestOwn)
+	}
+}

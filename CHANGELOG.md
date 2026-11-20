@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   raise an item when a run is stopped at a dialog. Set `ingest_own: true` on create or update (CLI `--ingest-own`).
   It is accepted only when the subscription's subject is exactly one of those two; any other subject, wildcards and
   everything ingestion can cause (inbox, task events) is refused with `validation_failed` (422). Own events are
-  ingested only at automation depth 0, so nothing an ingestion led to is ingested again, and `event_depth`, the rate
+  ingested only at automation depth 0, so SpaceMan's events about an ingestion's items and tasks are never ingested, and `event_depth`, the rate
   limit and deduplication still apply. Other subscriptions keep filtering own events. Migration 0070 adds the column
   (off for existing subscriptions). ADR-0104.
 - **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**

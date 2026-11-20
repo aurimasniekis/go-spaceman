@@ -319,8 +319,10 @@ wildcards such as `evt.spaceman.fleet.run.*` and every event ingestion can itsel
 An update that changes the subject keeps the flag only on one of these subjects; turn it off in the same update to move
 elsewhere.
 
-Even with the flag, SpaceMan ingests one of its own events only at automation depth 0 (no `spaceman-depth`): an event
-that an ingestion led to is still filtered, so ingestion can never feed itself. Everything else applies as usual: the
+Even with the flag, SpaceMan ingests one of its own events only at automation depth 0 (no `spaceman-depth`): its events
+about what an ingestion caused (the item, tasks made from it) carry a depth and are still filtered, so ingestion never
+feeds itself. A run carries no depth, though: if control starts a run for a dialog item and that run stops at a dialog
+too, that is a new item, one per real dialog occurrence. Everything else applies as usual: the
 rate limit, `event_depth`, the template's filters, deduplication and quarantine. Each dialog occurrence becomes one
 item per subscription. Subscriptions without the flag, including others on the same subject, keep filtering own events
 (ADR-0104).

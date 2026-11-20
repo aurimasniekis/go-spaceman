@@ -202,7 +202,7 @@ const OwnOriginDetail = "published by this SpaceMan (spaceman-origin); not re-in
 
 // OwnCausedDetail is the delivery detail of an own event that a subscription with ingest_own still does not ingest:
 // its spaceman-depth says an ingestion led to it (ADR-0104).
-const OwnCausedDetail = "published by this SpaceMan with a spaceman-depth other than 0 (an ingestion led to it); ingest_own admits own events at depth 0 only"
+const OwnCausedDetail = "published by this SpaceMan with a spaceman-depth that is not 0 (an ingestion led to it) or not readable; ingest_own admits own events at depth 0 only"
 
 // ownEvent reports whether e carries this installation's spaceman-origin header.
 func (svc *Service) ownEvent(e pulse.Event) bool {

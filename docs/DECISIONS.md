@@ -7996,10 +7996,12 @@
   3. **Ingestion checks again, per event.** An own event is admitted only when the subscription's current row has
      `ingest_own`, the event's subject is on the allow-list (whatever the subscription's filter), and its
      `spaceman-depth` is absent or 0. Everything an ingestion causes (the item, tasks made from it, their events)
-     carries depth 1 or more (ADR-0049), so an own event that an ingestion led to is never ingested again, even on a
-     subscription forced past the API check. Such an event is recorded as `filtered` with its own detail. Durable and
+     carries depth 1 or more (ADR-0049), so an own event about something an ingestion caused is never ingested again,
+     even on a subscription forced past the API check. Such an event is recorded as `filtered` with its own detail. Durable and
      core NATS subscriptions use the same check (`admitOwn`).
-  4. **Every other guard still applies.** An admitted event goes through the rate limit, `event_depth`, the
+  4. **Template followers keep the flag.** A subscription that follows a template's latest version moves to a new
+     version only when its subject stays the same, and keeps `ingest_own` when it moves.
+  5. **Every other guard still applies.** An admitted event goes through the rate limit, `event_depth`, the
      template's filters, deduplication (subscription and event ID) and quarantine like any other. Its item has depth 1.
 - **Alternatives considered:**
   - An installation-level allow-list in the configuration: rejected. It is invisible on the subscription, applies to
@@ -8016,7 +8018,8 @@
     (`dialog_id`) and becomes one item per subscription, and the run, tool-call and budget limits bound control.
   - Evidence (simulated, in-process NATS): `internal/events` `TestOwnDialogEventIngestedOnlyWithOptIn`,
     `TestOwnDialogEventIngestedOnCore`, `TestIngestOwnRefusedOffTheAllowList`, `TestIngestOwnCannotLoop` (the
-    item's own event, relayed by the real outbox code, is filtered); `internal/app` `TestIngestOwnOverHTTP`;
+    item's own event, relayed by the real outbox code, is filtered), `TestIngestOwnSurvivesTemplateFollow`; `internal/app`
+    `TestIngestOwnOverHTTP`;
     `internal/store` `TestSubscriptionIngestOwnMigrationFrom0069`. Not yet seen against a real pulsed.
   - The Terraform provider's `ingest_own` attribute is a separate change.
 
