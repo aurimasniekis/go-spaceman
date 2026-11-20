@@ -83,11 +83,20 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration, progres
 		wait = time.Minute
 	}
 	wait = min(wait, proto.MemoryFlushMaxWait*time.Second)
-	// A caller's deadline shorter than the wait bounds it too: nodes are not told to wait longer than the call can.
+	// A caller's deadline shorter than the wait bounds it too: nodes are not told to wait longer than the call can, and
+	// the grace for their answer to arrive fits inside the deadline as well (a node using its whole wait would
+	// otherwise answer after it, and its results would be lost as timed out).
+	var remaining time.Duration
+	hasDeadline := false
 	if dl, ok := ctx.Deadline(); ok {
-		wait = max(min(wait, time.Until(dl)), time.Second)
+		hasDeadline = true
+		remaining = time.Until(dl)
+		wait = max(min(wait, remaining-flushGrace(remaining)), time.Second)
 	}
 	bound := wait + flushGrace(wait)
+	if hasDeadline {
+		bound = min(bound, max(remaining, time.Second))
+	}
 	dctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 	if progress == nil {

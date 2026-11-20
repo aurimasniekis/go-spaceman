@@ -125,6 +125,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The backup's memory flush no longer loses a node's answer when the call's deadline is short.** The wait a node was
+  told to use was capped at the deadline without leaving room for the grace its answer needs, so a node that used its
+  whole wait answered after the deadline and its spaces were reported as timed out. The wait now leaves the grace
+  inside the deadline, and the "no answer within" detail names the bound actually applied.
 - **A run's terminal dialog no longer outlives the run, and its history has an API.** A run that ends with a
   `blocked_on_dialog` flag open (it was lost, its launch failed, or the agent restarted over it) now has the flag closed:
   the node sends `cleared` on every path that ends a run, and central closes whatever is still open when it records the
