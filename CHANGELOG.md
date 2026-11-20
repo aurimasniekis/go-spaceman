@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A run no longer shows "at usage limit" after the limit has reset and it carries on working.** The node looked for
+  the end of a limit only when a turn ended, so a run that continued at the reset and then worked for a long turn kept
+  its limit until that turn was over. The node now also scans the transcript when a run with an open limit starts
+  working (or is adopted already working after an agent restart), and every 30 seconds while it keeps working. This is a change to the node agent: it takes effect on a node
+  once the agent is upgraded.
 - **A person's comment on a human action now reaches the agent that asked.** Only **Ask the requester** used to
   notify it, so a "done" written with plain **Comment** went unseen until someone asked for clarification. A comment
   on a pending action an agent asked now becomes a `comment` notice, routed and woken like a clarification (the

@@ -18,8 +18,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
-// Usage-limit detection (ADR-0079 decision 1). When a Claude Code run's status turns idle or error, and once when it
-// ends, the agent scans the run's transcript from the offset it reached last time and reads only typed fields. The
+// Usage-limit detection (ADR-0079 decision 1). When a Claude Code run's status turns idle or error, once when it
+// ends, and while a run with an open limit is working (when it starts working or is adopted so, then every limitPoll),
+// the agent scans the run's transcript from the offset it reached last time and reads only typed fields. The
 // limit it finds is journaled with that offset (a restarted agent resumes the scan and re-reports the same since) and
 // rides on every run report. Nothing read from the transcript is logged or sent except the allowlisted kind, the
 // reset epoch and the record's timestamp, all normalized (proto.RunLimit.Normalized).
@@ -48,6 +49,11 @@ const (
 // limitSettle is how long after an idle or error status the scan waits (debounced per run), so the records Claude Code
 // writes as the turn ends are on disk. A variable for tests.
 var limitSettle = 2 * time.Second
+
+// limitPoll is how often the scan repeats while a run with an open limit is working: the record that ends the limit
+// (the auto-continuation turn, the first reply after it) is written while the turn runs, and a long turn would
+// otherwise leave the limit open until it ends. A variable for tests.
+var limitPoll = 30 * time.Second
 
 // gatewayBudget is Harbor Pilot's blocking-budget refusal (harbor-pilot.md): "budget <name> is exhausted …".
 var gatewayBudget = regexp.MustCompile(`^budget .+ is exhausted `)
@@ -339,21 +345,40 @@ func limitScanned(status string) bool {
 
 // limitKick schedules a run's limit scan limitSettle after its status turned idle, done or error (debounced per run).
 func (a *Agent) limitKick(ctx context.Context, runID string) {
+	a.limitKickIn(ctx, runID, limitSettle, false)
+}
+
+// limitKickIn is limitKick with its own delay. keep leaves a scan that is already pending as it is (a re-arm never
+// pushes an earlier scan out).
+func (a *Agent) limitKickIn(ctx context.Context, runID string, d time.Duration, keep bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if t, ok := a.limitTimers[runID]; ok {
-		t.Reset(limitSettle)
+		if !keep {
+			t.Reset(d)
+		}
 		return
 	}
 	if a.limitTimers == nil {
 		a.limitTimers = map[string]*time.Timer{}
 	}
-	a.limitTimers[runID] = time.AfterFunc(limitSettle, func() {
+	var self *time.Timer
+	self = time.AfterFunc(d, func() {
 		a.mu.Lock()
-		delete(a.limitTimers, runID)
+		if a.limitTimers[runID] == self { // not a newer timer's entry
+			delete(a.limitTimers, runID)
+		}
 		a.mu.Unlock()
 		a.track(func() { a.limitScan(ctx, runID, false) })
 	})
+	a.limitTimers[runID] = self
+}
+
+// limitRearm schedules the next scan of a working run whose journaled limit is open.
+func (a *Agent) limitRearm(ctx context.Context, runID string) {
+	if cur, err := a.j.getRun(ctx, runID); err == nil && cur.State == proto.RunRunning && cur.Status == "working" && cur.Limit.Kind != "" {
+		a.limitKickIn(ctx, runID, limitPoll, true)
+	}
 }
 
 // limitScan scans a run's transcript from its journaled offset, journals the limit and the new offset, and sends one
@@ -372,6 +397,11 @@ func (a *Agent) limitScan(ctx context.Context, runID string, final bool) {
 	r, err := a.j.getRun(ctx, runID)
 	if err != nil || r.Harness != harness.KindClaude || (!final && ended(r.State)) {
 		return
+	}
+	if !final {
+		// A run that is working with a limit still open is scanned again: its turn may be the auto-continuation that
+		// ends the limit, and observe only kicks a scan when a turn ends.
+		defer a.limitRearm(ctx, runID)
 	}
 	abs, _ := a.transcriptOf(ctx, r)
 	if abs == "" {
