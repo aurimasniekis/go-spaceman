@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupAttention, kindOptions, spaceOptions, targetRoute, truncate, truncatedKinds, type AttentionItem, type AttentionSpace } from './targets'
+import { attentionSummary, groupAttention, summaryText, kindOptions, spaceOptions, targetRoute, truncate, truncatedKinds, type AttentionItem, type AttentionSpace } from './targets'
 
 const item = (p: Partial<AttentionItem>): AttentionItem => ({
   id: 'x', kind: 'task_blocked', severity: 'act', since: '2026-11-20T10:00:00Z', space_id: 'spc_a', title: 't',
@@ -63,5 +63,36 @@ describe('options and truncation', () => {
   it('shortens long agent titles', () => {
     expect(truncate('a  b\n c')).toBe('a b c')
     expect(truncate('x'.repeat(200)).length).toBe(120)
+  })
+})
+
+describe('summaryText', () => {
+  const rows = [
+    item({ id: '1', kind: 'account_switch_failed' }),
+    item({ id: '2', kind: 'xspace_request' }),
+    item({ id: '3', kind: 'run_parked', severity: 'watch' }),
+  ]
+  it('counts the listed Act now rows, including ones the server total leaves out, and the watch rows', () => {
+    const spaces = [space({ total: 0 })]
+    expect(attentionSummary({ items: rows, spaces })).toEqual({ act: 2, watch: 1 })
+    expect(summaryText({ items: rows, spaces })).toBe('2 items need a person · 1 to watch')
+  })
+  it('counts uncapped kinds from item_counts', () => {
+    expect(summaryText({ items: [rows[0]], spaces: [space({})], item_counts: { account_switch_failed: 25 } })).toBe('25 items need a person')
+  })
+  it('counts a budget notice by its own severity, whichever is newest', () => {
+    const spaces = [space({ budget_exceeded: 1, budget_warnings: 2 })]
+    const notice = (id: string, severity: 'act' | 'watch', since: string) => item({ id, kind: 'budget_notice', severity, since })
+    const exceededNewest = [notice('1', 'act', '2026-11-20T12:00:00Z'), notice('2', 'watch', '2026-11-20T11:00:00Z'), notice('3', 'watch', '2026-11-20T10:00:00Z')]
+    expect(attentionSummary({ items: exceededNewest, spaces, item_counts: { budget_notice: 3 } })).toEqual({ act: 1, watch: 2 })
+    expect(attentionSummary({ items: [...exceededNewest].reverse(), spaces, item_counts: { budget_notice: 3 } })).toEqual({ act: 1, watch: 2 })
+  })
+  it('falls back to the total when only non-row categories are counted', () => {
+    expect(summaryText({ items: [], spaces: [space({ total: 3 })], total: 3 })).toBe('3 items need attention')
+    expect(summaryText({ items: [], spaces: [space({})], total: 0 })).toBe('')
+  })
+  it('adds human actions to Act now and never says 0 above rows', () => {
+    expect(summaryText({ items: [], spaces: [space({ human_pending: 1 })] })).toBe('1 item needs a person')
+    expect(summaryText({ items: [rows[2]], spaces: [space({})] })).toBe('1 to watch')
   })
 })

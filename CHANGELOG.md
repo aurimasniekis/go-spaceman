@@ -74,11 +74,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The Attention page's summary line matches its rows.** It said "N items need a person" from the server's total, which
+  leaves out failed account switches and cross-space requests that are listed under Act now, so it could read 0 above
+  rows. It now counts the Act now rows (human actions included) and the Watch rows.
 - **Usage page follow-ups.** The page keeps the last figures on screen (dimmed, busy) while a new range, grouping or
   filter loads instead of blanking. With an account filter on, the Accounts table shows "—" for accounts outside it and
   marks the column "(filtered)". Grouped by harness, the chart legend uses the display name ("Claude Code"), as the table
   does. A selected row's toggle is named "Remove filter X". The "not counted" note links to the run pages.
-
 - **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
   are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
   for a reconnect, and the monitor loop doesn't wait out the write timeout.
