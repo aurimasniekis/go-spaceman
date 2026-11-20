@@ -182,6 +182,7 @@ export function applyChange(qc: QueryClient, c: Change) {
       break
     case 'human_action':
       if (c.space_id) invalidate(qc, keys.human(c.space_id))
+      if (c.space_id) invalidate(qc, keys.humanAction(c.space_id, c.resource_id))
       invalidate(qc, keys.humanPending)
       invalidate(qc, ['human', 'search'])
       break

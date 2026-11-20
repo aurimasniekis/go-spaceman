@@ -8,6 +8,7 @@ Aliases: `runs`.
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman run dialogs`](#spaceman-run-dialogs) | A run's terminal dialogs, newest first (answered by SpaceMan, or flagged and when cleared) |
 | [`spaceman run get`](#spaceman-run-get) | Show a run |
 | [`spaceman run input`](#spaceman-run-input) | Send input to a run (delivered only while the program is idle, unless --force) |
 | [`spaceman run launch`](#spaceman-run-launch) | Launch a run on the space's node |
@@ -18,6 +19,21 @@ Aliases: `runs`.
 | [`spaceman run terminal-size`](#spaceman-run-terminal-size) | Resize a running run's terminal, or return it to the node's default (needs terminal:takeover) |
 | [`spaceman run transcript`](#spaceman-run-transcript) | A run's stored native transcript: download or delete |
 | [`spaceman run usage`](#spaceman-run-usage) | A run's token usage and cost estimate (unknown usage is reported as unknown) |
+
+## spaceman run dialogs
+
+A run's terminal dialogs, newest first (answered by SpaceMan, or flagged and when cleared).
+
+```sh
+spaceman run dialogs <run> [flags]
+```
+
+API: `list-run-dialogs` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--limit` | integer |  | maximum number of items |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman run get
 

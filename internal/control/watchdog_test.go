@@ -76,6 +76,7 @@ func TestWatchdogGuards(t *testing.T) {
 		{"operator took over", wdN, func(o *observation) { o.Control.Takeover = &fleet.Takeover{} }, guardTakeover},
 		{"at a usage limit", wdN, func(o *observation) { o.Control.Limit = &fleet.RunLimit{} }, guardLimit},
 		{"parked at a usage limit", wdN, func(o *observation) { o.Parked = true }, guardLimit},
+		{"terminal dialog (blocked_on_dialog)", wdN, func(o *observation) { o.Control.Status, o.Control.StatusKind = "blocked", proto.StatusKindDialog }, guardHuman},
 		{"harness prompt", wdN, func(o *observation) { o.Control.Status = "blocked" }, guardHuman},
 		{"asked a person last", wdN, func(o *observation) { o.HumanOpen, o.Act.tool, o.Act.asked, o.Act.askTurn = 1, humanAskTool, true, 7 }, guardHuman},
 		{"asked, then told a worker in the same turn", wdN, func(o *observation) {

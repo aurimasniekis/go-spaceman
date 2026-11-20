@@ -23,7 +23,7 @@ function PromptsPage() {
   const [creating, setCreating] = useState(false)
   return (
     <>
-      <PageHeader title="Prompts" description="Versioned prompts for roles, dreams, knowledge bases and events. Published versions never change; roles follow the latest or pin one."
+      <PageHeader hub="configuration" title="Prompts" description="Versioned prompts for roles, dreams, knowledge bases and events. Published versions never change; roles follow the latest or pin one."
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New prompt</Button>} />
       <ErrorAlert error={prompts.error} />
       <Card p={0}>

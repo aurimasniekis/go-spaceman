@@ -26,7 +26,7 @@ function TokensPage() {
   const [secret, setSecret] = useState<string | null>(null)
   return (
     <>
-      <PageHeader title="API tokens" description="Tokens act for you, limited to the grants you give them (each within your own)."
+      <PageHeader hub="access" title="API tokens" description="Tokens act for you, limited to the grants you give them (each within your own)."
         actions={me?.user && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New token</Button>} />
       <Tabs defaultValue="mine">
         <Tabs.List>

@@ -1,0 +1,204 @@
+package agent
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
+)
+
+// openOccurrence is a flagged occurrence of a run, as dialogFlag would record it.
+func openOccurrence(run, space string) proto.RunDialog {
+	return proto.RunDialog{ID: ids.New(ids.Dialog), RunID: run, SpaceID: space, Generation: 1, Outcome: proto.DialogBlocked,
+		Dialog: "unknown", Signal: "screen_prompt", DetectedAt: time.Now().UTC()}
+}
+
+// pendingOutcomes lists the run.dialog messages an agent without a central connection kept for the next welcome.
+func pendingOutcomes(a *Agent) []string {
+	a.dlg.mu.Lock()
+	defer a.dlg.mu.Unlock()
+	var out []string
+	for _, d := range a.dlg.pending {
+		out = append(out, d.Outcome+":"+d.ID)
+	}
+	return out
+}
+
+// A run's end tells central its flag is over on every path that ends a run, also the ones that never observe its exit
+// (a failed launch, the runner reconcile at an agent restart): central would otherwise keep the occurrence open.
+func TestDialogClearedOnEveryRunEndPath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// inMemory: the flag is in the watch (a launch that fails in this process); otherwise it is only in the saved file
+		// (an agent restart: the watch is gone).
+		inMemory bool
+		end      func(t *testing.T, a *Agent)
+	}{
+		{"launch fails", true, func(t *testing.T, a *Agent) {
+			a.launch(context.Background(), proto.Command{CommandID: "cmd_" + adoptWaitRun, Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: adoptWaitRun, Generation: 1},
+				proto.LaunchPayload{Harness: "no-such-harness", Kind: "worker", Role: "implementor", InstanceID: adoptWaitInst})
+			if r := getRun(t, a, adoptWaitRun); r.State != proto.RunFailed {
+				t.Fatalf("state %s, want failed", r.State)
+			}
+		}},
+		{"reconcile finds the program gone", false, func(t *testing.T, a *Agent) {
+			row := getRun(t, a, adoptWaitRun)
+			row.State, row.TerminalID = proto.RunRunning, "term_gone"
+			if err := a.j.updateRun(context.Background(), row); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.reconcileRunner(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if r := getRun(t, a, adoptWaitRun); r.State != proto.RunLost {
+				t.Fatalf("state %s, want lost", r.State)
+			}
+		}},
+		{"reconcile finds a launch that never started", false, func(t *testing.T, a *Agent) {
+			if err := a.reconcileRunner(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if r := getRun(t, a, adoptWaitRun); r.State != proto.RunFailed {
+				t.Fatalf("state %s, want failed", r.State)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _ := ccAgent(t, t.TempDir(), nil, nil)
+			ccAgentSeedRun(t, a)
+			d := openOccurrence(adoptWaitRun, ccSpace)
+			if tc.inMemory {
+				a.dlg.mu.Lock()
+				a.dlg.watchLocked(adoptWaitRun).blocked = &d
+				a.dlg.mu.Unlock()
+			} else {
+				if err := os.MkdirAll(a.runDir(adoptWaitRun), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := writeJSONFile(filepath.Join(a.runDir(adoptWaitRun), dialogOpenFile), d); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tc.end(t, a)
+			if got := pendingOutcomes(a); !slices.Equal(got, []string{proto.DialogCleared + ":" + d.ID}) {
+				t.Fatalf("sent %v, want one cleared of the open occurrence", got)
+			}
+			if _, err := os.Stat(filepath.Join(a.runDir(adoptWaitRun), dialogOpenFile)); err == nil {
+				t.Fatal("the open occurrence is still saved")
+			}
+			a.dlg.mu.Lock()
+			defer a.dlg.mu.Unlock()
+			if a.dlg.runs[adoptWaitRun] != nil {
+				t.Fatal("the watch of an ended run was kept")
+			}
+		})
+	}
+}
+
+// A clear from the observe path waits for a flag in progress (the run's dialog lock), so central never gets cleared
+// before the blocked it ends and keeps the occurrence open.
+func TestDialogClearWaitsForAFlagInProgress(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	d := openOccurrence(e.run, e.space)
+	e.a.dlg.mu.Lock()
+	e.a.dlg.watchLocked(e.run).blocked = &d
+	e.a.dlg.mu.Unlock()
+	row := getRun(t, e.a, e.run)
+	prev := row
+	row.Status = "working"
+	unlock := e.a.dialogLock(e.run) // the flag, mid-way
+	var done atomic.Bool
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.a.dialogObserved(context.Background(), prev, row)
+		done.Store(true)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	if done.Load() || !e.a.dialogBlocked(e.run) {
+		t.Fatal("the clear did not wait for the flag in progress")
+	}
+	unlock()
+	wg.Wait()
+	if e.a.dialogBlocked(e.run) {
+		t.Fatal("the flag was not cleared")
+	}
+	waitFor(t, "cleared sent", func() bool { return slices.Equal(e.outcomes(), []string{"cleared:unknown"}) })
+}
+
+// A run that ends while its screen is read with a known dialog on it: nothing is typed into it, nothing is sent, and the
+// watch the end dropped stays gone (the nil guard of the Known branch).
+func TestDialogKnownDialogRunEndsDuringRead(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	var once sync.Once
+	var read atomic.Bool
+	e.f.OnReadScreen = func(string) {
+		once.Do(func() {
+			e.endRun()
+			e.a.dialogForget(e.run) // what the end of a run does (runEndHooks)
+			read.Store(true)
+		})
+	}
+	e.show(fixture(t, "claude-2.1.328-code-mode.txt"))
+	waitFor(t, "read", read.Load)
+	quiet()
+	if got := e.f.KeysPressed(e.term); len(got) != 0 {
+		t.Fatalf("keys typed for a run that ended: %v", got)
+	}
+	if got := e.outcomes(); len(got) != 0 || e.watching() {
+		t.Fatalf("outcomes %v, watching %v", got, e.watching())
+	}
+}
+
+// A run that ends while a known dialog is being answered: the answer is logged (the keys were typed), and the write of
+// "answered" does not recreate the watch the end dropped (the answered-write guard).
+func TestDialogKnownDialogRunEndsDuringAnswer(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	var once sync.Once
+	var typed atomic.Bool
+	e.f.OnKeys = func(string, []string) {
+		once.Do(func() {
+			e.endRun()
+			e.a.dialogForget(e.run)
+			typed.Store(true)
+		})
+	}
+	e.show(fixture(t, "claude-2.1.328-code-mode.txt"))
+	waitFor(t, "answered", typed.Load)
+	waitFor(t, "answer logged", func() bool { return len(e.dialogs()) == 1 })
+	quiet()
+	if e.watching() {
+		t.Fatal("the answer recreated the watch of a run that ended")
+	}
+	if got := e.outcomes(); !slices.Equal(got, []string{"answered:claude.code_mode_optin"}) {
+		t.Fatalf("outcomes %v", got)
+	}
+}
+
+// A run that ended while its screen was read is not flagged, even when its end hooks have not dropped the watch yet
+// (they wait for the run's dialog lock, which the check holds).
+func TestDialogEndedDuringReadIsNotFlaggedBeforeForget(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	var once sync.Once
+	var read atomic.Bool
+	e.f.OnReadScreen = func(string) {
+		once.Do(func() {
+			e.endRun() // the watch stays: runEndHooks would wait for the lock
+			read.Store(true)
+		})
+	}
+	e.show(fixture(t, "claude-unknown.txt"))
+	waitFor(t, "read", read.Load)
+	quiet()
+	if got := e.outcomes(); len(got) != 0 {
+		t.Fatalf("an ended run was flagged: %v", got)
+	}
+}

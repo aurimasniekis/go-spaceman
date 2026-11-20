@@ -388,9 +388,10 @@ var Table = map[string]Entry{
 	"save-space-role":         {Dangerous, rSpaceRole},
 
 	// Runs.
-	"get-run":    {Read, rRead},
-	"launch-run": {Write, rLaunch},
-	"list-runs":  {Read, rRead},
+	"get-run":          {Read, rRead},
+	"launch-run":       {Write, rLaunch},
+	"list-runs":        {Read, rRead},
+	"list-run-dialogs": {Read, rRead},
 	// Usage-limit holds and parked runs' waits (ADR-0079): identifiers, kinds and times only.
 	"list-space-usage-limits":     {Read, rRead},
 	"list-space-limit-waits":      {Read, rRead},

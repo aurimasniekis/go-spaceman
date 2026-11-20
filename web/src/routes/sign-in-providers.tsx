@@ -46,7 +46,7 @@ function SignInProvidersPage() {
   }
   return (
     <>
-      <PageHeader title="Sign-in providers" description="OpenID Connect providers people sign in with, such as Porch, and the grants their groups map to."
+      <PageHeader hub="access" title="Sign-in providers" description="OpenID Connect providers people sign in with, such as Porch, and the grants their groups map to."
         actions={<Button leftSection={<IconPlus size={14} />} onClick={() => setAdding(true)}>Add provider</Button>} />
       <ErrorAlert error={providers.error} />
       <Stack gap="md">
