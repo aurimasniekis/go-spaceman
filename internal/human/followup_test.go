@@ -89,6 +89,9 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND body NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("no operator message (or it carries the response)")
 	}
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND subject = 'A human response could not be delivered'`) != 1 {
+		t.Fatal("operator message subject does not name the undelivered kind")
+	}
 	if f.count(`SELECT count(*) FROM audit_events WHERE action = 'human_action.rerouted'`) != 1 ||
 		f.count(`SELECT count(*) FROM event_outbox WHERE type = 'spaceman.human.action_rerouted.v1' AND payload_json NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("reroute not audited or published")
