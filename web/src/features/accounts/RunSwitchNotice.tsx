@@ -24,21 +24,21 @@ export function RunSwitchNotice({ spaceId, runId }: { spaceId: string; runId: st
           <Text size="sm">
             {isSwitchBack(from) && from.state !== 'cancelled' ? (
               from.state === 'fell_back' ? (
-                <>Not switched back: this run stayed on account <b>{name(from.from_account_id)}</b>{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
+                <>Not switched back: this run stayed on account <b>{name(from.from_account_id)}</b>{from.reason ? ` because ${reasonLabel(from.reason, from.cause)}` : ''}.</>
               ) : (
                 <>{from.state === 'pending' || from.state === 'parked' ? 'Switching back' : 'Switched back'} to its original account <b>{name(from.to_account_id)}</b> (it reset; was on {name(from.from_account_id)}){' '}
                   {from.new_run_id ? <>→ <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: from.new_run_id }} size="sm">the new run</AnchorLink></> : <>(the new run has not started yet)</>}
-                  {from.state === 'failed' && from.reason ? `. It failed because ${reasonLabel(from.reason)}` : ''}.</>
+                  {from.state === 'failed' && from.reason ? `. It failed because ${reasonLabel(from.reason, from.cause)}` : ''}.</>
               )
             ) : from.state === 'fell_back' ? (
-              <>No switch: this run waited at its limit instead{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
+              <>No switch: this run waited at its limit instead{from.reason ? ` because ${reasonLabel(from.reason, from.cause)}` : ''}.</>
             ) : from.state === 'cancelled' ? (
-              <>A switch to another account was cancelled{from.reason ? ` because ${reasonLabel(from.reason)}` : ''}.</>
+              <>A switch to another account was cancelled{from.reason ? ` because ${reasonLabel(from.reason, from.cause)}` : ''}.</>
             ) : (
               <>{from.state === 'pending' || from.state === 'parked' ? 'Moving' : 'Moved'} to account <b>{name(from.to_account_id)}</b> ({limitKindLabel(from.limit_kind)} on {name(from.from_account_id)}
                 {from.limit_resets_at && <>, resets <LimitTime at={from.limit_resets_at} /></>}){' '}
                 {from.new_run_id ? <>→ <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: from.new_run_id }} size="sm">the new run</AnchorLink></> : <>(the new run has not started yet)</>}
-                {from.state === 'failed' && from.reason ? `. It failed because ${reasonLabel(from.reason)}` : ''}.</>
+                {from.state === 'failed' && from.reason ? `. It failed because ${reasonLabel(from.reason, from.cause)}` : ''}.</>
             )}
           </Text>
         </Alert>

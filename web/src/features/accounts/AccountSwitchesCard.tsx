@@ -40,7 +40,7 @@ export function AccountSwitchesCard({ spaceId }: { spaceId: string }) {
                     </Table.Td>
                     <Table.Td>
                       <Badge variant="light" color={st.color} style={{ textTransform: 'none', maxWidth: 'none' }}>{st.label}</Badge>
-                      {s.reason && <Text size="xs" c="dimmed">because {reasonLabel(s.reason)}</Text>}
+                      {s.reason && <Text size="xs" c="dimmed">because {reasonLabel(s.reason, s.cause)}</Text>}
                     </Table.Td>
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">

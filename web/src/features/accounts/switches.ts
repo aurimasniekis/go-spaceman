@@ -31,6 +31,11 @@ export const SWITCH_STATE: Record<AccountSwitch['state'], { label: string; color
   cancelled: { label: 'Cancelled', color: 'gray' },
 }
 
+/** A switch-back only ever targets its original account, so "no eligible account" there means that account is not available. */
+export const SWITCH_BACK_REASON: Record<string, string> = {
+  no_eligible_account: 'its original account was not available any more',
+}
+
 /** The fixed reasons a switch records (never raw text), in words. */
 export const SWITCH_REASON: Record<string, string> = {
   no_eligible_account: 'no other account of the pool was free',
@@ -44,7 +49,12 @@ export const SWITCH_REASON: Record<string, string> = {
   switch_back_off: 'switching back was turned off',
 }
 
-export const reasonLabel = (r?: string) => (r ? (SWITCH_REASON[r] ?? r.replaceAll('_', ' ')) : '')
+/** The words for a switch's reason; a switch-back's own wording wins where it has one. */
+export function reasonLabel(r?: string, cause?: string): string {
+  if (!r) return ''
+  if (cause === 'switch_back' && SWITCH_BACK_REASON[r]) return SWITCH_BACK_REASON[r]
+  return SWITCH_REASON[r] ?? r.replaceAll('_', ' ')
+}
 
 /** The switch that moved a run away (as its source) and the one that moved it here (as its target), newest first. */
 export function switchesOfRun(all: AccountSwitch[], runId: string): { from?: AccountSwitch; into?: AccountSwitch } {

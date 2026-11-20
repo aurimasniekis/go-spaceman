@@ -188,6 +188,8 @@ describe('account switches', () => {
     expect(within(card).getAllByText('Switched back').length).toBeGreaterThanOrEqual(2)
     expect(card).toHaveTextContent('original account reset')
     expect(card).toHaveTextContent('Stayed on its account')
+    expect(card).toHaveTextContent('because its original account was not available any more')
+    expect(card.textContent).not.toMatch(/no other account of the pool/)
     expect(card).toHaveTextContent('Moved')
     expect(within(card).getAllByRole('link', { name: 'previous run' })).toHaveLength(2)
   })
