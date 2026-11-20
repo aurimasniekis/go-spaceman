@@ -77,6 +77,23 @@ export function groupAttention(data: Pick<Attention, 'items' | 'spaces'>, f: Fil
   return { act, watch }
 }
 
+/** The count the summary line states: what is in the Act now group (human actions plus act items) and what is in Watch, unfiltered. */
+export function attentionSummary(data: Pick<Attention, 'items' | 'spaces'>): { act: number; watch: number } {
+  const items = data.items ?? []
+  const human = (data.spaces ?? []).reduce((n, s) => n + (s.human_pending ?? 0), 0)
+  return { act: human + items.filter((i) => i.severity === 'act').length, watch: items.filter((i) => i.severity !== 'act').length }
+}
+
+/** The summary line above the rows; its numbers are the rows' own, so it never says 0 above listed rows. */
+export function summaryText(data: Pick<Attention, 'items' | 'spaces'>): string {
+  const { act, watch } = attentionSummary(data)
+  const plural = (n: number) => (n === 1 ? '' : 's')
+  const parts: string[] = []
+  if (act > 0) parts.push(`${act} item${plural(act)} need${act === 1 ? 's' : ''} a person`)
+  if (watch > 0) parts.push(`${watch} to watch`)
+  return parts.join(' · ')
+}
+
 /** The spaces to offer in the space filter: everything the items or the summary mention, by name, falling back to the ID. */
 export function spaceOptions(data: Pick<Attention, 'items' | 'spaces'>): { value: string; label: string }[] {
   const names = new Map(data.spaces.map((s) => [s.space_id, s.name]))

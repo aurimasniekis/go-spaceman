@@ -187,9 +187,11 @@ in the sweep).
       otherwise left out).
   - Titles that come from agents (task and human-action titles) are untrusted text. They are rendered as plain text
     and truncated.
-- **Web:** a list grouped **Act now** (failed runs, overdue or escalated human actions, blocked or failed tasks, dead
-  letters, failing backups, disconnected nodes, storage problems) and **Watch** (parked runs, limits, budget warnings,
-  quarantined events, storage near quota).
+- **Web:** a list grouped **Act now** (unknown runs, overdue or escalated human actions, blocked or failed tasks,
+  quarantined events, failed account switches, incoming cross-space requests, dead letters, failing backups,
+  disconnected nodes, storage problems) and **Watch** (failed runs of the last 24 h, parked runs, account limits,
+  budget warnings, storage near quota). A failed run is already over, so it is Watch; a quarantined event stays until a
+  person reprocesses or discards it, so it is Act now. The server's severities decide (ADR-0103 does not name them).
   - Each row says what, where, since when, and links directly to the item: a run page, the queue, or
     `/spaces/$id/human?action=…`.
   - Filters by space and kind. The installation cards (Storage, Backups) stay below.

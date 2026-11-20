@@ -62,6 +62,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The Attention page's summary line matches its rows.** It said "N items need a person" from the server's total, which
+  leaves out failed account switches and cross-space requests that are listed under Act now, so it could read 0 above
+  rows. It now counts the Act now rows (human actions included) and the Watch rows.
+
 - **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
   and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
   the terminal column, and the divider runs from the header rule to the bottom edge of the window.

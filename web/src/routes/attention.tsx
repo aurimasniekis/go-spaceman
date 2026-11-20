@@ -9,10 +9,10 @@ import { AttentionView } from '@/features/attention/AttentionView'
 export const Route = createFileRoute('/attention')({ component: AttentionPage })
 
 /**
- * One view of what needs a person (SM-UI-003): human actions, blocked and failed tasks, quarantined events, runs in
- * unknown or failed states, budgets, attachment storage, disconnected nodes, outbound dead letters, backups and
- * storage health. It refreshes when the change feed reports a change; storage health has no change event, so Refresh
- * re-reads it.
+ * One view of what needs a person (SM-UI-003): itemised rows grouped Act now and Watch (blocked and failed tasks,
+ * quarantined events, runs, budgets, parked runs, account limits and failed switches, cross-space requests) with
+ * human actions collapsed into one row, then the installation sections (nodes, outbound dead letters, backups, storage
+ * health). It refreshes when the change feed reports a change; storage health has no change event, so Refresh re-reads it.
  */
 function AttentionPage() {
   const q = useAttention()

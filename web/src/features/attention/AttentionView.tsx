@@ -6,7 +6,7 @@ import { isMiniApp } from '@/api/session'
 import { AnchorLink } from '@/components/AnchorLink'
 import { formatBytes } from '@/components/composer/upload'
 import { ago, datetime } from '@/lib/format'
-import { groupAttention, kindOptions, KIND_LABELS, spaceOptions, targetRoute, truncate, truncatedKinds, type Attention, type AttentionSpace, type Row } from './targets'
+import { groupAttention, kindOptions, summaryText, KIND_LABELS, spaceOptions, targetRoute, truncate, truncatedKinds, type Attention, type AttentionSpace, type Row, type TargetRoute } from './targets'
 
 export type { Attention, AttentionSpace }
 
@@ -106,6 +106,21 @@ export function spaceHasItems(s: AttentionSpace): boolean {
   return s.total > 0 || [s.runs_parked, s.account_limits, s.account_switches_failed, s.xspace_incoming].some((n) => !!n)
 }
 
+/** A link to an item's target. Each route is spelled out, so a renamed route fails the build instead of being cast away. */
+function TargetLink({ route, children }: { route: TargetRoute; children: ReactNode }) {
+  switch (route.to) {
+    case '/spaces/$spaceId/runs/$runId': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId/queue': return <AnchorLink to={route.to} params={route.params} search={route.search} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId/events/$subscriptionId': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId/usage': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId/events': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId/limits': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId/cross-space': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId/human': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+    case '/spaces/$spaceId': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
+  }
+}
+
 function ItemRow({ row, names, miniApp }: { row: Row; names: Map<string, string>; miniApp: boolean }) {
   if (row.type === 'human') {
     const where = row.spaceId ? names.get(row.spaceId) : undefined
@@ -129,7 +144,7 @@ function ItemRow({ row, names, miniApp }: { row: Row; names: Map<string, string>
     <Group gap="xs" wrap="nowrap" justify="space-between" py={4}>
       <Group gap="xs" style={{ minWidth: 0 }}>
         <Badge variant="light" color={item.severity === 'act' ? 'owlRed' : 'owlBlue'} style={{ textTransform: 'none', flexShrink: 0 }}>{KIND_LABELS[item.kind] ?? item.kind}</Badge>
-        {route ? <AnchorLink {...(route as unknown as { to: '/' })} size="sm">{title}</AnchorLink> : <Text size="sm">{title}</Text>}
+        {route ? <TargetLink route={route}>{title}</TargetLink> : <Text size="sm">{title}</Text>}
       </Group>
       <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>{names.get(item.space_id) ?? item.space_id} · {ago(item.since)}</Text>
     </Group>
@@ -165,7 +180,7 @@ export function AttentionView({ data }: { data: Attention }) {
       {data.total === 0 && source.items.length === 0 ? (
         <Alert color="owlGreen" icon={<IconCircleCheck size={16} />} title="Nothing needs you">Everything you can see is in order.</Alert>
       ) : (
-        <Text size="sm" c="dimmed">{data.total} item{data.total === 1 ? '' : 's'} need a person · checked {ago(data.checked_at)}</Text>
+        <Text size="sm" c="dimmed">{summaryText(source)} · checked {ago(data.checked_at)}</Text>
       )}
       {(source.items.length > 0 || source.spaces.some((s) => (s.human_pending ?? 0) > 0)) && (
         <>
