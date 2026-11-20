@@ -23,6 +23,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   isn't read as zero. A 90-day daily range works as before. The sums run in SQL, and migration 0069 replaces the
   ledger's time index with a covering one so they read the index alone (30 days of 200k rows by space: about 50 ms).
   See ADR-0103.
+- **One list of the messages addressed to operators, across all spaces.** `GET /messages` (`list-operator-messages`)
+  returns the messages to operators from every space you hold `message:read` in, newest first, with the space's slug and
+  name on each item so a client can act through the per-space ack, reply and resolve operations. By default only open
+  messages (not yet acknowledged or resolved); `state=all`, `space` and `kind` filter, and `cursor` and `limit` (at most
+  200) page it. `unread_count` is the open count over all readable spaces, for a badge. Messages to control, roles and
+  runs, and other spaces' messages, never appear. CLI: `spaceman message inbox` (`--all` follows every page).
+
 - **One call lists the usage windows of every account you can see.** `GET /account-windows` (and `spaceman usage
   windows`) returns each subscription account bound, directly or through a role pool, to a space you can read
   (`run:read`), once, with its name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound

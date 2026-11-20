@@ -395,6 +395,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/messages` | `list-operator-messages` | Messages addressed to operators, across the spaces you can read |
 | `GET` | `/spaces/{space_id}/messages` | `list-messages` | A space's recent messages between agents, control and operators |
 | `POST` | `/spaces/{space_id}/messages` | `send-message` | Send a durable message to control, a role or a run |
 | `GET` | `/spaces/{space_id}/messages/{message_id}` | `get-message` | A message |

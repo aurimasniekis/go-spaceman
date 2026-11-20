@@ -1468,6 +1468,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Messages addressed to operators, across the spaces you can read
+         * @description Only messages to operators in spaces where you have message:read (never messages to control, roles or runs), newest first. By default only open messages (not acknowledged or resolved). Act on an item through the per-space ack, reply and resolve operations.
+         */
+        get: operations["list-operator-messages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -10257,6 +10277,64 @@ export interface components {
             provision_reason?: string;
             would_provision: boolean;
         };
+        OperatorMessage: {
+            /** Format: date-time */
+            acknowledged_at?: string;
+            acknowledged_by?: string;
+            attachments?: components["schemas"]["AttachmentsAttachment"][];
+            /** Format: date-time */
+            available_at?: string;
+            /** @description Markdown; untrusted when an agent wrote it */
+            body: string;
+            correlation_id?: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description Scheduled for this time: not delivered before it
+             */
+            deliver_at?: string;
+            /** @enum {string} */
+            delivered_via?: "" | "terminal_notice" | "mcp_fetch" | "operator_view";
+            from_id?: string;
+            /** @enum {string} */
+            from_kind: "run" | "operator" | "system";
+            from_label?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "message" | "request" | "reply" | "notification";
+            reply_to?: string;
+            resolution?: string;
+            /** Format: date-time */
+            resolved_at?: string;
+            space_id: string;
+            space_name: string;
+            space_slug: string;
+            /** @enum {string} */
+            state: "stored" | "available" | "acknowledged" | "resolved";
+            subject: string;
+            to_id?: string;
+            /** @enum {string} */
+            to_kind: "run" | "role" | "control" | "operators";
+            /** Format: int64 */
+            version: number;
+        };
+        OperatorMessageList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OperatorMessageList.json
+             */
+            readonly $schema?: string;
+            /** @description Newest first */
+            items: components["schemas"]["OperatorMessage"][];
+            next_cursor?: string;
+            /**
+             * Format: int64
+             * @description Open messages to operators (not acknowledged or resolved) in all spaces you can read, whatever the filters
+             */
+            unread_count: number;
+        };
         OutboxFailure: {
             /** Format: int64 */
             attempts: number;
@@ -16742,6 +16820,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Link"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-operator-messages": {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                /** @description open: not yet acknowledged or resolved */
+                state?: "open" | "all";
+                /** @description Only this space (ID or slug) */
+                space?: string;
+                kind?: "" | "message" | "request" | "reply" | "notification";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorMessageList"];
                 };
             };
             /** @description Error */

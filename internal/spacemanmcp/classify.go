@@ -94,6 +94,7 @@ var Table = map[string]Entry{
 	"get-event-template":         {Read, rFiltered},
 	"preview-event-template":     {Read, rFiltered},
 	"get-attention":              {Read, rFiltered},
+	"list-operator-messages":     {Read, rFiltered},
 	"list-account-kinds":         {Read, rFiltered},
 	"list-limit-definitions":     {Read, rFiltered},
 	"list-pending-human-actions": {Read, rFiltered},
