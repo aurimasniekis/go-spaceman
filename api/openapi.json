@@ -18919,6 +18919,74 @@
         ],
         "type": "object"
       },
+      "SpaceUsageSeriesPage": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SpaceUsageSeriesPage.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bucket": {
+            "enum": [
+              "hour",
+              "day"
+            ],
+            "type": "string"
+          },
+          "cost_note": {
+            "description": "What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit",
+            "type": "string"
+          },
+          "from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "group_by": {
+            "type": "string"
+          },
+          "items": {
+            "description": "One row per bucket and group, oldest first",
+            "items": {
+              "$ref": "#/components/schemas/UsageRow"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "not_counted": {
+            "description": "Per harness, runs of this space active in the range whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero",
+            "items": {
+              "$ref": "#/components/schemas/UsageNotCounted"
+            },
+            "type": "array"
+          },
+          "to": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/UsageRow",
+            "description": "Over the whole range, not only this page"
+          }
+        },
+        "required": [
+          "not_counted",
+          "bucket",
+          "group_by",
+          "from",
+          "to",
+          "cost_note",
+          "totals",
+          "items"
+        ],
+        "type": "object"
+      },
       "SpaceWatchdog": {
         "additionalProperties": false,
         "properties": {
@@ -37238,7 +37306,7 @@
     },
     "/spaces/{space_id}/usage/series": {
       "get": {
-        "description": "Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.",
+        "description": "Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported; runs whose usage the ledger does not hold are counted per harness in not_counted.",
         "operationId": "get-space-usage-series",
         "parameters": [
           {
@@ -37330,7 +37398,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UsageSeriesPage"
+                  "$ref": "#/components/schemas/SpaceUsageSeriesPage"
                 }
               }
             },

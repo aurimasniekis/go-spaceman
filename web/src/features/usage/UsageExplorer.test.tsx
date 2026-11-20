@@ -144,12 +144,11 @@ describe('Usage explorer follow-ups', () => {
     expect(await screen.findByRole('columnheader', { name: 'Tokens in range (filtered)' })).toBeInTheDocument()
     expect(screen.getByTestId('usage-account-team-max')).toHaveTextContent('500')
   })
-  it('on a space page, shows the not-counted note from the all-spaces series with a link to the run pages', async () => {
-    const calls: string[] = []
-    vi.spyOn(api, 'GET').mockImplementation(((path: string) => {
-      calls.push(path)
-      if (path === '/spaces/{space_id}/usage/series') return Promise.resolve({ data: page([row(14, 'worker', 100)]), response: new Response() })
-      if (path === '/usage/series') return Promise.resolve({ data: page([], { not_counted: [{ harness: 'codex', runs: 2, harbor_pilot_runs: 0 }] }), response: new Response() })
+  it('on a space page, shows the not-counted note from the space series with a link to the run pages', async () => {
+    const calls: { path: string; space?: string }[] = []
+    vi.spyOn(api, 'GET').mockImplementation(((path: string, init?: { params?: { path?: { space_id?: string } } }) => {
+      calls.push({ path, space: init?.params?.path?.space_id })
+      if (path === '/spaces/{space_id}/usage/series') return Promise.resolve({ data: page([row(14, 'worker', 100)], { not_counted: [{ harness: 'codex', runs: 2, harbor_pilot_runs: 0 }] }), response: new Response() })
       return new Promise(() => {})
     }) as never)
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -157,7 +156,8 @@ describe('Usage explorer follow-ups', () => {
     const note = await screen.findByTestId('usage-not-counted')
     expect(note).toHaveTextContent('2 Codex runs')
     expect(within(note).getByRole('link', { name: 'run pages' })).toHaveAttribute('href', '/spaces/spc_1/runs')
-    expect(calls).toContain('/usage/series')
+    expect(calls).toContainEqual({ path: '/spaces/{space_id}/usage/series', space: 'spc_1' })
+    expect(calls.map((c) => c.path)).not.toContain('/usage/series')
   })
   it('drops the old figures when the reload fails, and does not mark accounts against stale data', async () => {
     let n = 0
@@ -178,6 +178,30 @@ describe('Usage explorer follow-ups', () => {
     await waitFor(() => expect(screen.queryByTestId('usage-totals')).toBeNull())
     expect(screen.queryByRole('table', { name: 'Usage by space' })).toBeNull()
     expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+  it('hides the — account marks while the page is stale, and shows them again once it is fresh', async () => {
+    let release: (() => void) | undefined
+    let n = 0
+    vi.spyOn(api, 'GET').mockImplementation(((path: string) => {
+      if (path === '/usage/series') {
+        n++
+        if (n === 1) return Promise.resolve({ data: page([row(14, 'acc_other', 500)], { group_by: 'account' }), response: new Response() })
+        return new Promise((res) => { release = () => res({ data: page([row(14, 'acc_other', 5)], { group_by: 'account' }), response: new Response() }) })
+      }
+      if (path === '/account-windows') return Promise.resolve({ data: windows, response: new Response() })
+      if (path === '/spaces') return Promise.resolve({ data: { items: [] }, response: new Response() })
+      return new Promise(() => {})
+    }) as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MantineProvider theme={theme}><QueryClientProvider client={qc}><Harness initial={{ group: 'account', account: 'acc_other' }} seen={[]} /></QueryClientProvider></MantineProvider>)
+    expect(await screen.findByTestId('usage-account-team-max')).toHaveTextContent('—')
+    fireEvent.click(screen.getByRole('radio', { name: 'Last 90 days' }))
+    await waitFor(() => expect(n).toBe(2))
+    await waitFor(() => expect(document.querySelector('[data-stale="true"]')).not.toBeNull())
+    expect(screen.getByTestId('usage-account-team-max')).not.toHaveTextContent('—')
+    release!()
+    await waitFor(() => expect(document.querySelector('[data-stale="true"]')).toBeNull())
+    expect(await screen.findByTestId('usage-account-team-max')).toHaveTextContent('—')
   })
   it('shows — in the accounts table for an account the filter excludes', async () => {
     setup(() => page([row(14, 'acc_other', 500)], { group_by: 'account' }), { group: 'account', account: 'acc_other' })

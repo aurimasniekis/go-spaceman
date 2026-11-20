@@ -198,15 +198,33 @@ func (svc *Service) GlobalSeries(ctx context.Context, q SeriesQuery, f Filter, s
 	if err := svc.labels(ctx, out, spaces); err != nil {
 		return nil, err
 	}
-	nc, err := r.CountUnledgeredRuns(ctx, db.CountUnledgeredRunsParams{ToUs: to, FromUs: from, Spaces: p.Spaces, Accounts: p.Accounts, Roles: p.Roles,
-		Harnesses: p.Harnesses})
+	if out.NotCounted, err = svc.notCounted(ctx, db.CountUnledgeredRunsParams{ToUs: to, FromUs: from, Spaces: p.Spaces, Accounts: p.Accounts, Roles: p.Roles,
+		Harnesses: p.Harnesses}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (svc *Service) notCounted(ctx context.Context, p db.CountUnledgeredRunsParams) ([]NotCounted, error) {
+	nc, err := svc.s.R().CountUnledgeredRuns(ctx, p)
 	if err != nil {
 		return nil, err
 	}
+	out := []NotCounted{}
 	for _, n := range nc {
-		out.NotCounted = append(out.NotCounted, NotCounted{Harness: n.Harness, Runs: n.Runs, HarborPilotRuns: n.HarborPilotRuns})
+		out = append(out, NotCounted{Harness: n.Harness, Runs: n.Runs, HarborPilotRuns: n.HarborPilotRuns})
 	}
 	return out, nil
+}
+
+// SpaceNotCounted lists, per harness, the runs of one space active in the series range whose usage the ledger does not
+// hold (the same count as the all-spaces series gives, narrowed to the space). Always non-nil.
+func (svc *Service) SpaceNotCounted(ctx context.Context, spaceID string, q SeriesQuery) ([]NotCounted, error) {
+	q, err := q.normalize(svc.s.Now(), SpaceGroups)
+	if err != nil {
+		return nil, err
+	}
+	return svc.notCounted(ctx, db.CountUnledgeredRunsParams{ToUs: q.To.UnixMicro(), FromUs: q.From.UnixMicro(), Spaces: jsonList([]string{spaceID})})
 }
 
 // totalSlices is how many parallel reads sum a range's totals. Every ledger row of the range is read (index only), so

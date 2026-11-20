@@ -4338,7 +4338,7 @@ export interface paths {
         };
         /**
          * A space's usage over time
-         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.
+         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported; runs whose usage the ledger does not hold are counted per harness in not_counted.
          */
         get: operations["get-space-usage-series"];
         put?: never;
@@ -12520,6 +12520,30 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["SettingsSpace"][];
+        };
+        SpaceUsageSeriesPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceUsageSeriesPage.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            bucket: "hour" | "day";
+            /** @description What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit */
+            cost_note: string;
+            /** Format: date-time */
+            from: string;
+            group_by: string;
+            /** @description One row per bucket and group, oldest first */
+            items: components["schemas"]["UsageRow"][];
+            next_cursor?: string;
+            /** @description Per harness, runs of this space active in the range whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero */
+            not_counted: components["schemas"]["UsageNotCounted"][];
+            /** Format: date-time */
+            to: string;
+            /** @description Over the whole range, not only this page */
+            totals: components["schemas"]["UsageRow"];
         };
         SpaceWatchdog: {
             /**
@@ -23641,7 +23665,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UsageSeriesPage"];
+                    "application/json": components["schemas"]["SpaceUsageSeriesPage"];
                 };
             };
             /** @description Error */
