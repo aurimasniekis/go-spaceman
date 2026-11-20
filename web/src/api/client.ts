@@ -92,6 +92,8 @@ export type AccountSwitch = Schemas['FleetAccountSwitch']
 export type RolePool = Schemas['AccountsRolePool']
 export type UsageSeries = Schemas['UsageSeriesPage']
 export type UsageRow = Schemas['UsageRow']
+export type GlobalUsageSeries = Schemas['GlobalUsageSeriesPage']
+export type AccountState = Schemas['UsageAccountState']
 
 export type EventConnection = Schemas['EventsConnection']
 export type EventTemplate = Schemas['EventsTemplate']

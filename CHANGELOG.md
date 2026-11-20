@@ -15,6 +15,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `aria-current`). An entry shows only if one of its tabs is visible to you. Every existing URL still loads directly,
   and `/configuration`, `/integrations` and `/access` open the first tab you may see. Account is only in the user
   menu now, and Attention is off the sidebar (`/attention` stays).
+- **A Usage page in the web UI (`/usage`, in the sidebar's Work group).** Token usage across every space you can read,
+  over 24 hours, 7, 30 or 90 days (90 days in daily buckets), grouped by space, account, model, role or harness. Select an
+  account, model or harness in the table to filter by it; the range, grouping and filters are in the URL, so a view can
+  be linked to and survives a reload. Names come from the response's labels, and a space row opens that space's Usage
+  page. A note lists the runs whose usage isn't counted (Codex, and runs with only Harbor Pilot figures) per harness, so
+  a missing figure isn't read as zero. An Accounts section shows each account's 5-hour and 7-day window and its open
+  usage limits (`GET /account-windows`). A space's own Usage page now offers the 90-day range as well.
 - **Usage across every space you can read: `GET /usage/series` (`get-usage-series`) and `spaceman usage all`.** Ledger
   tokens per hour or day, grouped by space, account, model, role or harness, with filters on each (at most 50 values
   per filter). Rows, totals, `labels` (space and account names) and `not_counted` cover only the spaces where you have
