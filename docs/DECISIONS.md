@@ -7910,7 +7910,7 @@
        **0069**, and only if the UI-T1 benchmark shows it is needed.
   3. **Overview.** From top to bottom: the top five Attention items, linking to `/attention` with "See all (N)"; a usage
      summary (tokens today and in 7 days, a 14-day sparkline, the top five spaces and models, and a delta against the
-     previous period of the same length, tokens only, ADR-0103 Q7); an Accounts strip, hidden without accounts; then the
+     previous period of the same length, tokens only, §8 Q7); an Accounts strip, hidden without accounts; then the
      existing Active runs, Spaces and Nodes. It adds at most three cached requests. The Mini App home is unchanged.
   4. **Attention.** `/attention` stays a route and becomes the full itemised list. It leaves the sidebar, and Overview
      shows its top items. `GET /attention` gains an additive `items[]`: `kind`, `severity` (`act` or `watch`), `space_id`,
@@ -7929,10 +7929,12 @@
      - **URLs, option A:** every existing page keeps its URL. `/configuration`, `/integrations` and `/access` are entry
        routes that redirect to the first tab the user may see. Nested URLs (option B) are not taken, so UI-T7b is not
        needed. `/settings` is not used, because the Mini App owns it.
-  6. **Operator messages (accepted addition, SM-UI-010).** Needs you lists operator messages across the spaces the caller
-     can read, as the page already describes them. The API for them today is per space, `GET /spaces/{space_id}/messages`.
-     A cross-space `GET /messages` is not part of plan §3 and is not added by this ADR. It would need its own review of
-     the read rule.
+  6. **Operator messages (accepted addition, SM-UI-010).** Needs you gets a **Messages** tab (UI-M2): the messages
+     addressed to operators across the spaces the caller can read, newest first, open ones by default. It reads the
+     cross-space operator inbox `GET /messages` (`list-operator-messages`, `FilteredRead()`, only spaces where the caller
+     holds `message:read`, only messages to operators), which its own change adds; it is not one of this ADR's two
+     operations. Acknowledge, reply and resolve go through the existing per-space operations. Message bodies are
+     agent-written and rendered as untrusted text (SM-UI-005).
 - **Alternatives:**
   - Naming the page Spend or Consumption: rejected, a cost-like name, which ADR-0090 avoids.
   - Usage for admins only: rejected. The rule is the one `get-account-usage` already uses (per space, `run:read`).

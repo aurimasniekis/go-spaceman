@@ -448,7 +448,8 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   and the latest account windows, for the spaces the caller can read. It says which runs' usage is not counted (ADR-0103).
 - SM-UI-009 The main navigation groups rarely used administration pages into tabbed hubs, and every existing page URL keeps
   working (ADR-0103).
-- SM-UI-010 Needs you lists operator messages across the spaces the caller can read (ADR-0103, accepted addition).
+- SM-UI-010 Needs you lists operator messages across the spaces the caller can read, in a Messages view backed by the
+  cross-space operator inbox `GET /messages` (ADR-0103, accepted addition).
 
 ### SM-REC — Recordings, transcripts and usage
 - SM-REC-001 Terminal recordings, native transcripts and normalized metadata are kept distinct.
