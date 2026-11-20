@@ -170,9 +170,9 @@ type Attention struct {
 
 func i64(v int64) *int64 { return &v }
 
-// hasWatchOnly reports whether the space has rows only in the categories that are not part of Total (parked runs,
+// hasUncountedRows reports whether the space has rows only in the categories that are not part of Total (parked runs,
 // account limits, failed account switches, incoming cross-space requests), so it is still listed with its counts.
-func (s *AttentionSpace) hasWatchOnly() bool {
+func (s *AttentionSpace) hasUncountedRows() bool {
 	for _, n := range []*int64{s.RunsParked, s.AccountLimits, s.AccountSwitchFails, s.XSpaceIncoming} {
 		if n != nil && *n > 0 {
 			return true
@@ -484,7 +484,7 @@ func (d *Deps) attention(ctx context.Context, src *AttentionSources, only string
 	}
 	out := &Attention{Spaces: []AttentionSpace{}, Items: capItems(items), ItemCounts: counts, CheckedAt: now.UTC()}
 	for _, id := range order {
-		if s := byID[id]; s.Total > 0 || s.hasWatchOnly() || only != "" {
+		if s := byID[id]; s.Total > 0 || s.hasUncountedRows() || only != "" {
 			out.Spaces = append(out.Spaces, *s)
 			out.Total += s.Total
 		}

@@ -1,6 +1,6 @@
-import { Alert, Badge, Card, CloseButton, Group, SegmentedControl, SimpleGrid, Stack, Table, Text, Title, Anchor } from '@mantine/core'
+import { Alert, Badge, Card, CloseButton, Group, Loader, SegmentedControl, SimpleGrid, Stack, Table, Text, Title, Anchor } from '@mantine/core'
 import { IconInfoCircle } from '@tabler/icons-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAllAccountWindows, useSpaces, useUsageSeries } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
@@ -46,25 +46,38 @@ export function UsageExplorer({ spaceId, search, onSearch, names }: {
     ...(everywhere ? { space_id: st.space.length ? st.space : undefined, account_id: st.account.length ? st.account : undefined, model: st.model.length ? st.model : undefined, harness: st.harness.length ? st.harness : undefined } : {}),
   })
   const windows = useAllAccountWindows(everywhere)
+  // The query keeps the last answer as placeholder while the next one loads, so a change of range, grouping or filter does
+  // not blank the page. A placeholder is shown with its own grouping and bucket, since those describe the data and not the
+  // controls. After a failed load there is no placeholder: the error shows and the old figures are gone.
+  const fresh = useRef<{ group: GroupBy; bucket: 'hour' | 'day' } | null>(null)
+  if (usage.data && !usage.isPlaceholderData) fresh.current = { group: st.group, bucket: r.bucket }
   const d = usage.data
+  const stale = usage.isPlaceholderData
+  const group = stale ? (fresh.current?.group ?? st.group) : st.group
+  const bucket = stale ? (fresh.current?.bucket ?? r.bucket) : r.bucket
+  const loading = !d && usage.isPending
   const known = useMemo(() => ({ ...names, ...Object.fromEntries((windows.data ?? []).map((a) => [a.account_id, a.name])), ...d?.labels }), [names, windows.data, d?.labels])
-  const chart = useMemo(() => (d ? buildChart(d.items, bucketStarts(d.from, d.to, d.bucket), known) : null), [d, known])
   const rows = useMemo(() => (d ? perGroup(d.items) : []), [d])
-  const tokens = useMemo(() => (d && st.group === 'account' ? Object.fromEntries(rows.map((g) => [g.group, g.total_tokens])) : undefined), [d, st.group, rows])
+  // Grouped by harness the legend and the table both use the display name, never the raw ID.
+  const chartNames = useMemo(() => (group === 'harness' ? { ...known, ...Object.fromEntries(rows.map((g) => [g.group, harnessName(g.group)])) } : known), [group, known, rows])
+  const chart = useMemo(() => (d ? buildChart(d.items, bucketStarts(d.from, d.to, d.bucket), chartNames) : null), [d, chartNames])
+  const filtered = FILTER_KEYS.some((k) => st[k].length > 0)
+  const tokens = useMemo(() => (d && group === 'account' ? Object.fromEntries(rows.map((g) => [g.group, g.total_tokens])) : undefined), [d, group, rows])
   const lines = notCountedLines(d?.not_counted)
-  const label = fmtBucket(r.bucket)
+  const label = fmtBucket(bucket)
   const empty = !!d && d.totals.total_tokens === 0
   const groups = everywhere ? GROUPS : GROUPS.filter((g) => SPACE_GROUPS.includes(g.value))
-  const groupName = GROUPS.find((g) => g.value === st.group)?.label ?? st.group
-  const filterKey = filterOf(st.group)
+  const groupName = GROUPS.find((g) => g.value === group)?.label ?? group
+  const filterKey = filterOf(group)
   return (
-    <Stack gap="md">
+    <Stack gap="md" aria-busy={stale || loading} data-stale={stale ? 'true' : undefined} style={stale ? { opacity: 0.6 } : undefined}>
       <Group justify="space-between" gap="sm">
         <SegmentedControl aria-label="Time range" value={st.range} onChange={(v) => set({ ...st, range: v as typeof st.range })} data={RANGES.map((x) => ({ value: x.value, label: x.label }))} />
         <SegmentedControl aria-label="Group by" value={st.group} onChange={(v) => set({ ...st, group: v as GroupBy })} data={groups} />
       </Group>
       {everywhere && <FilterChips st={st} known={known} onRemove={(k, v) => set(toggleFilter(st, k, v))} />}
       <ErrorAlert error={usage.error} />
+      {loading && <Group gap="xs" role="status" data-testid="usage-loading"><Loader size="xs" /><Text size="sm" c="dimmed">Loading usage…</Text></Group>}
       {d && (
         <SimpleGrid cols={{ base: 2, sm: 4 }} data-testid="usage-totals">
           <Tile label="Tokens" value={n(d.totals.total_tokens)} note="input, output and cache" primary />
@@ -78,14 +91,14 @@ export function UsageExplorer({ spaceId, search, onSearch, names }: {
         <Alert color="owlYellow" variant="light" icon={<IconInfoCircle size={16} />} title="Not counted" data-testid="usage-not-counted">
           <Text size="sm">Usage of these runs is not in the figures above, so the totals are lower than what was used. It is missing, not zero.</Text>
           <ul style={{ margin: '4px 0 0', paddingLeft: 20 }}>{lines.map((l) => <li key={l}><Text size="sm" span>{l}</Text></li>)}</ul>
-          <Text size="xs" c="dimmed" mt={4}>{d?.not_counted.some((i) => i.harbor_pilot_runs > 0) ? 'Runs read back from Harbor Pilot have their figures on the run page only. ' : ''}Only Claude Code usage from a run's transcript reaches this page.</Text>
+          <Text size="xs" c="dimmed" mt={4}>{d?.not_counted.some((i) => i.harbor_pilot_runs > 0) ? 'Runs read back from Harbor Pilot have their figures on the run page only. ' : ''}Only Claude Code usage from a run's transcript reaches this page.{spaceId && <> Per-run figures are on the <AnchorLink to="/spaces/$spaceId/runs" params={{ spaceId }}>run pages</AnchorLink>.</>}</Text>
         </Alert>
       )}
       <Card>
-        <Title order={5} mb={4}>Tokens per {r.bucket}, by {groupName.toLowerCase()}</Title>
+        <Title order={5} mb={4}>Tokens per {bucket}, by {groupName.toLowerCase()}</Title>
         {empty ? <Text size="sm" c="dimmed" data-testid="usage-empty">No usage was reported in this range{FILTER_KEYS.some((k) => st[k].length) ? ' for these filters' : ''}.</Text> : chart && (
           <>
-            <UsageChart chart={chart} label={label} bucket={r.bucket} />
+            <UsageChart chart={chart} label={label} bucket={bucket} />
             <UsageLegend chart={chart} />
           </>
         )}
@@ -94,8 +107,8 @@ export function UsageExplorer({ spaceId, search, onSearch, names }: {
       {d && !empty && (
         <Card p={0}>
           {/* The table can scroll sideways on a phone; the region takes focus so a keyboard can scroll it. */}
-          <Table.ScrollContainer minWidth={640} scrollAreaProps={{ viewportProps: { tabIndex: 0, role: 'region', 'aria-label': `Usage by ${st.group}, table` } }}>
-            <Table verticalSpacing="xs" aria-label={`Usage by ${st.group}`}>
+          <Table.ScrollContainer minWidth={640} scrollAreaProps={{ viewportProps: { tabIndex: 0, role: 'region', 'aria-label': `Usage by ${group}, table` } }}>
+            <Table verticalSpacing="xs" aria-label={`Usage by ${group}`}>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>{groupName}</Table.Th><Table.Th ta="right">Tokens</Table.Th><Table.Th ta="right">Input</Table.Th><Table.Th ta="right">Output</Table.Th>
@@ -104,13 +117,14 @@ export function UsageExplorer({ spaceId, search, onSearch, names }: {
               </Table.Thead>
               <Table.Tbody>
                 {rows.map((g) => {
-                  const text = st.group === 'harness' ? harnessName(g.group) : groupLabel(g.group, known)
+                  const text = group === 'harness' ? harnessName(g.group) : groupLabel(g.group, known)
+                  const active = !!filterKey && st[filterKey].includes(g.group)
                   return (
                     <Table.Tr key={g.group}>
                       <Table.Td>
-                        {everywhere && st.group === 'space' && g.group ? <AnchorLink to="/spaces/$spaceId/usage" params={{ spaceId: g.group }}>{text}</AnchorLink>
+                        {everywhere && group === 'space' && g.group ? <AnchorLink to="/spaces/$spaceId/usage" params={{ spaceId: g.group }}>{text}</AnchorLink>
                           : everywhere && filterKey && g.group ? (
-                            <Anchor component="button" type="button" size="sm" onClick={() => set(toggleFilter(st, filterKey, g.group))} aria-label={`Filter by ${text}`}>{text}</Anchor>
+                            <Anchor component="button" type="button" size="sm" onClick={() => set(toggleFilter(st, filterKey, g.group))} aria-label={active ? `Remove filter ${text}` : `Filter by ${text}`}>{text}</Anchor>
                           ) : text}
                       </Table.Td>
                       <Table.Td ta="right" fw={600}>{n(g.total_tokens)}</Table.Td><Table.Td ta="right">{n(g.input_tokens)}</Table.Td><Table.Td ta="right">{n(g.output_tokens)}</Table.Td>
@@ -132,7 +146,7 @@ export function UsageExplorer({ spaceId, search, onSearch, names }: {
       {everywhere && (
         <>
           <ErrorAlert error={windows.error} />
-          {windows.data && <AccountWindowsTable items={windows.data} tokens={tokens} />}
+          {windows.data && <AccountWindowsTable items={windows.data} tokens={tokens} filtered={filtered} onlyAccounts={!stale && st.account.length ? st.account : undefined} />}
         </>
       )}
     </Stack>

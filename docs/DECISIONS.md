@@ -5892,6 +5892,30 @@
 - **Evidence:** `internal/backup` `TestServiceStalledStageFailsAndReleasesBusy` (a target whose upload blocks: the run
   fails naming `upload`, the row is `failed`, `busy` clears, the next backup succeeds; the status shows the stage while
   stuck), `TestServiceMaxDurationFailsBackup`, `TestWatchProgressAndStall`, `TestWatchStopIsNotAStall`.
+- **Amendment (2026-11-20): the memory flush is outside the watchdog and can never fail the backup.** Manual backups
+  failed with `backup stopped in stage memory_flush: no progress for 10m0s: open database …: context canceled` while a
+  busy node was connected, and a scheduled one spent 448 s in `memory_flush` against a one-minute wait. Cause: the flush
+  queued its request on each node's connection with the hub's unbounded `send`, one node after another, and started its
+  deadline only after that. A node whose outbound queue stayed full (a busy node reading slowly) blocked the flush
+  without a bound, and the other nodes were not even asked. The flush ran under the watchdog's context, so when the
+  watchdog fired, the same context also stopped the snapshot. Decision:
+  - `fleet.FlushMemory` is bounded end to end by the wait plus its grace from its start: the reads, the requests and
+    the answers. Requests are queued concurrently with a context-aware send (`session.sendCtx`; `send` is unchanged for
+    its other callers). A node whose request could not be queued in time is `timed_out` with the detail "the node's
+    outbound queue is full". An answer that arrived counts even when the deadline passed while an earlier node was
+    being waited for. Each node's outcome is logged (Info when flushed, Warn otherwise).
+  - The backup service runs the `memory_flush` stage under its own context, bounded by `MemoryFlushTimeout` (central
+    sets the wait plus 30 s; default 2 minutes), and at most half of `stall_timeout` and of `max_duration`. The watchdog
+    starts after the flush, with the overall limit reduced by the time the flush took (at least half of it remains). A
+    flush hook that does not return within 5 s of its bound is abandoned, and the manifest records that the flush did
+    not finish. Each node's answer or timeout is reported as progress on the backup's status.
+  - Consequence: `TestServiceMaxDurationFailsBackup` now hits the overall limit in the upload stage; a flush that never
+    returns is stopped at its own bound and does not fail the backup.
+  - Evidence: `internal/fleet` `TestFlushMemoryBusyNodeFullQueue` (a session whose queue is never drained: before the
+    fix FlushMemory was still blocked after 15 s; after it, it returns within the wait plus grace, the busy node's space
+    is `timed_out` with the queue detail and the other node's space is flushed); `internal/backup`
+    `TestServiceMemoryFlushStallDoesNotFailBackup` (before the fix it failed with the production error; after it the
+    backup succeeds, verifies and records the space as stale), `TestServiceMemoryFlushHookStuck`, `TestReportProgress`.
 
 ### ADR-0092 — Memory conflicts close when reconciled: a tool for control and the dreamer, and automatically when the folder is removed
 - **Status:** Accepted, 2026-11-16. Migration `0060_memory_conflict_folder` (one column; the node's own journal gets
@@ -7966,6 +7990,64 @@
     The hub work (UI-T7) lands before the pages that also edit `nav.ts`, or they are rebased onto it.
   - Migration 0069 is reserved, not used. Requirement rows SM-UI-008, SM-UI-009 and SM-UI-010 stay `todo` until their
     tasks land. SM-UI-003's evidence changes: Attention lists items, not only counts.
+
+### ADR-0104 — A subscription may ingest this installation's own run dialog events (ingest_own) (security-relevant change)
+
+- **Status:** Accepted, 2026-11-20 (v0.1.16). **Security-relevant change:** it relaxes the SM-EVT-016 loop guard "an
+  installation never ingests its own events" (ADR-0015, ADR-0049) for one narrow, opt-in case. Migration 0070
+  (`event_subscriptions.ingest_own`). Builds on ADR-0049 (automation depth) and ADR-0102 (run dialog events).
+- **Context:** ingestion drops every event whose `spaceman-origin` is this installation's `source`
+  (`ownEvent`, recorded as `filtered`). So an installation cannot subscribe to its own
+  `evt.spaceman.fleet.run.dialog_detected` to raise an inbox item when one of its runs is stopped at a dialog, though
+  that is the event's main use. The guard exists because ingestion publishes events of its own (the item's
+  `inbox.item.created`, the events of tasks made from it): ingesting those would feed itself.
+- **Decision:**
+  1. **A per-subscription boolean `ingest_own`** (default false) in the API, the OpenAPI spec (and so the MCP
+     catalog, which is built from it) and the CLI (`--ingest-own`). An installation-level allow-list was the
+     alternative. The flag was chosen because it is explicit where it acts: the operator turns it on for one
+     subscription, it shows on that subscription and its audit records, and every other subscription keeps the old
+     behaviour, including one on the same subject.
+  2. **A hard-coded subject allow-list.** Create and update accept `ingest_own` only when the subscription's effective
+     subject is exactly one of `evt.spaceman.fleet.run.dialog_detected` and `evt.spaceman.fleet.run.dialog_cleared`
+     (`events.OwnIngestSubjects`, built from the outbox catalog names). NATS wildcards cannot say `dialog_*`, and
+     `evt.spaceman.fleet.run.*` would also cover the run lifecycle, so wildcards are refused. Anything else, such as
+     `inbox.*` and `task.*`, is refused with `validation_failed` (HTTP 422): "ingest_own is not allowed for subject
+     S: a subscription may ingest this SpaceMan's own events only when its subject is exactly one of
+     evt.spaceman.fleet.run.dialog_detected, evt.spaceman.fleet.run.dialog_cleared; events that ingestion can itself
+     cause, such as inbox and task events, are never ingested as own". An update is checked against the subject it
+     leaves, so a subject change cannot carry the flag off the list. SpaceMan's own dialog answers
+     (`run.dialog_answered`) are audit records, not published, so they are not on the list.
+  3. **Ingestion checks again, per event.** An own event is admitted only when the subscription's current row has
+     `ingest_own`, the event's subject is on the allow-list (whatever the subscription's filter), its `data.space_id`
+     equals the subscription's own space (a missing or unreadable one means filtered, so one space never ingests
+     another space's dialogs), and its
+     `spaceman-depth` is absent or 0. Everything an ingestion causes (the item, tasks made from it, their events)
+     carries depth 1 or more (ADR-0049), so an own event about something an ingestion caused is never ingested again,
+     even on a subscription forced past the API check. Such an event is recorded as `filtered` with its own detail. Durable and
+     core NATS subscriptions use the same check (`admitOwn`).
+  4. **Template followers keep the flag.** A subscription that follows a template's latest version moves to a new
+     version only when its subject stays the same, and keeps `ingest_own` when it moves.
+  5. **Every other guard still applies.** An admitted event goes through the rate limit, `event_depth`, the
+     template's filters, deduplication (subscription and event ID) and quarantine like any other. Its item has depth 1.
+- **Alternatives considered:**
+  - An installation-level allow-list in the configuration: rejected. It is invisible on the subscription, applies to
+    every space at once, and needs a restart to change.
+  - Allowing `evt.spaceman.fleet.run.*` and filtering per event: rejected. The flag would then sit on a subscription
+    whose filter covers subjects it must not ingest.
+  - No depth condition, relying on the subject list alone: rejected as a single layer. The depth condition holds even
+    if the list is widened by mistake.
+- **Consequences:**
+  - An operator can turn a run stopped at a dialog into an inbox item in the same installation.
+  - Residual: a run carries no automation depth (ADR-0049, LIMITATIONS), so a dialog event of a run working on an
+    ingested item still has depth 0. A chain item → control → run → dialog → item is possible. It is not a loop of
+    ingestion alone: each step needs a real dialog on a real terminal, each occurrence is published once
+    (`dialog_id`) and becomes one item per subscription, and the run, tool-call and budget limits bound control.
+  - Evidence (simulated, in-process NATS): `internal/events` `TestOwnDialogEventIngestedOnlyWithOptIn`,
+    `TestOwnDialogEventIngestedOnCore`, `TestIngestOwnRefusedOffTheAllowList`, `TestIngestOwnCannotLoop` (the
+    item's own event, relayed by the real outbox code, is filtered), `TestIngestOwnSurvivesTemplateFollow`; `internal/app`
+    `TestIngestOwnOverHTTP`;
+    `internal/store` `TestSubscriptionIngestOwnMigrationFrom0069`. Not yet seen against a real pulsed.
+  - The Terraform provider's `ingest_own` attribute is a separate change.
 
 ## 2. Open items and unresolved contracts
 

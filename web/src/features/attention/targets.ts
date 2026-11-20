@@ -77,6 +77,48 @@ export function groupAttention(data: Pick<Attention, 'items' | 'spaces'>, f: Fil
   return { act, watch }
 }
 
+type SummaryData = Pick<Attention, 'items' | 'spaces'> & { item_counts?: Attention['item_counts']; total?: number }
+
+/**
+ * The count the summary line states: what is in the Act now group (human actions plus act items) and what is in Watch,
+ * unfiltered. Per kind the count is the full one from `item_counts` (the list is capped), so it matches the "N of M" note.
+ */
+export function attentionSummary(data: SummaryData): { act: number; watch: number } {
+  const listed: Record<string, { act: number; watch: number }> = {}
+  for (const i of data.items ?? []) {
+    const e = (listed[i.kind] ??= { act: 0, watch: 0 })
+    e[i.severity === 'act' ? 'act' : 'watch']++
+  }
+  const spaces = data.spaces ?? []
+  let act = spaces.reduce((n, s) => n + (s.human_pending ?? 0), 0)
+  let watch = 0
+  for (const [kind, e] of Object.entries(listed)) {
+    if (kind === 'budget_notice') {
+      // One kind, two severities: exceeded is Act now, a warning is Watch, so count them from the per-space numbers.
+      act += Math.max(e.act, spaces.reduce((n, s) => n + (s.budget_exceeded ?? 0), 0))
+      watch += Math.max(e.watch, spaces.reduce((n, s) => n + (s.budget_warnings ?? 0), 0))
+      continue
+    }
+    // A single-severity kind: the full count from item_counts (the list is capped), falling back to what is listed.
+    const n = Math.max(e.act + e.watch, data.item_counts?.[kind] ?? 0)
+    if (e.act > 0) act += n
+    else watch += n
+  }
+  return { act, watch }
+}
+
+/** The summary line above the rows; its numbers are the rows' own, so it never says 0 above listed rows. */
+export function summaryText(data: SummaryData): string {
+  const { act, watch } = attentionSummary(data)
+  const plural = (n: number) => (n === 1 ? '' : 's')
+  const parts: string[] = []
+  if (act > 0) parts.push(`${act} item${plural(act)} need${act === 1 ? 's' : ''} a person`)
+  if (watch > 0) parts.push(`${watch} to watch`)
+  // Problems that are not rows (dead letters, backups, storage, nodes, quota) still count in the server total.
+  if (parts.length === 0 && (data.total ?? 0) > 0) parts.push(`${data.total} item${plural(data.total!)} need${data.total === 1 ? 's' : ''} attention`)
+  return parts.join(' · ')
+}
+
 /** The spaces to offer in the space filter: everything the items or the summary mention, by name, falling back to the ID. */
 export function spaceOptions(data: Pick<Attention, 'items' | 'spaces'>): { value: string; label: string }[] {
   const names = new Map(data.spaces.map((s) => [s.space_id, s.name]))

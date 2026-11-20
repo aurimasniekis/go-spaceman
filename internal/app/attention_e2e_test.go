@@ -281,6 +281,9 @@ func TestAttentionNewCategoriesNeedTheirOwnPermission(t *testing.T) {
 		}
 		var at api.Attention
 		viewer.do("GET", "/attention", nil).json(t, &at)
+		if len(at.Spaces) != 1 {
+			t.Fatalf("a reader of one space sees %d spaces: %+v", len(at.Spaces), at.Spaces)
+		}
 		return at
 	}
 	const all = "account_limit account_switch_failed run_parked task_blocked xspace_request"

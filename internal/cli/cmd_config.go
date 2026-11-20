@@ -367,6 +367,8 @@ func (a *App) roleCmd() *cobra.Command {
 
 const whilePausedHelp = "while the space is paused: defer (default: ingest, tell control on resume), wake (ingest, tell control at once) or stop (stop until resume)"
 
+const ingestOwnHelp = "ingest this SpaceMan's own events (only for the subjects evt.spaceman.fleet.run.dialog_detected and evt.spaceman.fleet.run.dialog_cleared)"
+
 func (a *App) eventCmd() *cobra.Command {
 	conn := func(f *form) {
 		f.str("name", "name", "name").str("url", "url", "NATS URL of the Pulse server").str("stream", "stream", "JetStream stream").
@@ -418,14 +420,14 @@ func (a *App) eventCmd() *cobra.Command {
 					kv("var", "vars", "template variable").doc("custom", "custom", "custom template definition (JSON or YAML file)").
 					doc("start", "start", "start cursor (JSON or YAML file)").
 					str("delivery", "delivery", "durable (default, a JetStream durable) or core (plain NATS Core: non-durable, no replay or redelivery)").
-					str("while-paused", "while_paused", whilePausedHelp)
+					str("while-paused", "while_paused", whilePausedHelp).boolean("ingest-own", "ingest_own", ingestOwnHelp)
 			}}),
 		a.cmd(opts{use: "update", short: "Edit a subscription (only the flags given change)", op: "update-subscription", get: "get-subscription",
 			merge: true, drop: []string{"custom", "start"}, scoped: true, args: pos("subscription"),
 			form: func(f *form) {
 				f.str("name", "name", "name").boolean("enabled", "enabled", "enabled").str("template-version", "template_version_id", "template version ID").
 					str("follow", "follow", "pinned or latest").kv("var", "vars", "template variable (replaces the variables)").
-					str("while-paused", "while_paused", whilePausedHelp)
+					str("while-paused", "while_paused", whilePausedHelp).boolean("ingest-own", "ingest_own", ingestOwnHelp)
 			}}),
 		a.cmd(opts{use: "delete", short: "Delete a subscription", op: "delete-subscription", scoped: true, args: pos("subscription"), done: "Subscription deleted."}),
 		a.cmd(opts{use: "replay", short: "Replay a subscription's events from a point (recorded with a reason)", op: "replay-subscription",

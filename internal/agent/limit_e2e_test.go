@@ -61,6 +61,28 @@ func (fc *wsCentral) collect(t *testing.T, runID string, d time.Duration) []prot
 	}
 }
 
+// collectAtLeast waits (up to a generous cap, not a fixed sleep) for n of runID's reports, then returns them with any
+// that follow until none has come for quiet, so a late extra report still fails the exact-count checks. A loaded
+// -race run can take far longer than a quiet window to produce the first one.
+func (fc *wsCentral) collectAtLeast(t *testing.T, runID string, n int, quiet time.Duration) []proto.RunReport {
+	t.Helper()
+	var out []proto.RunReport
+	deadline := time.After(15 * time.Second)
+	for len(out) < n {
+		select {
+		case env := <-fc.msgs:
+			noTranscriptText(t, env)
+			var r proto.RunReport
+			if env.Type == proto.TypeRunReport && env.Decode(&r) == nil && r.RunID == runID {
+				out = append(out, r)
+			}
+		case <-deadline:
+			return out
+		}
+	}
+	return append(out, fc.collect(t, runID, quiet)...)
+}
+
 // limitChanges counts the reports whose limit differs from the report before (the first against before).
 func limitChanges(before *proto.RunLimit, rs []proto.RunReport) int {
 	n := 0
@@ -154,7 +176,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	// A turn with no limit: a report per status, none with a limit.
 	f.SetStatus(row.TerminalID, "working")
 	f.SetStatus(row.TerminalID, "idle")
-	if rs := fc.collect(t, runID, 300*time.Millisecond); len(rs) != 2 || limitChanges(nil, rs) != 0 {
+	if rs := fc.collectAtLeast(t, runID, 2, 300*time.Millisecond); len(rs) != 2 || limitChanges(nil, rs) != 0 {
 		t.Fatalf("turn without a limit: %d reports, %d limit changes", len(rs), limitChanges(nil, rs))
 	}
 
@@ -163,7 +185,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 3, 300*time.Millisecond)
 	if len(rs) != 3 || limitChanges(nil, rs) != 1 {
 		t.Fatalf("limit hit: %d reports, %d limit changes", len(rs), limitChanges(nil, rs))
 	}
@@ -174,7 +196,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	// Another turn with nothing new in the transcript: the status reports carry the same limit, and no extra report.
 	f.SetStatus(row.TerminalID, "working")
 	f.SetStatus(row.TerminalID, "idle")
-	rs = fc.collect(t, runID, 300*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 2, 300*time.Millisecond)
 	if len(rs) != 2 {
 		t.Fatalf("unchanged: %d reports", len(rs))
 	}
@@ -204,7 +226,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	if err := f.LimitReset(row.TerminalID, transcript, reset.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	rs = fc.collect(t, runID, 300*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 3, 300*time.Millisecond)
 	if len(rs) != 3 || limitChanges(rs[0].Limit, rs) != 1 {
 		t.Fatalf("reset: %d reports, %d limit changes", len(rs), limitChanges(rs[0].Limit, rs))
 	}
@@ -213,7 +235,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 
 	// The run ends: its final report keeps the cleared limit, and the end scan finds nothing new to send.
 	f.Exit(row.TerminalID, 0, "exited")
-	rs = fc.collect(t, runID, 300*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
 	if len(rs) == 0 || limitChanges(rs[0].Limit, rs) != 0 || rs[len(rs)-1].State != proto.RunExited {
 		t.Fatalf("end: %+v", rs)
 	}

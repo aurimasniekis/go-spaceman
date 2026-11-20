@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Ingest your own run dialog events: `ingest_own` on a subscription.** A subscription can now turn this
+  installation's own `evt.spaceman.fleet.run.dialog_detected` (or `dialog_cleared`) into inbox items, for example to
+  raise an item when a run is stopped at a dialog. Set `ingest_own: true` on create or update (CLI `--ingest-own`).
+  It is accepted only when the subscription's subject is exactly one of those two; any other subject, wildcards and
+  everything ingestion can cause (inbox, task events) is refused with `validation_failed` (422). Own events are
+  ingested only for the subscription's own space (its `data.space_id`) and at automation depth 0, so SpaceMan's events about an ingestion's items and tasks are never ingested, and `event_depth`, the rate
+  limit and deduplication still apply. Other subscriptions keep filtering own events. Migration 0070 adds the column
+  (off for existing subscriptions). ADR-0104.
+- **Messages tab under Needs you.** `/human?tab=messages` lists the messages addressed to operators from every space you
+  can read, using `GET /messages`. Each row shows the space (linked), kind, sender, subject, age and state; you can
+  acknowledge inline, or open one to reply, acknowledge or resolve through the per-space operations. Filter by unread or
+  all, space and kind. The tab shows the unread count and refreshes live from the change feed. The per-space Messages page
+  is unchanged.
+- **A reworked Overview in the web UI.** From the top: the **top 5 items that need attention** (act before watch, each
+  linking to where it is handled, with "See all (N)" to `/attention`; this replaces the "Needs attention" tile), a
+  **Usage** summary (tokens today and over the last 7 days with the change against the 7 days before, a 14-day
+  sparkline, and the top 5 spaces and models; tokens only, no cost), and an **Accounts** strip with each account's
+  5-hour and 7-day window bars and any open limit (hidden when no account is bound). The Spaces table gains a
+  "tokens 7 d" figure. The page adds three requests (`/usage/series` by space and by model, `/account-windows`);
+  the Telegram Mini App home is unchanged. "Open Usage" links to `/usage`.
 - **The Attention page lists items.** `/attention` now shows the itemised rows from `GET /attention` grouped **Act now**
   and **Watch**, each with what, where, since when and a link to the run, task, queue, usage page or cross-space page
   that handles it, with filters by space and kind. Pending human actions collapse into one row that opens Needs you.
@@ -15,7 +35,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   counts parked runs, account limits, failed account switches and incoming cross-space requests. The Mini App keeps its
   `/attention` page, with the web-only targets unlinked. `spaces[]` in the response now also lists a space whose only
   rows are parked runs, account limits or switches, or cross-space requests (its `total` stays 0).
-
 - **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
   (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
   MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
@@ -66,12 +85,31 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the run's observed working status kept its re-read backoff, so a flag raised again with no output was only re-read
   up to five minutes later instead of after the first quiet period. The backoff now ends with the flag.
 
+- **Replying to a request in the Messages drawer shows it resolved.** A reply resolves the request on the server, but the
+  open drawer kept the request's old state (and its Acknowledge and Resolve buttons) until the list refetched, which
+  under the Unread filter never brought it back. The drawer now re-reads the request after the reply.
+- **The Attention page's summary line matches its rows.** It said "N items need a person" from the server's total, which
+  leaves out failed account switches and cross-space requests that are listed under Act now, so it could read 0 above
+  rows. It now counts the Act now rows (human actions included) and the Watch rows.
+- **Usage page follow-ups.** The page keeps the last figures on screen (dimmed, busy) while a new range, grouping or
+  filter loads instead of blanking. With an account filter on, the Accounts table shows "—" for accounts outside it and
+  marks the column "(filtered)". Grouped by harness, the chart legend uses the display name ("Claude Code"), as the table
+  does. A selected row's toggle is named "Remove filter X". The "not counted" note links to the run pages.
 - **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
   are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
   for a reconnect, and the monitor loop doesn't wait out the write timeout.
 - **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
   and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
   the terminal column, and the divider runs from the header rule to the bottom edge of the window.
+- **A busy node can no longer stall a backup in `memory_flush` or make it fail.** Central queued the memory-flush
+  request on each node's connection one after another, with no bound, and started its wait only afterwards. A node
+  whose outbound queue stayed full held the flush far past its one-minute wait, and when the stall watchdog fired the
+  backup failed with `backup stopped in stage memory_flush: … context canceled`. The flush is now bounded end to end by
+  its wait plus a short grace: requests are queued concurrently and give up at the deadline, and a node that cannot be
+  reached in time is reported as `timed_out`. The flush runs under its own bounded context, outside the watchdog, so it
+  never fails the backup: the backup goes on and names the spaces whose memory is possibly stale. Each node's outcome is
+  logged and counts as progress on the backup status; a flush hook that outlives its bound can no longer report progress in
+  a later stage and hide a real stall, and nodes are never told to wait longer than the flush has left. See the ADR-0091 amendment.
 
 ## [0.1.15] - 2026-11-20
 
@@ -91,6 +129,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The backup's memory flush no longer loses a node's answer when the call's deadline is short.** The wait a node was
+  told to use was capped at the deadline without leaving room for the grace its answer needs, so a node that used its
+  whole wait answered after the deadline and its spaces were reported as timed out. The wait now leaves the grace
+  inside the deadline, and the "no answer within" detail names the bound actually applied.
 - **A run's terminal dialog no longer outlives the run, and its history has an API.** A run that ends with a
   `blocked_on_dialog` flag open (it was lost, its launch failed, or the agent restarted over it) now has the flag closed:
   the node sends `cleared` on every path that ends a run, and central closes whatever is still open when it records the
