@@ -35,6 +35,7 @@ async function openHubTab(page: Page, hub: 'Configuration' | 'Integrations' | 'A
 test.describe.configure({ mode: 'serial' })
 
 // Specs that run only from their own drivers (see testIgnore in playwright.config.ts), each on a stack of its own.
+// Keep in step with testIgnore in playwright.config.ts (a spec listed in both is never collected here).
 const separateDrivers = new Set(['demo.spec.ts', 'screenshots.spec.ts', 'site-a11y.spec.ts'])
 
 /**

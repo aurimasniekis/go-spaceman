@@ -34,7 +34,8 @@ async function noSideways(page: Page, what: string) {
 const json = (route: Route, body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
 // The time is shown with its date ("Sat 21 Nov, 00:05") when it falls on another day than today in that zone, which depends on
 // when the test runs.
-const DAY = '(?:\\w{3} \\d{1,2} \\w{3}, )?'
+// Letters, not \w{3}: en-GB writes September as "Sept" ("Wed 16 Sept, 00:05 GMT+9").
+const DAY = '(?:[A-Za-z]+ \\d{1,2} [A-Za-z]+, )?'
 const hhmm = (d: Date, offsetHours: number) => {
   const t = new Date(d.getTime() + offsetHours * 3600_000)
   return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`
