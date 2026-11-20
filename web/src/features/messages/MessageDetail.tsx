@@ -25,7 +25,7 @@ export function party(kind: string, id?: string, label?: string) {
 }
 
 /** One message with its acknowledge, resolve, cancel and reply controls; shared by the space page and Needs you → Messages. */
-/** `onChange` gets the message the server returns after acknowledge, cancel or resolve, for a parent that holds the opened message itself. */
+/** `onChange` gets the message the server returns after acknowledge, cancel or resolve (or the re-read request after a reply), for a parent that holds the opened message itself. */
 export function MessageDetail({ spaceId, m, canWrite, onChange }: { spaceId: string; m: Message; canWrite: boolean; onChange?: (m: Message) => void }) {
   const qc = useQueryClient()
   const path = { space_id: spaceId, message_id: m.id }
@@ -33,10 +33,17 @@ export function MessageDetail({ spaceId, m, canWrite, onChange }: { spaceId: str
   const replyForm = useAppForm({
     defaultValues: { body: '', attachmentIds: [] as string[] },
     onSubmit: async ({ value }) => act(async () => {
-      unwrap(await api.POST('/spaces/{space_id}/messages/{message_id}/reply', { params: { path },
+      const sent = unwrap(await api.POST('/spaces/{space_id}/messages/{message_id}/reply', { params: { path },
         body: { body: value.body, attachment_ids: value.attachmentIds.length ? value.attachmentIds : undefined } }))
       replyForm.reset()
       setReplyKey((k) => k + 1)
+      // A reply resolves a request, and the response is the reply, not the request: read the request again for the parent.
+      if (m.kind !== 'request' || sent === undefined) return undefined
+      try {
+        return unwrap(await api.GET('/spaces/{space_id}/messages/{message_id}', { params: { path } }))
+      } catch {
+        return undefined // The reply went out; the list refetch below brings the request's new state.
+      }
     }, 'Could not reply'),
   })
   const act = async (fn: () => Promise<unknown>, what: string) => {
