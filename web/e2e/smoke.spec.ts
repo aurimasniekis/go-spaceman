@@ -25,6 +25,12 @@ async function shot(page: Page, name: string) {
 // A 1×1 PNG.
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 
+// A settings page, reached the way a person does: the sidebar's hub entry, then the page's tab under its header.
+async function openHubTab(page: Page, hub: 'Configuration' | 'Integrations' | 'Access', tab: string) {
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: hub, exact: true }).click()
+  await page.getByRole('main').getByRole('navigation', { name: `${hub} sections` }).getByRole('link', { name: tab, exact: true }).click()
+}
+
 test.describe.configure({ mode: 'serial' })
 
 test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
@@ -68,7 +74,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   writeFileSync(join(env('SM_DIR'), 'admin.json'), JSON.stringify({ email, password, totp: secret }), { mode: 0o600 })
 
   // A node, enrolled with the one-time token shown once.
-  await page.getByRole('link', { name: 'Nodes' }).click()
+  await openHubTab(page, 'Configuration', 'Nodes')
   await page.getByRole('button', { name: 'Add node' }).click()
   await page.getByLabel('Name').fill('dev-node')
   await page.getByLabel('Description').fill('Local development node')
@@ -103,7 +109,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // An account: runs cannot start until the space has one (SM-ACCT-003). The stub harness ignores the credential.
   await expect(page.getByText('No account is bound, so runs cannot start.')).toBeVisible()
-  await page.getByRole('link', { name: 'Accounts' }).click()
+  await openHubTab(page, 'Integrations', 'Accounts')
   await page.getByRole('button', { name: 'Add account' }).click()
   await page.getByLabel('Name').fill('team-codex')
   await page.getByRole('textbox', { name: 'Kind' }).click()
@@ -270,7 +276,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('link', { name: 'Needs you', exact: true })).toBeVisible()
 
   // Prompts: a role prompt is created as a draft and published as version 1.
-  await page.getByRole('link', { name: 'Prompts' }).click()
+  await openHubTab(page, 'Configuration', 'Prompts')
   await page.getByRole('button', { name: 'New prompt' }).click()
   const np = page.getByRole('dialog', { name: 'New prompt' })
   await np.getByLabel('Name').fill('Payments reviewer')
@@ -298,12 +304,12 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.keyboard.press('Escape')
 
   // Audit shows what happened.
-  await page.getByRole('link', { name: 'Audit log' }).click()
+  await openHubTab(page, 'Access', 'Audit log')
   await expect(page.getByText('run.launched').first()).toBeVisible()
   await shot(page, 'audit')
 
   // Password reset: an administrator issues a single-use token, the user sets a new password at /reset and signs in.
-  await page.getByRole('link', { name: 'Users' }).click()
+  await openHubTab(page, 'Access', 'Users')
   await page.getByRole('button', { name: 'Actions for Alex Admin' }).click()
   await page.getByRole('menuitem', { name: 'Password reset token' }).click()
   const reset = (await page.getByTestId('secret').innerText()).trim()
@@ -325,7 +331,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
 
   // The attention summary gathers what needs a person (SM-UI-003).
-  await page.getByRole('link', { name: 'Attention' }).click()
+  await page.goto('/attention') // off the sidebar; the Overview's stat link and direct URLs lead here
   await expect(page.getByRole('heading', { name: 'Attention' })).toBeVisible()
   await expect(page.getByText('Storage', { exact: true })).toBeVisible()
 

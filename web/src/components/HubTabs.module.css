@@ -12,6 +12,11 @@
   margin-bottom: -1px;
 }
 
+.tab:focus-visible {
+  /* The ScrollArea viewport clips the default outside outline at top and bottom. */
+  outline-offset: -2px;
+}
+
 .tab:hover {
   color: var(--mantine-color-text);
 }
