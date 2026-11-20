@@ -21,6 +21,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The usage windows and open limits of the accounts bound to the spaces you can read
+         * @description Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. An account bound only to other spaces is absent.
+         */
+        get: operations["list-account-windows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts": {
         parameters: {
             query?: never;
@@ -298,7 +318,7 @@ export interface paths {
         };
         /**
          * What needs a person
-         * @description One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. Computed on request (one query per category); clients refresh it when the change feed reports a change.
+         * @description One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, parked runs, open account limits, failed account switches, incoming cross-space requests, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. `items` names the newest of each kind (at most 20 per kind, counts in `item_counts`). Parked runs, account limits, failed switches and incoming requests are not part of `total`. Harbor Pilot budget state is not included yet. Computed on request (no network I/O, one query per category, twelve at most); clients refresh it when the change feed reports a change.
          */
         get: operations["get-attention"];
         put?: never;
@@ -5128,6 +5148,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["AccountsAccount"][];
         };
+        AccountWindowsList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AccountWindowsList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["UsageAccountState"][];
+        };
         AccountsAccount: {
             /**
              * Format: uri
@@ -5393,13 +5422,22 @@ export interface components {
             backups?: components["schemas"]["AttentionBackups"];
             /** Format: date-time */
             checked_at: string;
+            /** @description Full number of items per kind in readable spaces, to tell a truncated list */
+            item_counts: {
+                [key: string]: number;
+            };
+            /** @description The newest items per kind in readable spaces (at most 20 per kind), newest first. Human actions are counted but not listed. Nodes and storage are in their own sections */
+            items: components["schemas"]["AttentionItem"][];
             /** @description Active nodes that are not connected (node:read) */
             nodes?: components["schemas"]["AttentionNode"][];
             outbox?: components["schemas"]["AttentionOutbox"];
             /** @description Readable spaces with at least one item, most items first */
             spaces: components["schemas"]["AttentionSpace"][];
             storage?: components["schemas"]["AttentionStorage"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Items that need a person; does not include parked runs, account limits, failed account switches or incoming cross-space requests
+             */
             total: number;
         };
         AttentionBackups: {
@@ -5420,6 +5458,21 @@ export interface components {
             error?: string;
             name: string;
             status: string;
+        };
+        AttentionItem: {
+            id: string;
+            /** @enum {string} */
+            kind: "task_blocked" | "task_failed" | "quarantine" | "run_unknown" | "run_failed" | "budget_notice" | "run_parked" | "account_limit" | "account_switch_failed" | "xspace_request";
+            /**
+             * @description act: someone has to do something; watch: it may resolve itself
+             * @enum {string}
+             */
+            severity: "act" | "watch";
+            /** Format: date-time */
+            since: string;
+            space_id: string;
+            target: components["schemas"]["AttentionTarget"];
+            title: string;
         };
         AttentionNode: {
             connected: boolean;
@@ -5444,6 +5497,16 @@ export interface components {
             retrying: number;
         };
         AttentionSpace: {
+            /**
+             * Format: int64
+             * @description Open account usage limits as this space sees them
+             */
+            account_limits?: number;
+            /**
+             * Format: int64
+             * @description Account switches that failed in the last 24 hours
+             */
+            account_switches_failed?: number;
             /** Format: int64 */
             budget_exceeded?: number;
             /** Format: int64 */
@@ -5462,6 +5525,11 @@ export interface components {
             quarantine_open?: number;
             /** Format: int64 */
             runs_failed?: number;
+            /**
+             * Format: int64
+             * @description Runs parked at a usage limit or for a restart that still wait to come back
+             */
+            runs_parked?: number;
             /** Format: int64 */
             runs_unknown?: number;
             slug: string;
@@ -5482,9 +5550,14 @@ export interface components {
             tasks_failed?: number;
             /**
              * Format: int64
-             * @description Items in this space that need a person (the counts above, without the unassigned and overdue subsets)
+             * @description Items in this space that need a person (the counts above, without the unassigned and overdue subsets and without the parked, account-limit, account-switch and cross-space counts, which are watch information; sum item_counts to include them)
              */
             total: number;
+            /**
+             * Format: int64
+             * @description Cross-space requests from other spaces waiting for a decision
+             */
+            xspace_incoming?: number;
         };
         AttentionStorage: {
             below_reserve: boolean;
@@ -5508,6 +5581,12 @@ export interface components {
             store_reason?: string;
             /** @enum {string} */
             store_state: "ok" | "degraded" | "failed";
+        };
+        AttentionTarget: {
+            id?: string;
+            space_id: string;
+            /** @enum {string} */
+            type: "task" | "run" | "subscription" | "space_usage" | "space_budget" | "xspace_request";
         };
         AuditGap: {
             /** Format: int64 */
@@ -12990,6 +13069,15 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        UsageAccountState: {
+            account_id: string;
+            harness?: string;
+            /** @description Open usage limits, oldest first; empty when none */
+            limits: components["schemas"]["UsageLimit"][];
+            name: string;
+            /** @description The latest 5-hour and 7-day windows; empty when no run has reported one */
+            windows: components["schemas"]["UsageWindow"][];
+        };
         UsageAccountWindows: {
             /**
              * Format: uri
@@ -13032,6 +13120,16 @@ export interface components {
              * @description Attempts whose token usage the provider did not report (not counted as zero)
              */
             unknown_usage_requests: number;
+        };
+        UsageLimit: {
+            kind: string;
+            /** Format: date-time */
+            resets_at?: string;
+            /**
+             * Format: date-time
+             * @description When a run first reported the limit
+             */
+            seen_at: string;
         };
         UsageRow: {
             /**
@@ -13369,6 +13467,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-account-kindsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountWindowsList"];
                 };
             };
             /** @description Error */

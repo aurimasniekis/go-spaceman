@@ -269,6 +269,138 @@ func (q *Queries) ListAccountWindows(ctx context.Context, accountID string) ([]A
 	return items, nil
 }
 
+const listAllAccountBindings = `-- name: ListAllAccountBindings :many
+SELECT sa.account_id, a.name AS account_name, sa.harness, sa.space_id
+FROM space_accounts sa
+JOIN accounts a ON a.id = sa.account_id
+UNION
+SELECT ra.account_id, a.name, coalesce(sa.harness, ''), ra.space_id
+FROM space_role_accounts ra
+JOIN accounts a ON a.id = ra.account_id
+LEFT JOIN space_accounts sa ON sa.space_id = ra.space_id AND sa.account_id = ra.account_id
+ORDER BY 1, 4
+`
+
+type ListAllAccountBindingsRow struct {
+	AccountID   string
+	AccountName string
+	Harness     string
+	SpaceID     string
+}
+
+// Every binding of an account to a space, directly or through a role pool, with the account's name. A pool account is
+// also bound to the space, so the harness comes from that binding. For the cross-space account view, which keeps only
+// the spaces the caller can read.
+func (q *Queries) ListAllAccountBindings(ctx context.Context) ([]ListAllAccountBindingsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllAccountBindings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllAccountBindingsRow{}
+	for rows.Next() {
+		var i ListAllAccountBindingsRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.AccountName,
+			&i.Harness,
+			&i.SpaceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllAccountWindows = `-- name: ListAllAccountWindows :many
+SELECT account_id, kind, used_pct, resets_at, observed_at FROM account_windows ORDER BY account_id, kind
+`
+
+type ListAllAccountWindowsRow struct {
+	AccountID  string
+	Kind       string
+	UsedPct    float64
+	ResetsAt   sql.NullInt64
+	ObservedAt int64
+}
+
+// The latest windows of every account that has any.
+func (q *Queries) ListAllAccountWindows(ctx context.Context) ([]ListAllAccountWindowsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllAccountWindows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllAccountWindowsRow{}
+	for rows.Next() {
+		var i ListAllAccountWindowsRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.Kind,
+			&i.UsedPct,
+			&i.ResetsAt,
+			&i.ObservedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllOpenAccountUsageLimits = `-- name: ListAllOpenAccountUsageLimits :many
+SELECT account_id, kind, resets_at, seen_at FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL ORDER BY account_id, seen_at, id
+`
+
+type ListAllOpenAccountUsageLimitsRow struct {
+	AccountID string
+	Kind      string
+	ResetsAt  sql.NullInt64
+	SeenAt    int64
+}
+
+// Every open account-scope usage limit (a hold applies in every space bound to the account).
+func (q *Queries) ListAllOpenAccountUsageLimits(ctx context.Context) ([]ListAllOpenAccountUsageLimitsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllOpenAccountUsageLimits)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllOpenAccountUsageLimitsRow{}
+	for rows.Next() {
+		var i ListAllOpenAccountUsageLimitsRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.SeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSpaceAccountWindows = `-- name: ListSpaceAccountWindows :many
 SELECT w.account_id, a.name AS account_name, sa.harness, w.kind, w.used_pct, w.resets_at, w.observed_at
 FROM space_accounts sa
