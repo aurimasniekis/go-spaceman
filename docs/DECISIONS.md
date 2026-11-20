@@ -7994,7 +7994,9 @@
      leaves, so a subject change cannot carry the flag off the list. SpaceMan's own dialog answers
      (`run.dialog_answered`) are audit records, not published, so they are not on the list.
   3. **Ingestion checks again, per event.** An own event is admitted only when the subscription's current row has
-     `ingest_own`, the event's subject is on the allow-list (whatever the subscription's filter), and its
+     `ingest_own`, the event's subject is on the allow-list (whatever the subscription's filter), its `data.space_id`
+     equals the subscription's own space (a missing or unreadable one means filtered, so one space never ingests
+     another space's dialogs), and its
      `spaceman-depth` is absent or 0. Everything an ingestion causes (the item, tasks made from it, their events)
      carries depth 1 or more (ADR-0049), so an own event about something an ingestion caused is never ingested again,
      even on a subscription forced past the API check. Such an event is recorded as `filtered` with its own detail. Durable and

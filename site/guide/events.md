@@ -319,6 +319,10 @@ wildcards such as `evt.spaceman.fleet.run.*` and every event ingestion can itsel
 An update that changes the subject keeps the flag only on one of these subjects; turn it off in the same update to move
 elsewhere.
 
+Admission is scoped to the subscription's own space: an own event is ingested only when its `data.space_id` is the
+subscription's space, so a subscription never raises items for another space's runs; one with no readable
+`space_id` is filtered.
+
 Even with the flag, SpaceMan ingests one of its own events only at automation depth 0 (no `spaceman-depth`): its events
 about what an ingestion caused (the item, tasks made from it) carry a depth and are still filtered, so ingestion never
 feeds itself. A run carries no depth, though: if control starts a run for a dialog item and that run stops at a dialog

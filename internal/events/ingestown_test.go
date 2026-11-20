@@ -52,6 +52,13 @@ func (f *fx) publishOwn(subject, typ, id, depth string) {
 	must(f.t, err)
 }
 
+// publishOwnData is publishOwn with an explicit payload.
+func (f *fx) publishOwnData(id, data string) {
+	f.t.Helper()
+	_, err := f.pub.Publish(f.ctx, dialogSubject, dialogType, json.RawMessage(data), pulse.WithID(id), pulse.WithHeader(outbox.HeaderOrigin, ownOrigin))
+	must(f.t, err)
+}
+
 func (f *fx) detailsOf(sub string) map[string]int {
 	f.t.Helper()
 	d, err := f.svc.Deliveries(f.ctx, "spc_a", sub, 100)
@@ -101,6 +108,34 @@ func TestOwnDialogEventIngestedOnlyWithOptIn(t *testing.T) {
 	if n := len(f.items("spc_a")); n != 1 {
 		t.Fatalf("items after opting out: %d", n)
 	}
+}
+
+// ADR-0104: an own dialog event is admitted only for the subscription's own space: another space's, one without a
+// space_id and an unreadable one are filtered even with ingest_own on, on durable and core subscriptions alike.
+func TestIngestOwnScopedToSubscriptionSpace(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	f.svc.o.Origin = ownOrigin
+	dur := f.subscribeOwn("dialogs-own", dialogSubject, true, "")
+	core := f.subscribeOwn("dialogs-core-own", dialogSubject, true, DeliveryCore)
+	src := f.nats.Conn("core-source")
+	t.Cleanup(src.Close)
+	hdr := func(id string) map[string]string { return map[string]string{outbox.HeaderOrigin: ownOrigin, "Nats-Msg-Id": id} }
+
+	f.publishOwnData("evt-other", `{"space_id":"spc_b","run_id":"run_9","dialog_id":"dlg_9"}`)
+	f.corePublish(src, dialogSubject, []byte(`{"space_id":"spc_b","run_id":"run_9","dialog_id":"dlg_9"}`), hdr("evt-other-core"))
+	f.publishOwnData("evt-none", `{"run_id":"run_9","dialog_id":"dlg_9"}`)
+	f.publishOwnData("evt-bad", `not json`)
+	eventually(t, "others filtered", func() bool {
+		// Every event reaches both subscriptions: a core subscription sees stream traffic too.
+		return f.detailsOf(dur.ID)[OutcomeFiltered+": "+OwnOtherSpaceDetail] == 4 && f.detailsOf(core.ID)[OutcomeFiltered+": "+OwnOtherSpaceDetail] == 4
+	})
+	if n := len(f.items("spc_a")); n != 0 {
+		t.Fatalf("items %d, want none", n)
+	}
+
+	f.publishOwn(dialogSubject, dialogType, "evt-same", "")
+	eventually(t, "same space admitted", func() bool { return f.outcomes("spc_a", dur.ID)[OutcomeAccepted] == 1 })
 }
 
 // ADR-0104 on core NATS: the same opt-in applies to a core subscription.
