@@ -21,6 +21,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The usage windows and open limits of the accounts bound to the spaces you can read
+         * @description Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. An account bound only to other spaces is absent.
+         */
+        get: operations["list-account-windows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts": {
         parameters: {
             query?: never;
@@ -5107,6 +5127,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AccountsAccount"][];
+        };
+        AccountWindowsList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AccountWindowsList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["UsageAccountState"][];
         };
         AccountsAccount: {
             /**
@@ -12912,6 +12941,15 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        UsageAccountState: {
+            account_id: string;
+            harness?: string;
+            /** @description Open usage limits, oldest first; empty when none */
+            limits: components["schemas"]["UsageLimit"][];
+            name: string;
+            /** @description The latest 5-hour and 7-day windows; empty when no run has reported one */
+            windows: components["schemas"]["UsageWindow"][];
+        };
         UsageAccountWindows: {
             /**
              * Format: uri
@@ -12954,6 +12992,16 @@ export interface components {
              * @description Attempts whose token usage the provider did not report (not counted as zero)
              */
             unknown_usage_requests: number;
+        };
+        UsageLimit: {
+            kind: string;
+            /** Format: date-time */
+            resets_at?: string;
+            /**
+             * Format: date-time
+             * @description When a run first reported the limit
+             */
+            seen_at: string;
         };
         UsageRow: {
             /**
@@ -13291,6 +13339,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-account-kindsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountWindowsList"];
                 };
             };
             /** @description Error */
