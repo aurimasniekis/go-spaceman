@@ -130,6 +130,20 @@ func (e *dialogEnv) lastReport() proto.RunReport {
 	return proto.RunReport{}
 }
 
+// reportsFor lists the run's reports sent so far.
+func (e *dialogEnv) reportsFor() []proto.RunReport {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []proto.RunReport
+	for _, env := range e.got {
+		var r proto.RunReport
+		if env.Type == proto.TypeRunReport && env.Decode(&r) == nil && r.RunID == e.run {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // ackReason is the reason of the node's ack of a command ("" until it arrives).
 func (e *dialogEnv) ackReason(cmd string) string {
 	e.mu.Lock()
