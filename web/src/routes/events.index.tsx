@@ -24,7 +24,7 @@ function EventsPage() {
   const [creating, setCreating] = useState(false)
   return (
     <>
-      <PageHeader title="Events" description="Pulse connections, the catalog of templates spaces subscribe with, and SpaceMan's own published events." />
+      <PageHeader hub="integrations" title="Events" description="Pulse connections, the catalog of templates spaces subscribe with, and SpaceMan's own published events." />
       <Tabs defaultValue="templates">
         <Tabs.List>
           <Tabs.Tab value="templates">Templates</Tabs.Tab>

@@ -23,7 +23,7 @@ function SkillsPage() {
   const current = skills.data?.find((s) => s.id === open) ?? null
   return (
     <>
-      <PageHeader title="Skills" description="Guidance files (SKILL.md and references) given to agents through roles. Skills inform; they never grant access, and nothing in them runs when they are installed."
+      <PageHeader hub="configuration" title="Skills" description="Guidance files (SKILL.md and references) given to agents through roles. Skills inform; they never grant access, and nothing in them runs when they are installed."
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New skill</Button>} />
       <ErrorAlert error={skills.error} />
       <Card p={0}>

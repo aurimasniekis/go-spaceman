@@ -149,6 +149,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/runs` | `list-runs` | A space's runs, newest first |
 | `POST` | `/spaces/{space_id}/runs` | `launch-run` | Launch a run on the space's node |
 | `GET` | `/spaces/{space_id}/runs/{run_id}` | `get-run` | Get a run |
+| `GET` | `/spaces/{space_id}/runs/{run_id}/dialogs` | `list-run-dialogs` | A run's terminal dialogs, newest first |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/input` | `send-input` | Send safe input to a run (delivered only while the program reports idle, unless forced) |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/stop` | `stop-run` | Stop a run |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover` | `start-takeover` | Take over a run's terminal |

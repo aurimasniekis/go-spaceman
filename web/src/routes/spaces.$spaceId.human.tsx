@@ -5,7 +5,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { api, unwrap } from '@/api/client'
 import { isMiniApp } from '@/api/session'
 import { useState } from 'react'
-import { useHumanSearch, useMe } from '@/api/queries'
+import { keys, useHumanSearch, useMe } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { ActionDetail } from '@/features/human/ActionDetail'
@@ -34,7 +34,7 @@ function SpaceHumanPage() {
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
   const linked = useQuery({
-    queryKey: ['human-action', spaceId, search.action ?? '', 'linked'],
+    queryKey: [...keys.humanAction(spaceId, search.action ?? ''), 'linked'],
     enabled: !!search.action,
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/human-actions/{action_id}', { params: { path: { space_id: spaceId, action_id: search.action! } }, signal })),
   })

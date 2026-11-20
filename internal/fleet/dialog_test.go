@@ -142,3 +142,68 @@ func TestStatusLabel(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0102: no open dialog outlives its run. A run that ends with a blocked dialog open (the node's cleared never came)
+// has it closed in the same transaction, audited and published once; a node's late cleared changes nothing; answered
+// dialogs and the ones already cleared are left alone.
+func TestRunEndClearsOpenDialogs(t *testing.T) {
+	e, _, send := newFleetDialogEnv(t)
+	open := blockedDialog()
+	open.DetectedAt = e.t0
+	done := blockedDialog()
+	done.DetectedAt = e.t0
+	ans := proto.RunDialog{ID: ids.New(ids.Dialog), RunID: "run_d", SpaceID: "spc_a", Generation: 1, Outcome: proto.DialogAnswered,
+		Dialog: "claude.code_mode_optin", Signal: "screen_known", Answer: "no", DetectedAt: e.t0}
+	send(open, proto.MinorDialog)
+	send(done, proto.MinorDialog)
+	send(ans, proto.MinorDialog)
+	cl := done
+	cl.Outcome, cl.Excerpt = proto.DialogCleared, ""
+	send(cl, proto.MinorDialog)
+	const cleared = `SELECT count(*) FROM event_outbox WHERE subject = 'evt.spaceman.fleet.run.dialog_cleared'`
+	if n := e.count(cleared); n != 1 {
+		t.Fatalf("%d dialog_cleared rows before the end, want 1", n)
+	}
+	if e.report("run_d", "spc_a", 1, proto.RunExited, nil); e.count(`SELECT count(*) FROM run_dialogs WHERE cleared_at IS NULL AND outcome = 'blocked'`) != 0 {
+		t.Fatal("a blocked dialog is still open after its run ended")
+	}
+	if n := e.count(cleared+` AND json_extract(payload_json, '$.dialog_id') = ?`, open.ID); n != 1 {
+		t.Fatalf("%d dialog_cleared rows for the open dialog, want 1", n)
+	}
+	if n := e.count(cleared); n != 2 {
+		t.Fatalf("%d dialog_cleared rows, want 2 (the one cleared before is not published again)", n)
+	}
+	if n := e.count(`SELECT count(*) FROM audit_events WHERE action = 'run.dialog_cleared' AND json_extract(details_json, '$.reason') = 'run_ended'
+		AND json_extract(details_json, '$.dialog_id') = ?`, open.ID); n != 1 {
+		t.Fatalf("%d run_ended audit events", n)
+	}
+	if n := e.count(`SELECT count(*) FROM run_dialogs WHERE id = ? AND cleared_at IS NULL`, ans.ID); n != 1 {
+		t.Fatal("an answered dialog must stay as it was")
+	}
+	// The node's own cleared, arriving after the run ended, is not published a second time.
+	late := open
+	late.Outcome, late.Excerpt = proto.DialogCleared, ""
+	send(late, proto.MinorDialog)
+	if n := e.count(cleared); n != 2 {
+		t.Fatalf("%d dialog_cleared rows after the node's late cleared, want 2", n)
+	}
+	if n := e.count(`SELECT count(*) FROM audit_events WHERE action = 'run.dialog_cleared'`); n != 2 {
+		t.Fatalf("%d audit events, want 2", n)
+	}
+}
+
+// A blocked or answered dialog that reaches central after its run ended is not recorded: the end closed what was open,
+// and a new open occurrence of an ended run would only be a notice nobody can act on.
+func TestRunDialogAfterRunEndIgnored(t *testing.T) {
+	e, told, send := newFleetDialogEnv(t)
+	e.report("run_d", "spc_a", 1, proto.RunExited, nil)
+	d := blockedDialog()
+	d.DetectedAt = e.t0
+	send(d, proto.MinorDialog)
+	a := proto.RunDialog{ID: ids.New(ids.Dialog), RunID: "run_d", SpaceID: "spc_a", Generation: 1, Outcome: proto.DialogAnswered,
+		Dialog: "claude.code_mode_optin", Signal: "screen_known", Answer: "no", DetectedAt: e.t0}
+	send(a, proto.MinorDialog)
+	if n := e.count(`SELECT count(*) FROM run_dialogs`); n != 0 || len(*told) != 0 {
+		t.Fatalf("%d rows, told %d", n, len(*told))
+	}
+}

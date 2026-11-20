@@ -7760,13 +7760,20 @@
   and acted only when the operator used **Ask the requester**. Only `RequestClarification` created a notification;
   `Service.Comment` (`internal/human/ops.go`) stored the comment and nothing else.
 - **Decision:** a plain comment on a pending action whose requester is an agent creates a `comment` notification
-  through `notify`, so it takes the routing, hold and wake of a response and of a clarification (live run, else the
-  role's next run or control). Nothing is notified when the actor is an agent, when the actor acts for the requester's
+  through `notify`, so it takes the routing, hold and wake of a response and of a clarification (see the routing order
+  below). Nothing is notified when the actor is an agent, when the actor acts for the requester's
   own run (no echo), when the requester is an operator, or when the action is already final. A comment is never a
   response; the action stays pending; the text is read with `spaceman_human_get` (comments were already included).
   **Ask the requester** stays the explicit clarification, answered with `spaceman_human_reply`.
+- **Routing order** (the same for a comment, a clarification and a response). While the requester's run is live, the
+  notice goes to that run. A run that is missing, in another space, or ended counts as ended, and then: (1) when the
+  policy is `next_launch` and the requester has a valid agent-instance ID, the next run of that instance, within the
+  hold; (2) else a live run (running, starting or pending) of the policy's successor role; (3) else control, when one
+  is wanted or can be started; (4) else the operators, who get a message that it could not be delivered. The default
+  `reroute` policy skips step (1).
 - **Consequences:** migration 0067 rebuilds `human_notifications` to allow the kind; `internal/human`
-  `TestPlainCommentNotifiesRequester`. An agent requester gets one notice per comment.
+  `TestPlainCommentNotifiesRequester`, `TestCommentNotifiesARequesterWithoutARun` and
+  `TestCommentOnAnEndedRequesterRoutesLikeAClarification`. An agent requester gets one notice per comment.
 
 ### ADR-0102 — Interactive dialogs on a run's terminal: known ones are answered, unknown ones flag the run (security-relevant change)
 

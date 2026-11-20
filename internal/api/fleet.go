@@ -29,11 +29,12 @@ var FleetRules = map[string]Rule{
 	"set-space-state": InSpace(authz.SpaceWrite),
 	"purge-space":     {Perm: authz.SpacePurge, Reauth: true, MFA: true},
 
-	"list-runs":  InSpace(authz.RunRead),
-	"get-run":    InSpace(authz.RunRead),
-	"launch-run": InSpace(authz.RunControl), // and run:diagnose for a diagnostic launch (checked once the kind is resolved)
-	"stop-run":   InSpace(authz.RunControl),
-	"send-input": InSpace(authz.RunControl),
+	"list-runs":        InSpace(authz.RunRead),
+	"get-run":          InSpace(authz.RunRead),
+	"list-run-dialogs": InSpace(authz.RunRead),
+	"launch-run":       InSpace(authz.RunControl), // and run:diagnose for a diagnostic launch (checked once the kind is resolved)
+	"stop-run":         InSpace(authz.RunControl),
+	"send-input":       InSpace(authz.RunControl),
 
 	// Usage limits (ADR-0079). A space's holds include other spaces' open holds on its accounts, redacted to what the
 	// space may know (the account and the window); the account view names every space and needs account:read.
@@ -445,6 +446,40 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 					return nil, err
 				}
 				return &struct{ Body *fleet.Run }{Body: r}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-run-dialogs", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}/dialogs",
+			Summary: "A run's terminal dialogs, newest first",
+			Description: "The interactive dialogs the node recognised on the run's terminal (ADR-0102): the ones SpaceMan answered, and the " +
+				"ones it flagged (blocked_on_dialog) with when each was cleared. The screen excerpt is not included.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				RunPath
+				Limit int `query:"limit" minimum:"1" maximum:"200" default:"50" doc:"How many of the newest dialogs to list"`
+			}) (*struct {
+				Body struct {
+					Items []fleet.RunDialog `json:"items"`
+				}
+			}, error) {
+				if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
+					return nil, err
+				}
+				if in.Limit == 0 {
+					in.Limit = 50
+				}
+				ds, err := f.RunDialogs(ctx, in.RunID, in.Limit)
+				if err != nil {
+					return nil, d.fail(ctx, "runs.dialogs", err)
+				}
+				for i := range ds {
+					ds[i].Excerpt = "" // terminal text stays out of the API (it is on the notice sent to the operators)
+				}
+				out := struct {
+					Items []fleet.RunDialog `json:"items"`
+				}{Items: ds}
+				return &struct {
+					Body struct {
+						Items []fleet.RunDialog `json:"items"`
+					}
+				}{Body: out}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "launch-run", Method: http.MethodPost, Path: "/spaces/{space_id}/runs", Summary: "Launch a run on the space's node",
 			Tags: tags, DefaultStatus: http.StatusCreated},

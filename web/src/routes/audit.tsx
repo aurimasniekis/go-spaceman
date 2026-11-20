@@ -42,7 +42,7 @@ function AuditPage() {
 
   return (
     <>
-      <PageHeader title="Audit log" description="Hash-chained record of every security-relevant action. Secret values are never recorded."
+      <PageHeader hub="access" title="Audit log" description="Hash-chained record of every security-relevant action. Secret values are never recorded."
         actions={<Button variant="default" leftSection={<IconShieldCheck size={14} />} loading={verifying} onClick={() => void verify()}>Verify chain</Button>} />
       <Group mb="sm" gap="xs">
         <TextInput placeholder="Action, e.g. run.launched" value={action} onChange={reset(setAction)} aria-label="Filter by action" />

@@ -1045,6 +1045,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			if err := svc.endRunTakeoverTx(ctx, tx, r); err != nil {
 				return err
 			}
+			if err := svc.clearRunDialogsTx(ctx, tx, r); err != nil {
+				return err
+			}
 			// A run that ends, or is lost or swept, while at its limit is parked: it comes back at the reset (ADR-0079
 			// decision 4). One somebody asked to stop is not.
 			if nextLimit.kind != "" && r.Desired != "stopped" {

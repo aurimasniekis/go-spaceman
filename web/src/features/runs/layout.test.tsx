@@ -45,14 +45,14 @@ const runs = [run('run_control', { role: 'control', kind: 'control' }), ...Array
 const spaces = [{ id: SPACE, name: 'SpaceMan', slug: 'spaceman', state: 'active', node_id: 'nod_1' }] as unknown as Space[]
 
 /** Renders inside Mantine, a seeded query client and a router (links in the inspector and the workspace need one). */
-async function show(ui: ReactNode) {
+async function show(ui: ReactNode, shown: Run[] = runs) {
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
   qc.setQueryData(keys.me, me)
   qc.setQueryData(keys.spaces, spaces)
   qc.setQueryData(keys.space(SPACE), spaces[0])
   qc.setQueryData(keys.nodes, [])
-  qc.setQueryData(runsQuery(SPACE).queryKey, runs)
-  for (const r of runs) qc.setQueryData(keys.run(SPACE, r.id), r)
+  qc.setQueryData(runsQuery(SPACE).queryKey, shown)
+  for (const r of shown) qc.setQueryData(keys.run(SPACE, r.id), r)
   const router = createRouter({ routeTree: createRootRoute({ component: () => <>{ui}</> }), history: createMemoryHistory({ initialEntries: ['/'] }) })
   const view = render(<MantineProvider><QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider></MantineProvider>)
   await screen.findAllByRole('button')
@@ -110,6 +110,16 @@ describe('run header', () => {
     // Full-text buttons on a desktop.
     expect(screen.getByRole('button', { name: /Take over/ })).toHaveTextContent('Take over')
     expect(screen.getByRole('button', { name: /Stop/ })).toHaveTextContent('Stop')
+  })
+
+  it('says blocked on dialog in the header for a run waiting at a dialog, and not for one waiting on a question', async () => {
+    const dlg = run('run_w0', { status: 'blocked', status_kind: 'dialog' })
+    const { unmount } = await show(<RunWorkbench spaceId={SPACE} run={dlg} mode="live" onMode={() => {}} inspectorDefault={false} />)
+    expect(screen.getByTestId('run-header-state')).toHaveTextContent('blocked on dialog')
+    expect(screen.queryByText(/waiting for input/)).toBeNull()
+    unmount()
+    await show(<RunWorkbench spaceId={SPACE} run={run('run_w0', { status: 'blocked', status_kind: 'question' })} mode="live" onMode={() => {}} inspectorDefault={false} />)
+    expect(screen.getByTestId('run-header-state')).not.toHaveTextContent('blocked on dialog')
   })
 
   it('puts the actions on their own row of icon buttons on a phone', async () => {
@@ -179,5 +189,25 @@ describe('space header', () => {
     expect(header.style.getPropertyValue('--group-wrap')).toBe('wrap')
     expect(screen.getByRole('heading', { name: 'SpaceMan' }).closest('.mantine-Stack-root')).toHaveStyle({ minWidth: '0px' })
     expect(screen.getByRole('button', { name: /Launch run/ }).closest('.mantine-Group-root')).toHaveStyle({ flexShrink: '0' })
+  })
+
+  it('counts runs blocked on a dialog apart from those waiting for input', async () => {
+    const shown = [run('run_a', { status: 'blocked', status_kind: 'question' }), run('run_b', { status: 'blocked', status_kind: 'permission' }),
+      run('run_c', { status: 'blocked', status_kind: 'dialog' }), run('run_d')]
+    await show(<Workspace spaceId={SPACE} onSelect={() => {}} onMode={() => {}} />, shown)
+    // The dialog run is not one a person answers in the app.
+    expect(screen.getByText(/^2 waiting for input/)).toBeInTheDocument()
+    expect(screen.getByText('1 blocked on a dialog')).toBeInTheDocument()
+  })
+
+  it('says dialogs in the plural, and shows neither count when nothing is blocked', async () => {
+    const { unmount } = await show(<Workspace spaceId={SPACE} onSelect={() => {}} onMode={() => {}} />,
+      [run('run_a', { status: 'blocked', status_kind: 'dialog' }), run('run_b', { status: 'blocked', status_kind: 'dialog' })])
+    expect(screen.getByText('2 blocked on dialogs')).toBeInTheDocument()
+    expect(screen.queryByText(/waiting for input/)).toBeNull()
+    unmount()
+    await show(<Workspace spaceId={SPACE} onSelect={() => {}} onMode={() => {}} />, [run('run_a')])
+    expect(screen.queryByText(/blocked on/)).toBeNull()
+    expect(screen.queryByText(/waiting for input/)).toBeNull()
   })
 })

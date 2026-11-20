@@ -50,6 +50,11 @@ and woken like a clarification, so a "done" or a hint written as a comment is no
 action stays pending. The requester's own comments never notify it, and comments on a final action notify nobody.
 The agent reads the text with `spaceman_human_get`.
 
+When that agent's run has ended (or is gone), a comment, a clarification and a response are routed in the same order:
+the next run of its agent instance (if the policy is **To its next run**, within the hold, and the agent instance is
+known), else a live run of the successor role, else control, else the operators. When nobody can take it, the operators get a message that the comment could not
+be delivered; the comment stays on the action, where people read it, and the action stays pending.
+
 <Shot name="human-clarify" alt="A pending question with a clarification request to its requester, asking which refunds are meant" caption="Asking the requester for more information" />
 
 Links in the drawer lead to what an action refers to: the requester's run, the related task, the inbox item it came
