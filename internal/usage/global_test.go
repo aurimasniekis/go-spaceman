@@ -441,3 +441,24 @@ func TestGlobalSeriesValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A space's not-counted runs are the all-spaces count narrowed to that space, and never another space's runs.
+func TestSpaceNotCountedMatchesGlobalNarrowedToSpace(t *testing.T) {
+	t.Parallel()
+	f, _ := leakWorld(t)
+	q := SeriesQuery{GroupBy: "space", Bucket: GranDay, From: globalNow.Add(-90 * 24 * time.Hour)}
+	for _, id := range []string{"spc_a", "spc_b", "spc_none"} {
+		want := f.allPages(t, q, Filter{Spaces: []string{id}}, Scope{All: true}, 50).NotCounted
+		q.GroupBy = "role"
+		got, err := f.svc.SpaceNotCounted(f.ctx, id, q)
+		q.GroupBy = "space"
+		if err != nil || got == nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: not counted %+v (err %v), want %+v", id, got, err, want)
+		}
+	}
+	all, _ := f.svc.SpaceNotCounted(f.ctx, "spc_a", SeriesQuery{GroupBy: "role", Bucket: GranDay, From: globalNow.Add(-90 * 24 * time.Hour)})
+	both := f.allPages(t, q, Filter{}, Scope{All: true}, 50).NotCounted
+	if reflect.DeepEqual(all, both) {
+		t.Fatalf("space count %+v equals the all-spaces count: the fixture must hold uncounted runs in both spaces", all)
+	}
+}

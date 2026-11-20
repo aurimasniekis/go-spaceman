@@ -54,6 +54,12 @@ type UsageSeriesPage struct {
 	NextCursor string      `json:"next_cursor,omitempty"`
 }
 
+// SpaceUsageSeriesPage is a page of a space's series, with the runs of the space the ledger cannot count.
+type SpaceUsageSeriesPage struct {
+	UsageSeriesPage
+	NotCounted []usage.NotCounted `json:"not_counted" doc:"Per harness, runs of this space active in the range whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero"`
+}
+
 func (q UsageSeriesQuery) series(groupBy string) usage.SeriesQuery {
 	return usage.SeriesQuery{From: q.From, To: q.To, Bucket: q.Bucket, GroupBy: groupBy}
 }
@@ -129,12 +135,13 @@ func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "get-space-usage-series", Method: http.MethodGet, Path: "/spaces/{space_id}/usage/series",
 			Summary: "A space's usage over time",
 			Description: "Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the " +
-				"harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.", Tags: tags},
+				"harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported; runs whose usage the ledger " +
+				"does not hold are counted per harness in not_counted.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
 				UsageSeriesQuery
 				GroupBy string `query:"group_by" enum:"role,account,model,harness" default:"role"`
-			}) (*struct{ Body *UsageSeriesPage }, error) {
+			}) (*struct{ Body *SpaceUsageSeriesPage }, error) {
 				s, err := svc.SpaceSeries(ctx, in.SpaceID, in.series(in.GroupBy))
 				if err != nil {
 					return nil, d.fail(ctx, "usage.series", err)
@@ -143,7 +150,11 @@ func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "usage.series", err)
 				}
-				return &struct{ Body *UsageSeriesPage }{Body: pg}, nil
+				nc, err := svc.SpaceNotCounted(ctx, in.SpaceID, in.series(in.GroupBy))
+				if err != nil {
+					return nil, d.fail(ctx, "usage.series", err)
+				}
+				return &struct{ Body *SpaceUsageSeriesPage }{Body: &SpaceUsageSeriesPage{UsageSeriesPage: *pg, NotCounted: nc}}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "get-account-usage", Method: http.MethodGet, Path: "/accounts/{account_id}/usage",
 			Summary: "An account's usage over time, in the spaces you can read",
