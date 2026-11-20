@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-20
+
 ### Added
 
 - **A run blocked on a dialog says so in the web UI.** The run header and the space overview show a "blocked on dialog"
@@ -2429,7 +2431,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...HEAD
+[0.1.15]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.13
 [0.1.10]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.9...v0.1.10
