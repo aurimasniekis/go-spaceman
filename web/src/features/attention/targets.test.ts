@@ -77,6 +77,13 @@ describe('summaryText', () => {
     expect(attentionSummary({ items: rows, spaces })).toEqual({ act: 2, watch: 1 })
     expect(summaryText({ items: rows, spaces })).toBe('2 items need a person · 1 to watch')
   })
+  it('counts uncapped kinds from item_counts', () => {
+    expect(summaryText({ items: [rows[0]], spaces: [space({})], item_counts: { account_switch_failed: 25 } })).toBe('25 items need a person')
+  })
+  it('falls back to the total when only non-row categories are counted', () => {
+    expect(summaryText({ items: [], spaces: [space({ total: 3 })], total: 3 })).toBe('3 items need attention')
+    expect(summaryText({ items: [], spaces: [space({})], total: 0 })).toBe('')
+  })
   it('adds human actions to Act now and never says 0 above rows', () => {
     expect(summaryText({ items: [], spaces: [space({ human_pending: 1 })] })).toBe('1 item needs a person')
     expect(summaryText({ items: [rows[2]], spaces: [space({})] })).toBe('1 to watch')

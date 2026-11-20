@@ -1,6 +1,6 @@
 import { Alert, Badge, Card, Group, List, Progress, Select, SimpleGrid, Stack, Text, Title } from '@mantine/core'
 import { IconCircleCheck } from '@tabler/icons-react'
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactElement, type ReactNode } from 'react'
 import type { Schemas } from '@/api/client'
 import { isMiniApp } from '@/api/session'
 import { AnchorLink } from '@/components/AnchorLink'
@@ -107,7 +107,7 @@ export function spaceHasItems(s: AttentionSpace): boolean {
 }
 
 /** A link to an item's target. Each route is spelled out, so a renamed route fails the build instead of being cast away. */
-function TargetLink({ route, children }: { route: TargetRoute; children: ReactNode }) {
+function TargetLink({ route, children }: { route: TargetRoute; children: ReactNode }): ReactElement {
   switch (route.to) {
     case '/spaces/$spaceId/runs/$runId': return <AnchorLink to={route.to} params={route.params} size="sm">{children}</AnchorLink>
     case '/spaces/$spaceId/queue': return <AnchorLink to={route.to} params={route.params} search={route.search} size="sm">{children}</AnchorLink>
@@ -180,7 +180,7 @@ export function AttentionView({ data }: { data: Attention }) {
       {data.total === 0 && source.items.length === 0 ? (
         <Alert color="owlGreen" icon={<IconCircleCheck size={16} />} title="Nothing needs you">Everything you can see is in order.</Alert>
       ) : (
-        <Text size="sm" c="dimmed">{summaryText(source)} · checked {ago(data.checked_at)}</Text>
+        <Text size="sm" c="dimmed">{[summaryText({ ...source, item_counts: data.item_counts, total: data.total }), `checked ${ago(data.checked_at)}`].filter(Boolean).join(' · ')}</Text>
       )}
       {(source.items.length > 0 || source.spaces.some((s) => (s.human_pending ?? 0) > 0)) && (
         <>
