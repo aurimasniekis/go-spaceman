@@ -84,16 +84,24 @@ type SummaryData = Pick<Attention, 'items' | 'spaces'> & { item_counts?: Attenti
  * unfiltered. Per kind the count is the full one from `item_counts` (the list is capped), so it matches the "N of M" note.
  */
 export function attentionSummary(data: SummaryData): { act: number; watch: number } {
-  const listed: Record<string, { n: number; act: boolean }> = {}
+  const listed: Record<string, { act: number; watch: number }> = {}
   for (const i of data.items ?? []) {
-    const e = (listed[i.kind] ??= { n: 0, act: i.severity === 'act' })
-    e.n++
+    const e = (listed[i.kind] ??= { act: 0, watch: 0 })
+    e[i.severity === 'act' ? 'act' : 'watch']++
   }
-  let act = (data.spaces ?? []).reduce((n, s) => n + (s.human_pending ?? 0), 0)
+  const spaces = data.spaces ?? []
+  let act = spaces.reduce((n, s) => n + (s.human_pending ?? 0), 0)
   let watch = 0
   for (const [kind, e] of Object.entries(listed)) {
-    const n = Math.max(e.n, data.item_counts?.[kind] ?? 0)
-    if (e.act) act += n
+    if (kind === 'budget_notice') {
+      // One kind, two severities: exceeded is Act now, a warning is Watch, so count them from the per-space numbers.
+      act += Math.max(e.act, spaces.reduce((n, s) => n + (s.budget_exceeded ?? 0), 0))
+      watch += Math.max(e.watch, spaces.reduce((n, s) => n + (s.budget_warnings ?? 0), 0))
+      continue
+    }
+    // A single-severity kind: the full count from item_counts (the list is capped), falling back to what is listed.
+    const n = Math.max(e.act + e.watch, data.item_counts?.[kind] ?? 0)
+    if (e.act > 0) act += n
     else watch += n
   }
   return { act, watch }
