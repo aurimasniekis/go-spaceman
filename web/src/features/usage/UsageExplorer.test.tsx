@@ -1,0 +1,103 @@
+import { MantineProvider } from '@mantine/core'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState, type ReactNode } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { api, type GlobalUsageSeries, type UsageRow } from '@/api/client'
+import { axeViolations } from '@/test/axe'
+import { theme } from '@/theme/theme'
+import { UsageExplorer } from './UsageExplorer'
+import type { UsageSearch } from './state'
+
+vi.mock('@/components/AnchorLink', () => ({ AnchorLink: ({ to, params, children }: { to: string; params: Record<string, string>; children: ReactNode }) => <a href={to.replace('$spaceId', params.spaceId)}>{children}</a> }))
+
+beforeEach(() => {
+  window.matchMedia ??= ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as unknown as typeof window.matchMedia
+  globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver
+})
+afterEach(() => vi.restoreAllMocks())
+
+const row = (day: number, group: string, tokens: number) => ({
+  bucket_start: new Date(Date.UTC(2026, 10, day)).toISOString().replace('.000Z', 'Z'), group, total_tokens: tokens, input_tokens: tokens - 10, output_tokens: 10,
+  cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, requests: 2, total_cost_usd: tokens / 1000,
+}) as UsageRow
+
+function page(items: UsageRow[], extra: Partial<GlobalUsageSeries> = {}): GlobalUsageSeries {
+  const total = items.reduce((n, r) => n + r.total_tokens, 0)
+  return { bucket: 'day', group_by: 'space', from: '2026-11-10T00:00:00Z', to: '2026-11-17T00:00:00Z', cost_note: 'List price, not a bill.', items, labels: {}, not_counted: [],
+    totals: { group: '', total_tokens: total, input_tokens: total, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, requests: 2 * items.length, total_cost_usd: total / 1000 },
+    ...extra } as GlobalUsageSeries
+}
+
+const windows = { items: [{ account_id: 'acc_a', name: 'team-max', harness: 'claude-code', windows: [{ kind: 'five_hour', used_pct: 64, observed_at: new Date().toISOString(), resets_at: new Date(Date.now() + 3600_000).toISOString() }], limits: [{ kind: 'seven_day', seen_at: new Date().toISOString() }] }] }
+
+function Harness({ initial, seen }: { initial: UsageSearch; seen: UsageSearch[] }) {
+  const [s, setS] = useState(initial)
+  return <UsageExplorer search={s} onSearch={(n) => { seen.push(n); setS(n) }} />
+}
+
+function setup(get: (q: Record<string, unknown>) => GlobalUsageSeries, initial: UsageSearch = {}) {
+  const seen: UsageSearch[] = []
+  const queries: Record<string, unknown>[] = []
+  vi.spyOn(api, 'GET').mockImplementation(((path: string, init?: { params?: { query?: Record<string, unknown> } }) => {
+    if (path === '/usage/series') { queries.push(init?.params?.query ?? {}); return Promise.resolve({ data: get(init?.params?.query ?? {}), response: new Response() }) }
+    if (path === '/account-windows') return Promise.resolve({ data: windows, response: new Response() })
+    if (path === '/spaces') return Promise.resolve({ data: { items: [{ id: 'spc_1', name: 'Payments' }] }, response: new Response() })
+    return new Promise(() => {})
+  }) as never)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const view = render(<MantineProvider theme={theme}><QueryClientProvider client={qc}><Harness initial={initial} seen={seen} /></QueryClientProvider></MantineProvider>)
+  return { seen, queries, view }
+}
+
+describe('Usage explorer across spaces', () => {
+  it('groups by space with labels from the response, links to the space page and has no axe violations', async () => {
+    const { view } = setup(() => page([row(14, 'spc_1', 1200), row(15, 'spc_2', 300)], { labels: { spc_1: 'Payments', spc_2: 'Ledger' } }))
+    const table = await screen.findByRole('table', { name: 'Usage by space' })
+    expect(within(table).getByRole('link', { name: 'Payments' })).toHaveAttribute('href', '/spaces/spc_1/usage')
+    expect(table).not.toHaveTextContent('spc_2')
+    expect(table).toHaveTextContent('Ledger')
+    expect(await axeViolations(view.container)).toEqual([])
+  })
+  it('asks for the chosen range and grouping, and writes them to the URL state', async () => {
+    const { seen, queries } = setup(() => page([row(14, 'opus', 100)]))
+    await screen.findByTestId('usage-totals')
+    fireEvent.click(screen.getByRole('radio', { name: 'Last 90 days' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Model' }))
+    expect(seen.at(-1)).toEqual({ range: '90d', group: 'model' })
+    expect(await screen.findByRole('table', { name: 'Usage by model' })).toBeInTheDocument()
+    const last = queries.at(-1)!
+    expect(last).toMatchObject({ bucket: 'day', group_by: 'model' })
+    expect(Date.parse(last.to as string) - Date.parse(last.from as string)).toBe(90 * 86_400_000)
+  })
+  it('turns a clicked account into a filter chip that can be removed, named from the account list', async () => {
+    const { seen, queries } = setup((q) => page([row(14, 'acc_a', 500)], { group_by: String(q.group_by) }), { group: 'account' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter by team-max' }))
+    expect(seen.at(-1)).toEqual({ group: 'account', account: 'acc_a' })
+    const chips = await screen.findByTestId('usage-filters')
+    expect(chips).toHaveTextContent('Account: team-max')
+    expect(queries.at(-1)).toMatchObject({ account_id: ['acc_a'] })
+    fireEvent.click(within(chips).getByRole('button', { name: /Remove filter Account team-max/ }))
+    expect(seen.at(-1)).toEqual({ group: 'account' })
+  })
+  it('names a space filter that came in through the URL', async () => {
+    const { queries } = setup(() => page([row(14, 'opus', 100)]), { group: 'model', space: 'spc_1' })
+    await waitFor(() => expect(screen.getByTestId('usage-filters')).toHaveTextContent('Space: Payments'))
+    expect(queries[0]).toMatchObject({ space_id: ['spc_1'], group_by: 'model' })
+  })
+  it('lists not-counted runs per harness, only when there are some', async () => {
+    setup(() => page([row(14, 'spc_1', 100)], { not_counted: [{ harness: 'codex', runs: 3, harbor_pilot_runs: 1 }, { harness: 'claude-code', runs: 0, harbor_pilot_runs: 0 }] }))
+    const note = await screen.findByTestId('usage-not-counted')
+    expect(note).toHaveTextContent('3 Codex runs (1 read back from Harbor Pilot)')
+    expect(within(note).getAllByRole('listitem')).toHaveLength(1)
+  })
+  it('shows no note when nothing is uncounted, an empty state and the account windows', async () => {
+    setup(() => page([]))
+    expect(await screen.findByTestId('usage-empty')).toHaveTextContent('No usage was reported in this range.')
+    expect(screen.queryByTestId('usage-not-counted')).toBeNull()
+    const acc = await screen.findByTestId('usage-account-team-max')
+    expect(acc).toHaveTextContent('64 % used')
+    expect(acc).toHaveTextContent('7-day window')
+    expect(screen.getByRole('progressbar', { name: 'team-max, 5-hour window' })).toHaveAttribute('aria-valuenow', '64')
+  })
+})

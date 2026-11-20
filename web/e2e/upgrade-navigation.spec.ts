@@ -34,7 +34,7 @@ const viewports: { name: string; mobile: boolean; options: BrowserContextOptions
 // The admin sees these sidebar entries (web/src/lib/nav.ts): the plain ones, then the three settings hubs. Each hub opens on
 // its first tab, and every page of a hub is a tab link under the page header.
 const entries: [label: string | RegExp, path: string][] = [
-  ['Overview', '/'], [/^Needs you/, '/human'], ['Terminals', '/terminals'], ['Spaces', '/spaces'],
+  ['Overview', '/'], [/^Needs you/, '/human'], ['Terminals', '/terminals'], ['Spaces', '/spaces'], ['Usage', '/usage'],
 ]
 const hubs: { label: string; entry: string; tabs: [label: string, path: string][] }[] = [
   { label: 'Configuration', entry: '/configuration', tabs: [

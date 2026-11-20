@@ -1,8 +1,8 @@
-import { IconActivity, IconAdjustments, IconBell, IconBox, IconLayoutDashboard, IconPlugConnected, IconShieldLock, IconTerminal2 } from '@tabler/icons-react'
+import { IconActivity, IconAdjustments, IconBell, IconBox, IconChartBar, IconLayoutDashboard, IconPlugConnected, IconShieldLock, IconTerminal2 } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
-type Path = '/' | '/attention' | '/human' | '/terminals' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/git-keys' | '/harbor-pilot' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/cross-space' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/system' | '/account'
+type Path = '/' | '/attention' | '/human' | '/terminals' | '/spaces' | '/usage' | '/nodes' | '/events' | '/accounts' | '/git-keys' | '/harbor-pilot' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/cross-space' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/system' | '/account'
 
 interface Visibility {
   /** Shown only to global administrators (accounts hold credentials). */
@@ -42,6 +42,7 @@ export const nav: NavItem[] = [
   { to: '/human', label: 'Needs you', icon: IconBell, pendingBadge: true },
   { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
   { to: '/spaces', label: 'Spaces', icon: IconBox },
+  { to: '/usage', label: 'Usage', icon: IconChartBar },
 ]
 
 /** Every existing page keeps its URL; a hub only groups them. Account stays in the header's user menu. */

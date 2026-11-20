@@ -39,6 +39,7 @@ import { Route as SpacesRouteImport } from './routes/spaces'
 import { Route as SystemRouteImport } from './routes/system'
 import { Route as TerminalsRouteImport } from './routes/terminals'
 import { Route as TokensRouteImport } from './routes/tokens'
+import { Route as UsageRouteImport } from './routes/usage'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as EventsIndexRouteImport } from './routes/events.index'
 import { Route as PromptsIndexRouteImport } from './routes/prompts.index'
@@ -217,6 +218,11 @@ const TerminalsRoute = TerminalsRouteImport.update({
 const TokensRoute = TokensRouteImport.update({
   id: '/tokens',
   path: '/tokens',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsageRoute = UsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsersRoute = UsersRouteImport.update({
@@ -402,6 +408,7 @@ export interface FileRoutesByFullPath {
   '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
+  '/usage': typeof UsageRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
@@ -461,6 +468,7 @@ export interface FileRoutesByTo {
   '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
+  '/usage': typeof UsageRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/events': typeof EventsIndexRoute
@@ -520,6 +528,7 @@ export interface FileRoutesById {
   '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
+  '/usage': typeof UsageRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
@@ -583,6 +592,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/terminals'
     | '/tokens'
+    | '/usage'
     | '/users'
     | '/prompts/$promptId'
     | '/spaces/$spaceId'
@@ -642,6 +652,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/terminals'
     | '/tokens'
+    | '/usage'
     | '/users'
     | '/prompts/$promptId'
     | '/events'
@@ -700,6 +711,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/terminals'
     | '/tokens'
+    | '/usage'
     | '/users'
     | '/prompts/$promptId'
     | '/spaces/$spaceId'
@@ -762,6 +774,7 @@ export interface RootRouteChildren {
   SystemRoute: typeof SystemRoute
   TerminalsRoute: typeof TerminalsRoute
   TokensRoute: typeof TokensRoute
+  UsageRoute: typeof UsageRoute
   UsersRoute: typeof UsersRoute
   PromptsPromptIdRoute: typeof PromptsPromptIdRoute
   PromptsIndexRoute: typeof PromptsIndexRoute
@@ -977,6 +990,13 @@ declare module '@tanstack/react-router' {
       path: '/tokens'
       fullPath: '/tokens'
       preLoaderRoute: typeof TokensRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/usage': {
+      id: '/usage'
+      path: '/usage'
+      fullPath: '/usage'
+      preLoaderRoute: typeof UsageRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/users': {
@@ -1315,6 +1335,7 @@ const rootRouteChildren: RootRouteChildren = {
   SystemRoute: SystemRoute,
   TerminalsRoute: TerminalsRoute,
   TokensRoute: TokensRoute,
+  UsageRoute: UsageRoute,
   UsersRoute: UsersRoute,
   PromptsPromptIdRoute: PromptsPromptIdRoute,
   PromptsIndexRoute: PromptsIndexRoute,
