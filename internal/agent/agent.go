@@ -232,7 +232,7 @@ type Agent struct {
 	// snapshotReconciled, when set, runs after the monitor has handled a runner "snapshot" event. Tests wait on it so a late
 	// reconcile cannot send a report into a later step.
 	snapshotReconciled func()
-	// eventHandled, when set, runs after the monitor has handled any runner event (never blocking it). It is atomic
+	// eventHandled, when set, runs after the monitor has handled any runner event; it must not block the monitor. It is atomic
 	// because tests set it while the monitor already runs. Tests wait on it to know an event's observe has finished.
 	eventHandled atomic.Pointer[func(runner.Event)]
 	limitTimers  map[string]*time.Timer
