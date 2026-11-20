@@ -31,6 +31,7 @@ function page(items: UsageRow[], extra: Partial<UsageSeries> = {}): UsageSeries 
 function setup(get: (query: Record<string, unknown>) => UsageSeries) {
   const spy = vi.spyOn(api, 'GET').mockImplementation(((path: string, init?: { params?: { query?: Record<string, unknown> } }) => {
     if (path === '/spaces/{space_id}/usage/series') return Promise.resolve({ data: get(init?.params?.query ?? {}), response: new Response() })
+    if (path === '/usage/series') return Promise.resolve({ data: { not_counted: [] }, response: new Response() })
     return new Promise(() => {})
   }) as never)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })

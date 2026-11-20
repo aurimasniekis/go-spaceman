@@ -69,6 +69,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Usage page follow-ups.** The page keeps the last figures on screen (dimmed, busy) while a new range, grouping or
+  filter loads instead of blanking. With an account filter on, the Accounts table shows "—" for accounts outside it and
+  marks the column "(filtered)". Grouped by harness, the chart legend uses the display name ("Claude Code"), as the table
+  does. A selected row's toggle is named "Remove filter X". The "not counted" note links to the run pages.
+
 - **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
   are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
   for a reconnect, and the monitor loop doesn't wait out the write timeout.
