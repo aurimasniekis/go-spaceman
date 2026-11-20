@@ -736,7 +736,8 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		a.failureEnded(row.RunID, prev.Status != "working")
 	}
 	a.dialogObserved(ctx, prev, row)
-	a.report(ctx, row)
+	// Read again under limitSend: of two concurrent observes, the one that sends second sends the newer journal state.
+	a.reportCurrent(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
 		if a.holdWanted(row.RunID) {

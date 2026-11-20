@@ -4858,9 +4858,11 @@
             "type": "string"
           },
           "cause": {
+            "description": "usage_limit: moved away from an account at its limit; operator: moved by a person; switch_back: moved back to the account a chain of usage-limit switches started from, after its reset (ADR-0105)",
             "enum": [
               "usage_limit",
-              "operator"
+              "operator",
+              "switch_back"
             ],
             "type": "string"
           },
@@ -4888,6 +4890,7 @@
             "type": "string"
           },
           "limit_kind": {
+            "description": "The limit that caused a usage_limit switch; empty for a switch_back",
             "type": "string"
           },
           "limit_resets_at": {
@@ -4898,6 +4901,10 @@
             "type": "string"
           },
           "new_run_id": {
+            "type": "string"
+          },
+          "origin_account_id": {
+            "description": "The account the chain of usage-limit switches started from; a switch_back moves the run there",
             "type": "string"
           },
           "reason": {
@@ -5306,9 +5313,10 @@
             "type": "integer"
           },
           "cause": {
-            "description": "Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098)",
+            "description": "Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098); switch_back, the run was parked to move back to its original account (ADR-0105)",
             "enum": [
-              "agent_restart"
+              "agent_restart",
+              "switch_back"
             ],
             "type": "string"
           },

@@ -749,6 +749,17 @@ func (a *Agent) report(ctx context.Context, r runRow) {
 	a.sendReport(ctx, r)
 }
 
+// reportCurrent sends a run's report from the journal, read under limitSend, so a report that waited for the lock never
+// sends an older state after a newer one (the row is the fallback when the journal cannot be read).
+func (a *Agent) reportCurrent(ctx context.Context, row runRow) {
+	a.limitSend.Lock()
+	defer a.limitSend.Unlock()
+	if cur, err := a.j.getRun(ctx, row.RunID); err == nil {
+		row = cur
+	}
+	a.sendReport(ctx, row)
+}
+
 // resendHeldReports sends, from the journal, the reports held back before the welcome.
 func (a *Agent) resendHeldReports(ctx context.Context, held map[string]struct{}) {
 	for id := range held {
