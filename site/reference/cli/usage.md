@@ -7,6 +7,7 @@ Usage over time from the ledger: tokens first, cost as a list-price estimate.
 | Subcommand | Description |
 |---|---|
 | [`spaceman usage account`](#spaceman-usage-account) | An account's usage over time in the spaces you can read, grouped by space, role or model |
+| [`spaceman usage all`](#spaceman-usage-all) | Usage over time across the spaces you can read, grouped by space, account, model, role or harness |
 | [`spaceman usage space`](#spaceman-usage-space) | A space's usage over time, grouped by role, account, model or harness |
 
 ## spaceman usage account
@@ -27,6 +28,37 @@ API: `get-account-usage` ([HTTP API](../api)).
 | `--from` | string |  | start of the range, RFC 3339 (default: 7 days, or 30 with --bucket day, before --to) |
 | `--group-by` | string |  | space (default), role or model |
 | `--limit` | integer |  | maximum number of items |
+| `--to` | string |  | end of the range, RFC 3339 (default: now) |
+
+## spaceman usage all
+
+Usage over time across the spaces you can read, grouped by space, account, model, role or harness.
+
+```sh
+spaceman usage all [flags]
+```
+
+API: `get-usage-series` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman usage all --group-by model --bucket day --from 2026-08-22T00:00:00Z
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--account` | stringSlice |  | only these account IDs (repeat or comma-separate, at most 50) |
+| `--all` | bool |  | follow next_cursor and print every page |
+| `--bucket` | string |  | hour (default) or day |
+| `--cursor` | string |  | continue from a previous page's next_cursor |
+| `--from` | string |  | start of the range, RFC 3339 (default: 7 days, or 30 with --bucket day, before --to) |
+| `--group-by` | string |  | space (default), account, model, role or harness |
+| `--harness` | stringSlice |  | only these harnesses (repeat or comma-separate, at most 50) |
+| `--limit` | integer |  | maximum number of items |
+| `--model` | stringSlice |  | only these models (repeat or comma-separate, at most 50) |
+| `--role` | stringSlice |  | only these roles (repeat or comma-separate, at most 50) |
+| `--space-id` | stringSlice |  | only these space IDs (repeat or comma-separate, at most 50) |
 | `--to` | string |  | end of the range, RFC 3339 (default: now) |
 
 ## spaceman usage space

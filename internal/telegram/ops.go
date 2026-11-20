@@ -12,6 +12,7 @@ var Ops = map[string]api.TelegramClass{
 	"list-spaces": api.TelegramBoth,
 	// Usage ledger and account windows (ADR-0090): read-only numbers and IDs, never a credential.
 	"get-space-usage-series":     api.TelegramBoth,
+	"get-usage-series":           api.TelegramBoth,
 	"list-space-account-windows": api.TelegramBoth,
 	"get-account-usage":          api.TelegramBoth,
 	"get-account-windows":        api.TelegramBoth,

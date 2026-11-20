@@ -65,6 +65,17 @@ func (r *Row) add(b db.UsageBucket) {
 	r.TotalTokens = r.InputTokens + r.OutputTokens + r.CacheWriteTokens + r.CacheReadTokens
 }
 
+func (r *Row) addRow(o Row) {
+	r.InputTokens += o.InputTokens
+	r.OutputTokens += o.OutputTokens
+	r.CacheWriteTokens += o.CacheWriteTokens
+	r.CacheReadTokens += o.CacheReadTokens
+	r.ReasoningTokens += o.ReasoningTokens
+	r.Requests += o.Requests
+	r.TotalCostUSD += o.TotalCostUSD
+	r.TotalTokens = r.InputTokens + r.OutputTokens + r.CacheWriteTokens + r.CacheReadTokens
+}
+
 // Series is a usage series: every row of the range in order (bucket start, then group), and the totals of the range.
 type Series struct {
 	Bucket   string    `json:"bucket" enum:"hour,day"`

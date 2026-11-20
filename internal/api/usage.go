@@ -19,6 +19,8 @@ import (
 var UsageRules = map[string]Rule{
 	"get-run-usage":   InSpace(authz.RunRead),
 	"get-space-usage": InSpace(authz.RunRead),
+	// The cross-space series (ADR-0103) filters every row to the spaces with run:read, so it needs only a session.
+	"get-usage-series": FilteredRead(),
 	// The usage ledger (ADR-0090). A space's views need run:read there. An account's views are global (account:read) and
 	// show only what the caller can also read in a space: usage of the spaces they have run:read in, and windows only
 	// of an account bound to such a space.
@@ -95,6 +97,7 @@ type SpaceAccountWindows struct {
 func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
 		tags := []string{"usage"}
+		registerUsageSeries(svc, api, d)
 		huma.Register(api, huma.Operation{OperationID: "get-run-usage", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}/usage",
 			Summary: "A run's usage", Description: "Only what the harness recorded; unknown usage is reported as unknown, never zero.", Tags: tags},
 			func(ctx context.Context, in *struct {

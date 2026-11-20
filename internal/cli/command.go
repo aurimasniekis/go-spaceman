@@ -39,7 +39,7 @@ func pos(names ...string) []arg {
 // qflag is a flag that becomes a query parameter.
 type qflag struct {
 	flag, param, usage string
-	kind               fieldKind // kString, kBool or kInt
+	kind               fieldKind // kString, kBool, kInt or kList
 }
 
 func qs(flag, param, usage string) qflag {
@@ -50,6 +50,11 @@ func qb(flag, param, usage string) qflag {
 }
 func qi(flag, param, usage string) qflag {
 	return qflag{flag: flag, param: param, usage: usage, kind: kInt}
+}
+
+// ql is a repeatable query flag: each value (repeated or comma-separated) becomes one repeated query parameter.
+func ql(flag, param, usage string) qflag {
+	return qflag{flag: flag, param: param, usage: usage, kind: kList}
 }
 func limitFlag() qflag { return qi("limit", "limit", "maximum number of items") }
 
@@ -187,6 +192,10 @@ func (a *App) cmd(o opts) *cobra.Command {
 			n := new(int)
 			cmd.Flags().IntVar(n, q.flag, 0, q.usage)
 			qvals[i] = n
+		case kList:
+			l := new([]string)
+			cmd.Flags().StringSliceVar(l, q.flag, nil, q.usage)
+			qvals[i] = l
 		default:
 			s := new(string)
 			cmd.Flags().StringVar(s, q.flag, "", q.usage)
@@ -236,6 +245,8 @@ func (a *App) cmd(o opts) *cobra.Command {
 				c.query.Set(q.param, strconv.FormatBool(*v))
 			case *int:
 				c.query.Set(q.param, strconv.Itoa(*v))
+			case *[]string:
+				c.query[q.param] = append([]string(nil), *v...)
 			case *string:
 				c.query.Set(q.param, *v)
 			}
