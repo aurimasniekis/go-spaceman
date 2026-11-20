@@ -20,7 +20,11 @@ import { ago, datetime } from '@/lib/format'
 import { required } from '@/lib/form'
 import { notifyError } from '@/lib/notify'
 
-export const Route = createFileRoute('/spaces/$spaceId/messages')({ component: MessagesPage })
+export const Route = createFileRoute('/spaces/$spaceId/messages')({
+  component: MessagesPage,
+  // ?view=system opens SpaceMan's own notices (a run's dialog notice is one); anything else is the default view.
+  validateSearch: (s: Record<string, unknown>): { view?: 'system' } => (s.view === 'system' ? { view: 'system' } : {}),
+})
 
 const stateColor: Record<Message['state'], string> = { stored: 'gray', available: 'owlBlue', acknowledged: 'owlPurple', resolved: 'owlGreen' }
 
@@ -43,7 +47,7 @@ function MessagesPage() {
   const [open, setOpen] = useState<string | null>(null)
   const [onlyMine, setOnlyMine] = useState(false)
   // People and agents by default: SpaceMan's own notifications to control would otherwise bury them (UX review).
-  const [view, setView] = useState<MessageView>('people')
+  const [view, setView] = useState<MessageView>(Route.useSearch().view ?? 'people')
   const all = list.data?.items ?? []
   const systemCount = all.filter(isSystem).length
   const scheduled = pending.data ?? []

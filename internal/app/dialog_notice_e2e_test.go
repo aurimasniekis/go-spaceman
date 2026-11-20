@@ -89,4 +89,24 @@ func TestRunDialogNoticeOverHTTP(t *testing.T) {
 			t.Fatalf("no excerpt to %s: %q", to, b)
 		}
 	}
+
+	// Control itself is the one waiting: only the operators are told.
+	ctl := run
+	ctl.ID, ctl.Kind = "run_ctl", "control"
+	app.NotifyRunDialog(h.c, ctx, ctl, fleet.RunDialog{ID: "dlg_ctl", Dialog: "unknown", Signal: dialog.SignalPrompt})
+	r = root.do("GET", "/spaces/"+sp.ID+"/messages", nil)
+	r.json(t, &msgs)
+	toOps, toControl := 0, 0
+	for _, m := range msgs.Items {
+		if strings.Contains(m.Body, "occurrence `dlg_ctl`") {
+			if m.ToKind == "operators" {
+				toOps++
+			} else if m.ToKind == "control" {
+				toControl++
+			}
+		}
+	}
+	if toOps != 1 || toControl != 0 {
+		t.Fatalf("control run's dialog: %d to operators, %d to control", toOps, toControl)
+	}
 }

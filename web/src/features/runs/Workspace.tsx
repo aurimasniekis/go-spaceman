@@ -6,7 +6,7 @@ import type { Run, Space } from '@/api/client'
 import { runsQuery, useNodes, useSpaces } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { useNarrow } from '@/lib/media'
-import { isEnded, RunDot, runLabels, runStateText, runTone, sortRuns, type Tone } from './runInfo'
+import { isBlockedOnDialog, isEnded, RunDot, runLabels, runStateText, runTone, sortRuns, type Tone } from './runInfo'
 import { useNow } from './RunWorkbench'
 import { SpaceTerminals } from './SpaceTerminals'
 
@@ -49,7 +49,8 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
   const runs = useQueries({ queries: visible.map((s) => runsQuery(s.id)) })
   const bySpace = new Map<string, Run[]>(visible.map((s, i) => [s.id, sortRuns(runs[i]?.data ?? [])]))
   const allLive = visible.flatMap((s) => (bySpace.get(s.id) ?? []).filter((r) => !isEnded(r)))
-  const attention = allLive.filter((r) => runTone(r) === 'attention').length
+  const attention = allLive.filter((r) => runTone(r) === 'attention' && !isBlockedOnDialog(r)).length
+  const onDialog = allLive.filter(isBlockedOnDialog).length
   // The selected space: the URL's, else the first with a running agent, else the first space.
   const current = spaceId ?? visible.find((s) => (bySpace.get(s.id) ?? []).some((r) => !isEnded(r)))?.id ?? visible[0]?.id
   const currentName = visible.find((s) => s.id === current)?.name
@@ -141,6 +142,7 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
       <Group gap="md" px="xs" py={4} mt="xs" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
         <Text size="xs" c="dimmed">{allLive.length} {allLive.length === 1 ? 'agent' : 'agents'} running in {visible.length} {visible.length === 1 ? 'space' : 'spaces'}</Text>
         {attention > 0 && <AnchorLink to="/human" size="xs" c="owlYellow">{attention} waiting for input →</AnchorLink>}
+        {onDialog > 0 && <Text size="xs" c="owlYellow">{onDialog} blocked on {onDialog === 1 ? 'a dialog' : 'dialogs'}</Text>}
         {!narrow && <Text size="xs" c="dimmed" ml="auto">[ and ] switch agents</Text>}
       </Group>
       {narrow && (

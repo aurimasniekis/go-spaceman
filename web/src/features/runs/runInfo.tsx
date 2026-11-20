@@ -18,7 +18,6 @@ export const harnessLabel = (h: Run['harness'] | string) => HARNESS_LABEL[h as R
 export const runTitle = (r: Run) => (r.turn > 0 ? `${r.role} #${r.turn}` : r.role)
 
 /** Blocked at an interactive dialog on its terminal that SpaceMan does not answer (ADR-0102): status blocked, kind dialog. */
-export const isBlockedOnDialog = (r: Run) => !isEnded(r) && r.observed !== 'unknown' && r.status === 'blocked' && r.status_kind === 'dialog'
 
 export type Tone = 'working' | 'idle' | 'attention' | 'starting' | 'ended' | 'failed' | 'offline'
 
@@ -33,6 +32,9 @@ export function runTone(r: Run): Tone {
   if (r.status === 'working') return 'working'
   return 'idle'
 }
+
+/** The run's tone is attention and the program says it waits at a dialog (so a starting or offline run is not). */
+export const isBlockedOnDialog = (r: Run) => runTone(r) === 'attention' && r.status_kind === 'dialog'
 
 const TONE_COLOR: Record<Tone, string> = {
   working: 'var(--mantine-color-owlGreen-5)', idle: 'var(--mantine-color-owlBlue-5)', attention: 'var(--mantine-color-owlYellow-5)',

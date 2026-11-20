@@ -26,11 +26,12 @@ describe('RunDialogBadge', () => {
     await show(run({}))
     const badge = screen.getByTestId('run-dialog-badge')
     expect(badge).toHaveTextContent('blocked on dialog')
-    expect(badge).toHaveAttribute('href', '/spaces/spc_1/messages')
+    expect(badge).toHaveAttribute('href', '/spaces/spc_1/messages?view=system')
   })
   it.each([
     ['another blocked kind', { status_kind: 'question' }],
     ['a working run', { status: 'working', status_kind: undefined }],
+    ['a starting run', { observed: 'starting' }],
     ['an ended run', { observed: 'exited' }],
   ])('is not shown for %s', async (_n, p) => {
     await show(run(p as Partial<Run>))
