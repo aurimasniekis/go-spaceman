@@ -171,9 +171,12 @@ type AccountSwitch struct {
 	NewRunID      string `json:"new_run_id,omitempty"`
 	FromAccountID string `json:"from_account_id"`
 	ToAccountID   string `json:"to_account_id,omitempty"`
-	LimitKind     string `json:"limit_kind"`
-	State         string `json:"state"`
-	Reason        string `json:"reason,omitempty"`
+	// Cause is usage_limit (moved away from an account at its usage limit) or switch_back (moved back to the account a
+	// chain of usage-limit switches started from, after its reset; ADR-0105). limit_kind is empty for a switch_back.
+	Cause     string `json:"cause,omitempty"`
+	LimitKind string `json:"limit_kind"`
+	State     string `json:"state"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // AccountSwitchStarted: central armed a switch: the run is parked at its next idle point and resumed on the target.
@@ -422,10 +425,10 @@ func Catalog() []CatalogEntry {
 		{UsageLimitReachedName, UsageLimitReached{ul}, "A run's report opened a hold on its account in its space (once per hold)."},
 		{UsageLimitClearedName, UsageLimitCleared{UsageLimit: ul, ClearedBy: "run:run_…"}, "A hold on an account was cleared."},
 		{SwitchStartedName, AccountSwitchStarted{AccountSwitch{SpaceID: "spc_…", SwitchID: "asw_…", InstanceID: "ins_…", FromRunID: "run_…",
-			FromAccountID: "acc_…", ToAccountID: "acc_…", LimitKind: "five_hour", State: "pending"}},
+			FromAccountID: "acc_…", ToAccountID: "acc_…", Cause: "usage_limit", LimitKind: "five_hour", State: "pending"}},
 			"A run at its usage limit is moved to another account of its pool at its next idle point."},
 		{SwitchCompletedName, AccountSwitchCompleted{AccountSwitch{SpaceID: "spc_…", SwitchID: "asw_…", InstanceID: "ins_…", FromRunID: "run_…",
-			NewRunID: "run_…", FromAccountID: "acc_…", ToAccountID: "acc_…", LimitKind: "five_hour", State: "succeeded"}},
+			NewRunID: "run_…", FromAccountID: "acc_…", ToAccountID: "acc_…", Cause: "usage_limit", LimitKind: "five_hour", State: "succeeded"}},
 			"An account switch ended: succeeded, failed, fell back to waiting for the reset, or cancelled."},
 		{TaskCreatedName, TaskCreated{Task: task, Status: "ready"}, "A task was added to a queue."},
 		{TaskStatusChangedName, TaskStatusChanged{Task: task, From: "ready", To: "running"}, "A task changed state."},

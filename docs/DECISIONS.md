@@ -8049,6 +8049,90 @@
     `internal/store` `TestSubscriptionIngestOwnMigrationFrom0069`. Not yet seen against a real pulsed.
   - The Terraform provider's `ingest_own` attribute is a separate change.
 
+### ADR-0105 — A run moved at a usage limit goes back to its original account when that account has reset (security-relevant change)
+
+- **Status:** Accepted, 2026-11-20 (v0.1.16), the operator's choice "switch back when idle" (option 1). Amends ADR-0090.
+  The core is implemented and tested with simulated evidence only (fleet tests): the decision, the park and resume,
+  the setting, the store and the control message. The API, OpenAPI, CLI, web, guide and CHANGELOG are a follow-up
+  task. Real two-account evidence stays open as K-17.
+- **Security-relevant because:** SpaceMan moves a live run to another credential on a new trigger: time (the original
+  account's reset), not the run's own limit report. The target is never chosen by the run: only the account the
+  instance was moved away from, while it is an eligible member of the run's pool. The setting is on by default.
+- **Context:**
+  - ADR-0090 moves a run away from an account that hit its usage limit, by parking it and resuming the same session on
+    another account of its pool. Nothing brings it back. The run stays on the stand-in account after the original has
+    reset, so it uses up that account too, and the pool's order (the operator's preference) stops applying to it.
+  - A move is a restart (Claude Code fixes its token for the life of the process), so going back costs what any switch
+    costs: a stop, a `--resume` and an uncached first request. It must never cut into a turn.
+- **Decision:**
+  1. **Which runs.** Only a run whose current account came from a usage-limit switch: the instance's newest switch
+     (rows that `fell_back` or were `cancelled` aside, since they moved nothing) has cause `usage_limit`, is
+     `succeeded` or `failed` (the run on the new account exists; a `failed` one was resumed fresh there or waited
+     there), and its `to_account_id` is the account the run is launched on now. A run moved by an operator (cause
+     `operator`), a run that a switch-back already brought home, a run relaunched on another account since, and a
+     gateway-routed (Harbor Pilot) run are never switched back. Run kinds as ADR-0079 parks them (control, worker,
+     diagnostic).
+  2. **Target: the chain's origin, in one move.** A run moved A to B, then B to C, goes back from C straight to A, never
+     to B. The origin is stored on each usage-limit switch (`account_switches.origin_account_id`): the `from` account
+     of the first switch of an unbroken chain (the previous switch of the instance is a usage-limit switch whose target is
+     this switch's `from`), so no history walk is needed. Why not one hop at a time: the origin is the account the
+     operator's configuration chose (the launch's account: the default, the role pool's first, or a named one); the
+     intermediate accounts were stand-ins. Going home through them costs two restarts instead of one and two chances to
+     flap. A chain that existed before this change gets its last switch's `from` as its origin (one hop), because
+     the migration has nothing else to go by.
+  3. **When the origin is ready.** The origin has no open usage-limit hold (in any space) whose reset, plus ADR-0079's
+     resume slack (2 minutes), is still ahead; a hold with no known reset blocks until it is cleared (evidence, a probe
+     or an operator). It must also pass the switch target's own eligibility (`switchTargetTx` with the origin as the
+     preferred account, so nothing is duplicated): bound to the space for the harness, enabled, in the role's pool when it
+     has one, not held, and through the launch headroom gate when that is on. The pool's other accounts never stand in:
+     when the origin isn't eligible the run stays where it is.
+  4. **Only between turns.** The run must be live (`running`, wanted running), at an idle point (status `idle` or
+     `done`: its turn ended; never `working`, including a program waiting on background tasks, ADR-0100), at no limit
+     of its own (then ADR-0090's switch away applies), with a session to resume, no open blocked terminal dialog
+     (ADR-0102), no terminal takeover by a person, and no active switch or limit wait of its instance; its space active,
+     not relocating, and its node holding the space's lease. Nothing is armed and nothing waits for an idle point: the
+     decision and the park happen in the same transaction that sees the idle point, so a busy run is never interrupted
+     for it. It is checked at each idle report, by the limit-wait job when the origin's reset plus slack passes, and by
+     that job at most every 10 minutes while a run qualifies otherwise (a cleared hold, a pool or headroom change).
+  5. **How.** A switch row with cause `switch_back` (from the current account to the origin, `origin_account_id` the
+     origin, no limit kind), parked at once with a limit wait of cause `switch_back` due now on the origin, and the run
+     stopped. The limit-wait job resumes it as ADR-0090 does: a new run of the same instance, `--resume` of its session,
+     the task re-pointed, and a fixed note: SpaceMan moved the session back to its original account, whose usage limit
+     has reset; continue, or keep waiting if it was waiting. The claim transaction checks the origin again: if it is no
+     longer eligible (limited meanwhile, taken out of the pool, failover or switch-back turned off), the switch falls back
+     and the run resumes at once on the account it was on, with a note saying it was not moved. The new run's first turn
+     marks the switch `succeeded`; a resume that ends before one gets ADR-0079's fresh retry on the origin and the switch
+     is `failed`; a limit on the origin at once fails it, and ADR-0090's switch away applies.
+  6. **Setting.** Space limit `usage_limit_switch_back` (0 or 1, default 1), next to the other usage-limit limits, with
+     installation default, per-space override and audit like them. It applies only while `usage_limit_failover` is on
+     (failover off means SpaceMan moves no run between accounts). Turning it off starts no new switch-back; one already
+     parked resumes on the account the run was on. No column: limits are key-value.
+  7. **No flapping.** At most one switch-back per instance in 6 hours (longer than a five-hour window), counted from its
+     newest switch-back that moved or was set to move the run, including one that fell back at the claim (decision 5): it had
+     already stopped the run, which restarted where it was. Switch-backs, those included, count toward
+     `usage_limit_switch_max_per_day`, and none starts when that budget is spent. If the origin limits again, the
+     ordinary ADR-0090 switch away applies and starts a new chain at the origin.
+  8. **Recorded like any switch.** The `account_switches` row (cause `switch_back`) with its change records; audit
+     `account.switch_started` … `account.switch_succeeded` with `cause` in the details; outbox
+     `fleet.account_switch.started` and `fleet.account_switch.completed`, whose payload gains `cause`; metric
+     `spaceman_account_switches_total` gains a bounded `cause` label (`usage_limit`, `switch_back`); control gets
+     one message per switch-back at its resume (dedup `account-switch:` plus the switch ID). People are not told.
+  9. **Store.** Migration 0071 rebuilds `account_switches` (SQLite can't alter a CHECK) to allow the cause
+     `switch_back` and add `origin_account_id`, backfilled with `from_account_id` for usage-limit rows. Forward-only.
+- **Rejected:**
+  - Switching back at once at the reset, interrupting a turn: the operator chose idle only.
+  - Switching back along the chain one hop at a time: see decision 2.
+  - Letting the pool's order pick (any better-ranked account): that is a pre-emptive switch, which ADR-0090 decision 4
+    rules out; only the account a limit moved the run away from comes back.
+- **Consequences:** A run that sits idle for long goes home within 10 minutes of its origin becoming eligible, and at
+  the reset when that is the last thing missing. Idle control and workers waiting for a reply get one extra turn (the
+  note) on the origin. An idle point reported just before the program starts another turn (a notice typed in) can still
+  have that turn interrupted by the stop; the session is resumed, as with ADR-0090's idle point.
+- **Known inconsistency, left as is:** the takeover check here (`GetActiveTakeover`, which does not look at the expiry)
+  and the idle-point code's `activeTakeover(now)` (which ignores an expired takeover) can disagree for a takeover that
+  has expired but not been ended: it keeps a switch-back from starting until the takeover is ended. That errs on the
+  side of not moving the run; it is not changed here.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

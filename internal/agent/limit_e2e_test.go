@@ -172,7 +172,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond) // the launch's reports
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	// A turn with no limit: a report per status, none with a limit.
 	f.SetStatus(row.TerminalID, "working")
 	f.SetStatus(row.TerminalID, "idle")
@@ -215,8 +215,17 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	a2.leases[ccSpace] = a.leases[ccSpace]
 	startAgent(t, a2, fc, clk)
 	wantOpen(t, "hello after restart", fc.helloRun(t, runID), proto.LimitFiveHour, reset, at)
-	for _, r := range fc.collect(t, runID, 300*time.Millisecond) {
-		wantOpen(t, "adopted", r, proto.LimitFiveHour, reset, at) // reconcile's reports
+	// The monitor's snapshot reconcile of an adopted run may or may not send one report after the hello (it races
+	// the hello), but never more, and any it sends repeats the limit still open and the run still running.
+	rs = fc.collect(t, runID, 300*time.Millisecond)
+	if len(rs) > 1 {
+		t.Fatalf("adopted run: %d reports after the hello, want at most 1", len(rs))
+	}
+	for _, r := range rs {
+		wantOpen(t, "adopted reconcile", r, proto.LimitFiveHour, reset, at)
+		if r.State != "running" {
+			t.Fatalf("adopted reconcile: state %q, want running", r.State)
+		}
 	}
 	if j := getRun(t, a2, runID).Limit; j.Offset != offset {
 		t.Fatalf("offset after restart %d, want %d", j.Offset, offset)
@@ -266,14 +275,18 @@ func TestUsageLimitWrapUpAndOldCentral(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		fc.collect(t, "run_wrap", 300*time.Millisecond)
+		fc.collectAtLeast(t, "run_wrap", 2, 300*time.Millisecond)
 		at := clk.Now().Add(-time.Minute)
 		f.SetStatus(row.TerminalID, "working")
 		if err := rt.AppendTranscript(transcript, rt.TypedRecord(at), rt.WrapUpRecord(at), rt.AssistantRecord("grace", at), rt.NoticeRecord(at)); err != nil {
 			t.Fatal(err)
 		}
 		f.SetStatus(row.TerminalID, "idle")
-		rs := fc.collect(t, "run_wrap", 300*time.Millisecond)
+		want := 3 // working, idle, and the limit
+		if minor < proto.MinorUsageLimit {
+			want = 2
+		}
+		rs := fc.collectAtLeast(t, "run_wrap", want, 300*time.Millisecond)
 		if j := getRun(t, a, "run_wrap").Limit; j.Kind != proto.LimitUnknown {
 			t.Fatalf("minor %d: journal %+v", minor, j)
 		}
@@ -305,7 +318,7 @@ func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
 	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
 	fc.next(t, proto.TypeHello) // sent: the connection is set, the welcome is held
 	ccLaunch(a, "run_held")
-	fc.collect(t, "run_held", 100*time.Millisecond)
+	fc.collectAtLeast(t, "run_held", 2, 100*time.Millisecond)
 	if err := a.j.setRunLimit(context.Background(), "run_held", runLimit{Kind: proto.LimitFiveHour, ResetsAt: &reset, Since: &at, Offset: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +327,7 @@ func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
 		t.Fatalf("%d reports before the welcome: %+v", len(rs), rs[0].Limit)
 	}
 	close(hold)
-	rs := fc.collect(t, "run_held", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_held", 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the welcome")
 	}
@@ -368,7 +381,7 @@ func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
 		t.Fatalf("%d reports before the welcome", len(rs))
 	}
 	close(hold)
-	rs := fc.collect(t, "run_scan", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_scan", 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the welcome")
 	}
@@ -395,7 +408,7 @@ func TestRunEndBetweenHelloSnapshotAndConnIsSentAfterWelcome(t *testing.T) {
 	}
 	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
 	fc.next(t, proto.TypeHello)
-	rs := fc.collect(t, "run_gap", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_gap", 1, 500*time.Millisecond)
 	if len(rs) == 0 || rs[len(rs)-1].State != proto.RunExited {
 		t.Fatalf("run end not reported after the welcome: %d reports", len(rs))
 	}
@@ -455,7 +468,7 @@ func TestUsageLimitScannedInPreConnWindowIsSentAfterWelcome(t *testing.T) {
 	}
 	startAgent(t, a, fc, clk)
 	fc.next(t, proto.TypeHello)
-	rs := fc.collect(t, "run_pre", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_pre", 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the welcome")
 	}
@@ -503,12 +516,15 @@ func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	reset := at.Add(5 * time.Hour).Truncate(time.Second)
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the limit was hit")
+	}
 	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
 
 	// The reset passes: the run starts its auto-continuation turn and keeps working; the status never goes idle.
@@ -519,7 +535,7 @@ func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.NoticeRecord(reset), rt.AutoContinueRecord(reset), rt.AssistantRecord("msg_continue", reset.Add(time.Second))); err != nil {
 		t.Fatal(err)
 	}
-	rs = fc.collect(t, runID, 500*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the reset")
 	}
@@ -553,16 +569,19 @@ func TestUsageLimitClearedForRunAdoptedWorking(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	reset := at.Add(5 * time.Hour).Truncate(time.Second)
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the limit was hit")
+	}
 	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
 	// The run starts working again; the agent stops before the continuation's records are written.
 	f.SetStatus(row.TerminalID, "working")
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
 	stop()
 	if got := getRun(t, a, runID); got.Status != "working" || got.Limit.Kind == "" {
 		t.Fatalf("run before restart %+v", got)
@@ -613,15 +632,18 @@ func TestUsageLimitIdleRunIsNotPolled(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	f.SetStatus(row.TerminalID, "working")
 	f.SetStatus(row.TerminalID, "idle")
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond)
 	reset := at.Add(5 * time.Hour).Truncate(time.Second)
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the limit was hit")
+	}
 	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
 	if got := getRun(t, a, runID); got.Status != "idle" || got.Limit.Kind == "" {
 		t.Fatalf("run %+v", got)

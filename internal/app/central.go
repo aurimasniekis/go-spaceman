@@ -445,7 +445,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		// ADR-0079: failover and the probe backoff cap are space limits.
 		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
 			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait, NotifyAfter: fleet.DefaultLimitNotifyAfter,
-				WaitIfResetWithin: fleet.DefaultSwitchWaitIfResetWithin, SwitchMaxPerDay: fleet.DefaultSwitchMaxPerDay}
+				WaitIfResetWithin: fleet.DefaultSwitchWaitIfResetWithin, SwitchMaxPerDay: fleet.DefaultSwitchMaxPerDay, SwitchBack: true}
 			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
 				out.Failover = v.Get(limits.UsageLimitFailover) != 0
 				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
@@ -458,6 +458,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				out.WaitIfResetWithin = time.Duration(v.Get(limits.UsageLimitWaitIfResetWithin)) * time.Minute
 				out.SwitchMaxPerDay = int(v.Get(limits.UsageLimitSwitchMaxPerDay))
 				out.MinHeadroomPercent = int(v.Get(limits.UsageLimitMinHeadroomPercent))
+				out.SwitchBack = v.Get(limits.UsageLimitSwitchBack) != 0
 			}
 			return out
 		},

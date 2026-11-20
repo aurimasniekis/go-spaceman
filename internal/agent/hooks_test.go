@@ -337,7 +337,7 @@ func TestStopFailureStartsLimitScan(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	reset := at.Add(5 * time.Hour).Truncate(time.Second)
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
