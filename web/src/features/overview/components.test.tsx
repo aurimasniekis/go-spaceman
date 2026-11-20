@@ -64,7 +64,7 @@ describe('UsageSummary', () => {
     const { container } = await view(<UsageSummary bySpace={bySpace} byModel={byModel} from={from} />)
     expect(screen.getAllByText('1.5K').length).toBeGreaterThan(0)
     expect(screen.getAllByText('2K').length).toBeGreaterThan(0)
-    expect(screen.getByTestId('usage-delta').textContent).toContain('100 %')
+    expect(screen.getByTestId('usage-delta').textContent).toContain('up 100 %')
     expect(screen.getByText('Payments')).toBeTruthy()
     expect(screen.getByText('claude-x')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Open Usage' }).getAttribute('href')).toBe('/usage')
