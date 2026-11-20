@@ -109,6 +109,9 @@ func TestStatusLineFillsWrapUpLimitOnTheWire(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.SetStatus(row.TerminalID, "idle")
+		// The idle status kicks the transcript scan; its limit report must be on the wire (and drained) before the hooks,
+		// or a scan slowed by -race lands in the window below and is counted as the hooks' report.
+		waitFor(t, "the scan's limit", func() bool { return getRun(t, a, "run_wrap").Limit.Kind != "" })
 		fc.collect(t, "run_wrap", 300*time.Millisecond)
 
 		reset := clk.Now().Add(2 * time.Hour)
