@@ -2,10 +2,14 @@ package fleet
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
@@ -69,14 +73,30 @@ func (h *Hub) session(nodeID string) *session {
 // returns one result per space with role memory, sorted by slug: flushed, or not with the reason (the node is not
 // connected, its agent is too old, it did not answer in time, or central had not acknowledged everything). It runs
 // outside any transaction and never fails the caller: a storage error returns what is known so far.
-func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration) ([]MemoryFlushResult, error) {
+//
+// The whole call is bounded by wait plus the grace, from its start: the reads, the requests and the answers. A request
+// is queued on each node's connection concurrently and gives up at the deadline, so a busy node whose outbound queue
+// stays full is reported as timed out and never holds up the other nodes or the caller. progress, when not nil, is
+// called once per node as its outcome is known (it answered, or it was given up on). Each node's outcome is logged.
+func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration, progress func()) ([]MemoryFlushResult, error) {
 	if wait < time.Second {
 		wait = time.Minute
 	}
 	wait = min(wait, proto.MemoryFlushMaxWait*time.Second)
+	// A caller's deadline shorter than the wait bounds it too: nodes are not told to wait longer than the call can.
+	if dl, ok := ctx.Deadline(); ok {
+		wait = max(min(wait, time.Until(dl)), time.Second)
+	}
+	bound := wait + flushGrace(wait)
+	dctx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	if progress == nil {
+		progress = func() {}
+	}
+	log := obs.Component(svc.opts.Log, "fleet")
 	h := svc.hub
 	q := svc.s.R()
-	spaces, err := q.ListSpaces(ctx)
+	spaces, err := q.ListSpaces(dctx)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +109,7 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration) ([]Memo
 		if sp.State == "archived" {
 			continue
 		}
-		cols, err := q.ListMemoryCollections(ctx, sp.ID)
+		cols, err := q.ListMemoryCollections(dctx, sp.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -103,10 +123,23 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration) ([]Memo
 			}
 		}
 	}
+	nodeLog := func(nodeID, name string, sps []spaceInfo, outcome, detail string) {
+		attrs := []any{slog.String(obs.FieldNodeID, nodeID), slog.String("node.name", name), slog.Int("spaces", len(sps)),
+			slog.String("outcome", outcome)}
+		if detail != "" {
+			attrs = append(attrs, slog.String("detail", detail))
+		}
+		if outcome == "flushed" {
+			log.Info("memory flush before a backup: node answered", attrs...)
+		} else {
+			log.Warn("memory flush before a backup: node not flushed", attrs...)
+		}
+	}
 	type waiter struct {
 		node, name, id string
 		spaces         []spaceInfo
 		p              *pendingFlush
+		queued         chan struct{} // closed once the request is on the node's outbound queue
 	}
 	var waiters []waiter
 	defer func() {
@@ -118,19 +151,22 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration) ([]Memo
 	}()
 	for nodeID, sps := range byNode {
 		name := ""
-		if n, err := q.GetNode(ctx, nodeID); err == nil {
+		if n, err := q.GetNode(dctx, nodeID); err == nil {
 			name = n.Name
 		}
 		s := h.session(nodeID)
 		switch {
 		case s == nil:
 			stale(nodeID, name, sps, FlushNodeDisconnected, "")
+			nodeLog(nodeID, name, sps, FlushNodeDisconnected, "")
 			continue
 		case s.minor < proto.MinorMemoryFlush:
 			stale(nodeID, name, sps, FlushProtocolTooOld, "")
+			nodeLog(nodeID, name, sps, FlushProtocolTooOld, "")
 			continue
 		}
-		w := waiter{node: nodeID, name: name, id: ids.New("mfl"), spaces: sps, p: &pendingFlush{node: nodeID, ch: make(chan proto.MemoryFlushed, 1)}}
+		w := waiter{node: nodeID, name: name, id: ids.New("mfl"), spaces: sps, p: &pendingFlush{node: nodeID, ch: make(chan proto.MemoryFlushed, 1)},
+			queued: make(chan struct{})}
 		req := proto.MemoryFlush{FlushID: w.id, WaitSeconds: int(wait / time.Second)}
 		for _, sp := range sps {
 			req.SpaceIDs = append(req.SpaceIDs, sp.id)
@@ -142,36 +178,68 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration) ([]Memo
 		h.flushes[w.id] = w.p
 		h.flushMu.Unlock()
 		waiters = append(waiters, w)
-		if err := s.send(proto.TypeMemoryFlush, svc.now(), req); err != nil {
-			w.p.ch <- proto.MemoryFlushed{FlushID: "send-failed"}
+		go func() {
+			err := s.sendCtx(dctx, proto.TypeMemoryFlush, svc.now(), req)
+			switch {
+			case err == nil:
+				close(w.queued)
+			case dctx.Err() == nil:
+				select {
+				case w.p.ch <- proto.MemoryFlushed{FlushID: "send-failed"}:
+				default:
+				}
+			}
+		}()
+	}
+	// await returns a node's answer, or false once the deadline passed without one. An answer already here counts even
+	// when the deadline passed while waiting for an earlier node.
+	await := func(ch chan proto.MemoryFlushed) (proto.MemoryFlushed, bool) {
+		select {
+		case res := <-ch:
+			return res, true
+		default:
+		}
+		select {
+		case res := <-ch:
+			return res, true
+		case <-dctx.Done():
+			return proto.MemoryFlushed{}, false
 		}
 	}
-	deadline := time.NewTimer(wait + flushGrace(wait))
-	defer deadline.Stop()
 	for _, w := range waiters {
-		var res proto.MemoryFlushed
-		select {
-		case res = <-w.p.ch:
-		case <-deadline.C:
-			stale(w.node, w.name, w.spaces, FlushTimedOut, "")
-			continue
-		case <-ctx.Done():
-			stale(w.node, w.name, w.spaces, FlushTimedOut, "the backup was stopped")
+		res, ok := await(w.p.ch)
+		if !ok {
+			detail := fmt.Sprintf("no answer within %s", bound)
+			select {
+			case <-w.queued:
+			default:
+				detail = "the request could not be queued in time: the node's outbound queue is full"
+			}
+			if errors.Is(ctx.Err(), context.Canceled) {
+				detail = "the backup was stopped"
+			}
+			stale(w.node, w.name, w.spaces, FlushTimedOut, detail)
+			nodeLog(w.node, w.name, w.spaces, FlushTimedOut, detail)
+			progress()
 			continue
 		}
+		progress()
 		if res.FlushID != w.id {
 			stale(w.node, w.name, w.spaces, FlushNodeDisconnected, "the request could not be sent")
+			nodeLog(w.node, w.name, w.spaces, FlushNodeDisconnected, "the request could not be sent")
 			continue
 		}
 		got := map[string]proto.MemoryFlushSpace{}
 		for _, r := range res.Spaces {
 			got[r.SpaceID] = r
 		}
+		notFlushed := 0
 		for _, sp := range w.spaces {
 			r, ok := got[sp.id]
 			switch {
 			case !ok:
 				if sp.known {
+					notFlushed++
 					out = append(out, MemoryFlushResult{SpaceID: sp.id, SpaceSlug: sp.slug, NodeID: w.node, NodeName: w.name, Reason: FlushTimedOut,
 						Detail: "the node did not report this space"})
 				}
@@ -180,9 +248,15 @@ func (svc *Service) FlushMemory(ctx context.Context, wait time.Duration) ([]Memo
 					out = append(out, MemoryFlushResult{SpaceID: sp.id, SpaceSlug: sp.slug, NodeID: w.node, NodeName: w.name, Flushed: true})
 				}
 			default:
+				notFlushed++
 				out = append(out, MemoryFlushResult{SpaceID: sp.id, SpaceSlug: sp.slug, NodeID: w.node, NodeName: w.name, Reason: FlushNotAcknowledged,
 					Detail: truncate(r.Detail, 300)})
 			}
+		}
+		if notFlushed > 0 {
+			nodeLog(w.node, w.name, w.spaces, "partly_flushed", fmt.Sprintf("%d space(s) not flushed", notFlushed))
+		} else {
+			nodeLog(w.node, w.name, w.spaces, "flushed", "")
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

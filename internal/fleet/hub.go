@@ -382,6 +382,23 @@ func (s *session) send(typ string, now time.Time, body any) error {
 	}
 }
 
+// sendCtx is send that gives up when ctx ends, for a caller with its own deadline: a busy node's outbound queue can stay
+// full for a long time, and send waits for room without a bound.
+func (s *session) sendCtx(ctx context.Context, typ string, now time.Time, body any) error {
+	b, err := proto.Encode(ids.New(ids.Message), typ, now, body)
+	if err != nil {
+		return err
+	}
+	select {
+	case s.out <- b:
+		return nil
+	case <-s.done:
+		return net.ErrClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // ServeHTTP is the node endpoint (proto.ConnectPath).
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

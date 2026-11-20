@@ -55,3 +55,33 @@ func TestWatchStopIsNotAStall(t *testing.T) {
 		t.Fatalf("cause: %v", context.Cause(ctx))
 	}
 }
+
+// ReportProgress (a node answering the memory flush) moves the tracker's last progress, for the status and the
+// watchdog; outside a backup it does nothing.
+func TestReportProgress(t *testing.T) {
+	t.Parallel()
+	clk := clock.NewFake(time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC))
+	tr := newTracker("bkp_x", clk, slog.New(slog.DiscardHandler))
+	tr.enter(StageMemoryFlush)
+	before := tr.progress().LastProgressAt
+	clk.Advance(time.Minute)
+	time.Sleep(100 * time.Millisecond)
+	_, idle := tr.idle()
+	ReportProgress(withTracker(context.Background(), tr))
+	if p := tr.progress(); !p.LastProgressAt.Equal(before.Add(time.Minute)) || p.Stage != StageMemoryFlush {
+		t.Fatalf("progress: %+v (before %s)", p, before)
+	}
+	if _, d := tr.idle(); d >= idle {
+		t.Fatalf("idle %s, was %s", d, idle)
+	}
+	ReportProgress(context.Background())
+
+	// Once the backup has left the memory-flush stage, a late report (an abandoned flush hook) changes nothing.
+	tr.enter(StageSnapshot)
+	at := tr.progress().LastProgressAt
+	clk.Advance(time.Minute)
+	ReportProgress(withTracker(context.Background(), tr))
+	if p := tr.progress(); !p.LastProgressAt.Equal(at) {
+		t.Fatalf("a report in stage %s moved the progress: %+v (was %s)", p.Stage, p, at)
+	}
+}

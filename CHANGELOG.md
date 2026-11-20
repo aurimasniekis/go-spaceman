@@ -87,6 +87,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
   and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
   the terminal column, and the divider runs from the header rule to the bottom edge of the window.
+- **A busy node can no longer stall a backup in `memory_flush` or make it fail.** Central queued the memory-flush
+  request on each node's connection one after another, with no bound, and started its wait only afterwards. A node
+  whose outbound queue stayed full held the flush far past its one-minute wait, and when the stall watchdog fired the
+  backup failed with `backup stopped in stage memory_flush: … context canceled`. The flush is now bounded end to end by
+  its wait plus a short grace: requests are queued concurrently and give up at the deadline, and a node that cannot be
+  reached in time is reported as `timed_out`. The flush runs under its own bounded context, outside the watchdog, so it
+  never fails the backup: the backup goes on and names the spaces whose memory is possibly stale. Each node's outcome is
+  logged and counts as progress on the backup status; a flush hook that outlives its bound can no longer report progress in
+  a later stage and hide a real stall, and nodes are never told to wait longer than the flush has left. See the ADR-0091 amendment.
 
 ## [0.1.15] - 2026-11-20
 

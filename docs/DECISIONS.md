@@ -5892,6 +5892,30 @@
 - **Evidence:** `internal/backup` `TestServiceStalledStageFailsAndReleasesBusy` (a target whose upload blocks: the run
   fails naming `upload`, the row is `failed`, `busy` clears, the next backup succeeds; the status shows the stage while
   stuck), `TestServiceMaxDurationFailsBackup`, `TestWatchProgressAndStall`, `TestWatchStopIsNotAStall`.
+- **Amendment (2026-11-20): the memory flush is outside the watchdog and can never fail the backup.** Manual backups
+  failed with `backup stopped in stage memory_flush: no progress for 10m0s: open database …: context canceled` while a
+  busy node was connected, and a scheduled one spent 448 s in `memory_flush` against a one-minute wait. Cause: the flush
+  queued its request on each node's connection with the hub's unbounded `send`, one node after another, and started its
+  deadline only after that. A node whose outbound queue stayed full (a busy node reading slowly) blocked the flush
+  without a bound, and the other nodes were not even asked. The flush ran under the watchdog's context, so when the
+  watchdog fired, the same context also stopped the snapshot. Decision:
+  - `fleet.FlushMemory` is bounded end to end by the wait plus its grace from its start: the reads, the requests and
+    the answers. Requests are queued concurrently with a context-aware send (`session.sendCtx`; `send` is unchanged for
+    its other callers). A node whose request could not be queued in time is `timed_out` with the detail "the node's
+    outbound queue is full". An answer that arrived counts even when the deadline passed while an earlier node was
+    being waited for. Each node's outcome is logged (Info when flushed, Warn otherwise).
+  - The backup service runs the `memory_flush` stage under its own context, bounded by `MemoryFlushTimeout` (central
+    sets the wait plus 30 s; default 2 minutes), and at most half of `stall_timeout` and of `max_duration`. The watchdog
+    starts after the flush, with the overall limit reduced by the time the flush took (at least half of it remains). A
+    flush hook that does not return within 5 s of its bound is abandoned, and the manifest records that the flush did
+    not finish. Each node's answer or timeout is reported as progress on the backup's status.
+  - Consequence: `TestServiceMaxDurationFailsBackup` now hits the overall limit in the upload stage; a flush that never
+    returns is stopped at its own bound and does not fail the backup.
+  - Evidence: `internal/fleet` `TestFlushMemoryBusyNodeFullQueue` (a session whose queue is never drained: before the
+    fix FlushMemory was still blocked after 15 s; after it, it returns within the wait plus grace, the busy node's space
+    is `timed_out` with the queue detail and the other node's space is flushed); `internal/backup`
+    `TestServiceMemoryFlushStallDoesNotFailBackup` (before the fix it failed with the production error; after it the
+    backup succeeds, verifies and records the space as stale), `TestServiceMemoryFlushHookStuck`, `TestReportProgress`.
 
 ### ADR-0092 — Memory conflicts close when reconciled: a tool for control and the dreamer, and automatically when the folder is removed
 - **Status:** Accepted, 2026-11-16. Migration `0060_memory_conflict_folder` (one column; the node's own journal gets
