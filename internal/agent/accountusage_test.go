@@ -102,7 +102,7 @@ func TestStatusLineFillsWrapUpLimitOnTheWire(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		fc.collect(t, "run_wrap", 300*time.Millisecond)
+		fc.collectAtLeast(t, "run_wrap", 2, 300*time.Millisecond)
 		at := clk.Now().Add(-time.Minute)
 		f.SetStatus(row.TerminalID, "working")
 		if err := rt.AppendTranscript(transcript, rt.TypedRecord(at), rt.WrapUpRecord(at), rt.AssistantRecord("grace", at), rt.NoticeRecord(at)); err != nil {
@@ -123,7 +123,11 @@ func TestStatusLineFillsWrapUpLimitOnTheWire(t *testing.T) {
 		if err := sendHook(ctx, a.o.BridgeSocket, "run_wrap", ToolHookStopFailure, harness.StopFailure{Error: "billing_error"}); err != nil {
 			t.Fatal(err)
 		}
-		rs := fc.collect(t, "run_wrap", 500*time.Millisecond)
+		want := 1 // the hooks' report
+		if minor < proto.MinorAccountUsage {
+			want = 0
+		}
+		rs := fc.collectAtLeast(t, "run_wrap", want, 500*time.Millisecond)
 		if minor < proto.MinorAccountUsage {
 			// Today's behaviour: the hooks cause no report at all, and nothing of minor 13 is on any report.
 			if len(rs) != 0 {
@@ -249,7 +253,7 @@ func TestFailureClearedAfterRestartOnTheWire(t *testing.T) {
 	ctx := context.Background()
 	row := getRun(t, a, runID)
 	f.SetStatus(row.TerminalID, "working")
-	fc.collect(t, runID, 500*time.Millisecond)
+	fc.collectAtLeast(t, runID, 1, 500*time.Millisecond)
 	observe := func() []proto.RunReport {
 		t.Helper()
 		p, err := f.Get(ctx, row.TerminalID)
@@ -302,7 +306,7 @@ func TestFailureOnTheWire(t *testing.T) {
 	})
 	ctx := context.Background()
 	row := getRun(t, a, runID)
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	send := func(class string) {
 		t.Helper()
 		if err := sendHook(ctx, socket, runID, ToolHookStopFailure, harness.StopFailure{Error: class}); err != nil {
@@ -333,7 +337,7 @@ func TestFailureOnTheWire(t *testing.T) {
 	if hello.Failure != "" || hello.FailureCleared {
 		t.Fatalf("hello carries hook data: %+v", hello)
 	}
-	rs := fc.collect(t, runID, time.Second)
+	rs := fc.collectAtLeast(t, runID, 1, time.Second)
 	if n := countFailure(rs, "billing_error"); n < 1 {
 		t.Fatalf("the class did not follow the welcome: %+v", rs)
 	}
@@ -344,10 +348,10 @@ func TestFailureOnTheWire(t *testing.T) {
 	}
 	// A new turn clears it.
 	f.SetStatus(row.TerminalID, "idle")
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
 	f.SetStatus(row.TerminalID, "working")
 	cleared := false
-	for _, r := range fc.collect(t, runID, 500*time.Millisecond) {
+	for _, r := range fc.collectAtLeast(t, runID, 1, 500*time.Millisecond) {
 		cleared = cleared || r.FailureCleared && r.Failure == ""
 	}
 	if !cleared {
