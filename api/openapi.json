@@ -13103,6 +13103,175 @@
         ],
         "type": "object"
       },
+      "OperatorMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledged_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "acknowledged_by": {
+            "type": "string"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentsAttachment"
+            },
+            "type": "array"
+          },
+          "available_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "body": {
+            "description": "Markdown; untrusted when an agent wrote it",
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deliver_at": {
+            "description": "Scheduled for this time: not delivered before it",
+            "format": "date-time",
+            "type": "string"
+          },
+          "delivered_via": {
+            "enum": [
+              "",
+              "terminal_notice",
+              "mcp_fetch",
+              "operator_view"
+            ],
+            "type": "string"
+          },
+          "from_id": {
+            "type": "string"
+          },
+          "from_kind": {
+            "enum": [
+              "run",
+              "operator",
+              "system"
+            ],
+            "type": "string"
+          },
+          "from_label": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "message",
+              "request",
+              "reply",
+              "notification"
+            ],
+            "type": "string"
+          },
+          "reply_to": {
+            "type": "string"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "resolved_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "space_name": {
+            "type": "string"
+          },
+          "space_slug": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "stored",
+              "available",
+              "acknowledged",
+              "resolved"
+            ],
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to_id": {
+            "type": "string"
+          },
+          "to_kind": {
+            "enum": [
+              "run",
+              "role",
+              "control",
+              "operators"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "space_slug",
+          "space_name",
+          "id",
+          "space_id",
+          "from_kind",
+          "to_kind",
+          "kind",
+          "subject",
+          "body",
+          "state",
+          "created_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "OperatorMessageList": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/OperatorMessageList.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "description": "Newest first",
+            "items": {
+              "$ref": "#/components/schemas/OperatorMessage"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "unread_count": {
+            "description": "Open messages to operators (not acknowledged or resolved) in all spaces you can read, whatever the filters",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "unread_count"
+        ],
+        "type": "object"
+      },
       "OutboxFailure": {
         "additionalProperties": false,
         "properties": {
@@ -25647,6 +25816,104 @@
         "summary": "Re-confirm your Telegram link",
         "tags": [
           "telegram"
+        ]
+      }
+    },
+    "/messages": {
+      "get": {
+        "description": "Only messages to operators in spaces where you have message:read (never messages to control, roles or runs), newest first. By default only open messages (not acknowledged or resolved). Act on an item through the per-space ack, reply and resolve operations.",
+        "operationId": "list-operator-messages",
+        "parameters": [
+          {
+            "description": "Opaque cursor from a previous response's next_cursor",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Opaque cursor from a previous response's next_cursor",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "open: not yet acknowledged or resolved",
+            "explode": false,
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "default": "open",
+              "description": "open: not yet acknowledged or resolved",
+              "enum": [
+                "open",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only this space (ID or slug)",
+            "explode": false,
+            "in": "query",
+            "name": "space",
+            "schema": {
+              "description": "Only this space (ID or slug)",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "enum": [
+                "",
+                "message",
+                "request",
+                "reply",
+                "notification"
+              ],
+              "maxLength": 16,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorMessageList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Messages addressed to operators, across the spaces you can read",
+        "tags": [
+          "messages"
         ]
       }
     },

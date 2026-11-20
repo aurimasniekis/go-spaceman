@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **One list of the messages addressed to operators, across all spaces.** `GET /messages` (`list-operator-messages`)
+  returns the messages to operators from every space you hold `message:read` in, newest first, with the space's slug and
+  name on each item so a client can act through the per-space ack, reply and resolve operations. By default only open
+  messages (not yet acknowledged or resolved); `state=all`, `space` and `kind` filter, and `cursor` and `limit` (at most
+  200) page it. `unread_count` is the open count over all readable spaces, for a badge. Messages to control, roles and
+  runs, and other spaces' messages, never appear. CLI: `spaceman message inbox` (`--all` follows every page).
+
 - **Interactive dialogs on a run's terminal no longer stall it silently.** The node now reads a run's screen when its
   output goes quiet and the program isn't working. It answers a few known startup dialogs from a registry (Claude Code's
   theme picker, "Adding a new directory" for a folder SpaceMan provisioned for the run, and the Code Mode opt-in, turned

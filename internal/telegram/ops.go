@@ -48,12 +48,13 @@ var Ops = map[string]api.TelegramClass{
 	"upload-attachment": api.TelegramBoth,
 	"get-attachment":    api.TelegramBoth,
 	// Messages to operators.
-	"list-messages":   api.TelegramBoth,
-	"get-message":     api.TelegramBoth,
-	"send-message":    api.TelegramBoth,
-	"reply-message":   api.TelegramBoth,
-	"ack-message":     api.TelegramBoth,
-	"resolve-message": api.TelegramBoth,
+	"list-messages":          api.TelegramBoth,
+	"list-operator-messages": api.TelegramBoth,
+	"get-message":            api.TelegramBoth,
+	"send-message":           api.TelegramBoth,
+	"reply-message":          api.TelegramBoth,
+	"ack-message":            api.TelegramBoth,
+	"resolve-message":        api.TelegramBoth,
 	// The Mini App's session exchange: public, on the Mini App host only.
 	"create-telegram-session": api.TelegramExchange,
 	// The Mini App's identity (get-me is not served on its host): the same document for the link's user.
