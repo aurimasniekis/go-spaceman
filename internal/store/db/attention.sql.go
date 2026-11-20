@@ -10,6 +10,106 @@ import (
 	"database/sql"
 )
 
+const attentionAccountLimits = `-- name: AttentionAccountLimits :many
+SELECT id, space_id, kind, resets_at, since, total FROM (
+  SELECT id, space_id, kind, resets_at, seen_at AS since,
+    row_number() OVER (PARTITION BY space_id ORDER BY seen_at DESC, id) AS rn,
+    count(*) OVER (PARTITION BY space_id) AS total
+  FROM usage_limits WHERE cleared_at IS NULL AND scope = 'account'
+) WHERE rn <= 20
+`
+
+type AttentionAccountLimitsRow struct {
+	ID       string
+	SpaceID  string
+	Kind     string
+	ResetsAt sql.NullInt64
+	Since    int64
+	Total    int64
+}
+
+// Open account limits as one space sees them (gateway holds are not accounts).
+func (q *Queries) AttentionAccountLimits(ctx context.Context) ([]AttentionAccountLimitsRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionAccountLimits)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AttentionAccountLimitsRow{}
+	for rows.Next() {
+		var i AttentionAccountLimitsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.Since,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const attentionAccountSwitches = `-- name: AttentionAccountSwitches :many
+SELECT id, space_id, role, from_run_id, reason, since, total FROM (
+  SELECT id, space_id, role, from_run_id, reason, updated_at AS since,
+    row_number() OVER (PARTITION BY space_id ORDER BY updated_at DESC, id) AS rn,
+    count(*) OVER (PARTITION BY space_id) AS total
+  FROM account_switches WHERE state = 'failed' AND updated_at >= ?1
+) WHERE rn <= 20
+`
+
+type AttentionAccountSwitchesRow struct {
+	ID        string
+	SpaceID   string
+	Role      string
+	FromRunID string
+	Reason    string
+	Since     int64
+	Total     int64
+}
+
+// Switches that failed since the given time.
+func (q *Queries) AttentionAccountSwitches(ctx context.Context, since int64) ([]AttentionAccountSwitchesRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionAccountSwitches, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AttentionAccountSwitchesRow{}
+	for rows.Next() {
+		var i AttentionAccountSwitchesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Role,
+			&i.FromRunID,
+			&i.Reason,
+			&i.Since,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const attentionAttachmentBytes = `-- name: AttentionAttachmentBytes :many
 SELECT space_id, CAST(coalesce(sum(size), 0) AS INTEGER) AS bytes FROM attachments GROUP BY space_id
 `
@@ -63,29 +163,45 @@ func (q *Queries) AttentionBackups(ctx context.Context) (AttentionBackupsRow, er
 	return i, err
 }
 
-const attentionBudgets = `-- name: AttentionBudgets :many
-SELECT space_id,
-  CAST(coalesce(sum(CASE WHEN level = 'warning' THEN 1 ELSE 0 END), 0) AS INTEGER) AS warnings,
-  CAST(coalesce(sum(CASE WHEN level = 'exceeded' THEN 1 ELSE 0 END), 0) AS INTEGER) AS exceeded
-FROM budget_notices WHERE at >= ?1 GROUP BY space_id
+const attentionBudgetItems = `-- name: AttentionBudgetItems :many
+SELECT id, space_id, scope, run_id, budget, level, since, total FROM (
+  SELECT id, space_id, scope, run_id, budget, level, at AS since,
+    row_number() OVER (PARTITION BY space_id, level ORDER BY at DESC, id) AS rn,
+    count(*) OVER (PARTITION BY space_id, level) AS total
+  FROM budget_notices WHERE at >= ?1
+) WHERE rn <= 20
 `
 
-type AttentionBudgetsRow struct {
-	SpaceID  string
-	Warnings int64
-	Exceeded int64
+type AttentionBudgetItemsRow struct {
+	ID      string
+	SpaceID string
+	Scope   string
+	RunID   string
+	Budget  string
+	Level   string
+	Since   int64
+	Total   int64
 }
 
-func (q *Queries) AttentionBudgets(ctx context.Context, since int64) ([]AttentionBudgetsRow, error) {
-	rows, err := q.db.QueryContext(ctx, attentionBudgets, since)
+func (q *Queries) AttentionBudgetItems(ctx context.Context, since int64) ([]AttentionBudgetItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionBudgetItems, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AttentionBudgetsRow{}
+	items := []AttentionBudgetItemsRow{}
 	for rows.Next() {
-		var i AttentionBudgetsRow
-		if err := rows.Scan(&i.SpaceID, &i.Warnings, &i.Exceeded); err != nil {
+		var i AttentionBudgetItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.RunID,
+			&i.Budget,
+			&i.Level,
+			&i.Since,
+			&i.Total,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -117,7 +233,7 @@ type AttentionHumanRow struct {
 	Unassigned int64
 }
 
-// Attention summary (SM-UI-003): one grouped query per category. Rows are per space; the API keeps the spaces the
+// Attention summary (SM-UI-003): one query per category. Rows are per space; the API keeps the spaces the
 // caller may read.
 func (q *Queries) AttentionHuman(ctx context.Context, now sql.NullInt64) ([]AttentionHumanRow, error) {
 	rows, err := q.db.QueryContext(ctx, attentionHuman, now)
@@ -167,27 +283,44 @@ func (q *Queries) AttentionOutbox(ctx context.Context) (AttentionOutboxRow, erro
 	return i, err
 }
 
-const attentionQuarantine = `-- name: AttentionQuarantine :many
-SELECT s.space_id, count(*) AS open
-FROM event_quarantine q JOIN event_subscriptions s ON s.id = q.subscription_id
-WHERE q.status = 'open' GROUP BY s.space_id
+const attentionParkedRuns = `-- name: AttentionParkedRuns :many
+SELECT id, space_id, run_id, role, cause, since, total FROM (
+  SELECT id, space_id, run_id, role, cause, created_at AS since,
+    row_number() OVER (PARTITION BY space_id ORDER BY created_at DESC, id) AS rn,
+    count(*) OVER (PARTITION BY space_id) AS total
+  FROM limit_waits WHERE state = 'waiting'
+) WHERE rn <= 20
 `
 
-type AttentionQuarantineRow struct {
+type AttentionParkedRunsRow struct {
+	ID      string
 	SpaceID string
-	Open    int64
+	RunID   string
+	Role    string
+	Cause   string
+	Since   int64
+	Total   int64
 }
 
-func (q *Queries) AttentionQuarantine(ctx context.Context) ([]AttentionQuarantineRow, error) {
-	rows, err := q.db.QueryContext(ctx, attentionQuarantine)
+// Runs parked at a usage limit (or for an agent restart) that still wait to come back.
+func (q *Queries) AttentionParkedRuns(ctx context.Context) ([]AttentionParkedRunsRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionParkedRuns)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AttentionQuarantineRow{}
+	items := []AttentionParkedRunsRow{}
 	for rows.Next() {
-		var i AttentionQuarantineRow
-		if err := rows.Scan(&i.SpaceID, &i.Open); err != nil {
+		var i AttentionParkedRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.RunID,
+			&i.Role,
+			&i.Cause,
+			&i.Since,
+			&i.Total,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -201,33 +334,93 @@ func (q *Queries) AttentionQuarantine(ctx context.Context) ([]AttentionQuarantin
 	return items, nil
 }
 
-const attentionRuns = `-- name: AttentionRuns :many
-SELECT space_id,
-  CAST(coalesce(sum(CASE WHEN observed = 'unknown' THEN 1 ELSE 0 END), 0) AS INTEGER) AS unknown,
-  CAST(coalesce(sum(CASE WHEN observed IN ('failed', 'lost') THEN 1 ELSE 0 END), 0) AS INTEGER) AS failed
-FROM runs
-WHERE observed = 'unknown' OR (observed IN ('failed', 'lost') AND coalesce(observed_at, created_at) >= ?1)
-GROUP BY space_id
+const attentionQuarantineItems = `-- name: AttentionQuarantineItems :many
+SELECT id, space_id, subscription_id, since, total FROM (
+  SELECT q.id AS id, s.space_id AS space_id, q.subscription_id AS subscription_id, q.created_at AS since,
+    row_number() OVER (PARTITION BY s.space_id ORDER BY q.created_at DESC, q.id) AS rn,
+    count(*) OVER (PARTITION BY s.space_id) AS total
+  FROM event_quarantine q JOIN event_subscriptions s ON s.id = q.subscription_id
+  WHERE q.status = 'open'
+) WHERE rn <= 20
 `
 
-type AttentionRunsRow struct {
-	SpaceID string
-	Unknown int64
-	Failed  int64
+type AttentionQuarantineItemsRow struct {
+	ID             string
+	SpaceID        string
+	SubscriptionID string
+	Since          int64
+	Total          int64
+}
+
+func (q *Queries) AttentionQuarantineItems(ctx context.Context) ([]AttentionQuarantineItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionQuarantineItems)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AttentionQuarantineItemsRow{}
+	for rows.Next() {
+		var i AttentionQuarantineItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.SubscriptionID,
+			&i.Since,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const attentionRunItems = `-- name: AttentionRunItems :many
+SELECT id, space_id, role, kind, observed, since, total FROM (
+  SELECT id, space_id, role, kind, observed, coalesce(observed_at, created_at) AS since,
+    row_number() OVER (PARTITION BY space_id, observed = 'unknown' ORDER BY coalesce(observed_at, created_at) DESC, id) AS rn,
+    count(*) OVER (PARTITION BY space_id, observed = 'unknown') AS total
+  FROM runs
+  WHERE observed = 'unknown' OR (observed IN ('failed', 'lost') AND coalesce(observed_at, created_at) >= ?1)
+) WHERE rn <= 20
+`
+
+type AttentionRunItemsRow struct {
+	ID       string
+	SpaceID  string
+	Role     string
+	Kind     string
+	Observed string
+	Since    int64
+	Total    int64
 }
 
 // unknown: the node has not reported the run's state (disconnected or lost contact) while it should run; failed and
-// lost: runs that ended that way since the given time.
-func (q *Queries) AttentionRuns(ctx context.Context, since sql.NullInt64) ([]AttentionRunsRow, error) {
-	rows, err := q.db.QueryContext(ctx, attentionRuns, since)
+// lost: runs that ended that way since the given time. total is the space's full count of that group.
+func (q *Queries) AttentionRunItems(ctx context.Context, since sql.NullInt64) ([]AttentionRunItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionRunItems, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AttentionRunsRow{}
+	items := []AttentionRunItemsRow{}
 	for rows.Next() {
-		var i AttentionRunsRow
-		if err := rows.Scan(&i.SpaceID, &i.Unknown, &i.Failed); err != nil {
+		var i AttentionRunItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Role,
+			&i.Kind,
+			&i.Observed,
+			&i.Since,
+			&i.Total,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -241,29 +434,94 @@ func (q *Queries) AttentionRuns(ctx context.Context, since sql.NullInt64) ([]Att
 	return items, nil
 }
 
-const attentionTasks = `-- name: AttentionTasks :many
-SELECT space_id,
-  CAST(coalesce(sum(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0) AS INTEGER) AS blocked,
-  CAST(coalesce(sum(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS INTEGER) AS failed
-FROM tasks WHERE status IN ('blocked', 'failed') GROUP BY space_id
+const attentionTaskItems = `-- name: AttentionTaskItems :many
+
+SELECT id, space_id, title, status, updated_at AS since, total FROM (
+  SELECT id, space_id, title, status, updated_at,
+    row_number() OVER (PARTITION BY space_id, status ORDER BY updated_at DESC, id) AS rn,
+    count(*) OVER (PARTITION BY space_id, status) AS total
+  FROM tasks WHERE status IN ('blocked', 'failed')
+) WHERE rn <= 20
 `
 
-type AttentionTasksRow struct {
+type AttentionTaskItemsRow struct {
+	ID      string
 	SpaceID string
-	Blocked int64
-	Failed  int64
+	Title   string
+	Status  string
+	Since   int64
+	Total   int64
 }
 
-func (q *Queries) AttentionTasks(ctx context.Context) ([]AttentionTasksRow, error) {
-	rows, err := q.db.QueryContext(ctx, attentionTasks)
+// Attention items (UI-T4): the newest rows of a category per space (at most 20 each); the API keeps the spaces the
+// caller may read and caps each kind again after that. total is the space's full count of the group (the API's
+// counts come from it, so there is no separate count query).
+func (q *Queries) AttentionTaskItems(ctx context.Context) ([]AttentionTaskItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionTaskItems)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AttentionTasksRow{}
+	items := []AttentionTaskItemsRow{}
 	for rows.Next() {
-		var i AttentionTasksRow
-		if err := rows.Scan(&i.SpaceID, &i.Blocked, &i.Failed); err != nil {
+		var i AttentionTaskItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Title,
+			&i.Status,
+			&i.Since,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const attentionXSpaceIncoming = `-- name: AttentionXSpaceIncoming :many
+SELECT id, space_id, kind, title, since, total FROM (
+  SELECT id, dest_space_id AS space_id, kind, title, created_at AS since,
+    row_number() OVER (PARTITION BY dest_space_id ORDER BY created_at DESC, id) AS rn,
+    count(*) OVER (PARTITION BY dest_space_id) AS total
+  FROM xspace_requests WHERE state = 'pending'
+) WHERE rn <= 20
+`
+
+type AttentionXSpaceIncomingRow struct {
+	ID      string
+	SpaceID string
+	Kind    string
+	Title   string
+	Since   int64
+	Total   int64
+}
+
+// Cross-space requests waiting for the destination's decision, by destination space.
+func (q *Queries) AttentionXSpaceIncoming(ctx context.Context) ([]AttentionXSpaceIncomingRow, error) {
+	rows, err := q.db.QueryContext(ctx, attentionXSpaceIncoming)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AttentionXSpaceIncomingRow{}
+	for rows.Next() {
+		var i AttentionXSpaceIncomingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Kind,
+			&i.Title,
+			&i.Since,
+			&i.Total,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
