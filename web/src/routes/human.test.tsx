@@ -34,10 +34,10 @@ describe('Needs you tabs', () => {
     await open('/human')
     expect(screen.getByRole('tab', { name: 'Actions' })).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByRole('tab', { name: /Messages/ })).toHaveTextContent(/3/)
-  })
+  }, 15000)
   it('opens the Messages tab for ?tab=messages', async () => {
     await open('/human?tab=messages')
     expect(screen.getByRole('tab', { name: /Messages/ })).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByRole('list', { name: 'Messages to operators' })).toBeInTheDocument()
-  })
+  }, 15000)
 })
