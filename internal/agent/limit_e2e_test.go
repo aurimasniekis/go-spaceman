@@ -214,7 +214,12 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	t.Cleanup(a2.stopRecorders)
 	a2.leases[ccSpace] = a.leases[ccSpace]
 	reconciled := make(chan struct{}, 4)
-	a2.snapshotReconciled = func() { reconciled <- struct{}{} }
+	a2.snapshotReconciled = func() {
+		select {
+		case reconciled <- struct{}{}:
+		default:
+		}
+	}
 	startAgent(t, a2, fc, clk)
 	wantOpen(t, "hello after restart", fc.helloRun(t, runID), proto.LimitFiveHour, reset, at)
 	// The monitor's snapshot reconcile of an adopted run may or may not send one report after the hello (it races

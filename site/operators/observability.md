@@ -14,7 +14,7 @@ bind it to a private address and let only your monitoring reach it.
 
 **Overview** is the first page in the web UI. It shows the top items from **Attention**, the tokens of the last seven days with
 their change against the seven days before, a 14-day sparkline, the top five spaces and models by tokens, and a strip of
-the accounts with their usage windows. The change is left out when the earlier week had no usage.
+the accounts with their usage windows. The change is left out when the earlier week had no usage. The [Overview guide](/guide/overview) describes each part.
 
 <Shot name="overview" alt="The Overview page: the top attention items, the last seven days' tokens with their change, a 14-day sparkline, the top spaces and models, and the accounts strip with their windows" caption="The reworked Overview" />
 
@@ -27,7 +27,7 @@ attachment storage at 90 % or more of a space's quota, and spaces whose node is 
 that handles it. With `system:read` it also shows enrolled nodes that are not connected, outbound dead letters,
 failing backups or verifications, and central's storage: readiness and its checks, the database's health and the data
 directory's free space against its reserve. Every section appears only where you may read it. Each space's overview
-shows the same counters for that space.
+shows the same counters for that space. The [Attention guide](/guide/attention) describes the list and its filters.
 
 It is computed on request, one grouped query per category, and refreshes when the change feed reports a change to a
 space, run, node, task, human action, subscription, limit or backup. Storage health has no change event: use

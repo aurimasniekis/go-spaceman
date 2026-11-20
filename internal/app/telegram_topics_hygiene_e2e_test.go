@@ -106,7 +106,8 @@ func TestTelegramTopicsRenameAndRelinkReuseTopics(t *testing.T) {
 }
 
 // relinkTelegramUser42 links Telegram user 42 again: a link code made in the web session, /start with the code, the
-// [Confirm] button in the bot, then the web confirmation.
+// [Confirm] button in the bot, then the web confirmation. It expects the unlink notice in the chat (the unlink that
+// precedes a relink queues it) and waits for it before taking the bot's reply.
 func relinkTelegramUser42(t *testing.T, e *miniAppEnv, ui *client) {
 	t.Helper()
 	from := botapi.User{ID: 42, FirstName: "Mini", Username: "mini"}
