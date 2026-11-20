@@ -114,6 +114,47 @@ func (q *Queries) InsertRunDialog(ctx context.Context, arg InsertRunDialogParams
 	return result.RowsAffected()
 }
 
+const listOpenRunDialogs = `-- name: ListOpenRunDialogs :many
+SELECT id, run_id, space_id, node_id, dialog, signal, outcome, answer, excerpt, harness_version, detected_at, cleared_at, created_at FROM run_dialogs WHERE run_id = ? AND outcome = 'blocked' AND cleared_at IS NULL ORDER BY detected_at, id
+`
+
+func (q *Queries) ListOpenRunDialogs(ctx context.Context, runID string) ([]RunDialog, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenRunDialogs, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunDialog{}
+	for rows.Next() {
+		var i RunDialog
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.SpaceID,
+			&i.NodeID,
+			&i.Dialog,
+			&i.Signal,
+			&i.Outcome,
+			&i.Answer,
+			&i.Excerpt,
+			&i.HarnessVersion,
+			&i.DetectedAt,
+			&i.ClearedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunDialogs = `-- name: ListRunDialogs :many
 SELECT id, run_id, space_id, node_id, dialog, signal, outcome, answer, excerpt, harness_version, detected_at, cleared_at, created_at FROM run_dialogs WHERE run_id = ? ORDER BY detected_at DESC, id DESC LIMIT ?
 `

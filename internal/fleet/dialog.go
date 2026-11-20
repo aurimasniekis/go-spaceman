@@ -132,3 +132,36 @@ func (svc *Service) runDialog(ctx context.Context, nodeID string, d proto.RunDia
 		return nil
 	})
 }
+
+// DialogClearedRunEnded is the reason on the run.dialog_cleared audit record of a dialog that central closed because its
+// run ended (the node's own cleared never came: it was lost, relocated away or the observation did not carry it).
+const DialogClearedRunEnded = "run_ended"
+
+// clearRunDialogsTx closes the blocked dialogs a run that ended still has open (inside the transaction that records its
+// end), so no occurrence outlives its run. Each one it closes is audited and published (run.dialog_cleared) exactly like
+// one the node cleared; a node's own cleared that arrives later, or came earlier, finds the occurrence closed and changes
+// nothing (runDialog records a clear only when it closes an open occurrence), so a clear is never published twice.
+func (svc *Service) clearRunDialogsTx(ctx context.Context, tx *store.Tx, r db.Run) error {
+	open, err := tx.Q.ListOpenRunDialogs(ctx, r.ID)
+	if err != nil || len(open) == 0 {
+		return err
+	}
+	if _, err := tx.Q.ClearOpenRunDialogs(ctx, db.ClearOpenRunDialogsParams{ClearedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RunID: r.ID}); err != nil {
+		return err
+	}
+	for _, d := range open {
+		if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "run.dialog_cleared", Target: audit.Target{Type: "run", ID: r.ID},
+			Details: map[string]any{"space_id": r.SpaceID, "dialog_id": d.ID, "dialog": d.Dialog, "signal": d.Signal, "reason": DialogClearedRunEnded}}); err != nil {
+			return err
+		}
+		if svc.opts.Outbox == nil {
+			continue
+		}
+		ev := outbox.RunDialog{Run: outboxRun(r), DialogID: d.ID, Dialog: d.Dialog, Signal: d.Signal, HarnessVersion: d.HarnessVersion,
+			DetectedAt: tx.Now.UTC()}
+		if err := svc.runEvent(ctx, tx, r, outbox.RunDialogCleared{RunDialog: ev, ClearedAt: tx.Now.UTC()}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
