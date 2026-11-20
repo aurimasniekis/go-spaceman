@@ -735,6 +735,9 @@ func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) err
 				if err := svc.endRunTakeoverTx(ctx, tx, run); err != nil {
 					return err
 				}
+				if err := svc.clearRunDialogsTx(ctx, tx, run); err != nil {
+					return err
+				}
 				if err := svc.runEvent(ctx, tx, run, outbox.RunEnded{Run: outboxRun(run), State: proto.RunLost, EndReason: relocatedSourceUnavailable}); err != nil {
 					return err
 				}

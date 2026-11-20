@@ -3555,6 +3555,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/runs/{run_id}/dialogs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A run's terminal dialogs, newest first
+         * @description The interactive dialogs the node recognised on the run's terminal (ADR-0102): the ones SpaceMan answered, and the ones it flagged (blocked_on_dialog) with when each was cleared. The screen excerpt is not included.
+         */
+        get: operations["list-run-dialogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/runs/{run_id}/input": {
         parameters: {
             query?: never;
@@ -7297,6 +7317,21 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        FleetRunDialog: {
+            answer?: string;
+            /** Format: date-time */
+            cleared_at?: string;
+            /** Format: date-time */
+            detected_at: string;
+            dialog: string;
+            excerpt?: string;
+            harness_version?: string;
+            id: string;
+            outcome: string;
+            run_id: string;
+            signal: string;
+            space_id: string;
+        };
         FleetRunLimit: {
             /** @enum {string} */
             kind: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "gateway_quota" | "gateway_budget" | "unknown";
@@ -9457,6 +9492,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["CatalogRoleTemplate"][];
+        };
+        "List-run-dialogsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-run-dialogsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetRunDialog"][];
         };
         "List-runsResponse": {
             /**
@@ -21557,6 +21601,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetRun"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-run-dialogs": {
+        parameters: {
+            query?: {
+                /** @description How many of the newest dialogs to list */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-run-dialogsResponse"];
                 };
             };
             /** @description Error */

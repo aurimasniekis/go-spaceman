@@ -22,6 +22,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A run's terminal dialog no longer outlives the run, and its history has an API.** A run that ends with a
+  `blocked_on_dialog` flag open (it was lost, its launch failed, or the agent restarted over it) now has the flag closed:
+  the node sends `cleared` on every path that ends a run, and central closes whatever is still open when it records the
+  end, publishing `evt.spaceman.fleet.run.dialog_cleared` once. A clear from the observe path can no longer overtake the
+  `blocked` it ends and leave the occurrence open on central. `GET /spaces/{space_id}/runs/{run_id}/dialogs`
+  (`list-run-dialogs`, `spaceman run dialogs`) lists a run's recognised dialogs, newest first, without their screen text.
+  The watchdog does not treat a control or a worker blocked on a dialog as stalled and does not type a reminder into it.
+  The node-side part takes effect once the agent is upgraded.
 - **A comment on a human action shows without a page reload.** The action's detail view was keyed by the listed version
   and neither a post nor the change feed refreshed it. Posting now updates it at once, and a `human_action` change (an
   agent's reply, another person's comment) refetches the open action through the existing change feed.
