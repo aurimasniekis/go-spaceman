@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **The Attention page lists items.** `/attention` now shows the itemised rows from `GET /attention` grouped **Act now**
+  and **Watch**, each with what, where, since when and a link to the run, task, queue, usage page or cross-space page
+  that handles it, with filters by space and kind. Pending human actions collapse into one row that opens Needs you.
+  The installation cards (nodes, outbound events, backups, storage) stay below. The space overview's attention card also
+  counts parked runs, account limits, failed account switches and incoming cross-space requests. The Mini App keeps its
+  `/attention` page, with the web-only targets unlinked. `spaces[]` in the response now also lists a space whose only
+  rows are parked runs, account limits or switches, or cross-space requests (its `total` stays 0).
+
 - **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
   (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
   MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
