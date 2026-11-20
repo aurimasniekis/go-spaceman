@@ -3,7 +3,9 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +78,14 @@ func TestUsageAPIAuthorization(t *testing.T) {
 				return err
 			}
 		}
+		// A Codex run in each of A and B: their usage is not in the ledger, so the series says so, per space.
+		for i, sp := range []string{spA.ID, spB.ID} {
+			if _, err := tx.SQL.ExecContext(ctx, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed,
+				launch_json, manifest_json, created_at, created_by, updated_at, ended_at) VALUES (?, ?, ?, 1, 'worker', 'worker', 'codex', 'ins_1', '', 'stopped', 'exited',
+				'{}', '{}', ?, 't', ?, ?)`, fmt.Sprintf("run_01codex%019d", i), sp, nodes[0].ID, now.Add(-time.Hour).UnixMicro(), now.UnixMicro(), now.UnixMicro()); err != nil {
+				return err
+			}
+		}
 		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO account_windows (account_id, kind, used_pct, resets_at, observed_at, run_id, updated_at) VALUES (?, 'five_hour', 61, ?, ?, '', 0)`,
 			acc.ID, now.Add(time.Hour).UnixMicro(), now.UnixMicro())
 		return err
@@ -127,6 +137,7 @@ func TestUsageAPIAuthorization(t *testing.T) {
 		Items []struct {
 			Group string `json:"group"`
 		} `json:"items"`
+		NotCounted []usage.NotCounted `json:"not_counted"`
 	}
 
 	// A space's series: its viewer reads it; another space's viewer and a caller without access are refused.
@@ -134,6 +145,10 @@ func TestUsageAPIAuthorization(t *testing.T) {
 	if st, body := get(viewerA, "/spaces/"+spA.ID+"/usage/series?group_by=account", &a); st != http.StatusOK || a.Totals.Total != 110 || len(a.Items) != 1 ||
 		a.Items[0].Group != acc.ID || a.CostNote != usage.CostBasis || a.Totals.Cost != 0.5 {
 		t.Fatalf("viewer A: %d %s", st, body)
+	}
+	// The Codex run of space A is reported as not counted, and space B's is not mixed in.
+	if want := []usage.NotCounted{{Harness: "codex", Runs: 1}}; !reflect.DeepEqual(a.NotCounted, want) {
+		t.Fatalf("viewer A not_counted %+v, want %+v", a.NotCounted, want)
 	}
 	for who, tok := range map[string]string{"viewer of B": viewerB, "viewer of C": nobody} {
 		if st, _ := get(tok, "/spaces/"+spA.ID+"/usage/series", nil); st != http.StatusNotFound && st != http.StatusForbidden {
