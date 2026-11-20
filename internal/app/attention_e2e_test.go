@@ -108,6 +108,41 @@ func TestAttentionOverHTTP(t *testing.T) {
 	expect(t, h.client().do("GET", "/attention", nil), 401)
 }
 
+// SM-UI-003 over HTTP: a kind with more rows than the list shows lists the newest 20 and still counts all of them.
+func TestAttentionItemsCappedAt20WithFullCount(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	a, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const blocked = 25
+	for i := range blocked {
+		var task queue.Task
+		root.do("POST", "/spaces/"+a.ID+"/tasks", map[string]any{"title": "Blocked " + string(rune('A'+i)), "status": "ready"}).json(t, &task)
+		expect(t, root.do("POST", "/spaces/"+a.ID+"/tasks/"+task.ID+"/status", map[string]any{"status": "blocked", "reason": "waiting"}, "If-Match", `"1"`), 200)
+	}
+	var at api.Attention
+	root.do("GET", "/attention", nil).json(t, &at)
+	listed := 0
+	for _, it := range at.Items {
+		if it.Kind == "task_blocked" {
+			listed++
+		}
+	}
+	if listed != 20 {
+		t.Fatalf("listed %d task_blocked items, want 20", listed)
+	}
+	if at.ItemCounts["task_blocked"] != blocked || len(at.Spaces) != 1 || *at.Spaces[0].TasksBlocked != blocked {
+		t.Fatalf("counts %+v spaces %+v", at.ItemCounts, at.Spaces)
+	}
+}
+
 // SM-HUM-006, SM-HUI-001, SM-ATT-001 over HTTP: search and filters on both listings, clarification requests,
 // attachments on comments, responses, tasks and messages (only the space's own), and per-user notification
 // preferences (SM-HUI-006) with optimistic concurrency.
