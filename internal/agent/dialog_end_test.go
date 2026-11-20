@@ -383,7 +383,9 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 		defer close(done)
 		e.a.observe(ctx, getRun(t, e.a, e.run), p, false)
 	}()
-	time.Sleep(200 * time.Millisecond) // the observe has written its row and waits for the lock
+	// The observe's own row write (its older state) must land before the concurrent update below, or the observe would
+	// overwrite that update with the older state it had built.
+	waitFor(t, "the observe's row written", func() bool { return getRun(t, e.a, e.run).Status == orig })
 	cur := getRun(t, e.a, e.run)
 	cur.Status = "fresh" // a concurrent observe wrote a newer state
 	if err := e.a.j.updateRun(ctx, cur); err != nil {
