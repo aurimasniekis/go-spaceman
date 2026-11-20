@@ -37,7 +37,7 @@ test('switching between run terminals', async ({ page }) => {
     nodeId = node.node.id
     await expect.poll(async () => (await api.call<{ connected: boolean }>('GET', `/nodes/${nodeId}`)).connected, { timeout: 30_000 }).toBe(true)
   }
-  const sp = await api.call<{ id: string }>('POST', '/spaces', { slug: 'switching', name: 'Switching', node_id: nodeId }, { 'Idempotency-Key': 'terminal-switch-space' })
+  const sp = await api.call<{ id: string }>('POST', '/spaces', { slug: 'terminal-switch', name: 'Terminal switch', node_id: nodeId }, { 'Idempotency-Key': 'terminal-switch-space' })
   const acct = await asRoot.call<{ id: string }>('POST', '/accounts', { name: 'switch-stub', kind: 'claude_oauth_token', secret: 'stub-token' })
   await asRoot.call('PUT', `/spaces/${sp.id}/accounts`, { items: [{ account_id: acct.id, default: true }] })
   await expect.poll(async () => (await api.call<{ lease?: { valid: boolean } }>('GET', `/spaces/${sp.id}`)).lease?.valid, { timeout: 30_000 }).toBe(true)

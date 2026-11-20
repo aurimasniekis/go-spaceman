@@ -7,12 +7,14 @@ import { Api, env, settle } from './stack'
 
 /**
  * Account switching in the UI (ADR-0090, AS-T8): a space's Accounts page (pool order and role pools saved through the
- * real API, the failover and headroom settings, windows, the switches list) and its Usage page. Checked at 390 and
+  * real API, the failover and headroom settings, windows, the switches list) and its Usage page. Checked at 390 and
  * 1280 px, in light and dark, without sideways scrolling, and with axe (WCAG 2.1 A/AA).
  *
  * Accounts, bindings, pools and limits are real. The account windows, the switches and the usage series are served by
  * route stubs: they come from runs that report usage and reach limits, which this stack's stub harness doesn't do (the
  * API side is covered by the Go app tests).
+ *
+ * It creates its own administrator, so it must sort after smoke.spec.ts, which needs a stack that is not set up yet.
  */
 
 const WIDTHS = [390, 1280] as const
