@@ -33,12 +33,12 @@ export function MessageDetail({ spaceId, m, canWrite, onChange }: { spaceId: str
   const replyForm = useAppForm({
     defaultValues: { body: '', attachmentIds: [] as string[] },
     onSubmit: async ({ value }) => act(async () => {
-      const sent = unwrap(await api.POST('/spaces/{space_id}/messages/{message_id}/reply', { params: { path },
+      unwrap(await api.POST('/spaces/{space_id}/messages/{message_id}/reply', { params: { path },
         body: { body: value.body, attachment_ids: value.attachmentIds.length ? value.attachmentIds : undefined } }))
       replyForm.reset()
       setReplyKey((k) => k + 1)
       // A reply resolves a request, and the response is the reply, not the request: read the request again for the parent.
-      if (m.kind !== 'request' || sent === undefined) return undefined
+      if (m.kind !== 'request') return undefined
       try {
         return unwrap(await api.GET('/spaces/{space_id}/messages/{message_id}', { params: { path } }))
       } catch {

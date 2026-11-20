@@ -72,7 +72,7 @@ export function OperatorMessages() {
         {list.hasNextPage && <Button variant="default" size="xs" loading={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Load more</Button>}
       </Stack>
       <Drawer opened={current !== null} onClose={() => setOpened(null)} position="right" size="lg" title="Message">
-        {current && <MessageDetail spaceId={current.space_id} m={current} canWrite={canWrite(current)} onChange={(u) => setOpened({ ...current, ...u })} />}
+        {current && <MessageDetail spaceId={current.space_id} m={current} canWrite={canWrite(current)} onChange={(u) => setOpened((o) => (o && o.id === u.id ? { ...o, ...u } : o))} />}
       </Drawer>
     </>
   )
