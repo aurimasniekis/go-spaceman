@@ -116,20 +116,7 @@ func TestGlobalSeriesQueryPlan(t *testing.T) {
 		"every space": {int64(86_400_000_000), "space", `["hour","day"]`, from, globalNow.UnixMicro(), nil, nil, nil, nil, nil, int64(-1), "", int64(201)},
 		"some spaces": {int64(86_400_000_000), "space", `["hour","day"]`, from, globalNow.UnixMicro(), `["spc_a","spc_b"]`, nil, `["m1"]`, nil, nil, int64(-1), "", int64(201)},
 	} {
-		rows, err := f.s.ReadDB().QueryContext(f.ctx, "EXPLAIN QUERY PLAN "+query, args...)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var plan []string
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-				t.Fatal(err)
-			}
-			plan = append(plan, detail)
-		}
-		_ = rows.Close()
+		plan := explain(t, f, query, args)
 		t.Logf("%s:\n  %s", name, strings.Join(plan, "\n  "))
 		for _, d := range plan {
 			if strings.HasPrefix(d, "SCAN b") && !strings.Contains(d, "INDEX") {
@@ -140,4 +127,26 @@ func TestGlobalSeriesQueryPlan(t *testing.T) {
 			t.Fatalf("%s: the time index is not used:\n%s", name, strings.Join(plan, "\n"))
 		}
 	}
+}
+
+func explain(t *testing.T, f *globalFx, query string, args []any) []string {
+	t.Helper()
+	rows, err := f.s.ReadDB().QueryContext(f.ctx, "EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return plan
 }
