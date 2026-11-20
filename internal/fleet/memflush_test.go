@@ -120,3 +120,34 @@ func TestFlushMemoryCapsWaitToContextDeadline(t *testing.T) {
 		t.Fatalf("request: %+v", req)
 	}
 }
+
+// The capped wait leaves room for the grace inside the caller's deadline: a node that uses its whole wait still
+// answers before the deadline, so its results are not lost as timed out.
+func TestFlushMemoryCapSubtractsGrace(t *testing.T) {
+	t.Parallel()
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'quiet', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES
+		('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+	e.exec(`INSERT INTO memory_collections (id, space_id, role, created_at, updated_at) VALUES ('mco_a', 'spc_a', 'implementor', 0, 0)`)
+	s := flushSession(e, "nod_1", 8)
+	const deadline = 8 * time.Second
+	ctx, cancel := context.WithTimeout(e.ctx, deadline)
+	defer cancel()
+	res, err := e.svc.FlushMemory(ctx, time.Minute, nil)
+	if err != nil || len(res) != 1 {
+		t.Fatalf("results: %+v %v", res, err)
+	}
+	env, err := proto.Decode(<-s.out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req proto.MemoryFlush
+	if env.Decode(&req) != nil || req.WaitSeconds < 1 {
+		t.Fatalf("request: %+v", req)
+	}
+	wait := time.Duration(req.WaitSeconds) * time.Second
+	if wait+flushGrace(wait) > deadline {
+		t.Fatalf("node told to wait %s: with its grace %s that is past the %s deadline", wait, flushGrace(wait), deadline)
+	}
+}

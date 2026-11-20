@@ -158,5 +158,12 @@ describe('change-feed invalidation', () => {
     await vi.advanceTimersByTimeAsync(USAGE_SERIES_WINDOW_MS)
     expect(stale(keys.usageSeries('', 'q'))).toBe(true)
     expect(stale(keys.usageSeries('spc_a', 'q'))).toBe(false)
+    // Once the window has fired it re-arms: the next run change starts a new one, and the series is refetched again.
+    qc.setQueryData(keys.usageSeries('', 'q'), {}) // the refetch landed: fresh again
+    for (let i = 0; i < 100; i++) applyChange(qc, runChange('spc_a', i))
+    await vi.advanceTimersByTimeAsync(INVALIDATE_WINDOW_MS)
+    expect(stale(keys.usageSeries('', 'q'))).toBe(false) // throttled, not immediate
+    await vi.advanceTimersByTimeAsync(USAGE_SERIES_WINDOW_MS)
+    expect(stale(keys.usageSeries('', 'q'))).toBe(true)
   })
 })

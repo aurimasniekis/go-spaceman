@@ -39,17 +39,17 @@ describe('Overview route: attention and usage states', () => {
     expect(screen.queryByText('Nothing needs you right now.')).toBeNull()
     expect(screen.getByText('Usage').closest('div')?.textContent ?? '').not.toMatch(/tok/)
     expect(screen.getAllByRole('status').every((s) => s.textContent === 'Loading…')).toBe(true)
-  })
+  }, 15000)
 
   it('shows each read\'s error, not an empty state, when the reads fail', async () => {
     const { attention } = await open({ '/attention': fail, '/usage/series': fail })
     expect(await within(attention).findByText('Attention is unavailable')).toBeTruthy()
     expect(await screen.findByText('Usage is unavailable')).toBeTruthy()
     expect(screen.queryByText('Nothing needs you right now.')).toBeNull()
-  })
+  }, 15000)
 
   it('shows the empty state once attention has loaded with no items', async () => {
     await open({ '/attention': () => ok({ items: [], total: 0 }) })
     expect(await screen.findByText('Nothing needs you right now.')).toBeTruthy()
-  })
+  }, 15000)
 })

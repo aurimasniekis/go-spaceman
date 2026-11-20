@@ -4338,7 +4338,7 @@ export interface paths {
         };
         /**
          * A space's usage over time
-         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.
+         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported; runs whose usage the ledger does not hold are counted per harness in not_counted.
          */
         get: operations["get-space-usage-series"];
         put?: never;
@@ -6916,6 +6916,8 @@ export interface components {
             /** @description The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core */
             grant: string;
             id: string;
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. */
+            ingest_own: boolean;
             last_error?: string;
             /** Format: date-time */
             last_event_at?: string;
@@ -12521,6 +12523,30 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["SettingsSpace"][];
         };
+        SpaceUsageSeriesPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceUsageSeriesPage.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            bucket: "hour" | "day";
+            /** @description What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit */
+            cost_note: string;
+            /** Format: date-time */
+            from: string;
+            group_by: string;
+            /** @description One row per bucket and group, oldest first */
+            items: components["schemas"]["UsageRow"][];
+            next_cursor?: string;
+            /** @description Per harness, runs of this space active in the range whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero */
+            not_counted: components["schemas"]["UsageNotCounted"][];
+            /** Format: date-time */
+            to: string;
+            /** @description Over the whole range, not only this page */
+            totals: components["schemas"]["UsageRow"];
+        };
         SpaceWatchdog: {
             /**
              * Format: uri
@@ -12639,6 +12665,8 @@ export interface components {
             delivery?: "durable" | "core";
             /** @enum {string} */
             follow?: "pinned" | "latest";
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. */
+            ingest_own?: boolean;
             name: string;
             /** @description Where the consumer starts; default new (no history). Core subscriptions accept only new. */
             start?: components["schemas"]["EventsCursor"];
@@ -12663,6 +12691,8 @@ export interface components {
             enabled: boolean;
             /** @enum {string} */
             follow?: "pinned" | "latest";
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. Omitted: unchanged; a subject change keeps it only on an allowed subject. */
+            ingest_own?: boolean;
             name?: string;
             /** @description Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor. */
             start?: components["schemas"]["EventsCursor"];
@@ -23641,7 +23671,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UsageSeriesPage"];
+                    "application/json": components["schemas"]["SpaceUsageSeriesPage"];
                 };
             };
             /** @description Error */

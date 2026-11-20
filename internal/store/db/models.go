@@ -354,6 +354,7 @@ type EventSubscription struct {
 	UpdatedAt         int64
 	Delivery          string
 	WhilePaused       string
+	IngestOwn         int64
 }
 
 type EventTemplate struct {

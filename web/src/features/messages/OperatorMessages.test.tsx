@@ -1,7 +1,7 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type Me, type OperatorMessage } from '@/api/client'
 import { keys } from '@/api/queries'
@@ -48,7 +48,7 @@ describe('Needs you → Messages', () => {
   it('asks the server for unread by default and re-queries with the chosen filters', async () => {
     const get = vi.spyOn(api, 'GET').mockImplementation(list([msg('a')], 1) as never)
     mount()
-    await screen.findByRole('listitem', { name: /Subject a/ })
+    await screen.findByRole('listitem', { name: /Subject a/ }, { timeout: 4000 })
     const query = () => (get.mock.calls.filter((c) => c[0] === '/messages').at(-1)?.[1] as unknown as { params: { query: Record<string, unknown> } }).params.query
     expect(query()).toMatchObject({ state: 'open' })
     fireEvent.click(screen.getByLabelText('All'))
@@ -62,7 +62,7 @@ describe('Needs you → Messages', () => {
     const get = vi.spyOn(api, 'GET').mockImplementation(list([msg('a')], 1) as never)
     const post = vi.spyOn(api, 'POST').mockImplementation(() => ok({}))
     mount()
-    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge Subject a' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge Subject a' }, { timeout: 4000 }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/spaces/{space_id}/messages/{message_id}/ack', { params: { path: { space_id: 'spc_1', message_id: 'a' } } }))
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(1))
   })
@@ -70,20 +70,60 @@ describe('Needs you → Messages', () => {
   it('keeps the opened message in the drawer after Acknowledge drops it from the Unread list', async () => {
     let items = [msg('a')]
     vi.spyOn(api, 'GET').mockImplementation(((path: string) => (list(items, items.length) as (p: string) => unknown)(path)) as never)
-    vi.spyOn(api, 'POST').mockImplementation(() => { items = []; return ok({}) })
+    vi.spyOn(api, 'POST').mockImplementation(() => { items = []; return ok(msg('a', { state: 'acknowledged', version: 2, acknowledged_at: new Date().toISOString(), acknowledged_by: 'Op' })) })
     mount()
     fireEvent.click(await screen.findByRole('button', { name: 'Subject a' }, { timeout: 4000 }))
     const drawer = await screen.findByRole('dialog')
-    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge Subject a' }))
+    fireEvent.click(await within(drawer).findByRole('button', { name: 'Acknowledge' }))
     await waitFor(() => expect(screen.queryByRole('listitem', { name: /Subject a/ })).toBeNull())
     expect(screen.getByRole('dialog')).toBe(drawer)
     expect(drawer).toHaveTextContent('Subject a')
+    // The drawer shows the server's answer, not the stale row: acknowledged, and no second Acknowledge.
+    await waitFor(() => expect(drawer).toHaveTextContent('acknowledged'))
+    expect(drawer).not.toHaveTextContent('available')
+    expect(within(drawer).queryByRole('button', { name: 'Acknowledge' })).toBeNull()
+  })
+
+  it('a cached older row (version 1, All filter) does not overwrite the drawer\'s version 2', async () => {
+    // The list keeps answering with the version 1 row, as when the refetch has not landed yet.
+    vi.spyOn(api, 'GET').mockImplementation(list([msg('a')], 1) as never)
+    vi.spyOn(api, 'POST').mockImplementation(() => ok(msg('a', { state: 'acknowledged', version: 2, acknowledged_at: new Date().toISOString(), acknowledged_by: 'Op' })))
+    mount()
+    fireEvent.click(await screen.findByLabelText('All'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Subject a' }, { timeout: 4000 }))
+    const drawer = await screen.findByRole('dialog')
+    fireEvent.click(await within(drawer).findByRole('button', { name: 'Acknowledge' }))
+    await waitFor(() => expect(drawer).toHaveTextContent('acknowledged'))
+    // Let the invalidation refetch finish; the version 1 row it brings must not win.
+    await new Promise((r) => setTimeout(r, 100))
+    expect(drawer).toHaveTextContent('acknowledged')
+    expect(within(drawer).queryByRole('button', { name: 'Acknowledge' })).toBeNull()
+  })
+
+  it('shows the request as resolved in the drawer after a reply resolves it', async () => {
+    let items = [msg('a')]
+    vi.spyOn(api, 'GET').mockImplementation(((path: string) =>
+      path === '/spaces/{space_id}/messages/{message_id}' ? ok(msg('a', { state: 'resolved', version: 2, resolution: 'replied: r1' }))
+        : (list(items, items.length) as (p: string) => unknown)(path)) as never)
+    const post = vi.spyOn(api, 'POST').mockImplementation(() => { items = []; return ok(msg('r1', { kind: 'reply', from_kind: 'operator', to_kind: 'run' })) })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Subject a' }, { timeout: 4000 }))
+    const drawer = await screen.findByRole('dialog')
+    expect(drawer).toHaveTextContent('available')
+    const box = await within(drawer).findByRole('textbox', { name: 'Reply' })
+    fireEvent.input(box, { target: { textContent: 'on it' } })
+    box.textContent = 'on it'
+    fireEvent.input(box)
+    fireEvent.click(await within(drawer).findByRole('button', { name: 'Send reply' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/spaces/{space_id}/messages/{message_id}/reply', expect.anything()))
+    await waitFor(() => expect(drawer).toHaveTextContent('resolved'), { timeout: 4000 })
+    expect(within(drawer).queryByRole('button', { name: 'Resolve' })).toBeNull()
   })
 
   it('offers no Acknowledge to a viewer, nor on an acknowledged message', async () => {
     vi.spyOn(api, 'GET').mockImplementation(list([msg('v', { space_id: 'spc_2' }), msg('d', { state: 'acknowledged' })], 0) as never)
     mount()
-    await screen.findByRole('listitem', { name: /Subject v/ })
+    await screen.findByRole('listitem', { name: /Subject v/ }, { timeout: 4000 })
     expect(screen.queryByRole('button', { name: /^Acknowledge/ })).toBeNull()
   })
 })

@@ -462,7 +462,7 @@ export interface UsageQuery {
 /**
  * Token usage over time from the ledger. Tokens are the primary unit; cost is the harness's own list-price estimate.
  * With `space` it reads that space's series, otherwise the series of every space the caller reads (labels and the
- * not-counted runs come with it; a single space has none).
+ * not-counted runs come with it; a single space's series has no labels and its own not_counted).
  */
 export const useUsageSeries = (space: string | undefined, q: UsageQuery) =>
   useQuery({
@@ -488,21 +488,9 @@ async function usagePage(space: string | undefined, q: UsageQuery, cursor: strin
   if (space) {
     const group_by = q.group_by === 'space' ? 'role' : q.group_by
     const page = unwrap(await api.GET('/spaces/{space_id}/usage/series', { params: { path: { space_id: space }, query: { bucket: q.bucket, group_by, from: q.from, to: q.to, cursor, limit: 200 } }, signal }))
-    // The space endpoint does not list runs the ledger cannot count; the all-spaces one does, narrowed to this space. Only
-    // the first page needs it, and a failure there leaves the note out rather than the page.
-    const not_counted = cursor ? [] : await notCountedOf(space, q, signal)
-    return { ...page, labels: {}, not_counted } as GlobalUsageSeries
+    return { ...page, labels: {} } as GlobalUsageSeries
   }
   return unwrap(await api.GET('/usage/series', { params: { query: { ...q, cursor, limit: 200 } }, signal }))
-}
-
-async function notCountedOf(space: string, q: UsageQuery, signal: AbortSignal): Promise<GlobalUsageSeries['not_counted']> {
-  try {
-    const { data } = await api.GET('/usage/series', { params: { query: { bucket: q.bucket, group_by: 'space', from: q.from, to: q.to, space_id: [space], limit: 1 } }, signal })
-    return data?.not_counted ?? []
-  } catch {
-    return []
-  }
 }
 
 /** The latest windows and open usage limits of every account bound to a space the caller reads. */

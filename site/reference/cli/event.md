@@ -142,6 +142,7 @@ API: `create-subscription` ([HTTP API](../api)).
 | `--delivery` | string |  | durable (default, a JetStream durable) or core (plain NATS Core: non-durable, no replay or redelivery) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--follow` | string |  | pinned or latest |
+| `--ingest-own` | bool |  | ingest this SpaceMan's own events (only for the subjects evt.spaceman.fleet.run.dialog_detected and evt.spaceman.fleet.run.dialog_cleared) |
 | `--name` | string |  | name (required) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--start-file` | string |  | start cursor (JSON or YAML file) |
@@ -322,6 +323,7 @@ API: `get-subscription`, `update-subscription` ([HTTP API](../api)).
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--follow` | string |  | pinned or latest |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--ingest-own` | bool |  | ingest this SpaceMan's own events (only for the subjects evt.spaceman.fleet.run.dialog_detected and evt.spaceman.fleet.run.dialog_cleared) |
 | `--name` | string |  | name |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--template-version` | string |  | template version ID |

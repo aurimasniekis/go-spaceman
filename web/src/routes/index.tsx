@@ -55,7 +55,7 @@ function Overview() {
     <>
       <PageHeader title="Overview" description={me?.user ? `Welcome back, ${me.user.display_name}.` : undefined} />
       <ErrorAlert error={spaces.error} />
-      <SimpleGrid cols={{ base: 2, sm: 4 }} mb="md">
+      <SimpleGrid cols={{ base: 2, sm: showNodes ? 3 : 2 }} mb="md">
         <Stat label="Spaces" value={list.length} hint={`${list.filter((s) => s.state === 'paused').length} paused`} />
         <Stat label="Active runs" value={active.length} hint={`${active.filter((r) => r.status === 'working').length} working`} />
         {showNodes && <Stat label="Nodes" value={`${connected}/${nodes.data?.length ?? 0}`} hint="connected" />}

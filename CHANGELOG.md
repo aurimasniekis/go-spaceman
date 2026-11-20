@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Ingest your own run dialog events: `ingest_own` on a subscription.** A subscription can now turn this
+  installation's own `evt.spaceman.fleet.run.dialog_detected` (or `dialog_cleared`) into inbox items, for example to
+  raise an item when a run is stopped at a dialog. Set `ingest_own: true` on create or update (CLI `--ingest-own`).
+  It is accepted only when the subscription's subject is exactly one of those two; any other subject, wildcards and
+  everything ingestion can cause (inbox, task events) is refused with `validation_failed` (422). Own events are
+  ingested only for the subscription's own space (its `data.space_id`) and at automation depth 0, so SpaceMan's events about an ingestion's items and tasks are never ingested, and `event_depth`, the rate
+  limit and deduplication still apply. Other subscriptions keep filtering own events. Migration 0070 adds the column
+  (off for existing subscriptions). ADR-0104.
 - **Messages tab under Needs you.** `/human?tab=messages` lists the messages addressed to operators from every space you
   can read, using `GET /messages`. Each row shows the space (linked), kind, sender, subject, age and state; you can
   acknowledge inline, or open one to reply, acknowledge or resolve through the per-space operations. Filter by unread or
@@ -27,7 +35,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   counts parked runs, account limits, failed account switches and incoming cross-space requests. The Mini App keeps its
   `/attention` page, with the web-only targets unlinked. `spaces[]` in the response now also lists a space whose only
   rows are parked runs, account limits or switches, or cross-space requests (its `total` stays 0).
-
 - **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
   (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
   MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
@@ -74,6 +81,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **Replying to a request in the Messages drawer shows it resolved.** A reply resolves the request on the server, but the
+  open drawer kept the request's old state (and its Acknowledge and Resolve buttons) until the list refetched, which
+  under the Unread filter never brought it back. The drawer now re-reads the request after the reply.
 - **The Attention page's summary line matches its rows.** It said "N items need a person" from the server's total, which
   leaves out failed account switches and cross-space requests that are listed under Act now, so it could read 0 above
   rows. It now counts the Act now rows (human actions included) and the Watch rows.
@@ -115,6 +125,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The backup's memory flush no longer loses a node's answer when the call's deadline is short.** The wait a node was
+  told to use was capped at the deadline without leaving room for the grace its answer needs, so a node that used its
+  whole wait answered after the deadline and its spaces were reported as timed out. The wait now leaves the grace
+  inside the deadline, and the "no answer within" detail names the bound actually applied.
 - **A run's terminal dialog no longer outlives the run, and its history has an API.** A run that ends with a
   `blocked_on_dialog` flag open (it was lost, its launch failed, or the agent restarted over it) now has the flag closed:
   the node sends `cleared` on every path that ends a run, and central closes whatever is still open when it records the
