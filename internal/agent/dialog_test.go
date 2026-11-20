@@ -545,9 +545,11 @@ func TestDialogAddDirResolvedSymlink(t *testing.T) {
 	}
 }
 
-// endRun marks the run as exited in the journal, as an observation of its exit does.
+// endRun marks the run as exited in the journal, as an observation of its exit does: under the run's observe lock, so
+// an observation of the live program in flight (the monitor's) cannot write its stale running row over the end.
 func (e *dialogEnv) endRun() {
 	e.t.Helper()
+	defer e.a.observeLock(e.run)()
 	row := getRun(e.t, e.a, e.run)
 	row.State = proto.RunExited
 	if err := e.a.j.updateRun(context.Background(), row); err != nil {
