@@ -314,7 +314,9 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Sessions are per agent instance.** A relaunched worker with a new instance gets a new session.
 - **Resumed conversations depend on the harness.** A session woken from sleep continues its conversation where the
   harness supports resuming (Claude Code); otherwise it starts fresh with the same worktree.
-- **The knowledge branch must not be checked out** where SpaceMan should move it; acceptance refuses such a branch.
+- **The knowledge branch must not be checked out in a linked worktree**; acceptance refuses such a branch. The
+  repository's own checkout may have it checked out: it is fast-forwarded with the branch when clean, and a dirty
+  checkout fails the acceptance.
 - **The check runs with the node user's rights**, like agent programs.
 - **No proposal review by agents.** Accepting is a person's decision (reviewed) or automatic after the check
   (serialized); there is no maintainer-agent workflow.
