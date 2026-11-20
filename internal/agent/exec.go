@@ -1059,6 +1059,9 @@ func (a *Agent) monitor(ctx context.Context) {
 				if err := a.reconcileRunner(ctx); err != nil {
 					a.log.Warn("runner reconcile", obs.Err(err))
 				}
+				if ev.Kind == "snapshot" && a.snapshotReconciled != nil {
+					a.snapshotReconciled()
+				}
 			case "size":
 				// The recording notes every size change (an operator's resize, a takeover, a hold that closed), so
 				// replay redraws at the size the output was drawn for (ADR-0075).

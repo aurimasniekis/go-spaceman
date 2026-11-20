@@ -83,22 +83,6 @@ func (fc *wsCentral) collectAtLeast(t *testing.T, runID string, n int, quiet tim
 	return append(out, fc.collect(t, runID, quiet)...)
 }
 
-// dropRepeats drops a report that repeats the one before it while more than n remain. The monitor's snapshot reconcile
-// re-sends the state it sees, and a late one (past the window of the steps above) can land next to the reports of
-// a limit change, before them or after them.
-func dropRepeats(rs []proto.RunReport, n int) []proto.RunReport {
-	for i := 1; len(rs) > n && i < len(rs); {
-		a, _ := json.Marshal(rs[i-1])
-		b, _ := json.Marshal(rs[i])
-		if string(a) == string(b) {
-			rs = append(rs[:i], rs[i+1:]...)
-			continue
-		}
-		i++
-	}
-	return rs
-}
-
 // limitChanges counts the reports whose limit differs from the report before (the first against before).
 func limitChanges(before *proto.RunLimit, rs []proto.RunReport) int {
 	n := 0
@@ -229,10 +213,18 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	t.Cleanup(func() { a2.drain(10 * time.Second) })
 	t.Cleanup(a2.stopRecorders)
 	a2.leases[ccSpace] = a.leases[ccSpace]
+	reconciled := make(chan struct{}, 4)
+	a2.snapshotReconciled = func() { reconciled <- struct{}{} }
 	startAgent(t, a2, fc, clk)
 	wantOpen(t, "hello after restart", fc.helloRun(t, runID), proto.LimitFiveHour, reset, at)
 	// The monitor's snapshot reconcile of an adopted run may or may not send one report after the hello (it races
 	// the hello), but never more, and any it sends repeats the limit still open and the run still running.
+	// Wait for that reconcile to finish first, so nothing of it can land in the clear step below.
+	select {
+	case <-reconciled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the monitor's snapshot reconcile did not finish")
+	}
 	rs = fc.collect(t, runID, 300*time.Millisecond)
 	if len(rs) > 1 {
 		t.Fatalf("adopted run: %d reports after the hello, want at most 1", len(rs))
@@ -251,7 +243,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	if err := f.LimitReset(row.TerminalID, transcript, reset.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	rs = dropRepeats(fc.collectAtLeast(t, runID, 3, 300*time.Millisecond), 3)
+	rs = fc.collectAtLeast(t, runID, 3, 300*time.Millisecond)
 	if len(rs) != 3 || limitChanges(rs[0].Limit, rs) != 1 {
 		t.Fatalf("reset: %d reports, %d limit changes", len(rs), limitChanges(rs[0].Limit, rs))
 	}

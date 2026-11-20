@@ -227,9 +227,12 @@ type Agent struct {
 	// Lock order: limitSend, then mu (sendReport); session takes only mu here and never limitSend, so no cycle.
 	preConn bool
 	// helloStage, when set, runs after the hello snapshot and before the connection is set. Tests race a report there.
-	helloStage  func()
-	limitTimers map[string]*time.Timer
-	limitFiles  map[string]os.FileInfo
+	helloStage func()
+	// snapshotReconciled, when set, runs after the monitor has handled a runner "snapshot" event. Tests wait on it so a late
+	// reconcile cannot send a report into a later step.
+	snapshotReconciled func()
+	limitTimers        map[string]*time.Timer
+	limitFiles         map[string]os.FileInfo
 	// statusSnaps are the latest status-line snapshots and failureClasses the latest non-limit StopFailure class of
 	// each run, by run ID (hooks.go); both are dropped when the run ends.
 	statusSnaps    map[string]StatusObservation
