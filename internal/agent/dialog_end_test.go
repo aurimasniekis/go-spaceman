@@ -262,6 +262,89 @@ func TestDialogSendDoesNotHoldTheRunLock(t *testing.T) {
 	waitFor(t, "cleared sent", func() bool { return slices.Equal(e.outcomes(), []string{"cleared:unknown"}) })
 }
 
+// A report that stalls on its write is sent outside the run's dialog lock: the lock stays free while it waits.
+func TestDialogReportSendDoesNotHoldTheRunLock(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	d := openOccurrence(e.run, e.space)
+	e.a.dlg.mu.Lock()
+	e.a.dlg.watchLocked(e.run).blocked = &d
+	e.a.dlg.mu.Unlock()
+	row := getRun(t, e.a, e.run)
+	row.Status = "working"
+	e.a.limitSend.Lock() // the report's write in progress, which does not return
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			e.a.limitSend.Unlock()
+		}
+	}
+	defer release()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.a.dialogObserved(context.Background(), row, row)
+	}()
+	waitFor(t, "cleared queued", func() bool { return slices.Equal(pendingOutcomes(e.a), []string{proto.DialogCleared + ":" + d.ID}) })
+	locked := make(chan struct{})
+	go func() {
+		defer close(locked)
+		e.a.dialogLock(e.run)()
+	}()
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run's dialog lock is held while a report waits")
+	}
+	select {
+	case <-done:
+		t.Fatal("the clear returned before its report was sent")
+	default:
+	}
+	release()
+	<-done
+}
+
+// A queued report is built from the run's row as it is when the send turns come, not as it was when the drain began:
+// a newer state sent meanwhile is not followed by the older one.
+func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
+	e := newDialogEnv(t, nil)
+	old := getRun(t, e.a, e.run)
+	old.Status = "stale"
+	e.a.limitSend.Lock() // another report is being sent
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			e.a.limitSend.Unlock()
+		}
+	}
+	defer release()
+	e.a.dialogQueueReport(old)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.a.dialogDrain(context.Background())
+	}()
+	time.Sleep(200 * time.Millisecond) // the drain has taken its row (before the fix) and waits for the lock
+	cur := getRun(t, e.a, e.run)
+	cur.Status = "fresh"
+	if err := e.a.j.updateRun(context.Background(), cur); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	<-done
+	// The monitor reports on its own too, so look for the fresh state anywhere, and for the stale one nowhere.
+	waitFor(t, "fresh report sent", func() bool {
+		return slices.ContainsFunc(e.reportsFor(), func(r proto.RunReport) bool { return r.Status == "fresh" })
+	})
+	for _, r := range e.reportsFor() {
+		if r.Status == "stale" {
+			t.Fatalf("the older state was sent: %+v", r)
+		}
+	}
+}
+
 // A blocked whose second-phase send in resendDialogs fails (it was open, not queued) is kept in the queue, so the
 // cleared that follows it still goes out after it on the next welcome.
 func TestDialogResendFailureKeepsBlockedAheadOfCleared(t *testing.T) {

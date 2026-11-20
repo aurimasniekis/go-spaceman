@@ -93,7 +93,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   does. A selected row's toggle is named "Remove filter X". The "not counted" note links to the run pages.
 - **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
   are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
-  for a reconnect, and the monitor loop doesn't wait out the write timeout.
+  for a reconnect, and a stalled write no longer keeps the run's dialog lock (so a launch or a flag for that run no
+  longer waits on it). The observation that clears a flag still reports and drains inline, so it can still wait for the
+  write. A report for a dialog change is now built from the run's row as read under the send lock, so an older state
+  never follows a newer one.
 - **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
   and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
   the terminal column, and the divider runs from the header rule to the bottom edge of the window.

@@ -405,8 +405,7 @@ func (a *Agent) dialogLock(runID string) func() { return a.runLock("dialog/" + r
 func (a *Agent) dialogClear(ctx context.Context, row runRow) {
 	func() {
 		defer a.dialogLock(row.RunID)()
-		a.dialogClearLocked(ctx, row)
-	}()
+		a.dialogClearLocked(ctx, row)	}()
 	a.dialogDrain(ctx) // outside the run's dialog lock
 }
 
@@ -485,10 +484,14 @@ func (a *Agent) dialogDrain(ctx context.Context) {
 	a.dlg.reports = nil
 	a.dlg.mu.Unlock()
 	for id, row := range reports {
+		// The row is read under limitSend (as resendHeldReports does), so a newer report is never followed by this
+		// older state. withDialog gives it the flag as it is now.
+		a.limitSend.Lock()
 		if cur, err := a.j.getRun(ctx, id); err == nil {
 			row = cur
 		}
-		a.report(ctx, row) // withDialog gives it the flag as it is now
+		a.sendReport(ctx, row)
+		a.limitSend.Unlock()
 	}
 	a.dlg.sendMu.Lock()
 	defer a.dlg.sendMu.Unlock()
