@@ -217,6 +217,15 @@ func usageQuery() []qflag {
 // usageCmd shows the usage ledger: tokens per bucket, with the cost as the harnesses' list-price estimate (not a bill).
 func (a *App) usageCmd() *cobra.Command {
 	return group("usage", "Usage over time from the ledger: tokens first, cost as a list-price estimate", nil,
+		a.cmd(opts{use: "all", short: "Usage over time across the spaces you can read, grouped by space, account, model, role or harness", op: "get-usage-series",
+			paged: true, example: "spaceman usage all --group-by model --bucket day --from 2026-08-22T00:00:00Z",
+			query: append(usageQuery(), qs("group-by", "group_by", "space (default), account, model, role or harness"),
+				ql("space-id", "space_id", "only these space IDs (repeat or comma-separate, at most 50)"),
+				ql("account", "account_id", "only these account IDs (repeat or comma-separate, at most 50)"),
+				ql("model", "model", "only these models (repeat or comma-separate, at most 50)"),
+				ql("role", "role", "only these roles (repeat or comma-separate, at most 50)"),
+				ql("harness", "harness", "only these harnesses (repeat or comma-separate, at most 50)")),
+			view: view{items: "items", cols: usageCols, empty: "No usage in this range."}}),
 		a.cmd(opts{use: "space", short: "A space's usage over time, grouped by role, account, model or harness", op: "get-space-usage-series", args: spaceArg(), paged: true,
 			query: append(usageQuery(), qs("group-by", "group_by", "role (default), account, model or harness")),
 			view:  view{items: "items", cols: usageCols, empty: "No usage in this range."}}),

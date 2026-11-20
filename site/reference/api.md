@@ -587,4 +587,5 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/runs/{run_id}/usage` | `get-run-usage` | A run's usage |
 | `GET` | `/spaces/{space_id}/usage` | `get-space-usage` | A space's usage |
 | `GET` | `/spaces/{space_id}/usage/series` | `get-space-usage-series` | A space's usage over time |
+| `GET` | `/usage/series` | `get-usage-series` | Usage over time across the spaces you can read |
 

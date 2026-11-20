@@ -4928,6 +4928,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/usage/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage over time across the spaces you can read
+         * @description Tokens per bucket and group (space, account, model, role or harness) from the usage ledger, summed over every space where the caller has run:read; the rows, totals, labels and not-counted runs never include another space. Filters narrow it by space, account, model, role and harness. The cost is the harness's own list-price estimate, not a bill; tokens are the primary unit. Runs whose usage the ledger does not hold are counted per harness in not_counted.
+         */
+        get: operations["get-usage-series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -7949,6 +7969,34 @@ export interface components {
             name: string;
             repository_id: string;
             space_id: string;
+        };
+        GlobalUsageSeriesPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GlobalUsageSeriesPage.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            bucket: "hour" | "day";
+            /** @description What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit */
+            cost_note: string;
+            /** Format: date-time */
+            from: string;
+            group_by: string;
+            /** @description One row per bucket and group, oldest first */
+            items: components["schemas"]["UsageRow"][];
+            /** @description Display names of the space or account groups on this page: spaces you can read, accounts bound to one of them */
+            labels: {
+                [key: string]: string;
+            };
+            next_cursor?: string;
+            /** @description Per harness, runs active in the range (in the same spaces and filters, except model) whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero */
+            not_counted: components["schemas"]["UsageNotCounted"][];
+            /** Format: date-time */
+            to: string;
+            /** @description Over the whole range, not only this page */
+            totals: components["schemas"]["UsageRow"];
         };
         HarborpilotConnection: {
             /**
@@ -13174,6 +13222,19 @@ export interface components {
              * @description When a run first reported the limit
              */
             seen_at: string;
+        };
+        UsageNotCounted: {
+            /**
+             * Format: int64
+             * @description Of those, runs whose usage was read back from Harbor Pilot (per run only, not in the ledger)
+             */
+            harbor_pilot_runs: number;
+            harness: string;
+            /**
+             * Format: int64
+             * @description Runs active in the range whose usage is not in these figures
+             */
+            runs: number;
         };
         UsageRow: {
             /**
@@ -24796,6 +24857,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthAPIToken"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-usage-series": {
+        parameters: {
+            query?: {
+                /** @description Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to */
+                from?: string;
+                /** @description End of the range, exclusive (RFC 3339). Default: now */
+                to?: string;
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days */
+                bucket?: "hour" | "day";
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                /** @description Only these spaces (IDs; repeat or comma-separate, at most 50). A space you cannot read adds nothing */
+                space_id?: string[];
+                /** @description Only these accounts (IDs; repeat or comma-separate, at most 50) */
+                account_id?: string[];
+                /** @description Only these models (repeat or comma-separate, at most 50) */
+                model?: string[];
+                /** @description Only these roles (repeat or comma-separate, at most 50) */
+                role?: string[];
+                /** @description Only these harnesses (repeat or comma-separate, at most 50) */
+                harness?: string[];
+                group_by?: "space" | "account" | "model" | "role" | "harness";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalUsageSeriesPage"];
                 };
             };
             /** @description Error */

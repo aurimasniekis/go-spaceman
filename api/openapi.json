@@ -7429,6 +7429,82 @@
         ],
         "type": "object"
       },
+      "GlobalUsageSeriesPage": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GlobalUsageSeriesPage.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bucket": {
+            "enum": [
+              "hour",
+              "day"
+            ],
+            "type": "string"
+          },
+          "cost_note": {
+            "description": "What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit",
+            "type": "string"
+          },
+          "from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "group_by": {
+            "type": "string"
+          },
+          "items": {
+            "description": "One row per bucket and group, oldest first",
+            "items": {
+              "$ref": "#/components/schemas/UsageRow"
+            },
+            "type": "array"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Display names of the space or account groups on this page: spaces you can read, accounts bound to one of them",
+            "type": "object"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "not_counted": {
+            "description": "Per harness, runs active in the range (in the same spaces and filters, except model) whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero",
+            "items": {
+              "$ref": "#/components/schemas/UsageNotCounted"
+            },
+            "type": "array"
+          },
+          "to": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/UsageRow",
+            "description": "Over the whole range, not only this page"
+          }
+        },
+        "required": [
+          "labels",
+          "not_counted",
+          "bucket",
+          "group_by",
+          "from",
+          "to",
+          "cost_note",
+          "totals",
+          "items"
+        ],
+        "type": "object"
+      },
       "HarborpilotConnection": {
         "additionalProperties": false,
         "properties": {
@@ -20642,6 +20718,30 @@
         "required": [
           "kind",
           "seen_at"
+        ],
+        "type": "object"
+      },
+      "UsageNotCounted": {
+        "additionalProperties": false,
+        "properties": {
+          "harbor_pilot_runs": {
+            "description": "Of those, runs whose usage was read back from Harbor Pilot (per run only, not in the ledger)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "runs": {
+            "description": "Runs active in the range whose usage is not in these figures",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "harness",
+          "runs",
+          "harbor_pilot_runs"
         ],
         "type": "object"
       },
@@ -38934,6 +39034,180 @@
         "summary": "Revoke one of your API tokens",
         "tags": [
           "tokens"
+        ]
+      }
+    },
+    "/usage/series": {
+      "get": {
+        "description": "Tokens per bucket and group (space, account, model, role or harness) from the usage ledger, summed over every space where the caller has run:read; the rows, totals, labels and not-counted runs never include another space. Filters narrow it by space, account, model, role and harness. The cost is the harness's own list-price estimate, not a bill; tokens are the primary unit. Runs whose usage the ledger does not hold are counted per harness in not_counted.",
+        "operationId": "get-usage-series",
+        "parameters": [
+          {
+            "description": "Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to",
+            "explode": false,
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "End of the range, exclusive (RFC 3339). Default: now",
+            "explode": false,
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "End of the range, exclusive (RFC 3339). Default: now",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days",
+            "explode": false,
+            "in": "query",
+            "name": "bucket",
+            "schema": {
+              "default": "hour",
+              "description": "Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days",
+              "enum": [
+                "hour",
+                "day"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response's next_cursor",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Opaque cursor from a previous response's next_cursor",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only these spaces (IDs; repeat or comma-separate, at most 50). A space you cannot read adds nothing",
+            "explode": true,
+            "in": "query",
+            "name": "space_id",
+            "schema": {
+              "description": "Only these spaces (IDs; repeat or comma-separate, at most 50). A space you cannot read adds nothing",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Only these accounts (IDs; repeat or comma-separate, at most 50)",
+            "explode": true,
+            "in": "query",
+            "name": "account_id",
+            "schema": {
+              "description": "Only these accounts (IDs; repeat or comma-separate, at most 50)",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Only these models (repeat or comma-separate, at most 50)",
+            "explode": true,
+            "in": "query",
+            "name": "model",
+            "schema": {
+              "description": "Only these models (repeat or comma-separate, at most 50)",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Only these roles (repeat or comma-separate, at most 50)",
+            "explode": true,
+            "in": "query",
+            "name": "role",
+            "schema": {
+              "description": "Only these roles (repeat or comma-separate, at most 50)",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Only these harnesses (repeat or comma-separate, at most 50)",
+            "explode": true,
+            "in": "query",
+            "name": "harness",
+            "schema": {
+              "description": "Only these harnesses (repeat or comma-separate, at most 50)",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "group_by",
+            "schema": {
+              "default": "space",
+              "enum": [
+                "space",
+                "account",
+                "model",
+                "role",
+                "harness"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalUsageSeriesPage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Usage over time across the spaces you can read",
+        "tags": [
+          "usage"
         ]
       }
     },

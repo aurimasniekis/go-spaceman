@@ -7915,6 +7915,11 @@
        a readable space.
      - CLI `spaceman usage all` and `spaceman usage windows`. No migration is planned. A covering index would be migration
        **0069**, and only if the UI-T1 benchmark shows it is needed.
+       *Cost, as built (migration 0069):* `ix_usage_buckets_time_cover` holds every column of the WITHOUT ROWID ledger table,
+       so it roughly doubles the ledger's size on disk. Its counters are index columns, so every `AddUsageBucket` upsert
+       now rewrites one index entry (before, only an insert did). That is fine at ledger volumes (at most one row per
+       space, account, role, harness, model and hour, rolled up to days after the hourly retention); a ledger far larger than
+       the benchmarked 200k rows would need the index weighed again.
   3. **Overview.** From top to bottom: the top five Attention items, linking to `/attention` with "See all (N)"; a usage
      summary (tokens today and in 7 days, a 14-day sparkline, the top five spaces and models, and a delta against the
      previous period of the same length, tokens only, §8 Q7); an Accounts strip, hidden without accounts; then the

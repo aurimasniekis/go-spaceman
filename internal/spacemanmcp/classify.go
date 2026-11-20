@@ -474,6 +474,8 @@ var Table = map[string]Entry{
 	// Usage.
 	"get-run-usage":   {Read, rRead},
 	"get-space-usage": {Read, rRead},
+	// The cross-space ledger series (ADR-0103): filtered to the spaces the token reads.
+	"get-usage-series": {Read, rFiltered},
 	// The usage ledger (ADR-0090): numbers and IDs only.
 	"get-space-usage-series":     {Read, rRead},
 	"get-account-usage":          {Read, rRead},
