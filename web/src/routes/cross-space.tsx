@@ -20,7 +20,7 @@ function CrossSpaceAdmin() {
   const current = requests.find((r) => r.id === open)
   return (
     <>
-      <PageHeader title="Cross-space" description="Requests between spaces and what each space accepts from and may send to the others. Spaces manage their own side under Cross-space." />
+      <PageHeader hub="configuration" title="Cross-space" description="Requests between spaces and what each space accepts from and may send to the others. Spaces manage their own side under Cross-space." />
       <ErrorAlert error={all.error} />
       <Tabs defaultValue="requests">
         <Tabs.List mb="sm">

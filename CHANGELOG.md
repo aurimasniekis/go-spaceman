@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
+  (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
+  MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,
+  Backups, System). Each page shows its hub's tabs under its header as plain links (the current one has
+  `aria-current`). An entry shows only if one of its tabs is visible to you. Every existing URL still loads directly,
+  and `/configuration`, `/integrations` and `/access` open the first tab you may see. Account is only in the user
+  menu now, and Attention is off the sidebar (`/attention` stays).
 - **One call lists the usage windows of every account you can see.** `GET /account-windows` (and `spaceman usage
   windows`) returns each subscription account bound, directly or through a role pool, to a space you can read
   (`run:read`), once, with its name, harness, latest 5-hour and 7-day windows and open usage limits. An account bound

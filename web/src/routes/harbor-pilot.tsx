@@ -25,7 +25,7 @@ function HarborPilotPage() {
   const c = conn.data
   return (
     <>
-      <PageHeader title="Harbor Pilot" description="The LLM gateway runs of opted-in spaces use instead of direct accounts: one token per run, revoked when it ends."
+      <PageHeader hub="integrations" title="Harbor Pilot" description="The LLM gateway runs of opted-in spaces use instead of direct accounts: one token per run, revoked when it ends."
         actions={conn.isSuccess && <Button leftSection={<IconPlugConnected size={14} />} onClick={() => setEditing(true)}>{c ? 'Replace connection' : 'Connect'}</Button>} />
       <Alert color="owlBlue" icon={<IconInfoCircle size={16} />} mb="md" p="xs">
         <Text size="sm">

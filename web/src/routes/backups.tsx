@@ -94,7 +94,7 @@ function BackupsPage() {
 
   return (
     <>
-      <PageHeader title="Backups" description="Sealed backups of the database, role memory, recordings, attachments and transcripts. Restoring runs offline with spaceman backup restore."
+      <PageHeader hub="access" title="Backups" description="Sealed backups of the database, role memory, recordings, attachments and transcripts. Restoring runs offline with spaceman backup restore."
         actions={<Button leftSection={<IconDatabaseExport size={14} />} loading={starting} disabled={!s || s.busy} onClick={() => void create()}>Back up now</Button>} />
       <ErrorAlert error={q.error} />
       {restore.data?.restored && <RestoreCard n={restore.data} />}
