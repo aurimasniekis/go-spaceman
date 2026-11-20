@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -351,9 +353,26 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 			t.Fatalf("the older state %q was sent after the row changed: %+v", old.Status, r)
 		}
 	}
-	waitFor(t, "fresh report sent", func() bool {
-		return slices.ContainsFunc(e.reportsFor(), func(r proto.RunReport) bool { return r.Status == "fresh" })
-	})
+}
+
+// monitorIdle is whether every agent monitor is waiting for its next event, with none being handled. A goroutine that
+// waits to receive is parked only while its channel is empty, so no event is queued either.
+func monitorIdle() bool {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	for g := range strings.SplitSeq(string(buf), "\n\n") {
+		if strings.Contains(g, "agent.(*Agent).monitor(") && !strings.Contains(g, "[chan receive") {
+			return false
+		}
+	}
+	return true
 }
 
 // sentEither is whether a report carries one of the statuses (the monitor's own reports carry others, or none).
@@ -376,6 +395,10 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	if orig == "" || getRun(t, e.a, e.run).Status == orig {
 		t.Fatalf("status %q must be set and differ from the journal's", orig)
 	}
+	// The monitor may still be handling the status event of newDialogEnv's cleared status, and its observe writes the
+	// journal. Nothing emits another event now, so once it waits for the next one it writes nothing more, and the
+	// row write below can only be this observe's. (Before the lock below: an observe waiting for it is not idle.)
+	waitFor(t, "the run's monitor is idle", monitorIdle)
 	base := len(e.reportsFor())
 	e.a.limitSend.Lock() // another report is being sent
 	released := false
@@ -392,7 +415,7 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 		e.a.observe(ctx, getRun(t, e.a, e.run), p, false)
 	}()
 	// The observe's own row write (its older state) must land before the concurrent update below, or the observe would
-	// overwrite that update with the older state it had built.
+	// overwrite that update with the older state it had built. Only this observe writes it now.
 	waitFor(t, "the observe's row written", func() bool { return getRun(t, e.a, e.run).Status == orig })
 	cur := getRun(t, e.a, e.run)
 	cur.Status = "fresh" // a concurrent observe wrote a newer state
@@ -401,7 +424,7 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	}
 	release()
 	<-done
-	waitFor(t, "the observe's report sent", func() bool { return sentEither(e.reportsFor()[base:], orig, "fresh", "working") })
+	waitFor(t, "the observe's report sent", func() bool { return sentEither(e.reportsFor()[base:], orig, "fresh") })
 	for _, r := range e.reportsFor()[base:] {
 		if r.Status == orig {
 			t.Fatalf("the observe's own older state %q was sent: %+v", orig, r)
