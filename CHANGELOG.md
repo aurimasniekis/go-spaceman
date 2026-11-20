@@ -81,6 +81,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **A dialog flag raised again after it cleared is read again after the quiet period.** A flag that cleared through
+  the run's observed working status kept its re-read backoff, so a flag raised again with no output was only re-read
+  up to five minutes later instead of after the first quiet period. The backoff now ends with the flag.
+
 - **Replying to a request in the Messages drawer shows it resolved.** A reply resolves the request on the server, but the
   open drawer kept the request's old state (and its Acknowledge and Resolve buttons) until the list refetched, which
   under the Unread filter never brought it back. The drawer now re-reads the request after the reply.

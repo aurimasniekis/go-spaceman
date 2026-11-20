@@ -200,10 +200,7 @@ func (a *Agent) dialogBackoff(ctx context.Context, runID string) {
 	defer a.dlg.mu.Unlock()
 	w := a.dlg.runs[runID]
 	if w == nil || w.blocked == nil {
-		if w != nil {
-			w.backoff = 0
-		}
-		return
+		return // no flag: its backoff is 0 (dialogClearLocked ends it with the flag)
 	}
 	w.backoff = min(max(2*w.backoff, dialogQuiet), dialogRecheckMax)
 	a.dialogArmLocked(ctx, runID, w, w.backoff)
@@ -369,6 +366,9 @@ func (a *Agent) dialogFlag(ctx context.Context, row runRow, res dialog.Result) {
 		}
 	}
 	w.blocked, w.answered = &d, ""
+	if prev != nil {
+		w.backoff = 0 // a different dialog replaces the flag: its re-reads start from dialogQuiet, as a new flag's do
+	}
 	a.dlg.mu.Unlock()
 	if err := writeJSONFile(filepath.Join(a.runDir(row.RunID), dialogOpenFile), d); err != nil {
 		a.log.Warn("dialog watch: save the open dialog", slog.String(obs.FieldRunID, row.RunID), obs.Err(err))
@@ -415,7 +415,8 @@ func (a *Agent) dialogClearLocked(ctx context.Context, row runRow) {
 	var prev *proto.RunDialog
 	if w := a.dlg.runs[row.RunID]; w != nil {
 		prev = w.blocked
-		w.blocked, w.answered = nil, ""
+		// The backoff ends with the flag: a flag raised again starts its re-reads from dialogQuiet, not from this one.
+		w.blocked, w.answered, w.backoff = nil, "", 0
 	}
 	a.dlg.mu.Unlock()
 	if prev == nil {
