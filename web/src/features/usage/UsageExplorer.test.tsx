@@ -101,3 +101,53 @@ describe('Usage explorer across spaces', () => {
     expect(screen.getByRole('progressbar', { name: 'team-max, 5-hour window' })).toHaveAttribute('aria-valuenow', '64')
   })
 })
+
+describe('Usage explorer follow-ups', () => {
+  it('keeps the previous figures on screen while a new range loads', async () => {
+    let release: (() => void) | undefined
+    const seen: Record<string, unknown>[] = []
+    vi.spyOn(api, 'GET').mockImplementation(((path: string, init?: { params?: { query?: Record<string, unknown> } }) => {
+      if (path === '/usage/series') {
+        seen.push(init?.params?.query ?? {})
+        if (seen.length === 1) return Promise.resolve({ data: page([row(14, 'spc_1', 1200)], { labels: { spc_1: 'Payments' } }), response: new Response() })
+        return new Promise((res) => { release = () => res({ data: page([row(14, 'spc_1', 5)]), response: new Response() }) })
+      }
+      if (path === '/account-windows') return Promise.resolve({ data: windows, response: new Response() })
+      if (path === '/spaces') return Promise.resolve({ data: { items: [] }, response: new Response() })
+      return new Promise(() => {})
+    }) as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MantineProvider theme={theme}><QueryClientProvider client={qc}><Harness initial={{}} seen={[]} /></QueryClientProvider></MantineProvider>)
+    expect(await screen.findByRole('table', { name: 'Usage by space' })).toHaveTextContent('Payments')
+    fireEvent.click(screen.getByRole('radio', { name: 'Last 90 days' }))
+    await waitFor(() => expect(seen).toHaveLength(2))
+    expect(screen.getByTestId('usage-totals')).toHaveTextContent('1,200')
+    expect(screen.getByRole('table', { name: 'Usage by space' })).toBeInTheDocument()
+    release!()
+    await waitFor(() => expect(screen.getByTestId('usage-totals')).toHaveTextContent('5'))
+  })
+  it('uses the display name for a harness in the legend and the table', async () => {
+    setup(() => page([row(14, 'claude-code', 700), row(15, 'codex', 300)], { group_by: 'harness' }), { group: 'harness' })
+    const table = await screen.findByRole('table', { name: 'Usage by harness' })
+    expect(table).toHaveTextContent('Claude Code')
+    const legend = screen.getByRole('list', { name: 'Legend' })
+    expect(legend).toHaveTextContent('Claude Code')
+    expect(legend).toHaveTextContent('Codex')
+    expect(legend).not.toHaveTextContent('claude-code')
+  })
+  it('names the filter toggle by what it does, and shows — for accounts filtered out', async () => {
+    setup(() => page([row(14, 'acc_a', 500)], { group_by: 'account' }), { group: 'account' })
+    const toggle = await screen.findByRole('button', { name: 'Filter by team-max' })
+    fireEvent.click(toggle)
+    expect(await screen.findByRole('button', { name: 'Remove filter team-max' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Filter by team-max' })).toBeNull()
+    expect(screen.getByRole('columnheader', { name: 'Tokens in range (filtered)' })).toBeInTheDocument()
+    expect(screen.getByTestId('usage-account-team-max')).toHaveTextContent('500')
+  })
+  it('shows — in the accounts table for an account the filter excludes', async () => {
+    setup(() => page([row(14, 'acc_other', 500)], { group_by: 'account' }), { group: 'account', account: 'acc_other' })
+    const acc = await screen.findByTestId('usage-account-team-max')
+    expect(acc).toHaveTextContent('—')
+    expect(acc).not.toHaveTextContent(/\b0\b/)
+  })
+})
