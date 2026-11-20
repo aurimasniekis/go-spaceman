@@ -447,7 +447,8 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'attention', async () => {
     await page.goto('/attention')
     await expect(page.getByRole('heading', { name: 'Attention' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Payments platform' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Act now' })).toBeVisible()
+    await expect(page.getByText(/human actions/).first()).toBeVisible()
     await expect(page.getByText('Storage', { exact: true })).toBeVisible()
   })
   // Relocation dialog (SM-SPACE-005). The second node is enrolled through the API only (no second agent runs in this

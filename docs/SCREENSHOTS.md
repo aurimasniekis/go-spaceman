@@ -16,7 +16,7 @@
 | `space-create` | First node and space | Space create form | current |
 | `space-purge` | First node and space | Purge confirmation of an archived space with the slug typed | current |
 | `space-overview` | Site landing, First node and space | Space overview with lease and runs with the Export and lifecycle actions | current |
-| `attention` | Observability | Attention page: what needs a person across spaces (human actions, tasks, quarantine, runs, budgets, nodes, outbox, backups, storage) | current |
+| `attention` | Observability | Attention page: the Act now and Watch rows with filters, the collapsed human actions row, nodes, outbox, backups, storage | current |
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
 | `git-ssh-keys` | Repositories | Git SSH keys page: a shared key's public half, the spaces that may use it and the repositories that do (the private half is never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
