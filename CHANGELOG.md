@@ -62,6 +62,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The agent no longer stalls on a dead connection while reporting a dialog.** The messages about a run waiting at a dialog
+  are now sent outside the run's dialog lock, in order, so a `cleared` can't overtake a `blocked` that is still waiting
+  for a reconnect, and the monitor loop doesn't wait out the write timeout.
 - **The divider beside the Terminals space list runs the full height of the workspace.** It stopped short of the footer
   and of the window's top and bottom edges, so it did not line up with the navigation's divider. The footer now belongs to
   the terminal column, and the divider runs from the header rule to the bottom edge of the window.
