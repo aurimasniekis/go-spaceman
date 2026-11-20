@@ -239,6 +239,7 @@ export async function seedWorld(page: Page, tag = ''): Promise<World> {
     outbound: { questions: true, delegation: false, knowledge: false } })
   await api.call('PUT', `/spaces/${peer.id}/xspace/peers/${sp.id}`, { inbound: noInbound, outbound: { questions: true, delegation: false, knowledge: false } })
   const asker = await api.call<Run>('POST', `/spaces/${peer.id}/runs`, { kind: 'control', role: 'control', harness: 'claude-code', prompt: 'Keep the guides current.\n' +
+    '/call spaceman_message_send {"to":"operators","subject":"Guides are in step with the UI","request":true,"body":"Nothing is blocked."}\n' +
     `/call spaceman_xspace_request {"to":"overflow-payments${t}","kind":"question","title":"Which retry budget should the settlement guide document?","body":"What is the current budget?","deadline_minutes":1440}` })
   await expect.poll(async () => (await api.call<{ items: unknown[] }>('GET', `/spaces/${sp.id}/xspace/requests`)).items.length, { timeout: 30_000 }).toBeGreaterThan(0)
   await api.call('POST', `/spaces/${peer.id}/runs/${asker.id}/stop`, { mode: 'kill', reason: 'asked' })

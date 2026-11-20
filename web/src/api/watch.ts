@@ -110,6 +110,7 @@ export function applyChange(qc: QueryClient, c: Change) {
         invalidate(qc, keys.runs(c.space_id))
         invalidate(qc, keys.run(c.space_id, c.resource_id))
         invalidate(qc, ['usage', c.space_id])
+        invalidate(qc, ['usage-series', '']) // the all-spaces series (Overview and Usage)
       }
       break
     case 'node':
@@ -133,6 +134,7 @@ export function applyChange(qc: QueryClient, c: Change) {
       break
     case 'message':
       if (c.space_id) invalidate(qc, keys.messages(c.space_id))
+      invalidate(qc, keys.operatorMessages)
       break
     case 'prompt':
       invalidate(qc, keys.prompts)

@@ -266,6 +266,12 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ hasText: 'Payments platform' })).toBeVisible()
   await shot(page, 'human-global')
+  // The Messages tab lists messages to operators from every space (none yet here).
+  await page.getByRole('tab', { name: 'Messages' }).click()
+  await expect(page).toHaveURL(/\/human\?tab=messages/)
+  await expect(page.getByText('No unread messages.')).toBeVisible()
+  await page.getByRole('tab', { name: 'Actions' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Payments platform' })).toBeVisible()
   await page.getByRole('listitem').filter({ hasText: 'Which region' }).click()
   await page.getByRole('radio', { name: 'eu-west-1' }).check()
   await shot(page, 'human-form-default')
@@ -334,6 +340,8 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.goto('/attention') // off the sidebar; the Overview's stat link and direct URLs lead here
   await expect(page.getByRole('heading', { name: 'Attention' })).toBeVisible()
   await expect(page.getByText('Storage', { exact: true })).toBeVisible()
+  // Rows come from items[]: either the all-clear or the Act now / Watch groups with their filters.
+  await expect(page.getByText('Nothing needs you').or(page.getByRole('heading', { name: 'Act now' }))).toBeVisible()
 
   // Space lifecycle in the UI (SM-SPACE-002): archive, restore, archive again and purge. Purge needs a recent sign-in
   // with the second factor, which the sign-in above is.

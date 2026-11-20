@@ -363,3 +363,33 @@ func seedAttentionRows(t *testing.T, h *harness, node, a, b string) {
 		t.Fatal(err)
 	}
 }
+
+// A space whose only rows are in the categories outside Total (parked runs, account limits and switches, incoming
+// cross-space requests) is still listed in spaces[], so a client can name it next to its items.
+func TestAttentionListsSpaceWithOnlyWatchRows(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	a, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "beta", Name: "Beta", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAttentionRows(t, h, en.Node.ID, a.ID, b.ID)
+	var at api.Attention
+	root.do("GET", "/attention", nil).json(t, &at)
+	found := map[string]int64{}
+	for _, s := range at.Spaces {
+		found[s.SpaceID] = s.Total
+	}
+	if len(at.Spaces) != 2 || found[a.ID] != 0 || found[b.ID] != 0 {
+		t.Fatalf("spaces %+v", at.Spaces)
+	}
+}

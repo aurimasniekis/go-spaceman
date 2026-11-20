@@ -9,6 +9,7 @@
 
 | Shot name | Guide(s) | UI area | Status |
 |---|---|---|---|
+| `overview` | Observability | The reworked Overview: the top attention items, usage tokens with the delta and top spaces and models, and the accounts strip (usage and windows are invented figures served for the shot) | current |
 | `landing-overview` | Site landing | Overview | current |
 | `setup-bootstrap` | Try it locally, Sign-in and access | First-run setup with the root token | current |
 | `setup-mfa` | Sign-in and access | TOTP enrollment on first sign-in | current |
@@ -16,7 +17,7 @@
 | `space-create` | First node and space | Space create form | current |
 | `space-purge` | First node and space | Purge confirmation of an archived space with the slug typed | current |
 | `space-overview` | Site landing, First node and space | Space overview with lease and runs with the Export and lifecycle actions | current |
-| `attention` | Observability | Attention page: what needs a person across spaces (human actions, tasks, quarantine, runs, budgets, nodes, outbox, backups, storage) | current |
+| `attention` | Observability | Attention page: the Act now and Watch rows with filters, the collapsed human actions row, nodes, outbox, backups, storage | current |
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
 | `git-ssh-keys` | Repositories | Git SSH keys page: a shared key's public half, the spaces that may use it and the repositories that do (the private half is never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
@@ -54,6 +55,7 @@
 | `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
 | `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |
 | `human-global` | Human actions | Needs you: pending actions across spaces with the nav badge and a reminded to-do | current |
+| `human-messages` | Human actions | Needs you → Messages: messages addressed to operators from every space, with unread filter and Acknowledge | current |
 | `human-space` | Human actions | A space's human actions, including a resolved one | current |
 | `human-search` | Human actions | A space's human actions searched and sorted by priority | current |
 | `human-clarify` | Human actions | A pending question with a clarification request to its requester | current |

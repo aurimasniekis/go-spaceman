@@ -27,7 +27,14 @@ function Bar({ name, w }: { name: string; w: AccountState['windows'][number] }) 
  * A percentage is what the last run on the account reported, not a live reading; an account no run has reported for
  * shows no bar rather than an empty one. `tokens` (per account, in the range shown above) is optional.
  */
-export function AccountWindowsTable({ items, tokens }: { items: AccountState[]; tokens?: Record<string, number> }) {
+export function AccountWindowsTable({ items, tokens, filtered, onlyAccounts }: {
+  items: AccountState[]
+  tokens?: Record<string, number>
+  /** A filter is on: the token figures cover the filtered usage only. */
+  filtered?: boolean
+  /** The account filter: accounts outside it have no figure (—), not a zero. */
+  onlyAccounts?: string[]
+}) {
   const sorted = [...items].sort((a, b) => a.name.localeCompare(b.name))
   return (
     <Card p={0} data-testid="usage-accounts">
@@ -41,7 +48,7 @@ export function AccountWindowsTable({ items, tokens }: { items: AccountState[]; 
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Account</Table.Th><Table.Th>5-hour window</Table.Th><Table.Th>7-day window</Table.Th><Table.Th>Open limits</Table.Th>
-                {tokens && <Table.Th ta="right">Tokens in range</Table.Th>}
+                {tokens && <Table.Th ta="right">{filtered ? 'Tokens in range (filtered)' : 'Tokens in range'}</Table.Th>}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -58,7 +65,7 @@ export function AccountWindowsTable({ items, tokens }: { items: AccountState[]; 
                         <Text key={`${l.kind}-${l.seen_at}`} size="xs"><Badge size="xs" color="owlRed" variant="light" mr={6}>{WINDOW_LABEL[l.kind] ?? l.kind}</Badge>{l.resets_at ? <>resets <LimitTime at={l.resets_at} /></> : 'reset time unknown'}</Text>
                       ))}
                     </Table.Td>
-                    {tokens && <Table.Td ta="right">{(tokens[a.account_id] ?? 0).toLocaleString('en-US')}</Table.Td>}
+                    {tokens && <Table.Td ta="right">{onlyAccounts && !onlyAccounts.includes(a.account_id) ? <Text span c="dimmed" aria-label="filtered out">—</Text> : (tokens[a.account_id] ?? 0).toLocaleString('en-US')}</Table.Td>}
                   </Table.Tr>
                 )
               })}

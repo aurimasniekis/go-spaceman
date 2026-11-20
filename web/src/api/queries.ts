@@ -55,6 +55,8 @@ export const keys = {
   accountWindows: (space: string) => ['account-windows', space] as const,
   usageSeries: (space: string, params: string) => ['usage-series', space, params] as const,
   allAccountWindows: ['account-windows', 'all'] as const,
+  /** Messages to operators across every readable space (Needs you → Messages); the change feed refreshes it. */
+  operatorMessages: ['operator-messages'] as const,
   messages: (space: string) => ['messages', space] as const,
   /** Under keys.messages, so invalidating a space's messages refreshes it too. */
   scheduledMessages: (space: string) => ['messages', space, 'scheduled'] as const,
@@ -465,6 +467,7 @@ export interface UsageQuery {
 export const useUsageSeries = (space: string | undefined, q: UsageQuery) =>
   useQuery({
     queryKey: keys.usageSeries(space ?? '', JSON.stringify(q)),
+    placeholderData: keepPreviousData,
     queryFn: async ({ signal }): Promise<GlobalUsageSeries> => {
       // One page holds a whole range for any normal space; follow the cursor so totals and rows never disagree.
       const items: UsageRow[] = []
@@ -485,9 +488,21 @@ async function usagePage(space: string | undefined, q: UsageQuery, cursor: strin
   if (space) {
     const group_by = q.group_by === 'space' ? 'role' : q.group_by
     const page = unwrap(await api.GET('/spaces/{space_id}/usage/series', { params: { path: { space_id: space }, query: { bucket: q.bucket, group_by, from: q.from, to: q.to, cursor, limit: 200 } }, signal }))
-    return { ...page, labels: {}, not_counted: [] } as GlobalUsageSeries
+    // The space endpoint does not list runs the ledger cannot count; the all-spaces one does, narrowed to this space. Only
+    // the first page needs it, and a failure there leaves the note out rather than the page.
+    const not_counted = cursor ? [] : await notCountedOf(space, q, signal)
+    return { ...page, labels: {}, not_counted } as GlobalUsageSeries
   }
   return unwrap(await api.GET('/usage/series', { params: { query: { ...q, cursor, limit: 200 } }, signal }))
+}
+
+async function notCountedOf(space: string, q: UsageQuery, signal: AbortSignal): Promise<GlobalUsageSeries['not_counted']> {
+  try {
+    const { data } = await api.GET('/usage/series', { params: { query: { bucket: q.bucket, group_by: 'space', from: q.from, to: q.to, space_id: [space], limit: 1 } }, signal })
+    return data?.not_counted ?? []
+  } catch {
+    return []
+  }
 }
 
 /** The latest windows and open usage limits of every account bound to a space the caller reads. */
@@ -503,6 +518,25 @@ export const useMessages = (space: string) =>
   useQuery({
     queryKey: keys.messages(space),
     queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space } }, signal })),
+  })
+
+export interface OperatorMessageFilters { state: 'open' | 'all'; space: string; kind: string }
+
+/** Messages addressed to operators from every readable space, newest first, paged by cursor. */
+export const useOperatorMessages = (f: OperatorMessageFilters) =>
+  useInfiniteQuery({
+    queryKey: [...keys.operatorMessages, 'list', f] as const,
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ signal, pageParam }) => unwrap(await api.GET('/messages', {
+      params: { query: { state: f.state, space: f.space || undefined, kind: (f.kind || undefined) as never, cursor: pageParam, limit: 50 } }, signal })),
+    getNextPageParam: (last) => last.next_cursor || undefined,
+  })
+
+/** How many messages to operators are still open across every readable space (the Messages tab's badge). */
+export const useOperatorUnread = () =>
+  useQuery({
+    queryKey: [...keys.operatorMessages, 'unread'] as const,
+    queryFn: async ({ signal }) => unwrap(await api.GET('/messages', { params: { query: { state: 'open', limit: 1 } }, signal })).unread_count,
   })
 
 /** A space's pending scheduled messages to control, earliest first: the server's list, not a filter of the newest messages (ADR-0065). */
