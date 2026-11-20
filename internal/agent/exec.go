@@ -662,9 +662,19 @@ func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found
 			if atEnd {
 				a.endPending.Store(runID, true)
 			}
+			// The write is under the observe lock and from a fresh read, as every write that ends a run is (lock order:
+			// runLock, then observeLock; observe never takes runLock): the row read above may be stale by now, since an
+			// observe (the monitor's finished event for an already recorded terminal, or reconcile's found-program
+			// branch) does not take the run's lock, and its exit code and reason must not be overwritten. The lock is not
+			// held across the kill-wait above, so the monitor's events are not stalled by it.
+			unlockObs := a.observeLock(runID)
+			if fresh, ferr := a.j.getRun(ctx, runID); ferr == nil {
+				row = fresh
+			}
 			row.TerminalID, row.CoreID, row.Identity, row.PID = found.ID, found.CoreID, found.Identity(), found.PID
 			row.Adopted = true
 			_ = a.j.updateRun(ctx, row)
+			unlockObs()
 			// The program may have exited since the last kill-wait read, and the monitor's finished event may have
 			// been dropped before the terminal was recorded: look once more, and do the end work here if it is gone.
 			if atEnd {
