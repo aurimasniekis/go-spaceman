@@ -405,7 +405,8 @@ func (a *Agent) dialogLock(runID string) func() { return a.runLock("dialog/" + r
 func (a *Agent) dialogClear(ctx context.Context, row runRow) {
 	func() {
 		defer a.dialogLock(row.RunID)()
-		a.dialogClearLocked(ctx, row)	}()
+		a.dialogClearLocked(ctx, row)
+	}()
 	a.dialogDrain(ctx) // outside the run's dialog lock
 }
 
