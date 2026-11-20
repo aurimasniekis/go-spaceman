@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -56,6 +58,26 @@ func validWhilePaused(v *string) error {
 	return nil
 }
 
+// ownIngestSubjects is the allow-list of ingest_own (ADR-0104): the only subjects on which a subscription may ingest
+// events this installation published itself. It holds the run dialog events (evt.spaceman.fleet.run.dialog_*), which
+// report what a node saw on a run's terminal and carry automation depth 0. Nothing that ingestion can itself cause
+// (inbox, task, human action, cross-space, approval events…) may ever be added here: an item made from such an event
+// would publish the next one. A subscription's subject must equal one of these exactly (no wildcards).
+var ownIngestSubjects = []string{outbox.RunDialogDetectedName.Subject(), outbox.RunDialogClearedName.Subject()}
+
+// OwnIngestSubjects returns the subjects ingest_own is accepted for.
+func OwnIngestSubjects() []string { return slices.Clone(ownIngestSubjects) }
+
+// ownIngestAllowed reports whether subject is on the ingest_own allow-list.
+func ownIngestAllowed(subject string) bool { return slices.Contains(ownIngestSubjects, subject) }
+
+// errIngestOwn refuses ingest_own for a subscription whose subject is not on the allow-list.
+func errIngestOwn(subject string) error {
+	return apperr.New(apperr.CodeInvalid, "ingest_own is not allowed for subject %s: a subscription may ingest this SpaceMan's own events only "+
+		"when its subject is exactly one of %s; events that ingestion can itself cause, such as inbox and task events, are never ingested as own",
+		subject, strings.Join(ownIngestSubjects, ", "))
+}
+
 // errCoreCursor refuses cursor operations on core subscriptions.
 func errCoreCursor(what string) error {
 	return apperr.New(apperr.CodePrecondition,
@@ -79,6 +101,7 @@ type Subscription struct {
 	Grant        string               `json:"grant" doc:"The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core"`
 	Enabled      bool                 `json:"enabled"`
 	WhilePaused  string               `json:"while_paused" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)"`
+	IngestOwn    bool                 `json:"ingest_own" doc:"Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies."`
 	Cursor       Cursor               `json:"cursor"`
 	LastReplay   *Replay              `json:"last_replay,omitempty" doc:"The most recent explicit replay"`
 	Pending      bool                 `json:"cursor_pending" doc:"A cursor change waits to be applied by the ingestion manager"`
@@ -112,6 +135,8 @@ type SubscriptionInput struct {
 	Delivery string
 	// WhilePaused is PausedDefer (default), PausedWake or PausedStop.
 	WhilePaused string
+	// IngestOwn ingests this installation's own events on an allow-listed subject (ADR-0104).
+	IngestOwn bool
 }
 
 // SubscriptionUpdate edits a subscription. Changing the effective subject needs an explicit cursor (Start): the
@@ -127,6 +152,8 @@ type SubscriptionUpdate struct {
 	Start             *Cursor
 	// WhilePaused changes the paused-space policy; empty keeps it.
 	WhilePaused string
+	// IngestOwn changes the own-event opt-in (ADR-0104); nil keeps it.
+	IngestOwn *bool
 }
 
 func durableFor(id string) string { return "sm-" + strings.ToLower(strings.TrimPrefix(id, "sub_")) }
@@ -265,11 +292,14 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 		if err != nil {
 			return apperr.New(apperr.CodeInvalid, "%v", err)
 		}
+		if in.IngestOwn && !ownIngestAllowed(b.Subject) {
+			return errIngestOwn(b.Subject)
+		}
 		policy, st, ss := cursorCols(in.Start)
 		if err := tx.Q.InsertEventSubscription(ctx, db.InsertEventSubscriptionParams{ID: id, SpaceID: spaceID, Name: in.Name, ConnectionID: in.ConnectionID,
 			TemplateID: tmplID, TemplateVersionID: verID, Follow: in.Follow, CustomJson: custom, VarsJson: mustJSON(b.Vars), EffectiveSubject: b.Subject,
 			Durable: durableFor(id), Enabled: 1, StartPolicy: policy, StartTime: st, StartSeq: ss, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID,
-			UpdatedAt: tx.NowMicros(), Delivery: in.Delivery, WhilePaused: in.WhilePaused}); err != nil {
+			UpdatedAt: tx.NowMicros(), Delivery: in.Delivery, WhilePaused: in.WhilePaused, IngestOwn: b2i(in.IngestOwn)}); err != nil {
 			if isUnique(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "this space already has a subscription named %q", in.Name)
 			}
@@ -280,7 +310,7 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_subscription.created", Target: audit.Target{Type: "event_subscription", ID: id},
 			Details: map[string]any{"space_id": spaceID, "subject": b.Subject, "durable": durableFor(id), "start": policy, "custom": custom.Valid, "delivery": in.Delivery,
-				"while_paused": in.WhilePaused}})
+				"while_paused": in.WhilePaused, "ingest_own": in.IngestOwn}})
 		return err
 	})
 	if err != nil {
@@ -364,9 +394,18 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		if whilePaused == "" {
 			whilePaused = cur.WhilePaused
 		}
+		// The opt-in is checked against the subject the update leaves, so a subject change cannot carry it off the
+		// allow-list either.
+		ingestOwn := cur.IngestOwn == 1
+		if in.IngestOwn != nil {
+			ingestOwn = *in.IngestOwn
+		}
+		if ingestOwn && !ownIngestAllowed(b.Subject) {
+			return errIngestOwn(b.Subject)
+		}
 		if _, err := tx.Q.UpdateEventSubscription(ctx, db.UpdateEventSubscriptionParams{Name: name, TemplateVersionID: verID, Follow: follow, CustomJson: custom,
 			VarsJson: mustJSON(b.Vars), EffectiveSubject: b.Subject, Enabled: b2i(in.Enabled), CursorGeneration: gen, StartPolicy: policy, StartTime: st,
-			StartSeq: ss, Replay: replay, WhilePaused: whilePaused, Now: tx.NowMicros(), ID: id, Version: version}); err != nil {
+			StartSeq: ss, Replay: replay, WhilePaused: whilePaused, IngestOwn: b2i(ingestOwn), Now: tx.NowMicros(), ID: id, Version: version}); err != nil {
 			if isUnique(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "this space already has a subscription named %q", name)
 			}
@@ -375,7 +414,7 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		if err := svc.changes.Record(ctx, tx, spaceID, "event_subscription", id, "updated", version+1); err != nil {
 			return err
 		}
-		details := map[string]any{"subject": b.Subject, "enabled": in.Enabled, "while_paused": whilePaused}
+		details := map[string]any{"subject": b.Subject, "enabled": in.Enabled, "while_paused": whilePaused, "ingest_own": ingestOwn}
 		if in.Start != nil {
 			details["cursor"] = policy
 			details["replay"] = replay == 1
@@ -431,7 +470,7 @@ func (svc *Service) DeleteSubscription(ctx context.Context, actor audit.Actor, s
 
 func (svc *Service) subFromRow(ctx context.Context, r db.EventSubscription) (*Subscription, error) {
 	s := &Subscription{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, ConnectionID: r.ConnectionID, Follow: r.Follow, Delivery: r.Delivery, Subject: r.EffectiveSubject,
-		Durable: r.Durable, Enabled: r.Enabled == 1, WhilePaused: r.WhilePaused, Version: r.Version, CreatedAt: fromMicros(r.CreatedAt), Vars: map[string]string{},
+		Durable: r.Durable, Enabled: r.Enabled == 1, WhilePaused: r.WhilePaused, IngestOwn: r.IngestOwn == 1, Version: r.Version, CreatedAt: fromMicros(r.CreatedAt), Vars: map[string]string{},
 		// Core subscriptions have no cursor to apply.
 		Pending: r.Delivery != DeliveryCore && r.AppliedGeneration < r.CursorGeneration,
 		Cursor:  Cursor{Policy: r.StartPolicy, Replay: r.Replay == 1, Generation: r.CursorGeneration}}

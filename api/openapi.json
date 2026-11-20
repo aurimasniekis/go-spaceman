@@ -4639,6 +4639,10 @@
           "id": {
             "type": "string"
           },
+          "ingest_own": {
+            "description": "Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies.",
+            "type": "boolean"
+          },
           "last_error": {
             "type": "string"
           },
@@ -4713,6 +4717,7 @@
           "grant",
           "enabled",
           "while_paused",
+          "ingest_own",
           "cursor",
           "cursor_pending",
           "quarantined",
@@ -19203,6 +19208,10 @@
             ],
             "type": "string"
           },
+          "ingest_own": {
+            "description": "Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies.",
+            "type": "boolean"
+          },
           "name": {
             "maxLength": 80,
             "type": "string"
@@ -19261,6 +19270,10 @@
               "latest"
             ],
             "type": "string"
+          },
+          "ingest_own": {
+            "description": "Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. Omitted: unchanged; a subject change keeps it only on an allowed subject.",
+            "type": "boolean"
           },
           "name": {
             "maxLength": 80,

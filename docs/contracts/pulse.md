@@ -117,7 +117,7 @@ Payload fields are listed in `site/guide/publishing-events.md` (identifiers and 
 |---|---|
 | `spaceman-correlation-id` | The work the event belongs to (run, task, human action correlation, approval, collection, proposal, inbox item correlation). Omitted when unknown. |
 | `spaceman-causation-id` | What caused it, when known: an inbound Pulse event ID, a task origin, a deciding human action, a run, a node sync or command ID, or the API request ID (`req_…`). |
-| `spaceman-origin` | The publishing installation's `source`. SpaceMan's inbound side drops (records as `filtered`) events carrying its own origin. |
+| `spaceman-origin` | The publishing installation's `source`. SpaceMan's inbound side drops (records as `filtered`) events carrying its own origin, except on a subscription with `ingest_own` for an allow-listed run dialog subject at depth 0 (ADR-0104). |
 | `spaceman-depth` | The automation depth (ADR-0049): how many SpaceMan ingestions led to the change, as a decimal number; sent only when above 0. The inbound side gives an item the event's depth plus one (no header: 0) and quarantines an event at or over the space's `event_depth` limit, or with a value that is not a plain decimal number (at most 1,000,000). |
 
 Header values are identifier-like (`^[A-Za-z0-9][A-Za-z0-9._:/#@+=-]{0,127}$`); other values are not sent.

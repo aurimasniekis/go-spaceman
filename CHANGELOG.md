@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Ingest your own run dialog events: `ingest_own` on a subscription.** A subscription can now turn this
+  installation's own `evt.spaceman.fleet.run.dialog_detected` (or `dialog_cleared`) into inbox items, for example to
+  raise an item when a run is stopped at a dialog. Set `ingest_own: true` on create or update (CLI `--ingest-own`).
+  It is accepted only when the subscription's subject is exactly one of those two; any other subject, wildcards and
+  everything ingestion can cause (inbox, task events) is refused with `validation_failed` (422). Own events are
+  ingested only for the subscription's own space (its `data.space_id`) and at automation depth 0, so SpaceMan's events about an ingestion's items and tasks are never ingested, and `event_depth`, the rate
+  limit and deduplication still apply. Other subscriptions keep filtering own events. Migration 0070 adds the column
+  (off for existing subscriptions). ADR-0104.
 - **Messages tab under Needs you.** `/human?tab=messages` lists the messages addressed to operators from every space you
   can read, using `GET /messages`. Each row shows the space (linked), kind, sender, subject, age and state; you can
   acknowledge inline, or open one to reply, acknowledge or resolve through the per-space operations. Filter by unread or
@@ -27,7 +35,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   counts parked runs, account limits, failed account switches and incoming cross-space requests. The Mini App keeps its
   `/attention` page, with the web-only targets unlinked. `spaces[]` in the response now also lists a space whose only
   rows are parked runs, account limits or switches, or cross-space requests (its `total` stays 0).
-
 - **Settings hubs in the web UI.** The sidebar's 18 settings pages are grouped into three entries, **Configuration**
   (Prompts, Roles & profiles, Skills, Approval policies, Action types, Cross-space, Nodes), **Integrations** (Events,
   MCP servers, Accounts, Git SSH keys, Harbor Pilot) and **Access** (Users, Sign-in providers, API tokens, Audit log,

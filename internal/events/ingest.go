@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -200,23 +201,54 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 // OwnOriginDetail is the delivery detail of an event this installation published itself (loop guard, SM-EVT-016).
 const OwnOriginDetail = "published by this SpaceMan (spaceman-origin); not re-ingested"
 
+// OwnCausedDetail is the delivery detail of an own event that a subscription with ingest_own still does not ingest:
+// its spaceman-depth says an ingestion led to it (ADR-0104).
+const OwnCausedDetail = "published by this SpaceMan with a spaceman-depth that is not 0 (an ingestion led to it) or not readable; ingest_own admits own events at depth 0 only"
+
+// OwnOtherSpaceDetail is the delivery detail of an own event that a subscription with ingest_own does not ingest: its
+// data.space_id is not the subscription's space, or is missing or unreadable (ADR-0104).
+const OwnOtherSpaceDetail = "published by this SpaceMan for another space, or with no readable data.space_id; ingest_own admits an own event only for the subscription's own space"
+
 // ownEvent reports whether e carries this installation's spaceman-origin header.
 func (svc *Service) ownEvent(e pulse.Event) bool {
 	return svc.o.Origin != "" && e.Extra.Get(outbox.HeaderOrigin) == svc.o.Origin
 }
 
-// skipOwn acknowledges one of SpaceMan's own events, recorded as filtered.
-func (svc *Service) skipOwn(ctx context.Context, subID string, e template.Event, seq uint64) error {
+// admitOwn decides on one of SpaceMan's own events (ownEvent) before anything else handles it. It is ingested (true)
+// only when all of these hold (ADR-0104):
+//   - the subscription opts in (ingest_own), read now, not when its consumer started;
+//   - the event's subject is on the allow-list (ownIngestSubjects), whatever the subscription's filter;
+//   - its data.space_id equals the subscription's space (missing or unreadable means not admitted): one space never
+//     ingests another space's run dialogs;
+//   - its spaceman-depth is absent or 0: no ingestion led to it. Everything an ingestion causes (the item, a task made
+//     from it, their events) carries depth 1 or more, so an own event caused by ingestion is never ingested again.
+//
+// Otherwise it is acknowledged and recorded as filtered (false). An admitted event then goes through the same rate
+// limit, depth limit (event_depth), filtering, deduplication and quarantine as any other.
+func (svc *Service) admitOwn(ctx context.Context, subID string, e template.Event, seq uint64) (bool, error) {
 	r, err := svc.s.R().GetEventSubscription(ctx, subID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return false, nil
 	} else if err != nil {
-		return err
+		return false, err
+	}
+	detail := OwnOriginDetail
+	if r.IngestOwn == 1 && ownIngestAllowed(e.Subject) {
+		var d struct {
+			SpaceID string `json:"space_id"`
+		}
+		if json.Unmarshal(e.Data, &d) != nil || d.SpaceID == "" || d.SpaceID != r.SpaceID {
+			detail = OwnOtherSpaceDetail
+		} else if depth, err := parseDepth(e.Depth); err == nil && depth == 0 {
+			return true, nil
+		} else {
+			detail = OwnCausedDetail
+		}
 	}
 	start := time.Now()
-	err = svc.deliver(ctx, r, e, seq, Origin{Kind: OriginLive, attempt: 1}, OutcomeFiltered, "", OwnOriginDetail)
+	err = svc.deliver(ctx, r, e, seq, Origin{Kind: OriginLive, attempt: 1}, OutcomeFiltered, "", detail)
 	svc.observe(r.Delivery, OriginLive, OutcomeFiltered, err, time.Since(start))
-	return err
+	return false, err
 }
 
 // observe records one handled event in the ingestion metrics: the delivery mode, the origin and what came of it
@@ -694,7 +726,9 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 	}))
 	sub, err := c.client.Subscribe(sctx, s.EffectiveSubject, func(hctx context.Context, e pulse.Event) error {
 		if m.svc.ownEvent(e) {
-			return m.svc.skipOwn(hctx, subID, fromPulse(e), e.Sequence)
+			if ok, err := m.svc.admitOwn(hctx, subID, fromPulse(e), e.Sequence); !ok {
+				return err
+			}
 		}
 		if err := m.throttle(hctx, subID, spaceID, false); err != nil {
 			if hctx.Err() == nil {
