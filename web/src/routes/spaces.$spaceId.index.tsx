@@ -12,7 +12,8 @@ import { SpaceHarborPilotCard } from '@/features/harborpilot/SpaceHarborPilotCar
 import { SpaceMcpCard } from '@/features/mcp/SpaceMcpCard'
 import { RunLimitBadge } from '@/features/limits/LimitTime'
 import { WatchdogBadge } from '@/features/spaces/WatchdogBadge'
-import { harnessLabel, isEnded, kindLabel, RunDot, runStateText, runTitle, sortRuns } from '@/features/runs/runInfo'
+import { RunDialogBadge } from '@/features/runs/RunDialogBadge'
+import { harnessLabel, isBlockedOnDialog, isEnded, kindLabel, RunDot, runStateText, runTitle, sortRuns } from '@/features/runs/runInfo'
 import { RelocationCard } from '@/features/spaces/RelocationCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
 import { hasGlobal } from '@/lib/access'
@@ -81,7 +82,7 @@ function SpacePage() {
                   </Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text></Table.Td>
                   <Table.Td>
-                    <Group gap={6} wrap="wrap"><Text size="sm">{runStateText(r)}</Text><RunLimitBadge run={r} />{r.kind === 'control' && <WatchdogBadge spaceId={spaceId} runId={r.id} />}</Group>
+                    <Group gap={6} wrap="wrap">{isBlockedOnDialog(r) ? <RunDialogBadge run={r} /> : <Text size="sm">{runStateText(r)}</Text>}<RunLimitBadge run={r} />{r.kind === 'control' && <WatchdogBadge spaceId={spaceId} runId={r.id} />}</Group>
                   </Table.Td>
                   <Table.Td><Tooltip label={datetime(r.started_at ?? r.created_at)}><Text size="sm" c="dimmed">{ago(isSet(r.started_at) ? r.started_at : r.created_at)}</Text></Tooltip></Table.Td>
                 </Table.Tr>

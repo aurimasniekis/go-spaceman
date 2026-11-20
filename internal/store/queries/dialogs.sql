@@ -16,3 +16,6 @@ UPDATE run_dialogs SET cleared_at = ? WHERE run_id = ? AND outcome = 'blocked' A
 
 -- name: ListRunDialogs :many
 SELECT * FROM run_dialogs WHERE run_id = ? ORDER BY detected_at DESC, id DESC LIMIT ?;
+
+-- name: ListOpenRunDialogs :many
+SELECT * FROM run_dialogs WHERE run_id = ? AND outcome = 'blocked' AND cleared_at IS NULL ORDER BY detected_at, id;

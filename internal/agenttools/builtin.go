@@ -393,7 +393,8 @@ type humanCancelIn struct {
 func (r *Registry) registerHuman() {
 	Add(r, "spaceman_human_ask", "Ask a person: a question, a permission approval (advisory: operations that need an enforced approval request it themselves), a to-do, or a message. Returns at once with a durable ID; "+
 		"do not wait in a loop or check back. People are reminded per the space's policy, and you are notified of the response (a terminal notice when you "+
-		"are idle, and in spaceman_messages); then read it with spaceman_human_get. Asking too often is refused with rate_limited.", allKinds, false,
+		"are idle, and in spaceman_messages); then read it with spaceman_human_get. A person's comment on a pending action you asked reaches you the same way, "+
+		"as a comment notice that does not answer it. Asking too often is refused with rate_limited.", allKinds, false,
 		func(ctx context.Context, p *fleet.RunPrincipal, in humanAskIn) (any, error) {
 			req, err := marshalOrEmpty(in.Request)
 			if err != nil {

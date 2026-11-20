@@ -89,6 +89,9 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND body NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("no operator message (or it carries the response)")
 	}
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND body LIKE 'The response to human action `+a.ID+` %'`) != 1 {
+		t.Fatal("operator message body does not name the undelivered resolution as a response")
+	}
 	if f.count(`SELECT count(*) FROM audit_events WHERE action = 'human_action.rerouted'`) != 1 ||
 		f.count(`SELECT count(*) FROM event_outbox WHERE type = 'spaceman.human.action_rerouted.v1' AND payload_json NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("reroute not audited or published")
@@ -116,6 +119,19 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 	got := f.get(c.ID).Notifications[0]
 	if got.TargetKind != TargetControl || got.RouteReason != ReasonRunEnded || got.RoutedFrom != "run:run_rev" || got.OriginalRun != "run_gone" || got.RouteCount != 2 {
 		t.Fatalf("after successor ended %+v", got)
+	}
+
+	// A comment on a pending question nobody can take is undeliverable too: its operator message names the comment.
+	f.end("run_ctl")
+	cm := f.create(CreateInput{Type: TypeQuestion, Title: "cm", Requester: Requester{Kind: "agent", ID: "ins_4", Role: "worker", Run: "run_gone"}})
+	if _, err := f.svc.Comment(f.ctx, op, "spc_a", cm.ID, CommentInput{Body: "more detail"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+cm.ID+`' AND subject = 'A comment could not be delivered'`) != 1 {
+		t.Fatal("operator message subject does not name the undelivered comment")
+	}
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+cm.ID+`' AND body LIKE 'The comment to human action `+cm.ID+` %'`) != 1 {
+		t.Fatal("operator message body does not name the undelivered comment")
 	}
 }
 
@@ -232,6 +248,91 @@ func TestOperatorRoutesAResponse(t *testing.T) {
 	f.exec(`UPDATE human_notifications SET state = 'acknowledged'`)
 	_, err = f.svc.RouteNotification(f.ctx, op, "spc_a", a.ID, n.ID, "control")
 	code(t, err, apperr.CodeConflict)
+}
+
+// SM-HUM-009/006: a comment notice for an agent requester whose run has ended is routed exactly like a clarification:
+// the next run of its agent instance (next_launch), else a live run of the successor role, else control, else the
+// operators, who get the "could not be delivered" message. Each stage asks both ways from the same requester and
+// compares the routes.
+func TestCommentOnAnEndedRequesterRoutesLikeAClarification(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+
+	// ask makes a plain comment and a clarification request from the same requester.
+	ask := func(req Requester) (*Action, *Action) {
+		t.Helper()
+		c := f.create(CreateInput{Type: TypeTodo, Title: "Rotate the key", Requester: req})
+		cm, err := f.svc.Comment(f.ctx, op, "spc_a", c.ID, CommentInput{Body: "done"})
+		must(t, err)
+		k := f.create(CreateInput{Type: TypeTodo, Title: "Which key?", Requester: req})
+		cl, err := f.svc.RequestClarification(f.ctx, op, "spc_a", k.ID, CommentInput{Body: "Which key?"})
+		must(t, err)
+		return cm, cl
+	}
+	sameRoute := func(cm, cl *Action) {
+		t.Helper()
+		c, k := cm.Notifications[0], cl.Notifications[0]
+		if c.Kind != NoticeComment || k.Kind != NoticeClarification {
+			t.Fatalf("kinds: %+v / %+v", c, k)
+		}
+		if c.TargetKind != k.TargetKind || c.TargetRun != k.TargetRun || c.TargetRole != k.TargetRole || c.TargetInstance != k.TargetInstance ||
+			c.RouteReason != k.RouteReason || c.RoutedFrom != k.RoutedFrom || c.OriginalRun != k.OriginalRun {
+			t.Fatalf("a comment routes differently from a clarification: %+v / %+v", c, k)
+		}
+	}
+
+	// A live successor role and a live control exist from the start, so each stage shows which step wins.
+	f.run("run_ctl", "control", "control", "ins_c", "running", "running")
+	f.run("run_rev", "worker", "reviewer", "ins_r", "running", "running")
+	gone := Requester{Kind: "agent", ID: "ins_9", Role: "worker", Run: "run_gone"}
+	f.run("run_gone", "worker", "worker", "ins_9", "running", "running")
+	f.end("run_gone")
+
+	// 1. The requester's run ended: next_launch keeps it for the next run of its agent instance, ahead of the live
+	// successor and control, once that run starts.
+	inst := ids.New(ids.Instance)
+	f.policy("", TypeTodo, PolicyFields{MaxReminders: 1, RequesterEnded: EndedNextLaunch, HoldMinutes: 30, SuccessorRole: "reviewer", WakeIdle: false,
+		RatePerRunHour: 30, RatePerSpaceHour: 300})
+	f.run("run_k1", "worker", "worker", inst, "running", "running")
+	f.end("run_k1")
+	cm, cl := ask(Requester{Kind: "agent", ID: inst, Role: "worker", Run: "run_k1"})
+	sameRoute(cm, cl)
+	if n := cm.Notifications[0]; n.TargetKind != TargetInstance || n.TargetInstance != inst || n.HoldUntil == nil {
+		t.Fatalf("held for the instance %+v", n)
+	}
+	f.run("run_k2", "worker", "worker", inst, "running", "starting")
+	f.svc.Tick(f.ctx)
+	if n := f.get(cm.ID).Notifications[0]; n.TargetKind != TargetRun || n.TargetRun != "run_k2" {
+		t.Fatalf("the instance's next run %+v", n)
+	}
+
+	// 2. reroute (the default): the live successor role takes it, before control.
+	f.policy("", TypeTodo, PolicyFields{MaxReminders: 1, RequesterEnded: EndedReroute, HoldMinutes: 60, SuccessorRole: "reviewer", WakeIdle: true,
+		RatePerRunHour: 30, RatePerSpaceHour: 300})
+	cm, cl = ask(gone)
+	sameRoute(cm, cl)
+	if n := cm.Notifications[0]; n.TargetKind != TargetRun || n.TargetRun != "run_rev" || n.RouteReason != ReasonRequesterEnded {
+		t.Fatalf("the successor role %+v", n)
+	}
+
+	// 3. The successor ended as well: control.
+	f.end("run_rev")
+	cm, cl = ask(gone)
+	sameRoute(cm, cl)
+	if n := cm.Notifications[0]; n.TargetKind != TargetControl || n.RouteReason != ReasonRequesterEnded {
+		t.Fatalf("control %+v", n)
+	}
+
+	// 4. No agent left: the operators get the undeliverable message, and the comment stays pending.
+	f.end("run_ctl")
+	cm, cl = ask(gone)
+	sameRoute(cm, cl)
+	if n := cm.Notifications[0]; n.TargetKind != TargetOperators || n.RouteReason != ReasonRequesterEnded || cm.Status != Open {
+		t.Fatalf("operators %+v (status %s)", n, cm.Status)
+	}
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+cm.ID+`' AND body LIKE '%The comment to human action%could not be delivered%'`) != 1 {
+		t.Fatal("no undeliverable message for the comment")
+	}
 }
 
 // SM-HUM-009: runs unrelated to an action see its request, never its response, comments or reason.
