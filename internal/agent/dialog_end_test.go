@@ -337,7 +337,7 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 	// The monitor reports on its own too, so look for the fresh state anywhere, and for the journal's original state
 	// (what the drain would send had it kept the row it took) nowhere.
 	// A report with either state ends the wait, so a revert fails at once instead of after the timeout.
-	waitFor(t, "a report sent", func() bool { return len(e.reportsFor()) > base })
+	waitFor(t, "the drain's report sent", func() bool { return sentEither(e.reportsFor()[base:], old.Status, "fresh") })
 	for _, r := range e.reportsFor()[base:] {
 		if r.Status == old.Status {
 			t.Fatalf("the journal's original state %q was sent after the row changed: %+v", old.Status, r)
@@ -348,16 +348,22 @@ func TestDialogDrainReportReadsRowUnderTheSendLock(t *testing.T) {
 	})
 }
 
+// sentEither is whether a report carries one of the statuses (the monitor's own reports carry others, or none).
+func sentEither(rs []proto.RunReport, statuses ...string) bool {
+	return slices.ContainsFunc(rs, func(r proto.RunReport) bool { return slices.Contains(statuses, r.Status) })
+}
+
 // Two observes whose reports wait on the send lock: the report goes out from the journal as it is when the lock is
 // taken, not from the row the observe built before it waited, so an older state never follows a newer one.
 func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	e := newDialogEnv(t, nil)
 	ctx := context.Background()
-	e.f.SetStatus(e.term, "idle")
-	p, err := e.f.Get(ctx, e.term)
+	got, err := e.f.Get(ctx, e.term)
 	if err != nil {
 		t.Fatal(err)
 	}
+	p := *got // not a status the fake holds, so the run's monitor never observes it
+	p.Status.State = "idle"
 	orig := p.Status.State
 	if orig == "" || getRun(t, e.a, e.run).Status == orig {
 		t.Fatalf("status %q must be set and differ from the journal's", orig)
@@ -375,11 +381,9 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		e.a.observe(ctx, getRun(t, e.a, e.run), *p, false)
+		e.a.observe(ctx, getRun(t, e.a, e.run), p, false)
 	}()
-	waitFor(t, "observe took its row", func() bool {
-		return getRun(t, e.a, e.run).Status == orig // the observe wrote its row and waits for the lock
-	})
+	time.Sleep(200 * time.Millisecond) // the observe has written its row and waits for the lock
 	cur := getRun(t, e.a, e.run)
 	cur.Status = "fresh" // a concurrent observe wrote a newer state
 	if err := e.a.j.updateRun(ctx, cur); err != nil {
@@ -387,7 +391,7 @@ func TestObserveReportReadsRowUnderTheSendLock(t *testing.T) {
 	}
 	release()
 	<-done
-	waitFor(t, "a report sent", func() bool { return len(e.reportsFor()) > base })
+	waitFor(t, "the observe's report sent", func() bool { return sentEither(e.reportsFor()[base:], orig, "fresh", "working") })
 	for _, r := range e.reportsFor()[base:] {
 		if r.Status == orig {
 			t.Fatalf("the observe's own older state %q was sent: %+v", orig, r)
