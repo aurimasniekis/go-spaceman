@@ -733,7 +733,7 @@ func TestAdoptEndedRunKeepsConcurrentFinishedObserve(t *testing.T) {
 		}()
 		select {
 		case <-done:
-		case <-time.After(200 * time.Millisecond): // the fixed adopt may hold the observe lock: let it write first
+		case <-time.After(2 * time.Second): // not a hang if an adopt ever held the observe lock across its kill-wait
 		}
 	}
 	a.adopt(ctx, a.log, adoptWaitRun, *p)
