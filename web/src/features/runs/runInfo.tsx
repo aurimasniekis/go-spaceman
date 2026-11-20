@@ -17,6 +17,9 @@ export const harnessLabel = (h: Run['harness'] | string) => HARNESS_LABEL[h as R
 /** "control #4": the role and the turn (once it has one). */
 export const runTitle = (r: Run) => (r.turn > 0 ? `${r.role} #${r.turn}` : r.role)
 
+/** Blocked at an interactive dialog on its terminal that SpaceMan does not answer (ADR-0102): status blocked, kind dialog. */
+export const isBlockedOnDialog = (r: Run) => !isEnded(r) && r.observed !== 'unknown' && r.status === 'blocked' && r.status_kind === 'dialog'
+
 export type Tone = 'working' | 'idle' | 'attention' | 'starting' | 'ended' | 'failed' | 'offline'
 
 /** The run's tone: what the status dot shows. */
@@ -88,6 +91,7 @@ export function runStateText(r: Run, now = Date.now()): string {
       return `${r.observed === 'exited' ? 'exited' : r.observed}${at}${r.end_reason ? ` · ${endReasonText(r.end_reason)}` : ''}`
     }
     case 'attention':
+      if (isBlockedOnDialog(r)) return 'blocked on dialog'
       return r.status_kind === 'permission' ? 'waiting for permission' : r.status_kind === 'auth' ? 'needs sign-in' : 'waiting for input'
     default: {
       if (r.takeover) return 'taken over'
