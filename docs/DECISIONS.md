@@ -4560,7 +4560,7 @@
     `e2e/ui-markdown-diagrams.spec.ts` renders the slowest kinds at the automatic limit and checks that no long task
     runs 1 s or more (amended: the product target stays about 1 s per diagram; the e2e bound is 1.2× that, 1.2 s, as load
     margin, see #365 and #369, and the spec renders a small diagram of each costly kind first so that loading a kind's
-    chunks is not part of a measured task; renders queue with a yield between them so each long task is one diagram's).
+    chunks (0.1-0.4 s, split over several tasks) is not part of a measured task, and bounds that first use apart; renders queue with a yield between them so each long task is one diagram's).
     A failed render shows a one-line message and the source; the source is always available under the
     diagram as its text alternative. `MermaidDiagram` renders one diagram from source on its own (for a future "view
     diagram" page).
