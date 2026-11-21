@@ -1063,3 +1063,36 @@ func TestHoldProbeCappedAtNextKnownReset(t *testing.T) {
 		t.Fatalf("check_at %d, want the sibling's reset %d", u.CheckAt.Int64, want)
 	}
 }
+
+// An open hold of another space whose reset has passed no longer makes its account ineligible: the run's switch goes
+// there. A hold whose reset is ahead still blocks it, and one with no reset at all is unchanged (it blocks until a
+// probe or its expiry).
+func TestAccountSwitchIgnoresExpiredHoldOfOtherSpace(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		resets *time.Duration
+		want   string
+		reason string
+	}{
+		{"expired reset", dur(-20 * time.Minute), "acc_2", ""},
+		{"reset ahead", dur(time.Hour), "", SwitchNoEligibleAccount},
+		{"no reset", nil, "", SwitchNoEligibleAccount},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newSwitchEnv(t)
+			e.hold("ulm_other", "spc_b", "acc_2", "", proto.LimitUnknown, tc.resets, nil)
+			e.running("run_w", "worker", 2)
+			e.report("run_w", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+			sw := e.switchOf("run_w")
+			if tc.want != "" {
+				if sw.State != SwitchPending || sw.ToAccountID != tc.want {
+					t.Fatalf("switch %+v, want one to %s", sw, tc.want)
+				}
+				return
+			}
+			if sw.State != SwitchFellBack || sw.Reason != tc.reason {
+				t.Fatalf("switch %+v, want fell_back %s", sw, tc.reason)
+			}
+		})
+	}
+}
