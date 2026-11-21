@@ -846,9 +846,10 @@ func resumableSession(ctx context.Context, q *db.Queries, r db.Run) (string, err
 // fresh retry of a failed resume (it already had its one retry). A fresh-resumed run with no session of its own is ok
 // with an empty session: the switch relaunches it fresh on the target account.
 //
-// The fallback is asymmetric on purpose. An original fresh run with no session never started a session, so there is
-// nothing to resume and it falls back no_session. A run resumed fresh from a wait with no session had its prompt taken
-// on an earlier run, so its first turn ended at the limit with the work already begun: it is relaunched fresh instead.
+// The fallback is asymmetric on purpose. Both kinds of run can lack a session. An original fresh run with no session has
+// no earlier run that took its prompt, so there is nothing to resume: it falls back no_session. A run resumed fresh from a
+// wait with no session did take its prompt on an earlier run: if its first turn (turn 0) ended at the limit, the work is
+// begun and it is relaunched fresh instead. Past its first turn, with no session, it falls back no_session.
 func limitSwitchSession(ctx context.Context, q *db.Queries, r db.Run) (session string, ok bool, err error) {
 	if session, err = resumableSession(ctx, q, r); err != nil || session != "" {
 		return session, err == nil, err
