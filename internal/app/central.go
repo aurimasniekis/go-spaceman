@@ -76,6 +76,7 @@ import (
 	tgtopics "github.com/aurimasniekis/go-spaceman/internal/telegram/topics"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
+	"github.com/aurimasniekis/go-spaceman/internal/worktrees"
 	"github.com/aurimasniekis/go-spaceman/internal/xspace"
 )
 
@@ -162,6 +163,8 @@ type Central struct {
 	Schedules *schedule.Service
 	// Repos is a space's configured repositories and the node's reports of them (ADR-0044).
 	Repos *repos.Service
+	// Worktrees is the worktree lifecycle service (ADR-0107).
+	Worktrees *worktrees.Service
 	// Retention deletes what is older than its retention period in one daily pass (ADR-0045).
 	Retention *retention.Service
 	// Exports writes space export archives (ADR-0045).
@@ -570,6 +573,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet.Hub().RepoKey = c.Repos.Key // repository SSH keys go only onto the wire message of a clone or fetch (ADR-0057)
 	c.KB.ResolveRepo = c.Repos.ForKB
 	c.Fleet.Hub().RepoStatus = c.Repos.OnStatus
+	c.Worktrees = worktrees.New(st, c.Audit, c.Fleet, c.Repos, c.Queue, o.Clock, obs.Component(log, "worktrees"))
+	c.Fleet.Hub().WorktreeRemoved = c.Worktrees.OnRemoved
 	c.Fleet.Hub().OnConnected = c.Repos.OnNodeConnected
 	c.XSpace = xspace.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, c.KB, o.Clock, obs.Component(log, "xspace"))
 	c.XSpace.Outbox = c.Outbox
@@ -623,7 +628,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue, c.Catalog), memory.Tools(c.Memory, c.Dreams.MemoryRolesOfRun), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue, c.Catalog), memory.Tools(c.Memory, c.Dreams.MemoryRolesOfRun), kb.Tools(c.KB), repos.Tools(c.Repos), worktrees.Tools(c.Worktrees), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
 	// Every agent tool call counts as its run's activity for the control watchdog (ADR-0099).
 	c.Fleet.Hub().Tools = c.Watchdog.Tools(c.Limits.ToolCalls(c.Tools.Dispatch))
 	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)

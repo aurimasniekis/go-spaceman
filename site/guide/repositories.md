@@ -167,10 +167,36 @@ SpaceMan SSH key is cloned on the destination by the first sync after the move.
   `ssh_public_key` can feed the host's deploy key resource). The node's report is runtime state and is not part of the
   resource ([Terraform](../operators/terraform)).
 
+## Removing worktrees
+
+Worktrees are removed only when control (or a person's tool call) asks. Control has three tools ([Agent tools](./agent-tools)):
+
+- `spaceman_worktrees_list` joins the node's last report with SpaceMan's own records: the run that owns each worktree (the
+  newest run launched with that repository and branch), that run's task, the owning run's last activity, and whether the branch
+  was pushed as of the repository's last fetch. A worktree no run created is listed as unowned. Pull request state is always
+  `unknown`: SpaceMan knows no event tied to a branch and asks no forge per worktree. The `last_change` is the run's activity,
+  because the node's report carries no folder times.
+- `spaceman_worktree_remove` removes one worktree. SpaceMan first declines a worktree a live run holds (`live_run`), then asks
+  the space's node (node protocol 1.16 or later; an older node is refused with an upgrade hint). The node removes it only
+  when the worktree has no change of its own, its HEAD is on the remote after a fresh fetch, no run uses it and it lies directly
+  inside `worktrees/`; otherwise it refuses with a code (`invalid`, `outside`, `not_worktree`, `locked`, `no_remote`,
+  `fetch_failed`, `live_run`, `dirty`, `untracked`, `unpushed`, `git_error`) that is passed on unchanged. Nothing forces a
+  removal and the branch is kept. An answer that takes longer than a minute comes back `pending` with a `command_id`.
+- `spaceman_worktrees_prune` tries the worktrees of finished work (owning task done or cancelled, owning run ended, optionally
+  at least `older_than_days` ago), oldest first, up to `limit` (default 10, at most 25), each through the same safe path.
+  It only lists them unless `apply` is set. Unowned worktrees and those of failed or open tasks are never picked. There is no
+  separate node command that only forgets stale worktree entries: the node already does that after every removal.
+
+With more than 1000 runs in a space, a worktree whose owning run ended outside the newest 1000 is listed as unowned. That fails
+safe: an unowned worktree is never picked by the prune tool.
+
+Every request and every answer is an audit event of the target `worktree_removal` (the command ID).
+
 ## Limitations
 
 See [Limitations](../reference/limitations#control-and-repositories): reports follow events, not a clock; a repository
-with Git LFS installed per repository is refused; worktrees are never cleaned up automatically. When a worktree is
-removed (by a person's tool call or, later, an automatic cleanup), the files the committed `.gitignore` ignores, such as
+with Git LFS installed per repository is refused; worktrees are never cleaned up automatically (control can remove them,
+see [Removing worktrees](#removing-worktrees)). When a worktree is
+removed (by a control tool call or, later, an automatic cleanup), the files the committed `.gitignore` ignores, such as
 `.env` or build output, are deleted with it: SpaceMan only checks tracked and untracked-but-not-ignored work. Keep
 anything you need out of ignored files in a worktree.

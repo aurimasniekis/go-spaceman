@@ -530,7 +530,9 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   minutes old and says when it was made; work an agent is doing right now shows after its run ends or the next sync
   (SM-REPO-003). Each report asks every remote for its default branch (`git ls-remote`, 30 s each), so an unreachable
   remote slows the report down. Worktrees are never cleaned up automatically; remove them with git when done. (ADR-0107 adds the
-  node's safe-removal check that a later cleanup will use; nothing calls it yet.)
+  node's safe-removal check that a later cleanup will use; nothing calls it yet.) The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
+  than 1000 runs a worktree whose owning run ended outside that window shows as unowned ("made by hand"). That fails safe:
+  an unowned worktree is never picked by `spaceman_worktrees_prune`.
 - **Reassignment does not move work.** Reassigning a task (the task drawer, `spaceman task update --role/--run`, the API)
   records the new role and run; it never stops the run working on it or starts another: control acts on the new
   assignee. A run of another space is refused; a run ID that matches no run is accepted as given (SM-CTRL-004).
