@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,9 @@ var (
 	repoStatusIdle    = 7 * 24 * time.Hour
 	repoStatusMax     = 200
 	repoStatusRefresh = 24 * time.Hour
+	// repoStatusMaxAge is the hard limit on cached counts: past it without a refresh an entry is reported unchecked
+	// (unknown) rather than shown with counts that may be long out of date.
+	repoStatusMaxAge = 7 * 24 * time.Hour
 )
 
 // wtCacheKeep is how long an unrefreshed entry is kept before eviction (worktrees that were removed).
@@ -41,8 +45,32 @@ type wtCached struct {
 // wtStatusCache remembers worktree status counts across reports (in memory: after a restart the first reports refill it,
 // each within the per-report limit, and what is not refilled yet is reported unknown).
 type wtStatusCache struct {
-	mu sync.Mutex
-	m  map[string]wtCached
+	mu  sync.Mutex
+	m   map[string]wtCached
+	try map[string]time.Time // when a status was last attempted per worktree, successful or not
+}
+
+// attempted records that a status call was made for the worktree.
+func (c *wtStatusCache) attempted(path string, at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.try == nil {
+		c.try = map[string]time.Time{}
+	}
+	c.try[path] = at
+	if len(c.try) > 4096 {
+		for k, e := range c.try {
+			if at.Sub(e) > wtCacheKeep {
+				delete(c.try, k)
+			}
+		}
+	}
+}
+
+func (c *wtStatusCache) lastTry(path string) time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.try[path]
 }
 
 func (c *wtStatusCache) get(path string) (wtCached, bool) {
@@ -69,12 +97,26 @@ func (c *wtStatusCache) put(path string, v wtCached) {
 }
 
 // wtBudget is one report's worktree status allowance. A nil budget means no throttling (relocation needs exact counts).
+// The repositories of a report only classify their worktrees into it; spend then runs the statuses once for the whole
+// report, so the allowance is shared by every repository in order of need, not of configuration.
 type wtBudget struct {
 	cache *wtStatusCache
 	left  int
 	max   int
 	idle  time.Duration
 	now   func() time.Time
+
+	recent, idle2, refresh []wtJob
+}
+
+// wtJob is one worktree that wants a status call this report.
+type wtJob struct {
+	w     *proto.WorktreeCheck
+	p     wtPending
+	stamp time.Time
+	ok    bool
+	tried time.Time // when a status was last attempted (zero: never), the fairness order
+	at    time.Time // when the cached counts were taken (refresh jobs)
 }
 
 func (a *Agent) newWtBudget() *wtBudget {
@@ -140,82 +182,112 @@ type wtPending struct {
 	head string
 }
 
-// worktreeStatuses fills in the counts of the pending worktrees. With a nil budget every one runs git status.
-func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []proto.WorktreeCheck, pend []wtPending) {
-	run := func(p wtPending, stamp time.Time, stampOK bool) {
-		w := &wcs[p.i]
-		// GIT_OPTIONAL_LOCKS=0: the status does not refresh (rewrite) the worktree's index, so it neither changes the
-		// activity stamp it is cached against nor contends with the worktree's own git commands.
-		d, u, _, err := g.statusEnv(ctx, p.path, []string{"GIT_OPTIONAL_LOCKS=0"})
-		if err != nil {
-			if b != nil {
-				w.Status = proto.WorktreeStatusUnchecked
-			}
-			w.Error = err.Error()
-			return
-		}
-		w.Dirty, w.Untracked = d, u
-		if b == nil {
-			return
-		}
-		now := b.now()
-		w.Status, w.StatusAt = proto.WorktreeStatusFresh, &now
-		if stampOK {
-			b.cache.put(p.path, wtCached{stamp: stamp, head: p.head, dirty: d, untracked: u, at: now})
-		}
+// wtRun runs git status for one pending worktree and records the result.
+func (g *projectGit) wtRun(ctx context.Context, b *wtBudget, w *proto.WorktreeCheck, p wtPending, stamp time.Time, stampOK bool) {
+	// GIT_OPTIONAL_LOCKS=0: the status does not refresh (rewrite) the worktree's index, so it neither changes the
+	// activity stamp it is cached against nor contends with the worktree's own git commands.
+	d, u, _, err := g.statusEnv(ctx, p.path, []string{"GIT_OPTIONAL_LOCKS=0"})
+	if b != nil {
+		b.cache.attempted(p.path, b.now())
 	}
+	if err != nil {
+		if b != nil {
+			w.Status = proto.WorktreeStatusUnchecked
+		}
+		w.Error = err.Error()
+		return
+	}
+	w.Dirty, w.Untracked = d, u
+	if b == nil {
+		return
+	}
+	now := b.now()
+	w.Status, w.StatusAt = proto.WorktreeStatusFresh, &now
+	if stampOK {
+		b.cache.put(p.path, wtCached{stamp: stamp, head: p.head, dirty: d, untracked: u, at: now})
+	}
+}
+
+// worktreeStatuses fills in the counts of the pending worktrees. With a nil budget every one runs git status; with a
+// budget they are classified (cached ones are filled in at once) and queued for budget.spend.
+func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []proto.WorktreeCheck, pend []wtPending) {
 	if b == nil {
 		for _, p := range pend {
-			run(p, time.Time{}, false)
+			g.wtRun(ctx, nil, &wcs[p.i], p, time.Time{}, false)
 		}
 		return
 	}
-	type job struct {
-		p     wtPending
-		stamp time.Time
-		ok    bool
-	}
-	var recent, idle, refresh []job
 	now := b.now()
 	for _, p := range pend {
+		w := &wcs[p.i]
 		stamp, ok := worktreeStamp(p.path)
+		j := wtJob{w: w, p: p, stamp: stamp, ok: ok, tried: b.cache.lastTry(p.path)}
 		if ok && now.Sub(stamp) > b.idle {
 			if c, hit := b.cache.get(p.path); hit && c.stamp.Equal(stamp) && c.head == p.head {
 				at := c.at
-				w := &wcs[p.i]
 				w.Dirty, w.Untracked, w.Status, w.StatusAt = c.dirty, c.untracked, proto.WorktreeStatusCached, &at
 				if now.Sub(c.at) > repoStatusRefresh {
-					refresh = append(refresh, job{p, stamp, ok})
+					j.at = c.at
+					b.refresh = append(b.refresh, j)
 				}
 				continue
 			}
-			idle = append(idle, job{p, stamp, ok})
+			b.idle2 = append(b.idle2, j)
 			continue
 		}
-		recent = append(recent, job{p, stamp, ok})
+		b.recent = append(b.recent, j)
 	}
-	// Within a repository, recently changed worktrees first: they are the ones whose counts matter; an idle one with no
-	// cached counts yet takes what is left, then the refresh of old cached counts; what an unknown worktree is left
-	// without is reported unknown. (The allowance is shared by the repositories of a report, in configured order.)
-	for _, j := range append(append(recent, idle...), refresh...) {
+}
+
+// spend runs the queued statuses within the allowance: recently changed worktrees first, then idle ones with no usable
+// cached counts, then the refresh of old cached counts. Within each group the one attempted longest ago (or never) goes
+// first, whichever repository it is in, so every worktree is reached over successive reports and nothing stays
+// unchecked just for being last. What is left without an allowance is reported unknown; cached counts older than
+// repoStatusMaxAge are never kept: that is unchecked, not stale.
+func (b *wtBudget) spend(ctx context.Context, g *projectGit) {
+	now := b.now()
+	oldest := func(js []wtJob) {
+		sort.SliceStable(js, func(x, y int) bool { return js[x].tried.Before(js[y].tried) })
+	}
+	oldest(b.recent)
+	oldest(b.idle2)
+	oldest(b.refresh)
+	expired := func(w *proto.WorktreeCheck) bool {
+		return w.StatusAt != nil && now.Sub(*w.StatusAt) > repoStatusMaxAge
+	}
+	unchecked := func(w *proto.WorktreeCheck, msg string) {
+		w.Dirty, w.Untracked, w.StatusAt = 0, 0, nil
+		w.Status = proto.WorktreeStatusUnchecked
+		w.Error = msg
+	}
+	all := append(append(append([]wtJob{}, b.recent...), b.idle2...), b.refresh...)
+	b.recent, b.idle2, b.refresh = nil, nil, nil
+	for _, j := range all {
+		w := j.w
 		if b.left <= 0 {
-			if w := &wcs[j.p.i]; w.Status == proto.WorktreeStatusCached {
+			if w.Status == proto.WorktreeStatusCached && !expired(w) {
 				continue // old counts stay, labelled with their time
 			}
-			w := &wcs[j.p.i]
+			if w.Status == proto.WorktreeStatusCached {
+				unchecked(w, fmt.Sprintf("status not checked: the cached counts are older than %s and this report ran its limit of %d worktree status calls; the counts are unknown, not clean", repoStatusMaxAge, b.max))
+				continue
+			}
 			w.Status = proto.WorktreeStatusUnchecked
 			w.Error = fmt.Sprintf("status not checked: this report ran its limit of %d worktree status calls; the counts are unknown, not clean", b.max)
 			continue
 		}
 		b.left--
-		w := &wcs[j.p.i]
 		if w.Status != proto.WorktreeStatusCached {
-			run(j.p, j.stamp, j.ok)
+			g.wtRun(ctx, b, w, j.p, j.stamp, j.ok)
 			continue
 		}
 		saved := *w
-		if run(j.p, j.stamp, j.ok); w.Error != "" { // a failed refresh keeps the older counts, still labelled cached
+		if g.wtRun(ctx, b, w, j.p, j.stamp, j.ok); w.Error != "" { // a failed refresh keeps the older counts, still labelled cached
+			err := w.Error
 			*w = saved
+			if expired(w) {
+				unchecked(w, "status not checked: the cached counts are older than "+repoStatusMaxAge.String()+" and the refresh failed: "+err)
+			}
 		}
 	}
 }
