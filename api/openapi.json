@@ -6595,7 +6595,7 @@
             "type": "string"
           },
           "cleared_by": {
-            "description": "run:\u003cid\u003e (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it",
+            "description": "run:\u003cid\u003e (a run of this space reported the limit over), evidence (a run of another space did, or the window it was seen in ended), expired (its window passed with no reset seen), reset, quota_board or budget_status (Harbor Pilot showed it recovered), or who cleared it",
             "type": "string"
           },
           "first_run_id": {

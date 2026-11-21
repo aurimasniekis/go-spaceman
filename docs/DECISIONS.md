@@ -6214,6 +6214,11 @@
        - Another space's row is cleared only when its reset has passed (within 2 min) or is unknown. It gets
          `cleared_by = evidence` and is correlated on the hold, so that space never sees this space's run.
        - A row whose reset is still ahead gets `check_at = now`: one probe launch decides.
+       - **Evidence cascade.** When an account hold clears this way with its reset observed (passed, within 2 min), the
+         account's other open holds of kind `unknown` with no reset, first seen no later than that reset, clear with it,
+         as `cleared_by = evidence` with the same event. A limit whose kind was never known has no reset of its own:
+         the window that ended is the one it was seen in. An `unknown` hold seen after the reset stays. The expiry
+         sweep that closes a hold whose reset passed (`cleared_by = reset`) cascades the same way.
      - **Events and visibility.**
        - Each cleared row publishes one `fleet.usage_limit.cleared` event in its own space, and each opened row one
          `fleet.usage_limit.reached` event.
@@ -6367,6 +6372,11 @@
     `cleared_by` is `expired`. If the account is still limited, the next launch hits the limit again and opens a new
     hold with its own window, so the bound can cost one failed turn, never a stuck account. Gateway holds keep their
     own estimate and re-read (decision 9). A hold with a known reset is untouched (it ends with its reset, as before).
+  - **Probe-due holds don't block failover.** A hold with no reset whose probe time passed refuses nothing
+    (`holdState`), so failover agrees: the switch target, the pool-exhausted test and the switch-back readiness count only
+    the holds that still refuse a launch. A switch first prefers an account with no open hold, and when every account
+    is avoided, tries again counting only blocking holds, so an account whose probe is due is the last resort and the
+    resumed run is its probe. A probe of a hold with no reset is never put off beyond the account's next known reset.
   - **No status-line evidence clear.** A status-line `rate_limits` snapshot does not end a hold. Its observed time is
     when the line was drawn on the node (every 60 s, even while a run is idle), not when the API data was read, and a
     hold with an unknown reset often exists because the limited run's own status line showed the window under 100 %: its

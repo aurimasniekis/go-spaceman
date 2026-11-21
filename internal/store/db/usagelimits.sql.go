@@ -1396,6 +1396,20 @@ func (q *Queries) MarkUsageLimitHumansNotified(ctx context.Context, arg MarkUsag
 	return result.RowsAffected()
 }
 
+const nextAccountResetAfter = `-- name: NextAccountResetAfter :one
+SELECT CAST(coalesce(min(resets_at), 0) AS INTEGER) AS at FROM usage_limits
+WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NOT NULL AND resets_at > ?
+`
+
+// The earliest known reset ahead of after among open account holds (0: none): a gateway hold's estimate and a reset that
+// has passed never wake the expiry job.
+func (q *Queries) NextAccountResetAfter(ctx context.Context, resetsAt sql.NullInt64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextAccountResetAfter, resetsAt)
+	var at int64
+	err := row.Scan(&at)
+	return at, err
+}
+
 const nextLimitWaitDue = `-- name: NextLimitWaitDue :one
 SELECT CAST(coalesce(min(resume_at), 0) AS INTEGER) AS at FROM limit_waits WHERE state = 'waiting'
 `

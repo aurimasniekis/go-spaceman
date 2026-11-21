@@ -198,3 +198,24 @@ func TestLaunchHeld(t *testing.T) {
 		t.Fatal("still held after acc_1's reset")
 	}
 }
+
+// An account whose only hold has no reset and its probe due is not blocked (holdState): the pool isn't exhausted, and
+// the origin of a switch is ready for a switch back. With the probe ahead the account is blocked.
+func TestPoolExhaustedProbeDueIsFree(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.exec(`UPDATE usage_limits SET cleared_at = 1`)
+	e.hold("ulm_a", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	e.hold("ulm_b", "spc_c", "acc_1", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	p, err := poolExhausted(e.ctx, e.s.R(), e.clk.Now().UnixMicro(), "spc_a", "claude-code", "implementor")
+	if err != nil || p != nil {
+		t.Fatalf("probe-due pool: %+v, %v", p, err)
+	}
+	if _, known, err := originReadyAt(e.ctx, e.s.R(), "acc_2", e.clk.Now().UnixMicro()); err != nil || !known {
+		t.Fatalf("origin with a probe-due hold: known %v, %v", known, err)
+	}
+	e.exec(`UPDATE usage_limits SET check_at = ? WHERE id = 'ulm_a'`, e.us(time.Hour))
+	e.exec(`UPDATE usage_limits SET check_at = ? WHERE id = 'ulm_b'`, e.us(time.Hour))
+	if p, err := poolExhausted(e.ctx, e.s.R(), e.clk.Now().UnixMicro(), "spc_a", "claude-code", "implementor"); err != nil || p == nil {
+		t.Fatalf("probe-ahead pool: %+v, %v", p, err)
+	}
+}

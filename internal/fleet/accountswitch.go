@@ -182,7 +182,9 @@ func (svc *Service) decideSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 // switchTargetTx returns the account a switch away from from moves to: prefer when it is still eligible, otherwise the
 // best eligible account of the run's pool (accounts.Resolve's failover order), or "" when none is. Eligible: bound to
 // the space for the harness, enabled, in the role's pool when it has one, with no open hold that hasn't reset (any
-// space, probe-due ones included), and not from.
+// space, probe-due ones included), and not from. When every account is avoided for that, it tries once more counting
+// only the holds that still refuse a launch: an account whose probe is due is then the last resort, and the resumed run
+// is its probe (holdCheckTx claims it).
 func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, harness, role, from, prefer string) (string, error) {
 	now := tx.NowMicros()
 	ul := UsageLimitSettings{}
@@ -190,12 +192,22 @@ func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, h
 		ul = svc.opts.UsageLimitSettings(ctx, tx.Q, spaceID)
 	}
 	// A switch's resume is a new start: the headroom gate removes accounts here too.
-	avoid := svc.withHeadroom(ctx, tx.Q, ul, func(id string) (bool, error) {
-		if id == from {
-			return true, nil
+	for _, held := range []func(context.Context, *db.Queries, string, int64) (bool, error){accountHeld, accountBlocked} {
+		avoid := svc.withHeadroom(ctx, tx.Q, ul, func(id string) (bool, error) {
+			if id == from {
+				return true, nil
+			}
+			return held(ctx, tx.Q, id, now)
+		})
+		if id, err := svc.switchTargetAvoiding(ctx, tx, spaceID, harness, role, from, prefer, avoid); err != nil || id != "" {
+			return id, err
 		}
-		return accountHeld(ctx, tx.Q, id, now)
-	})
+	}
+	return "", nil
+}
+
+// switchTargetAvoiding is switchTargetTx's choice with the accounts avoid names removed.
+func (svc *Service) switchTargetAvoiding(ctx context.Context, tx *store.Tx, spaceID, harness, role, from, prefer string, avoid func(string) (bool, error)) (string, error) {
 	// Resolve from the limited account: it is bound (so a space without a default still resolves) and avoided, so the
 	// pool's order decides. A fresh retry's wait doesn't know it (from is empty): the role's pool decides first, and
 	// only a role without a pool of its own (the space pool is every bound account, so it can't widen) falls back to

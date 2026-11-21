@@ -7701,7 +7701,7 @@ export interface components {
             check_at?: string;
             /** Format: date-time */
             cleared_at?: string;
-            /** @description run:<id> (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it */
+            /** @description run:<id> (a run of this space reported the limit over), evidence (a run of another space did, or the window it was seen in ended), expired (its window passed with no reset seen), reset, quota_board or budget_status (Harbor Pilot showed it recovered), or who cleared it */
             cleared_by?: string;
             first_run_id?: string;
             /** @description harbor-pilot (a quota exhaustion: the whole connection) or harbor-pilot:project:<id> (a project's budget) */

@@ -64,7 +64,7 @@ type UsageLimit struct {
 	FirstRunID string     `json:"first_run_id,omitempty"`
 	SeenAt     time.Time  `json:"seen_at"`
 	ClearedAt  *time.Time `json:"cleared_at,omitempty"`
-	ClearedBy  string     `json:"cleared_by,omitempty" doc:"run:<id> (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it"`
+	ClearedBy  string     `json:"cleared_by,omitempty" doc:"run:<id> (a run of this space reported the limit over), evidence (a run of another space did, or the window it was seen in ended), expired (its window passed with no reset seen), reset, quota_board or budget_status (Harbor Pilot showed it recovered), or who cleared it"`
 	Version    int64      `json:"version,omitempty"`
 }
 
@@ -305,6 +305,32 @@ func (svc *Service) clearHoldsTx(ctx context.Context, tx *store.Tx, r db.Run, cl
 			err = svc.clearHoldTx(ctx, tx, u, ClearedByEvidence, u.ID)
 		}
 		if err != nil {
+			return err
+		}
+		if scope == LimitScopeAccount && (!u.ResetsAt.Valid || u.ResetsAt.Int64 <= grace) {
+			if err := svc.clearUnknownAfterResetTx(ctx, tx, rows, u); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// clearUnknownAfterResetTx closes the open holds of rows (the account's, read before the clear) of kind unknown and with
+// no reset that were seen no later than the reset of cleared, a hold of the same account that was just cleared with its
+// reset observed. A limit whose kind the node could not tell (a wrap-up) has no reset of its own to wait for: the window
+// that ended was the one it was seen in, so the account's other holds seen by then went with it. It clears as "evidence"
+// (the reset was observed), correlated on the hold, with the usual cleared event. A hold seen after the reset is a new
+// limit and stays.
+func (svc *Service) clearUnknownAfterResetTx(ctx context.Context, tx *store.Tx, rows []db.UsageLimit, cleared db.UsageLimit) error {
+	if !cleared.ResetsAt.Valid {
+		return nil
+	}
+	for _, w := range rows {
+		if w.ID == cleared.ID || w.Kind != proto.LimitUnknown || w.ResetsAt.Valid || w.SeenAt > cleared.ResetsAt.Int64 {
+			continue
+		}
+		if err := svc.clearHoldTx(ctx, tx, w, ClearedByEvidence, w.ID); err != nil {
 			return err
 		}
 	}

@@ -226,6 +226,17 @@ func probeBackoff(u db.UsageLimit, now int64, keepAliveMax time.Duration) time.D
 	return min(max(d, limitProbeFirst), max(keepAliveMax, limitProbeFirst))
 }
 
+// nextKnownReset is the earliest future reset among rows' open holds other than skip (ok is false with none): the
+// account's window ends then at the latest, so a probe of a hold with no reset needn't wait longer.
+func nextKnownReset(rows []db.UsageLimit, skip string, now int64) (at int64, ok bool) {
+	for _, u := range rows {
+		if u.ID != skip && u.ResetsAt.Valid && u.ResetsAt.Int64 > now && (!ok || u.ResetsAt.Int64 < at) {
+			at, ok = u.ResetsAt.Int64, true
+		}
+	}
+	return at, ok
+}
+
 // holdCheckTx refuses a launch on a held account (or gateway reference) in the launch transaction, or lets it through
 // as the probe of the holds that are due. A refusal writes nothing. A probe moves each due hold's check_at on: with
 // backoff while its reset is unknown, otherwise to none (one probe decides, then the reset does). The probes reports
@@ -247,6 +258,10 @@ func (svc *Service) holdCheckTx(ctx context.Context, tx *store.Tx, t HoldTarget,
 		next := sql.NullInt64{}
 		if !u.ResetsAt.Valid {
 			next = sql.NullInt64{Int64: tx.Now.Add(probeBackoff(u, now, keepAliveMax)).UnixMicro(), Valid: true}
+			// A reset known on the account's other holds ends the window sooner: probe then, not after the backoff.
+			if r, ok := nextKnownReset(rows, u.ID, now); ok && r < next.Int64 {
+				next.Int64 = r
+			}
 		}
 		n, err := tx.Q.SetUsageLimitCheck(ctx, db.SetUsageLimitCheckParams{CheckAt: next, Now: now, ID: u.ID, Version: u.Version})
 		if err != nil {
@@ -271,6 +286,18 @@ func accountHeld(ctx context.Context, q *db.Queries, accountID string, now int64
 		return false, err
 	}
 	return slices.ContainsFunc(rows, func(u db.UsageLimit) bool { return !u.ResetsAt.Valid || u.ResetsAt.Int64 > now }), nil
+}
+
+// accountBlocked reports whether an account has an open hold that still refuses a launch (as holdState judges): a hold
+// whose probe is due doesn't count, since the next launch on the account claims the probe. accountHeld is the stricter
+// test failover prefers; this is the last-resort one.
+func accountBlocked(ctx context.Context, q *db.Queries, accountID string, now int64) (bool, error) {
+	rows, err := q.ListOpenUsageLimitsByAccount(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	blocking, _ := holdState(rows, now)
+	return len(blocking) > 0, nil
 }
 
 // HoldOpen reports, outside any transaction, whether a launch on t would still be refused, and until when. Control
