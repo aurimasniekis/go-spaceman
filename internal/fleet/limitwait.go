@@ -603,6 +603,7 @@ func (svc *Service) LimitWaitsDue(ctx context.Context) (int, error) {
 	n, err = svc.expireHolds(ctx, now)
 	done += n
 	errs = append(errs, err)
+	errs = append(errs, svc.closePassedHolds(ctx, now))
 	return done, errors.Join(errs...)
 }
 
