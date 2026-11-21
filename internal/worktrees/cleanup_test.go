@@ -164,7 +164,7 @@ func TestNotifyCleanupContent(t *testing.T) {
 	if m.from != "system" || m.to != "control" || m.kind != "notification" || m.subject != CleanupMessageSubject || !strings.HasPrefix(m.dedup, "worktree-cleanup:14d:") {
 		t.Fatalf("message %+v", m)
 	}
-	for _, want := range []string{"3 worktrees", "1 of them finished", "oldest for 10 days", "1 were not created by a SpaceMan run", "once every 14 days",
+	for _, want := range []string{"3 worktrees", "1 of them finished", "oldest for 10 days", "1 were not created by a SpaceMan run", "once per 14-day period",
 		"spaceman_worktrees_list", "spaceman_worktrees_prune", "spaceman_worktree_remove", "Nothing has been removed"} {
 		if !strings.Contains(m.body, want) {
 			t.Errorf("body lacks %q:\n%s", want, m.body)
@@ -174,6 +174,26 @@ func TestNotifyCleanupContent(t *testing.T) {
 		if strings.Contains(m.body, leak) {
 			t.Errorf("body names %q", leak)
 		}
+	}
+}
+
+// A finished worktree whose last removal was refused at its current HEAD is not counted: control is not asked to tidy
+// what the node will refuse again. With nothing else finished there is no message; a later answer that is no refusal
+// brings it back.
+func TestNotifyCleanupLeavesOutRefusedWorktrees(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 20 * time.Millisecond
+	f.withMessages()
+	pruneAndAnswer(t, f, "spaceman-tsk_1", proto.WorktreeRefused, "dirty", "")
+	if sum, err := f.svc.CleanupSummary(f.ctx, "spc_a"); err != nil || sum.Finished != 0 || sum.Total != 3 {
+		t.Fatalf("summary %+v, err %v", sum, err)
+	}
+	if sent, err := f.svc.NotifyCleanup(f.ctx, "spc_a", 7); err != nil || sent {
+		t.Fatalf("only a refused worktree is finished: %v %v", sent, err)
+	}
+	pruneAndAnswer(t, f, "spaceman-tsk_1", proto.WorktreeFailed, "", "bbbb")
+	if sent, err := f.svc.NotifyCleanup(f.ctx, "spc_a", 7); err != nil || !sent {
+		t.Fatalf("after a later answer that was not a refusal: %v %v", sent, err)
 	}
 }
 

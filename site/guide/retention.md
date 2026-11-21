@@ -35,10 +35,10 @@ owner task, those with a failed or open task (or a task without a finish time) a
 left alone. A refused worktree is tried again on the next pass. The pass's count `worktrees` is the number removed.
 Other limits on the same page stay editable by the space's operators.
 
-The same pass also sends each space's control a message asking it to tidy the space's repositories, at most once every
-`limits.worktree_cleanup_message_days` days (7 by default, 0 never; any space can override it, and it needs no
-`retention:write`, because the message removes nothing). It is sent only when the space has a finished worktree, once per
-period even across restarts, and counts nothing in the pass's `deleted` counts. See
+The same pass also sends each space's control a message asking it to tidy the space's repositories, once per
+`limits.worktree_cleanup_message_days`-day period when that limit is above 0 (it is 0, never, by default; set it to 7 for
+a weekly message; any space can override it, and it needs no `retention:write`, because the message removes nothing).
+It is sent only when the space has a finished worktree that the node has not refused, once per period even across restarts, and counts nothing in the pass's `deleted` counts. See
 [Repositories](/guide/repositories#the-weekly-cleanup-message).
 
 Uploads that no item ever used are still collected after a day by the hourly attachment collection, whatever the

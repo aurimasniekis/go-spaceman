@@ -198,8 +198,9 @@ Every request and every answer is an audit event of the target `worktree_removal
    the run ends: SpaceMan never deletes a checkout by itself unless you turn the automatic cleanup on.
 2. When the owning run has ended and every task of it is done or cancelled, the worktree counts as **finished**. Its age
    is counted from the later of the run's end and the tasks' latest finish time.
-3. Every `worktree_cleanup_message_days` days (7 by default), control gets a message (see below) with how many worktrees are finished. Control decides what to
-   remove with the three tools above.
+3. If you turn the weekly message on (`worktree_cleanup_message_days`, off by default), control gets a message (see
+   below) once per period with how many worktrees are finished. Control decides what to remove with the three tools
+   above.
 4. If you set `worktree_retention_days`, the daily retention pass also removes finished worktrees that are at least that
    old, without anyone asking.
 
@@ -222,13 +223,15 @@ The installation default is `limits.worktree_retention_days` in the configuratio
 
 ### The weekly cleanup message
 
-Once every `worktree_cleanup_message_days` days (7 by default), the daily pass sends the space's control a message that
-asks it to tidy the repositories. It says how many worktrees there are, how many of them are finished, how old the oldest
+Once per `worktree_cleanup_message_days`-day period, the daily pass sends the space's control a message that
+asks it to tidy the repositories. It says how many worktrees there are, how many of them are finished (not counting those the node already refused at their current state), how old the oldest
 finished one is and how many no run created, and points at `spaceman_worktrees_list` and `spaceman_worktrees_prune`.
 It names no worktree and removes nothing, but it is work waiting for control, so with `control_autostart` on it starts the space's control when none is running. It is sent only to active spaces, is skipped when no worktree is finished or the report is from an earlier node, and sent once per period even
-when central restarts. The counts come from the node's last repository report. To turn it off for a space:
+when central restarts. The counts come from the node's last repository report. The message is off (`0`) until you turn it on. To get it weekly for a space (7 days), or for every space through
+`limits.worktree_cleanup_message_days` in the configuration file, and to turn it off again:
 
 ```sh
+spaceman limits set --space payments --set worktree_cleanup_message_days=7
 spaceman limits set --space payments --set worktree_cleanup_message_days=0
 ```
 

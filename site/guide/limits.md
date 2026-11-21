@@ -29,7 +29,7 @@ it comes from and where SpaceMan enforces it.
 | Export size (`export_max_bytes`) | 2 GiB | 1 MiB–64 GiB | one space export archive | space export |
 | Recording, transcript, attachment and finished human-action retention (`retention_*_days`) | kept (0) | 0–36,500 days | how long central keeps them | the daily retention pass ([Retention and export](/guide/retention)) |
 | Worktree retention (`worktree_retention_days`) | off (0) | 0–36,500 days | how long after its work finished a worktree SpaceMan created may be pruned: every task of its run done or cancelled and the run ended, counted from the later of the run's end and the tasks' latest finish time (never for failed or open tasks, a task without a finish time, or worktrees without an owner task); the daily retention pass asks the node to remove them, at most 10 per space and 50 per pass, and the node refuses any that are dirty, unpushed or in use | daily pass ([Retention and export](/guide/retention)) |
-| Worktree cleanup message (`worktree_cleanup_message_days`) | 7 | 0–365 (0: never) | days between the messages that ask the space's control to tidy its repositories with `spaceman_worktrees_list` and `spaceman_worktrees_prune`; sent only when a finished worktree exists, removes nothing itself and needs no `retention:write` | daily retention pass ([Repositories](/guide/repositories#the-weekly-cleanup-message)) |
+| Worktree cleanup message (`worktree_cleanup_message_days`) | 0 | 0–365 (0: never) | days between the messages that ask the space's control to tidy its repositories with `spaceman_worktrees_list` and `spaceman_worktrees_prune`; set it to 7 to get it weekly; sent only when a finished worktree exists that the node has not refused, removes nothing itself and needs no `retention:write` | daily retention pass ([Repositories](/guide/repositories#the-weekly-cleanup-message)) |
 | Start control on new work (`control_autostart`) | on (1) | 0 off, 1 on | whether work waiting for control starts the space's control role ([Control](/guide/control#starting-and-stopping-on-its-own)) | control supervisor |
 | Stop idle control (`control_idle_stop_minutes`) | 30 | 0–10,080 (0: never) | how long control sits idle before it is stopped | control supervisor |
 | Control watchdog (`control_watchdog_minutes`) | 15 | 0–1,440 (0: off) | how long work may wait for a live, idle control that does nothing before SpaceMan types a reminder into its terminal ([control watchdog](/guide/control#the-control-watchdog)) | control watchdog |
@@ -128,7 +128,7 @@ limits:
   worker_start_watchdog_minutes: 10  # tell control about a worker whose program never connected to SpaceMan (0: off)
   worker_idle_watchdog_minutes: 10   # remind an idle worker whose task is still running, then tell control (0: off)
   worktree_retention_days: 0         # remove worktrees of finished work after this many days (0: never)
-  worktree_cleanup_message_days: 7   # ask control to tidy its worktrees every 7 days (0: never)
+  worktree_cleanup_message_days: 0   # ask control to tidy its worktrees every this many days, e.g. 7 (0: never)
 ```
 
 - `GET /api/v1/spaces/{space_id}/limits`: every limit with its value, default, override and source, the related limits

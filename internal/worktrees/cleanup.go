@@ -26,7 +26,7 @@ const CleanupMessageSubject = "Tidy this space's repositories"
 // CleanupSummary is what the cleanup message says about a space's worktrees.
 type CleanupSummary struct {
 	Total    int // worktrees directly inside worktrees/
-	Finished int // owned worktrees whose run ended and whose tasks are all done or cancelled (spaceman_worktrees_prune would try them)
+	Finished int // owned worktrees whose run ended and whose tasks are all done or cancelled, less those whose last removal was refused at their current HEAD
 	Unowned  int // worktrees no SpaceMan run created: never pruned, only removed on request
 	// OldestDays is the age in whole days of the oldest finished worktree, counted from the later of its run's end and
 	// its tasks' latest finish time.
@@ -45,12 +45,21 @@ func (svc *Service) CleanupSummary(ctx context.Context, spaceID string) (Cleanup
 		return sum, nil // the report is from the space's earlier node: nothing is said about worktrees that may be gone
 	}
 	now := svc.clk.Now()
+	// A worktree whose last removal the node refused at its current HEAD stays refused until it changes: it is not work
+	// for control to be asked about (the same lookup the automatic pass orders by).
+	refused, err := svc.refusedHeads(ctx, spaceID, now.AddDate(0, 0, -MinRefusalWindowDays))
+	if err != nil {
+		return sum, err
+	}
 	for _, e := range l.Worktrees {
 		sum.Total++
 		if !e.Owned {
 			sum.Unowned++
 		}
 		if !e.Prunable {
+			continue
+		}
+		if h, ok := refused[[2]string{e.Repo, e.Name}]; ok && h != "" && h == e.Head {
 			continue
 		}
 		sum.Finished++
@@ -67,9 +76,9 @@ func cleanupKey(now time.Time, every int64) string {
 	return fmt.Sprintf("worktree-cleanup:%dd:%d", every, now.Unix()/86400/every)
 }
 
-// NotifyCleanup sends the space's control the message asking it to tidy the space's repositories, at most once every
+// NotifyCleanup sends the space's control the message asking it to tidy the space's repositories, once per period of
 // every days (ADR-0107 decision 5): nothing when every is 0 or less, when this period's message was already sent
-// (checked first, with one read, so a daily pass costs a space no listing), or when the space has no finished worktree.
+// (checked first, with one read, so a daily pass costs a space no listing), or when the space has no finished worktree that was not refused at its current HEAD.
 // A space that is not active, one whose node reported no worktree and one whose report is from an earlier node get none.
 // The message only asks: nothing is removed by it. It is work waiting for control, so with control_autostart on it
 // starts the space's control when none runs. It reports whether a message was sent.
@@ -115,7 +124,7 @@ func hasWorktrees(ov *repos.Overview) bool {
 
 func cleanupBody(sum CleanupSummary, every int64) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "SpaceMan sends this reminder at most once every %d days. Nothing has been removed.\n\n", every)
+	fmt.Fprintf(&b, "SpaceMan sends this reminder once per %d-day period. Nothing has been removed.\n\n", every)
 	fmt.Fprintf(&b, "- %d worktrees in this space's repositories, %d of them finished (the owning run ended and every task of it is done or cancelled), the oldest for %d days.\n",
 		sum.Total, sum.Finished, sum.OldestDays)
 	fmt.Fprintf(&b, "- %d were not created by a SpaceMan run; they are never pruned and are removed only when you ask for that one.\n\n", sum.Unowned)

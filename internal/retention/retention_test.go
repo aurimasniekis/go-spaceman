@@ -474,8 +474,8 @@ func TestPassPrunesWorktreesOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
-// The cleanup message step runs for every space whose worktree_cleanup_message_days is above 0 (default 7), with that
-// space's days; a space that sets 0 opts out, and clearing the override brings the default back.
+// The cleanup message step runs for every space whose worktree_cleanup_message_days is above 0 (off by default; the fixture sets 7), with that
+// space's days; the default 0 asks none, and a space that sets 0 again opts out.
 func TestPassNotifiesWorktreeCleanupUnlessOptedOut(t *testing.T) {
 	f := newFx(t, 0)
 	got := map[string][]int64{}
@@ -483,7 +483,14 @@ func TestPassNotifiesWorktreeCleanupUnlessOptedOut(t *testing.T) {
 		got[space] = append(got[space], days)
 		return true, nil
 	}
-	_, err := f.lim.Set(f.ctx, admin, "spc_b", 0, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 0}})
+	_, err := f.svc.Run(f.ctx, admin) // the default is 0: no space is asked
+	must(t, err)
+	if len(got) != 0 {
+		t.Fatalf("calls with the default: %v", got)
+	}
+	_, err = f.lim.Set(f.ctx, admin, "spc_a", 0, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 7}})
+	must(t, err)
+	_, err = f.lim.Set(f.ctx, admin, "spc_b", 0, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 0}})
 	must(t, err)
 	_, err = f.svc.Run(f.ctx, admin)
 	must(t, err)
@@ -492,7 +499,7 @@ func TestPassNotifiesWorktreeCleanupUnlessOptedOut(t *testing.T) {
 	}
 	_, err = f.lim.Set(f.ctx, admin, "spc_b", 1, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 3}})
 	must(t, err)
-	_, err = f.lim.Set(f.ctx, admin, "spc_a", 0, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 0}})
+	_, err = f.lim.Set(f.ctx, admin, "spc_a", 1, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 0}})
 	must(t, err)
 	_, err = f.svc.Run(f.ctx, admin)
 	must(t, err)
@@ -505,6 +512,10 @@ func TestPassNotifiesWorktreeCleanupUnlessOptedOut(t *testing.T) {
 func TestPassWorktreeCleanupNoticeErrorContinues(t *testing.T) {
 	f := newFx(t, 0)
 	var seen []string
+	for _, sp := range []string{"spc_a", "spc_b"} {
+		_, err := f.lim.Set(f.ctx, admin, sp, 0, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 7}})
+		must(t, err)
+	}
 	f.svc.o.NotifyWorktreeCleanup = func(_ context.Context, space string, _ int64) (bool, error) {
 		seen = append(seen, space)
 		return false, errors.New("boom")

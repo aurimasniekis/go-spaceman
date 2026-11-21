@@ -8399,10 +8399,11 @@
      or changed file, the HEAD re-read catches most commits, and a commit made on the branch moves the kept branch
      ref; only a commit on a detached HEAD in the last instant would be left to git's garbage collection. The mark also
      knows only the folder each run launched in: a run that works in another worktree through its own shell is not
-     seen. Only clean, pushed work can be removed under it, so that disrupts the run but loses nothing. Known limit: the operating system resolves the folder
-     a run's process starts in when it execs the harness, after the launch's last check and record; a symlink in the
-     space folder swapped in that remaining window can still start a process in a worktree a removal claims later. The
-     same holds: only clean, pushed work is ever removed, so it disrupts that run and loses nothing. Lock order: a
+     seen. Only clean, pushed work can be removed under it, so that disrupts the run but loses nothing. Known limit:
+     the operating system resolves the folder a run's process starts in when it execs the harness, after the launch's
+     last check and record; a symlink in the space folder swapped in that remaining window can still start a process
+     in a worktree a removal claims later. The same holds: only clean, pushed work is ever removed, so it disrupts
+     that run and loses nothing. Lock order: a
      launch holds the space's guard lock, then the worktree lock; a removal takes the repository lock only around its
      fetch, the worktree lock only inside the claim, and never the guard lock. Callers of the removal must hold
      neither. Alternative considered: a bounded wait for the lock in the launch (fail after a few seconds). It keeps
@@ -8432,16 +8433,17 @@
      decision 4, WL-4, reads that limit) and the node checks every worktree again. It is not `git worktree prune`; the
      node's removal already drops stale entries.
      **The scheduled message (implemented, WL-5):** the daily retention pass, for each space whose limit
-     `worktree_cleanup_message_days` is above 0 (default 7; a space sets 0 to opt out, the installation default is
+     `worktree_cleanup_message_days` is above 0 (off by default, 0, opt-in: set 7 for a weekly message; the installation default is
      `limits.worktree_cleanup_message_days`; no schema change), asks `worktrees.Service.NotifyCleanup` to send the
      space's control one system notification asking it to tidy its repositories with these tools. The dedup key is
      `worktree-cleanup:<days>d:<n>`, with n the number of whole periods since the Unix epoch, so a second pass, a
-     restart or a second central sends at most one message per period (the key is checked with one read before
+     restart or a second central sends one message per period at most (the key is checked with one read before
      the listing is computed, so a space that has its message costs the daily pass one read, and a space whose node
      reported no worktree only the repository report read). It is sent only to active spaces and is skipped when the
-     space has no finished worktree or its report is from an earlier node (nothing to tidy); it is retried on the next
+     space has no finished worktree (one whose last removal the node refused at its current HEAD, found with the
+     same lookup the automatic pass orders by, is not counted) or its report is from an earlier node (nothing to tidy); it is retried on the next
      daily pass in the same period. It is work waiting for control, so with `control_autostart` on it starts the
-     space's control when none is running; a space sets the limit to 0 where that is unwanted.
+     space's control when none is running; a space keeps the limit at 0 where that is unwanted.
      The summary comes from one `List` (the node's last report joined with the newest 1000 runs): worktrees in total,
      finished ones (what `spaceman_worktrees_prune` would try), the oldest finished one's age in days, and worktrees
      no run created. It names no worktree, branch or path and does not say what was refused before (that would need

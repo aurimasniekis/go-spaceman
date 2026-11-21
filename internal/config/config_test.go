@@ -469,9 +469,9 @@ func TestRecordingReconcileIntervalBounds(t *testing.T) {
 	}
 }
 
-// worktree_cleanup_message_days (ADR-0107 decision 5): 7 by default, 0 turns the message off, at most 365.
+// worktree_cleanup_message_days (ADR-0107 decision 5): 0 (off) by default, 7 or any value up to 365 turns it on, at most 365.
 func TestWorktreeCleanupMessageLimitConfig(t *testing.T) {
-	if d := Default(); d.Limits.WorktreeCleanupMessageDays != 7 || d.LimitValues()["worktree_cleanup_message_days"] != 7 {
+	if d := Default(); d.Limits.WorktreeCleanupMessageDays != 0 || d.LimitValues()["worktree_cleanup_message_days"] != 0 {
 		t.Fatalf("default = %d", d.Limits.WorktreeCleanupMessageDays)
 	}
 	p := writeFile(t, "public_url: https://spaceman.example.com\nlimits:\n  worktree_cleanup_message_days: 0\n")
