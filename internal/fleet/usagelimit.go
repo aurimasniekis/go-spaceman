@@ -307,7 +307,7 @@ func (svc *Service) clearHoldsTx(ctx context.Context, tx *store.Tx, r db.Run, cl
 		if err != nil {
 			return err
 		}
-		if scope == LimitScopeAccount && !(u.ResetsAt.Valid && u.ResetsAt.Int64 > grace) {
+		if scope == LimitScopeAccount && (!u.ResetsAt.Valid || u.ResetsAt.Int64 <= grace) {
 			if err := svc.clearUnknownAfterResetTx(ctx, tx, rows, u); err != nil {
 				return err
 			}
