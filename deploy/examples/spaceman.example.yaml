@@ -60,6 +60,7 @@ backups:
 #   retention_transcripts_days: 0
 #   retention_attachments_days: 0     # attachments of finished items only
 #   retention_human_actions_days: 0   # finished human actions only
+#   worktree_retention_days: 0        # worktrees of finished tasks (ADR-0107); 0 never prunes
 #   export_max_bytes: 2147483648      # one space export archive (2 GiB)
 
 # Installation-wide audit retention (0 keeps the audit log forever; otherwise 30 or more days).

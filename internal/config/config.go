@@ -169,6 +169,10 @@ type LimitsConfig struct {
 	// they finished, with their comments and notifications, unless an open task, an open follow-up or an undelivered
 	// response still refers to them (0: keep).
 	RetentionHumanActionsDays int64 `yaml:"retention_human_actions_days"`
+	// WorktreeRetentionDays is how many days after its owning task finished a worktree SpaceMan created may be pruned
+	// (ADR-0107; 0: never, the default; at most 36500). The pruning that uses it is a follow-up: until it lands the value
+	// is stored and shown, and nothing is removed.
+	WorktreeRetentionDays int64 `yaml:"worktree_retention_days"`
 	// RecordingQuotaBytes bounds one run's terminal recording on the node (1 MiB-64 GiB, default 512 MiB). When it is
 	// reached the recording ends with a truncation record; the run is unaffected.
 	RecordingQuotaBytes int64 `yaml:"recording_quota_bytes"`
