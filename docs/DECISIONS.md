@@ -8199,16 +8199,23 @@
        resolved `worktrees` folder; git lists it as one of that repository's linked worktrees (never the main one) and
        not locked. A worktree outside `worktrees/` is never removed by SpaceMan; it is only reported.
      - **Remote** (`no_remote`, `fetch_failed`): the repository's configured URL (with its SpaceMan key, ADR-0044) is
-       fetched into the tracking refs of the remote that has that URL, with `--prune` for that remote only, so a branch
-       deleted on the remote stops counting as pushed. The URL in the repository's own configuration is never used
+       fetched (as a sync fetches: tracking refs only, nothing pruned), so the remote's commits are in the repository,
+       and then asked for its branches (`git ls-remote --heads`). Only the commits the remote itself lists count:
+       refs in the repository (tracking refs, symbolic refs) are agent-writable and never vouch for a commit, and a
+       branch deleted on the remote stops counting at once. The URL in the repository's own configuration is never used
        (agents can change it), so an unconfigured repository's worktrees are never removed by this path. A failed
-       fetch refuses: whether the remote has the work is then not known.
+       fetch or listing refuses: whether the remote has the work is then not known.
      - **No run** (`live_run`): no live or launching run of the space works in the worktree, in a folder inside it or
-       in a folder that contains it (decision 2). A live run whose work folder is not recorded counts as using every
-       worktree.
-     - **Clean** (`dirty`, `untracked`): `git status --porcelain --untracked-files=all` shows nothing: no changed or
-       staged tracked file and no untracked file that is not ignored. Ignored files (build output) go with the folder.
-     - **Pushed** (`unpushed`): HEAD is a commit and `git rev-list HEAD --not --remotes=<remote>` is empty.
+       in a folder that contains it (decision 2). A live run whose work folder is not recorded, or recorded as anything
+       but an absolute path, counts as using every worktree.
+     - **Clean** (`dirty`, `untracked`): no changed or staged tracked file (`git status`); no tracked file git was
+       told not to look at (assume-unchanged, skip-worktree, sparse checkout: their edits are hidden from `git status`
+       and from `git worktree remove`); no untracked file, judged by the tree's `.gitignore` files only (the
+       repository's `info/exclude` and `core.excludesFile` are agent-writable and could hide anything); and no git
+       repository anywhere below the top, ignored or not. Files the tree's own `.gitignore` ignores (build output) go
+       with the folder.
+     - **Pushed** (`unpushed`): HEAD is a commit and `git rev-list HEAD --not <the remote's branch tips>` is empty.
+       Right before the removal HEAD and the folder's resolved path are read again and must not have changed.
      - Any git error refuses (`git_error`): unsure means not removed.
 
      Then `git worktree remove <path>` (never `--force`; git refuses an unclean or locked worktree by itself, a
@@ -8223,8 +8230,12 @@
      that is journaled but has not recorded its folder yet (still launching), or that an older agent launched, blocks
      every removal in its space until it ends. What the lock cannot cover is a process SpaceMan did not start (a
      person's shell) writing in the worktree during the removal: git's own clean check catches a new or changed file,
-     and a commit made on the branch moves the kept branch ref; only a commit on a detached HEAD in that instant
-     would be left to git's garbage collection.
+     the HEAD re-read catches most commits, and a commit made on the branch moves the kept branch ref; only a commit
+     on a detached HEAD in the last instant would be left to git's garbage collection. The lock also knows only the
+     folder each run launched in: a run that works in another worktree through its own shell is not seen. Only clean,
+     pushed work can be removed under it, so that disrupts the run but loses nothing. Lock order: a launch holds the
+     space's guard lock, then the worktree lock; a removal takes the repository lock only around its fetch, before the
+     worktree lock, and never the guard lock. Callers of the removal must hold neither.
   3. **How a worktree is judged.** Central joins the node's report with its own records: the newest run launched with
      that repository and branch is the worktree's owning run, and that run's task (if any) its owning task. A worktree
      with no such run (made by hand, or by an agent's shell) is **unowned**: it is listed with its state, never

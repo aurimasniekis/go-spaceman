@@ -71,9 +71,10 @@ type worktreeRemoval struct {
 
 // removalHooks are the parts of a removal that need the agent.
 type removalHooks struct {
-	// fetch refreshes the repository's remote-tracking refs of one remote from the configured URL, dropping the refs of
-	// branches the remote no longer has, and returns that remote's name. An error refuses the removal.
-	fetch func(ctx context.Context, repoDir string) (remote string, err error)
+	// fetch fetches the remote's branches from the configured URL (so their commits are in the repository) and returns
+	// the commits the remote's branches point at, as the remote itself lists them (git ls-remote), never as refs in the
+	// repository, which agents can write. An error refuses the removal.
+	fetch func(ctx context.Context, repoDir string) (tips []string, err error)
 	// lock takes the space's worktree lock (launches take it while they prepare a worktree and record their work
 	// folder) and returns its unlock.
 	lock func() func()
@@ -140,7 +141,7 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 	if h.fetch == nil {
 		return out, refuse(RefuseNoRemote, "no remote to check against")
 	}
-	remote, err := h.fetch(ctx, repo)
+	tips, err := h.fetch(ctx, repo)
 	if err != nil {
 		var r *WorktreeRefusal
 		if errors.As(err, &r) {
@@ -148,8 +149,10 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 		}
 		return out, refuse(RefuseFetch, "fetch failed, so whether the remote has the work is not known: %s", truncateStr(err.Error(), 300))
 	}
-	if !validRef(remote) || strings.Contains(remote, "/") {
-		return out, refuse(RefuseFetch, "invalid remote name")
+	for _, t := range tips {
+		if !isObjectID(t) {
+			return out, refuse(RefuseFetch, "the remote listed an invalid commit")
+		}
 	}
 
 	// From here on no launch prepares a worktree or records its work folder in this space until the removal is done.
@@ -160,26 +163,42 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 	} else if who != "" {
 		return out, refuse(RefuseLiveRun, "%s", who)
 	}
-	st, err := g.run(ctx, realDir, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
-	if err != nil {
-		return out, refuse(RefuseGit, "git status: %s", truncateStr(err.Error(), 300))
-	}
-	if dirty, untracked, paths := statusCounts(st); dirty > 0 {
-		return out, refuse(RefuseDirty, "%d changed file(s), e.g. %s", dirty, strings.Join(paths, ", "))
-	} else if untracked > 0 {
-		return out, refuse(RefuseUntracked, "%d untracked file(s), e.g. %s", untracked, strings.Join(paths, ", "))
+	if err := cleanTree(ctx, g, realDir); err != nil {
+		return out, err
 	}
 	head, err := g.run(ctx, realDir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if head = strings.TrimSpace(head); err != nil || head == "" {
 		return out, refuse(RefuseUnpushed, "the worktree has no commit checked out")
 	}
 	out.Head = head
-	ahead, err := g.run(ctx, repo, "rev-list", "-n", "1", head, "--not", "--remotes="+remote)
+	if len(tips) == 0 {
+		return out, refuse(RefuseUnpushed, "the remote has no branches")
+	}
+	seen := map[string]bool{}
+	args := []string{"rev-list", "-n", "1", head, "--not"}
+	for _, t := range tips {
+		if !seen[t] {
+			seen[t] = true
+			args = append(args, t)
+		}
+	}
+	ahead, err := g.run(ctx, repo, args...)
 	if err != nil {
 		return out, refuse(RefuseGit, "git rev-list: %s", truncateStr(err.Error(), 300))
 	}
 	if strings.TrimSpace(ahead) != "" {
-		return out, refuse(RefuseUnpushed, "HEAD %s has commits the remote %s does not have", short(head), remote)
+		return out, refuse(RefuseUnpushed, "HEAD %s has commits the remote's branches do not have", short(head))
+	}
+	// Right before the removal: the folder is still the one checked and HEAD has not moved (a process SpaceMan did not
+	// start could commit or swap the folder meanwhile).
+	if fi, err := os.Lstat(dir); err != nil || fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
+		return out, refuse(RefuseOutside, "worktrees/%s changed during the removal", req.Name)
+	}
+	if again, err := filepath.EvalSymlinks(dir); err != nil || again != realDir {
+		return out, refuse(RefuseOutside, "worktrees/%s changed during the removal", req.Name)
+	}
+	if again, err := g.run(ctx, realDir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil || strings.TrimSpace(again) != head {
+		return out, refuse(RefuseUnpushed, "HEAD moved during the removal")
 	}
 	// Never --force: git refuses by itself an unclean or locked worktree, a second check of what is above.
 	if _, err := g.run(ctx, repo, "worktree", "remove", realDir); err != nil {
@@ -189,6 +208,76 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 		return out, fmt.Errorf("the worktree was removed but git worktree prune failed: %w", err)
 	}
 	return out, nil
+}
+
+// cleanTree refuses a worktree with anything of its own that removing the folder would lose:
+//   - changed or staged tracked files (git status, untracked files aside);
+//   - tracked files git was told not to look at (assume-unchanged, skip-worktree, sparse checkout): their edits are hidden
+//     from git status and from git worktree remove;
+//   - untracked files, judged by the tree's .gitignore files only: the repository's info/exclude and core.excludesFile
+//     are ignored here, because agents can write them to hide any file;
+//   - a git repository anywhere below the top (ignored or not), which may hold its own unpushed work.
+func cleanTree(ctx context.Context, g *projectGit, dir string) error {
+	st, err := g.run(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none")
+	if err != nil {
+		return refuse(RefuseGit, "git status: %s", truncateStr(err.Error(), 300))
+	}
+	if dirty, _, paths := statusCounts(st); dirty > 0 {
+		return refuse(RefuseDirty, "%d changed file(s), e.g. %s", dirty, strings.Join(paths, ", "))
+	}
+	tagged, err := g.run(ctx, dir, "ls-files", "-v", "-z")
+	if err != nil {
+		return refuse(RefuseGit, "git ls-files: %s", truncateStr(err.Error(), 300))
+	}
+	for e := range strings.SplitSeq(tagged, "\x00") {
+		if len(e) > 2 && (e[0] == 'S' || (e[0] >= 'a' && e[0] <= 'z')) {
+			return refuse(RefuseDirty, "%s is hidden from git status (assume-unchanged, skip-worktree or sparse checkout)", e[2:])
+		}
+	}
+	others, err := g.run(ctx, dir, "ls-files", "-z", "--others", "--exclude-per-directory=.gitignore")
+	if err != nil {
+		return refuse(RefuseGit, "git ls-files: %s", truncateStr(err.Error(), 300))
+	}
+	var untracked []string
+	for p := range strings.SplitSeq(others, "\x00") {
+		if p != "" {
+			untracked = append(untracked, p)
+		}
+	}
+	if len(untracked) > 0 {
+		return refuse(RefuseUntracked, "%d untracked file(s), e.g. %s", len(untracked), strings.Join(untracked[:min(len(untracked), 5)], ", "))
+	}
+	var nested string
+	werr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Name() == ".git" && p != filepath.Join(dir, ".git") {
+			nested = p[len(dir)+1:]
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if werr != nil {
+		return refuse(RefuseGit, "reading the worktree: %s", truncateStr(werr.Error(), 300))
+	}
+	if nested != "" {
+		return refuse(RefuseUntracked, "a git repository inside the worktree (%s) may hold work of its own", nested)
+	}
+	return nil
+}
+
+// isObjectID reports whether s is a full SHA-1 or SHA-256 object name.
+func isObjectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 type listedTree struct {
@@ -260,10 +349,28 @@ func (a *Agent) recordWorkdir(runID, space, work string) error {
 		p = r
 	}
 	tmp := filepath.Join(rd, workdirFile+".tmp")
-	if err := os.WriteFile(tmp, []byte(p), 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // a fixed name in the run's own directory
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(rd, workdirFile))
+	_, err = f.WriteString(p)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, filepath.Join(rd, workdirFile)); err != nil {
+		return err
+	}
+	if d, err := os.Open(rd); err == nil { //nolint:gosec // the run's own directory
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 // worktreeInUse names the space's live or launching run that works in dir, in a folder inside it, or in a folder that
@@ -285,7 +392,11 @@ func (a *Agent) worktreeInUse(ctx context.Context, spaceID, dir string) (string,
 		if err != nil {
 			return "", err
 		}
-		if w := filepath.Clean(string(b)); within(w, dir) || within(dir, w) {
+		w := strings.TrimSpace(string(b))
+		if w == "" || !filepath.IsAbs(w) {
+			return fmt.Sprintf("live run %s has an unreadable work folder record", r.RunID), nil
+		}
+		if w = filepath.Clean(w); within(w, dir) || within(dir, w) {
 			return fmt.Sprintf("live run %s works in it", r.RunID), nil
 		}
 	}
@@ -306,29 +417,40 @@ func (a *Agent) removeWorktree(ctx context.Context, spaceID, space string, src p
 	if err != nil {
 		return removedWorktree{}, refuse(RefuseGit, "%s", err.Error())
 	}
-	fetch := func(ctx context.Context, repoDir string) (string, error) {
+	fetch := func(ctx context.Context, repoDir string) ([]string, error) {
 		if src.URL == "" {
-			return "", refuse(RefuseNoRemote, "repository %s has no configured URL to check the work against", src.Path)
+			return nil, refuse(RefuseNoRemote, "repository %s has no configured URL to check the work against", src.Path)
 		}
 		if err := proto.ValidateRepoURL(src.URL, true); err != nil {
-			return "", refuse(RefuseNoRemote, "repository %s: url %s", src.Path, err.Error())
+			return nil, refuse(RefuseNoRemote, "repository %s: url %s", src.Path, err.Error())
 		}
 		auth, err := newRepoAuth(ctx, src)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		defer auth.Close()
 		l := a.repoLock(spaceID)
 		l.Lock()
 		defer l.Unlock()
 		name := g.remoteName(ctx, repoDir, src.URL)
-		// --prune drops only this remote's tracking refs of branches the remote no longer has, so a branch deleted on
-		// the remote stops counting as pushed. Local branches and the work tree are untouched.
-		if _, err := g.runEnv(ctx, repoDir, fetchTimeout, auth.Env(), "fetch", "--quiet", "--no-tags", "--prune", "--", src.URL,
+		// The fetch brings the remote's commits into the repository (as fetchSource does: tracking refs only, nothing
+		// pruned); the remote's own list of its branches then says what it has. A branch pushed after the fetch names a
+		// commit the repository lacks, and the check fails closed on it.
+		if _, err := g.runEnv(ctx, repoDir, fetchTimeout, auth.Env(), "fetch", "--quiet", "--no-tags", "--", src.URL,
 			"+refs/heads/*:refs/remotes/"+name+"/*"); err != nil {
-			return "", sshError(err, src.SSHKey != "")
+			return nil, sshError(err, src.SSHKey != "")
 		}
-		return name, nil
+		ls, err := g.runEnv(ctx, repoDir, lsRemoteBudget, auth.Env(), "ls-remote", "--heads", "--", src.URL)
+		if err != nil {
+			return nil, sshError(err, src.SSHKey != "")
+		}
+		var tips []string
+		for ln := range strings.SplitSeq(strings.TrimSpace(ls), "\n") {
+			if sha, _, ok := strings.Cut(ln, "\t"); ok {
+				tips = append(tips, sha)
+			}
+		}
+		return tips, nil
 	}
 	return removeWorktreeSafely(ctx, g, worktreeRemoval{Space: space, Repo: src.Path, Name: name}, removalHooks{
 		fetch: fetch,

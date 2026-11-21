@@ -177,7 +177,7 @@ func TestRemoveWorktreeSafelyRefusesUncleanTrees(t *testing.T) {
 }
 
 // ADR-0106: a HEAD the remote does not have is refused: a commit never pushed, and a pushed branch since deleted on the
-// remote (the fetch prunes its stale tracking ref, so it no longer counts).
+// remote (its stale tracking ref stays, but only the remote's own branch list counts).
 func TestRemoveWorktreeSafelyRefusesUnpushedWork(t *testing.T) {
 	e := newRmEnv(t)
 	dir := e.worktree(t, "spaceman/local", false)
@@ -221,7 +221,7 @@ func TestRemoveWorktreeSafelyFailsClosedWithoutAFetch(t *testing.T) {
 	// A fetch hook's own error is a fetch failure too.
 	g, _ := newProjectGit()
 	_, err = removeWorktreeSafely(context.Background(), g, worktreeRemoval{Space: e.space, Repo: "repos/api", Name: "spaceman-pushed"}, removalHooks{
-		fetch: func(context.Context, string) (string, error) { return "", errors.New("network down") },
+		fetch: func(context.Context, string) ([]string, error) { return nil, errors.New("network down") },
 		lock:  func() func() { return func() {} },
 		inUse: func(context.Context, string) (string, error) { return "", nil },
 	})
@@ -269,7 +269,7 @@ func TestRemoveWorktreeSafelyRefusesALiveRun(t *testing.T) {
 	dir2 := e.worktree(t, "spaceman/busy2", true)
 	g, _ := newProjectGit()
 	_, err = removeWorktreeSafely(context.Background(), g, worktreeRemoval{Space: e.space, Repo: "repos/api", Name: "spaceman-busy2"}, removalHooks{
-		fetch: func(context.Context, string) (string, error) { return "origin", nil },
+		fetch: func(context.Context, string) ([]string, error) { return nil, nil },
 		lock:  func() func() { return func() {} },
 		inUse: func(context.Context, string) (string, error) { return "", errors.New("journal unreadable") },
 	})
@@ -393,5 +393,96 @@ func TestRecordWorkdir(t *testing.T) {
 	id2 := e.liveRun(t, e.spaceID, filepath.Join(e.space, "work", "new"))
 	if b, _ := os.ReadFile(filepath.Join(e.a.runDir(id2), workdirFile)); string(b) != filepath.Join(realPath(e.space), "work", "new") {
 		t.Fatalf("recorded %q", b)
+	}
+}
+
+// ADR-0106 (review): edits git was told to hide (assume-unchanged, skip-worktree), untracked files hidden by the
+// repository's own exclude rules, and a git repository inside an ignored folder are all refused.
+func TestRemoveWorktreeSafelyRefusesHiddenWork(t *testing.T) {
+	e := newRmEnv(t)
+	dir := e.worktree(t, "spaceman/hidden", true)
+	for _, flag := range []string{"--assume-unchanged", "--skip-worktree"} {
+		gitRun(t, dir, "update-index", flag, "work.txt")
+		writeFile(t, filepath.Join(dir, "work.txt"), "hidden edit\n")
+		_, err := e.remove("spaceman-hidden")
+		wantRefused(t, err, RefuseDirty)
+		if b, _ := os.ReadFile(filepath.Join(dir, "work.txt")); string(b) != "hidden edit\n" {
+			t.Fatal("the hidden edit was lost")
+		}
+		gitRun(t, dir, "update-index", strings.Replace(flag, "--", "--no-", 1), "work.txt")
+		gitRun(t, dir, "checkout", "--", "work.txt")
+	}
+
+	// An exclude rule the repository's own configuration adds does not make an untracked file ignorable.
+	gd := gitRun(t, e.repo, "rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(e.repo, gd)
+	}
+	writeFile(t, filepath.Join(gd, "info", "exclude"), "*\n")
+	writeFile(t, filepath.Join(dir, "notes.md"), "mine\n")
+	_, err := e.remove("spaceman-hidden")
+	wantRefused(t, err, RefuseUntracked)
+	writeFile(t, filepath.Join(gd, "info", "exclude"), "")
+	if err := os.Remove(filepath.Join(dir, "notes.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A repository inside an ignored folder may hold its own unpushed work.
+	nested := filepath.Join(dir, "dep.log")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, nested, "init", "-q")
+	_, err = e.remove("spaceman-hidden")
+	wantRefused(t, err, RefuseUntracked)
+	mustExist(t, filepath.Join(nested, ".git"))
+}
+
+// ADR-0106 (review): refs in the repository can't vouch for a commit: a symbolic ref planted in the remote's namespace
+// pointing at the local branch does not make an unpushed HEAD pushed.
+func TestRemoveWorktreeSafelyIgnoresPlantedRefs(t *testing.T) {
+	e := newRmEnv(t)
+	dir := e.worktree(t, "spaceman/planted", false)
+	gitRun(t, e.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/spaceman/planted")
+	gitRun(t, e.repo, "update-ref", "refs/remotes/origin/fake", "refs/heads/spaceman/planted")
+	_, err := e.remove("spaceman-planted")
+	wantRefused(t, err, RefuseUnpushed)
+	mustExist(t, filepath.Join(dir, "work.txt"))
+}
+
+// ADR-0106 (review): a live run whose work folder record is empty or not absolute counts as using every worktree.
+func TestRemoveWorktreeSafelyRefusesAnUnreadableRecord(t *testing.T) {
+	e := newRmEnv(t)
+	dir := e.worktree(t, "spaceman/rec2", true)
+	for _, content := range []string{"", "  ", "worktrees/spaceman-rec2"} {
+		id := e.liveRun(t, e.spaceID, "")
+		if err := os.MkdirAll(e.a.runDir(id), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(e.a.runDir(id), workdirFile), content)
+		_, err := e.remove("spaceman-rec2")
+		wantRefused(t, err, RefuseLiveRun)
+		e.endRun(t, id)
+	}
+	mustExist(t, dir)
+	if _, err := e.remove("spaceman-rec2"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ADR-0106: a detached HEAD the remote has is removed; a detached commit of its own is refused.
+func TestRemoveWorktreeSafelyDetachedHead(t *testing.T) {
+	e := newRmEnv(t)
+	dir := e.worktree(t, "spaceman/det", true)
+	gitRun(t, dir, "checkout", "-q", "--detach")
+	writeFile(t, filepath.Join(dir, "x.txt"), "x\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-q", "-m", "detached")
+	_, err := e.remove("spaceman-det")
+	wantRefused(t, err, RefuseUnpushed)
+	gitRun(t, dir, "checkout", "-q", "--detach", "origin/spaceman/det")
+	got, err := e.remove("spaceman-det")
+	if err != nil || got.Branch != "" {
+		t.Fatalf("detached pushed HEAD: %+v %v", got, err)
 	}
 }
