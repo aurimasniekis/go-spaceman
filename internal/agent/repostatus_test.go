@@ -589,3 +589,52 @@ func TestRepoReportWorktreeStatusFailingRefreshGoesLast(t *testing.T) {
 		t.Fatalf("w1 and w2 must both be refreshed within three reports, w0 never: %v", refreshed)
 	}
 }
+
+// The allowance is spent by group: recently changed worktrees first, then idle ones with no usable counts, then the refresh
+// of old counts. groupOrderReport builds one of each (plus two cached ones: w0 is due a refresh, w1 is not) and runs a report
+// with the given allowance.
+func groupOrderReport(t *testing.T, limit int) proto.RepoCheck {
+	t.Helper()
+	a, space, _, check := statusFixture(t, 2, limit)
+	check()
+	check() // w0 and w1 are cached
+	repo := filepath.Join(space, "repos", "api")
+	idle := filepath.Join(space, "worktrees", "idle")
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "idle", idle)
+	age(t, idle, time.Now().Add(-10*24*time.Hour))
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "recent", filepath.Join(space, "worktrees", "recent"))
+	a.wtStatus.mu.Lock()
+	for k, v := range a.wtStatus.m {
+		if strings.HasSuffix(k, "/w0") {
+			v.at = time.Now().Add(-2 * repoStatusRefresh)
+			a.wtStatus.m[k] = v
+		}
+	}
+	a.wtStatus.mu.Unlock()
+	return check()
+}
+
+// With room for one status it goes to the recent worktree, ahead of the idle one and the cached one due a refresh.
+// With room for two, the idle one takes the second, ahead of the refresh.
+func TestRepoReportWorktreeStatusGroupOrder(t *testing.T) {
+	c := groupOrderReport(t, 1)
+	if w := wtByName(t, c, "recent"); w.Status != proto.WorktreeStatusFresh {
+		t.Fatalf("one status: the recent worktree must take it: %+v", w)
+	}
+	if w := wtByName(t, c, "idle"); w.Status != proto.WorktreeStatusUnchecked {
+		t.Fatalf("one status: the idle worktree must wait behind the recent one: %+v", w)
+	}
+	if w := wtByName(t, c, "w0"); w.Status != proto.WorktreeStatusCached {
+		t.Fatalf("one status: the cached worktree due a refresh must wait: %+v", w)
+	}
+	c = groupOrderReport(t, 2)
+	if w := wtByName(t, c, "recent"); w.Status != proto.WorktreeStatusFresh {
+		t.Fatalf("two statuses: the recent worktree must be checked: %+v", w)
+	}
+	if w := wtByName(t, c, "idle"); w.Status != proto.WorktreeStatusFresh {
+		t.Fatalf("two statuses: the idle worktree must take the second, ahead of the refresh: %+v", w)
+	}
+	if w := wtByName(t, c, "w0"); w.Status != proto.WorktreeStatusCached {
+		t.Fatalf("two statuses: the cached worktree due a refresh must wait: %+v", w)
+	}
+}

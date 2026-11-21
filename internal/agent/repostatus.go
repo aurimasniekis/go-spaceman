@@ -116,7 +116,6 @@ type wtJob struct {
 	stamp time.Time
 	ok    bool
 	tried time.Time // when a status was last attempted (zero: never), the fairness order
-	at    time.Time // when the cached counts were taken (refresh jobs)
 }
 
 func (a *Agent) newWtBudget() *wtBudget {
@@ -227,7 +226,6 @@ func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []pr
 				at := c.at
 				w.Dirty, w.Untracked, w.Status, w.StatusAt = c.dirty, c.untracked, proto.WorktreeStatusCached, &at
 				if now.Sub(c.at) > repoStatusRefresh {
-					j.at = c.at
 					b.refresh = append(b.refresh, j)
 				}
 				continue
