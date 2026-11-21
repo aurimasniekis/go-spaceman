@@ -532,7 +532,7 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   remote slows the report down. Worktrees are cleaned up automatically only for a space whose `worktree_retention_days` is above 0 (off by
   default): the daily retention pass asks the node to remove up to 10 per space and 50 per pass of those whose task is done
   or cancelled and whose run ended that long ago, through the node's safe-removal check (a dirty, unpushed or held one is
-  refused and stays; the next pass tries again, so a refused worktree is retried every day). Otherwise remove them with git
+  refused and stays; the next pass tries again, so a refused worktree is retried every day and counts against the batch bounds: many worktrees the node always refuses can use a space's batch until they are cleaned up or pushed). Otherwise remove them with git
   when done or through control (ADR-0107). The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
   than 1000 runs a worktree whose owning run ended outside that window shows as unowned ("made by hand"). That fails safe:
   an unowned worktree is never picked by `spaceman_worktrees_prune`.

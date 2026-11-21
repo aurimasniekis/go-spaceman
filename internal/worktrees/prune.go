@@ -50,9 +50,11 @@ func (svc *Service) PruneSpace(ctx context.Context, actor audit.Actor, spaceID s
 	for _, e := range cands {
 		o, err := svc.Request(ctx, actor, spaceID, e.Repo, e.Name)
 		if err != nil {
-			if apperr.CodeOf(err) == apperr.CodePrecondition && len(pending) == 0 && sum.Failed == 0 {
+			if c := apperr.CodeOf(err); c == apperr.CodePrecondition || c == apperr.CodeUnavailable {
+				// The node cannot be asked now (too old, not connected, no lease, the space relocating): the rest would fail the
+				// same way. Answers to what was already asked are still collected below.
 				sum.Skipped = err.Error()
-				return sum, nil // the node cannot be asked: every other candidate would be refused the same way
+				break
 			}
 			sum.Failed++
 			if apperr.CodeOf(err) != apperr.CodeNotFound {

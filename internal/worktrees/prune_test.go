@@ -140,6 +140,16 @@ func TestPruneSpaceSkipsOldNode(t *testing.T) {
 	}
 }
 
+// A node without a valid lease (not connected) is skipped without an error, like an old node.
+func TestPruneSpaceSkipsDisconnectedNode(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.exec(`UPDATE execution_leases SET expires_at = 0 WHERE space_id = 'spc_a'`)
+	sum, err := f.svc.PruneSpace(f.ctx, retentionActor, "spc_a", 7, 10)
+	if err != nil || sum.Skipped == "" || sum.Requested != 0 || sum.Failed != 0 {
+		t.Fatalf("%v %+v", err, sum)
+	}
+}
+
 // The node's answers are counted: removed and refused (a refusal keeps the worktree).
 func TestPruneSpaceCountsAnswers(t *testing.T) {
 	f := newFx(t, proto.MinorWorktreeRemove)
