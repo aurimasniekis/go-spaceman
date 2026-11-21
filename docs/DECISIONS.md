@@ -8276,11 +8276,15 @@
 
 - **Status:** Accepted, 2026-11-21 (v0.1.17). Decisions 1, 2 and 6 are implemented and tested against temporary
   repositories (`internal/agent`: `TestRemoveWorktreeSafely*`, `TestLaunchRefusedOntoAClaimedWorktree`,
-  `TestLaunchRefusedOntoWorktreeClaimedAfterRecord`, `TestRepoReportWorktreeStatus*`). Nothing calls the removal
-  core yet. Decision 4's limit `worktree_retention_days` is implemented (WL-3: default 0, 0–36500, per-space override,
-  changed with `retention:write`; `TestWorktreeRetentionLimitOverHTTP`, `TestWorktreeRetentionLimitNeedsRetentionWrite`)
-  but nothing reads it, so its auto-prune is still the design for a follow-up; decisions 5, 7 and 8 are the design for
-  follow-up tasks, and until they land worktrees are still never removed automatically (LIMITATIONS).
+  `TestLaunchRefusedOntoWorktreeClaimedAfterRecord`, `TestRepoReportWorktreeStatus*`). The node half of decision 4 is
+  implemented (WL-1, protocol minor 16: the `space.worktree.remove` command runs `removeWorktree` and the node answers
+  with a `worktree.removed` report carrying the result or the refusal code; `internal/agent` `TestWorktreeRemoveCommand*`,
+  `internal/proto` `TestWorktreeRemoveMessages`, `internal/fleet` `TestWorktreeRemovedReport`,
+  `TestWorktreeRemoveKeyOnWireOnly`, simulated), and so is its limit `worktree_retention_days` (WL-3: default 0,
+  0–36500, per-space override, changed with `retention:write`; `TestWorktreeRetentionLimitOverHTTP`,
+  `TestWorktreeRetentionLimitNeedsRetentionWrite`), but central queues no such command and nothing reads the limit yet:
+  the retention pass, the control tools (decisions 4 and 5), 7 and 8 are the design for follow-up tasks, and until they
+  land worktrees are still never removed automatically (LIMITATIONS).
 - **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
   ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a
   worktree with no change of its own, whose HEAD the remote has (so it can be checked out again from the branch, which
