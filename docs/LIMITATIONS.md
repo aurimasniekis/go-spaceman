@@ -542,7 +542,7 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   times the retention days, if longer) are read to tell what was refused. Otherwise remove them with git
   when done or through control (ADR-0107). Once every `worktree_cleanup_message_days` days (7 by default, 0 never) the
   same pass also sends the space's control one message asking it to tidy, only when a worktree is finished; it counts
-  from the node's last report and the newest 1000 runs, names no worktree, and removes nothing. Its periods are aligned
+  from the node's last report and the newest 1000 runs, names no worktree, and removes nothing, but as work waiting for control it starts control when `control_autostart` is on and none runs (an installation with many spaces holding finished worktrees starts that many controls once per period; set the limit to 0 where that is unwanted). Only active spaces are asked. Its periods are aligned
   to the Unix epoch, and a space whose node has not reported a finished worktree gets no message. The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
   than 1000 runs a worktree whose owning run ended outside that window shows as unowned ("made by hand"). That fails safe:
   an unowned worktree is never picked by `spaceman_worktrees_prune`.

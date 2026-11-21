@@ -501,7 +501,7 @@ func TestPassNotifiesWorktreeCleanupUnlessOptedOut(t *testing.T) {
 	}
 }
 
-// A failing cleanup message fails the pass for that space only.
+// A failing cleanup message fails the pass (the first error is reported) but not the other spaces: every space is still tried.
 func TestPassWorktreeCleanupNoticeErrorContinues(t *testing.T) {
 	f := newFx(t, 0)
 	var seen []string

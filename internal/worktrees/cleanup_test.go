@@ -104,6 +104,32 @@ func TestNotifyCleanupSkips(t *testing.T) {
 	}
 }
 
+// A paused or archived space is not asked; it is asked once it is active again, in the same period. A space whose report
+// is from an earlier node (after a relocation) says nothing about worktrees that may be gone.
+func TestNotifyCleanupOnlyActiveSpacesWithCurrentReport(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.withMessages()
+	for _, state := range []string{"paused", "archived"} {
+		f.exec(`UPDATE spaces SET state = ? WHERE id = 'spc_a'`, state)
+		if sent, err := f.svc.NotifyCleanup(f.ctx, "spc_a", 7); err != nil || sent {
+			t.Fatalf("%s: %v %v", state, sent, err)
+		}
+	}
+	f.exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_a'`)
+	f.exec(`INSERT INTO nodes (id, name, state, protocol_minor, created_at, created_by, updated_at) VALUES ('nod_2', 'n2', 'active', ?, 0, 't', 0)`, proto.MinorWorktreeRemove)
+	f.exec(`UPDATE spaces SET node_id = 'nod_2' WHERE id = 'spc_a'`)
+	if sent, err := f.svc.NotifyCleanup(f.ctx, "spc_a", 7); err != nil || sent {
+		t.Fatalf("stale report: %v %v", sent, err)
+	}
+	f.exec(`UPDATE spaces SET node_id = 'nod_1' WHERE id = 'spc_a'`)
+	if sent, err := f.svc.NotifyCleanup(f.ctx, "spc_a", 7); err != nil || !sent {
+		t.Fatalf("active with a current report: %v %v", sent, err)
+	}
+	if sent, err := f.svc.NotifyCleanup(f.ctx, "no_such_space", 7); err != nil || sent {
+		t.Fatalf("unknown space: %v %v", sent, err)
+	}
+}
+
 // A space with no repository report has nothing to tidy.
 func TestNotifyCleanupNoReport(t *testing.T) {
 	f := newFx(t, proto.MinorWorktreeRemove)
@@ -112,6 +138,10 @@ func TestNotifyCleanupNoReport(t *testing.T) {
 	f.exec(`DELETE FROM tasks`)
 	if sent, err := f.svc.NotifyCleanup(f.ctx, "spc_a", 7); err != nil || sent {
 		t.Fatalf("no owned worktree: %v %v", sent, err)
+	}
+	f.exec(`DELETE FROM space_repositories`)
+	if sent, err := f.svc.NotifyCleanup(f.ctx, "spc_a", 7); err != nil || sent {
+		t.Fatalf("no repository: %v %v", sent, err)
 	}
 }
 
@@ -134,7 +164,7 @@ func TestNotifyCleanupContent(t *testing.T) {
 	if m.from != "system" || m.to != "control" || m.kind != "notification" || m.subject != CleanupMessageSubject || !strings.HasPrefix(m.dedup, "worktree-cleanup:14d:") {
 		t.Fatalf("message %+v", m)
 	}
-	for _, want := range []string{"3 worktrees", "1 of them finished", "oldest for 10 days", "1 have no SpaceMan run", "once every 14 days",
+	for _, want := range []string{"3 worktrees", "1 of them finished", "oldest for 10 days", "1 were not created by a SpaceMan run", "once every 14 days",
 		"spaceman_worktrees_list", "spaceman_worktrees_prune", "spaceman_worktree_remove", "Nothing has been removed"} {
 		if !strings.Contains(m.body, want) {
 			t.Errorf("body lacks %q:\n%s", want, m.body)

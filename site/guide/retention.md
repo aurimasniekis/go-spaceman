@@ -39,7 +39,7 @@ The same pass also sends each space's control a message asking it to tidy the sp
 `limits.worktree_cleanup_message_days` days (7 by default, 0 never; any space can override it, and it needs no
 `retention:write`, because the message removes nothing). It is sent only when the space has a finished worktree, once per
 period even across restarts, and counts nothing in the pass's `deleted` counts. See
-[Repositories](/guide/repositories#removing-worktrees).
+[Repositories](/guide/repositories#the-weekly-cleanup-message).
 
 Uploads that no item ever used are still collected after a day by the hourly attachment collection, whatever the
 retention period.

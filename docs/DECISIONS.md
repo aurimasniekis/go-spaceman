@@ -8437,8 +8437,11 @@
      space's control one system notification asking it to tidy its repositories with these tools. The dedup key is
      `worktree-cleanup:<days>d:<n>`, with n the number of whole periods since the Unix epoch, so a second pass, a
      restart or a second central sends at most one message per period (the key is checked with one read before
-     anything else is computed, so a space that has its message costs the daily pass nothing more). It is skipped when
-     the space has no finished worktree (nothing to tidy) and is retried on the next daily pass in the same period.
+     the listing is computed, so a space that has its message costs the daily pass one read, and a space whose node
+     reported no worktree only the repository report read). It is sent only to active spaces and is skipped when the
+     space has no finished worktree or its report is from an earlier node (nothing to tidy); it is retried on the next
+     daily pass in the same period. It is work waiting for control, so with `control_autostart` on it starts the
+     space's control when none is running; a space sets the limit to 0 where that is unwanted.
      The summary comes from one `List` (the node's last report joined with the newest 1000 runs): worktrees in total,
      finished ones (what `spaceman_worktrees_prune` would try), the oldest finished one's age in days, and worktrees
      no run created. It names no worktree, branch or path and does not say what was refused before (that would need
