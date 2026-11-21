@@ -73,9 +73,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   path, or a status line that missed) stayed limited after its original run was gone, hours after the real reset. The
   limit-wait job now clears such holds once their window has passed since they were seen (5 hours for the five-hour
   kind, 7 days for weekly kinds, the 6-hour keep-alive for the `unknown` and `overage` kinds) with
-  `cleared_by: expired`, ordered by expiry so the row cap never hides a due hold; if the account is still limited, the next launch opens a
-  new hold. A status-line snapshot is not evidence that a limit is over, since its time is when the line was drawn,
-  not when the data was read. ADR-0079 amended.
+  `cleared_by: expired`, ordered by expiry so the row cap never hides a due hold; if the account is still limited,
+  the next launch opens a new hold. A status-line snapshot is not evidence that a limit is over, since its time is
+  when the line was drawn, not when the data was read. ADR-0079 amended.
 - **Account holds whose reset has passed are closed, and a switch can use an account whose probe is due.** The hold
   sweep now also closes open account holds whose known reset passed (plus the 2-minute grace) with `cleared_by:
   reset`, and publishes `usage_limit.cleared`. A hold with no reset whose probe time has passed no longer counts as
