@@ -182,8 +182,8 @@ Worktrees are removed only when control (or a person's tool call) asks. Control 
   inside `worktrees/`; otherwise it refuses with a code (`invalid`, `outside`, `not_worktree`, `locked`, `no_remote`,
   `fetch_failed`, `live_run`, `dirty`, `untracked`, `unpushed`, `git_error`) that is passed on unchanged. Nothing forces a
   removal and the branch is kept. An answer that takes longer than a minute comes back `pending` with a `command_id`.
-- `spaceman_worktrees_prune` tries the worktrees of finished work (owning task done or cancelled, owning run ended, optionally
-  at least `older_than_days` ago), oldest first, up to `limit` (default 10, at most 25), each through the same safe path.
+- `spaceman_worktrees_prune` tries the worktrees of finished work (every task of the owning run done or cancelled and the run ended, optionally
+  at least `older_than_days` after the later of the run's end and the tasks' latest finish time), oldest first, up to `limit` (default 10, at most 25), each through the same safe path.
   It only lists them unless `apply` is set. Unowned worktrees and those of failed or open tasks are never picked. There is no
   separate node command that only forgets stale worktree entries: the node already does that after every removal.
 

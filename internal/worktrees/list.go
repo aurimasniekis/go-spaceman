@@ -10,6 +10,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/queue"
 )
 
 // RunRef is the run that owns a worktree: the newest run SpaceMan launched with the worktree's repository and branch.
@@ -61,7 +62,12 @@ type Entry struct {
 	PullRequest *PullRequest `json:"pull_request,omitempty"`
 	// Prunable is set when spaceman_worktrees_prune would pick it (older_than_days 0): the owning task is done or
 	// cancelled and the owning run has ended.
-	Prunable bool `json:"prunable" doc:"The owning task is done or cancelled and its run ended: the prune tool would try it (the node still checks everything)"`
+	Prunable bool `json:"prunable" doc:"Every task of the owning run is done or cancelled and the run ended: the prune tool would try it (the node still checks everything)"`
+
+	// tasksDone is set when every task assigned to the owning run is done or cancelled; finishedAt is the latest
+	// finished_at of those tasks, nil when there are none or any lacks one (then the worktree is never a candidate).
+	tasksDone  bool
+	finishedAt *time.Time
 }
 
 // Listing is a space's worktrees.
@@ -87,10 +93,15 @@ func (svc *Service) List(ctx context.Context, spaceID, repo string) (*Listing, e
 	if err != nil {
 		return nil, err
 	}
-	byRun := map[string]*TaskRef{}
+	byRun := map[string]*runTasks{}
 	for _, t := range tasks {
 		if t.AssigneeRun != "" {
-			byRun[t.AssigneeRun] = &TaskRef{ID: t.ID, Title: t.Title, Status: t.Status}
+			rt := byRun[t.AssigneeRun]
+			if rt == nil {
+				rt = &runTasks{done: true}
+				byRun[t.AssigneeRun] = rt
+			}
+			rt.add(t)
 		}
 	}
 	// ListRuns is newest first: the first run seen for a repository and folder is the owner.
@@ -134,7 +145,9 @@ func (svc *Service) List(ctx context.Context, spaceID, repo string) (*Listing, e
 			if r := owners[key{strings.Trim(rp.Path, "/"), name}]; r != nil {
 				e.Owned = true
 				e.Run = &RunRef{ID: r.ID, Role: r.Role, State: r.Observed, Live: isLive(r), EndedAt: r.EndedAt}
-				e.Task = byRun[r.ID]
+				if rt := byRun[r.ID]; rt != nil {
+					e.Task, e.tasksDone, e.finishedAt = rt.ref, rt.done, rt.finishedAt()
+				}
 				e.LastChange = lastActivity(r)
 				e.Prunable = prunable(e, 0, time.Time{})
 			}
@@ -169,21 +182,71 @@ func lastActivity(r *fleet.Run) *time.Time {
 	return &t
 }
 
-// prunable reports whether an owned worktree is a candidate for the auto-prune rule (ADR-0107 decision 4): its
-// owning task is done or cancelled and its owning run ended at least days before now (days 0: ended at all).
-// Unowned worktrees, worktrees of failed or open tasks and worktrees with a live run are never candidates.
-func prunable(e Entry, days int, now time.Time) bool {
-	if !e.Owned || e.Run == nil || e.Run.Live || e.Run.EndedAt == nil || e.Task == nil {
-		return false
-	}
-	if e.Task.Status != "done" && e.Task.Status != "cancelled" {
-		return false
-	}
-	return days <= 0 || !e.Run.EndedAt.After(now.AddDate(0, 0, -days))
+// runTasks collects the tasks assigned to one run (a task can be pointed at an existing run, so a run can have several).
+type runTasks struct {
+	ref     *TaskRef // the first task that is not finished, else the first task
+	done    bool     // every task is done or cancelled
+	latest  *time.Time
+	missing bool // a finished task has no finished_at
 }
 
-// Candidates are the worktrees the retention rule would remove now, oldest run end first, at most limit (ADR-0107
-// decision 4). repo limits it to one repository; days is the age the owning run must have reached (0: any).
+func (rt *runTasks) add(t *queue.Task) {
+	finished := t.Status == "done" || t.Status == "cancelled"
+	if rt.ref == nil || (rt.done && !finished) {
+		rt.ref = &TaskRef{ID: t.ID, Title: t.Title, Status: t.Status}
+	}
+	if !finished {
+		rt.done = false
+		return
+	}
+	if t.FinishedAt == nil {
+		rt.missing = true
+	} else if rt.latest == nil || t.FinishedAt.After(*rt.latest) {
+		rt.latest = t.FinishedAt
+	}
+}
+
+func (rt *runTasks) finishedAt() *time.Time {
+	if rt.missing {
+		return nil
+	}
+	return rt.latest
+}
+
+// finishedSince is when the work counts as finished: the later of the run's end and the latest finished_at of the
+// run's tasks (a worker usually ends its run when it hands the task over, and the task is marked done later). Nil
+// when either is unknown.
+func finishedSince(e Entry) *time.Time {
+	if e.Run == nil || e.Run.EndedAt == nil || e.finishedAt == nil {
+		return nil
+	}
+	t := *e.Run.EndedAt
+	if e.finishedAt.After(t) {
+		t = *e.finishedAt
+	}
+	return &t
+}
+
+// prunable reports whether an owned worktree is a candidate for the auto-prune rule (ADR-0107 decision 4): every task
+// of its owning run is done or cancelled (each with a finished_at), the run ended, and the later of the run's end and
+// the latest finished_at is at least days before now (days 0: any age). Unowned worktrees, worktrees with a failed or
+// open task and worktrees with a live run are never candidates.
+func prunable(e Entry, days int, now time.Time) bool {
+	if !e.Owned || e.Run == nil || e.Run.Live || e.Run.EndedAt == nil || e.Task == nil || !e.tasksDone {
+		return false
+	}
+	since := finishedSince(e)
+	if since == nil {
+		return false
+	}
+	return days <= 0 || !since.After(now.AddDate(0, 0, -days))
+}
+
+// Candidates are the worktrees the retention rule would remove now, at most limit (ADR-0107 decision 4). repo limits
+// it to one repository; days is the age the finished work must have reached (0: any), counted from the later of the
+// run's end and its tasks' latest finished_at. Order: worktrees whose last removal was not refused at their current
+// HEAD first, then the ones that were (a refusal repeats until the worktree changes, so they must not use up the batch
+// every day); within each, the oldest first.
 func (svc *Service) Candidates(ctx context.Context, spaceID, repo string, days, limit int) ([]Entry, error) {
 	l, err := svc.List(ctx, spaceID, repo)
 	if err != nil {
@@ -196,7 +259,17 @@ func (svc *Service) Candidates(ctx context.Context, spaceID, repo string, days, 
 			out = append(out, e)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Run.EndedAt.Before(*out[j].Run.EndedAt) })
+	refused, err := svc.refusedHeads(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	again := func(e Entry) bool { h, ok := refused[[2]string{e.Repo, e.Name}]; return ok && h != "" && h == e.Head }
+	sort.SliceStable(out, func(i, j int) bool {
+		if a, b := again(out[i]), again(out[j]); a != b {
+			return !a
+		}
+		return finishedSince(out[i]).Before(*finishedSince(out[j]))
+	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}

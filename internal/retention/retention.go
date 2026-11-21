@@ -19,6 +19,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -104,8 +105,10 @@ type Options struct {
 	// PruneWorktrees asks the space's node to remove up to limit worktrees of finished work that ended at least days ago
 	// (worktrees.Service.PruneSpace; ADR-0107 decision 4). Nil: worktrees are not pruned.
 	PruneWorktrees func(ctx context.Context, actor audit.Actor, spaceID string, days int64, limit int) (worktrees.PruneSummary, error)
-	Clock          clock.Clock
-	Log            *slog.Logger
+	// WorktreeBatchPerPass overrides WorktreeBatchPerPass (tests); 0 keeps the constant.
+	WorktreeBatchPerPass int
+	Clock                clock.Clock
+	Log                  *slog.Logger
 }
 
 // Service runs retention passes.
@@ -121,6 +124,9 @@ type Service struct {
 	startedAt time.Time
 	wg        sync.WaitGroup
 	base      context.Context
+	// worktreeFrom is the space the next pass starts its worktree step at: the one after where the last pass spent
+	// the whole batch, so spaces late in the list are not starved. In memory: a restart starts at the first space.
+	worktreeFrom string
 }
 
 // New returns the service.
@@ -399,6 +405,19 @@ func (svc *Service) finish(ctx context.Context, p *Pass) (*Pass, error) {
 	return p, werr
 }
 
+// rotate starts the space list at the space the last pass's worktree budget ran out before (worktreeFrom).
+func (svc *Service) rotate(spaces []db.ListRetentionSpacesRow) []db.ListRetentionSpacesRow {
+	svc.mu.Lock()
+	from := svc.worktreeFrom
+	svc.mu.Unlock()
+	for i, sp := range spaces {
+		if sp.ID == from && i > 0 {
+			return append(slices.Clone(spaces[i:]), spaces[:i]...)
+		}
+	}
+	return spaces
+}
+
 // work applies every space's retention and the audit retention. It continues past a failing space and reports the
 // first error.
 func (svc *Service) work(ctx context.Context) (Counts, error) {
@@ -409,11 +428,21 @@ func (svc *Service) work(ctx context.Context) (Counts, error) {
 	}
 	var errs []error
 	worktreeBudget := WorktreeBatchPerPass
-	for _, sp := range spaces {
+	if svc.o.WorktreeBatchPerPass > 0 {
+		worktreeBudget = svc.o.WorktreeBatchPerPass
+	}
+	spaces = svc.rotate(spaces)
+	for i, sp := range spaces {
 		if ctx.Err() != nil {
 			return counts, ctx.Err()
 		}
+		before := worktreeBudget
 		c, err := svc.space(ctx, sp.ID, &worktreeBudget)
+		if before > 0 && worktreeBudget <= 0 {
+			svc.mu.Lock()
+			svc.worktreeFrom = spaces[(i+1)%len(spaces)].ID
+			svc.mu.Unlock()
+		}
 		for k, v := range c {
 			counts[k] += v
 		}

@@ -8295,11 +8295,14 @@
   stale-only `git worktree prune`; it is control-only, needs an explicit `apply`, removes at most 25 per call and ignores
   `worktree_retention_days`. The tool ignores the limit; the daily retention pass reads it (WL-4, implemented): for each
   space with `worktree_retention_days` above 0, `worktrees.Service.PruneSpace` takes the worktrees SpaceMan created whose
-  owning task is done or cancelled and whose owning run ended at least that many days ago, oldest first, and calls the same
+  owning run has ended and whose tasks (a run can have several) are all done or cancelled, each with a finish time, at least that many
+  days after the later of the run's end and the tasks' latest `finished_at`; it orders them by that time, oldest first, with the
+  ones whose last removal was refused at their current HEAD last, and calls the same
   `Request` method for each (so central refuses a live run, the node checks again and nothing is forced). Owners that cannot
   be resolved (older than the listing's 1000-run window), failed or open tasks, unowned worktrees and a limit of 0 are never
   touched. The step is bounded (`retention.WorktreeBatchPerSpace` 10 removals per space, `WorktreeBatchPerPass` 50 per
-  pass; the next daily pass continues), waits at most 30 seconds per space for the nodes' answers (an unanswered one stays
+  pass; the next daily pass continues, and each pass starts at the space after the one where the last pass spent the whole
+  batch), waits at most 30 seconds per space for the nodes' answers (an unanswered one stays
   pending in the audit log), skips a space whose node is below minor 16, not connected or relocating, and counts the
   removed worktrees under `worktrees` in the pass's `deleted` counts (`internal/worktrees` `TestPruneSpace*`,
   `internal/retention` `TestPassPrunesWorktreesOnlyWhenEnabled`, `TestPassBoundsWorktreePrune`,
@@ -8402,7 +8405,8 @@
      already has it from events it receives; no forge API is called per worktree.
   4. **Auto-prune (follow-up).** A space limit `worktree_retention_days` (0: never, the default; installation default
      and per-space override like the retention limits, ADR-0045). The daily retention pass picks worktrees whose
-     owning task is done or cancelled and whose owning run ended at least that many days ago, with no live run on the
+     owning run has ended and whose tasks are all done or cancelled, at least that many days after the later of the
+     run's end and the tasks' latest finish time (a task without one keeps the worktree), with no live run on the
      branch, and queues a node command (`space.worktree.remove`, a protocol minor bump) per worktree, bounded per pass.
      The node answers with the result or the refusal code; a refused worktree is shown in the repository report and
      tried again only on a later pass. Unowned worktrees and worktrees of failed tasks are never auto-pruned.

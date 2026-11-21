@@ -530,9 +530,14 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   minutes old and says when it was made; work an agent is doing right now shows after its run ends or the next sync
   (SM-REPO-003). Each report asks every remote for its default branch (`git ls-remote`, 30 s each), so an unreachable
   remote slows the report down. Worktrees are cleaned up automatically only for a space whose `worktree_retention_days` is above 0 (off by
-  default): the daily retention pass asks the node to remove up to 10 per space and 50 per pass of those whose task is done
-  or cancelled and whose run ended that long ago, through the node's safe-removal check (a dirty, unpushed or held one is
-  refused and stays; the next pass tries again, so a refused worktree is retried every day and counts against the batch bounds: many worktrees the node always refuses can use a space's batch until they are cleaned up or pushed). Otherwise remove them with git
+  default): the daily retention pass asks the node to remove up to 10 per space and 50 per pass of those whose run's tasks
+  are all done or cancelled, counted from the later of the run's end and the tasks' latest finish time (a task without a finish
+  time keeps the worktree), through the node's safe-removal check (a dirty, unpushed or held one is refused and stays). A
+  refused worktree is retried on later passes and counts against the batch bounds, but it is tried after the worktrees never
+  refused or refused at another HEAD, and each pass starts at the space after the one where the last pass spent the whole
+  batch (in memory: a restart starts at the first space). Many worktrees the node always refuses can still delay the others,
+  within a space and, with enough such spaces, across spaces for several passes, until they are cleaned up or pushed. Only the
+  newest 5000 answers are read to tell what was refused. Otherwise remove them with git
   when done or through control (ADR-0107). The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
   than 1000 runs a worktree whose owning run ended outside that window shows as unowned ("made by hand"). That fails safe:
   an unowned worktree is never picked by `spaceman_worktrees_prune`.

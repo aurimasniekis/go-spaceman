@@ -110,10 +110,10 @@ func Tools(svc *Service) func(r *agenttools.Registry) {
 					}
 					pending = append(pending, o)
 				}
-				deadline := svc.clk.Now().Add(svc.wait())
+				deadline := time.Now().Add(svc.wait()) // wall time: Await waits on a real timer
 				for i, o := range pending {
 					if o.Status == StatusPending {
-						if got, err := svc.Await(ctx, p.SpaceID, o, max(deadline.Sub(svc.clk.Now()), time.Second)); err == nil {
+						if got, err := svc.Await(ctx, p.SpaceID, o, max(time.Until(deadline), time.Second)); err == nil {
 							pending[i] = got
 						}
 					}

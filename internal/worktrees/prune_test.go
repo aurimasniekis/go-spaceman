@@ -26,7 +26,11 @@ func (f *fx) reportWith(names ...string) {
 	wts := []proto.WorktreeCheck{{Path: "worktrees/spaceman-tsk_1", Branch: "spaceman/tsk_1", Head: "bbbb"},
 		{Path: "worktrees/spaceman-tsk_2", Branch: "spaceman/tsk_2", Head: "cccc"}, {Path: "worktrees/hand", Branch: "hand", Head: "dddd"}}
 	for _, n := range names {
-		wts = append(wts, proto.WorktreeCheck{Path: "worktrees/" + n, Branch: "spaceman/" + n[len("spaceman-"):], Head: "bbbb"})
+		head := "bbbb"
+		if h := f.heads[n]; h != "" {
+			head = h
+		}
+		wts = append(wts, proto.WorktreeCheck{Path: "worktrees/" + n, Branch: "spaceman/" + n[len("spaceman-"):], Head: head})
 	}
 	f.rp.OnStatus(f.ctx, "nod_1", proto.RepoStatusReport{CommandID: "cmd_p", SpaceID: "spc_a", CheckedAt: at, Repositories: []proto.RepoState{
 		{ID: f.repo.ID, Path: "api", Present: true, LastFetchAt: &at, Check: &proto.RepoCheck{Path: "api", Branch: "main", Head: "aaaa", Worktrees: wts}}}})
@@ -181,5 +185,175 @@ func TestPruneSpaceCountsAnswers(t *testing.T) {
 	}
 	if sum := <-done; sum.Removed != 1 || sum.Refused != 1 || sum.Requested != 2 {
 		t.Fatalf("summary %+v", sum)
+	}
+}
+
+// A run can have several tasks: the worktree is a candidate only if every one is done or cancelled. A failed or an open
+// task next to a done one keeps it, whichever the list keeps.
+func TestPruneSpaceEveryTaskOfTheRunMustBeFinished(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 20 * time.Millisecond
+	names := map[string]string{}
+	for i, other := range []string{"failed", "review", "running"} {
+		n := 20 + i
+		f.run(fmt.Sprintf("run_%d", n), fmt.Sprintf("spaceman/tsk_%d", n), "exited", f.clk.Now().Add(-20*24*time.Hour))
+		// The finished task has the higher rank (so it comes last in the list, the case that used to win); the other the lower.
+		f.taskAt(fmt.Sprintf("tsk_%da", n), other, fmt.Sprintf("run_%d", n), 1, "NULL")
+		f.taskAt(fmt.Sprintf("tsk_%db", n), "done", fmt.Sprintf("run_%d", n), 2, `(SELECT ended_at FROM runs WHERE id = ?)`, fmt.Sprintf("run_%d", n))
+		names[other] = fmt.Sprintf("spaceman-tsk_%d", n)
+	}
+	// Two finished tasks of one run: eligible.
+	f.run("run_30", "spaceman/tsk_30", "exited", f.clk.Now().Add(-20*24*time.Hour))
+	f.taskAt("tsk_30a", "done", "run_30", 1, `(SELECT ended_at FROM runs WHERE id = 'run_30')`)
+	f.taskAt("tsk_30b", "cancelled", "run_30", 2, `(SELECT ended_at FROM runs WHERE id = 'run_30')`)
+	f.reportWith(names["failed"], names["review"], names["running"], "spaceman-tsk_30")
+	if _, err := f.svc.PruneSpace(f.ctx, retentionActor, "spc_a", 7, 10); err != nil {
+		t.Fatal(err)
+	}
+	got := queuedNames(f)
+	for k, n := range names {
+		if got[n] {
+			t.Errorf("the worktree of the run with a %s task was asked for removal", k)
+		}
+	}
+	if !got["spaceman-tsk_30"] || !got["spaceman-tsk_1"] || len(got) != 2 {
+		t.Fatalf("queued %v", got)
+	}
+	l, err := f.svc.List(f.ctx, "spc_a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range l.Worktrees {
+		if e.Name == names["failed"] && (e.Prunable || e.Task.Status != "failed") {
+			t.Errorf("listing: %+v %+v", e, e.Task)
+		}
+	}
+}
+
+// The age counts from the later of the run's end and the latest finished_at of its tasks; a finished task without
+// finished_at is never eligible; candidates are ordered by that time.
+func TestPruneSpaceTimeBase(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 20 * time.Millisecond
+	ago := func(d int) string {
+		return fmt.Sprintf("%d", f.clk.Now().Add(-time.Duration(d)*24*time.Hour).UnixMicro())
+	}
+	mk := func(n, endedDays int, tasks ...[2]string) string {
+		id := fmt.Sprintf("%d", n)
+		f.run("run_"+id, "spaceman/tsk_"+id, "exited", f.clk.Now().Add(-time.Duration(endedDays)*24*time.Hour))
+		for i, tk := range tasks {
+			fin := "NULL"
+			if tk[1] != "" {
+				fin = tk[1]
+			}
+			f.taskAt(fmt.Sprintf("tsk_%d_%d", n, i), tk[0], "run_"+id, i+1, fin)
+		}
+		return "spaceman-tsk_" + id
+	}
+	lateDone := mk(40, 20, [2]string{"done", ago(1)})                                // run ended long ago, marked done yesterday: too new
+	laterRun := mk(41, 1, [2]string{"done", ago(20)})                                // marked done long ago, run ended yesterday: too new
+	noFinish := mk(42, 20, [2]string{"done", ""})                                    // done without finished_at
+	oneMissing := mk(43, 20, [2]string{"done", ago(20)}, [2]string{"cancelled", ""}) // one of two lacks it
+	late2 := mk(44, 20, [2]string{"done", ago(20)}, [2]string{"done", ago(2)})       // the latest of the tasks counts: too new
+	old := mk(45, 12, [2]string{"done", ago(30)})                                    // 12 days from the run's end
+	older := mk(46, 30, [2]string{"done", ago(25)})                                  // 25 days from the task: the oldest
+	f.reportWith(lateDone, laterRun, noFinish, oneMissing, late2, old, older)
+	c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range c {
+		got = append(got, e.Name)
+	}
+	// tsk_1 (10 days) sits between old (12) and nothing newer; order is by the later time, oldest first.
+	if want := []string{older, old, "spaceman-tsk_1"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("candidates %v, want %v", got, want)
+	}
+}
+
+// A worktree whose last removal was refused at its current HEAD is tried after the ones never refused, so refusals
+// that repeat cannot use up the batch; a new HEAD makes it a fresh candidate again.
+func TestPruneSpaceTriesRefusedLast(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 20 * time.Millisecond
+	stuck := f.addFinished(0, "done", 30) // older than tsk_1 (10 days): first in line until it is refused
+	f.reportWith(stuck)
+	if _, err := f.svc.PruneSpace(f.ctx, retentionActor, "spc_a", 7, 10); err != nil {
+		t.Fatal(err)
+	}
+	ids, pl := f.commands()
+	for i, id := range ids {
+		if pl[i].Name == stuck {
+			f.answer(id, stuck, proto.WorktreeRefused, "dirty", "changed files") // head bbbb
+		}
+	}
+	c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 1)
+	if err != nil || len(c) != 1 || c[0].Name != "spaceman-tsk_1" {
+		t.Fatalf("after a refusal at the same HEAD: %v %+v", err, c)
+	}
+	f.heads[stuck] = "eeee" // the worktree moved on
+	f.reportWith(stuck)
+	c, err = f.svc.Candidates(f.ctx, "spc_a", "", 7, 1)
+	if err != nil || len(c) != 1 || c[0].Name != stuck {
+		t.Fatalf("after a new HEAD: %v %+v", err, c)
+	}
+}
+
+// With more than 1000 runs in the space the owner of an old worktree is not found: it shows as unowned and is never
+// a candidate (fails safe).
+func TestPruneSpaceKeepsWorktreesBeyondTheRunWindow(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	hour := f.clk.Now().Add(-time.Hour).UnixMicro()
+	for part := 0; part < 5; part++ { // in parts: one big transaction would hold the write lock too long
+		f.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 200)
+			INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by, ended_at, updated_at)
+			SELECT 'run_bulk' || (? + i), 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', 'ins_x', 'running', 'exited', '{}', ?, 't', ?, ? FROM n`,
+			part*200, hour, hour, hour)
+	}
+	c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 0)
+	if err != nil || len(c) != 0 {
+		t.Fatalf("%v %+v", err, c)
+	}
+	l, err := f.svc.List(f.ctx, "spc_a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range l.Worktrees {
+		if e.Name == "spaceman-tsk_1" && (e.Owned || e.Prunable) {
+			t.Fatalf("%+v", e)
+		}
+	}
+}
+
+// A live run is never a candidate even when ended_at is set (a run reported live keeps no end, but the check must not
+// depend on that).
+func TestPrunableNeverLive(t *testing.T) {
+	end := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	e := Entry{Owned: true, Run: &RunRef{EndedAt: &end}, Task: &TaskRef{Status: "done"}, tasksDone: true, finishedAt: &end}
+	now := end.Add(30 * 24 * time.Hour)
+	if !prunable(e, 7, now) {
+		t.Fatal("the control entry is not prunable")
+	}
+	e.Run.Live = true
+	if prunable(e, 7, now) {
+		t.Fatal("a live run was prunable")
+	}
+}
+
+// The answer wait is one deadline for the whole space, on the wall clock: with a frozen injected clock, three
+// unanswered removals wait about PruneWait together, not each the full time.
+func TestPruneSpaceWaitIsOneDeadline(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 300 * time.Millisecond
+	a, b := f.addFinished(3, "done", 20), f.addFinished(4, "done", 20)
+	f.reportWith(a, b)
+	start := time.Now()
+	sum, err := f.svc.PruneSpace(f.ctx, retentionActor, "spc_a", 7, 10)
+	if err != nil || sum.Pending != 3 {
+		t.Fatalf("%v %+v", err, sum)
+	}
+	if d := time.Since(start); d > 700*time.Millisecond {
+		t.Fatalf("waited %v for 3 answers with a 300ms deadline", d)
 	}
 }

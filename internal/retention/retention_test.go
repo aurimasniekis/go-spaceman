@@ -521,3 +521,63 @@ func TestPassWorktreePruneErrorContinues(t *testing.T) {
 		t.Fatalf("%v %+v %v", err, p, seen)
 	}
 }
+
+// enableWorktrees turns the worktree retention on for the fixture's spaces and the extra ones.
+func (f *fx) enableWorktrees(extra int) {
+	f.t.Helper()
+	ids := []string{"spc_a", "spc_b"}
+	for i := 0; i < extra; i++ {
+		id := fmt.Sprintf("spc_x%d", i)
+		f.exec(fmt.Sprintf(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('%s', 'x%d', 'X', 'nod_1', 'active', 'x%d', 0, 't', 0)`, id, i, i))
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
+		_, err := f.lim.Set(f.ctx, admin, id, 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 7}})
+		must(f.t, err)
+	}
+}
+
+// The pass's own cap, when it is not a multiple of the per-space bound: the last space is asked for what is left, not
+// for the whole per-space bound.
+func TestPassWorktreeCapIsNotAMultipleOfTheSpaceBound(t *testing.T) {
+	f := newFx(t, 0)
+	f.enableWorktrees(3)
+	f.svc.o.WorktreeBatchPerPass = 25
+	calls := f.withPrune(1000)
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	var limits []int
+	for _, c := range *calls {
+		limits = append(limits, c.limit)
+	}
+	if fmt.Sprint(limits) != "[10 10 5]" || p.Deleted[KindWorktrees] != 25 {
+		t.Fatalf("limits %v removed %d", limits, p.Deleted[KindWorktrees])
+	}
+}
+
+// Each pass starts at the space after the one where the last pass spent the whole batch, so spaces late in the list
+// are not starved by the early ones.
+func TestPassWorktreePruneRotatesTheStartSpace(t *testing.T) {
+	f := newFx(t, 0)
+	f.enableWorktrees(6) // 8 spaces; a pass serves 5
+	calls := f.withPrune(1000)
+	_, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	first := append([]pruneCall(nil), *calls...)
+	*calls = nil
+	_, err = f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if len(first) != 5 || len(*calls) != 5 {
+		t.Fatalf("served %d then %d spaces", len(first), len(*calls))
+	}
+	if (*calls)[0].space == first[0].space {
+		t.Fatalf("the second pass started at the same space: %v then %v", first, *calls)
+	}
+	served := map[string]bool{}
+	for _, c := range append(first, *calls...) {
+		served[c.space] = true
+	}
+	if len(served) != 8 {
+		t.Fatalf("two passes served %d of 8 spaces", len(served))
+	}
+}

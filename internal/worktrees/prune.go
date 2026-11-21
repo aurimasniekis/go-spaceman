@@ -28,7 +28,8 @@ type PruneSummary struct {
 }
 
 // PruneSpace applies the retention rule of ADR-0107 decision 4 to one space: it asks the node to remove up to limit
-// worktrees (oldest finished first) whose owning task is done or cancelled and whose owning run ended at least days ago.
+// worktrees (oldest finished first, refused-before-at-this-HEAD ones last) whose owning run's tasks are all done or cancelled and whose
+// work finished at least days ago (the later of the run's end and its tasks' latest finished_at).
 // Every removal is a Request, so a live run is refused here and the node checks again; nothing is forced. A space whose
 // node cannot be asked (protocol below 16, not connected, relocating) is skipped without an error. days or limit of 0
 // or less does nothing.
@@ -69,10 +70,10 @@ func (svc *Service) PruneSpace(ctx context.Context, actor audit.Actor, spaceID s
 	if svc.PruneWait > 0 {
 		wait = svc.PruneWait
 	}
-	deadline := svc.clk.Now().Add(wait)
+	deadline := time.Now().Add(wait) // wall time: Await waits on a real timer
 	for _, o := range pending {
 		if o.Status == StatusPending {
-			if got, err := svc.Await(ctx, spaceID, o, max(deadline.Sub(svc.clk.Now()), time.Millisecond)); err == nil {
+			if got, err := svc.Await(ctx, spaceID, o, max(time.Until(deadline), time.Millisecond)); err == nil {
 				o = got
 			}
 		}

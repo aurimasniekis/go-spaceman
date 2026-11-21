@@ -400,6 +400,38 @@ func (svc *Service) listed(ctx context.Context, q *db.Queries, sp db.Space, rep 
 	return false, nil
 }
 
+// refusedHeads maps (repository folder, worktree name) of the space to the HEAD the node reported when its latest
+// answer for that worktree was a refusal. A worktree whose latest answer was anything else is absent. Only the newest
+// 5000 answers are read.
+func (svc *Service) refusedHeads(ctx context.Context, spaceID string) (map[[2]string]string, error) {
+	rows, err := svc.s.ReadDB().QueryContext(ctx, `SELECT json_extract(q.details_json, '$.repo'), json_extract(q.details_json, '$.name'),
+		json_extract(a.details_json, '$.result'), json_extract(a.details_json, '$.head')
+		FROM audit_events a JOIN audit_events q ON q.target_type = a.target_type AND q.target_id = a.target_id AND q.action = ?
+		WHERE a.target_type = ? AND a.action = ? AND json_extract(a.details_json, '$.space_id') = ? ORDER BY a.seq DESC LIMIT 5000`,
+		ActionRequested, TargetType, ActionResult, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[[2]string]string{}
+	seen := map[[2]string]bool{}
+	for rows.Next() {
+		var repo, name, result, head sql.NullString
+		if err := rows.Scan(&repo, &name, &result, &head); err != nil {
+			return nil, err
+		}
+		k := [2]string{repo.String, name.String}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if result.String == StatusRefused {
+			out[k] = head.String
+		}
+	}
+	return out, rows.Err()
+}
+
 // folderOf is the worktree folder name a run's launch gets (the node's rule: the branch with / replaced by -).
 func folderOf(branch string) string { return strings.ReplaceAll(branch, "/", "-") }
 
