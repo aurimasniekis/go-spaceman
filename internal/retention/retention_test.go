@@ -573,6 +573,11 @@ func TestPassWorktreePruneRotatesTheStartSpace(t *testing.T) {
 	if (*calls)[0].space == first[0].space {
 		t.Fatalf("the second pass started at the same space: %v then %v", first, *calls)
 	}
+	for _, c := range first {
+		if c.space == (*calls)[0].space {
+			t.Fatalf("the second pass started at a space the first one served (%s), not the one after the last: %v then %v", c.space, first, *calls)
+		}
+	}
 	served := map[string]bool{}
 	for _, c := range append(first, *calls...) {
 		served[c.space] = true

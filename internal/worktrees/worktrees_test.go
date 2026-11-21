@@ -146,8 +146,13 @@ func (f *fx) commands() (ids []string, payloads []proto.WorktreeRemovePayload) {
 }
 
 func (f *fx) answer(cmd, name, result, code, reason string) {
+	f.answerHead(cmd, name, result, code, reason, "bbbb")
+}
+
+// answerHead is answer with the HEAD the node reports ("" for the refusals the node makes before it reads the HEAD).
+func (f *fx) answerHead(cmd, name, result, code, reason, head string) {
 	f.svc.OnRemoved(f.ctx, "nod_1", proto.WorktreeRemoved{CommandID: cmd, SpaceID: "spc_a", Repo: "api", Name: name, Result: result, Code: code, Reason: reason,
-		Path: "worktrees/" + name, Branch: "spaceman/tsk_1", Head: "bbbb", CheckedAt: f.clk.Now()})
+		Path: "worktrees/" + name, Branch: "spaceman/tsk_1", Head: head, CheckedAt: f.clk.Now()})
 }
 
 func (f *fx) call(kind, tool string, args any, out any) error {

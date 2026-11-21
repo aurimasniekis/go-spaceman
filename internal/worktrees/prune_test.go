@@ -257,7 +257,9 @@ func TestPruneSpaceTimeBase(t *testing.T) {
 	late2 := mk(44, 20, [2]string{"done", ago(20)}, [2]string{"done", ago(2)})       // the latest of the tasks counts: too new
 	old := mk(45, 12, [2]string{"done", ago(30)})                                    // 12 days from the run's end
 	older := mk(46, 30, [2]string{"done", ago(25)})                                  // 25 days from the task: the oldest
-	f.reportWith(lateDone, laterRun, noFinish, oneMissing, late2, old, older)
+	mid := mk(47, 13, [2]string{"done", ago(13)})                                    // 13 days
+	late := mk(48, 15, [2]string{"done", ago(8)})                                    // run ended 15 days ago but the task 8: counts as 8, the newest
+	f.reportWith(lateDone, laterRun, noFinish, oneMissing, late2, old, older, mid, late)
 	c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -266,9 +268,62 @@ func TestPruneSpaceTimeBase(t *testing.T) {
 	for _, e := range c {
 		got = append(got, e.Name)
 	}
-	// tsk_1 (10 days) sits between old (12) and nothing newer; order is by the later time, oldest first.
-	if want := []string{older, old, "spaceman-tsk_1"}; fmt.Sprint(got) != fmt.Sprint(want) {
+	// Order is by the later time, oldest first (not by the run's end: late ended before mid and old).
+	if want := []string{older, mid, old, "spaceman-tsk_1", late}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("candidates %v, want %v", got, want)
+	}
+}
+
+// pruneAndAnswer runs a pass and answers the newest queued removal of name.
+func pruneAndAnswer(t *testing.T, f *fx, name, result, code, head string) {
+	t.Helper()
+	if _, err := f.svc.PruneSpace(f.ctx, retentionActor, "spc_a", 7, 10); err != nil {
+		t.Fatal(err)
+	}
+	ids, pl := f.commands()
+	cmd := ""
+	for i, id := range ids {
+		if pl[i].Name == name {
+			cmd = id
+		}
+	}
+	if cmd == "" {
+		t.Fatalf("no removal of %s queued", name)
+	}
+	f.answerHead(cmd, name, result, code, "why", head)
+}
+
+// Only the latest answer counts: a refusal that a later (failed) attempt followed does not push the worktree back.
+func TestPruneSpaceLatestAnswerDecidesRefusedLast(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 20 * time.Millisecond
+	stuck := f.addFinished(0, "done", 30)
+	f.reportWith(stuck)
+	pruneAndAnswer(t, f, stuck, proto.WorktreeRefused, "dirty", "bbbb")
+	if c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 1); err != nil || len(c) != 1 || c[0].Name != "spaceman-tsk_1" {
+		t.Fatalf("after the refusal: %v %+v", err, c)
+	}
+	pruneAndAnswer(t, f, stuck, proto.WorktreeFailed, "", "bbbb")
+	if c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 1); err != nil || len(c) != 1 || c[0].Name != stuck {
+		t.Fatalf("after a later answer that was not a refusal: %v %+v", err, c)
+	}
+}
+
+// The refusals the node makes before it reads the HEAD (dirty, untracked, locked, ...) carry none: the HEAD the
+// listing showed when the removal was requested stands in, so an always-dirty worktree is tried last too.
+func TestPruneSpaceRefusalWithoutHeadIsTriedLast(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 20 * time.Millisecond
+	stuck := f.addFinished(0, "done", 30)
+	f.reportWith(stuck)
+	pruneAndAnswer(t, f, stuck, proto.WorktreeRefused, "dirty", "")
+	if c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 1); err != nil || len(c) != 1 || c[0].Name != "spaceman-tsk_1" {
+		t.Fatalf("after a refusal with no HEAD: %v %+v", err, c)
+	}
+	f.heads[stuck] = "eeee"
+	f.reportWith(stuck)
+	if c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 1); err != nil || len(c) != 1 || c[0].Name != stuck {
+		t.Fatalf("after a new HEAD: %v %+v", err, c)
 	}
 }
 

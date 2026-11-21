@@ -242,6 +242,11 @@ func prunable(e Entry, days int, now time.Time) bool {
 	return days <= 0 || !since.After(now.AddDate(0, 0, -days))
 }
 
+// MinRefusalWindowDays is the least age, in days, of the removal answers read to tell what was refused (Candidates reads
+// the answers of the last max(4 x days, MinRefusalWindowDays) days: a refusal repeats on every daily pass, so a worktree
+// that is still refused has a recent one).
+const MinRefusalWindowDays = 30
+
 // Candidates are the worktrees the retention rule would remove now, at most limit (ADR-0107 decision 4). repo limits
 // it to one repository; days is the age the finished work must have reached (0: any), counted from the later of the
 // run's end and its tasks' latest finished_at. Order: worktrees whose last removal was not refused at their current
@@ -259,7 +264,7 @@ func (svc *Service) Candidates(ctx context.Context, spaceID, repo string, days, 
 			out = append(out, e)
 		}
 	}
-	refused, err := svc.refusedHeads(ctx, spaceID)
+	refused, err := svc.refusedHeads(ctx, spaceID, now.AddDate(0, 0, -max(4*days, MinRefusalWindowDays)))
 	if err != nil {
 		return nil, err
 	}

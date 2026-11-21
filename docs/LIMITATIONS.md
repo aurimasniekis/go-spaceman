@@ -536,8 +536,10 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   refused worktree is retried on later passes and counts against the batch bounds, but it is tried after the worktrees never
   refused or refused at another HEAD, and each pass starts at the space after the one where the last pass spent the whole
   batch (in memory: a restart starts at the first space). Many worktrees the node always refuses can still delay the others,
-  within a space and, with enough such spaces, across spaces for several passes, until they are cleaned up or pushed. Only the
-  newest 5000 answers are read to tell what was refused. Otherwise remove them with git
+  within a space and, with enough such spaces, across spaces for several passes, until they are cleaned up or pushed. A refusal the node
+  makes before it reads the HEAD (dirty, untracked, locked, fetch failed, no remote, outside) carries none, so the HEAD the
+  listing showed when the removal was requested stands in for it. Only the newest 5000 answers of the last 30 days (or four
+  times the retention days, if longer) are read to tell what was refused. Otherwise remove them with git
   when done or through control (ADR-0107). The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
   than 1000 runs a worktree whose owning run ended outside that window shows as unowned ("made by hand"). That fails safe:
   an unowned worktree is never picked by `spaceman_worktrees_prune`.

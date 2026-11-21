@@ -8297,7 +8297,9 @@
   space with `worktree_retention_days` above 0, `worktrees.Service.PruneSpace` takes the worktrees SpaceMan created whose
   owning run has ended and whose tasks (a run can have several) are all done or cancelled, each with a finish time, at least that many
   days after the later of the run's end and the tasks' latest `finished_at`; it orders them by that time, oldest first, with the
-  ones whose last removal was refused at their current HEAD last, and calls the same
+  ones whose last removal was refused at their current HEAD last (the HEAD the node reported, or for a refusal that carries
+  none the HEAD the listing showed when the removal was requested, kept in the request's audit event; only answers of the
+  last max(30, 4 x days) days, newest 5000, are read), and calls the same
   `Request` method for each (so central refuses a live run, the node checks again and nothing is forced). Owners that cannot
   be resolved (older than the listing's 1000-run window), failed or open tasks, unowned worktrees and a limit of 0 are never
   touched. The step is bounded (`retention.WorktreeBatchPerSpace` 10 removals per space, `WorktreeBatchPerPass` 50 per
