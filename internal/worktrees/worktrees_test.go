@@ -3,6 +3,7 @@ package worktrees
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -294,6 +295,10 @@ func TestRemoveRefusedForLiveRun(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("audit refusals %d", n)
 	}
+	_ = f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM audit_events WHERE action = ? AND target_type = ?`, ActionRefused, TargetType).Scan(&n)
+	if n != 1 {
+		t.Fatalf("the live_run refusal is not audited under %s: %d", TargetType, n)
+	}
 	// Once the run has ended the worktree is asked for.
 	f.exec(`UPDATE runs SET observed = 'exited' WHERE id = 'run_live'`)
 	if o, err := f.svc.Request(f.ctx, admin, "spc_a", "api", "spaceman-tsk_2"); err != nil || o.Status != StatusPending {
@@ -443,5 +448,74 @@ func TestWorktreesPrune(t *testing.T) {
 		if err := f.call(agenttools.KindControl, "spaceman_worktrees_prune", in, nil); err == nil {
 			t.Errorf("%v accepted", in)
 		}
+	}
+}
+
+// A relocating space, and a report that an earlier node of the space made, are refused and nothing is queued.
+func TestRemoveRefusedRelocatingAndStaleReport(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.exec(`UPDATE space_repository_reports SET node_id = 'nod_old' WHERE space_id = 'spc_a'`)
+	if _, err := f.svc.Request(f.ctx, admin, "spc_a", "api", "spaceman-tsk_1"); code(err) != apperr.CodeNotFound {
+		t.Fatalf("report of an earlier node: %v", err)
+	}
+	f.exec(`UPDATE space_repository_reports SET node_id = 'nod_1' WHERE space_id = 'spc_a'`)
+	f.exec(`UPDATE spaces SET desired_node_id = 'nod_1' WHERE id = 'spc_a'`)
+	if _, err := f.svc.Request(f.ctx, admin, "spc_a", "api", "spaceman-tsk_1"); code(err) != apperr.CodePrecondition || !strings.Contains(err.Error(), "relocating") {
+		t.Fatalf("relocating space: %v", err)
+	}
+	if ids, _ := f.commands(); len(ids) != 0 {
+		t.Fatalf("commands queued by refused requests: %v", ids)
+	}
+}
+
+// OnRemoved hears only the node, the space and the command kind the command was queued for.
+func TestOnRemovedIgnoresMismatches(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	o, err := f.svc.Request(f.ctx, admin, "spc_a", "api", "spaceman-tsk_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.OnRemoved(f.ctx, "nod_1", proto.WorktreeRemoved{CommandID: o.CommandID, SpaceID: "spc_other", Repo: "api", Name: "spaceman-tsk_1", Result: proto.WorktreeRemovedOK})
+	if r, _ := f.svc.Result(f.ctx, "spc_a", o.CommandID); r.Status != StatusPending {
+		t.Fatalf("an answer for another space was heard: %+v", r)
+	}
+	// A command of another kind, on the same node and space, is not a removal.
+	f.exec(`UPDATE node_commands SET kind = 'space.repos.sync' WHERE id = ?`, o.CommandID)
+	f.answer(o.CommandID, "spaceman-tsk_1", proto.WorktreeRemovedOK, "", "")
+	if r, _ := f.svc.Result(f.ctx, "spc_a", o.CommandID); r.Status != StatusPending {
+		t.Fatalf("an answer for a command of another kind was heard: %+v", r)
+	}
+}
+
+// The prune limit cuts the candidates: oldest first, Candidates counts them all.
+func TestWorktreesPruneLimit(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.Wait = 30 * time.Millisecond
+	at := f.clk.Now().Add(-time.Minute)
+	wts := []proto.WorktreeCheck{{Path: "worktrees/spaceman-tsk_1", Branch: "spaceman/tsk_1", Head: "bbbb"}}
+	for i, days := range []int{20, 15, 12} {
+		n := fmt.Sprintf("%d", i+3)
+		f.run("run_"+n, "spaceman/tsk_"+n, "exited", f.clk.Now().Add(-time.Duration(days)*24*time.Hour))
+		f.task("tsk_"+n, "done", "run_"+n)
+		wts = append(wts, proto.WorktreeCheck{Path: "worktrees/spaceman-tsk_" + n, Branch: "spaceman/tsk_" + n, Head: "bbbb"})
+	}
+	f.rp.OnStatus(f.ctx, "nod_1", proto.RepoStatusReport{CommandID: "cmd_y", SpaceID: "spc_a", CheckedAt: at, Repositories: []proto.RepoState{
+		{ID: f.repo.ID, Path: "api", Present: true, LastFetchAt: &at, Check: &proto.RepoCheck{Path: "api", Branch: "main", Head: "aaaa", Worktrees: wts}}}})
+	var dry PruneResult
+	if err := f.call(agenttools.KindControl, "spaceman_worktrees_prune", map[string]any{"limit": 2}, &dry); err != nil {
+		t.Fatal(err)
+	}
+	if dry.Candidates != 4 || len(dry.Would) != 2 || dry.Would[0].Name != "spaceman-tsk_3" || dry.Would[1].Name != "spaceman-tsk_4" {
+		t.Fatalf("dry run: %+v", dry)
+	}
+	var res PruneResult
+	if err := f.call(agenttools.KindControl, "spaceman_worktrees_prune", map[string]any{"limit": 2, "apply": true}, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Candidates != 4 || len(res.Results) != 2 {
+		t.Fatalf("apply: %+v", res)
+	}
+	if ids, _ := f.commands(); len(ids) != 2 {
+		t.Fatalf("commands %v", ids)
 	}
 }

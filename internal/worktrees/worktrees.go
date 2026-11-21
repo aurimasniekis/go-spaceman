@@ -165,7 +165,7 @@ func (svc *Service) Request(ctx context.Context, actor audit.Actor, spaceID, rep
 			base.Status, base.Code, base.By, base.At = StatusRefused, CodeLiveRun, "central", tx.Now
 			base.Reason = "the live run " + holder + " works in this worktree; stop it or wait until it ends"
 			out = base
-			_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: ActionRefused, Target: audit.Target{Type: "worktree", ID: spaceID + "/" + rep.Path + "/" + name},
+			_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: ActionRefused, Target: audit.Target{Type: TargetType, ID: spaceID + "/" + rep.Path + "/" + name},
 				Outcome: audit.OutcomeDenied, Details: map[string]any{"space_id": spaceID, "repo": rep.Path, "name": name, "code": CodeLiveRun, "run_id": holder}})
 			return err
 		}

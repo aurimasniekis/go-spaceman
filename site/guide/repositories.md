@@ -187,6 +187,9 @@ Worktrees are removed only when control (or a person's tool call) asks. Control 
   It only lists them unless `apply` is set. Unowned worktrees and those of failed or open tasks are never picked. There is no
   separate node command that only forgets stale worktree entries: the node already does that after every removal.
 
+With more than 1000 runs in a space, a worktree whose owning run ended outside the newest 1000 is listed as unowned. That fails
+safe: an unowned worktree is never picked by the prune tool.
+
 Every request and every answer is an audit event of the target `worktree_removal` (the command ID).
 
 ## Limitations
