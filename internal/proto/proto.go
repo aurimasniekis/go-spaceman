@@ -36,8 +36,9 @@ const (
 	// reports and node-managed harness details in capabilities, ADR-0077); 12: usage limits (the limit a node detected
 	// in a run's transcript on run reports, ADR-0079); 13: account usage (a run's StopFailure class and the source of a
 	// limit's reset time on run reports, account-switching plan §3.9); 14: role rename (the memory.rename command,
-	// memory.renamed reports and memory.renamed.ack, ADR-0093); 15: terminal dialogs (run.dialog, ADR-0102)
-	MaxMinor = 15
+	// memory.renamed reports and memory.renamed.ack, ADR-0093); 15: terminal dialogs (run.dialog, ADR-0102); 16: worktree
+	// removal (the space.worktree.remove command and worktree.removed reports, ADR-0107)
+	MaxMinor = 16
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -248,6 +249,7 @@ const (
 	CmdDreamDone    = "dream.commit"     // minor ≥ 2: checkpoint a dream's memory, then advance its evidence positions
 	CmdReposSync    = "space.repos.sync" // minor ≥ 4: clone and fetch configured repositories, then report their state
 	CmdMemoryRename = "memory.rename"    // minor ≥ 14: move a renamed role's memory folder (ADR-0093)
+	// CmdWorktreeRemove (minor ≥ 16, ADR-0107) is declared in worktree.go.
 	// minor ≥ 3: relocation steps (ADR-0037). They are not execution: the node accepts them without a valid lease (the
 	// source's lease is revoked while it relocates; the destination has none yet). Central is the only sender.
 	CmdRelocateCheck   = "space.relocate.check"   // source: flush memory and uploads, then inspect the space folder
@@ -520,7 +522,7 @@ func (c Command) Validate() error {
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")
 		}
-	case CmdPrepare, CmdKBAccept, CmdReposSync, CmdMemoryRename, CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
+	case CmdPrepare, CmdKBAccept, CmdReposSync, CmdMemoryRename, CmdWorktreeRemove, CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
 	case CmdDreamDone:
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")

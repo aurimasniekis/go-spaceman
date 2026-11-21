@@ -74,6 +74,8 @@ type Hub struct {
 	Usage UsageStore
 	// RepoStatus receives the node's reports of a space's configured repositories (ADR-0044); nil drops them.
 	RepoStatus func(ctx context.Context, nodeID string, rep proto.RepoStatusReport)
+	// WorktreeRemoved receives the outcomes of space.worktree.remove commands (ADR-0107); nil drops them.
+	WorktreeRemoved func(ctx context.Context, nodeID string, rep proto.WorktreeRemoved)
 	// OnConnected is called (on its own goroutine) once a node's connection is set up and its leases granted.
 	OnConnected func(ctx context.Context, nodeID string)
 
@@ -787,6 +789,21 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			h.spawn(func() { h.RepoStatus(context.WithoutCancel(ctx), s.nodeID, rep) })
 		}
 		return nil
+	case proto.TypeWorktreeRemoved:
+		if s.minor < proto.MinorWorktreeRemove {
+			return apperr.New(apperr.CodeInvalid, "worktree.removed needs protocol minor %d", proto.MinorWorktreeRemove)
+		}
+		var rep proto.WorktreeRemoved
+		if err := env.Decode(&rep); err != nil {
+			return err
+		}
+		if err := rep.Validate(); err != nil {
+			return apperr.New(apperr.CodeInvalid, "worktree.removed: %s", err.Error())
+		}
+		if h.WorktreeRemoved != nil {
+			h.spawn(func() { h.WorktreeRemoved(context.WithoutCancel(ctx), s.nodeID, rep) })
+		}
+		return nil
 	case proto.TypeMemoryStatus:
 		var st proto.MemoryStatus
 		if err := env.Decode(&st); err != nil {
@@ -1113,6 +1130,19 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 			}
 			p.Repositories[i].SSHKey = k
 		}
+		msg.Payload = mustJSON(p)
+		return msg, nil
+	}
+	if c.Kind == proto.CmdWorktreeRemove && keys {
+		var p proto.WorktreeRemovePayload
+		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
+			return msg, fmt.Errorf("%w: %w", errBadPayload, err)
+		}
+		k, err := h.RepoKey(ctx, c.SpaceID, p.Repository.ID)
+		if err != nil {
+			return msg, err
+		}
+		p.Repository.SSHKey = k
 		msg.Payload = mustJSON(p)
 		return msg, nil
 	}
