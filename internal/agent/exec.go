@@ -438,6 +438,9 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	unlockWorktrees()
+	if a.afterRecordWorkdir != nil {
+		a.afterRecordWorkdir(work) // test hook: a symlink may be planted here, before the folder is created and resolved
+	}
 	var dreamMem []string // role memory checkouts a dream's memory/<role> links point at
 	if p.Dream != nil {
 		dir, links, err := a.prepareDream(ctx, c.SpaceID, space, c.RunID, p.InstanceID, *p.Dream)
@@ -461,6 +464,20 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
 	}
+	// The folder was recorded and checked before it was created and resolved; a symlink planted in between could have
+	// pointed it into a worktree a removal has since claimed. Check the final folder and record it, under the lock.
+	unlockWorktrees = a.worktreeLock(c.SpaceID)
+	if a.workBeingRemoved(space, work) {
+		unlockWorktrees()
+		fail("prepare the work folder", errors.New("a worktree in or around it is being removed; launch again when that is done"))
+		return
+	}
+	if err := a.recordWorkdir(c.RunID, space, work); err != nil {
+		unlockWorktrees()
+		fail("record the work folder", err)
+		return
+	}
+	unlockWorktrees()
 	spaceReal := space
 	if real, err := filepath.EvalSymlinks(space); err == nil {
 		spaceReal = real

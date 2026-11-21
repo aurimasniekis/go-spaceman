@@ -512,9 +512,14 @@ func (a *Agent) workBeingRemoved(space, work string) bool {
 	if err != nil {
 		return false
 	}
+	// The marks are copied under a.mu and compared after it is released: pathsOverlap stats the folders.
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	marks := make([]string, 0, len(a.removing))
 	for d := range a.removing {
+		marks = append(marks, d)
+	}
+	a.mu.Unlock()
+	for _, d := range marks {
 		if pathsOverlap(p, d) {
 			return true
 		}

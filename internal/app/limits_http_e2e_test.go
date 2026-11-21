@@ -105,3 +105,83 @@ func TestLimitsAndSchedulesOverHTTP(t *testing.T) {
 	expect(t, root.do("DELETE", "/spaces/"+sp.ID+"/schedules/"+s.ID, nil), 204)
 	expect(t, root.do("GET", "/spaces/"+sp.ID+"/schedules/"+s.ID, nil), 404)
 }
+
+// ADR-0107 over HTTP: worktree_retention_days is defined as a days limit, its installation default comes from the
+// configuration, and a space override round-trips with its bounds checked.
+func TestWorktreeRetentionLimitOverHTTP(t *testing.T) {
+	t.Parallel()
+	h := newHarnessWith(t, func(c *config.Config) { c.Limits.WorktreeRetentionDays = 30 })
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-w"})
+	sp, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "worktrees", Name: "Worktrees", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defs struct{ Items []limits.Def }
+	root.do("GET", "/limits/definitions", nil).json(t, &defs)
+	found := false
+	for _, d := range defs.Items {
+		if d.Key == limits.WorktreeRetention {
+			found = d.Unit == "days" && d.ZeroNone && d.Min == 0 && d.Max == 36_500
+		}
+	}
+	if !found {
+		t.Fatalf("definition of %s missing or wrong: %+v", limits.WorktreeRetention, defs.Items)
+	}
+	var eff limits.Effective
+	root.do("GET", "/spaces/"+sp.ID+"/limits", nil).json(t, &eff)
+	var got limits.Limit
+	for _, l := range eff.Limits {
+		if l.Key == limits.WorktreeRetention {
+			got = l
+		}
+	}
+	if got.Value != 30 || got.Default != 30 || got.Source != "installation" {
+		t.Fatalf("installation default %+v", got)
+	}
+	expect(t, root.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.WorktreeRetention: 36_501}}), 422)
+	r := root.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.WorktreeRetention: 14}})
+	expect(t, r, 200)
+	r.json(t, &eff)
+	got = limits.Limit{}
+	for _, l := range eff.Limits {
+		if l.Key == limits.WorktreeRetention {
+			got = l
+		}
+	}
+	if got.Value != 14 || got.Source != "space" || got.Override == nil || *got.Override != 14 {
+		t.Fatalf("override %+v", got)
+	}
+}
+
+// ADR-0107 decision 4: worktree_retention_days is changed like the retention limits, with retention:write. An operator
+// (space_config:write) is refused; an admin of the space is allowed; the operator still changes other limits.
+func TestWorktreeRetentionLimitNeedsRetentionWrite(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-p"})
+	sp, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "wt-perm", Name: "Worktree permission", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw := "correct horse battery staple"
+	expect(t, root.do("POST", "/users", map[string]any{"email": "ops-wt@example.com", "display_name": "Ops", "password": pw,
+		"grants": []map[string]string{{"role": "operator", "domain": sp.ID}}}), 201)
+	expect(t, root.do("POST", "/users", map[string]any{"email": "adm-wt@example.com", "display_name": "Adm", "password": pw,
+		"grants": []map[string]string{{"role": "admin", "domain": sp.ID}}}), 201)
+	ops := h.client()
+	ops.bearer = loginAndIssueToken(t, h, "ops-wt@example.com", []map[string]string{{"role": "operator", "domain": sp.ID}})
+	adm := h.client()
+	adm.bearer = loginAndIssueToken(t, h, "adm-wt@example.com", []map[string]string{{"role": "admin", "domain": sp.ID}})
+	expect(t, ops.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.WorktreeRetention: 14}}), 403)
+	expect(t, ops.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.ConcurrentRuns: 3}}), 200)
+	expect(t, adm.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.ConcurrentRuns: 3, limits.WorktreeRetention: 14}},
+		"If-Match", `"1"`), 200)
+}

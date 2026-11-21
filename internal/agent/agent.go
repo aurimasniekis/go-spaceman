@@ -216,7 +216,9 @@ type Agent struct {
 	// beforeEnsureGuard runs in a launch before it takes the guard lock; onRunEndHooks runs at the start of runEndHooks.
 	// Test hooks.
 	beforeEnsureGuard func()
-	onRunEndHooks     func(runID string)
+	// afterRecordWorkdir runs in a launch after it recorded its work folder and released the worktree lock.
+	afterRecordWorkdir func(work string)
+	onRunEndHooks      func(runID string)
 	// beforeRecordAttach, when set, runs before each of a recorder's attachments (tests).
 	beforeRecordAttach func(runID string)
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it

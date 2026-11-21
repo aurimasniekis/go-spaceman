@@ -748,3 +748,68 @@ func TestRemoveWorktreeSafelyDoesNotHoldTheLockWhileChecking(t *testing.T) {
 		t.Fatal("the claim was not released")
 	}
 }
+
+// ADR-0107 (follow-up): a symlink planted after the launch recorded its folder, and before it created and resolved it,
+// must not let the run start inside a worktree a removal has claimed in that window. The launch checks and records the
+// resolved folder again, so it fails; a removal that claims afterwards sees the run through the new record.
+func TestLaunchRefusedOntoWorktreeClaimedAfterRecord(t *testing.T) {
+	a, f := ccAgent(t, t.TempDir(), nil, nil)
+	space := a.spaceDir("cc")
+	claimed := filepath.Join(realPath(space), "worktrees", "spaceman-late")
+	if err := os.MkdirAll(claimed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var release func()
+	a.afterRecordWorkdir = func(string) {
+		// The removal claims the worktree (the record does not overlap it yet), then the symlink appears.
+		var err error
+		if release, err = a.claimWorktree(context.Background(), ccSpace, claimed); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(claimed, filepath.Join(space, "plant")); err != nil {
+			t.Error(err)
+		}
+	}
+	a.launch(context.Background(), proto.Command{CommandID: "cmd_wl5", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_wl5", Generation: 1},
+		proto.LaunchPayload{Harness: harness.KindClaude, Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Prompt: "hello", Workspace: "plant/sub"})
+	if release == nil {
+		t.Fatal("the hook did not run")
+	}
+	defer release()
+	if r := getRun(t, a, "run_wl5"); r.State != proto.RunFailed {
+		t.Fatalf("a launch through a symlink planted after the record: state %s, want failed", r.State)
+	}
+	for _, s := range f.Specs {
+		if s.Name == RunName("run_wl5") {
+			t.Fatalf("the run's program was started: %v", s.Argv)
+		}
+	}
+}
+
+// The same window without a removal: the record is corrected to the resolved folder, so a removal that claims later is
+// refused as a live run.
+func TestLaunchRerecordsFolderResolvedAfterRecord(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	space := a.spaceDir("cc")
+	target := filepath.Join(realPath(space), "worktrees", "spaceman-late2")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a.afterRecordWorkdir = func(string) {
+		if err := os.Symlink(target, filepath.Join(space, "plant")); err != nil {
+			t.Error(err)
+		}
+	}
+	a.launch(context.Background(), proto.Command{CommandID: "cmd_wl6", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_wl6", Generation: 1},
+		proto.LaunchPayload{Harness: harness.KindClaude, Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Prompt: "hello", Workspace: "plant"})
+	if r := getRun(t, a, "run_wl6"); r.State == proto.RunFailed {
+		t.Fatalf("the launch failed: %+v", r)
+	}
+	b, _ := os.ReadFile(filepath.Join(a.runDir("run_wl6"), workdirFile))
+	if string(b) != target {
+		t.Fatalf("recorded %q, want %q", b, target)
+	}
+	if _, err := a.claimWorktree(context.Background(), ccSpace, target); RefusalCode(err) != RefuseLiveRun {
+		t.Fatalf("claim: %v", err)
+	}
+}

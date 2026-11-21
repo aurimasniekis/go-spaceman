@@ -5,7 +5,7 @@
 // Lowering a limit never stops running work: it only refuses new work beyond it. The single exception is a space's
 // explicit on_lower=stop policy for the run concurrency limit, which stops the newest runs beyond the new limit.
 // Retention periods (retention_*_days, ADR-0045) are limits too, but shortening one deletes data in the next daily
-// retention pass (internal/retention); changing them needs retention:write.
+// retention pass (internal/retention); changing them needs retention:write, as does worktree_retention_days.
 //
 // Budgets are usage-based: usage is reported by harnesses, late or not at all, so a budget warns and refuses new runs
 // once the reported usage passes it. It is never a hard currency limit, and unknown usage is never counted as zero.
@@ -53,8 +53,10 @@ const (
 	RetainTranscripts  = "retention_transcripts_days"
 	RetainAttachments  = "retention_attachments_days"
 	RetainHumanActions = "retention_human_actions_days"
-	RecordingQuota     = "recording_quota_bytes"
-	ExportMax          = "export_max_bytes"
+	// WorktreeRetention is the days after its task finished that a worktree SpaceMan created may be pruned (ADR-0107; 0: never).
+	WorktreeRetention = "worktree_retention_days"
+	RecordingQuota    = "recording_quota_bytes"
+	ExportMax         = "export_max_bytes"
 	// Control lifecycle (ADR-0056).
 	ControlAutostart = "control_autostart"
 	ControlIdleStop  = "control_idle_stop_minutes"
@@ -93,6 +95,11 @@ const (
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
 var RetentionKeys = []string{RetainRecordings, RetainTranscripts, RetainAttachments, RetainHumanActions}
+
+// retentionWriteKeys are the limits whose change needs retention:write: RetentionKeys and the worktree retention
+// period (ADR-0107 decision 4: like the retention limits). The worktree key is not in RetentionKeys, which the
+// retention pass and the retention defaults read, until its pruning lands.
+var retentionWriteKeys = append(slices.Clone(RetentionKeys), WorktreeRetention)
 
 // TerminalSizeKeys are the limits that set a new run's held terminal size (ADR-0075).
 var TerminalSizeKeys = []string{TerminalCols, TerminalRows}
@@ -172,6 +179,8 @@ var Defs = []Def{
 		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
 	{Key: RetainHumanActions, Label: "Finished human-action retention", Unit: "days", Scope: "days a resolved, cancelled or expired human action is kept; kept while an open task, follow-up or undelivered response refers to it", ZeroNone: true,
 		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
+	{Key: WorktreeRetention, Label: "Worktree retention", Unit: "days", Scope: "days after its owning task was done or cancelled before a worktree SpaceMan created for it may be pruned (never for failed tasks or unowned worktrees; its owning run ended at least this long ago, no live run uses it, and the work is pushed and clean); 0 never prunes", ZeroNone: true,
+		Enforced: "not enforced yet: the worktree pruning of the daily retention pass (ADR-0107) will read it; nothing is removed until it lands", OnLower: "Nothing is removed when it is lowered; the pruning that reads it applies from its next pass.", Overridable: true},
 	{Key: ExportMax, Label: "Export size", Unit: "bytes", Scope: "size of one space export archive",
 		Enforced: "space export (refused before it starts when larger)", OnLower: "Only later exports are refused.", Overridable: true},
 	{Key: ControlAutostart, Label: "Start control on new work", Unit: "switch",
@@ -305,7 +314,7 @@ func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, defaults map
 // RetentionChanged reports whether replacing a space's overrides with in would change one of its retention overrides
 // (set, cleared or a different value). The API requires retention:write for such a change.
 func (svc *Service) RetentionChanged(ctx context.Context, spaceID string, in Input) (bool, error) {
-	return svc.KeysChanged(ctx, spaceID, in, RetentionKeys)
+	return svc.KeysChanged(ctx, spaceID, in, retentionWriteKeys)
 }
 
 // TerminalSizeChanged reports whether replacing a space's overrides with in would change its new-run terminal size
