@@ -318,7 +318,6 @@ func TestKBAcceptIgnoresHooksAndVerifySignatures(t *testing.T) {
 	}
 }
 
-// The target moving while the KB's check runs fails the acceptance and changes nothing.
 // The target moves after the fast-forward has landed: the proposal is still reported merged, with a note naming the
 // observed tips, and nothing is reset.
 func TestKBAcceptMovedAfterMergeIsReportedMerged(t *testing.T) {
@@ -343,6 +342,7 @@ func TestKBAcceptMovedAfterMergeIsReportedMerged(t *testing.T) {
 	}
 }
 
+// The target moving while the KB's check runs fails the acceptance and changes nothing.
 func TestKBAcceptTargetMovesDuringValidator(t *testing.T) {
 	f := newKBFixture(t)
 	c := f.propose(t, "c.md", "c\n")
