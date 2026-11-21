@@ -486,3 +486,60 @@ func TestRemoveWorktreeSafelyDetachedHead(t *testing.T) {
 		t.Fatalf("detached pushed HEAD: %+v %v", got, err)
 	}
 }
+
+// ADR-0106 (second review): replace refs and grafts can't fake the pushed check, an untracked .gitignore can't hide
+// itself and its folder, and repository configuration can't make git skip a content check.
+func TestRemoveWorktreeSafelyResistsRepositoryTricks(t *testing.T) {
+	e := newRmEnv(t)
+	dir := e.worktree(t, "spaceman/tricks", false)
+	head := gitRun(t, dir, "rev-parse", "HEAD")
+	tip := gitRun(t, e.repo, "rev-parse", "origin/main")
+	// The remote's tip pretends to descend from the unpushed HEAD.
+	gitRun(t, e.repo, "replace", "--graft", tip, head)
+	_, err := e.remove("spaceman-tricks")
+	wantRefused(t, err, RefuseUnpushed)
+	gitRun(t, e.repo, "replace", "-d", tip)
+	gd := gitRun(t, e.repo, "rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(e.repo, gd)
+	}
+	gitRun(t, dir, "push", "-q", "origin", "spaceman/tricks") // pushed: only the grafts file refuses now
+	writeFile(t, filepath.Join(gd, "info", "grafts"), tip+" "+head+"\n")
+	_, err = e.remove("spaceman-tricks")
+	wantRefused(t, err, RefuseUnpushed)
+	if err := os.Remove(filepath.Join(gd, "info", "grafts")); err != nil {
+		t.Fatal(err)
+	}
+
+	// An untracked .gitignore that ignores itself and its folder.
+	writeFile(t, filepath.Join(dir, "notes", ".gitignore"), "*\n")
+	writeFile(t, filepath.Join(dir, "notes", "precious.md"), "mine\n")
+	_, err = e.remove("spaceman-tricks")
+	wantRefused(t, err, RefuseUntracked)
+	mustExist(t, filepath.Join(dir, "notes", "precious.md"))
+	if err := os.RemoveAll(filepath.Join(dir, "notes")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stat checks turned down in the repository's configuration, and an edit of the same size with the old times.
+	gitRun(t, e.repo, "config", "core.trustctime", "false")
+	gitRun(t, e.repo, "config", "core.checkStat", "minimal")
+	p := filepath.Join(dir, "work.txt")
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, dir, "update-index", "--refresh")
+	writeFile(t, p, "dome\n") // same size as "done\n"
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if st := gitRun(t, dir, "status", "--porcelain"); st != "" {
+		t.Logf("setup: git status already sees the edit (%q); the check still must", st)
+	}
+	_, err = e.remove("spaceman-tricks")
+	wantRefused(t, err, RefuseDirty)
+	if b, _ := os.ReadFile(p); string(b) != "dome\n" {
+		t.Fatal("the edit was lost")
+	}
+}

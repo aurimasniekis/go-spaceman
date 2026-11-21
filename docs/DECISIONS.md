@@ -8208,14 +8208,20 @@
      - **No run** (`live_run`): no live or launching run of the space works in the worktree, in a folder inside it or
        in a folder that contains it (decision 2). A live run whose work folder is not recorded, or recorded as anything
        but an absolute path, counts as using every worktree.
-     - **Clean** (`dirty`, `untracked`): no changed or staged tracked file (`git status`); no tracked file git was
+     - **Clean** (`dirty`, `untracked`): no staged change (`diff-index --cached HEAD`); no tracked file whose content
+       differs from HEAD, hashed through a temporary index read from HEAD, so neither the index's cached stat data (an
+       edit within the same second) nor repository configuration (`core.trustctime`, `core.checkStat`) can hide an
+       edit; no tracked file git was
        told not to look at (assume-unchanged, skip-worktree, sparse checkout: their edits are hidden from `git status`
        and from `git worktree remove`); no untracked file, judged by the tree's `.gitignore` files only (the
-       repository's `info/exclude` and `core.excludesFile` are agent-writable and could hide anything); and no git
+       repository's `info/exclude` and `core.excludesFile` are agent-writable and could hide anything, and an
+       untracked `.gitignore` is itself untracked work, even when it ignores itself); and no git
        repository anywhere below the top, ignored or not. Files the tree's own `.gitignore` ignores (build output) go
        with the folder.
      - **Pushed** (`unpushed`): HEAD is a commit and `git rev-list HEAD --not <the remote's branch tips>` is empty.
-       Right before the removal HEAD and the folder's resolved path are read again and must not have changed.
+       History is read without replace refs (`GIT_NO_REPLACE_OBJECTS`), and a repository with `info/grafts` is
+       refused: both are agent-writable ways to make a commit look like an ancestor of another. Right before the
+       removal HEAD and the folder's resolved path are read again and must not have changed.
      - Any git error refuses (`git_error`): unsure means not removed.
 
      Then `git worktree remove <path>` (never `--force`; git refuses an unclean or locked worktree by itself, a

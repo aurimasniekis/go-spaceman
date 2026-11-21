@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
@@ -166,7 +167,7 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 	if err := cleanTree(ctx, g, realDir); err != nil {
 		return out, err
 	}
-	head, err := g.run(ctx, realDir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	head, err := strictGit(ctx, g, realDir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if head = strings.TrimSpace(head); err != nil || head == "" {
 		return out, refuse(RefuseUnpushed, "the worktree has no commit checked out")
 	}
@@ -182,7 +183,18 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 			args = append(args, t)
 		}
 	}
-	ahead, err := g.run(ctx, repo, args...)
+	// Grafts rewrite history for every reader like replace refs do; a repository with them is refused.
+	common, err := g.run(ctx, repo, "rev-parse", "--git-common-dir")
+	if common = strings.TrimSpace(common); err != nil || common == "" {
+		return out, refuse(RefuseGit, "git rev-parse: the repository's git folder is not known")
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(repo, common)
+	}
+	if _, err := os.Lstat(filepath.Join(common, "info", "grafts")); !errors.Is(err, fs.ErrNotExist) {
+		return out, refuse(RefuseUnpushed, "the repository has grafts (info/grafts), so its history can't be trusted")
+	}
+	ahead, err := strictGit(ctx, g, repo, args...)
 	if err != nil {
 		return out, refuse(RefuseGit, "git rev-list: %s", truncateStr(err.Error(), 300))
 	}
@@ -197,7 +209,7 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 	if again, err := filepath.EvalSymlinks(dir); err != nil || again != realDir {
 		return out, refuse(RefuseOutside, "worktrees/%s changed during the removal", req.Name)
 	}
-	if again, err := g.run(ctx, realDir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil || strings.TrimSpace(again) != head {
+	if again, err := strictGit(ctx, g, realDir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil || strings.TrimSpace(again) != head {
 		return out, refuse(RefuseUnpushed, "HEAD moved during the removal")
 	}
 	// Never --force: git refuses by itself an unclean or locked worktree, a second check of what is above.
@@ -211,21 +223,44 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 }
 
 // cleanTree refuses a worktree with anything of its own that removing the folder would lose:
-//   - changed or staged tracked files (git status, untracked files aside);
+//   - staged changes, and tracked files whose content differs from HEAD (hashed, never judged by stat data);
 //   - tracked files git was told not to look at (assume-unchanged, skip-worktree, sparse checkout): their edits are hidden
 //     from git status and from git worktree remove;
 //   - untracked files, judged by the tree's .gitignore files only: the repository's info/exclude and core.excludesFile
 //     are ignored here, because agents can write them to hide any file;
 //   - a git repository anywhere below the top (ignored or not), which may hold its own unpushed work.
 func cleanTree(ctx context.Context, g *projectGit, dir string) error {
-	st, err := g.run(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none")
+	// Staged changes: the index against HEAD (no stat data involved).
+	staged, err := strictGit(ctx, g, dir, "diff-index", "--cached", "--name-only", "-z", "HEAD", "--")
 	if err != nil {
-		return refuse(RefuseGit, "git status: %s", truncateStr(err.Error(), 300))
+		return refuse(RefuseGit, "git diff-index: %s", truncateStr(err.Error(), 300))
 	}
-	if dirty, _, paths := statusCounts(st); dirty > 0 {
-		return refuse(RefuseDirty, "%d changed file(s), e.g. %s", dirty, strings.Join(paths, ", "))
+	if p := firstPath(staged); p != "" {
+		return refuse(RefuseDirty, "staged changes, e.g. %s", p)
 	}
-	tagged, err := g.run(ctx, dir, "ls-files", "-v", "-z")
+	// Changed files: every tracked file's content against HEAD, through a fresh index read from HEAD, which holds no
+	// stat data, so git hashes each file instead of trusting the index's cached stat data (which edits within the same
+	// second, or repository configuration, can make match).
+	tmp, err := os.MkdirTemp("", "smwt-")
+	if err != nil {
+		return refuse(RefuseGit, "a temporary index: %s", err.Error())
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	env := []string{"GIT_NO_REPLACE_OBJECTS=1", "GIT_INDEX_FILE=" + filepath.Join(tmp, "index")}
+	opts := []string{"-c", "core.trustctime=true", "-c", "core.checkStat=default"}
+	for _, args := range [][]string{{"read-tree", "HEAD"}, {"update-index", "-q", "--refresh"}} {
+		if _, err := g.runEnv(ctx, dir, 10*time.Minute, env, append(append([]string{}, opts...), args...)...); err != nil {
+			return refuse(RefuseGit, "git %s: %s", args[0], truncateStr(err.Error(), 300))
+		}
+	}
+	changed, err := g.runEnv(ctx, dir, 10*time.Minute, env, append(append([]string{}, opts...), "diff-files", "--name-only", "-z", "--")...)
+	if err != nil {
+		return refuse(RefuseGit, "git diff-files: %s", truncateStr(err.Error(), 300))
+	}
+	if p := firstPath(changed); p != "" {
+		return refuse(RefuseDirty, "changed files, e.g. %s", p)
+	}
+	tagged, err := strictGit(ctx, g, dir, "ls-files", "-v", "-z")
 	if err != nil {
 		return refuse(RefuseGit, "git ls-files: %s", truncateStr(err.Error(), 300))
 	}
@@ -234,13 +269,23 @@ func cleanTree(ctx context.Context, g *projectGit, dir string) error {
 			return refuse(RefuseDirty, "%s is hidden from git status (assume-unchanged, skip-worktree or sparse checkout)", e[2:])
 		}
 	}
-	others, err := g.run(ctx, dir, "ls-files", "-z", "--others", "--exclude-per-directory=.gitignore")
+	others, err := strictGit(ctx, g, dir, "ls-files", "-z", "--others", "--exclude-per-directory=.gitignore")
 	if err != nil {
 		return refuse(RefuseGit, "git ls-files: %s", truncateStr(err.Error(), 300))
 	}
 	var untracked []string
 	for p := range strings.SplitSeq(others, "\x00") {
 		if p != "" {
+			untracked = append(untracked, p)
+		}
+	}
+	// An untracked .gitignore can ignore itself and everything beside it: only committed ones may hide files.
+	ignored, err := strictGit(ctx, g, dir, "ls-files", "-z", "--others", "--ignored", "--exclude-per-directory=.gitignore")
+	if err != nil {
+		return refuse(RefuseGit, "git ls-files: %s", truncateStr(err.Error(), 300))
+	}
+	for p := range strings.SplitSeq(ignored, "\x00") {
+		if p != "" && filepath.Base(p) == ".gitignore" {
 			untracked = append(untracked, p)
 		}
 	}
@@ -267,6 +312,16 @@ func cleanTree(ctx context.Context, g *projectGit, dir string) error {
 	return nil
 }
 
+// firstPath is the first path of a NUL-separated git list, or "".
+func firstPath(out string) string {
+	for p := range strings.SplitSeq(out, "\x00") {
+		if p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
 // isObjectID reports whether s is a full SHA-1 or SHA-256 object name.
 func isObjectID(s string) bool {
 	if len(s) != 40 && len(s) != 64 {
@@ -278,6 +333,14 @@ func isObjectID(s string) bool {
 		}
 	}
 	return true
+}
+
+// strictGit runs git for the removal's checks with what the repository's configuration must not change: content is
+// compared by its stat data in full (core.trustctime, core.checkStat) and history is read as it is, without replace
+// refs (GIT_NO_REPLACE_OBJECTS), which agents can write to make any commit look like an ancestor of another.
+func strictGit(ctx context.Context, g *projectGit, dir string, args ...string) (string, error) {
+	return g.runEnv(ctx, dir, 2*time.Minute, []string{"GIT_NO_REPLACE_OBJECTS=1"},
+		append([]string{"-c", "core.trustctime=true", "-c", "core.checkStat=default"}, args...)...)
 }
 
 type listedTree struct {
