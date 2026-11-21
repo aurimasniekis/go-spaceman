@@ -251,7 +251,7 @@ func (b *wtBudget) spend(ctx context.Context, g *projectGit) {
 	}
 	oldest(b.recent)
 	oldest(b.idle2)
-	sort.SliceStable(b.refresh, func(x, y int) bool { return b.refresh[x].at.Before(b.refresh[y].at) })
+	oldest(b.refresh)
 	expired := func(w *proto.WorktreeCheck) bool {
 		return w.StatusAt != nil && now.Sub(*w.StatusAt) > repoStatusMaxAge
 	}

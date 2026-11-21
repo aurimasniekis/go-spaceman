@@ -544,3 +544,48 @@ func TestRepoReportWorktreeStatusIdleFailingGoesLast(t *testing.T) {
 		t.Fatalf("the two healthy idle worktrees must each be checked within three reports: %v", seen)
 	}
 }
+
+// A cached worktree whose refresh always fails must not take the allowance on every report: refreshes go by last
+// attempt, so the healthy cached worktrees behind it are refreshed too, even though the failing one has the oldest counts.
+func TestRepoReportWorktreeStatusFailingRefreshGoesLast(t *testing.T) {
+	a, _, wts, check := statusFixture(t, 3, 50)
+	for _, wt := range wts {
+		untracked(t, wt, time.Now().Add(-10*24*time.Hour))
+	}
+	check()
+	check() // every worktree is now cached
+	stamp, _ := worktreeStamp(wts[0])
+	gd := strings.TrimPrefix(strings.TrimSpace(readText(t, filepath.Join(wts[0], ".git"))), "gitdir: ")
+	idx := filepath.Join(gd, "index")
+	if err := os.WriteFile(idx, []byte("not an index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(idx, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	repoStatusMax = 1
+	// w0's cached counts are the oldest and stay so, because its refresh never succeeds.
+	setAt := func() {
+		a.wtStatus.mu.Lock()
+		defer a.wtStatus.mu.Unlock()
+		for k, v := range a.wtStatus.m {
+			v.at = time.Now().Add(-2 * repoStatusRefresh)
+			if k == wts[0] {
+				v.at = time.Now().Add(-3 * repoStatusRefresh)
+			}
+			a.wtStatus.m[k] = v
+		}
+	}
+	refreshed := map[string]bool{}
+	for range 3 {
+		setAt()
+		for _, w := range check().Worktrees {
+			if w.Status == proto.WorktreeStatusFresh {
+				refreshed[filepath.Base(w.Path)] = true
+			}
+		}
+	}
+	if !refreshed["w1"] || !refreshed["w2"] || refreshed["w0"] {
+		t.Fatalf("w1 and w2 must both be refreshed within three reports, w0 never: %v", refreshed)
+	}
+}
