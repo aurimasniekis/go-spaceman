@@ -981,3 +981,85 @@ func TestAccountSwitchNearResetBeforeNoAccount(t *testing.T) {
 		t.Fatalf("a near reset on a run without an account decided %d switches", n)
 	}
 }
+
+// Regression: a hold with no reset whose probe is due refuses nothing (holdState), but failover counted it as held, so
+// a switch to the account found no eligible account and fell back. With every account avoided the switch now goes to
+// the account whose probe is due, and the resumed run is that probe.
+func TestReproSwitchBlockedByProbeDueUnknownHold(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	e.running("run_p", "worker", 2)
+	e.report("run_p", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_p"); sw.State != SwitchPending || sw.ToAccountID != "acc_2" {
+		t.Fatalf("switch %+v, want pending to acc_2", sw)
+	}
+}
+
+// A hold that still blocks keeps blocking in the last-resort pass: a hold with no reset and its probe ahead, or a known
+// reset ahead, is not a target.
+func TestAccountSwitchUnexpiredBlockingHoldStillBlocks(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.running("run_p", "worker", 2)
+	e.report("run_p", "idle", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_p"); sw.State != SwitchFellBack || sw.Reason != SwitchNoEligibleAccount {
+		t.Fatalf("switch %+v, want fell back, no eligible account", sw)
+	}
+}
+
+// The evidence cascade: the account's five_hour hold clears by evidence at its reset, and its no-reset unknown hold seen
+// by then goes with it (its probe was ahead, so nothing else would have ended it). One seen after the reset stays. The
+// switch to the account then succeeds.
+func TestAccountSwitchUnknownHoldClearedWithSiblingEvidence(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_f", "spc_c", "acc_2", "", proto.LimitFiveHour, dur(time.Minute), nil)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.hold("ulm_l", "spc_b", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_l'`, e.us(10*time.Minute))
+	e.clk.Advance(2 * time.Minute)
+	err := e.s.W().TxNamed(e.ctx, "test.evidence", func(tx *store.Tx) error {
+		return e.svc.clearHoldsTx(e.ctx, tx, db.Run{ID: "run_o", SpaceID: "spc_d", LaunchJson: `{"account_ref":"acc_2"}`}, limitState{kind: proto.LimitFiveHour})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"ulm_f": "evidence", "ulm_u": "evidence", "ulm_l": ""} {
+		u, err := e.s.R().GetUsageLimit(e.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.ClearedBy != want {
+			t.Fatalf("%s cleared_by %q, want %q", id, u.ClearedBy, want)
+		}
+	}
+	if n := e.count(`SELECT count(*) FROM event_outbox WHERE subject = 'evt.spaceman.fleet.usage_limit.cleared' AND correlation_id = 'ulm_u'`); n != 1 {
+		t.Fatalf("%d cleared events for the unknown hold", n)
+	}
+	e.exec(`UPDATE usage_limits SET cleared_at = 1 WHERE id = 'ulm_l'`)
+	e.running("run_p", "worker", 2)
+	e.report("run_p", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_p"); sw.State != SwitchPending || sw.ToAccountID != "acc_2" {
+		t.Fatalf("switch %+v, want pending to acc_2", sw)
+	}
+}
+
+// A probe of a hold with no reset is not put off beyond the account's next known reset.
+func TestHoldProbeCappedAtNextKnownReset(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_f", "spc_c", "acc_2", "", proto.LimitFiveHour, dur(30*time.Minute), dur(-time.Minute)) // a probe was asked for
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_u'`, e.us(-4*time.Hour))
+	if err := e.s.W().TxNamed(e.ctx, "test.probe", func(tx *store.Tx) error {
+		_, err := e.svc.holdCheckTx(e.ctx, tx, HoldTarget{AccountID: "acc_2"}, 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := e.s.R().GetUsageLimit(e.ctx, "ulm_u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := e.us(30 * time.Minute); u.CheckAt.Int64 != want {
+		t.Fatalf("check_at %d, want the sibling's reset %d", u.CheckAt.Int64, want)
+	}
+}
