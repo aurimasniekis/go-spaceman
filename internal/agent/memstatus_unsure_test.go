@@ -232,3 +232,113 @@ func TestMemoryStatusUnbornHeadWithFileIsDirty(t *testing.T) {
 		t.Fatalf("the file was not checkpointed: uncheckpointed=%d ok=%v", n, ok)
 	}
 }
+
+// blockRevList points the memory manager's git at a wrapper that, the first time rev-list runs in dir, marks that it
+// started and then blocks until it is killed. It returns the marker's path.
+func blockRevList(t *testing.T, m *memManager, dir string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	started, once := filepath.Join(tmp, "started"), filepath.Join(tmp, "once")
+	script := "#!/bin/sh\n" +
+		"case \" $* \" in *\" rev-list \"*)\n" +
+		"  if [ \"$PWD\" = '" + dir + "' ] && mkdir '" + once + "' 2>/dev/null; then\n" +
+		"    : > '" + started + "'\n" +
+		"    while :; do sleep 0.05; done\n" +
+		"  fi;;\n" +
+		"esac\n" +
+		"exec '" + m.git.Bin + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(tmp, "git"), []byte(script), 0o700); err != nil { //nolint:gosec // test wrapper
+		t.Fatal(err)
+	}
+	m.git.Bin = filepath.Join(tmp, "git")
+	return started
+}
+
+// A status whose context ends while it counts an instance's commits (a connection drop during a memory.flush) knows
+// nothing about them. It must not read that as an unborn HEAD or cache it: a later status with a live context still
+// sees the unpublished commit, the space is not clean, and the flush publishes it.
+func TestMemoryStatusCancelledCountIsNotCachedAsClean(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	old := statusRacy
+	statusRacy = 0
+	t.Cleanup(func() { statusRacy = old })
+	col := statusFleet(t, m, 1, 2)[0]
+	sp, role := col[0], col[1]
+	stopSyncs(m)
+	inst := m.instance(sp, role, "ins_1")
+	write(t, inst, "local.md", "- unpublished\n")
+	localCommit(t, inst, "local")
+	shared := m.shared(sp, role)
+	head := m.git.RevParse(ctx, shared, "refs/heads/main")
+	js, _ := a.j.memory(ctx, sp, role)
+	js.Acked = head
+	if err := a.j.putMemory(ctx, js); err != nil {
+		t.Fatal(err)
+	}
+	// Work tree files older than the index, and the index settled (the first git status may rewrite it), so that the
+	// cancelled status below could be cached; then drop the cached entry: the cancelled status has to count.
+	past := time.Now().Add(-time.Hour)
+	_ = filepath.WalkDir(inst, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && !strings.Contains(p, string(filepath.Separator)+".git"+string(filepath.Separator)) {
+			_ = os.Chtimes(p, past, past)
+		}
+		return nil
+	})
+	for range 3 {
+		if _, n, ok := m.instanceStatus(ctx, inst, head); !ok || n != 1 {
+			t.Fatalf("before: ok=%v localCommits=%d, want 1", ok, n)
+		}
+	}
+	m.statusMu.Lock()
+	_, primed := m.instStatus[inst]
+	delete(m.instStatus, inst)
+	m.statusMu.Unlock()
+	if !primed {
+		t.Fatal("the settled checkout's status was not cached, so the probe proves nothing")
+	}
+
+	bin := m.git.Bin
+	started := blockRevList(t, m, inst)
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		for !exists(started) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		cancel()
+	}()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.instanceStatus(cctx, inst, head)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the status did not end after its context was cancelled")
+	}
+	if !exists(started) {
+		t.Fatal("the status never counted the instance's commits")
+	}
+	m.git.Bin = bin
+
+	m.statusMu.Lock()
+	c, cached := m.instStatus[inst]
+	m.statusMu.Unlock()
+	if cached {
+		t.Errorf("a status under a cancelled context was cached: %+v", c)
+	}
+	if _, n, ok := m.instanceStatus(ctx, inst, head); !ok || n < 1 {
+		t.Errorf("after the cancelled status: ok=%v localCommits=%d, want at least 1", ok, n)
+	}
+	if ok, why := a.memoryClean(ctx, sp); ok {
+		t.Errorf("an instance with an unpublished commit read as clean (%s)", why)
+	}
+	a.flushSpaceMemory(ctx, sp, "backup")
+	out, err := m.git.Run(ctx, shared, nil, "show", "refs/heads/main:local.md")
+	if err != nil || out != "- unpublished\n" {
+		t.Fatalf("local.md did not reach shared main: %q %v", out, err)
+	}
+}

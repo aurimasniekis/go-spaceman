@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"hash/fnv"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -141,12 +143,10 @@ func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (unc
 				n, err = m.git.CountErr(ctx, inst, head, "HEAD")
 			}
 		}
-		if err != nil {
-			if _, herr := m.git.RunCheckout(ctx, inst, nil, "rev-parse", "--verify", "-q", "HEAD"); herr != nil {
-				// An unborn HEAD (a checkout that was only initialised, as a failed or cancelled ensure leaves it)
-				// has no commits to publish; its files still count through the status above. Cached as usual.
-				n, err = 0, nil
-			}
+		if err != nil && m.unbornHead(ctx, inst) {
+			// An unborn HEAD (a checkout that was only initialised, as a failed or cancelled ensure leaves it) has no
+			// commits to publish; its files still count through the status above. Cached as usual.
+			n, err = 0, nil
 		}
 		if err != nil {
 			// Typically the instance diverged and lacks the new shared head's objects. Never read that as clean: count
@@ -160,13 +160,68 @@ func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (unc
 		}
 		localCommits = n
 	}
-	// Cached only when nothing changed while git ran (git status may rewrite the index: the next report counts again).
-	if post, ok := statusStamp(inst, head); cacheable && ok && !countFailed && post == pre {
+	// Cached only when every step answered (an ended context or a failed count is never cached: what it read may be
+	// wrong) and nothing changed while git ran (git status may rewrite the index: the next report counts again).
+	if post, ok := statusStamp(inst, head); cacheable && ok && !countFailed && ctx.Err() == nil && post == pre {
 		m.statusMu.Lock()
 		m.instStatus[inst] = instStatus{stamp: pre, uncheckpointed: uncheckpointed, localCommits: localCommits}
 		m.statusMu.Unlock()
 	}
 	return uncheckpointed, localCommits, true
+}
+
+// unbornHead reports whether a checkout's HEAD names a branch that does not exist yet (a checkout that was only
+// initialised). Only positive evidence counts, never an error: the context must not have ended, git must have run and
+// answered "no such commit" (rev-parse --verify exit 1), HEAD must be a symbolic ref to a branch, and that branch must be
+// neither a loose nor a packed ref. Anything else (an ended context, a refused, killed or failed git, a detached HEAD, an
+// unreadable ref store) is not unborn, so the caller keeps counting the checkout as unpublished.
+func (m *memManager) unbornHead(ctx context.Context, inst string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	_, err := m.git.RunCheckout(ctx, inst, nil, "rev-parse", "--verify", "-q", "HEAD")
+	var ee *exec.ExitError
+	if err == nil || !errors.As(err, &ee) || ee.ExitCode() != 1 || ctx.Err() != nil {
+		return false
+	}
+	out, err := m.git.RunCheckout(ctx, inst, nil, "symbolic-ref", "-q", "HEAD")
+	if err != nil || ctx.Err() != nil {
+		return false
+	}
+	return branchAbsent(filepath.Join(inst, ".git"), strings.TrimSpace(out))
+}
+
+// branchAbsent reports whether ref (refs/heads/<b>) is neither a loose ref nor a packed-refs entry of the git dir. It
+// is false when the ref store cannot be read or is not the files backend.
+func branchAbsent(gitDir, ref string) bool {
+	b, ok := strings.CutPrefix(ref, "refs/heads/")
+	if !ok || b == "" || !filepath.IsLocal(b) {
+		return false
+	}
+	if _, err := os.Lstat(filepath.Join(gitDir, "reftable")); !os.IsNotExist(err) {
+		return false // another ref backend (or an unreadable folder): no evidence
+	}
+	if _, err := os.Lstat(filepath.Join(gitDir, "refs", "heads", filepath.FromSlash(b))); !os.IsNotExist(err) {
+		return false
+	}
+	p := filepath.Join(gitDir, "packed-refs")
+	fi, err := os.Lstat(p)
+	switch {
+	case os.IsNotExist(err):
+		return true
+	case err != nil || !fi.Mode().IsRegular():
+		return false
+	}
+	data, err := os.ReadFile(p) //nolint:gosec // the checkout's own packed-refs, a regular file (checked above and by the guard)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[1] == ref {
+			return false
+		}
+	}
+	return true
 }
 
 // forgetStatus drops the cached status of a collection's instances that are no longer on disk.

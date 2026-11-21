@@ -102,7 +102,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   whose unpublished commits cannot be counted (it diverged and lacks the new shared head's objects) is now never
   reported clean and never cached: before, the count failed as 0, the backup flush skipped the instance and a backup or
   relocation could go ahead without its commits. It is now checkpointed, and until then it counts as having
-  unacknowledged commits.
+  unacknowledged commits. An instance folder that was only initialised (no commit yet) counts 0 commits, but only on
+  positive evidence: git ran, said HEAD does not resolve, and HEAD's branch is neither a loose nor a packed ref. A count
+  cut short by a stopped connection or agent, or any other git failure, counts as unpublished and is never cached.
 - **A shutdown during a backup no longer logs a checkpoint warning for every role-memory instance.** Each backup's
   memory flush walked every instance of a space and kept going after the connection or the agent stopped, so each
   remaining instance failed at once with `context canceled`, logged a warning and recorded the error. Overlapping
