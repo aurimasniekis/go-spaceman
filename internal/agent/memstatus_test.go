@@ -119,7 +119,6 @@ func TestMemoryStatusExecsBounded(t *testing.T) {
 	cols := statusFleet(t, m, 4, n)
 	stopSyncs(m)
 	hs := heads(ctx, m, cols)
-	count := countGit(t, m)
 	ack := func() {
 		for i, k := range cols {
 			id := fmt.Sprintf("msy_%d", i)
@@ -129,6 +128,21 @@ func TestMemoryStatusExecsBounded(t *testing.T) {
 			m.acked(ctx, proto.MemoryAck{SyncID: id, SpaceID: k[0], Role: k[1], Result: proto.MemoryOK, Head: hs[i]})
 		}
 	}
+	// Central has every collection's head before the node connects. resume schedules a sync of each collection at
+	// once, and stopSyncs cannot stop one that already fired: with history to offer it would fail (no connection here)
+	// and retry 10 s later (syncDelay<<1), its head check landing in whichever measurement below runs then. An
+	// acknowledged collection's sync ends after that check and schedules nothing.
+	for i, k := range cols {
+		st, err := a.j.memory(ctx, k[0], k[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.Acked = hs[i]
+		if err := a.j.putMemory(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := countGit(t, m)
 
 	// The first report after connecting counts every instance (git status may refresh an index, and git rewrites
 	// racily clean ones, so the next report or two count some again); after that the counts are cached.
@@ -142,7 +156,7 @@ func TestMemoryStatusExecsBounded(t *testing.T) {
 		c := count()
 		m.statusChangedAll()
 		waitReport(t, reports)
-		if count()-c <= len(cols)*4 {
+		if count()-c <= len(cols)*2 { // each collection's head (with the guard's config check), no instance
 			break
 		}
 		if i == 5 {
@@ -202,7 +216,8 @@ func TestMemoryStatusExecsBounded(t *testing.T) {
 	}
 
 	// Correct within the interval: a change in an ended instance is counted at the next report, and only that
-	// checkout is asked again.
+	// checkout is asked again: the shared head (config check, rev-parse), the checkout's status (config check, the
+	// guard's rev-parse and ls-files, status) and its unpublished commits (config check, rev-parse, rev-list).
 	write(t, m.instance(cols[1][0], cols[1][1], "ins_1"), "notes.md", "late note\n")
 	c2 := count()
 	m.statusChanged(cols[1][0], cols[1][1])
@@ -211,7 +226,7 @@ func TestMemoryStatusExecsBounded(t *testing.T) {
 	if !ok || len(st.Collections) != 1 || got.Uncheckpointed != 1 || got.Instances != n {
 		t.Fatalf("after an edit: %+v", st)
 	}
-	if one := count() - c2; one > 4+7 {
-		t.Fatalf("a report after one edit ran %d execs, want at most %d", one, 4+7)
+	if one, want := count()-c2, 2+4+3; one > want {
+		t.Fatalf("a report after one edit ran %d execs, want at most %d", one, want)
 	}
 }
