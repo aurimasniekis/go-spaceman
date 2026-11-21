@@ -845,6 +845,10 @@ func resumableSession(ctx context.Context, q *db.Queries, r db.Run) (string, err
 // when there is nothing to switch with: no session, a resumed run whose session changed (the resume didn't take), or the
 // fresh retry of a failed resume (it already had its one retry). A fresh-resumed run with no session of its own is ok
 // with an empty session: the switch relaunches it fresh on the target account.
+//
+// The fallback is asymmetric on purpose. An original fresh run with no session never started a session, so there is
+// nothing to resume and it falls back no_session. A run resumed fresh from a wait with no session had its prompt taken
+// on an earlier run, so its first turn ended at the limit with the work already begun: it is relaunched fresh instead.
 func limitSwitchSession(ctx context.Context, q *db.Queries, r db.Run) (session string, ok bool, err error) {
 	if session, err = resumableSession(ctx, q, r); err != nil || session != "" {
 		return session, err == nil, err
@@ -862,7 +866,9 @@ func limitSwitchSession(ctx context.Context, q *db.Queries, r db.Run) (session s
 		return "", false, nil // a resumed run whose session changed: the resume didn't take
 	}
 	// prev started this run fresh. If prev's own run was a resume of a session, this is the fresh retry of that failed
-	// resume: it stops here, so a switch can't loop.
+	// resume: it stops here, so a switch can't loop. The retry is detected by its shape (a fresh start whose wait's run
+	// was itself resumed with a session), not by a flag. A false positive, a run that only looks like a retry, stops a
+	// switch it could have made; that is the safe side, since the run waits and nothing loops.
 	if first, err := q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: prev.RunID}); err == nil && first.SessionID != "" {
 		return "", false, nil
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {

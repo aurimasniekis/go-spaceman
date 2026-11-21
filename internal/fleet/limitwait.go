@@ -1100,8 +1100,8 @@ const (
 	switchPrompt = "SpaceMan moved this session to another subscription account because the previous one reached its usage limit. Continue " +
 		"the task; do not repeat completed work. Check spaceman_messages first."
 	switchFreshPrompt = "SpaceMan moved you to another subscription account because the previous one reached its usage limit. Your previous " +
-		"session could not be resumed (the space moved to another node, or resuming it failed), so this is a fresh session. Continue the task " +
-		"from the state of the workspace; check spaceman_messages first."
+		"session could not be resumed or never started (the space moved to another node, or resuming it failed), so this is a fresh session. " +
+		"Continue the task from the state of the workspace; check spaceman_messages first."
 	// restartPrompt and restartFreshPrompt are an agent-restart resume's (ADR-0098).
 	restartPrompt = "The node's agent restarted and stopped your process; SpaceMan resumed your session. Continue the task you were working on " +
 		"from where you left off (your worktree is as it was); check spaceman_messages first."
