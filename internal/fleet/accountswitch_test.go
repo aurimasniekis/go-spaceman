@@ -927,6 +927,20 @@ func TestAccountSwitchFreshResumedRunLimitedAtTurnZero(t *testing.T) {
 	}
 }
 
+// The r.Turn > 0 guard in limitSwitchSession: a run resumed fresh (its wait had no session) that has finished turns but has
+// no session id of its own can't be relaunched fresh by a switch, so it falls back no_session. Without the guard it would
+// park with an empty session.
+func TestAccountSwitchFreshResumedRunWithTurnsNoSession(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_s", "worker", 1)
+	e.exec(`UPDATE runs SET session_id = '' WHERE id = 'run_s'`)
+	e.resumedFrom("run_s", "run_t", "")
+	e.report("run_s", "error", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_s"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("switch %+v, want fell_back no_session", sw)
+	}
+}
+
 // The fresh retry of a failed resume (its wait was written by resumeFailedTx for a run that had been resumed with a
 // session) that is limited at turn 0 again stops with no_session: no loop. Nor does a resumed run whose session changed
 // (its resume didn't take) switch.

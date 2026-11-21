@@ -8248,7 +8248,8 @@
     That is what a replay is for, and it needs `replay:execute` and is audited (SM-EVT-007). (g) Archiving a space
     does not revoke its grant (a grant for an archived space is refused); revoke it explicitly when the operations
     space changes. (h) Anyone allowed to publish the dialog subjects with this installation's origin header can forge
-    items that look like they come from any space; that trust is ADR-0104's. Fleet scope does not change the trust, but a fleet-scoped subscription lets such a forged item name any space, not only the subscriber's own.
+    items that look like they come from any space; that trust is one ADR-0104 implies. Fleet scope does not change that
+    trust, but a fleet-scoped subscription lets such a forged item name any space, not only the subscriber's own.
   - The CLI's `subscription update` does not resend the stored `ingest_own_scope` (it is dropped from the merged
     body like `custom` and `start`), so `--ingest-own=false` alone returns a fleet subscription to `space`; after a
     revocation, an update still needs `--ingest-own-scope space` (decision 2).
