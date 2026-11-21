@@ -729,6 +729,15 @@ func (svc *Service) NotifyControlTx(ctx context.Context, tx *store.Tx, spaceID, 
 	return true, nil
 }
 
+// ControlNotified is ControlNotifiedTx from a read, for a caller that checks before it works out the message.
+func (svc *Service) ControlNotified(ctx context.Context, spaceID, dedup string) (bool, error) {
+	_, err := svc.s.R().GetMessageByDedup(ctx, db.GetMessageByDedupParams{SpaceID: spaceID, FromKind: SystemFrom.Kind, FromID: SystemFrom.ID, DedupKey: dedup})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // ControlNotifiedTx reports whether SpaceMan already sent control the notification with this dedup key.
 func (svc *Service) ControlNotifiedTx(ctx context.Context, tx *store.Tx, spaceID, dedup string) (bool, error) {
 	_, err := tx.Q.GetMessageByDedup(ctx, db.GetMessageByDedupParams{SpaceID: spaceID, FromKind: SystemFrom.Kind, FromID: SystemFrom.ID, DedupKey: dedup})

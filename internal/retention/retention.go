@@ -105,6 +105,9 @@ type Options struct {
 	// PruneWorktrees asks the space's node to remove up to limit worktrees of finished work that ended at least days ago
 	// (worktrees.Service.PruneSpace; ADR-0107 decision 4). Nil: worktrees are not pruned.
 	PruneWorktrees func(ctx context.Context, actor audit.Actor, spaceID string, days int64, limit int) (worktrees.PruneSummary, error)
+	// NotifyWorktreeCleanup sends the space's control the message that asks it to tidy its repositories, at most once
+	// every days days (worktrees.Service.NotifyCleanup; ADR-0107 decision 5). Nil: no message.
+	NotifyWorktreeCleanup func(ctx context.Context, spaceID string, days int64) (bool, error)
 	// WorktreeBatchPerPass overrides WorktreeBatchPerPass (tests); 0 keeps the constant.
 	WorktreeBatchPerPass int
 	Clock                clock.Clock
@@ -548,6 +551,11 @@ func (svc *Service) space(ctx context.Context, spaceID string, budget *int) (Cou
 		*budget -= sum.Requested
 		counts[KindWorktrees] += int64(sum.Removed)
 		errs = append(errs, err)
+	}
+	if days := v.Get(limits.WorktreeCleanupMessage); days > 0 && svc.o.NotifyWorktreeCleanup != nil {
+		if _, err := svc.o.NotifyWorktreeCleanup(ctx, spaceID, days); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return counts, errors.Join(errs...)
 }

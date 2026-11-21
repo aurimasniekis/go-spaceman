@@ -73,6 +73,8 @@ type Service struct {
 
 	// Wait is how long Remove and the tools wait for a node's answer (default DefaultWait).
 	Wait time.Duration
+	// Control sends the weekly cleanup message (messages.Service; nil: NotifyCleanup does nothing).
+	Control ControlNotifier
 	// PruneWait is how long PruneSpace waits in total for the answers of one space's removals (default PruneAnswerWait).
 	PruneWait time.Duration
 
@@ -181,8 +183,12 @@ func (svc *Service) Request(ctx context.Context, actor audit.Actor, spaceID, rep
 		}
 		base.CommandID, base.Status = id, StatusPending
 		out = base
+		details := map[string]any{"space_id": spaceID, "repo": rep.Path, "name": name}
+		if len(head) <= 64 { // as proto.WorktreeRemoved.Validate: a longer head is not a commit ID and is not recorded
+			details["head"] = head
+		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: ActionRequested, Target: audit.Target{Type: TargetType, ID: id},
-			Details: map[string]any{"space_id": spaceID, "repo": rep.Path, "name": name, "head": head}})
+			Details: details})
 		return err
 	})
 	if err != nil {

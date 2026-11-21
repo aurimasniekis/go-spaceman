@@ -8274,42 +8274,50 @@
     show the scope or the grants yet; the API and CLI do.
 ### ADR-0107 — Worktree lifecycle: one safe removal path, auto-prune, a control-led cleanup and cheaper repository reports (security-relevant change)
 
-- **Status:** Accepted, 2026-11-21 (v0.1.17). Decisions 1, 2 and 6 are implemented and tested against temporary
-  repositories (`internal/agent`: `TestRemoveWorktreeSafely*`, `TestLaunchRefusedOntoAClaimedWorktree`,
-  `TestLaunchRefusedOntoWorktreeClaimedAfterRecord`, `TestRepoReportWorktreeStatus*`). The node half of decision 4 is
-  implemented (WL-1, protocol minor 16: the `space.worktree.remove` command runs `removeWorktree` and the node answers
-  with a `worktree.removed` report carrying the result or the refusal code; `internal/agent` `TestWorktreeRemoveCommand*`,
+- **Status:** Accepted, 2026-11-21 (v0.1.17). Decisions 1 to 6 are implemented; decisions 7 and 8 are follow-ups.
+  Decisions 1, 2 and 6 are implemented and tested against temporary repositories (`internal/agent`:
+  `TestRemoveWorktreeSafely*`, `TestLaunchRefusedOntoAClaimedWorktree`,
+  `TestLaunchRefusedOntoWorktreeClaimedAfterRecord`, `TestRepoReportWorktreeStatus*`). The node half of decision 4
+  (WL-1, protocol minor 16): the `space.worktree.remove` command runs `removeWorktree` and the node answers with a
+  `worktree.removed` report carrying the result or the refusal code (`internal/agent` `TestWorktreeRemoveCommand*`,
   `internal/proto` `TestWorktreeRemoveMessages`, `internal/fleet` `TestWorktreeRemovedReport`,
-  `TestWorktreeRemoveKeyOnWireOnly`, simulated), and so is its limit `worktree_retention_days` (WL-3: default 0,
-  0–36500, per-space override, changed with `retention:write`; `TestWorktreeRetentionLimitOverHTTP`,
-  `TestWorktreeRetentionLimitNeedsRetentionWrite`), and central queues the command for control (WL-2: the
-  `internal/worktrees` service queues `space.worktree.remove` after refusing a node below minor 16 or a worktree a live run
-  holds, keeps every request and every answer as an audit event of the target `worktree_removal`, and surfaces the result or
-  the refusal code verbatim; the control tools `spaceman_worktrees_list`, `spaceman_worktree_remove` and
-  `spaceman_worktrees_prune`; `internal/worktrees` `TestWorktreesList`, `TestRemoveHappyPath`,
-  `TestRemoveRefusalCodesPassThrough`, `TestRemoveRefusedForLiveRun`, `TestRemoveRefusals`, `TestWorktreeToolsControlOnly`,
-  `TestWorktreeRemoveTool`, `TestWorktreesPrune`, simulated). In WL-2 the listing shows the owning run's activity as the last
-  change (the node's report carries no folder times), pushed as of the last fetch from the report's branch counts, and a
-  pull request state of always `unknown`; `spaceman_worktrees_prune` is scoped to what the node offers: it removes finished
-  work worktree by worktree through `space.worktree.remove` (whose removal already prunes stale entries), not a separate
-  stale-only `git worktree prune`; it is control-only, needs an explicit `apply`, removes at most 25 per call and ignores
-  `worktree_retention_days`. The tool ignores the limit; the daily retention pass reads it (WL-4, implemented): for each
-  space with `worktree_retention_days` above 0, `worktrees.Service.PruneSpace` takes the worktrees SpaceMan created whose
-  owning run has ended and whose tasks (a run can have several) are all done or cancelled, each with a finish time, at least that many
-  days after the later of the run's end and the tasks' latest `finished_at`; it orders them by that time, oldest first, with the
-  ones whose last removal was refused at their current HEAD last (the HEAD the node reported, or for a refusal that carries
-  none the HEAD the listing showed when the removal was requested, kept in the request's audit event; only answers of the
-  last max(30, 4 x days) days, newest 5000, are read), and calls the same
-  `Request` method for each (so central refuses a live run, the node checks again and nothing is forced). Owners that cannot
-  be resolved (older than the listing's 1000-run window), failed or open tasks, unowned worktrees and a limit of 0 are never
-  touched. The step is bounded (`retention.WorktreeBatchPerSpace` 10 removals per space, `WorktreeBatchPerPass` 50 per
-  pass; the next daily pass continues, and each pass starts at the space after the one where the last pass spent the whole
-  batch), waits at most 30 seconds per space for the nodes' answers (an unanswered one stays
-  pending in the audit log), skips a space whose node is below minor 16, not connected or relocating, and counts the
-  removed worktrees under `worktrees` in the pass's `deleted` counts (`internal/worktrees` `TestPruneSpace*`,
-  `internal/retention` `TestPassPrunesWorktreesOnlyWhenEnabled`, `TestPassBoundsWorktreePrune`,
-  `TestPassWorktreePruneErrorContinues`, simulated). The scheduled message of decision 5, 7 and 8 are the design for
-  follow-up tasks.
+  `TestWorktreeRemoveKeyOnWireOnly`, simulated). Its limit `worktree_retention_days` (WL-3): default 0, 0–36500,
+  per-space override, changed with `retention:write` (`TestWorktreeRetentionLimitOverHTTP`,
+  `TestWorktreeRetentionLimitNeedsRetentionWrite`; clearing a space's override falls back to the installation default,
+  `internal/limits` `TestClearingAnOverrideFallsBackToTheDefault`). Central queues the command for control (WL-2): the
+  `internal/worktrees` service queues `space.worktree.remove` after refusing a node below minor 16 or a worktree a
+  live run holds, keeps every request and every answer as an audit event of the target `worktree_removal`, and
+  surfaces the result or the refusal code verbatim; the control tools are `spaceman_worktrees_list`,
+  `spaceman_worktree_remove` and `spaceman_worktrees_prune` (`internal/worktrees` `TestWorktreesList`,
+  `TestRemoveHappyPath`, `TestRemoveRefusalCodesPassThrough`, `TestRemoveRefusedForLiveRun`, `TestRemoveRefusals`,
+  `TestRemoveRefusedRelocatingAndStaleReport`, `TestOnRemovedIgnoresMismatches`, `TestWorktreeToolsControlOnly`,
+  `TestWorktreeRemoveTool`, `TestWorktreesPrune`, `TestWorktreesPruneLimit`, simulated). In WL-2 the listing shows the
+  owning run's activity as the last change (the node's report carries no folder times), pushed as of the last fetch
+  from the report's branch counts, and a pull request state of always `unknown`. `spaceman_worktrees_prune` is scoped
+  to what the node offers: it removes finished work worktree by worktree through `space.worktree.remove` (whose
+  removal already prunes stale entries), not a separate stale-only `git worktree prune`; it is control-only, needs an
+  explicit `apply`, removes at most 25 per call and ignores `worktree_retention_days`. The tool ignores the limit; the
+  daily retention pass reads it (WL-4, implemented): for each space with `worktree_retention_days` above 0,
+  `worktrees.Service.PruneSpace` takes the worktrees SpaceMan created whose owning run has ended and whose tasks (a
+  run can have several) are all done or cancelled, each with a finish time, at least that many days after the later of
+  the run's end and the tasks' latest `finished_at`. It orders them by that time, oldest first, with the ones whose
+  last removal was refused at their current HEAD last (the HEAD the node reported, or for a refusal that carries none
+  the HEAD the listing showed when the removal was requested, kept in the request's audit event when it is at most 64
+  bytes, as the node's answer is validated; only answers of the last max(30, 4 x days) days, newest 5000, are read),
+  and calls the same `Request` method for each (so central refuses a live run, the node checks again and nothing is
+  forced). Owners that cannot be resolved (older than the listing's 1000-run window), failed or open tasks, unowned
+  worktrees and a limit of 0 are never touched. The step is bounded (`retention.WorktreeBatchPerSpace` 10 removals per
+  space, `WorktreeBatchPerPass` 50 per pass; the next daily pass continues, and each pass starts at the space after
+  the one where the last pass spent the whole batch), waits at most 30 seconds per space for the nodes' answers (an
+  unanswered one stays pending in the audit log), skips a space whose node is below minor 16, not connected or
+  relocating, and counts the removed worktrees under `worktrees` in the pass's `deleted` counts (`internal/worktrees`
+  `TestPruneSpace*`, including `TestPruneSpaceRefusalWindow` (a refusal older than the window counts as fresh) and
+  `TestRequestAuditRecordsHeadOnlyWhenShort`; `internal/retention` `TestPassPrunesWorktreesOnlyWhenEnabled`,
+  `TestPassBoundsWorktreePrune`, `TestPassWorktreePruneErrorContinues`, simulated). The scheduled message of decision
+  5 (WL-5) is implemented as described there (`internal/worktrees` `TestNotifyCleanup*`, `TestCleanupKey`;
+  `internal/retention` `TestPassNotifiesWorktreeCleanupUnlessOptedOut`, `TestPassWorktreeCleanupNoticeErrorContinues`;
+  `internal/limits` `TestWorktreeCleanupMessageLimit`; `internal/config` `TestWorktreeCleanupMessageLimitConfig`,
+  simulated). Decisions 7 and 8 are the design for follow-up tasks.
 - **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
   ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a
   worktree with no change of its own, whose HEAD the remote has (so it can be checked out again from the branch, which
@@ -8391,7 +8399,10 @@
      or changed file, the HEAD re-read catches most commits, and a commit made on the branch moves the kept branch
      ref; only a commit on a detached HEAD in the last instant would be left to git's garbage collection. The mark also
      knows only the folder each run launched in: a run that works in another worktree through its own shell is not
-     seen. Only clean, pushed work can be removed under it, so that disrupts the run but loses nothing. Lock order: a
+     seen. Only clean, pushed work can be removed under it, so that disrupts the run but loses nothing. Known limit: the operating system resolves the folder
+     a run's process starts in when it execs the harness, after the launch's last check and record; a symlink in the
+     space folder swapped in that remaining window can still start a process in a worktree a removal claims later. The
+     same holds: only clean, pushed work is ever removed, so it disrupts that run and loses nothing. Lock order: a
      launch holds the space's guard lock, then the worktree lock; a removal takes the repository lock only around its
      fetch, the worktree lock only inside the claim, and never the guard lock. Callers of the removal must hold
      neither. Alternative considered: a bounded wait for the lock in the launch (fail after a few seconds). It keeps
@@ -8412,15 +8423,28 @@
      branch, and queues a node command (`space.worktree.remove`, a protocol minor bump) per worktree, bounded per pass.
      The node answers with the result or the refusal code; a refused worktree is shown in the repository report and
      tried again only on a later pass. Unowned worktrees and worktrees of failed tasks are never auto-pruned.
-  5. **Scheduled cleanup through control (follow-up).** Agent tools for control: `spaceman_worktrees_list` (decision 3,
-     from the latest report), `spaceman_worktree_remove` (one worktree, through the core, answering with the result or
-     the refusal code and reason) and `spaceman_worktrees_prune`. "Prune" here means the control tool that removes up to 25 finished
-     worktrees per call (owning task done or cancelled, owning run ended) through the safe path of decision 1, one
-     `space.worktree.remove` per worktree: it is control-only, removes nothing without an explicit `apply`, does not
-     read `worktree_retention_days` (only the automatic pass of decision 4, WL-4, reads that limit) and the node checks
-     every worktree again. It is not `git worktree prune`; the node's removal already drops stale entries. On a schedule (weekly by default, an installation setting) SpaceMan sends each
-     active space's control one message asking it to tidy its repositories with these tools, with a short summary (how
-     many worktrees are finished, unowned, refused before). Control judges; nothing is removed by the message itself.
+  5. **Scheduled cleanup through control (implemented, WL-5; the tools by WL-2).** Agent tools for control:
+     `spaceman_worktrees_list` (decision 3, from the latest report), `spaceman_worktree_remove` (one worktree, through
+     the core, answering with the result or the refusal code and reason) and `spaceman_worktrees_prune`. "Prune" here
+     means the control tool that removes up to 25 finished worktrees per call (owning task done or cancelled, owning
+     run ended) through the safe path of decision 1, one `space.worktree.remove` per worktree: it is control-only,
+     removes nothing without an explicit `apply`, does not read `worktree_retention_days` (only the automatic pass of
+     decision 4, WL-4, reads that limit) and the node checks every worktree again. It is not `git worktree prune`; the
+     node's removal already drops stale entries.
+     **The scheduled message (implemented, WL-5):** the daily retention pass, for each space whose limit
+     `worktree_cleanup_message_days` is above 0 (default 7; a space sets 0 to opt out, the installation default is
+     `limits.worktree_cleanup_message_days`; no schema change), asks `worktrees.Service.NotifyCleanup` to send the
+     space's control one system notification asking it to tidy its repositories with these tools. The dedup key is
+     `worktree-cleanup:<days>d:<n>`, with n the number of whole periods since the Unix epoch, so a second pass, a
+     restart or a second central sends at most one message per period (the key is checked with one read before
+     anything else is computed, so a space that has its message costs the daily pass nothing more). It is skipped when
+     the space has no finished worktree (nothing to tidy) and is retried on the next daily pass in the same period.
+     The summary comes from one `List` (the node's last report joined with the newest 1000 runs): worktrees in total,
+     finished ones (what `spaceman_worktrees_prune` would try), the oldest finished one's age in days, and worktrees
+     no run created. It names no worktree, branch or path and does not say what was refused before (that would need
+     the audit log). Periods are aligned to the Unix epoch, not to when the limit was set; changing the period starts
+     a new key series, so a change can send one message early. Control judges; nothing is removed by the message
+     itself.
   6. **Cheaper repository reports (implemented, WL-6).** `inspectRepo` skips `git status` in a worktree whose last change
      (decision 3) is older than a cut-off (7 days by default) when the previous report has counts for it, and reports
      the previous counts with the time they were taken. At most a bounded number of `git status` calls run per report,

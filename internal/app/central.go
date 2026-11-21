@@ -574,6 +574,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.KB.ResolveRepo = c.Repos.ForKB
 	c.Fleet.Hub().RepoStatus = c.Repos.OnStatus
 	c.Worktrees = worktrees.New(st, c.Audit, c.Fleet, c.Repos, c.Queue, o.Clock, obs.Component(log, "worktrees"))
+	c.Worktrees.Control = c.Messages
 	c.Fleet.Hub().WorktreeRemoved = c.Worktrees.OnRemoved
 	c.Fleet.Hub().OnConnected = c.Repos.OnNodeConnected
 	c.XSpace = xspace.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, c.KB, o.Clock, obs.Component(log, "xspace"))
@@ -602,7 +603,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Limits.OnChange = c.Human.Kick
 	c.Limits.AuditDays = cfg.Retention.AuditDays
 	c.Retention = retention.New(st, c.Audit, c.Changes, c.Limits, retention.Options{AuditDays: cfg.Retention.AuditDays, Clock: o.Clock,
-		Log: obs.Component(log, "retention"), DeleteRecording: c.Fleet.DeleteRecording, DeleteTranscript: c.Usage.DeleteTranscript, PruneWorktrees: c.Worktrees.PruneSpace,
+		Log: obs.Component(log, "retention"), DeleteRecording: c.Fleet.DeleteRecording, DeleteTranscript: c.Usage.DeleteTranscript, PruneWorktrees: c.Worktrees.PruneSpace, NotifyWorktreeCleanup: c.Worktrees.NotifyCleanup,
 		AfterPass: func(ctx context.Context) {
 			if _, _, err := c.Attachments.GC(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("attachment garbage collection after retention", obs.Err(err))

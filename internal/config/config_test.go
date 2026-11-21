@@ -469,6 +469,26 @@ func TestRecordingReconcileIntervalBounds(t *testing.T) {
 	}
 }
 
+// worktree_cleanup_message_days (ADR-0107 decision 5): 7 by default, 0 turns the message off, at most 365.
+func TestWorktreeCleanupMessageLimitConfig(t *testing.T) {
+	if d := Default(); d.Limits.WorktreeCleanupMessageDays != 7 || d.LimitValues()["worktree_cleanup_message_days"] != 7 {
+		t.Fatalf("default = %d", d.Limits.WorktreeCleanupMessageDays)
+	}
+	p := writeFile(t, "public_url: https://spaceman.example.com\nlimits:\n  worktree_cleanup_message_days: 0\n")
+	cfg, err := Load(p, nil)
+	if err != nil || cfg.Limits.WorktreeCleanupMessageDays != 0 {
+		t.Fatalf("0 from the file: %v %+v", err, cfg.Limits)
+	}
+	for _, bad := range []int64{-1, 366} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Limits.WorktreeCleanupMessageDays = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "limits.worktree_cleanup_message_days must be within 0..365") {
+			t.Errorf("%d: err = %v", bad, err)
+		}
+	}
+}
+
 // worktree_retention_days (ADR-0107): a space limit of 0 (off) by default, bounded 0..36500 days, and read from the file.
 func TestWorktreeRetentionLimitConfig(t *testing.T) {
 	if d := Default(); d.Limits.WorktreeRetentionDays != 0 || d.LimitValues()["worktree_retention_days"] != 0 {

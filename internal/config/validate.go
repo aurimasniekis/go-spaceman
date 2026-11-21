@@ -260,8 +260,10 @@ var LimitRanges = map[string][2]int64{
 	"retention_human_actions_days": {0, 36_500},
 	// Worktree pruning period in days (ADR-0107): 0 never prunes, the default.
 	"worktree_retention_days": {0, 36_500},
-	"recording_quota_bytes":   {1 << 20, 64 << 30},
-	"export_max_bytes":        {1 << 20, 64 << 30},
+	// Days between the messages asking control to tidy its worktrees (ADR-0107 decision 5): 0 never sends them.
+	"worktree_cleanup_message_days": {0, 365},
+	"recording_quota_bytes":         {1 << 20, 64 << 30},
+	"export_max_bytes":              {1 << 20, 64 << 30},
 	// Control lifecycle (ADR-0056): a switch (0 off, 1 on) and minutes (0: never).
 	"control_autostart":         {0, 1},
 	"control_idle_stop_minutes": {0, 10_080},
@@ -308,8 +310,8 @@ func (c *Config) LimitValues() map[string]int64 {
 		"budget_cost_cents_24h": l.BudgetCostCents24h, "budget_tokens_per_run": l.BudgetTokensPerRun, "budget_warn_percent": l.BudgetWarnPercent,
 		"retention_recordings_days": l.RetentionRecordingsDays, "retention_transcripts_days": l.RetentionTranscriptsDays,
 		"retention_attachments_days": l.RetentionAttachmentsDays, "retention_human_actions_days": l.RetentionHumanActionsDays,
-		"worktree_retention_days": l.WorktreeRetentionDays,
-		"recording_quota_bytes":   l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
+		"worktree_retention_days": l.WorktreeRetentionDays, "worktree_cleanup_message_days": l.WorktreeCleanupMessageDays,
+		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
 		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes,
 		"control_watchdog_minutes": l.ControlWatchdogMinutes, "control_watchdog_nudges": l.ControlWatchdogNudges,
 		"control_watchdog_restart": l.ControlWatchdogRestart, "worker_start_watchdog_minutes": l.WorkerStartWatchdogMinutes,

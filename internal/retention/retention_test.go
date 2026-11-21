@@ -474,6 +474,47 @@ func TestPassPrunesWorktreesOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
+// The cleanup message step runs for every space whose worktree_cleanup_message_days is above 0 (default 7), with that
+// space's days; a space that sets 0 opts out, and clearing the override brings the default back.
+func TestPassNotifiesWorktreeCleanupUnlessOptedOut(t *testing.T) {
+	f := newFx(t, 0)
+	got := map[string][]int64{}
+	f.svc.o.NotifyWorktreeCleanup = func(_ context.Context, space string, days int64) (bool, error) {
+		got[space] = append(got[space], days)
+		return true, nil
+	}
+	_, err := f.lim.Set(f.ctx, admin, "spc_b", 0, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 0}})
+	must(t, err)
+	_, err = f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if fmt.Sprint(got) != "map[spc_a:[7]]" {
+		t.Fatalf("calls %v", got)
+	}
+	_, err = f.lim.Set(f.ctx, admin, "spc_b", 1, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 3}})
+	must(t, err)
+	_, err = f.lim.Set(f.ctx, admin, "spc_a", 0, limits.Input{Values: map[string]int64{limits.WorktreeCleanupMessage: 0}})
+	must(t, err)
+	_, err = f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if fmt.Sprint(got) != "map[spc_a:[7] spc_b:[3]]" {
+		t.Fatalf("calls %v", got)
+	}
+}
+
+// A failing cleanup message fails the pass for that space only.
+func TestPassWorktreeCleanupNoticeErrorContinues(t *testing.T) {
+	f := newFx(t, 0)
+	var seen []string
+	f.svc.o.NotifyWorktreeCleanup = func(_ context.Context, space string, _ int64) (bool, error) {
+		seen = append(seen, space)
+		return false, errors.New("boom")
+	}
+	p, err := f.svc.Run(f.ctx, admin)
+	if err == nil || p.State != StateFailed || len(seen) != 2 {
+		t.Fatalf("state %v err %v seen %v", p.State, err, seen)
+	}
+}
+
 // The bounds: a space is asked for at most WorktreeBatchPerSpace, and the pass for at most WorktreeBatchPerPass; later
 // spaces get what is left and none once it is spent.
 func TestPassBoundsWorktreePrune(t *testing.T) {

@@ -55,8 +55,10 @@ const (
 	RetainHumanActions = "retention_human_actions_days"
 	// WorktreeRetention is the days after its task finished that a worktree SpaceMan created may be pruned (ADR-0107; 0: never).
 	WorktreeRetention = "worktree_retention_days"
-	RecordingQuota    = "recording_quota_bytes"
-	ExportMax         = "export_max_bytes"
+	// WorktreeCleanupMessage is the days between the messages that ask control to tidy the space's worktrees (ADR-0107 decision 5; 0: never).
+	WorktreeCleanupMessage = "worktree_cleanup_message_days"
+	RecordingQuota         = "recording_quota_bytes"
+	ExportMax              = "export_max_bytes"
 	// Control lifecycle (ADR-0056).
 	ControlAutostart = "control_autostart"
 	ControlIdleStop  = "control_idle_stop_minutes"
@@ -180,7 +182,9 @@ var Defs = []Def{
 	{Key: RetainHumanActions, Label: "Finished human-action retention", Unit: "days", Scope: "days a resolved, cancelled or expired human action is kept; kept while an open task, follow-up or undelivered response refers to it", ZeroNone: true,
 		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
 	{Key: WorktreeRetention, Label: "Worktree retention", Unit: "days", Scope: "days after its owning task was done or cancelled before a worktree SpaceMan created for it may be pruned (never for failed tasks or unowned worktrees; its owning run ended at least this long ago, no live run uses it, and the work is pushed and clean); 0 never prunes", ZeroNone: true,
-		Enforced: "not enforced yet: the worktree pruning of the daily retention pass (ADR-0107) will read it; nothing is removed until it lands", OnLower: "Nothing is removed when it is lowered; the pruning that reads it applies from its next pass.", Overridable: true},
+		Enforced: "daily retention pass (ADR-0107): removals are bounded (10 per space, 50 per pass) and the node refuses any worktree that is dirty, unpushed or in use", OnLower: "The next daily retention pass removes the worktrees that are now old enough; a removal is not undone (the branch is kept).", Overridable: true},
+	{Key: WorktreeCleanupMessage, Label: "Worktree cleanup message", Unit: "days", Scope: "days between the messages that ask the space's control to tidy its repositories with spaceman_worktrees_list and spaceman_worktrees_prune; sent only when a finished worktree exists, and it removes nothing itself; 0 never sends it", ZeroNone: true,
+		Enforced: "daily retention pass", OnLower: "Only changes when the next message is sent.", Overridable: true},
 	{Key: ExportMax, Label: "Export size", Unit: "bytes", Scope: "size of one space export archive",
 		Enforced: "space export (refused before it starts when larger)", OnLower: "Only later exports are refused.", Overridable: true},
 	{Key: ControlAutostart, Label: "Start control on new work", Unit: "switch",

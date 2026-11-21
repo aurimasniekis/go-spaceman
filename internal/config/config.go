@@ -175,6 +175,10 @@ type LimitsConfig struct {
 	// Worktrees with a failed or open task, a task without a finish time, or no owner are never pruned.
 	// The daily retention pass uses it: removals are bounded (10 per space, 50 per pass) and go through the node's safe check.
 	WorktreeRetentionDays int64 `yaml:"worktree_retention_days"`
+	// WorktreeCleanupMessageDays is how many days pass between the messages that ask a space's control to tidy its
+	// repositories (ADR-0107 decision 5; default 7, 0 never sends it, at most 365). It is sent only when the space has a
+	// finished worktree and removes nothing itself.
+	WorktreeCleanupMessageDays int64 `yaml:"worktree_cleanup_message_days"`
 	// RecordingQuotaBytes bounds one run's terminal recording on the node (1 MiB-64 GiB, default 512 MiB). When it is
 	// reached the recording ends with a truncation record; the run is unaffected.
 	RecordingQuotaBytes int64 `yaml:"recording_quota_bytes"`
