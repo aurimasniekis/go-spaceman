@@ -529,3 +529,29 @@ func TestTaskDeadlinesNotifyNeverStop(t *testing.T) {
 		t.Fatalf("a reported task is still scheduled: %v", next)
 	}
 }
+
+// ADR-0107: the worktree retention period is a per-space limit: 0 (off) by default, bounded 0..36500 days, and an
+// explicit 0 is an override that turns pruning off again.
+func TestWorktreeRetentionLimit(t *testing.T) {
+	f := newFx(t)
+	e, err := f.svc.Effective(f.ctx, "spc_a")
+	must(t, err)
+	if l := limitOf(e, WorktreeRetention); l.Value != 0 || l.Source != SourceInstallation || l.Unit != "days" || !l.ZeroNone || !l.Overridable {
+		t.Fatalf("default %+v", l)
+	}
+	for _, bad := range []int64{-1, 36_501} {
+		if _, err := f.svc.Set(f.ctx, admin, "spc_a", 0, Input{Values: map[string]int64{WorktreeRetention: bad}}); apperr.CodeOf(err) != apperr.CodeInvalid {
+			t.Fatalf("%d: %v", bad, err)
+		}
+	}
+	e, err = f.svc.Set(f.ctx, admin, "spc_a", 0, Input{Values: map[string]int64{WorktreeRetention: 14}})
+	must(t, err)
+	if l := limitOf(e, WorktreeRetention); l.Value != 14 || l.Source != SourceSpace || e.Version != 1 {
+		t.Fatalf("override %+v", l)
+	}
+	e, err = f.svc.Set(f.ctx, admin, "spc_a", 1, Input{Values: map[string]int64{WorktreeRetention: 0}})
+	must(t, err)
+	if l := limitOf(e, WorktreeRetention); l.Value != 0 || l.Source != SourceSpace {
+		t.Fatalf("explicit off %+v", l)
+	}
+}

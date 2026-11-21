@@ -53,8 +53,10 @@ const (
 	RetainTranscripts  = "retention_transcripts_days"
 	RetainAttachments  = "retention_attachments_days"
 	RetainHumanActions = "retention_human_actions_days"
-	RecordingQuota     = "recording_quota_bytes"
-	ExportMax          = "export_max_bytes"
+	// WorktreeRetention is the days after its task finished that a worktree SpaceMan created may be pruned (ADR-0107; 0: never).
+	WorktreeRetention = "worktree_retention_days"
+	RecordingQuota    = "recording_quota_bytes"
+	ExportMax         = "export_max_bytes"
 	// Control lifecycle (ADR-0056).
 	ControlAutostart = "control_autostart"
 	ControlIdleStop  = "control_idle_stop_minutes"
@@ -172,6 +174,8 @@ var Defs = []Def{
 		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
 	{Key: RetainHumanActions, Label: "Finished human-action retention", Unit: "days", Scope: "days a resolved, cancelled or expired human action is kept; kept while an open task, follow-up or undelivered response refers to it", ZeroNone: true,
 		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
+	{Key: WorktreeRetention, Label: "Worktree retention", Unit: "days", Scope: "days after its owning task was done or cancelled before a worktree SpaceMan created for it may be pruned (never for failed tasks or unowned worktrees; its owning run ended at least this long ago, no live run uses it, and the work is pushed and clean); 0 never prunes", ZeroNone: true,
+		Enforced: "not enforced yet: the worktree pruning of the daily retention pass (ADR-0107) will read it; nothing is removed until it lands", OnLower: "Nothing is removed when it is lowered; the pruning that reads it applies from its next pass.", Overridable: true},
 	{Key: ExportMax, Label: "Export size", Unit: "bytes", Scope: "size of one space export archive",
 		Enforced: "space export (refused before it starts when larger)", OnLower: "Only later exports are refused.", Overridable: true},
 	{Key: ControlAutostart, Label: "Start control on new work", Unit: "switch",
