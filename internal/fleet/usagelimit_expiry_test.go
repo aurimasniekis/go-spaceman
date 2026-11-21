@@ -132,3 +132,26 @@ func TestListOpenUnknownResetAccountLimitsAgreesWithHoldMaxAge(t *testing.T) {
 		}
 	}
 }
+
+// A hold whose known reset passed is closed by the sweep (cleared_by "reset"); one whose reset is ahead, one inside the
+// grace and one with no reset are left to their own paths.
+func TestExpireHoldsClosesPassedKnownReset(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_past", "spc_b", "acc_1", "", proto.LimitUnknown, dur(-time.Hour), nil)
+	e.hold("ulm_grace", "spc_a", "acc_1", "", proto.LimitSevenDayOpus, dur(-limitResetGrace/2), nil)
+	e.hold("ulm_ahead", "spc_a", "acc_1", "", proto.LimitSevenDaySonnet, dur(time.Hour), nil)
+	e.hold("ulm_none", "spc_a", "acc_1", "", proto.LimitSevenDay, nil, dur(time.Hour))
+	e.hold("ulm_gw", "spc_a", "", "hp", proto.LimitGatewayBudget, dur(-time.Hour), nil)
+	if err := e.svc.closePassedHolds(e.ctx, e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if open := e.openIDs(); open["ulm_past"] || len(open) != 3 || e.clearedBy("ulm_gw") != "" {
+		t.Fatalf("open after sweep: %v", open)
+	}
+	if by := e.count(`SELECT count(*) FROM usage_limits WHERE id = 'ulm_past' AND cleared_by = 'reset'`); by != 1 {
+		t.Fatal("the closed hold does not record why")
+	}
+	if at, err := e.svc.NextHoldExpiry(e.ctx); err != nil || at.IsZero() {
+		t.Fatalf("next expiry %v (%v), want one", at, err)
+	}
+}
