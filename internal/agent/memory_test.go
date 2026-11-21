@@ -154,6 +154,146 @@ func TestMemoryInstancesShareAndPreserve(t *testing.T) {
 	}
 }
 
+// An instance checkout that was unborn when it got its first file has a root commit unrelated to the shared history;
+// the checkpoint still has to bring the file to shared main.
+func TestMemoryUnbornCheckoutReachesShared(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	if _, err := m.prepare(ctx, "spc_u", "implementor-backend", "ins_one"); err != nil {
+		t.Fatal(err)
+	}
+	inst := m.instance("spc_u", "implementor-backend", "ins_unborn")
+	if err := os.MkdirAll(inst, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.git.Run(ctx, inst, nil, "init", "--quiet", "--initial-branch=main", "."); err != nil {
+		t.Fatal(err)
+	}
+	write(t, inst, "notes/unborn.md", "from the unborn checkout\n")
+	if err := m.checkpointErr(ctx, "spc_u", "implementor-backend", "ins_unborn", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	shared := m.shared("spc_u", "implementor-backend")
+	got, err := m.git.Run(ctx, shared, nil, "show", "refs/heads/main:notes/unborn.md")
+	if err != nil || got != "from the unborn checkout\n" {
+		t.Fatalf("file did not reach shared main: %q %v", got, err)
+	}
+	if refs, _ := m.git.Run(ctx, shared, nil, "for-each-ref", "refs/conflicts/"); strings.TrimSpace(refs) != "" {
+		t.Fatalf("unexpected conflict refs: %q", refs)
+	}
+}
+
+// A conflict on one file must not hold back a non-conflicting change: it reaches shared main, and only the conflicting
+// file keeps the shared version with the local copy under conflicts/.
+func TestPreserveKeepsNonConflictingChangesOnMain(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	const sp, role = "spc_n", "implementor-backend"
+	one, err := m.prepare(ctx, sp, role, "ins_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "a.md", "base\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	two, err := m.prepare(ctx, sp, role, "ins_two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, one, "a.md", "one\n")
+	m.checkpoint(ctx, sp, role, "ins_one", "idle")
+	write(t, two, "a.md", "two\n")
+	write(t, two, "b.md", "only two\n")
+	if err := m.checkpointErr(ctx, sp, role, "ins_two", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	shared := m.shared(sp, role)
+	show := func(p string) string {
+		out, err := m.git.Run(ctx, shared, nil, "show", "refs/heads/main:"+p)
+		if err != nil {
+			t.Fatalf("show %s: %v", p, err)
+		}
+		return out
+	}
+	if got := show("b.md"); got != "only two\n" {
+		t.Fatalf("non-conflicting file on main: %q", got)
+	}
+	if got := show("a.md"); got != "one\n" {
+		t.Fatalf("conflicting file should keep the shared version: %q", got)
+	}
+	files, _ := m.git.Run(ctx, shared, nil, "ls-tree", "-r", "--name-only", "refs/heads/main")
+	var copyPath string
+	for _, f := range strings.Fields(files) {
+		if strings.HasPrefix(f, "conflicts/ins_two-") && strings.HasSuffix(f, "/a.md") {
+			copyPath = f
+		}
+	}
+	if copyPath == "" {
+		t.Fatalf("no conflict copy of a.md in %q", files)
+	}
+	if got := show(copyPath); got != "two\n" {
+		t.Fatalf("conflict copy: %q", got)
+	}
+}
+
+// Conflicting files with spaces or non-ASCII characters in their names are still preserved and the instance's other
+// work still reaches shared main.
+func TestPreserveConflictingOddNames(t *testing.T) {
+	for _, name := range []string{"my notes.md", "zurnalas-ąčę.md"} {
+		t.Run(name, func(t *testing.T) {
+			a := memAgent(t)
+			ctx := context.Background()
+			m := a.mem
+			const sp, role = "spc_o", "implementor-backend"
+			one, err := m.prepare(ctx, sp, role, "ins_one")
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, one, name, "base\n")
+			m.checkpoint(ctx, sp, role, "ins_one", "idle")
+			two, err := m.prepare(ctx, sp, role, "ins_two")
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, one, name, "one\n")
+			m.checkpoint(ctx, sp, role, "ins_one", "idle")
+			write(t, two, name, "two\n")
+			write(t, two, "b.md", "only two\n")
+			if err := m.checkpointErr(ctx, sp, role, "ins_two", "idle"); err != nil {
+				t.Fatal(err)
+			}
+			shared := m.shared(sp, role)
+			show := func(p string) string {
+				out, err := m.git.Run(ctx, shared, nil, "show", "refs/heads/main:"+p)
+				if err != nil {
+					t.Fatalf("show %s: %v", p, err)
+				}
+				return out
+			}
+			if got := show("b.md"); got != "only two\n" {
+				t.Fatalf("non-conflicting file on main: %q", got)
+			}
+			if got := show(name); got != "one\n" {
+				t.Fatalf("conflicting file should keep the shared version: %q", got)
+			}
+			files, _ := m.git.Run(ctx, shared, nil, "-c", "core.quotepath=false", "ls-tree", "-r", "-z", "--name-only", "refs/heads/main")
+			var copyPath string
+			for _, f := range splitNUL(files) {
+				if strings.HasPrefix(f, "conflicts/ins_two-") && strings.HasSuffix(f, "/"+name) {
+					copyPath = f
+				}
+			}
+			if copyPath == "" {
+				t.Fatalf("no conflict copy of %s in %q", name, files)
+			}
+			if got := show(copyPath); got != "two\n" {
+				t.Fatalf("conflict copy: %q", got)
+			}
+		})
+	}
+}
+
 // SM-MEM-004/005: central's answers move the acknowledged head; a missing base resets it for a full resend; failures
 // are counted and kept for the status.
 func TestMemoryAcks(t *testing.T) {

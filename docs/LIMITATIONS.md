@@ -61,7 +61,7 @@
 - **At least once, no global order.** Consumers must deduplicate on `Nats-Msg-Id`; JetStream deduplicates retries only
   within its 2-minute window. Events of different subjects can arrive in any order (SM-OBS-004).
 - **Automation depth follows recorded links only.** An installation drops events carrying its own `spaceman-origin`
-  (unless a subscription opts in with `ingest_own` for its own run dialog events at depth 0, ADR-0104), and quarantines events whose `spaceman-depth` reaches the space's `event_depth` (default 8, ADR-0049). The depth
+  (unless a subscription opts in with `ingest_own` for its own run dialog events at depth 0, ADR-0104, or for every space's in an operations space an administrator granted fleet scope, ADR-0106), and quarantines events whose `spaceman-depth` reaches the space's `event_depth` (default 8, ADR-0049). The depth
   passes from an event to its inbox item, to tasks created from the item (`origin_kind` inbox_item) and their
   subtasks, and to their events. Runs, human actions, approvals, memory and KB events carry no depth: a change control
   makes on its own judgement after reading an item starts a new chain, bounded only by the run, tool-call and budget
@@ -315,8 +315,11 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Resumed conversations depend on the harness.** A session woken from sleep continues its conversation where the
   harness supports resuming (Claude Code); otherwise it starts fresh with the same worktree.
 - **The knowledge branch must not be checked out in a linked worktree**; acceptance refuses such a branch. The
-  repository's own checkout may have it checked out: it is fast-forwarded with the branch when clean, and a dirty
-  checkout fails the acceptance.
+  repository's own checkout may have it checked out: it is fast-forwarded with the branch. An untracked file does not
+  block it unless the new tip adds a file at the same path; then the merge is refused and nothing is overwritten. Ignored
+  files are never overwritten, and local changes to tracked files, an operation in progress (merge, cherry-pick, revert,
+  rebase) or a moved HEAD fail the acceptance. If the branch or HEAD moves after the merge landed, the proposal is still reported
+  merged, with a note of the tips seen; SpaceMan never resets anything.
 - **The check runs with the node user's rights**, like agent programs.
 - **No proposal review by agents.** Accepting is a person's decision (reviewed) or automatic after the check
   (serialized); there is no maintainer-agent workflow.
@@ -526,7 +529,23 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   connects, when a run of the space ends and on **Sync now**; nothing polls idle spaces (SM-ARCH-004). A report can be
   minutes old and says when it was made; work an agent is doing right now shows after its run ends or the next sync
   (SM-REPO-003). Each report asks every remote for its default branch (`git ls-remote`, 30 s each), so an unreachable
-  remote slows the report down. Worktrees are never cleaned up automatically; remove them with git when done.
+  remote slows the report down. Worktrees are cleaned up automatically only for a space whose `worktree_retention_days` is above 0 (off by
+  default): the daily retention pass asks the node to remove up to 10 per space and 50 per pass of those whose run's tasks
+  are all done or cancelled, counted from the later of the run's end and the tasks' latest finish time (a task without a finish
+  time keeps the worktree), through the node's safe-removal check (a dirty, unpushed or held one is refused and stays). A
+  refused worktree is retried on later passes and counts against the batch bounds, but it is tried after the worktrees never
+  refused or refused at another HEAD, and each pass starts at the space after the one where the last pass spent the whole
+  batch (in memory: a restart starts at the first space). Many worktrees the node always refuses can still delay the others,
+  within a space and, with enough such spaces, across spaces for several passes, until they are cleaned up or pushed. A refusal the node
+  makes before it reads the HEAD (dirty, untracked, locked, fetch failed, no remote, outside) carries none, so the HEAD the
+  listing showed when the removal was requested stands in for it. Only the newest 5000 answers of the last 30 days (or four
+  times the retention days, if longer) are read to tell what was refused. Otherwise remove them with git
+  when done or through control (ADR-0107). Once per `worktree_cleanup_message_days`-day period (off by default: 0; set it to 7 for a weekly message) the
+  same pass also sends the space's control one message asking it to tidy, only when a worktree is finished and was not refused at its current HEAD; it counts
+  from the node's last report and the newest 1000 runs, names no worktree, and removes nothing, but as work waiting for control it starts control when `control_autostart` is on and none runs (an installation with many spaces holding finished worktrees starts that many controls once per period; set the limit to 0 where that is unwanted). Only active spaces are asked. Its periods are aligned
+  to the Unix epoch, and a space whose node has not reported a finished worktree gets no message. The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
+  than 1000 runs a worktree whose owning run ended outside that window shows as unowned ("made by hand"). That fails safe:
+  an unowned worktree is never picked by `spaceman_worktrees_prune`.
 - **Reassignment does not move work.** Reassigning a task (the task drawer, `spaceman task update --role/--run`, the API)
   records the new role and run; it never stops the run working on it or starts another: control acts on the new
   assignee. A run of another space is refused; a run ID that matches no run is accepted as given (SM-CTRL-004).

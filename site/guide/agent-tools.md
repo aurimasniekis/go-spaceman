@@ -56,6 +56,9 @@ Code's own question picker (`AskUserQuestion`) or plan mode (`EnterPlanMode`); s
 | `spaceman_message_resolve` | Close a request you sent or received | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_runs_list` | Active runs with role, status and task | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_repos_list` | The space's configured repositories with the node's last report: remote, default branch, last fetch, changes, unpushed commits, worktrees and their runs; read only ([Repositories and worktrees](./repositories)) | ✓ | ✓ | KB | ✓ |
+| `spaceman_worktrees_list` | Worktrees of the space's repositories from the node's last report: branch, HEAD, changes, the run and task that own each one (none: made by hand), the owning run's last activity, whether the branch was pushed as of the last fetch, and whether the prune tool would pick it; pull request state is always `unknown` (central has no event tied to a branch); read only ([Repositories and worktrees](./repositories#removing-worktrees)) | ✓ | | | |
+| `spaceman_worktree_remove` | Remove one worktree through the node's safe path (clean, pushed, no live run, inside `worktrees/`; the branch is kept). Answers `removed`, or `refused` with the node's refusal code and reason, or `pending` with a `command_id` to ask about again | ✓ | | | |
+| `spaceman_worktrees_prune` | Remove the worktrees of finished work (owning task done or cancelled, run ended), oldest first, through the same safe path; lists them unless `apply` is set | ✓ | | | |
 | `spaceman_worker_launch` | Start a worker for a ready, eligible task (optionally in its own git worktree of a repository, by name or folder) | ✓ | | | |
 | `spaceman_worker_stop` | Stop a worker, KB, dreamer or diagnostic run | ✓ | | | |
 | `spaceman_xspace_discover` | Spaces that let yours discover them, with what you may send ([Cross-space requests](./cross-space)) | ✓ | | | |

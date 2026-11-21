@@ -284,8 +284,14 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	if r.Turn > 0 {
 		w.SessionID = r.SessionID // a session that never finished a turn has nothing to resume
 	} else if sw != nil {
-		// A switch keeps the session a resumed run was given, even before its first turn (limited at once).
-		if w.SessionID, err = resumableSession(ctx, tx.Q, r); err != nil {
+		// A switch keeps the session a resumed run was given, even before its first turn (limited at once), and a
+		// usage-limit switch the session of a fresh run whose first turn ended at the limit.
+		if sw.Cause == SwitchCauseUsageLimit {
+			w.SessionID, _, err = limitSwitchSession(ctx, tx.Q, r)
+		} else {
+			w.SessionID, err = resumableSession(ctx, tx.Q, r)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -532,6 +538,11 @@ func (svc *Service) NextLimitWait(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	earlier(back)
+	expiry, err := svc.NextHoldExpiry(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	earlier(expiry)
 	runs, err := q.ListLimitedLiveRuns(ctx, maxLimitRows)
 	if err != nil {
 		return time.Time{}, err
@@ -589,6 +600,10 @@ func (svc *Service) LimitWaitsDue(ctx context.Context) (int, error) {
 	n, err = svc.resumeDueWaits(ctx, now)
 	done += n
 	errs = append(errs, err)
+	n, err = svc.expireHolds(ctx, now)
+	done += n
+	errs = append(errs, err)
+	errs = append(errs, svc.closePassedHolds(ctx, now))
 	return done, errors.Join(errs...)
 }
 
@@ -1086,8 +1101,8 @@ const (
 	switchPrompt = "SpaceMan moved this session to another subscription account because the previous one reached its usage limit. Continue " +
 		"the task; do not repeat completed work. Check spaceman_messages first."
 	switchFreshPrompt = "SpaceMan moved you to another subscription account because the previous one reached its usage limit. Your previous " +
-		"session could not be resumed (the space moved to another node, or resuming it failed), so this is a fresh session. Continue the task " +
-		"from the state of the workspace; check spaceman_messages first."
+		"session could not be resumed or never started (the space moved to another node, resuming it failed, or it never started), so this is a fresh session. " +
+		"Continue the task from the state of the workspace; check spaceman_messages first."
 	// restartPrompt and restartFreshPrompt are an agent-restart resume's (ADR-0098).
 	restartPrompt = "The node's agent restarted and stopped your process; SpaceMan resumed your session. Continue the task you were working on " +
 		"from where you left off (your worktree is as it was); check spaceman_messages first."

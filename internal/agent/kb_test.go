@@ -318,6 +318,30 @@ func TestKBAcceptIgnoresHooksAndVerifySignatures(t *testing.T) {
 	}
 }
 
+// The target moves after the fast-forward has landed: the proposal is still reported merged, with a note naming the
+// observed tips, and nothing is reset.
+func TestKBAcceptMovedAfterMergeIsReportedMerged(t *testing.T) {
+	f := newKBFixture(t)
+	c := f.propose(t, "c.md", "c\n")
+	f.a.kbAfterMerge = func() {
+		gitRun(t, f.repo, "-c", "user.name=x", "-c", "user.email=x@example.test", "commit", "-q", "--allow-empty", "--no-verify", "-m", "moved")
+	}
+	res := f.accept(c)
+	moved := gitRun(t, f.repo, "rev-parse", "HEAD")
+	if res.Result != proto.KBMerged || res.Merged != c {
+		t.Fatalf("result %+v", res)
+	}
+	if !strings.Contains(res.Detail, "Nothing was reset") || !strings.Contains(res.Detail, moved) {
+		t.Fatalf("detail %q lacks the note or the observed tip %s", res.Detail, moved)
+	}
+	if gitRun(t, f.repo, "log", "-1", "--format=%s", "main") != "moved" {
+		t.Fatal("the later commit was undone")
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, "c.md")); err != nil {
+		t.Fatal("merged file missing")
+	}
+}
+
 // The target moving while the KB's check runs fails the acceptance and changes nothing.
 func TestKBAcceptTargetMovesDuringValidator(t *testing.T) {
 	f := newKBFixture(t)

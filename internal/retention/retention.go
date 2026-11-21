@@ -19,6 +19,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/worktrees"
 )
 
 // Triggers and states of a pass.
@@ -54,6 +56,7 @@ const (
 	KindHumanActions = "human_actions"
 	KindAudit        = "audit_events"
 	KindTelegram     = "telegram_messages"
+	KindWorktrees    = "worktrees" // worktrees the node removed (ADR-0107 decision 4)
 
 	// The usage ledger and the closed limit rows (ADR-0090, Q9): counts of rows deleted; rolled-up hourly rows count
 	// under KindUsageBuckets too.
@@ -63,6 +66,13 @@ const (
 	KindUsageLimits     = "usage_limits"
 	KindLimitWaits      = "limit_waits"
 	KindAccountSwitches = "account_switches"
+)
+
+// Bounds of the worktree step of a pass (ADR-0107 decision 4): at most WorktreeBatchPerSpace removals are asked for one
+// space and WorktreeBatchPerPass in the whole pass; what is left is picked up by the next daily pass.
+const (
+	WorktreeBatchPerSpace = 10
+	WorktreeBatchPerPass  = 50
 )
 
 // Actor is who retention deletions are attributed to.
@@ -92,8 +102,16 @@ type Options struct {
 	// AfterPass runs after a pass that deleted attachments (attachment content garbage collection), outside any
 	// transaction.
 	AfterPass func(ctx context.Context)
-	Clock     clock.Clock
-	Log       *slog.Logger
+	// PruneWorktrees asks the space's node to remove up to limit worktrees of finished work that ended at least days ago
+	// (worktrees.Service.PruneSpace; ADR-0107 decision 4). Nil: worktrees are not pruned.
+	PruneWorktrees func(ctx context.Context, actor audit.Actor, spaceID string, days int64, limit int) (worktrees.PruneSummary, error)
+	// NotifyWorktreeCleanup sends the space's control the message that asks it to tidy its repositories, at most once
+	// every days days (worktrees.Service.NotifyCleanup; ADR-0107 decision 5). Nil: no message.
+	NotifyWorktreeCleanup func(ctx context.Context, spaceID string, days int64) (bool, error)
+	// WorktreeBatchPerPass overrides WorktreeBatchPerPass (tests); 0 keeps the constant.
+	WorktreeBatchPerPass int
+	Clock                clock.Clock
+	Log                  *slog.Logger
 }
 
 // Service runs retention passes.
@@ -109,6 +127,9 @@ type Service struct {
 	startedAt time.Time
 	wg        sync.WaitGroup
 	base      context.Context
+	// worktreeFrom is the space the next pass starts its worktree step at: the one after where the last pass spent
+	// the whole batch, so spaces late in the list are not starved. In memory: a restart starts at the first space.
+	worktreeFrom string
 }
 
 // New returns the service.
@@ -387,6 +408,19 @@ func (svc *Service) finish(ctx context.Context, p *Pass) (*Pass, error) {
 	return p, werr
 }
 
+// rotate starts the space list at the space the last pass's worktree budget ran out before (worktreeFrom).
+func (svc *Service) rotate(spaces []db.ListRetentionSpacesRow) []db.ListRetentionSpacesRow {
+	svc.mu.Lock()
+	from := svc.worktreeFrom
+	svc.mu.Unlock()
+	for i, sp := range spaces {
+		if sp.ID == from && i > 0 {
+			return append(slices.Clone(spaces[i:]), spaces[:i]...)
+		}
+	}
+	return spaces
+}
+
 // work applies every space's retention and the audit retention. It continues past a failing space and reports the
 // first error.
 func (svc *Service) work(ctx context.Context) (Counts, error) {
@@ -396,11 +430,22 @@ func (svc *Service) work(ctx context.Context) (Counts, error) {
 		return counts, err
 	}
 	var errs []error
-	for _, sp := range spaces {
+	worktreeBudget := WorktreeBatchPerPass
+	if svc.o.WorktreeBatchPerPass > 0 {
+		worktreeBudget = svc.o.WorktreeBatchPerPass
+	}
+	spaces = svc.rotate(spaces)
+	for i, sp := range spaces {
 		if ctx.Err() != nil {
 			return counts, ctx.Err()
 		}
-		c, err := svc.space(ctx, sp.ID)
+		before := worktreeBudget
+		c, err := svc.space(ctx, sp.ID, &worktreeBudget)
+		if before > 0 && worktreeBudget <= 0 {
+			svc.mu.Lock()
+			svc.worktreeFrom = spaces[(i+1)%len(spaces)].ID
+			svc.mu.Unlock()
+		}
 		for k, v := range c {
 			counts[k] += v
 		}
@@ -456,7 +501,8 @@ func (svc *Service) pruneTelegramMessages(ctx context.Context) (int64, error) {
 }
 
 // space applies one space's retention periods.
-func (svc *Service) space(ctx context.Context, spaceID string) (Counts, error) {
+// budget is what is left of the pass's worktree removals (WorktreeBatchPerPass); the worktree step spends from it.
+func (svc *Service) space(ctx context.Context, spaceID string, budget *int) (Counts, error) {
 	counts := Counts{}
 	v, err := svc.limits.For(ctx, svc.s.R(), spaceID)
 	if err != nil {
@@ -499,6 +545,17 @@ func (svc *Service) space(ctx context.Context, spaceID string) (Counts, error) {
 		n, err := svc.attachments(ctx, spaceID, c, days)
 		counts[KindAttachments] += n
 		errs = append(errs, err)
+	}
+	if days := v.Get(limits.WorktreeRetention); days > 0 && svc.o.PruneWorktrees != nil && *budget > 0 {
+		sum, err := svc.o.PruneWorktrees(ctx, Actor, spaceID, days, min(WorktreeBatchPerSpace, *budget))
+		*budget -= sum.Requested
+		counts[KindWorktrees] += int64(sum.Removed)
+		errs = append(errs, err)
+	}
+	if days := v.Get(limits.WorktreeCleanupMessage); days > 0 && svc.o.NotifyWorktreeCleanup != nil {
+		if _, err := svc.o.NotifyWorktreeCleanup(ctx, spaceID, days); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return counts, errors.Join(errs...)
 }

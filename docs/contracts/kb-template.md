@@ -21,7 +21,9 @@
 ## Using it with SpaceMan
 
 - Repository: the KB folder in the space; knowledge branch: the branch the owner accepts into (may be checked out in the
-  repository's own checkout, which SpaceMan fast-forwards when clean; not in a linked worktree).
+  repository's own checkout, which SpaceMan fast-forwards: untracked files are allowed unless the new tip adds a file at
+  the same path (that refuses the acceptance; nothing is overwritten), ignored files are never overwritten, and local
+  changes to tracked files or an operation in progress refuse the acceptance; not in a linked worktree).
 - Entry instructions: "Follow AGENTS.md. You are a consumer: answer and propose; never mark anything accepted."
 - Validator: `python3 tools/kb.py check`.
 - Write policy: **review** (a person accepts, matching "only the owner accepts").

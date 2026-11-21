@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -35,6 +36,32 @@ var statusInterval = 30 * time.Second
 // file system's timestamp granularity could leave size and time unchanged (git's "racy" entries). A variable so tests
 // can turn it off.
 var statusRacy = 2 * time.Second
+
+// statusWorkers bounds how many instance checkouts have their counts read by git at once, node-wide. Reading is
+// roughly seven git execs of a few milliseconds each, so a cold cache (an agent that just restarted) over a thousand
+// checkouts took tens of seconds one after the other.
+const statusWorkers = 8
+
+// eachParallel calls fn for 0..n-1 on up to statusWorkers goroutines, in order of the indexes, and returns when all
+// returned. Git runs behind the node-wide reader slots of instanceStatus, so several callers together stay bounded.
+func eachParallel(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	next := make(chan int)
+	for range min(n, statusWorkers) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				fn(i)
+			}
+		}()
+	}
+	for i := range n {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+}
 
 // instStatus is the cached status of one instance checkout.
 type instStatus struct {
@@ -112,23 +139,76 @@ func (m *memManager) reportStatus(ctx context.Context) {
 }
 
 // instanceStatus is an instance checkout's uncheckpointed changes and the commits it has not published, from the cache
-// when nothing in the checkout changed. ok is false for a folder that is not a checkout of its own.
+// when nothing in the checkout changed. ok is false for a folder that is not a checkout of its own (it has no .git);
+// a checkout whose status cannot be read counts as unclean.
 func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (uncheckpointed, localCommits int, ok bool) {
 	pre, cacheable := statusStamp(inst, head)
-	if cacheable {
+	cached := func() (instStatus, bool) {
 		m.statusMu.Lock()
+		defer m.statusMu.Unlock()
 		c, hit := m.instStatus[inst]
+		return c, hit && cacheable && c.stamp == pre
+	}
+	if c, hit := cached(); hit {
+		return c.uncheckpointed, c.localCommits, true
+	}
+	// One reader per checkout at a time: the status report and a flush that start together on a cold cache would
+	// otherwise both run git in every checkout. The second one waits and then finds the counts cached (or reads them
+	// itself when they could not be cached).
+	for {
+		m.statusMu.Lock()
+		busy, taken := m.statusBusy[inst]
+		if !taken {
+			ch := make(chan struct{})
+			m.statusBusy[inst] = ch
+			m.statusMu.Unlock()
+			defer func() {
+				m.statusMu.Lock()
+				delete(m.statusBusy, inst)
+				m.statusMu.Unlock()
+				close(ch)
+			}()
+			break
+		}
 		m.statusMu.Unlock()
-		if hit && c.stamp == pre {
+		select {
+		case <-busy:
+		case <-ctx.Done():
+			return 1, boolToInt(head != ""), true // never read as clean when nothing was read
+		}
+		if c, hit := cached(); hit {
 			return c.uncheckpointed, c.localCommits, true
 		}
 	}
+	if c, hit := cached(); hit { // another reader finished between the first look and the claim
+		return c.uncheckpointed, c.localCommits, true
+	}
+	select {
+	case m.statusSlots <- struct{}{}:
+		defer func() { <-m.statusSlots }()
+	case <-ctx.Done():
+		return 1, boolToInt(head != ""), true
+	}
+	return m.readInstanceStatus(ctx, inst, head, pre, cacheable)
+}
+
+// readInstanceStatus runs git in the checkout (instanceStatus holds the checkout's reader slot).
+func (m *memManager) readInstanceStatus(ctx context.Context, inst, head string, pre uint64, cacheable bool) (uncheckpointed, localCommits int, ok bool) {
 	out, err := m.git.RunCheckout(ctx, inst, nil, "status", "--porcelain")
 	if err != nil {
 		m.statusMu.Lock()
 		delete(m.instStatus, inst)
 		m.statusMu.Unlock()
-		return 0, 0, false // not a checkout of its own: nothing is counted, and no git runs there
+		if fi, serr := os.Lstat(inst); serr != nil || !fi.IsDir() {
+			return 0, 0, false // a stray file, or gone
+		}
+		if _, serr := os.Lstat(filepath.Join(inst, ".git")); os.IsNotExist(serr) {
+			return 0, 0, false // not a checkout of its own: nothing is counted, and no git runs there
+		}
+		// A checkout whose status cannot be read (the guard refused it: a nested .git, a FIFO, a link; or git failed or
+		// the context ended) is never read as clean: its changes and commits are unknown, so count at least one of
+		// each, and the space is not clean until the checkout can be read and published. Not cached.
+		return 1, boolToInt(head != ""), true
 	}
 	uncheckpointed = len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
 	// Commits an instance has not published (it diverged and is waiting for its next checkpoint).

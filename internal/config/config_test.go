@@ -468,3 +468,52 @@ func TestRecordingReconcileIntervalBounds(t *testing.T) {
 		}
 	}
 }
+
+// worktree_cleanup_message_days (ADR-0107 decision 5): 0 (off) by default, 7 or any value up to 365 turns it on, at most 365.
+func TestWorktreeCleanupMessageLimitConfig(t *testing.T) {
+	if d := Default(); d.Limits.WorktreeCleanupMessageDays != 0 || d.LimitValues()["worktree_cleanup_message_days"] != 0 {
+		t.Fatalf("default = %d", d.Limits.WorktreeCleanupMessageDays)
+	}
+	p := writeFile(t, "public_url: https://spaceman.example.com\nlimits:\n  worktree_cleanup_message_days: 0\n")
+	cfg, err := Load(p, nil)
+	if err != nil || cfg.Limits.WorktreeCleanupMessageDays != 0 {
+		t.Fatalf("0 from the file: %v %+v", err, cfg.Limits)
+	}
+	for _, bad := range []int64{-1, 366} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Limits.WorktreeCleanupMessageDays = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "limits.worktree_cleanup_message_days must be within 0..365") {
+			t.Errorf("%d: err = %v", bad, err)
+		}
+	}
+}
+
+// worktree_retention_days (ADR-0107): a space limit of 0 (off) by default, bounded 0..36500 days, and read from the file.
+func TestWorktreeRetentionLimitConfig(t *testing.T) {
+	if d := Default(); d.Limits.WorktreeRetentionDays != 0 || d.LimitValues()["worktree_retention_days"] != 0 {
+		t.Fatalf("default worktree_retention_days = %d", d.Limits.WorktreeRetentionDays)
+	}
+	p := writeFile(t, "public_url: https://spaceman.example.com\nlimits:\n  worktree_retention_days: 14\n")
+	cfg, err := Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits.WorktreeRetentionDays != 14 || cfg.LimitValues()["worktree_retention_days"] != 14 {
+		t.Fatalf("worktree_retention_days = %d", cfg.Limits.WorktreeRetentionDays)
+	}
+	for _, bad := range []int64{-1, 36_501} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Limits.WorktreeRetentionDays = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "limits.worktree_retention_days must be within 0..36500") {
+			t.Errorf("worktree_retention_days %d: err = %v", bad, err)
+		}
+	}
+	c := Default()
+	c.PublicURL = "https://spaceman.example.com"
+	c.Limits.WorktreeRetentionDays = 36_500
+	if err := c.Validate(); err != nil {
+		t.Fatalf("bound rejected: %v", err)
+	}
+}

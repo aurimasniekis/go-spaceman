@@ -102,8 +102,11 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 	defer l.Unlock()
 	rep := proto.RepoStatusReport{SpaceID: spaceID, Repositories: []proto.RepoState{}}
 	g, gerr := newProjectGit()
+	budget := a.newWtBudget()
 	configured := map[string]bool{}
-	for _, r := range p.Repositories {
+	// The repositories only queue their worktrees for status; the shared allowance is spent once below, over all of them.
+	states := make([]proto.RepoState, len(p.Repositories))
+	for i, r := range p.Repositories {
 		configured[r.Path] = true
 		st := proto.RepoState{ID: r.ID, Path: r.Path}
 		switch {
@@ -114,10 +117,14 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 		case !validRef(r.DefaultBranch):
 			st.Error = "invalid default branch"
 		default:
-			a.syncRepo(ctx, g, space, r, slices.Contains(p.Clone, r.ID), slices.Contains(p.Fetch, r.ID), &st)
+			a.syncRepo(ctx, g, space, r, slices.Contains(p.Clone, r.ID), slices.Contains(p.Fetch, r.ID), budget, &st)
 		}
-		rep.Repositories = append(rep.Repositories, st)
+		states[i] = st
 	}
+	if gerr == nil {
+		budget.spend(ctx, g)
+	}
+	rep.Repositories = append(rep.Repositories, states...)
 	if lay, err := walkSpace(space); err == nil {
 		for _, rel := range lay.repos {
 			if !configured[rel] && len(rep.Unlisted) < maxSyncRepos {
@@ -129,7 +136,7 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 	return rep
 }
 
-func (a *Agent) syncRepo(ctx context.Context, g *projectGit, space string, r proto.RepoSource, clone, fetch bool, st *proto.RepoState) {
+func (a *Agent) syncRepo(ctx context.Context, g *projectGit, space string, r proto.RepoSource, clone, fetch bool, budget *wtBudget, st *proto.RepoState) {
 	dir := filepath.Join(space, filepath.FromSlash(r.Path))
 	var env []string
 	if r.URL != "" {
@@ -171,7 +178,7 @@ func (a *Agent) syncRepo(ctx context.Context, g *projectGit, space string, r pro
 	if !present {
 		return
 	}
-	rc := g.inspectRepo(ctx, space, r.Path)
+	rc := g.inspectRepoBudget(ctx, space, r.Path, budget)
 	st.Check = &rc
 	if rc.Error != "" && st.Error == "" {
 		st.Error = rc.Error

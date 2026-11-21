@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -69,6 +70,10 @@ type memManager struct {
 	statusTimer *time.Timer
 	statusLast  time.Time
 	instStatus  map[string]instStatus
+	// statusBusy holds the instances whose counts are being read (a second reader waits for the first and then finds
+	// them cached); statusSlots bounds the git readers of the whole node (memstatus.go).
+	statusBusy  map[string]chan struct{}
+	statusSlots chan struct{}
 	reportMu    sync.Mutex
 	// statusSent, when set (tests), sees each status report as it is sent.
 	statusSent func(proto.MemoryStatus)
@@ -80,6 +85,7 @@ type memManager struct {
 func newMemManager(a *Agent) *memManager {
 	m := &memManager{a: a, base: context.Background(), root: filepath.Join(a.o.DataDir, "memory"), locks: map[string]*sync.Mutex{}, timers: map[string]*time.Timer{},
 		syncs: map[string]*time.Timer{}, waiting: map[string]string{}, statusDirty: map[string][2]string{}, instStatus: map[string]instStatus{},
+		statusBusy: map[string]chan struct{}{}, statusSlots: make(chan struct{}, statusWorkers),
 		flushing: map[string]chan struct{}{}}
 	if g, err := memory.NewGit(); err == nil {
 		m.git = g
@@ -235,6 +241,16 @@ func (m *memManager) checkpoint(ctx context.Context, spaceID, role, instance, re
 
 // checkpointErr is checkpoint reporting whether the changes reached the shared history.
 func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance, reason string) error {
+	return m.checkpointBy(ctx, spaceID, role, instance, reason, time.Time{})
+}
+
+// errBudgetSpent is what checkpointBy returns for a checkpoint it did not start because its budget had run out.
+var errBudgetSpent = errors.New("checkpoint budget spent")
+
+// checkpointBy is checkpointErr that does not start once notAfter has passed (also after waiting for the collection
+// lock) and cuts its git short at notAfter; the zero time: no limit. A skipped checkpoint returns errBudgetSpent and
+// records nothing: the changes stay in the files.
+func (m *memManager) checkpointBy(ctx context.Context, spaceID, role, instance, reason string, notAfter time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err // stopping (the connection or the agent ended): no git, no record, no warning
 	}
@@ -248,7 +264,17 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 		unlock()
 		return nil // the collection was renamed meanwhile (ADR-0093): its checkouts moved with it
 	}
-	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	limit := time.Now().Add(checkpointDeadline)
+	if !notAfter.IsZero() {
+		if !time.Now().Before(notAfter) {
+			unlock()
+			return errBudgetSpent
+		}
+		if notAfter.Before(limit) {
+			limit = notAfter
+		}
+	}
+	pctx, cancel := context.WithDeadline(ctx, limit)
 	published, err := m.publish(pctx, spaceID, role, instance, reason)
 	cancel()
 	unlock()
@@ -268,7 +294,11 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	_ = m.a.j.putMemory(ctx, st)
 	if published {
 		m.scheduleSync(spaceID, role, syncDelay)
-		m.fastForwardIdle(ctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
+		if notAfter.IsZero() {
+			// ADR-0094: the other instances between turns follow the new head. Not under a deadline (a flush): the
+			// collection lock wait and one 2 min git per idle instance are unbounded; they follow at the next checkpoint.
+			m.fastForwardIdle(ctx, spaceID, role, instance)
+		}
 	}
 	m.statusChanged(spaceID, role)
 	return err
@@ -307,14 +337,41 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 		_, err := g.RunCheckout(ctx, inst, nil, "merge", "--quiet", "--ff-only", theirs)
 		return false, err
 	}
-	// Both sides moved: merge, or preserve on conflict.
-	if _, err := g.RunCheckout(ctx, inst, id, "merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into "+instance, theirs); err == nil {
+	// Both sides moved: merge, or preserve on conflict. A checkout that was unborn when it first got files has a root
+	// commit unrelated to the shared history (no merge base): merge that on purpose, so its files reach shared main
+	// (files both sides added with different content still conflict and are preserved).
+	mergeArgs := []string{"merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into " + instance}
+	if _, err := g.RunCheckout(ctx, inst, nil, "merge-base", head, theirs); err != nil {
+		// Only exit 1 means "no common ancestor" (as in unbornHead); any other failure fails closed and is retried later.
+		if !noCommonAncestor(ctx, err) {
+			return false, err
+		}
+		mergeArgs = append(mergeArgs, "--allow-unrelated-histories")
+	}
+	if _, err := g.RunCheckout(ctx, inst, id, append(mergeArgs, theirs)...); err == nil {
 		_, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main")
 		return err == nil, err
 	}
-	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "--diff-filter=U")
+	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "-z", "--diff-filter=U")
 	_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
-	return m.preserve(ctx, spaceID, role, instance, head, theirs, strings.Fields(out))
+	return m.preserve(ctx, spaceID, role, instance, head, theirs, splitNUL(out))
+}
+
+// noCommonAncestor reports whether a failed merge-base means "no common ancestor": only exit code 1 does.
+func noCommonAncestor(ctx context.Context, err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 1 && ctx.Err() == nil
+}
+
+// splitNUL splits NUL-separated git output (-z), which keeps names with spaces or non-ASCII characters intact.
+func splitNUL(s string) []string {
+	var out []string
+	for _, f := range strings.Split(s, "\x00") {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // maxConflictFolders bounds how many recent conflict folders the node remembers and reports.
@@ -322,13 +379,15 @@ const maxConflictFolders = 50
 
 // preserve keeps an instance's conflicting history and moves the instance onto the shared history: the local commits
 // are pushed to refs/conflicts/…, and the local versions of the conflicting files are added under conflicts/ so the
-// role sees them and can reconcile. Nothing is overwritten.
+// role sees them and can reconcile. Nothing is overwritten. The instance's other (non-conflicting) changes are merged
+// into shared main: the conflicting files take the shared version, their local copies go under conflicts/.
 func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head, theirs string, files []string) (bool, error) {
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	g := m.git
 	stamp := m.a.now().UTC().Format("20060102T150405Z")
 	ref := "refs/conflicts/" + instance + "-" + stamp
 	if _, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, head+":"+ref); err != nil {
+		_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
 		return false, err
 	}
 	saved := map[string][]byte{}
@@ -340,7 +399,8 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 			saved[f] = []byte(b)
 		}
 	}
-	if _, err := g.RunCheckout(ctx, inst, nil, "reset", "--quiet", "--hard", theirs); err != nil {
+	if err := m.resolveToShared(ctx, inst, instance, head, theirs); err != nil {
+		_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
 		return false, err
 	}
 	dir := filepath.Join("conflicts", instance+"-"+stamp)
@@ -371,6 +431,41 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	m.a.log.Warn("memory conflict preserved", slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.ref", ref),
 		slog.Int("files", len(files)))
 	return true, nil
+}
+
+// resolveToShared moves the checkout (at head) onto the shared history without losing the instance's other work: it
+// merges theirs again, every conflicting file takes the shared version (or is removed when shared deleted it), and the
+// merge is committed, so the non-conflicting local changes stay. When the merge cannot even start, the checkout is
+// reset to the shared history as before.
+func (m *memManager) resolveToShared(ctx context.Context, inst, instance, head, theirs string) error {
+	g := m.git
+	_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
+	args := []string{"merge", "--quiet", "--no-commit", "--no-ff", "-m", "Merge memory from other instances into " + instance}
+	if _, err := g.RunCheckout(ctx, inst, nil, "merge-base", head, theirs); err != nil {
+		if !noCommonAncestor(ctx, err) {
+			return err
+		}
+		args = append(args, "--allow-unrelated-histories")
+	}
+	_, _ = g.RunCheckout(ctx, inst, ident(instance), append(args, theirs)...)
+	if g.RevParse(ctx, inst, "MERGE_HEAD") == "" {
+		_, err := g.RunCheckout(ctx, inst, nil, "reset", "--quiet", "--hard", theirs)
+		return err
+	}
+	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "-z", "--diff-filter=U")
+	for _, f := range splitNUL(out) {
+		if _, err := g.RunCheckout(ctx, inst, nil, "checkout", "--theirs", "--", f); err != nil {
+			if _, err := g.RunCheckout(ctx, inst, nil, "rm", "--quiet", "-f", "--sparse", "--", f); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := g.RunCheckout(ctx, inst, nil, "add", "-f", "--sparse", "--", f); err != nil {
+			return err
+		}
+	}
+	_, err := g.RunCheckout(ctx, inst, ident(instance), "commit", "--quiet", "--no-edit")
+	return err
 }
 
 // writeConflictCopies writes the conflict copies and the README under dir inside the instance checkout. Any instance can
@@ -566,15 +661,19 @@ func (m *memManager) statusOf(ctx context.Context, spaceID, role string) proto.M
 	dir := filepath.Join(m.root, spaceID, role, "instances")
 	insts, _ := os.ReadDir(dir)
 	seen := map[string]bool{}
+	var mu sync.Mutex
 	for _, i := range insts {
-		c.Instances++
-		inst := filepath.Join(dir, i.Name())
-		seen[inst] = true
-		if unc, local, ok := m.instanceStatus(ctx, inst, head); ok {
+		seen[filepath.Join(dir, i.Name())] = true
+	}
+	c.Instances = len(insts)
+	eachParallel(len(insts), func(i int) {
+		if unc, local, ok := m.instanceStatus(ctx, filepath.Join(dir, insts[i].Name()), head); ok {
+			mu.Lock()
 			c.Uncheckpointed += unc
 			c.LocalCommits += local
+			mu.Unlock()
 		}
-	}
+	})
 	m.forgetStatus(dir, seen)
 	return c
 }

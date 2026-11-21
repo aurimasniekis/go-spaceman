@@ -104,6 +104,11 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		a.handleMemoryRename(ctx, c, fresh)
 		return
 	}
+	if !fresh && c.Kind == proto.CmdWorktreeRemove {
+		a.ack(ctx, c, proto.AckDuplicate, "")
+		a.resendWorktreeRemoved(ctx, c)
+		return
+	}
 	if !fresh && c.Kind == proto.CmdReposSync {
 		a.ack(ctx, c, proto.AckDuplicate, "")
 		a.resendReposSync(ctx, c)
@@ -145,6 +150,9 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 	case proto.CmdReposSync:
 		a.handleReposSync(ctx, c)
 		return // the sync journals its own outcome (its report) when it finishes
+	case proto.CmdWorktreeRemove:
+		a.handleWorktreeRemove(ctx, c)
+		return // the removal journals its own outcome (its report) when it finishes
 	case proto.CmdKBAccept:
 		a.handleKBAccept(ctx, c)
 	case proto.CmdDreamDone:
@@ -402,13 +410,36 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	// The worktree is prepared and the run's work folder recorded under the space's worktree lock, so a worktree removal
+	// (ADR-0107) either finishes before this launch looks at the worktree or sees this run using it.
+	unlockWorktrees := a.worktreeLock(c.SpaceID)
 	if p.Worktree != nil {
+		if a.workBeingRemoved(space, worktreeDir(space, *p.Worktree)) {
+			unlockWorktrees()
+			fail("prepare worktree", errors.New("the worktree is being removed; launch again when that is done"))
+			return
+		}
 		dir, err := prepareWorktree(ctx, space, *p.Worktree)
 		if err != nil {
+			unlockWorktrees()
 			fail("prepare worktree", err)
 			return
 		}
 		work = dir
+	}
+	if a.workBeingRemoved(space, work) {
+		unlockWorktrees()
+		fail("prepare the work folder", errors.New("a worktree in or around it is being removed; launch again when that is done"))
+		return
+	}
+	if err := a.recordWorkdir(c.RunID, space, work); err != nil {
+		unlockWorktrees()
+		fail("record the work folder", err)
+		return
+	}
+	unlockWorktrees()
+	if a.afterRecordWorkdir != nil {
+		a.afterRecordWorkdir(work) // test hook: a symlink may be planted here, before the folder is created and resolved
 	}
 	var dreamMem []string // role memory checkouts a dream's memory/<role> links point at
 	if p.Dream != nil {
@@ -433,6 +464,20 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
 	}
+	// The folder was recorded and checked before it was created and resolved; a symlink planted in between could have
+	// pointed it into a worktree a removal has since claimed. Check the final folder and record it, under the lock.
+	unlockWorktrees = a.worktreeLock(c.SpaceID)
+	if a.workBeingRemoved(space, work) {
+		unlockWorktrees()
+		fail("prepare the work folder", errors.New("a worktree in or around it is being removed; launch again when that is done"))
+		return
+	}
+	if err := a.recordWorkdir(c.RunID, space, work); err != nil {
+		unlockWorktrees()
+		fail("record the work folder", err)
+		return
+	}
+	unlockWorktrees()
 	spaceReal := space
 	if real, err := filepath.EvalSymlinks(space); err == nil {
 		spaceReal = real

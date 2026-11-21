@@ -60,6 +60,8 @@ const (
 	SwitchLimitedAtOnce     = "limited_at_once"
 	SwitchLimitCleared      = "limit_cleared"
 	SwitchRunStopped        = "run_stopped"
+	SwitchNoSession         = "no_session"
+	SwitchNoAccount         = "no_account"
 )
 
 const (
@@ -122,8 +124,10 @@ func switchActive(state string) bool {
 func idleStatus(s string) bool { return s == "idle" || s == "done" || s == "error" }
 
 // switchDecision is what the report transaction decided for a run whose limit opened: no decision (the run isn't one
-// that switches, or failover is off: nothing is recorded), wait (the reset is near: nothing is recorded), fall back
-// (recorded with its reason), or switch to target.
+// that parks, its limit isn't an account's, failover is off, or the reset is near enough to wait for: nothing is
+// recorded), fall back (recorded with its reason: nothing to resume, no account to move from, no eligible account,
+// budget spent), or switch to target. A limit on a run that could switch is never left with neither a decision nor a
+// wait.
 type switchDecision struct {
 	decided bool
 	target  string
@@ -137,18 +141,26 @@ func (svc *Service) decideSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 	if !ul.Failover || !parkKind(r.Kind) || lim.kind == "" || svc.opts.ResolveAccount == nil {
 		return switchDecision{}, nil
 	}
-	if session, err := resumableSession(ctx, tx.Q, r); err != nil || session == "" {
-		return switchDecision{}, err // nothing to resume: the run waits
-	}
 	scope, from, _, ok := limitScope(r, lim.kind)
-	if !ok || scope != LimitScopeAccount {
-		return switchDecision{}, nil
+	if ok && scope != LimitScopeAccount {
+		return switchDecision{}, nil // a gateway limit: its own hold, no account to move from
 	}
-	// Q4: a reset within the window is waited for (ADR-0079), and isn't a fallback.
+	// Q4: a reset within the window is waited for (ADR-0079): the run stays alive at a limit that is about to end, with
+	// control told. That is the decision itself and isn't a fallback, so nothing is recorded.
 	if lim.resets.Valid && time.UnixMicro(lim.resets.Int64).Sub(tx.Now) <= ul.WaitIfResetWithin {
 		return switchDecision{}, nil
 	}
 	d := switchDecision{decided: true, from: from}
+	if !ok {
+		d.reason = SwitchNoAccount // the run's launch names no account: it can't be moved off one
+		return d, nil
+	}
+	if _, ok, err := limitSwitchSession(ctx, tx.Q, r); err != nil {
+		return switchDecision{}, err
+	} else if !ok {
+		d.reason = SwitchNoSession // nothing to resume: the run waits
+		return d, nil
+	}
 	used, err := tx.Q.CountAccountSwitchesSince(ctx, db.CountAccountSwitchesSinceParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID,
 		CreatedAt: tx.Now.Add(-switchBudgetWindow).UnixMicro()})
 	if err != nil {
@@ -170,7 +182,9 @@ func (svc *Service) decideSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 // switchTargetTx returns the account a switch away from from moves to: prefer when it is still eligible, otherwise the
 // best eligible account of the run's pool (accounts.Resolve's failover order), or "" when none is. Eligible: bound to
 // the space for the harness, enabled, in the role's pool when it has one, with no open hold that hasn't reset (any
-// space, probe-due ones included), and not from.
+// space, probe-due ones included), and not from. When every account is avoided for that, it tries once more counting
+// only the holds that still refuse a launch: an account whose probe is due is then the last resort, and the resumed run
+// is its probe (holdCheckTx claims it).
 func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, harness, role, from, prefer string) (string, error) {
 	now := tx.NowMicros()
 	ul := UsageLimitSettings{}
@@ -178,12 +192,22 @@ func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, h
 		ul = svc.opts.UsageLimitSettings(ctx, tx.Q, spaceID)
 	}
 	// A switch's resume is a new start: the headroom gate removes accounts here too.
-	avoid := svc.withHeadroom(ctx, tx.Q, ul, func(id string) (bool, error) {
-		if id == from {
-			return true, nil
+	for _, held := range []func(context.Context, *db.Queries, string, int64) (bool, error){accountHeld, accountBlocked} {
+		avoid := svc.withHeadroom(ctx, tx.Q, ul, func(id string) (bool, error) {
+			if id == from {
+				return true, nil
+			}
+			return held(ctx, tx.Q, id, now)
+		})
+		if id, err := svc.switchTargetAvoiding(ctx, tx, spaceID, harness, role, from, prefer, avoid); err != nil || id != "" {
+			return id, err
 		}
-		return accountHeld(ctx, tx.Q, id, now)
-	})
+	}
+	return "", nil
+}
+
+// switchTargetAvoiding is switchTargetTx's choice with the accounts avoid names removed.
+func (svc *Service) switchTargetAvoiding(ctx context.Context, tx *store.Tx, spaceID, harness, role, from, prefer string, avoid func(string) (bool, error)) (string, error) {
 	// Resolve from the limited account: it is bound (so a space without a default still resolves) and avoided, so the
 	// pool's order decides. A fresh retry's wait doesn't know it (from is empty): the role's pool decides first, and
 	// only a role without a pool of its own (the space pool is every bound account, so it can't widen) falls back to
@@ -824,6 +848,46 @@ func resumableSession(ctx context.Context, q *db.Queries, r db.Run) (string, err
 		return "", nil
 	}
 	return r.SessionID, nil
+}
+
+// limitSwitchSession is the session a usage-limit switch resumes: resumableSession's, or the run's own when it is a fresh
+// run, or a run itself resumed fresh (its wait had no session), whose first turn ended at the limit. The turn count only
+// moves on a finished turn, and a turn that ends in the limit error doesn't count, but the harness took the run's prompt,
+// so the session's transcript exists and resumes (a resume that still fails is retried fresh, ADR-0079). ok is false
+// when there is nothing to switch with: no session, a resumed run whose session changed (the resume didn't take), or the
+// fresh retry of a failed resume (it already had its one retry). A fresh-resumed run with no session of its own is ok
+// with an empty session: the switch relaunches it fresh on the target account.
+//
+// The fallback is asymmetric on purpose. Both kinds of run can lack a session. An original fresh run with no session has
+// no earlier run that took its prompt, so there is nothing to resume: it falls back no_session. A run resumed fresh from a
+// wait with no session did take its prompt on an earlier run: if its first turn (turn 0) ended at the limit, the work is
+// begun and it is relaunched fresh instead. Past its first turn, with no session, it falls back no_session.
+func limitSwitchSession(ctx context.Context, q *db.Queries, r db.Run) (session string, ok bool, err error) {
+	if session, err = resumableSession(ctx, q, r); err != nil || session != "" {
+		return session, err == nil, err
+	}
+	if r.Turn > 0 {
+		return "", false, nil
+	}
+	prev, err := q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: r.ID})
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return r.SessionID, r.SessionID != "", nil
+	case err != nil:
+		return "", false, err
+	case prev.SessionID != "":
+		return "", false, nil // a resumed run whose session changed: the resume didn't take
+	}
+	// prev started this run fresh. If prev's own run was a resume of a session, this is the fresh retry of that failed
+	// resume: it stops here, so a switch can't loop. The retry is detected by its shape (a fresh start whose wait's run
+	// was itself resumed with a session), not by a flag. A false positive, a run that only looks like a retry, stops a
+	// switch it could have made; that is the safe side, since the run waits and nothing loops.
+	if first, err := q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: prev.RunID}); err == nil && first.SessionID != "" {
+		return "", false, nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
+	}
+	return r.SessionID, true, nil
 }
 
 // armedSwitch reports whether a run has an armed switch waiting for its idle point.

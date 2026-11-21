@@ -21,13 +21,18 @@ import (
 // that repository at that folder is reused. Nothing is ever reset, deleted, forced or pushed (SM-REPO-006), and git
 // runs with the node's own environment, so the node's git configuration and credentials are used, never replaced
 // (SM-REPO-005), with hooks and fsmonitor disabled. It returns the worktree folder.
+// worktreeDir is the folder of the worktree a launch uses: the branch's name in the space's worktrees folder.
+func worktreeDir(space string, w proto.Worktree) string {
+	return filepath.Join(space, "worktrees", strings.ReplaceAll(w.Branch, "/", "-"))
+}
+
 func prepareWorktree(ctx context.Context, space string, w proto.Worktree) (string, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		return "", errors.New("git is not installed on this node")
 	}
 	repo := filepath.Join(space, filepath.Clean("/"+w.Repo))
-	dir := filepath.Join(space, "worktrees", strings.ReplaceAll(w.Branch, "/", "-"))
+	dir := worktreeDir(space, w)
 	// git runs with the node's configuration and credentials but with hooks and fsmonitor off, and not at all when
 	// the repository's own configuration would run a program: agents can write the repository's .git, and the daemon
 	// must not run their code (security review SR-M03).

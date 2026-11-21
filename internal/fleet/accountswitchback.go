@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -66,13 +67,18 @@ func switchBackOrigin(ctx context.Context, q *db.Queries, r db.Run) (origin, cur
 
 // originReadyAt is when an account's usage limits allow a switch back to it: the latest reset plus limitResumeSlack of
 // its open holds in any space (zero with none). known is false while a hold's reset is unknown: it blocks until the
-// hold clears.
-func originReadyAt(ctx context.Context, q *db.Queries, accountID string) (at time.Time, known bool, err error) {
+// hold clears or its probe is due (a hold due for its probe, at now in Unix microseconds, doesn't count: the switch
+// back is its probe).
+func originReadyAt(ctx context.Context, q *db.Queries, accountID string, now int64) (at time.Time, known bool, err error) {
 	rows, err := q.ListOpenUsageLimitsByAccount(ctx, accountID)
 	if err != nil {
 		return time.Time{}, false, err
 	}
+	_, probes := holdState(rows, now)
 	for _, u := range rows {
+		if slices.ContainsFunc(probes, func(p db.UsageLimit) bool { return p.ID == u.ID }) {
+			continue
+		}
 		if !u.ResetsAt.Valid {
 			return time.Time{}, false, nil
 		}
@@ -86,7 +92,7 @@ func originReadyAt(ctx context.Context, q *db.Queries, accountID string) (at tim
 // originReadyTx reports whether the origin is eligible to take the run back now (ADR-0105 decision 3): its limits have
 // reset (plus slack) and switchTargetTx, with the origin preferred, returns it.
 func (svc *Service) originReadyTx(ctx context.Context, tx *store.Tx, spaceID, harness, role, current, origin string) (bool, error) {
-	at, known, err := originReadyAt(ctx, tx.Q, origin)
+	at, known, err := originReadyAt(ctx, tx.Q, origin, tx.NowMicros())
 	if err != nil || !known || at.After(tx.Now) {
 		return false, err
 	}
@@ -271,7 +277,7 @@ func (svc *Service) switchBackRuns(ctx context.Context, now time.Time) (int, err
 	var errs []error
 	for _, c := range rows {
 		if !full {
-			at, known, err := originReadyAt(ctx, q, c.OriginAccountID)
+			at, known, err := originReadyAt(ctx, q, c.OriginAccountID, now.UnixMicro())
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -315,7 +321,7 @@ func (svc *Service) nextSwitchBack(ctx context.Context, q *db.Queries, now time.
 		next = full.Add(switchBackRecheck)
 	}
 	for _, c := range rows {
-		at, known, err := originReadyAt(ctx, q, c.OriginAccountID)
+		at, known, err := originReadyAt(ctx, q, c.OriginAccountID, now.UnixMicro())
 		if err != nil {
 			return time.Time{}, err
 		}

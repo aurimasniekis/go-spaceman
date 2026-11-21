@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -315,12 +316,42 @@ func TestAccountSwitchFallbacksAtDecision(t *testing.T) {
 	if n := e.switches("run_f"); n != 0 {
 		t.Fatalf("failover off decided %d switches", n)
 	}
-	// A run without a finished turn has nothing to resume: it waits.
 	e.failoverOn = true
+
+	// A run with no session has nothing to resume: it waits, with the fallback on record.
 	e.running("run_t", "worker", 0)
+	e.exec(`UPDATE runs SET session_id = '' WHERE id = 'run_t'`)
 	e.report("run_t", "idle", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
-	if n := e.switches("run_t"); n != 0 {
-		t.Fatalf("a run without a turn decided %d switches", n)
+	if sw := e.switchOf("run_t"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("a run without a session: %+v", sw)
+	}
+
+	// A run whose launch names no account can't be moved off one: recorded too.
+	e.running("run_g", "worker", 1)
+	e.exec(`UPDATE runs SET launch_json = '{"prompt":"x"}' WHERE id = 'run_g'`)
+	e.report("run_g", "idle", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_g"); sw.State != SwitchFellBack || sw.Reason != SwitchNoAccount {
+		t.Fatalf("a run without an account: %+v", sw)
+	}
+}
+
+// Regression: a fresh run whose first turn ended in the limit error (status error, a session, no finished turn) used
+// to record its limit with neither a switch decision nor a wait, and sat in error until the keep-alive parked it. It is
+// now switched to the pool's other account like any other run.
+func TestAccountSwitchFirstTurnEndsInLimitError(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_e", "worker", 0)
+	e.report("run_e", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	sw := e.switchOf("run_e")
+	if sw.ToAccountID != "acc_2" || sw.FromAccountID != "acc_1" {
+		t.Fatalf("switch %+v, want acc_1 -> acc_2", sw)
+	}
+	// The error status is an idle point: the report that carries the limit parks the run at once.
+	if sw.State != SwitchParked {
+		t.Fatalf("switch state %q, want parked", sw.State)
+	}
+	if w := e.waitOf("run_e"); w.SwitchToAccountID != "acc_2" || w.SessionID != "ses_run_e" {
+		t.Fatalf("wait %+v", w)
 	}
 }
 
@@ -855,5 +886,273 @@ func TestAccountSwitchesListIsPerSpace(t *testing.T) {
 	}
 	if got := ids("spc_b"); len(got) != 1 || got[0] != "asw_b1" {
 		t.Errorf("space b lists %v", got)
+	}
+}
+
+// resumedFrom seeds the wait run was resumed from: it was parked from an earlier run (prev) with session (empty: the
+// resume started fresh), and its new run is run.
+func (e *switchEnv) resumedFrom(run, prev, session string) {
+	e.t.Helper()
+	e.exec(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by,
+		updated_at) VALUES (?, 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', ?, 'stopped', 'exited', '{}', 0, 't', 0)`, prev, e.instance(run))
+	e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, resume_at, state, new_run_id,
+		created_at, updated_at) VALUES (?, 'spc_a', ?, 'worker', 'implementor', 'nod_1', ?, 'claude-code', ?, '{"account_ref":"acc_1","prompt":"do the task"}', 0,
+		'resumed', ?, 0, 0)`, "lwt_"+prev, prev, e.instance(run), session, run)
+}
+
+// A run that was itself resumed fresh (its wait had no session) and whose first turn ends at the limit took its prompt,
+// so its session resumes on the pool's other account instead of falling back (PR #392 follow-up).
+func TestAccountSwitchFreshResumedRunLimitedAtTurnZero(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_r", "worker", 0)
+	e.resumedFrom("run_r", "run_p", "")
+	e.report("run_r", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	sw := e.switchOf("run_r")
+	if sw.State != SwitchParked || sw.FromAccountID != "acc_1" || sw.ToAccountID != "acc_2" {
+		t.Fatalf("switch %+v, want parked acc_1 -> acc_2", sw)
+	}
+	if w := e.waitOf("run_r"); w.SwitchToAccountID != "acc_2" || w.SessionID != "ses_run_r" {
+		t.Fatalf("wait %+v", w)
+	}
+
+	// With no session of its own it is relaunched fresh on the target: an empty session in the wait.
+	e.running("run_n", "worker", 0)
+	e.exec(`UPDATE runs SET session_id = '' WHERE id = 'run_n'`)
+	e.resumedFrom("run_n", "run_q", "")
+	e.report("run_n", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_n"); sw.State != SwitchParked || sw.ToAccountID != "acc_2" {
+		t.Fatalf("no-session switch %+v", sw)
+	}
+	if w := e.waitOf("run_n"); w.SwitchToAccountID != "acc_2" || w.SessionID != "" {
+		t.Fatalf("no-session wait %+v", w)
+	}
+}
+
+// The r.Turn > 0 guard in limitSwitchSession: a run resumed fresh (its wait had no session) that has finished turns but has
+// no session id of its own can't be relaunched fresh by a switch, so it falls back no_session. Without the guard it would
+// park with an empty session.
+func TestAccountSwitchFreshResumedRunWithTurnsNoSession(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_s", "worker", 1)
+	e.exec(`UPDATE runs SET session_id = '' WHERE id = 'run_s'`)
+	e.resumedFrom("run_s", "run_t", "")
+	e.report("run_s", "error", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_s"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("switch %+v, want fell_back no_session", sw)
+	}
+}
+
+// The fresh retry of a failed resume (its wait was written by resumeFailedTx for a run that had been resumed with a
+// session) that is limited at turn 0 again stops with no_session: no loop. Nor does a resumed run whose session changed
+// (its resume didn't take) switch.
+func TestAccountSwitchSecondTurnZeroLimitStops(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_2", "worker", 0)
+	e.resumedFrom("run_2", "run_f", "") // the retry's wait: no session...
+	// ...written for run_f, which was itself resumed with a session that failed.
+	e.exec(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by,
+		updated_at) VALUES ('run_0', 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', ?, 'stopped', 'exited', '{}', 0, 't', 0)`, e.instance("run_2"))
+	e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, resume_at, state, new_run_id,
+		created_at, updated_at) VALUES ('lwt_run_0', 'spc_a', 'run_0', 'worker', 'implementor', 'nod_1', ?, 'claude-code', 'ses_old', '{}', 0, 'resumed', 'run_f', 0, 0)`,
+		e.instance("run_2"))
+	e.report("run_2", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_2"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("second turn-0 limit: %+v", sw)
+	}
+	if n := e.metric("fell_back"); n < 1 {
+		t.Fatalf("fell_back metric %v", n)
+	}
+
+	// The resume didn't take: the run got a session other than the one its wait carried.
+	e.running("run_c", "worker", 0)
+	e.resumedFrom("run_c", "run_x", "ses_other")
+	e.report("run_c", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_c"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("resume that didn't take: %+v", sw)
+	}
+}
+
+// A reset inside the wait window is waited for before anything else is decided: a run with no account records nothing.
+func TestAccountSwitchNearResetBeforeNoAccount(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_g", "worker", 1)
+	e.exec(`UPDATE runs SET launch_json = '{"prompt":"x"}' WHERE id = 'run_g'`)
+	e.report("run_g", "idle", 1, e.limit(proto.LimitFiveHour, dur(5*time.Minute)))
+	if n := e.switches("run_g"); n != 0 {
+		t.Fatalf("a near reset on a run without an account decided %d switches", n)
+	}
+}
+
+// Regression: a hold with no reset whose probe is due refuses nothing (holdState), but failover counted it as held, so
+// a switch to the account found no eligible account and fell back. With every account avoided the switch now goes to
+// the account whose probe is due, and the resumed run is that probe.
+func TestReproSwitchBlockedByProbeDueUnknownHold(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	e.running("run_p", "worker", 2)
+	e.report("run_p", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_p"); sw.State != SwitchPending || sw.ToAccountID != "acc_2" {
+		t.Fatalf("switch %+v, want pending to acc_2", sw)
+	}
+}
+
+// A hold that still blocks keeps blocking in the last-resort pass: a hold with no reset and its probe ahead, or a known
+// reset ahead, is not a target.
+func TestAccountSwitchUnexpiredBlockingHoldStillBlocks(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.running("run_p", "worker", 2)
+	e.report("run_p", "idle", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_p"); sw.State != SwitchFellBack || sw.Reason != SwitchNoEligibleAccount {
+		t.Fatalf("switch %+v, want fell back, no eligible account", sw)
+	}
+}
+
+// The evidence cascade: the account's five_hour hold clears by evidence at its reset, and its no-reset unknown hold seen
+// by then goes with it (its probe was ahead, so nothing else would have ended it). One seen after the reset stays. The
+// switch to the account then succeeds.
+func TestAccountSwitchUnknownHoldClearedWithSiblingEvidence(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_f", "spc_c", "acc_2", "", proto.LimitFiveHour, dur(time.Minute), nil)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.hold("ulm_l", "spc_b", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_l'`, e.us(10*time.Minute))
+	e.clk.Advance(2 * time.Minute)
+	err := e.s.W().TxNamed(e.ctx, "test.evidence", func(tx *store.Tx) error {
+		return e.svc.clearHoldsTx(e.ctx, tx, db.Run{ID: "run_o", SpaceID: "spc_d", LaunchJson: `{"account_ref":"acc_2"}`}, limitState{kind: proto.LimitFiveHour})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"ulm_f": "evidence", "ulm_u": "evidence", "ulm_l": ""} {
+		u, err := e.s.R().GetUsageLimit(e.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.ClearedBy != want {
+			t.Fatalf("%s cleared_by %q, want %q", id, u.ClearedBy, want)
+		}
+	}
+	if n := e.count(`SELECT count(*) FROM event_outbox WHERE subject = 'evt.spaceman.fleet.usage_limit.cleared' AND correlation_id = 'ulm_u'`); n != 1 {
+		t.Fatalf("%d cleared events for the unknown hold", n)
+	}
+	e.exec(`UPDATE usage_limits SET cleared_at = 1 WHERE id = 'ulm_l'`)
+	e.running("run_p", "worker", 2)
+	e.report("run_p", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_p"); sw.State != SwitchPending || sw.ToAccountID != "acc_2" {
+		t.Fatalf("switch %+v, want pending to acc_2", sw)
+	}
+}
+
+// A probe of a hold with no reset is not put off beyond the account's next known reset.
+func TestHoldProbeCappedAtNextKnownReset(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_f", "spc_c", "acc_2", "", proto.LimitFiveHour, dur(30*time.Minute), dur(-time.Minute)) // a probe was asked for
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_u'`, e.us(-4*time.Hour))
+	if err := e.s.W().TxNamed(e.ctx, "test.probe", func(tx *store.Tx) error {
+		_, err := e.svc.holdCheckTx(e.ctx, tx, HoldTarget{AccountID: "acc_2"}, 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := e.s.R().GetUsageLimit(e.ctx, "ulm_u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := e.us(30 * time.Minute); u.CheckAt.Int64 != want {
+		t.Fatalf("check_at %d, want the sibling's reset %d", u.CheckAt.Int64, want)
+	}
+}
+
+// An open hold of another space whose reset has passed no longer makes its account ineligible: the run's switch goes
+// there. A hold whose reset is ahead still blocks it, and one with no reset at all is unchanged (it blocks until a
+// probe or its expiry).
+func TestAccountSwitchIgnoresExpiredHoldOfOtherSpace(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		resets *time.Duration
+		want   string
+		reason string
+	}{
+		{"expired reset", dur(-20 * time.Minute), "acc_2", ""},
+		{"reset ahead", dur(time.Hour), "", SwitchNoEligibleAccount},
+		{"no reset", nil, "", SwitchNoEligibleAccount},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newSwitchEnv(t)
+			e.hold("ulm_other", "spc_b", "acc_2", "", proto.LimitUnknown, tc.resets, nil)
+			e.running("run_w", "worker", 2)
+			e.report("run_w", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+			sw := e.switchOf("run_w")
+			if tc.want != "" {
+				if sw.State != SwitchPending || sw.ToAccountID != tc.want {
+					t.Fatalf("switch %+v, want one to %s", sw, tc.want)
+				}
+				return
+			}
+			if sw.State != SwitchFellBack || sw.Reason != tc.reason {
+				t.Fatalf("switch %+v, want fell_back %s", sw, tc.reason)
+			}
+		})
+	}
+}
+
+// The probe fallback is the second pass only: while an account without any hold is eligible, a probe-due account is not
+// chosen, whichever of the two the pool's order would put first.
+func TestAccountSwitchPrefersHoldFreeOverProbeDue(t *testing.T) {
+	for _, tc := range []struct{ name, probeDue, free string }{{"first", "acc_2", "acc_3"}, {"second", "acc_3", "acc_2"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newSwitchEnv(t)
+			e.exec(`INSERT INTO space_accounts (space_id, account_id, harness, created_at, created_by) VALUES ('spc_a', 'acc_3', 'claude-code', 1, 't')`)
+			e.hold("ulm_u", "spc_c", tc.probeDue, "", proto.LimitUnknown, nil, dur(-time.Minute))
+			e.running("run_p", "worker", 2)
+			e.report("run_p", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+			if sw := e.switchOf("run_p"); sw.State != SwitchPending || sw.ToAccountID != tc.free {
+				t.Fatalf("switch %+v, want pending to %s", sw, tc.free)
+			}
+		})
+	}
+}
+
+// The evidence cascade only follows a sibling hold whose reset has passed: one whose reset is still ahead is probed, not
+// cleared, and the account's unknown hold stays.
+func TestClearHoldsNoCascadeFromSiblingResetAhead(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_f", "spc_c", "acc_2", "", proto.LimitFiveHour, dur(2*time.Hour), nil)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	err := e.s.W().TxNamed(e.ctx, "test.evidence", func(tx *store.Tx) error {
+		return e.svc.clearHoldsTx(e.ctx, tx, db.Run{ID: "run_o", SpaceID: "spc_d", LaunchJson: `{"account_ref":"acc_2"}`}, limitState{kind: proto.LimitFiveHour})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"ulm_f", "ulm_u"} {
+		u, err := e.s.R().GetUsageLimit(e.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.ClearedAt.Valid {
+			t.Fatalf("%s cleared by %q, want open", id, u.ClearedBy)
+		}
+	}
+}
+
+// A probe claim that updates no row (the hold changed under the launch) is a refusal, not a probe.
+func TestHoldCheckClaimLostIsRefusal(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_u", "spc_a", "acc_2", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	e.exec(`CREATE TRIGGER test_lose_claim BEFORE UPDATE ON usage_limits WHEN old.id = 'ulm_u' BEGIN SELECT RAISE(IGNORE); END`)
+	var probe bool
+	var herr error
+	if err := e.s.W().TxNamed(e.ctx, "test.claim", func(tx *store.Tx) error {
+		probe, herr = e.svc.holdCheckTx(e.ctx, tx, HoldTarget{AccountID: "acc_2"}, 0)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var he *HoldError
+	if probe || !errors.As(herr, &he) {
+		t.Fatalf("probe %v, err %v, want a hold refusal", probe, herr)
 	}
 }

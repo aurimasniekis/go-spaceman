@@ -461,6 +461,13 @@ var Table = map[string]Entry{
 	"resolve-quarantine":         {Write, rSpaceWrite},
 	"update-subscription":        {Write, rSpaceWrite},
 
+	// Fleet-scope grants (ADR-0106). The writes are step-up, so excluded by their rule; these entries are what they
+	// fall back to.
+	"list-event-fleet-scope-grants":  {Read, rRead},
+	"get-event-fleet-scope-grant":    {Read, rRead},
+	"put-event-fleet-scope-grant":    {Excluded, "widens which spaces' run dialog events a space ingests: an installation administrator's decision, never an agent's"},
+	"delete-event-fleet-scope-grant": {Excluded, "fleet-scope grants are given and revoked by installation administrators only"},
+
 	// System.
 	"get-outbound-events": {Read, rRead},
 

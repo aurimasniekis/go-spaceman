@@ -898,6 +898,55 @@ func (q *Queries) ListOpenGatewayUsageLimits(ctx context.Context, lim int64) ([]
 	return items, nil
 }
 
+const listOpenUnknownResetAccountLimits = `-- name: ListOpenUnknownResetAccountLimits :many
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NULL
+ORDER BY seen_at + CASE kind WHEN 'five_hour' THEN 18000000000 WHEN 'seven_day' THEN 604800000000 WHEN 'seven_day_opus' THEN 604800000000 WHEN 'seven_day_sonnet' THEN 604800000000 WHEN 'seven_day_overage_included' THEN 604800000000 ELSE 21600000000 END, id LIMIT ?1
+`
+
+// Open account holds whose reset is unknown, soonest expiry first (seen_at plus the kind window, see holdMaxAge): the
+// expiry sweep ends the ones past their window (ADR-0079 amendment), so the row cap never hides a due hold.
+func (q *Queries) ListOpenUnknownResetAccountLimits(ctx context.Context, lim int64) ([]UsageLimit, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenUnknownResetAccountLimits, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageLimit{}
+	for rows.Next() {
+		var i UsageLimit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.AccountID,
+			&i.GatewayRef,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.CheckAt,
+			&i.Source,
+			&i.FirstRunID,
+			&i.SeenAt,
+			&i.ClearedAt,
+			&i.ClearedBy,
+			&i.NotifiedControlAt,
+			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenUsageLimitsByAccount = `-- name: ListOpenUsageLimitsByAccount :many
 SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `
@@ -1345,6 +1394,20 @@ func (q *Queries) MarkUsageLimitHumansNotified(ctx context.Context, arg MarkUsag
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const nextAccountResetAfter = `-- name: NextAccountResetAfter :one
+SELECT CAST(coalesce(min(resets_at), 0) AS INTEGER) AS at FROM usage_limits
+WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NOT NULL AND resets_at > ?
+`
+
+// The earliest known reset ahead of after among open account holds (0: none): a gateway hold's estimate and a reset that
+// has passed never wake the expiry job.
+func (q *Queries) NextAccountResetAfter(ctx context.Context, resetsAt sql.NullInt64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextAccountResetAfter, resetsAt)
+	var at int64
+	err := row.Scan(&at)
+	return at, err
 }
 
 const nextLimitWaitDue = `-- name: NextLimitWaitDue :one

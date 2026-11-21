@@ -158,7 +158,7 @@ type UsageLimitReached struct {
 // UsageLimitCleared: a hold was cleared (a run on the account reported the limit over).
 type UsageLimitCleared struct {
 	UsageLimit
-	ClearedBy string `json:"cleared_by"` // run:<id> (a run of this space), evidence (a run of another space), or who cleared it
+	ClearedBy string `json:"cleared_by"` // run:<id> (a run of this space), evidence (a run of another space, or the window it was seen in ended), expired (its window passed with no reset seen), reset, quota_board or budget_status (Harbor Pilot showed it recovered), or who cleared it
 }
 
 // AccountSwitch describes a run's move to another account of its pool at a usage limit (ADR-0090). It carries IDs,
