@@ -104,7 +104,16 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 	g, gerr := newProjectGit()
 	budget := a.newWtBudget()
 	configured := map[string]bool{}
-	for _, r := range p.Repositories {
+	// The repositories are visited from a different one on every report so the shared status allowance is not always
+	// spent on the same ones first; the report keeps the configured order.
+	states := make([]proto.RepoState, len(p.Repositories))
+	order := make([]int, len(p.Repositories))
+	for i := range order {
+		order[i] = i
+	}
+	order = rotate(order, budget.rot, 1)
+	for _, i := range order {
+		r := p.Repositories[i]
 		configured[r.Path] = true
 		st := proto.RepoState{ID: r.ID, Path: r.Path}
 		switch {
@@ -117,8 +126,9 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 		default:
 			a.syncRepo(ctx, g, space, r, slices.Contains(p.Clone, r.ID), slices.Contains(p.Fetch, r.ID), budget, &st)
 		}
-		rep.Repositories = append(rep.Repositories, st)
+		states[i] = st
 	}
+	rep.Repositories = append(rep.Repositories, states...)
 	if lay, err := walkSpace(space); err == nil {
 		for _, rel := range lay.repos {
 			if !configured[rel] && len(rep.Unlisted) < maxSyncRepos {

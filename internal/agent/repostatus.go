@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,9 @@ var (
 	repoStatusIdle    = 7 * 24 * time.Hour
 	repoStatusMax     = 200
 	repoStatusRefresh = 24 * time.Hour
+	// repoStatusMaxAge is the hard limit on cached counts: past it without a refresh an entry is reported unchecked
+	// (unknown) rather than shown with counts that may be long out of date.
+	repoStatusMaxAge = 7 * 24 * time.Hour
 )
 
 // wtCacheKeep is how long an unrefreshed entry is kept before eviction (worktrees that were removed).
@@ -41,8 +45,17 @@ type wtCached struct {
 // wtStatusCache remembers worktree status counts across reports (in memory: after a restart the first reports refill it,
 // each within the per-report limit, and what is not refilled yet is reported unknown).
 type wtStatusCache struct {
-	mu sync.Mutex
-	m  map[string]wtCached
+	mu  sync.Mutex
+	m   map[string]wtCached
+	rot int // reports started so far; rotates where each report starts spending its allowance
+}
+
+// nextRot returns the rotation of a new report.
+func (c *wtStatusCache) nextRot() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rot++
+	return c.rot - 1
 }
 
 func (c *wtStatusCache) get(path string) (wtCached, bool) {
@@ -75,10 +88,21 @@ type wtBudget struct {
 	max   int
 	idle  time.Duration
 	now   func() time.Time
+	rot   int // rotation of this report, see rotate
+}
+
+// rotate starts a list at a different place on every report (by whole allowances), so that when more worktrees need a
+// status than a report may run, the unchecked ones differ from report to report instead of being the same tail.
+func rotate[T any](s []T, rot, step int) []T {
+	if len(s) < 2 || step <= 0 {
+		return s
+	}
+	k := (rot * step) % len(s)
+	return append(append([]T{}, s[k:]...), s[:k]...)
 }
 
 func (a *Agent) newWtBudget() *wtBudget {
-	return &wtBudget{cache: &a.wtStatus, left: repoStatusMax, max: repoStatusMax, idle: repoStatusIdle, now: a.now}
+	return &wtBudget{cache: &a.wtStatus, left: repoStatusMax, max: repoStatusMax, idle: repoStatusIdle, now: a.now, rot: a.wtStatus.nextRot()}
 }
 
 // worktreeStamp is when a worktree's tree last visibly changed: the newest modification time among the worktree folder,
@@ -174,6 +198,7 @@ func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []pr
 		p     wtPending
 		stamp time.Time
 		ok    bool
+		at    time.Time // when the cached counts were taken (refresh jobs)
 	}
 	var recent, idle, refresh []job
 	now := b.now()
@@ -185,37 +210,56 @@ func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []pr
 				w := &wcs[p.i]
 				w.Dirty, w.Untracked, w.Status, w.StatusAt = c.dirty, c.untracked, proto.WorktreeStatusCached, &at
 				if now.Sub(c.at) > repoStatusRefresh {
-					refresh = append(refresh, job{p, stamp, ok})
+					refresh = append(refresh, job{p, stamp, ok, c.at})
 				}
 				continue
 			}
-			idle = append(idle, job{p, stamp, ok})
+			idle = append(idle, job{p, stamp, ok, time.Time{}})
 			continue
 		}
-		recent = append(recent, job{p, stamp, ok})
+		recent = append(recent, job{p, stamp, ok, time.Time{}})
 	}
-	// Within a repository, recently changed worktrees first: they are the ones whose counts matter; an idle one with no
-	// cached counts yet takes what is left, then the refresh of old cached counts; what an unknown worktree is left
-	// without is reported unknown. (The allowance is shared by the repositories of a report, in configured order.)
-	for _, j := range append(append(recent, idle...), refresh...) {
+	// Recently changed worktrees first: they are the ones whose counts matter; an idle one with no cached counts yet
+	// takes what is left, then the refresh of old cached counts, oldest first; what an unknown worktree is left without
+	// is reported unknown. The allowance is shared by the repositories of a report, so the starting point of the recent
+	// and idle lists rotates between reports (and the repositories' order too, see syncRepos): nothing stays unchecked
+	// just for being last. Cached counts older than repoStatusMaxAge are never kept: that is unchecked, not stale.
+	sort.SliceStable(refresh, func(x, y int) bool { return refresh[x].at.Before(refresh[y].at) })
+	expired := func(w *proto.WorktreeCheck) bool {
+		return w.StatusAt != nil && now.Sub(*w.StatusAt) > repoStatusMaxAge
+	}
+	unchecked := func(w *proto.WorktreeCheck, msg string) {
+		w.Dirty, w.Untracked, w.StatusAt = 0, 0, nil
+		w.Status = proto.WorktreeStatusUnchecked
+		w.Error = msg
+	}
+	all := append(append(rotate(recent, b.rot, b.max), rotate(idle, b.rot, b.max)...), refresh...)
+	for _, j := range all {
+		w := &wcs[j.p.i]
 		if b.left <= 0 {
-			if w := &wcs[j.p.i]; w.Status == proto.WorktreeStatusCached {
+			if w.Status == proto.WorktreeStatusCached && !expired(w) {
 				continue // old counts stay, labelled with their time
 			}
-			w := &wcs[j.p.i]
+			if w.Status == proto.WorktreeStatusCached {
+				unchecked(w, fmt.Sprintf("status not checked: the cached counts are older than %s and this report ran its limit of %d worktree status calls; the counts are unknown, not clean", repoStatusMaxAge, b.max))
+				continue
+			}
 			w.Status = proto.WorktreeStatusUnchecked
 			w.Error = fmt.Sprintf("status not checked: this report ran its limit of %d worktree status calls; the counts are unknown, not clean", b.max)
 			continue
 		}
 		b.left--
-		w := &wcs[j.p.i]
 		if w.Status != proto.WorktreeStatusCached {
 			run(j.p, j.stamp, j.ok)
 			continue
 		}
 		saved := *w
 		if run(j.p, j.stamp, j.ok); w.Error != "" { // a failed refresh keeps the older counts, still labelled cached
+			err := w.Error
 			*w = saved
+			if expired(w) {
+				unchecked(w, "status not checked: the cached counts are older than "+repoStatusMaxAge.String()+" and the refresh failed: "+err)
+			}
 		}
 	}
 }

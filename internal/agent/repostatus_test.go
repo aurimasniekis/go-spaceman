@@ -75,7 +75,7 @@ func readText(t *testing.T, p string) string {
 	return string(b)
 }
 
-// ADR-0106 decision 8 (WL-6): a repository report's git status execs are bounded. Worktrees idle for over a week reuse
+// WL-6 (worktree lifecycle): a repository report's git status execs are bounded. Worktrees idle for over a week reuse
 // cached counts, at most repoStatusMax status calls run per report, cached and unchecked worktrees say so, and a worktree
 // whose status is unknown is never reported clean. Temporary repositories only.
 func TestRepoReportWorktreeStatusBounded(t *testing.T) {
@@ -245,5 +245,170 @@ func TestRepoReportWorktreeStatusRefreshAndExact(t *testing.T) {
 		if w.Status != "" || w.Error != "" {
 			t.Fatalf("exact inspection: %+v", w)
 		}
+	}
+}
+
+// statusFixture is a space with one repository and n aged linked worktrees; check runs one report.
+func statusFixture(t *testing.T, n, limit int) (a *Agent, space string, wts []string, check func() proto.RepoCheck) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	space, bare, _ := reposFixture(t)
+	a = testAgent()
+	oldMax := repoStatusMax
+	repoStatusMax = limit
+	t.Cleanup(func() { repoStatusMax = oldMax })
+	api := proto.RepoSource{ID: "rep_api", Name: "api", Path: "repos/api", URL: bare, DefaultBranch: "main", ClonePolicy: proto.CloneAuto}
+	p := proto.ReposSyncPayload{Repositories: []proto.RepoSource{api}, Clone: []string{"rep_api"}}
+	check = func() proto.RepoCheck {
+		rep := a.syncRepos(context.Background(), "spc_1", space, p)
+		p.Clone = nil
+		return *rep.Repositories[0].Check
+	}
+	check()
+	repo := filepath.Join(space, "repos", "api")
+	for i := range n {
+		wt := filepath.Join(space, "worktrees", fmt.Sprintf("w%d", i))
+		gitRun(t, repo, "worktree", "add", "-q", "-b", fmt.Sprintf("b%d", i), wt)
+		age(t, wt, time.Now().Add(-10*24*time.Hour))
+		wts = append(wts, wt)
+	}
+	return a, space, wts, check
+}
+
+func wtByName(c proto.RepoCheck, name string) proto.WorktreeCheck {
+	for _, w := range c.Worktrees {
+		if strings.HasSuffix(w.Path, "/"+name) {
+			return w
+		}
+	}
+	return proto.WorktreeCheck{}
+}
+
+// The cache key is the activity stamp and HEAD: a different stamp that is still old, or a different HEAD under the old
+// stamp, must be checked again, not served from the cache.
+func TestRepoReportWorktreeStatusCacheKey(t *testing.T) {
+	_, _, wts, check := statusFixture(t, 2, 50)
+	check() // fills the cache
+	if c := check(); wtByName(c, "w0").Status != proto.WorktreeStatusCached || wtByName(c, "w1").Status != proto.WorktreeStatusCached {
+		t.Fatalf("not cached: %+v", c.Worktrees)
+	}
+	logs := execLog(t)
+	// Stamp: still older than a week, but not the one the counts were taken against.
+	age(t, wts[0], time.Now().Add(-12*24*time.Hour))
+	// HEAD: a new commit, the stamp put back to the old one.
+	before, _ := worktreeStamp(wts[1])
+	gitRun(t, wts[1], "commit", "-q", "--allow-empty", "-m", "x")
+	age(t, wts[1], before)
+	if got, _ := worktreeStamp(wts[1]); !got.Equal(before) {
+		t.Fatalf("stamp moved: %v != %v", got, before)
+	}
+	c := check()
+	for _, n := range []string{"w0", "w1"} {
+		if w := wtByName(c, n); w.Status != proto.WorktreeStatusFresh {
+			t.Fatalf("%s: %+v, want fresh (checked again)", n, w)
+		}
+	}
+	if st := statusExecs(logs()); st != 3 { // two worktrees and the repository's own
+		t.Fatalf("%d status execs, want 3", st)
+	}
+}
+
+// A failed refresh keeps the cached counts and label; once they are past the maximum age they become unchecked.
+func TestRepoReportWorktreeStatusFailedRefresh(t *testing.T) {
+	a, _, wts, check := statusFixture(t, 1, 50)
+	check()
+	check()
+	gd := strings.TrimPrefix(strings.TrimSpace(readText(t, filepath.Join(wts[0], ".git"))), "gitdir: ")
+	// Make git status fail without changing the activity stamp the counts are cached against.
+	stamp, _ := worktreeStamp(wts[0])
+	idx := filepath.Join(gd, "index")
+	if err := os.WriteFile(idx, []byte("not an index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(idx, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := worktreeStamp(wts[0]); !got.Equal(stamp) {
+		t.Fatalf("stamp moved: %v != %v", got, stamp)
+	}
+	setAt := func(d time.Duration) {
+		a.wtStatus.mu.Lock()
+		defer a.wtStatus.mu.Unlock()
+		for k, v := range a.wtStatus.m {
+			v.at = time.Now().Add(-d)
+			a.wtStatus.m[k] = v
+		}
+	}
+	setAt(2 * repoStatusRefresh)
+	w := wtByName(check(), "w0")
+	if w.Status != proto.WorktreeStatusCached || w.Error != "" || w.StatusAt == nil {
+		t.Fatalf("a failed refresh must keep the cached counts: %+v", w)
+	}
+	if got := a.wtStatus.m[filepath.Join(wts[0])]; got.dirty != 0 || time.Since(got.at) < repoStatusRefresh {
+		t.Fatalf("a failed refresh overwrote the cache: %+v", got)
+	}
+	setAt(repoStatusMaxAge + time.Hour)
+	w = wtByName(check(), "w0")
+	if w.Status != proto.WorktreeStatusUnchecked || w.Error == "" || w.Dirty != 0 || w.Untracked != 0 || w.StatusAt != nil {
+		t.Fatalf("past the maximum age and unrefreshable: %+v", w)
+	}
+}
+
+// Cached counts past the maximum age are refreshed first (oldest first) and, when the allowance runs out, reported
+// unchecked instead of being kept.
+func TestRepoReportWorktreeStatusMaxAge(t *testing.T) {
+	a, _, _, check := statusFixture(t, 4, 2)
+	for range 3 {
+		check()
+	}
+	a.wtStatus.mu.Lock()
+	i := 0
+	for k, v := range a.wtStatus.m {
+		v.at = time.Now().Add(-repoStatusMaxAge - time.Duration(i+1)*time.Hour)
+		a.wtStatus.m[k] = v
+		i++
+	}
+	a.wtStatus.mu.Unlock()
+	m := map[string]int{}
+	for _, w := range check().Worktrees {
+		m[w.Status]++
+		if w.Status == proto.WorktreeStatusUnchecked && (w.Error == "" || w.Dirty != 0 || w.Untracked != 0) {
+			t.Fatalf("unchecked must carry an error and no counts: %+v", w)
+		}
+	}
+	if m[proto.WorktreeStatusFresh] != 2 || m[proto.WorktreeStatusUnchecked] != 2 || m[proto.WorktreeStatusCached] != 0 {
+		t.Fatalf("%v", m)
+	}
+}
+
+// With more recently changed worktrees than a report may check, the unchecked ones differ from report to report.
+func TestRepoReportWorktreeStatusRotates(t *testing.T) {
+	_, _, wts, check := statusFixture(t, 6, 3)
+	for _, wt := range wts { // recent again
+		if err := os.WriteFile(filepath.Join(wt, "r.txt"), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	for range 2 {
+		for _, w := range check().Worktrees {
+			if w.Status == proto.WorktreeStatusFresh {
+				seen[w.Path] = true
+			}
+		}
+	}
+	if len(seen) != 6 {
+		t.Fatalf("two reports checked %d of 6 recent worktrees, want all", len(seen))
+	}
+}
+
+func TestRotate(t *testing.T) {
+	if got := rotate([]int{0, 1, 2, 3, 4}, 1, 2); fmt.Sprint(got) != "[2 3 4 0 1]" {
+		t.Fatalf("%v", got)
+	}
+	if got := rotate([]int{0, 1, 2}, 5, 0); fmt.Sprint(got) != "[0 1 2]" {
+		t.Fatalf("%v", got)
 	}
 }
