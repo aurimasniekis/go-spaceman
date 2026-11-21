@@ -48,6 +48,8 @@ type runRow struct {
 	Turn                                                                                        uint64
 	Adopted                                                                                     bool
 	UpdatedAt                                                                                   int64
+	// CreatedAt is when the launch was journaled, in microseconds; usage-limit records older than it are not this run's.
+	CreatedAt int64
 	// Bin is the harness binary the run launched (ADR-0077); written once by setRunHarness, never by updateRun.
 	Bin harnessRun
 	// Limit is the usage limit the transcript scan found (ADR-0079); written only by setRunLimit, never by updateRun.
@@ -62,7 +64,7 @@ type harnessRun struct {
 
 const runCols = `run_id, space_id, generation, kind, role, harness, instance_id, terminal_name, terminal_id, core_id, identity, pid, desired, state,
   exit_code, reason, error, session_id, status, status_kind, turn, adopted, updated_at, harness_version, harness_path, harness_requested,
-  harness_fallback, limit_kind, limit_resets_at, limit_since, limit_offset`
+  harness_fallback, limit_kind, limit_resets_at, limit_since, limit_offset, created_at`
 
 func scanRun(sc interface{ Scan(...any) error }) (runRow, error) {
 	var r runRow
@@ -71,7 +73,7 @@ func scanRun(sc interface{ Scan(...any) error }) (runRow, error) {
 	var resets, since sql.NullInt64
 	err := sc.Scan(&r.RunID, &r.SpaceID, &r.Generation, &r.Kind, &r.Role, &r.Harness, &r.InstanceID, &r.TerminalName, &r.TerminalID, &r.CoreID,
 		&r.Identity, &r.PID, &r.Desired, &r.State, &exit, &r.Reason, &r.Error, &r.SessionID, &r.Status, &r.StatusKind, &r.Turn, &adopted, &r.UpdatedAt,
-		&r.Bin.Version, &r.Bin.Path, &r.Bin.Requested, &r.Bin.Fallback, &r.Limit.Kind, &resets, &since, &r.Limit.Offset)
+		&r.Bin.Version, &r.Bin.Path, &r.Bin.Requested, &r.Bin.Fallback, &r.Limit.Kind, &resets, &since, &r.Limit.Offset, &r.CreatedAt)
 	r.Limit.ResetsAt, r.Limit.Since = timeOf(resets), timeOf(since)
 	if exit.Valid {
 		v := int(exit.Int64)

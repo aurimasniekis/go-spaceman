@@ -251,7 +251,7 @@ func startHookAgentMinor(t *testing.T, minor int, drop func(proto.Envelope) bool
 	startAgent(t, a, fc, clock.System{})
 	fc.next(t, proto.TypeHello)
 	runID = "run_hook"
-	ccLaunch(a, runID)
+	ccLaunchEarlier(a, runID)
 	a.rememberRunToken(runID, "run-token-value")
 	t.Setenv("SPACEMAN_RUN_TOKEN", "run-token-value")
 	socket = a.o.BridgeSocket
@@ -382,7 +382,7 @@ func TestStopFailureCoalescesScans(t *testing.T) {
 	clk := clock.NewFake(time.Now())
 	a.o.Clock = clk
 	runID := "run_hook"
-	ccLaunch(a, runID)
+	ccLaunchEarlier(a, runID)
 	req := bridgeRequest{Run: runID, Tool: ToolHookStopFailure, Args: json.RawMessage(`{"error":"rate_limit"}`)}
 	scans := func() time.Time { a.mu.Lock(); defer a.mu.Unlock(); return a.stopScans[runID] }
 	a.stopFailureIntake(context.Background(), req)

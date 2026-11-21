@@ -47,6 +47,12 @@ SELECT * FROM usage_limits WHERE cleared_at IS NULL AND resets_at IS NOT NULL AN
 -- name: NextUsageLimitDue :one
 SELECT CAST(coalesce(min(resets_at), 0) AS INTEGER) AS at FROM usage_limits WHERE cleared_at IS NULL AND resets_at IS NOT NULL;
 
+-- The earliest known reset ahead of after among open account holds (0: none): a gateway hold's estimate and a reset that
+-- has passed never wake the expiry job.
+-- name: NextAccountResetAfter :one
+SELECT CAST(coalesce(min(resets_at), 0) AS INTEGER) AS at FROM usage_limits
+WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NOT NULL AND resets_at > ?;
+
 -- Open holds due for a check: an unknown reset's probe, a gateway hold's quota-board re-read (ADR-0079 decisions 5, 7, 9).
 -- name: ListUsageLimitsToCheck :many
 SELECT * FROM usage_limits WHERE cleared_at IS NULL AND check_at IS NOT NULL AND check_at <= ? ORDER BY check_at, id;

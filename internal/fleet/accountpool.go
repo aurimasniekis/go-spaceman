@@ -27,8 +27,9 @@ type PoolExhausted struct {
 }
 
 // poolExhaustedTx reports the exhaustion of the pool of role for harness, or nil when the pool is empty or any of its
-// accounts is free. An account is free when it has no open hold that hasn't reset (as accountHeld judges); it frees up
-// when the last of its holds resets, and not at all, as far as anyone knows, when one of them has no known reset.
+// accounts is free. An account is free when none of its open holds still refuses a launch (as holdState judges: one whose
+// reset passed or whose probe is due doesn't); it frees up when the last of its holds resets, and not at all, as far as
+// anyone knows, when one of them has no known reset and no probe due.
 func (svc *Service) poolExhaustedTx(ctx context.Context, tx *store.Tx, spaceID, harness, role string) (*PoolExhausted, error) {
 	return poolExhausted(ctx, tx.Q, tx.NowMicros(), spaceID, harness, role)
 }
@@ -48,13 +49,14 @@ func poolExhausted(ctx context.Context, q *db.Queries, now int64, spaceID, harne
 		}
 		var free int64
 		blocked, unknown := false, false
-		for _, u := range rows {
-			switch {
-			case !u.ResetsAt.Valid:
-				blocked, unknown = true, true
-			case u.ResetsAt.Int64 > now:
-				blocked = true
+		// A hold whose probe is due is not a block: the next launch on the account claims it (holdState).
+		blocking, _ := holdState(rows, now)
+		for _, u := range blocking {
+			blocked = true
+			if u.ResetsAt.Valid {
 				free = max(free, u.ResetsAt.Int64)
+			} else {
+				unknown = true
 			}
 		}
 		if !blocked {

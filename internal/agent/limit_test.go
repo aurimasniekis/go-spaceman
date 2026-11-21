@@ -112,7 +112,7 @@ func TestLimitParser(t *testing.T) {
 		{"garbage", []string{"not json", "[1,2]", `"x"`, "", "{", rt.LimitRecord("five_hour", reset, at), "null"}, open("five_hour", &reset, at)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			p, err := scanLimit(writeTranscript(t, c.lines...), runLimit{}, false, limitNow)
+			p, err := scanLimit(writeTranscript(t, c.lines...), runLimit{}, false, limitNow, time.Time{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -149,46 +149,46 @@ func TestLimitScanOffsets(t *testing.T) {
 	reset := at.Add(2 * time.Hour)
 	first := rt.TypedRecord(at) + "\n" + rt.LimitRecord("five_hour", reset, at) + "\n"
 	path := writeTranscript(t, strings.TrimSuffix(first, "\n"))
-	p, err := scanLimit(path, runLimit{}, false, limitNow)
+	p, err := scanLimit(path, runLimit{}, false, limitNow, time.Time{})
 	if err != nil || p.lim.Kind != "five_hour" || p.lim.Offset != int64(len(first)) || p.records != 2 {
 		t.Fatalf("first scan %+v %v", p, err)
 	}
 	// A partial line is left for the next scan.
 	partial := rt.AutoContinueRecord(reset)
 	appendRaw(t, path, partial[:20])
-	q, err := scanLimit(path, p.lim, false, limitNow)
+	q, err := scanLimit(path, p.lim, false, limitNow, time.Time{})
 	if err != nil || q.lim.Offset != p.lim.Offset || q.records != 0 || q.lim.Kind != "five_hour" {
 		t.Fatalf("partial %+v %v", q, err)
 	}
 	appendRaw(t, path, partial[20:]+"\n")
-	q, err = scanLimit(path, q.lim, false, limitNow)
+	q, err = scanLimit(path, q.lim, false, limitNow, time.Time{})
 	if err != nil || q.lim.Kind != "" || q.lim.Since == nil || q.records != 1 {
 		t.Fatalf("completed line %+v %v", q, err)
 	}
 	// Nothing new: nothing read.
-	if r, _ := scanLimit(path, q.lim, false, limitNow); r.records != 0 || r.lim.Offset != q.lim.Offset {
+	if r, _ := scanLimit(path, q.lim, false, limitNow, time.Time{}); r.records != 0 || r.lim.Offset != q.lim.Offset {
 		t.Fatalf("rescan read %d records", r.records)
 	}
 	// Truncated below the offset: read from the start again.
 	if err := os.WriteFile(path, []byte(rt.LimitRecord("seven_day", reset, at)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r, _ := scanLimit(path, q.lim, false, limitNow)
+	r, _ := scanLimit(path, q.lim, false, limitNow, time.Time{})
 	if r.lim.Kind != "seven_day" || r.records != 1 {
 		t.Fatalf("after truncation %+v", r)
 	}
 	// Replaced by a longer file: the caller says so.
-	if r2, _ := scanLimit(path, runLimit{Offset: 3}, true, limitNow); r2.records != 1 || r2.lim.Kind != "seven_day" {
+	if r2, _ := scanLimit(path, runLimit{Offset: 3}, true, limitNow, time.Time{}); r2.records != 1 || r2.lim.Kind != "seven_day" {
 		t.Fatalf("replaced %+v", r2)
 	}
 	// An over-long record is skipped, and the record after it is read.
 	long := `{"type":"user","message":{"content":"` + strings.Repeat("x", limitLineMax) + `"}}`
 	path2 := writeTranscript(t, long, rt.LimitRecord("five_hour", reset, at))
-	s, err := scanLimit(path2, runLimit{}, false, limitNow)
+	s, err := scanLimit(path2, runLimit{}, false, limitNow, time.Time{})
 	if err != nil || s.skipped != 1 || s.records != 1 || s.lim.Kind != "five_hour" || s.lim.Offset != int64(len(long)+1+len(rt.LimitRecord("five_hour", reset, at))+1) {
 		t.Fatalf("long line %+v %v", s, err)
 	}
-	if _, err := scanLimit(filepath.Join(t.TempDir(), "missing"), runLimit{}, false, limitNow); err == nil {
+	if _, err := scanLimit(filepath.Join(t.TempDir(), "missing"), runLimit{}, false, limitNow, time.Time{}); err == nil {
 		t.Fatal("missing transcript scanned")
 	}
 }
@@ -200,17 +200,17 @@ func TestLimitScanWrapUpAcrossScans(t *testing.T) {
 	path := writeTranscript(t, rt.TypedRecord(at), rt.AssistantRecord("m0", at))
 	before, _ := os.Stat(path)
 	appendRaw(t, path, rt.WrapUpRecord(at)+"\n")
-	p, _ := scanLimit(path, runLimit{}, false, limitNow)
+	p, _ := scanLimit(path, runLimit{}, false, limitNow, time.Time{})
 	if p.lim.Kind != proto.LimitUnknown || p.lim.Offset != before.Size() {
 		t.Fatalf("wrap-up scan %+v (offset %d, want %d)", p.lim, p.lim.Offset, before.Size())
 	}
 	appendRaw(t, path, rt.AssistantRecord("grace", at)+"\n"+rt.NoticeRecord(at)+"\n")
-	q, _ := scanLimit(path, p.lim, false, limitNow)
+	q, _ := scanLimit(path, p.lim, false, limitNow, time.Time{})
 	if q.lim.Kind != proto.LimitUnknown || q.lim.Offset != before.Size() {
 		t.Fatalf("grace reply cleared the limit: %+v", q.lim)
 	}
 	appendRaw(t, path, rt.AutoContinueRecord(at.Add(time.Hour))+"\n")
-	r, _ := scanLimit(path, q.lim, false, limitNow)
+	r, _ := scanLimit(path, q.lim, false, limitNow, time.Time{})
 	fi, _ := os.Stat(path)
 	if r.lim.Kind != "" || r.lim.Since == nil || !r.lim.Since.Equal(at) || r.lim.Offset != fi.Size() {
 		t.Fatalf("auto-continue %+v", r.lim)
@@ -248,7 +248,7 @@ func FuzzLimitScan(f *testing.F) {
 		if err := os.WriteFile(whole, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		p, err := scanLimit(whole, runLimit{}, false, limitNow)
+		p, err := scanLimit(whole, runLimit{}, false, limitNow, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,14 +269,14 @@ func FuzzLimitScan(f *testing.F) {
 		if err := os.WriteFile(split, head, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		q, err := scanLimit(split, runLimit{}, false, limitNow)
+		q, err := scanLimit(split, runLimit{}, false, limitNow, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(split, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		r, err := scanLimit(split, q.lim, false, limitNow)
+		r, err := scanLimit(split, q.lim, false, limitNow, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -284,4 +284,28 @@ func FuzzLimitScan(f *testing.F) {
 			t.Fatalf("split at line %d: %+v, whole: %+v", k, r.lim, p.lim)
 		}
 	})
+}
+
+// An account switch starts a new run on the same session, so its transcript still holds the previous account's limit
+// record. That record is older than the new run and must not put it on hold; a limit written after the start still does.
+func TestLimitScanIgnoresRecordsBeforeRunStart(t *testing.T) {
+	old := ago(time.Hour)
+	start := ago(time.Minute)
+	reset := old.Add(2 * time.Hour)
+	fresh := ago(10 * time.Second)
+	path := writeTranscript(t, rt.TypedRecord(old), rt.LimitRecord("five_hour", reset, old), rt.WrapUpRecord(old),
+		rt.GatewayRecord("no eligible account is available for model m", old))
+	p, err := scanLimit(path, runLimit{}, false, limitNow, start)
+	if err != nil || p.lim.Kind != "" || p.lim.Since != nil || p.wrapUp || p.records != 4 {
+		t.Fatalf("stale limit applied: %+v %v", p, err)
+	}
+	// Without the start the same transcript is a limit: the failure this guards against.
+	if q, _ := scanLimit(path, runLimit{}, false, limitNow, time.Time{}); q.lim.Kind == "" {
+		t.Fatal("control scan found no limit")
+	}
+	appendRaw(t, path, rt.LimitRecord("seven_day", fresh.Add(time.Hour), fresh)+"\n")
+	r, err := scanLimit(path, p.lim, false, limitNow, start)
+	if err != nil || r.lim.Kind != "seven_day" || r.lim.Since == nil || !r.lim.Since.Equal(fresh.Truncate(time.Second)) && !r.lim.Since.Equal(fresh) {
+		t.Fatalf("new limit %+v %v", r, err)
+	}
 }
