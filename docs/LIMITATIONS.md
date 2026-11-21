@@ -315,9 +315,10 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Resumed conversations depend on the harness.** A session woken from sleep continues its conversation where the
   harness supports resuming (Claude Code); otherwise it starts fresh with the same worktree.
 - **The knowledge branch must not be checked out in a linked worktree**; acceptance refuses such a branch. The
-  repository's own checkout may have it checked out: it is fast-forwarded with the branch. Untracked files do not block it, ignored files are never
-  overwritten, and local changes to tracked files, an operation in progress (merge, cherry-pick, revert, rebase) or a
-  moved HEAD fail the acceptance. If the branch or HEAD moves after the merge landed, the proposal is still reported
+  repository's own checkout may have it checked out: it is fast-forwarded with the branch. An untracked file does not
+  block it unless the new tip adds a file at the same path; then the merge is refused and nothing is overwritten. Ignored
+  files are never overwritten, and local changes to tracked files, an operation in progress (merge, cherry-pick, revert,
+  rebase) or a moved HEAD fail the acceptance. If the branch or HEAD moves after the merge landed, the proposal is still reported
   merged, with a note of the tips seen; SpaceMan never resets anything.
 - **The check runs with the node user's rights**, like agent programs.
 - **No proposal review by agents.** Accepting is a person's decision (reviewed) or automatic after the check

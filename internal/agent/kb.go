@@ -123,7 +123,7 @@ func (a *Agent) kbAccept(ctx context.Context, c proto.Command, p proto.KBAcceptP
 		head, tip := g.RevParse(ctx, held, "HEAD"), g.RevParse(ctx, repo, "refs/heads/"+p.Target)
 		if head != next || tip != next {
 			res.Result, res.Merged = proto.KBMerged, next
-			res.Detail = fmt.Sprintf("the proposal was merged as %s, but %s and the checkout's HEAD were seen at %s and %s afterwards: another writer moved them. Nothing was reset; check the branch", next, p.Target, tip, head)
+			res.Detail = fmt.Sprintf("the proposal was merged as %s, but %s and the checkout's HEAD were seen at %s and %s afterwards: another writer moved them. Nothing was reset; check the branch", next, p.Target, orUnknown(tip), orUnknown(head))
 			return res
 		}
 	} else if _, err := g.Run(ctx, repo, nil, "update-ref", "refs/heads/"+p.Target, next, old); err != nil {
@@ -131,6 +131,14 @@ func (a *Agent) kbAccept(ctx context.Context, c proto.Command, p proto.KBAcceptP
 	}
 	res.Result, res.Merged = proto.KBMerged, next
 	return res
+}
+
+// orUnknown names a commit that could not be resolved, so a note never shows an empty value.
+func orUnknown(sha string) string {
+	if sha == "" {
+		return "unknown"
+	}
+	return sha
 }
 
 // checkedOutAt returns the work trees (the repository's own checkout or linked worktrees) that have the branch checked out.
