@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
+	"github.com/aurimasniekis/go-spaceman/internal/worktrees"
 )
 
 var admin = audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
@@ -424,5 +425,99 @@ func TestPassPrunesTelegramMessagesAtTheBoundary(t *testing.T) {
 	}
 	if n := f.count(`SELECT count(*) FROM telegram_messages WHERE message_id = 2`); n != 1 {
 		t.Fatal("the mapping an hour inside the window was pruned")
+	}
+}
+
+type pruneCall struct {
+	space string
+	days  int64
+	limit int
+}
+
+// withPrune installs a fake worktree pruner that records its calls and reports every asked removal as removed (up to
+// the candidates it is given).
+func (f *fx) withPrune(candidates int) *[]pruneCall {
+	calls := &[]pruneCall{}
+	f.svc.o.PruneWorktrees = func(_ context.Context, actor audit.Actor, space string, days int64, limit int) (worktrees.PruneSummary, error) {
+		if actor != Actor {
+			f.t.Errorf("actor %+v", actor)
+		}
+		*calls = append(*calls, pruneCall{space, days, limit})
+		n := min(candidates, limit)
+		return worktrees.PruneSummary{Candidates: candidates, Requested: n, Removed: n}, nil
+	}
+	return calls
+}
+
+// The worktree step runs only for a space whose worktree_retention_days is above 0 (the default 0 is off), with the
+// space's days and the per-space bound, and its removals are counted.
+func TestPassPrunesWorktreesOnlyWhenEnabled(t *testing.T) {
+	f := newFx(t, 0)
+	calls := f.withPrune(3)
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if len(*calls) != 0 || p.Deleted[KindWorktrees] != 0 {
+		t.Fatalf("pruned with the limit off: %v %v", *calls, p.Deleted)
+	}
+	_, err = f.lim.Set(f.ctx, admin, "spc_a", 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 14}})
+	must(t, err)
+	p, err = f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if len(*calls) != 1 || (*calls)[0] != (pruneCall{"spc_a", 14, WorktreeBatchPerSpace}) || p.Deleted[KindWorktrees] != 3 {
+		t.Fatalf("calls %v deleted %v", *calls, p.Deleted)
+	}
+	// Setting it back to 0 turns it off.
+	_, err = f.lim.Set(f.ctx, admin, "spc_a", 1, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 0}})
+	must(t, err)
+	if _, err = f.svc.Run(f.ctx, admin); err != nil || len(*calls) != 1 {
+		t.Fatalf("pruned after turning it off: %v %v", err, *calls)
+	}
+}
+
+// The bounds: a space is asked for at most WorktreeBatchPerSpace, and the pass for at most WorktreeBatchPerPass; later
+// spaces get what is left and none once it is spent.
+func TestPassBoundsWorktreePrune(t *testing.T) {
+	f := newFx(t, 0)
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("spc_x%d", i)
+		f.exec(fmt.Sprintf(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('%s', 'x%d', 'X', 'nod_1', 'active', 'x%d', 0, 't', 0)`, id, i, i))
+	}
+	for _, id := range []string{"spc_a", "spc_b", "spc_x0", "spc_x1", "spc_x2", "spc_x3", "spc_x4", "spc_x5"} {
+		_, err := f.lim.Set(f.ctx, admin, id, 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 7}})
+		must(t, err)
+	}
+	calls := f.withPrune(1000)
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	total := 0
+	for _, c := range *calls {
+		if c.limit > WorktreeBatchPerSpace || c.limit <= 0 {
+			t.Fatalf("per-space bound broken: %v", *calls)
+		}
+		total += c.limit
+	}
+	if total != WorktreeBatchPerPass || p.Deleted[KindWorktrees] != WorktreeBatchPerPass {
+		t.Fatalf("asked %d, removed %d, want %d: %v", total, p.Deleted[KindWorktrees], WorktreeBatchPerPass, *calls)
+	}
+	if len(*calls) != WorktreeBatchPerPass/WorktreeBatchPerSpace {
+		t.Fatalf("spaces asked: %d", len(*calls))
+	}
+}
+
+// A pruner error fails the pass for that space only; the others still run.
+func TestPassWorktreePruneErrorContinues(t *testing.T) {
+	f := newFx(t, 0)
+	for _, id := range []string{"spc_a", "spc_b"} {
+		_, err := f.lim.Set(f.ctx, admin, id, 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 7}})
+		must(t, err)
+	}
+	var seen []string
+	f.svc.o.PruneWorktrees = func(_ context.Context, _ audit.Actor, space string, _ int64, _ int) (worktrees.PruneSummary, error) {
+		seen = append(seen, space)
+		return worktrees.PruneSummary{}, errors.New("boom")
+	}
+	p, err := f.svc.Run(f.ctx, admin)
+	if err == nil || p.State != StateFailed || len(seen) != 2 {
+		t.Fatalf("%v %+v %v", err, p, seen)
 	}
 }

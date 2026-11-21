@@ -22,9 +22,13 @@ keeps it forever; otherwise at least 30 days). It cannot be set per space.
 
 Changing a space's retention periods needs the `retention:write` permission, which only admins hold: a shorter period
 deletes data. The worktree retention period (`limits.worktree_retention_days`, 0 by default, up to 36,500 days) needs it
-too: it is the number of days after its task was done or cancelled that a worktree SpaceMan created may be pruned. It is
-stored and shown, but the pruning that reads it is a follow-up (ADR-0107), so nothing is removed yet; it is not in the
-table above for that reason, and the daily pass does not read it. Other limits on the same page stay editable by the space's operators.
+too: it is the number of days after its task was done or cancelled that a worktree SpaceMan created may be pruned. The
+daily pass reads it in its own step (it is not in the table above, which lists data deletions): for each space with a value above 0 it
+asks the node to remove the worktrees of finished work whose run ended at least that many days ago, oldest first, at most 10
+per space and 50 per pass (the next pass continues). The node checks every worktree again and refuses one with uncommitted
+changes, untracked files or commits no remote has; central never asks for one a live run holds. Worktrees without an owner
+task, those of failed or open tasks and a space whose node is too old are left alone. A refused worktree is tried again on
+the next pass. The pass's count `worktrees` is the number removed. Other limits on the same page stay editable by the space's operators.
 
 Uploads that no item ever used are still collected after a day by the hourly attachment collection, whatever the
 retention period.

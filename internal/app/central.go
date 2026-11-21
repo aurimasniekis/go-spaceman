@@ -602,7 +602,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Limits.OnChange = c.Human.Kick
 	c.Limits.AuditDays = cfg.Retention.AuditDays
 	c.Retention = retention.New(st, c.Audit, c.Changes, c.Limits, retention.Options{AuditDays: cfg.Retention.AuditDays, Clock: o.Clock,
-		Log: obs.Component(log, "retention"), DeleteRecording: c.Fleet.DeleteRecording, DeleteTranscript: c.Usage.DeleteTranscript,
+		Log: obs.Component(log, "retention"), DeleteRecording: c.Fleet.DeleteRecording, DeleteTranscript: c.Usage.DeleteTranscript, PruneWorktrees: c.Worktrees.PruneSpace,
 		AfterPass: func(ctx context.Context) {
 			if _, _, err := c.Attachments.GC(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("attachment garbage collection after retention", obs.Err(err))

@@ -195,8 +195,8 @@ Every request and every answer is an audit event of the target `worktree_removal
 ## Limitations
 
 See [Limitations](../reference/limitations#control-and-repositories): reports follow events, not a clock; a repository
-with Git LFS installed per repository is refused; worktrees are never cleaned up automatically (control can remove them,
+with Git LFS installed per repository is refused; worktrees are cleaned up automatically only when the space's `worktree_retention_days` is set (control can also remove them,
 see [Removing worktrees](#removing-worktrees)). When a worktree is
-removed (by a control tool call or, later, an automatic cleanup), the files the committed `.gitignore` ignores, such as
+removed (by a control tool call or the daily retention pass), the files the committed `.gitignore` ignores, such as
 `.env` or build output, are deleted with it: SpaceMan only checks tracked and untracked-but-not-ignored work. Keep
 anything you need out of ignored files in a worktree.

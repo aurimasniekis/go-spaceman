@@ -73,6 +73,8 @@ type Service struct {
 
 	// Wait is how long Remove and the tools wait for a node's answer (default DefaultWait).
 	Wait time.Duration
+	// PruneWait is how long PruneSpace waits in total for the answers of one space's removals (default PruneAnswerWait).
+	PruneWait time.Duration
 
 	mu      sync.Mutex
 	waiters map[string][]chan struct{} // by command ID

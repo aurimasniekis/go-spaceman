@@ -28,7 +28,7 @@ it comes from and where SpaceMan enforces it.
 | Terminal recording size (`recording_quota_bytes`) | 512 MiB | 1 MiB–64 GiB | one run's recording on the node | the node's recorder, from the launch |
 | Export size (`export_max_bytes`) | 2 GiB | 1 MiB–64 GiB | one space export archive | space export |
 | Recording, transcript, attachment and finished human-action retention (`retention_*_days`) | kept (0) | 0–36,500 days | how long central keeps them | the daily retention pass ([Retention and export](/guide/retention)) |
-| Worktree retention (`worktree_retention_days`) | off (0) | 0–36,500 days | how long after its task was done or cancelled a worktree SpaceMan created may be pruned (never for failed tasks or worktrees without an owner task); nothing is pruned yet: the pruning is a follow-up (ADR-0107) | not enforced yet ([Retention and export](/guide/retention)) |
+| Worktree retention (`worktree_retention_days`) | off (0) | 0–36,500 days | how long after its task was done or cancelled a worktree SpaceMan created may be pruned (never for failed tasks or worktrees without an owner task); the daily retention pass asks the node to remove them, at most 10 per space and 50 per pass, and the node refuses any that are dirty, unpushed or in use | daily pass ([Retention and export](/guide/retention)) |
 | Start control on new work (`control_autostart`) | on (1) | 0 off, 1 on | whether work waiting for control starts the space's control role ([Control](/guide/control#starting-and-stopping-on-its-own)) | control supervisor |
 | Stop idle control (`control_idle_stop_minutes`) | 30 | 0–10,080 (0: never) | how long control sits idle before it is stopped | control supervisor |
 | Control watchdog (`control_watchdog_minutes`) | 15 | 0–1,440 (0: off) | how long work may wait for a live, idle control that does nothing before SpaceMan types a reminder into its terminal ([control watchdog](/guide/control#the-control-watchdog)) | control watchdog |
@@ -52,7 +52,7 @@ retention (`retention.audit_days`).
 
 Retention periods are the one kind of limit whose lowering removes something: the next daily pass deletes what is older
 than the new period. Changing them needs `retention:write` (admins); see [Retention and export](/guide/retention). The worktree
-retention period (`worktree_retention_days`) needs the same permission, because it will let SpaceMan remove worktrees.
+retention period (`worktree_retention_days`) needs the same permission, because it lets SpaceMan remove worktrees.
 
 A launch beyond a limit is refused with `rate_limited` and a message that names the limit; control gets the same answer
 from its tools.

@@ -8293,9 +8293,18 @@
   pull request state of always `unknown`; `spaceman_worktrees_prune` is scoped to what the node offers: it removes finished
   work worktree by worktree through `space.worktree.remove` (whose removal already prunes stale entries), not a separate
   stale-only `git worktree prune`; it is control-only, needs an explicit `apply`, removes at most 25 per call and ignores
-  `worktree_retention_days`. Nothing reads the limit yet: the retention pass (decision 4, WL-4, which will call the
-  same `Request` method), the scheduled message of decision 5, 7 and 8 are the design for follow-up tasks, and until the
-  retention pass lands worktrees are removed only when control or a person asks (LIMITATIONS).
+  `worktree_retention_days`. The tool ignores the limit; the daily retention pass reads it (WL-4, implemented): for each
+  space with `worktree_retention_days` above 0, `worktrees.Service.PruneSpace` takes the worktrees SpaceMan created whose
+  owning task is done or cancelled and whose owning run ended at least that many days ago, oldest first, and calls the same
+  `Request` method for each (so central refuses a live run, the node checks again and nothing is forced). Owners that cannot
+  be resolved (older than the listing's 1000-run window), failed or open tasks, unowned worktrees and a limit of 0 are never
+  touched. The step is bounded (`retention.WorktreeBatchPerSpace` 10 removals per space, `WorktreeBatchPerPass` 50 per
+  pass; the next daily pass continues), waits at most 30 seconds per space for the nodes' answers (an unanswered one stays
+  pending in the audit log), skips a space whose node is below minor 16, not connected or relocating, and counts the
+  removed worktrees under `worktrees` in the pass's `deleted` counts (`internal/worktrees` `TestPruneSpace*`,
+  `internal/retention` `TestPassPrunesWorktreesOnlyWhenEnabled`, `TestPassBoundsWorktreePrune`,
+  `TestPassWorktreePruneErrorContinues`, simulated). The scheduled message of decision 5, 7 and 8 are the design for
+  follow-up tasks.
 - **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
   ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a
   worktree with no change of its own, whose HEAD the remote has (so it can be checked out again from the branch, which
