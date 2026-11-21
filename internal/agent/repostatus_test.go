@@ -589,3 +589,37 @@ func TestRepoReportWorktreeStatusFailingRefreshGoesLast(t *testing.T) {
 		t.Fatalf("w1 and w2 must both be refreshed within three reports, w0 never: %v", refreshed)
 	}
 }
+
+// The allowance is spent by group: recently changed worktrees first, then idle ones with no usable counts, then the refresh
+// of old counts. With room for one status, the recent worktree takes it over an idle one and a cached one due a refresh.
+func TestRepoReportWorktreeStatusGroupOrder(t *testing.T) {
+	a, space, _, check := statusFixture(t, 2, 50)
+	check()
+	check() // w0 and w1 are cached
+	repo := filepath.Join(space, "repos", "api")
+	idle := filepath.Join(space, "worktrees", "idle")
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "idle", idle)
+	age(t, idle, time.Now().Add(-10*24*time.Hour))
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "recent", filepath.Join(space, "worktrees", "recent"))
+	a.wtStatus.mu.Lock()
+	for k, v := range a.wtStatus.m {
+		if strings.HasSuffix(k, "/w0") {
+			v.at = time.Now().Add(-2 * repoStatusRefresh)
+			a.wtStatus.m[k] = v
+		}
+	}
+	a.wtStatus.mu.Unlock()
+	oldMax := repoStatusMax
+	repoStatusMax = 1
+	t.Cleanup(func() { repoStatusMax = oldMax })
+	c := check()
+	if w := wtByName(t, c, "recent"); w.Status != proto.WorktreeStatusFresh {
+		t.Fatalf("the recent worktree must take the one status: %+v", w)
+	}
+	if w := wtByName(t, c, "idle"); w.Status != proto.WorktreeStatusUnchecked {
+		t.Fatalf("the idle worktree must wait behind the recent one: %+v", w)
+	}
+	if w := wtByName(t, c, "w0"); w.Status != proto.WorktreeStatusCached {
+		t.Fatalf("the cached worktree due a refresh must wait behind the idle one: %+v", w)
+	}
+}
