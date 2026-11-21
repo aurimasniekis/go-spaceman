@@ -192,11 +192,54 @@ safe: an unowned worktree is never picked by the prune tool.
 
 Every request and every answer is an audit event of the target `worktree_removal` (the command ID).
 
+### The lifecycle of a worktree
+
+1. A writer run launched with a repository gets `worktrees/<branch>` (see above). It stays while the work goes on and after
+   the run ends: SpaceMan never deletes a checkout by itself unless you turn the automatic cleanup on.
+2. When the owning run has ended and every task of it is done or cancelled, the worktree counts as **finished**. Its age
+   is counted from the later of the run's end and the tasks' latest finish time.
+3. If you turn the weekly message on (`worktree_cleanup_message_days`, off by default), control gets a message (see
+   below) once per period with how many worktrees are finished. Control decides what to remove with the three tools
+   above.
+4. If you set `worktree_retention_days`, the daily retention pass also removes finished worktrees that are at least that
+   old, without anyone asking.
+
+Either way the node refuses a worktree that is dirty, has untracked files, has commits no remote has, is locked or is in
+use, and the branch is kept, so a later task on that branch gets a fresh checkout of the same commit.
+
+### Turning on the automatic cleanup
+
+The automatic cleanup is off (`0`) until you set the space limit `worktree_retention_days` (0 to 36,500 days). It needs
+the `retention:write` permission, because it lets SpaceMan remove worktrees:
+
+```sh
+spaceman limits set --space payments --set worktree_retention_days=30
+spaceman limits set --space payments --unset worktree_retention_days   # back to the installation default
+```
+
+The installation default is `limits.worktree_retention_days` in the configuration file
+([Configuration](../reference/configuration)). The daily pass removes at most 10 worktrees per space and 50 per pass; see
+[Retention and export](./retention) for the exact rule.
+
+### The weekly cleanup message
+
+Once per `worktree_cleanup_message_days`-day period, the daily pass sends the space's control a message that
+asks it to tidy the repositories. It says how many worktrees there are, how many of them are finished (not counting those the node already refused at their current state), how old the oldest
+finished one is and how many no run created, and points at `spaceman_worktrees_list` and `spaceman_worktrees_prune`.
+It names no worktree and removes nothing, but it is work waiting for control, so with `control_autostart` on it starts the space's control when none is running. It is sent only to active spaces, is skipped when no worktree is finished or the report is from an earlier node, and sent once per period even
+when central restarts. The counts come from the node's last repository report. The message is off (`0`) until you turn it on. To get it weekly for a space (7 days), or for every space through
+`limits.worktree_cleanup_message_days` in the configuration file, and to turn it off again:
+
+```sh
+spaceman limits set --space payments --set worktree_cleanup_message_days=7
+spaceman limits set --space payments --set worktree_cleanup_message_days=0
+```
+
 ## Limitations
 
 See [Limitations](../reference/limitations#control-and-repositories): reports follow events, not a clock; a repository
-with Git LFS installed per repository is refused; worktrees are cleaned up automatically only when the space's `worktree_retention_days` is set (control can also remove them,
-see [Removing worktrees](#removing-worktrees)). When a worktree is
-removed (by a control tool call or the daily retention pass), the files the committed `.gitignore` ignores, such as
-`.env` or build output, are deleted with it: SpaceMan only checks tracked and untracked-but-not-ignored work. Keep
-anything you need out of ignored files in a worktree.
+with Git LFS installed per repository is refused; worktrees are removed automatically only when the space's
+`worktree_retention_days` is set (control can also remove them, see [Removing worktrees](#removing-worktrees)). When a
+worktree is removed (by a control tool call or the daily retention pass), the files the committed `.gitignore` ignores,
+such as `.env` or build output, are deleted with it: SpaceMan only checks tracked and untracked-but-not-ignored work.
+Keep anything you need out of ignored files in a worktree.

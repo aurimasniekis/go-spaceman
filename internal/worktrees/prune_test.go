@@ -1,7 +1,9 @@
 package worktrees
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -410,5 +412,79 @@ func TestPruneSpaceWaitIsOneDeadline(t *testing.T) {
 	}
 	if d := time.Since(start); d > 700*time.Millisecond {
 		t.Fatalf("waited %v for 3 answers with a 300ms deadline", d)
+	}
+}
+
+// A refusal is read for max(4 x days, 30) days: a worktree refused 29 days ago is still tried last, one refused 31 days
+// ago counts as fresh again (at the same HEAD, since a very old refusal is no evidence about the tree now).
+func TestPruneSpaceRefusalWindow(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	f.svc.PruneWait = 20 * time.Millisecond
+	stuck := f.addFinished(0, "done", 30) // the oldest: first in line unless it was refused
+	f.reportWith(stuck)
+	pruneAndAnswer(t, f, stuck, proto.WorktreeRefused, "dirty", "bbbb")
+	first := func(when string) string {
+		t.Helper()
+		c, err := f.svc.Candidates(f.ctx, "spc_a", "", 7, 1)
+		if err != nil || len(c) != 1 {
+			t.Fatalf("%s: %v %+v", when, err, c)
+		}
+		return c[0].Name
+	}
+	if got := first("right after"); got != "spaceman-tsk_1" {
+		t.Fatalf("right after the refusal: %s first", got)
+	}
+	f.clk.Advance(29 * 24 * time.Hour)
+	f.reportWith(stuck)
+	if got := first("29 days on"); got != "spaceman-tsk_1" {
+		t.Fatalf("29 days on: %s first, the refusal is still in the window", got)
+	}
+	f.clk.Advance(2 * 24 * time.Hour)
+	f.reportWith(stuck)
+	if got := first("31 days on"); got != stuck {
+		t.Fatalf("31 days on: %s first, want the worktree refused beyond the window", got)
+	}
+}
+
+// The request's audit event records the listed HEAD only when it is a plausible commit ID (at most 64 bytes, as the
+// node's answer is validated), so a long head from a report does not break the record.
+func TestRequestAuditRecordsHeadOnlyWhenShort(t *testing.T) {
+	f := newFx(t, proto.MinorWorktreeRemove)
+	head := func(name string) (string, bool) {
+		t.Helper()
+		var d string
+		if err := f.s.ReadDB().QueryRowContext(f.ctx, `SELECT details_json FROM audit_events WHERE action = ? AND json_extract(details_json, '$.name') = ?`, ActionRequested, name).Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(d), &m); err != nil {
+			t.Fatal(err)
+		}
+		h, ok := m["head"].(string)
+		return h, ok
+	}
+	if _, err := f.svc.Request(f.ctx, admin, "spc_a", "api", "spaceman-tsk_1"); err != nil {
+		t.Fatal(err)
+	}
+	if h, ok := head("spaceman-tsk_1"); !ok || h != "bbbb" {
+		t.Fatalf("short head: %q %v", h, ok)
+	}
+	long := f.addFinished(7, "done", 30)
+	f.heads[long] = strings.Repeat("a", 65)
+	f.reportWith(long)
+	if _, err := f.svc.Request(f.ctx, admin, "spc_a", "api", long); err != nil {
+		t.Fatal(err)
+	}
+	if h, ok := head(long); ok {
+		t.Fatalf("a 65-byte head was recorded: %q", h)
+	}
+	exact := f.addFinished(8, "done", 30)
+	f.heads[exact] = strings.Repeat("b", 64)
+	f.reportWith(long, exact)
+	if _, err := f.svc.Request(f.ctx, admin, "spc_a", "api", exact); err != nil {
+		t.Fatal(err)
+	}
+	if h, ok := head(exact); !ok || len(h) != 64 {
+		t.Fatalf("a 64-byte head: %q %v", h, ok)
 	}
 }

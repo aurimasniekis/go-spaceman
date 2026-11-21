@@ -29,6 +29,7 @@ type fx struct {
 	t    *testing.T
 	ctx  context.Context
 	s    *store.Store
+	aw   *audit.Writer
 	clk  *clock.Fake
 	rp   *repos.Service
 	svc  *Service
@@ -50,7 +51,7 @@ func newFx(t *testing.T, minor int) *fx {
 	fl := fleet.New(s, kr, aw, eventbus.New(), ch, fleet.Options{Clock: clk})
 	rp := repos.New(s, aw, ch, fl, repos.Options{Clock: clk})
 	q := queue.New(s, aw, ch)
-	f := &fx{heads: map[string]string{}, t: t, ctx: context.Background(), s: s, clk: clk, rp: rp, svc: New(s, aw, fl, rp, q, clk, nil)}
+	f := &fx{aw: aw, heads: map[string]string{}, t: t, ctx: context.Background(), s: s, clk: clk, rp: rp, svc: New(s, aw, fl, rp, q, clk, nil)}
 	f.svc.Wait = 2 * time.Second
 	f.reg = agenttools.New(agenttools.Deps{Extra: []func(*agenttools.Registry){Tools(f.svc)}})
 	exp := clk.Now().Add(time.Hour).UnixMicro()

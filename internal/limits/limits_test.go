@@ -555,3 +555,50 @@ func TestWorktreeRetentionLimit(t *testing.T) {
 		t.Fatalf("explicit off %+v", l)
 	}
 }
+
+// Clearing a space's override (a save without the key) falls back to the installation default, for the retention
+// periods and the worktree limits alike.
+func TestClearingAnOverrideFallsBackToTheDefault(t *testing.T) {
+	f := newFx(t)
+	def, err := f.svc.Effective(f.ctx, "spc_a")
+	must(t, err)
+	for _, key := range []string{WorktreeRetention, WorktreeCleanupMessage, RetainRecordings} {
+		e, err := f.svc.Set(f.ctx, admin, "spc_a", limitVersion(t, f), Input{Values: map[string]int64{key: 21}})
+		must(t, err)
+		if l := limitOf(e, key); l.Value != 21 || l.Source != SourceSpace {
+			t.Fatalf("%s override %+v", key, l)
+		}
+		e, err = f.svc.Set(f.ctx, admin, "spc_a", e.Version, Input{Values: map[string]int64{}})
+		must(t, err)
+		if l, d := limitOf(e, key), limitOf(def, key); l.Value != d.Value || l.Source != SourceInstallation {
+			t.Fatalf("%s after clearing %+v, default %+v", key, l, d)
+		}
+	}
+}
+
+func limitVersion(t *testing.T, f *fx) int64 {
+	t.Helper()
+	e, err := f.svc.Effective(f.ctx, "spc_a")
+	must(t, err)
+	return e.Version
+}
+
+// ADR-0107 decision 5: the cleanup message period is a days limit (0: never), bounded 0..365.
+func TestWorktreeCleanupMessageLimit(t *testing.T) {
+	f := newFx(t)
+	e, err := f.svc.Effective(f.ctx, "spc_a")
+	must(t, err)
+	if l := limitOf(e, WorktreeCleanupMessage); l.Unit != "days" || !l.ZeroNone || !l.Overridable || l.Source != SourceInstallation {
+		t.Fatalf("definition %+v", l)
+	}
+	for _, bad := range []int64{-1, 366} {
+		if _, err := f.svc.Set(f.ctx, admin, "spc_a", 0, Input{Values: map[string]int64{WorktreeCleanupMessage: bad}}); apperr.CodeOf(err) != apperr.CodeInvalid {
+			t.Fatalf("%d: %v", bad, err)
+		}
+	}
+	e, err = f.svc.Set(f.ctx, admin, "spc_a", 0, Input{Values: map[string]int64{WorktreeCleanupMessage: 0}})
+	must(t, err)
+	if l := limitOf(e, WorktreeCleanupMessage); l.Value != 0 || l.Source != SourceSpace {
+		t.Fatalf("opt-out %+v", l)
+	}
+}
