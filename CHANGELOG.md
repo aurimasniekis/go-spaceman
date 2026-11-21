@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-11-21
+
 ### Added
 
 - **Account switch-back: a run a usage limit moved goes back to its original account after the reset.** Once the
@@ -2593,7 +2595,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.16...HEAD
+[0.1.16]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.10...v0.1.13
