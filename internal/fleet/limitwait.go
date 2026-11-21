@@ -284,8 +284,13 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	if r.Turn > 0 {
 		w.SessionID = r.SessionID // a session that never finished a turn has nothing to resume
 	} else if sw != nil {
-		// A switch keeps the session a resumed run was given, even before its first turn (limited at once).
-		if w.SessionID, err = resumableSession(ctx, tx.Q, r); err != nil {
+		// A switch keeps the session a resumed run was given, even before its first turn (limited at once), and a
+		// usage-limit switch the session of a fresh run whose first turn ended at the limit.
+		session := resumableSession
+		if sw.Cause == SwitchCauseUsageLimit {
+			session = limitSwitchSession
+		}
+		if w.SessionID, err = session(ctx, tx.Q, r); err != nil {
 			return nil, err
 		}
 	}
