@@ -314,8 +314,7 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 	mergeArgs := []string{"merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into " + instance}
 	if _, err := g.RunCheckout(ctx, inst, nil, "merge-base", head, theirs); err != nil {
 		// Only exit 1 means "no common ancestor" (as in unbornHead); any other failure fails closed and is retried later.
-		var ee *exec.ExitError
-		if !errors.As(err, &ee) || ee.ExitCode() != 1 || ctx.Err() != nil {
+		if !noCommonAncestor(ctx, err) {
 			return false, err
 		}
 		mergeArgs = append(mergeArgs, "--allow-unrelated-histories")
@@ -324,9 +323,26 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 		_, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main")
 		return err == nil, err
 	}
-	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "--diff-filter=U")
+	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "-z", "--diff-filter=U")
 	_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
-	return m.preserve(ctx, spaceID, role, instance, head, theirs, strings.Fields(out))
+	return m.preserve(ctx, spaceID, role, instance, head, theirs, splitNUL(out))
+}
+
+// noCommonAncestor reports whether a failed merge-base means "no common ancestor": only exit code 1 does.
+func noCommonAncestor(ctx context.Context, err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 1 && ctx.Err() == nil
+}
+
+// splitNUL splits NUL-separated git output (-z), which keeps names with spaces or non-ASCII characters intact.
+func splitNUL(s string) []string {
+	var out []string
+	for _, f := range strings.Split(s, "\x00") {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // maxConflictFolders bounds how many recent conflict folders the node remembers and reports.
@@ -397,6 +413,9 @@ func (m *memManager) resolveToShared(ctx context.Context, inst, instance, head, 
 	_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
 	args := []string{"merge", "--quiet", "--no-commit", "--no-ff", "-m", "Merge memory from other instances into " + instance}
 	if _, err := g.RunCheckout(ctx, inst, nil, "merge-base", head, theirs); err != nil {
+		if !noCommonAncestor(ctx, err) {
+			return err
+		}
 		args = append(args, "--allow-unrelated-histories")
 	}
 	_, _ = g.RunCheckout(ctx, inst, ident(instance), append(args, theirs)...)
@@ -404,8 +423,8 @@ func (m *memManager) resolveToShared(ctx context.Context, inst, instance, head, 
 		_, err := g.RunCheckout(ctx, inst, nil, "reset", "--quiet", "--hard", theirs)
 		return err
 	}
-	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "--diff-filter=U")
-	for _, f := range strings.Fields(out) {
+	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "-z", "--diff-filter=U")
+	for _, f := range splitNUL(out) {
 		if _, err := g.RunCheckout(ctx, inst, nil, "checkout", "--theirs", "--", f); err != nil {
 			if _, err := g.RunCheckout(ctx, inst, nil, "rm", "--quiet", "-f", "--sparse", "--", f); err != nil {
 				return err
