@@ -38,6 +38,28 @@ func TestMemoryStatusUnreadableCheckoutIsNotClean(t *testing.T) {
 	if unc, local, ok := m.instanceStatus(ctx, i1, head); !ok || unc < 1 || local < 1 {
 		t.Fatalf("unreadable checkout: uncheckpointed=%d localCommits=%d ok=%v, want both >= 1", unc, local, ok)
 	}
+	m.statusMu.Lock()
+	_, cached := m.instStatus[i1]
+	m.statusMu.Unlock()
+	if cached {
+		t.Fatal("an unreadable checkout was cached")
+	}
+	// Once readable again, the commit is published and the space is clean.
+	if err := os.RemoveAll(filepath.Join(i1, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	a.flushSpaceMemory(ctx, sp, "backup")
+	stopSyncs(m)
+	head = m.git.RevParse(ctx, m.shared(sp, role), "refs/heads/main")
+	if unc, local, ok := m.instanceStatus(ctx, i1, head); !ok || unc != 0 || local != 0 {
+		t.Fatalf("a readable checkout stayed unclean after the flush: uncheckpointed=%d localCommits=%d ok=%v", unc, local, ok)
+	}
+	// A stray file in instances/ is not a checkout and is not counted.
+	stray := filepath.Join(filepath.Dir(i1), "stray.txt")
+	write(t, filepath.Dir(i1), "stray.txt", "x")
+	if _, _, ok := m.instanceStatus(ctx, stray, head); ok {
+		t.Fatal("a stray file was counted")
+	}
 	// A folder without a .git of its own is still not counted.
 	plain := filepath.Join(filepath.Dir(i1), "ins_plain")
 	if err := os.MkdirAll(plain, 0o750); err != nil {

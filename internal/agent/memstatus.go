@@ -129,6 +129,9 @@ func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (unc
 		m.statusMu.Lock()
 		delete(m.instStatus, inst)
 		m.statusMu.Unlock()
+		if fi, serr := os.Lstat(inst); serr != nil || !fi.IsDir() {
+			return 0, 0, false // a stray file, or gone
+		}
 		if _, serr := os.Lstat(filepath.Join(inst, ".git")); os.IsNotExist(serr) {
 			return 0, 0, false // not a checkout of its own: nothing is counted, and no git runs there
 		}
