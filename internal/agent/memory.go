@@ -70,6 +70,10 @@ type memManager struct {
 	statusTimer *time.Timer
 	statusLast  time.Time
 	instStatus  map[string]instStatus
+	// statusBusy holds the instances whose counts are being read (a second reader waits for the first and then finds
+	// them cached); statusSlots bounds the git readers of the whole node (memstatus.go).
+	statusBusy  map[string]chan struct{}
+	statusSlots chan struct{}
 	reportMu    sync.Mutex
 	// statusSent, when set (tests), sees each status report as it is sent.
 	statusSent func(proto.MemoryStatus)
@@ -81,6 +85,7 @@ type memManager struct {
 func newMemManager(a *Agent) *memManager {
 	m := &memManager{a: a, base: context.Background(), root: filepath.Join(a.o.DataDir, "memory"), locks: map[string]*sync.Mutex{}, timers: map[string]*time.Timer{},
 		syncs: map[string]*time.Timer{}, waiting: map[string]string{}, statusDirty: map[string][2]string{}, instStatus: map[string]instStatus{},
+		statusBusy: map[string]chan struct{}{}, statusSlots: make(chan struct{}, statusWorkers),
 		flushing: map[string]chan struct{}{}}
 	if g, err := memory.NewGit(); err == nil {
 		m.git = g
@@ -632,15 +637,19 @@ func (m *memManager) statusOf(ctx context.Context, spaceID, role string) proto.M
 	dir := filepath.Join(m.root, spaceID, role, "instances")
 	insts, _ := os.ReadDir(dir)
 	seen := map[string]bool{}
+	var mu sync.Mutex
 	for _, i := range insts {
-		c.Instances++
-		inst := filepath.Join(dir, i.Name())
-		seen[inst] = true
-		if unc, local, ok := m.instanceStatus(ctx, inst, head); ok {
+		seen[filepath.Join(dir, i.Name())] = true
+	}
+	c.Instances = len(insts)
+	eachParallel(len(insts), func(i int) {
+		if unc, local, ok := m.instanceStatus(ctx, filepath.Join(dir, insts[i].Name()), head); ok {
+			mu.Lock()
 			c.Uncheckpointed += unc
 			c.LocalCommits += local
+			mu.Unlock()
 		}
-	}
+	})
 	m.forgetStatus(dir, seen)
 	return c
 }

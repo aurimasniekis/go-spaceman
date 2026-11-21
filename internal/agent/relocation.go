@@ -253,7 +253,7 @@ func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Durati
 		}
 	}
 	deadline := time.Now().Add(wait)
-	for {
+	for poll := flushPoll; ; poll = min(poll*2, flushPollMax) {
 		clean, _ := a.memoryClean(ctx, spaceID)
 		if recs, trs := a.pendingUploadsOf(ctx, spaceID); len(recs) > 0 || len(trs) > 0 {
 			clean = false
@@ -267,7 +267,7 @@ func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Durati
 		select {
 		case <-ctx.Done():
 			return false
-		case <-time.After(flushPoll):
+		case <-time.After(poll):
 		}
 	}
 }
