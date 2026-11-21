@@ -280,7 +280,11 @@ func statusCounts(out string) (dirty, untracked int, paths []string) {
 }
 
 func (g *projectGit) status(ctx context.Context, dir string) (int, int, []string, error) {
-	out, err := g.run(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=normal")
+	return g.statusEnv(ctx, dir, nil)
+}
+
+func (g *projectGit) statusEnv(ctx context.Context, dir string, env []string) (int, int, []string, error) {
+	out, err := g.runEnv(ctx, dir, 2*time.Minute, env, "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	if err != nil {
 		return 0, 0, nil, err
 	}
@@ -290,6 +294,11 @@ func (g *projectGit) status(ctx context.Context, dir string) (int, int, []string
 
 // inspectRepo reports a repository's remotes, branches (with what is not pushed), changes, stashes and worktrees.
 func (g *projectGit) inspectRepo(ctx context.Context, space, rel string) proto.RepoCheck {
+	return g.inspectRepoBudget(ctx, space, rel, nil)
+}
+
+// inspectRepoBudget is inspectRepo with the report's worktree status budget (nil: every worktree is checked).
+func (g *projectGit) inspectRepoBudget(ctx context.Context, space, rel string, b *wtBudget) proto.RepoCheck {
 	dir := filepath.Join(space, filepath.FromSlash(rel))
 	rc := proto.RepoCheck{Path: rel, Remotes: []proto.GitRemote{}, Branches: []proto.BranchCheck{}, Worktrees: []proto.WorktreeCheck{}}
 	if _, err := g.run(ctx, dir, "rev-parse", "--git-dir"); err != nil {
@@ -335,6 +344,7 @@ func (g *projectGit) inspectRepo(ctx context.Context, space, rel string) proto.R
 		return rc
 	}
 	realSpace := realPath(space)
+	var pend []wtPending
 	for _, w := range wts {
 		wc := proto.WorktreeCheck{Branch: w.branch, Head: w.head}
 		relp, err := filepath.Rel(realSpace, realPath(w.path))
@@ -344,11 +354,10 @@ func (g *projectGit) inspectRepo(ctx context.Context, space, rel string) proto.R
 			continue
 		}
 		wc.Path = filepath.ToSlash(relp)
-		if wc.Dirty, wc.Untracked, _, err = g.status(ctx, w.path); err != nil {
-			wc.Error = err.Error()
-		}
+		pend = append(pend, wtPending{i: len(rc.Worktrees), path: w.path, head: w.head})
 		rc.Worktrees = append(rc.Worktrees, wc)
 	}
+	g.worktreeStatuses(ctx, b, rc.Worktrees, pend)
 	return rc
 }
 

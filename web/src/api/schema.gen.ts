@@ -10905,6 +10905,13 @@ export interface components {
             head: string;
             /** @description Relative to the space folder */
             path: string;
+            /** @enum {string} */
+            status?: "fresh" | "cached" | "unchecked";
+            /**
+             * Format: date-time
+             * @description When the counts were taken
+             */
+            status_at?: string;
             /** Format: int64 */
             untracked: number;
         };

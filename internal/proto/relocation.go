@@ -87,8 +87,20 @@ type WorktreeCheck struct {
 	Head      string `json:"head"`
 	Dirty     int    `json:"dirty"`
 	Untracked int    `json:"untracked"`
-	Error     string `json:"error,omitempty"`
+	// Status says where Dirty and Untracked come from in a repository report: empty or "fresh" (git status ran for this
+	// report), "cached" (an idle worktree whose earlier counts were reused; StatusAt is when they were taken) or
+	// "unchecked" (no status was run and none is cached; the counts are unknown, never clean, and Error says so).
+	Status   string     `json:"status,omitempty" enum:"fresh,cached,unchecked"`
+	StatusAt *time.Time `json:"status_at,omitempty" doc:"When the counts were taken"`
+	Error    string     `json:"error,omitempty"`
 }
+
+// Worktree status sources (WorktreeCheck.Status).
+const (
+	WorktreeStatusFresh     = "fresh"
+	WorktreeStatusCached    = "cached"
+	WorktreeStatusUnchecked = "unchecked"
+)
 
 // RepoCheck is one repository in the space folder as the source sees it.
 type RepoCheck struct {

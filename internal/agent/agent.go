@@ -88,6 +88,7 @@ type Agent struct {
 	// kbAfterMerge runs between the fast-forward of a KB acceptance and its final check (tests only).
 	kbAfterMerge func()
 	o            Options
+	wtStatus     wtStatusCache // worktree status counts reused by repository reports (repostatus.go)
 	j            *Journal
 	log          *slog.Logger
 	// fetchChunk reads one range of an attachment from central for a save (forwardTool; tests replace it).

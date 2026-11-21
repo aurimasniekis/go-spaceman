@@ -14985,6 +14985,19 @@
             "description": "Relative to the space folder",
             "type": "string"
           },
+          "status": {
+            "enum": [
+              "fresh",
+              "cached",
+              "unchecked"
+            ],
+            "type": "string"
+          },
+          "status_at": {
+            "description": "When the counts were taken",
+            "format": "date-time",
+            "type": "string"
+          },
           "untracked": {
             "format": "int64",
             "type": "integer"
