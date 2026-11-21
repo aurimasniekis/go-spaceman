@@ -131,7 +131,7 @@ func TestStatusSlotsBoundConcurrentReaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Only "git status" runs under a reader slot: it is what the wrapper tracks.
-	script := "#!/bin/sh\ncase \"$*\" in *status*)\n  touch '" + live + "'/$$\n  ls '" + live + "' | wc -l >> '" + peakFile + "'\n  sleep 0.05\n  rm -f '" + live + "'/$$\n  ;;\nesac\nexec '" + m.git.Bin + "' \"$@\"\n"
+	script := "#!/bin/sh\ncase \"$*\" in *\" status --porcelain\")\n  touch '" + live + "'/$$\n  ls '" + live + "' | wc -l >> '" + peakFile + "'\n  sleep 0.05\n  rm -f '" + live + "'/$$\n  ;;\nesac\nexec '" + m.git.Bin + "' \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o700); err != nil { //nolint:gosec // test wrapper
 		t.Fatal(err)
 	}
@@ -149,11 +149,11 @@ func TestStatusSlotsBoundConcurrentReaders(t *testing.T) {
 			peak = max(peak, v)
 		}
 	}
-	t.Logf("peak concurrent git status = %d (bound %d)", peak, statusWorkers)
+	t.Logf("peak concurrent git status = %d (bound %d)", peak, 8)
 	if peak < 2 {
 		t.Fatalf("peak %d: the wrapper did not see concurrent readers", peak)
 	}
-	if peak > statusWorkers {
-		t.Fatalf("peak %d concurrent git readers, bound is %d", peak, statusWorkers)
+	if peak > 8 {
+		t.Fatalf("peak %d concurrent git readers, bound is %d", peak, 8)
 	}
 }
