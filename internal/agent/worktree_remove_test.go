@@ -521,6 +521,15 @@ func TestRemoveWorktreeSafelyResistsRepositoryTricks(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Case-insensitive names in the repository's configuration: an untracked WORK.TXT beside the tracked work.txt.
+	gitRun(t, e.repo, "config", "core.ignoreCase", "true")
+	writeFile(t, filepath.Join(dir, "WORK.TXT"), "mine\n")
+	_, err = e.remove("spaceman-tricks")
+	wantRefused(t, err, RefuseUntracked)
+	if err := os.Remove(filepath.Join(dir, "WORK.TXT")); err != nil {
+		t.Fatal(err)
+	}
+
 	// Stat checks turned down in the repository's configuration, and an edit of the same size with the old times.
 	gitRun(t, e.repo, "config", "core.trustctime", "false")
 	gitRun(t, e.repo, "config", "core.checkStat", "minimal")

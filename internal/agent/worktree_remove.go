@@ -247,7 +247,7 @@ func cleanTree(ctx context.Context, g *projectGit, dir string) error {
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	env := []string{"GIT_NO_REPLACE_OBJECTS=1", "GIT_INDEX_FILE=" + filepath.Join(tmp, "index")}
-	opts := []string{"-c", "core.trustctime=true", "-c", "core.checkStat=default"}
+	opts := strictOpts
 	for _, args := range [][]string{{"read-tree", "HEAD"}, {"update-index", "-q", "--refresh"}} {
 		if _, err := g.runEnv(ctx, dir, 10*time.Minute, env, append(append([]string{}, opts...), args...)...); err != nil {
 			return refuse(RefuseGit, "git %s: %s", args[0], truncateStr(err.Error(), 300))
@@ -335,13 +335,17 @@ func isObjectID(s string) bool {
 	return true
 }
 
-// strictGit runs git for the removal's checks with what the repository's configuration must not change: content is
-// compared by its stat data in full (core.trustctime, core.checkStat) and history is read as it is, without replace
+// strictGit runs git for the removal's checks with what the repository's configuration must not change (strictOpts),
+// and history is read as it is, without replace
 // refs (GIT_NO_REPLACE_OBJECTS), which agents can write to make any commit look like an ancestor of another.
 func strictGit(ctx context.Context, g *projectGit, dir string, args ...string) (string, error) {
 	return g.runEnv(ctx, dir, 2*time.Minute, []string{"GIT_NO_REPLACE_OBJECTS=1"},
-		append([]string{"-c", "core.trustctime=true", "-c", "core.checkStat=default"}, args...)...)
+		append(append([]string{}, strictOpts...), args...)...)
 }
+
+// strictOpts are the configuration values the removal's checks never take from the repository: full stat comparison,
+// case-sensitive names (core.ignoreCase would let an untracked WORK.TXT pass as the tracked work.txt) and file modes.
+var strictOpts = []string{"-c", "core.trustctime=true", "-c", "core.checkStat=default", "-c", "core.ignoreCase=false", "-c", "core.fileMode=true"}
 
 type listedTree struct {
 	branch string

@@ -8211,7 +8211,7 @@
      - **Clean** (`dirty`, `untracked`): no staged change (`diff-index --cached HEAD`); no tracked file whose content
        differs from HEAD, hashed through a temporary index read from HEAD, so neither the index's cached stat data (an
        edit within the same second) nor repository configuration (`core.trustctime`, `core.checkStat`) can hide an
-       edit; no tracked file git was
+       edit (the checks also force `core.ignoreCase=false` and `core.fileMode=true`); no tracked file git was
        told not to look at (assume-unchanged, skip-worktree, sparse checkout: their edits are hidden from `git status`
        and from `git worktree remove`); no untracked file, judged by the tree's `.gitignore` files only (the
        repository's `info/exclude` and `core.excludesFile` are agent-writable and could hide anything, and an
