@@ -37,6 +37,17 @@ func (q *Queries) CountEventDeliveriesOf(ctx context.Context, arg CountEventDeli
 	return count, err
 }
 
+const countFleetScopeSubscriptions = `-- name: CountFleetScopeSubscriptions :one
+SELECT count(*) FROM event_subscriptions WHERE space_id = ? AND ingest_own_scope = 'fleet'
+`
+
+func (q *Queries) CountFleetScopeSubscriptions(ctx context.Context, spaceID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countFleetScopeSubscriptions, spaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOpenQuarantine = `-- name: CountOpenQuarantine :one
 SELECT count(*) FROM event_quarantine WHERE subscription_id = ? AND status = 'open'
 `
@@ -54,6 +65,18 @@ DELETE FROM event_connections WHERE event_connections.id = ? AND NOT EXISTS (SEL
 
 func (q *Queries) DeleteEventConnection(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteEventConnection, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteEventFleetScopeGrant = `-- name: DeleteEventFleetScopeGrant :execrows
+DELETE FROM event_fleet_scope_grants WHERE space_id = ?
+`
+
+func (q *Queries) DeleteEventFleetScopeGrant(ctx context.Context, spaceID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteEventFleetScopeGrant, spaceID)
 	if err != nil {
 		return 0, err
 	}
@@ -97,8 +120,27 @@ func (q *Queries) GetEventConnection(ctx context.Context, id string) (EventConne
 	return i, err
 }
 
+const getEventFleetScopeGrant = `-- name: GetEventFleetScopeGrant :one
+
+SELECT space_id, reason, granted_at, granted_by FROM event_fleet_scope_grants WHERE space_id = ?
+`
+
+// Fleet-scope grants (ADR-0106): the spaces an installation administrator allows to ingest other spaces' run dialog
+// events.
+func (q *Queries) GetEventFleetScopeGrant(ctx context.Context, spaceID string) (EventFleetScopeGrant, error) {
+	row := q.db.QueryRowContext(ctx, getEventFleetScopeGrant, spaceID)
+	var i EventFleetScopeGrant
+	err := row.Scan(
+		&i.SpaceID,
+		&i.Reason,
+		&i.GrantedAt,
+		&i.GrantedBy,
+	)
+	return i, err
+}
+
 const getEventSubscription = `-- name: GetEventSubscription :one
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own FROM event_subscriptions WHERE id = ?
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own, ingest_own_scope FROM event_subscriptions WHERE id = ?
 `
 
 func (q *Queries) GetEventSubscription(ctx context.Context, id string) (EventSubscription, error) {
@@ -131,6 +173,7 @@ func (q *Queries) GetEventSubscription(ctx context.Context, id string) (EventSub
 		&i.Delivery,
 		&i.WhilePaused,
 		&i.IngestOwn,
+		&i.IngestOwnScope,
 	)
 	return i, err
 }
@@ -330,8 +373,9 @@ func (q *Queries) InsertEventDelivery(ctx context.Context, arg InsertEventDelive
 
 const insertEventSubscription = `-- name: InsertEventSubscription :exec
 INSERT INTO event_subscriptions (id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json,
-  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery, while_paused, ingest_own)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery, while_paused, ingest_own,
+  ingest_own_scope)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEventSubscriptionParams struct {
@@ -356,6 +400,7 @@ type InsertEventSubscriptionParams struct {
 	Delivery          string
 	WhilePaused       string
 	IngestOwn         int64
+	IngestOwnScope    string
 }
 
 func (q *Queries) InsertEventSubscription(ctx context.Context, arg InsertEventSubscriptionParams) error {
@@ -381,6 +426,7 @@ func (q *Queries) InsertEventSubscription(ctx context.Context, arg InsertEventSu
 		arg.Delivery,
 		arg.WhilePaused,
 		arg.IngestOwn,
+		arg.IngestOwnScope,
 	)
 	return err
 }
@@ -632,8 +678,40 @@ func (q *Queries) ListEventDeliveries(ctx context.Context, arg ListEventDeliveri
 	return items, nil
 }
 
+const listEventFleetScopeGrants = `-- name: ListEventFleetScopeGrants :many
+SELECT space_id, reason, granted_at, granted_by FROM event_fleet_scope_grants ORDER BY space_id
+`
+
+func (q *Queries) ListEventFleetScopeGrants(ctx context.Context) ([]EventFleetScopeGrant, error) {
+	rows, err := q.db.QueryContext(ctx, listEventFleetScopeGrants)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventFleetScopeGrant{}
+	for rows.Next() {
+		var i EventFleetScopeGrant
+		if err := rows.Scan(
+			&i.SpaceID,
+			&i.Reason,
+			&i.GrantedAt,
+			&i.GrantedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptions = `-- name: ListEventSubscriptions :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own FROM event_subscriptions ORDER BY space_id, name
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own, ingest_own_scope FROM event_subscriptions ORDER BY space_id, name
 `
 
 func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscription, error) {
@@ -672,6 +750,7 @@ func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscripti
 			&i.Delivery,
 			&i.WhilePaused,
 			&i.IngestOwn,
+			&i.IngestOwnScope,
 		); err != nil {
 			return nil, err
 		}
@@ -687,7 +766,7 @@ func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscripti
 }
 
 const listEventSubscriptionsBySpace = `-- name: ListEventSubscriptionsBySpace :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own FROM event_subscriptions WHERE space_id = ? ORDER BY name
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own, ingest_own_scope FROM event_subscriptions WHERE space_id = ? ORDER BY name
 `
 
 func (q *Queries) ListEventSubscriptionsBySpace(ctx context.Context, spaceID string) ([]EventSubscription, error) {
@@ -726,6 +805,7 @@ func (q *Queries) ListEventSubscriptionsBySpace(ctx context.Context, spaceID str
 			&i.Delivery,
 			&i.WhilePaused,
 			&i.IngestOwn,
+			&i.IngestOwnScope,
 		); err != nil {
 			return nil, err
 		}
@@ -814,7 +894,7 @@ func (q *Queries) ListEventTemplates(ctx context.Context) ([]EventTemplate, erro
 }
 
 const listFollowingSubscriptions = `-- name: ListFollowingSubscriptions :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own FROM event_subscriptions WHERE template_id = ? AND follow = 'latest'
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused, ingest_own, ingest_own_scope FROM event_subscriptions WHERE template_id = ? AND follow = 'latest'
 `
 
 func (q *Queries) ListFollowingSubscriptions(ctx context.Context, templateID sql.NullString) ([]EventSubscription, error) {
@@ -853,6 +933,7 @@ func (q *Queries) ListFollowingSubscriptions(ctx context.Context, templateID sql
 			&i.Delivery,
 			&i.WhilePaused,
 			&i.IngestOwn,
+			&i.IngestOwnScope,
 		); err != nil {
 			return nil, err
 		}
@@ -1170,8 +1251,8 @@ UPDATE event_subscriptions SET name = ?1, template_version_id = ?2, follow = ?3,
   custom_json = ?4, vars_json = ?5, effective_subject = ?6, enabled = ?7,
   cursor_generation = ?8, start_policy = ?9, start_time = ?10,
   start_seq = ?11, replay = ?12, while_paused = ?13,
-  ingest_own = ?14, version = version + 1, updated_at = ?15
-WHERE id = ?16 AND version = ?17
+  ingest_own = ?14, ingest_own_scope = ?15, version = version + 1, updated_at = ?16
+WHERE id = ?17 AND version = ?18
 `
 
 type UpdateEventSubscriptionParams struct {
@@ -1189,6 +1270,7 @@ type UpdateEventSubscriptionParams struct {
 	Replay            int64
 	WhilePaused       string
 	IngestOwn         int64
+	IngestOwnScope    string
 	Now               int64
 	ID                string
 	Version           int64
@@ -1210,6 +1292,7 @@ func (q *Queries) UpdateEventSubscription(ctx context.Context, arg UpdateEventSu
 		arg.Replay,
 		arg.WhilePaused,
 		arg.IngestOwn,
+		arg.IngestOwnScope,
 		arg.Now,
 		arg.ID,
 		arg.Version,
@@ -1237,4 +1320,26 @@ func (q *Queries) UpdateTemplateDraft(ctx context.Context, arg UpdateTemplateDra
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const upsertEventFleetScopeGrant = `-- name: UpsertEventFleetScopeGrant :exec
+INSERT INTO event_fleet_scope_grants (space_id, reason, granted_at, granted_by) VALUES (?, ?, ?, ?)
+ON CONFLICT (space_id) DO UPDATE SET reason = excluded.reason, granted_at = excluded.granted_at, granted_by = excluded.granted_by
+`
+
+type UpsertEventFleetScopeGrantParams struct {
+	SpaceID   string
+	Reason    string
+	GrantedAt int64
+	GrantedBy string
+}
+
+func (q *Queries) UpsertEventFleetScopeGrant(ctx context.Context, arg UpsertEventFleetScopeGrantParams) error {
+	_, err := q.db.ExecContext(ctx, upsertEventFleetScopeGrant,
+		arg.SpaceID,
+		arg.Reason,
+		arg.GrantedAt,
+		arg.GrantedBy,
+	)
+	return err
 }

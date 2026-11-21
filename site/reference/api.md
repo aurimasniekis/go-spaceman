@@ -537,6 +537,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/event-fleet-scope-grants` | `list-event-fleet-scope-grants` | Spaces allowed fleet-scoped ingest_own |
+| `DELETE` | `/event-fleet-scope-grants/{space_id}` | `delete-event-fleet-scope-grant` | Revoke a space's fleet-scope grant |
+| `GET` | `/event-fleet-scope-grants/{space_id}` | `get-event-fleet-scope-grant` | A space's fleet-scope grant |
+| `PUT` | `/event-fleet-scope-grants/{space_id}` | `put-event-fleet-scope-grant` | Allow a space fleet-scoped ingest_own |
 | `GET` | `/spaces/{space_id}/subscriptions` | `list-subscriptions` | A space's event subscriptions |
 | `POST` | `/spaces/{space_id}/subscriptions` | `create-subscription` | Subscribe a space to events |
 | `DELETE` | `/spaces/{space_id}/subscriptions/{subscription_id}` | `delete-subscription` | Delete a subscription |

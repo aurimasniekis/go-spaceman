@@ -304,6 +304,12 @@ var Ops = map[string]api.TelegramClass{
 	"update-xspace-settings":        api.TelegramExcluded,
 	"verify-audit-chain":            api.TelegramExcluded,
 	"verify-backup":                 api.TelegramExcluded,
+
+	// Fleet-scope grants (ADR-0106): installation administration with step-up, never from a chat.
+	"list-event-fleet-scope-grants":  api.TelegramExcluded,
+	"get-event-fleet-scope-grant":    api.TelegramExcluded,
+	"put-event-fleet-scope-grant":    api.TelegramExcluded,
+	"delete-event-fleet-scope-grant": api.TelegramExcluded,
 }
 
 // Watch is the class of the change feed, GET /api/v1/watch: the Mini App's live updates (§3.4.3). The bot has no

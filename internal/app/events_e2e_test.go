@@ -12,6 +12,8 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/events"
 	"github.com/aurimasniekis/go-spaceman/internal/events/pulsetest"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
@@ -284,5 +286,94 @@ func TestIngestOwnOverHTTP(t *testing.T) {
 	r.json(t, &sub)
 	if sub.IngestOwn {
 		t.Fatalf("after opting out: %+v", sub)
+	}
+}
+
+// ADR-0106 over HTTP: the fleet-scope grant is installation administration. A space's own admin can neither read nor
+// give it, and cannot create a fleet-scoped subscription without it (403); an installation administrator grants it
+// (idempotent PUT, the shape a Terraform resource needs), the space's admin can then opt in, and a revocation is a 204
+// followed by 404s. The write rules need step-up, so SpaceMan MCP and Telegram never reach them.
+func TestFleetScopeOverHTTP(t *testing.T) {
+	t.Parallel()
+	for _, op := range []string{"put-event-fleet-scope-grant", "delete-event-fleet-scope-grant"} {
+		rl := api.EventRules[op]
+		if rl.Perm != authz.SystemWrite || !rl.Perm.GlobalOnly || !rl.Reauth || !rl.MFA || rl.Space {
+			t.Fatalf("%s: rule %+v, want step-up system:write", op, rl)
+		}
+	}
+	h := newHarness(t)
+	ctx := context.Background()
+	nats := pulsetest.Start(t)
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	actor := audit.Actor{Type: audit.ActorUser, ID: "usr_test"}
+	en, _ := h.c.Fleet.CreateNode(ctx, actor, fleet.CreateNodeInput{Name: "node-a"})
+	ops, err := h.c.Fleet.CreateSpace(ctx, actor, fleet.CreateSpaceInput{Slug: "ops", Name: "Operations", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conn events.Connection
+	r := root.do("POST", "/event-connections", map[string]any{"name": "pulse", "url": nats.URL, "creds": string(nats.Creds("spaceman")), "enabled": true})
+	expect(t, r, 201)
+	r.json(t, &conn)
+	spaceAdmin := h.client()
+	spaceAdmin.bearer = userToken(t, h.c.Auth, "ops-admin@example.com", []auth.GrantInput{{Role: authz.RoleAdmin, Domain: ops.ID}})
+	grantPath := "/event-fleet-scope-grants/" + ops.ID
+	fleetSub := map[string]any{"name": "fleet-dialogs", "connection_id": conn.ID, "ingest_own": true, "ingest_own_scope": "fleet",
+		"custom": map[string]any{"subject": "evt.spaceman.fleet.run.dialog_detected", "title": "Dialog {{data.dialog_id}} in {{data.space_id}}",
+			"body": "{{data | json}}", "variables": []any{}, "filters": []any{}}}
+
+	// A space admin cannot grant its own space, read the grants, or claim fleet scope on its subscription.
+	if p := spaceAdmin.do("PUT", grantPath, map[string]any{"reason": "mine"}).problem(t); p.Status != 403 {
+		t.Fatalf("space admin grant: %+v", p)
+	}
+	if p := spaceAdmin.do("GET", "/event-fleet-scope-grants", nil).problem(t); p.Status != 403 {
+		t.Fatalf("space admin list: %+v", p)
+	}
+	if p := spaceAdmin.do("POST", "/spaces/"+ops.ID+"/subscriptions", fleetSub).problem(t); p.Status != 403 || !strings.Contains(p.Detail, "holds no fleet-scope grant") {
+		t.Fatalf("fleet subscription without a grant: %+v", p)
+	}
+	expect(t, root.do("GET", grantPath, nil), 404)
+
+	// An installation administrator grants it; granting again is idempotent.
+	var g events.FleetScopeGrant
+	for range 2 {
+		r = root.do("PUT", grantPath, map[string]any{"reason": "triage every space's dialogs"})
+		expect(t, r, 200)
+		r.json(t, &g)
+	}
+	if g.SpaceID != ops.ID || g.Reason != "triage every space's dialogs" || g.FleetSubscriptions != 0 {
+		t.Fatalf("grant %+v", g)
+	}
+	r = spaceAdmin.do("POST", "/spaces/"+ops.ID+"/subscriptions", fleetSub)
+	expect(t, r, 201)
+	var sub events.Subscription
+	r.json(t, &sub)
+	if sub.IngestOwnScope != "fleet" || !sub.IngestOwn {
+		t.Fatalf("subscription %+v", sub)
+	}
+	var list struct {
+		Items []events.FleetScopeGrant `json:"items"`
+	}
+	r = root.do("GET", "/event-fleet-scope-grants", nil)
+	expect(t, r, 200)
+	r.json(t, &list)
+	if len(list.Items) != 1 || list.Items[0].SpaceID != ops.ID || list.Items[0].FleetSubscriptions != 1 {
+		t.Fatalf("grants %+v", list)
+	}
+
+	// Revoked: the subscription keeps fleet but cannot be updated with it; back to space works.
+	expect(t, root.do("DELETE", grantPath, nil), 204)
+	expect(t, root.do("GET", grantPath, nil), 404)
+	expect(t, root.do("DELETE", grantPath, nil), 404)
+	if p := spaceAdmin.do("PUT", "/spaces/"+ops.ID+"/subscriptions/"+sub.ID, map[string]any{"enabled": false}, "If-Match", `"1"`).problem(t); p.Status != 403 {
+		t.Fatalf("update keeping fleet after revocation: %+v", p)
+	}
+	r = spaceAdmin.do("PUT", "/spaces/"+ops.ID+"/subscriptions/"+sub.ID, map[string]any{"enabled": true, "ingest_own_scope": "space"}, "If-Match", `"1"`)
+	expect(t, r, 200)
+	r.json(t, &sub)
+	if sub.IngestOwnScope != "space" || !sub.IngestOwn {
+		t.Fatalf("after going back to space: %+v", sub)
 	}
 }

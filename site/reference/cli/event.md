@@ -9,6 +9,7 @@ Aliases: `events`.
 | Subcommand | Description |
 |---|---|
 | [`spaceman event connection`](#spaceman-event-connection) | Pulse connections: list, show, add, update and delete |
+| [`spaceman event fleet-scope`](#spaceman-event-fleet-scope) | Spaces allowed to ingest every space's run dialog events (ingest_own_scope fleet; installation administrators) |
 | [`spaceman event subscription`](#spaceman-event-subscription) | A space's event subscriptions: list, show, add, update, delete, replay and quarantine (--space) |
 | [`spaceman event template`](#spaceman-event-template) | Event templates: list, show, create, save a draft, preview and publish |
 
@@ -107,6 +108,70 @@ API: `get-event-connection`, `update-event-connection` ([HTTP API](../api)).
 | `--stream` | string |  | JetStream stream |
 | `--url` | string |  | NATS URL of the Pulse server |
 
+## spaceman event fleet-scope
+
+Spaces allowed to ingest every space's run dialog events (ingest_own_scope fleet; installation administrators).
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman event fleet-scope get`](#spaceman-event-fleet-scope-get) | A space's fleet-scope grant |
+| [`spaceman event fleet-scope grant`](#spaceman-event-fleet-scope-grant) | Allow a space's subscriptions ingest_own_scope fleet |
+| [`spaceman event fleet-scope list`](#spaceman-event-fleet-scope-list) | Spaces holding a fleet-scope grant |
+| [`spaceman event fleet-scope revoke`](#spaceman-event-fleet-scope-revoke) | Revoke a space's fleet-scope grant (its fleet subscriptions then admit only its own space) |
+
+## spaceman event fleet-scope get
+
+A space's fleet-scope grant.
+
+```sh
+spaceman event fleet-scope get <space> [flags]
+```
+
+API: `get-event-fleet-scope-grant` ([HTTP API](../api)).
+
+## spaceman event fleet-scope grant
+
+Allow a space's subscriptions ingest_own_scope fleet.
+
+```sh
+spaceman event fleet-scope grant <space> [flags]
+```
+
+API: `put-event-fleet-scope-grant` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman event fleet-scope grant operations --reason "triage dialogs of every space"
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--reason` | string |  | why the space may see every space's run dialogs (recorded) |
+
+## spaceman event fleet-scope list
+
+Spaces holding a fleet-scope grant.
+
+```sh
+spaceman event fleet-scope list [flags]
+```
+
+Aliases: `ls`.
+
+API: `list-event-fleet-scope-grants` ([HTTP API](../api)).
+
+## spaceman event fleet-scope revoke
+
+Revoke a space's fleet-scope grant (its fleet subscriptions then admit only its own space).
+
+```sh
+spaceman event fleet-scope revoke <space> [flags]
+```
+
+API: `delete-event-fleet-scope-grant` ([HTTP API](../api)).
+
 ## spaceman event subscription
 
 A space's event subscriptions: list, show, add, update, delete, replay and quarantine (--space).
@@ -143,6 +208,7 @@ API: `create-subscription` ([HTTP API](../api)).
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--follow` | string |  | pinned or latest |
 | `--ingest-own` | bool |  | ingest this SpaceMan's own events (only for the subjects evt.spaceman.fleet.run.dialog_detected and evt.spaceman.fleet.run.dialog_cleared) |
+| `--ingest-own-scope` | string |  | whose dialog events --ingest-own admits: space (default) or fleet (every space's; needs the space's fleet-scope grant, see spaceman event fleet-scope) |
 | `--name` | string |  | name (required) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--start-file` | string |  | start cursor (JSON or YAML file) |
@@ -324,6 +390,7 @@ API: `get-subscription`, `update-subscription` ([HTTP API](../api)).
 | `--follow` | string |  | pinned or latest |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--ingest-own` | bool |  | ingest this SpaceMan's own events (only for the subjects evt.spaceman.fleet.run.dialog_detected and evt.spaceman.fleet.run.dialog_cleared) |
+| `--ingest-own-scope` | string |  | whose dialog events --ingest-own admits: space (default) or fleet (every space's; needs the space's fleet-scope grant, see spaceman event fleet-scope) |
 | `--name` | string |  | name |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--template-version` | string |  | template version ID |

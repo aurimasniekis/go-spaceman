@@ -98,8 +98,9 @@ func (m *Manager) handleCore(ctx context.Context, subID, spaceID string, msg *na
 	}
 	var err error
 	admitted := true
+	ev := fromPulse(e)
 	if m.svc.ownEvent(e) {
-		admitted, err = m.svc.admitOwn(ctx, subID, fromPulse(e), 0)
+		ev, admitted, err = m.svc.admitOwn(ctx, subID, ev, 0)
 	}
 	switch {
 	case !admitted:
@@ -111,7 +112,7 @@ func (m *Manager) handleCore(ctx context.Context, subID, spaceID string, msg *na
 		return // dropped: nothing could redeliver it
 	default:
 		// Always live: core NATS never redelivers, so a repeated ID is the source sending the message again.
-		err = m.svc.Process(ctx, subID, fromPulse(e), 0, Origin{Kind: OriginLive})
+		err = m.svc.Process(ctx, subID, ev, 0, Origin{Kind: OriginLive})
 	}
 	var qe *QuarantinedError
 	if err != nil && !errors.As(err, &qe) && ctx.Err() == nil {

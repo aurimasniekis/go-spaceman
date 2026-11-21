@@ -761,6 +761,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/event-fleet-scope-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spaces allowed fleet-scoped ingest_own
+         * @description The spaces whose subscriptions may set ingest_own_scope fleet: ingest every space's run dialog events (ADR-0106). Installation administrators only.
+         */
+        get: operations["list-event-fleet-scope-grants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/event-fleet-scope-grants/{space_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's fleet-scope grant
+         * @description 404 when the space holds none.
+         */
+        get: operations["get-event-fleet-scope-grant"];
+        /**
+         * Allow a space fleet-scoped ingest_own
+         * @description Lets the space's subscriptions set ingest_own_scope fleet, so they ingest the run dialog events (evt.spaceman.fleet.run.dialog_detected and _cleared, depth 0, identifying fields only) of every space. Idempotent: granting again replaces the reason. Needs system:write with step-up; never reachable through SpaceMan MCP or Telegram.
+         */
+        put: operations["put-event-fleet-scope-grant"];
+        post?: never;
+        /**
+         * Revoke a space's fleet-scope grant
+         * @description Takes effect with the next event: the space's fleet-scoped subscriptions then filter other spaces' dialog events (they keep their own space's). Updating such a subscription is refused until its ingest_own_scope is set back to space. 404 when the space holds no grant.
+         */
+        delete: operations["delete-event-fleet-scope-grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/event-template-versions/{version_id}/publish": {
         parameters: {
             query?: never;
@@ -6797,6 +6845,25 @@ export interface components {
             subject: string;
             type: string;
         };
+        EventsFleetScopeGrant: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsFleetScopeGrant.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The space's subscriptions with ingest_own_scope fleet
+             */
+            fleet_subscriptions: number;
+            /** Format: date-time */
+            granted_at: string;
+            granted_by: string;
+            /** @description Why the space holds the grant, as the administrator gave it */
+            reason?: string;
+            space_id: string;
+        };
         EventsQuarantineEntry: {
             /**
              * Format: uri
@@ -6918,6 +6985,11 @@ export interface components {
             id: string;
             /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. */
             ingest_own: boolean;
+            /**
+             * @description Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's, only while this space holds an installation administrator's fleet-scope grant (checked for every event: after a revocation other spaces' events are filtered). A fleet-scoped subscription ingests only the identifying fields of the event data: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at.
+             * @enum {string}
+             */
+            ingest_own_scope: "space" | "fleet";
             last_error?: string;
             /** Format: date-time */
             last_event_at?: string;
@@ -7472,6 +7544,16 @@ export interface components {
              * @description When the node first saw the limit
              */
             since: string;
+        };
+        FleetScopeBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetScopeBody.json
+             */
+            readonly $schema?: string;
+            /** @description Why this space may ingest every space's run dialog events (recorded on the grant and in the audit log) */
+            reason?: string;
         };
         FleetSpace: {
             /**
@@ -9492,6 +9574,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["EventsConnection"][];
+        };
+        "List-event-fleet-scope-grantsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-event-fleet-scope-grantsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["EventsFleetScopeGrant"][];
         };
         "List-event-templatesResponse": {
             /**
@@ -12673,6 +12764,11 @@ export interface components {
             follow?: "pinned" | "latest";
             /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. */
             ingest_own?: boolean;
+            /**
+             * @description Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's. fleet needs ingest_own and a fleet-scope grant for this space, which only an installation administrator gives (PUT /event-fleet-scope-grants/{space_id}); without one it is refused with 403. The grant is checked again for every event, so after a revocation other spaces' events are filtered. The subjects stay the two dialog events and the depth 0. A fleet-scoped subscription ingests only these data fields: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at.
+             * @enum {string}
+             */
+            ingest_own_scope?: "space" | "fleet";
             name: string;
             /** @description Where the consumer starts; default new (no history). Core subscriptions accept only new. */
             start?: components["schemas"]["EventsCursor"];
@@ -12699,6 +12795,11 @@ export interface components {
             follow?: "pinned" | "latest";
             /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. Omitted: unchanged; a subject change keeps it only on an allowed subject. */
             ingest_own?: boolean;
+            /**
+             * @description Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's. fleet needs ingest_own and a fleet-scope grant for this space, which only an installation administrator gives (PUT /event-fleet-scope-grants/{space_id}); without one it is refused with 403. The grant is checked again for every event, so after a revocation other spaces' events are filtered. The subjects stay the two dialog events and the depth 0. A fleet-scoped subscription ingests only these data fields: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at. Omitted: unchanged, except that turning ingest_own off returns it to space. While it stays fleet, an update is refused once the space has lost its grant.
+             * @enum {string}
+             */
+            ingest_own_scope?: "space" | "fleet";
             name?: string;
             /** @description Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor. */
             start?: components["schemas"]["EventsCursor"];
@@ -15196,6 +15297,130 @@ export interface operations {
             header?: never;
             path: {
                 connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-event-fleet-scope-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-event-fleet-scope-grantsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-event-fleet-scope-grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsFleetScopeGrant"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-event-fleet-scope-grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetScopeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsFleetScopeGrant"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-event-fleet-scope-grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
             };
             cookie?: never;
         };

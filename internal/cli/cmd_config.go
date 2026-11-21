@@ -22,6 +22,7 @@ var (
 	connCols     = []col{c("ID", "id"), c("NAME", "name"), c("URL", "url"), c("STREAM", "stream"), c("CLIENT", "client_id"), c("ENABLED", "enabled")}
 	etplCols     = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("BUILTIN", "builtin"), {head: "VERSIONS", fn: countOf("versions")}}
 	subCols      = []col{c("ID", "id"), c("NAME", "name"), c("STATE", "state"), c("ENABLED", "enabled"), c("DELIVERY", "delivery"), c("FOLLOW", "follow"), c("SUBJECT", "subject"), c("LAST EVENT", "last_event_at")}
+	fleetCols    = []col{c("SPACE", "space_id"), c("FLEET SUBS", "fleet_subscriptions"), c("REASON", "reason"), c("BY", "granted_by"), c("AT", "granted_at")}
 	replayCols   = []col{c("ID", "id"), c("POLICY", "policy"), c("APPLIED", "applied"), c("REASON", "reason"), c("BY", "requested_by"), c("AT", "requested_at")}
 	mcpCols      = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("URL", "url"), c("ENABLED", "enabled"), c("GRANTS", "grants"), c("HEADERS V", "headers_version")}
 	grantCols    = []col{c("ID", "id"), c("SPACE", "space_id"), c("ROLE", "role"), c("TOOLS", "tools"), c("CREATED", "created_at")}
@@ -369,6 +370,8 @@ const whilePausedHelp = "while the space is paused: defer (default: ingest, tell
 
 const ingestOwnHelp = "ingest this SpaceMan's own events (only for the subjects evt.spaceman.fleet.run.dialog_detected and evt.spaceman.fleet.run.dialog_cleared)"
 
+const ingestOwnScopeHelp = "whose dialog events --ingest-own admits: space (default) or fleet (every space's; needs the space's fleet-scope grant, see spaceman event fleet-scope)"
+
 func (a *App) eventCmd() *cobra.Command {
 	conn := func(f *form) {
 		f.str("name", "name", "name").str("url", "url", "NATS URL of the Pulse server").str("stream", "stream", "JetStream stream").
@@ -420,14 +423,16 @@ func (a *App) eventCmd() *cobra.Command {
 					kv("var", "vars", "template variable").doc("custom", "custom", "custom template definition (JSON or YAML file)").
 					doc("start", "start", "start cursor (JSON or YAML file)").
 					str("delivery", "delivery", "durable (default, a JetStream durable) or core (plain NATS Core: non-durable, no replay or redelivery)").
-					str("while-paused", "while_paused", whilePausedHelp).boolean("ingest-own", "ingest_own", ingestOwnHelp)
+					str("while-paused", "while_paused", whilePausedHelp).boolean("ingest-own", "ingest_own", ingestOwnHelp).
+					str("ingest-own-scope", "ingest_own_scope", ingestOwnScopeHelp)
 			}}),
 		a.cmd(opts{use: "update", short: "Edit a subscription (only the flags given change)", op: "update-subscription", get: "get-subscription",
 			merge: true, drop: []string{"custom", "start"}, scoped: true, args: pos("subscription"),
 			form: func(f *form) {
 				f.str("name", "name", "name").boolean("enabled", "enabled", "enabled").str("template-version", "template_version_id", "template version ID").
 					str("follow", "follow", "pinned or latest").kv("var", "vars", "template variable (replaces the variables)").
-					str("while-paused", "while_paused", whilePausedHelp).boolean("ingest-own", "ingest_own", ingestOwnHelp)
+					str("while-paused", "while_paused", whilePausedHelp).boolean("ingest-own", "ingest_own", ingestOwnHelp).
+					str("ingest-own-scope", "ingest_own_scope", ingestOwnScopeHelp)
 			}}),
 		a.cmd(opts{use: "delete", short: "Delete a subscription", op: "delete-subscription", scoped: true, args: pos("subscription"), done: "Subscription deleted."}),
 		a.cmd(opts{use: "replay", short: "Replay a subscription's events from a point (recorded with a reason)", op: "replay-subscription",
@@ -450,7 +455,17 @@ func (a *App) eventCmd() *cobra.Command {
 		a.cmd(opts{use: "deliveries", short: "A subscription's recent deliveries", op: "list-subscription-delivery", scoped: true, args: pos("subscription"),
 			query: []qflag{limitFlag()}}),
 	)
-	return group("event", "Events: Pulse connections, templates and subscriptions", []string{"events"}, connections, templates, subs)
+	fleet := group("fleet-scope", "Spaces allowed to ingest every space's run dialog events (ingest_own_scope fleet; installation administrators)", nil,
+		a.cmd(opts{use: "list", short: "Spaces holding a fleet-scope grant", op: "list-event-fleet-scope-grants", alias: []string{"ls"},
+			view: view{items: "items", cols: fleetCols, empty: "No fleet-scope grants."}}),
+		a.cmd(opts{use: "get", short: "A space's fleet-scope grant", op: "get-event-fleet-scope-grant", args: spaceArg()}),
+		a.cmd(opts{use: "grant", short: "Allow a space's subscriptions ingest_own_scope fleet", op: "put-event-fleet-scope-grant", args: spaceArg(),
+			example: "spaceman event fleet-scope grant operations --reason \"triage dialogs of every space\"",
+			form:    func(f *form) { f.str("reason", "reason", "why the space may see every space's run dialogs (recorded)") }}),
+		a.cmd(opts{use: "revoke", short: "Revoke a space's fleet-scope grant (its fleet subscriptions then admit only its own space)",
+			op: "delete-event-fleet-scope-grant", args: spaceArg(), done: "Fleet-scope grant revoked."}),
+	)
+	return group("event", "Events: Pulse connections, templates and subscriptions", []string{"events"}, connections, templates, subs, fleet)
 }
 
 func (a *App) mcpCmd() *cobra.Command {

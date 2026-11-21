@@ -321,7 +321,7 @@ elsewhere.
 
 Admission is scoped to the subscription's own space: an own event is ingested only when its `data.space_id` is the
 subscription's space, so a subscription never raises items for another space's runs; one with no readable
-`space_id` is filtered.
+`space_id` is filtered. The one exception is an operations space with a fleet-scope grant, below.
 
 Even with the flag, SpaceMan ingests one of its own events only at automation depth 0 (no `spaceman-depth`): its events
 about what an ingestion caused (the item, tasks made from it) carry a depth and are still filtered, so ingestion never
@@ -330,6 +330,44 @@ too, that is a new item, one per real dialog occurrence. Everything else applies
 rate limit, `event_depth`, the template's filters, deduplication and quarantine. Each dialog occurrence becomes one
 item per subscription. Subscriptions without the flag, including others on the same subject, keep filtering own events
 (ADR-0104).
+
+#### Fleet scope: one operations space for every space's dialogs
+
+An installation that runs an operations space can let it ingest the dialog events of **every** space, so a run stopped
+at a dialog anywhere becomes an item there. It takes two steps, by two different people:
+
+1. **An installation administrator grants the space.** Only a global administrator can (`system:write`, with a fresh
+   second factor in the browser, or an administrator's API token); a space's own admin cannot, and neither can an
+   agent through the SpaceMan MCP or a Telegram chat.
+
+   ```sh
+   spaceman event fleet-scope grant operations --reason "triage dialogs of every space"
+   spaceman event fleet-scope list
+   ```
+
+   Over the API this is `PUT /event-fleet-scope-grants/{space_id}` (idempotent, with an optional `reason`),
+   `GET` to read one or the list, and `DELETE` to revoke.
+2. **The space opts in on a subscription** with `ingest_own_scope: fleet` (`--ingest-own-scope fleet`) next to
+   `ingest_own`. Without the grant this is refused (`forbidden`, HTTP 403).
+
+Nothing else widens: the subject must still be exactly one of the two dialog subjects, and only events at automation
+depth 0 are ingested. A fleet-scoped subscription ingests only the fields that identify the dialog:
+
+| Field | Meaning |
+|---|---|
+| `space_id` | The space whose run is waiting |
+| `run_id` | The run |
+| `dialog_id` | The dialog occurrence |
+| `dialog` | The recognised dialog, or `unknown` |
+| `signal` | Why SpaceMan did not answer it |
+| `detected_at`, `cleared_at` | When it appeared and when it went away |
+
+The node, role, harness, instance, lease generation and harness version of the other space's run are dropped before
+the item is made. The dialog's screen text never leaves the run's own space.
+
+Revoking the grant takes effect with the next event: the subscription's setting stays `fleet`, but other spaces'
+events are filtered (shown as such in its deliveries) and only its own space's are ingested. Until you set the scope
+back to `space`, an update of that subscription is refused (ADR-0106).
 
 <Shot name="events-quarantine" alt="Quarantined alert missing a required field, with reprocess and discard" caption="A quarantined event" />
 

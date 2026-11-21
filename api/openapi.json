@@ -4369,6 +4369,46 @@
         ],
         "type": "object"
       },
+      "EventsFleetScopeGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsFleetScopeGrant.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "fleet_subscriptions": {
+            "description": "The space's subscriptions with ingest_own_scope fleet",
+            "format": "int64",
+            "type": "integer"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "granted_by": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the space holds the grant, as the administrator gave it",
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "space_id",
+          "granted_at",
+          "granted_by",
+          "fleet_subscriptions"
+        ],
+        "type": "object"
+      },
       "EventsQuarantineEntry": {
         "additionalProperties": false,
         "properties": {
@@ -4643,6 +4683,14 @@
             "description": "Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies.",
             "type": "boolean"
           },
+          "ingest_own_scope": {
+            "description": "Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's, only while this space holds an installation administrator's fleet-scope grant (checked for every event: after a revocation other spaces' events are filtered). A fleet-scoped subscription ingests only the identifying fields of the event data: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at.",
+            "enum": [
+              "space",
+              "fleet"
+            ],
+            "type": "string"
+          },
           "last_error": {
             "type": "string"
           },
@@ -4718,6 +4766,7 @@
           "enabled",
           "while_paused",
           "ingest_own",
+          "ingest_own_scope",
           "cursor",
           "cursor_pending",
           "quarantined",
@@ -6160,6 +6209,26 @@
           "kind",
           "since"
         ],
+        "type": "object"
+      },
+      "FleetScopeBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetScopeBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why this space may ingest every space's run dialog events (recorded on the grant and in the audit log)",
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "FleetSpace": {
@@ -11240,6 +11309,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/EventsConnection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-event-fleet-scope-grantsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-event-fleet-scope-grantsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventsFleetScopeGrant"
             },
             "type": "array"
           }
@@ -19288,6 +19381,14 @@
             "description": "Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies.",
             "type": "boolean"
           },
+          "ingest_own_scope": {
+            "description": "Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's. fleet needs ingest_own and a fleet-scope grant for this space, which only an installation administrator gives (PUT /event-fleet-scope-grants/{space_id}); without one it is refused with 403. The grant is checked again for every event, so after a revocation other spaces' events are filtered. The subjects stay the two dialog events and the depth 0. A fleet-scoped subscription ingests only these data fields: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at.",
+            "enum": [
+              "space",
+              "fleet"
+            ],
+            "type": "string"
+          },
           "name": {
             "maxLength": 80,
             "type": "string"
@@ -19350,6 +19451,14 @@
           "ingest_own": {
             "description": "Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. Omitted: unchanged; a subject change keeps it only on an allowed subject.",
             "type": "boolean"
+          },
+          "ingest_own_scope": {
+            "description": "Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's. fleet needs ingest_own and a fleet-scope grant for this space, which only an installation administrator gives (PUT /event-fleet-scope-grants/{space_id}); without one it is refused with 403. The grant is checked again for every event, so after a revocation other spaces' events are filtered. The subjects stay the two dialog events and the depth 0. A fleet-scoped subscription ingests only these data fields: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at. Omitted: unchanged, except that turning ingest_own off returns it to space. While it stays fleet, an update is refused once the space has lost its grant.",
+            "enum": [
+              "space",
+              "fleet"
+            ],
+            "type": "string"
           },
           "name": {
             "maxLength": 80,
@@ -23880,6 +23989,166 @@
         "summary": "Update a Pulse connection",
         "tags": [
           "events"
+        ]
+      }
+    },
+    "/event-fleet-scope-grants": {
+      "get": {
+        "description": "The spaces whose subscriptions may set ingest_own_scope fleet: ingest every space's run dialog events (ADR-0106). Installation administrators only.",
+        "operationId": "list-event-fleet-scope-grants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-event-fleet-scope-grantsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Spaces allowed fleet-scoped ingest_own",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
+    "/event-fleet-scope-grants/{space_id}": {
+      "delete": {
+        "description": "Takes effect with the next event: the space's fleet-scoped subscriptions then filter other spaces' dialog events (they keep their own space's). Updating such a subscription is refused until its ingest_own_scope is set back to space. 404 when the space holds no grant.",
+        "operationId": "delete-event-fleet-scope-grant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Revoke a space's fleet-scope grant",
+        "tags": [
+          "subscriptions"
+        ]
+      },
+      "get": {
+        "description": "404 when the space holds none.",
+        "operationId": "get-event-fleet-scope-grant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsFleetScopeGrant"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's fleet-scope grant",
+        "tags": [
+          "subscriptions"
+        ]
+      },
+      "put": {
+        "description": "Lets the space's subscriptions set ingest_own_scope fleet, so they ingest the run dialog events (evt.spaceman.fleet.run.dialog_detected and _cleared, depth 0, identifying fields only) of every space. Idempotent: granting again replaces the reason. Needs system:write with step-up; never reachable through SpaceMan MCP or Telegram.",
+        "operationId": "put-event-fleet-scope-grant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetScopeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsFleetScopeGrant"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Allow a space fleet-scoped ingest_own",
+        "tags": [
+          "subscriptions"
         ]
       }
     },
