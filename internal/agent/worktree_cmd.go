@@ -43,21 +43,26 @@ func (a *Agent) worktreeRemoveReport(ctx context.Context, c proto.Command, space
 	rep := proto.WorktreeRemoved{CommandID: c.CommandID, SpaceID: c.SpaceID, Repo: p.Repository.Path, Name: p.Name}
 	out, err := a.removeWorktree(ctx, c.SpaceID, space, p.Repository, p.Name)
 	rep.Path, rep.Branch, rep.Head = out.Path, out.Branch, out.Head
+	describeRemoval(&rep, err)
+	rep.CheckedAt = a.now().UTC().Truncate(time.Second)
+	return rep
+}
+
+// describeRemoval sets rep's result (and code or reason) from the error of a removal.
+func describeRemoval(rep *proto.WorktreeRemoved, err error) {
 	var r *WorktreeRefusal
+	var pe *pruneError
 	switch {
 	case err == nil:
 		rep.Result = proto.WorktreeRemovedOK
 	case errors.As(err, &r):
 		rep.Result, rep.Code, rep.Reason = proto.WorktreeRefused, r.Code, truncateStr(r.Reason, proto.WorktreeRemoveMaxReason)
-	case out.Head != "":
-		// Every step before the removal refuses with a code, so the one other error is the prune after it: the
-		// worktree is gone, a stale entry of another worktree may remain.
+	case errors.As(err, &pe):
+		// The worktree is gone; a stale entry of another worktree may remain.
 		rep.Result, rep.Reason = proto.WorktreeRemovedOK, truncateStr(err.Error(), proto.WorktreeRemoveMaxReason)
 	default:
 		rep.Result, rep.Reason = proto.WorktreeFailed, truncateStr(err.Error(), proto.WorktreeRemoveMaxReason)
 	}
-	rep.CheckedAt = a.now().UTC().Truncate(time.Second)
-	return rep
 }
 
 // resendWorktreeRemoved re-sends the stored report of a repeated space.worktree.remove (central keeps the first).

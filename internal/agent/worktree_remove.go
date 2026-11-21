@@ -220,10 +220,20 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 	// git worktree remove already deletes the worktree's administrative files; the prune only drops stale entries of
 	// other worktrees whose folders are gone, and a failure of it does not undo the removal.
 	if _, err := g.run(ctx, repo, "worktree", "prune"); err != nil {
-		return out, fmt.Errorf("the worktree was removed but git worktree prune failed: %w", err)
+		return out, &pruneError{err: err}
 	}
 	return out, nil
 }
+
+// pruneError is the one non-refusal failure of removeWorktreeSafely: the worktree is already removed, only the prune of
+// stale entries of other worktrees failed.
+type pruneError struct{ err error }
+
+func (e *pruneError) Error() string {
+	return "the worktree was removed but git worktree prune failed: " + e.err.Error()
+}
+
+func (e *pruneError) Unwrap() error { return e.err }
 
 // cleanTree refuses a worktree with anything of its own that removing the folder would lose:
 //   - staged changes, and tracked files whose content differs from HEAD (hashed, never judged by stat data);

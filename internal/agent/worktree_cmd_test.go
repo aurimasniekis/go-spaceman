@@ -3,14 +3,18 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
 )
 
 // wtCmd builds a space.worktree.remove command of the env's space and repository.
@@ -223,4 +227,89 @@ func TestWorktreeRemoveCommandRejectsBadInput(t *testing.T) {
 		t.Errorf("no lease: state %q %v", state, err)
 	}
 	mustExist(t, dir)
+}
+
+// The outcome of a removal is described by its typed error: removed, removed but the prune failed, refused, or failed.
+func TestDescribeRemoval(t *testing.T) {
+	boom := errors.New("boom")
+	cases := []struct {
+		name       string
+		err        error
+		result     string
+		code       string
+		reasonPart string
+	}{
+		{"removed", nil, proto.WorktreeRemovedOK, "", ""},
+		{"prune failed", &pruneError{err: boom}, proto.WorktreeRemovedOK, "", "prune failed: boom"},
+		{"prune failed wrapped", fmt.Errorf("outer: %w", &pruneError{err: boom}), proto.WorktreeRemovedOK, "", "prune failed"},
+		{"refused", refuse(RefuseDirty, "changed files"), proto.WorktreeRefused, RefuseDirty, "changed files"},
+		{"refused wrapped", fmt.Errorf("outer: %w", refuse(RefuseGit, "git broke")), proto.WorktreeRefused, RefuseGit, "git broke"},
+		{"other error", boom, proto.WorktreeFailed, "", "boom"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var rep proto.WorktreeRemoved
+			describeRemoval(&rep, tc.err)
+			if rep.Result != tc.result || rep.Code != tc.code || !strings.Contains(rep.Reason, tc.reasonPart) || (tc.reasonPart == "" && rep.Reason != "") {
+				t.Fatalf("report %+v", rep)
+			}
+		})
+	}
+}
+
+// A lease without a work folder is no lease for a removal: the command is rejected and nothing is removed.
+func TestWorktreeRemoveCommandRejectsLeaseWithoutWorkdir(t *testing.T) {
+	e := newRmEnv(t)
+	e.grantLease(t)
+	e.a.mu.Lock()
+	l := e.a.leases[e.spaceID]
+	l.Workdir = ""
+	e.a.leases[e.spaceID] = l
+	e.a.mu.Unlock()
+	dir := e.worktree(t, "spaceman/pushed", true)
+	c := e.wtCmd(t, "spaceman-pushed")
+	e.a.command(context.Background(), c)
+	var state string
+	if err := e.a.j.s.ReadDB().QueryRowContext(context.Background(), `SELECT state FROM commands WHERE id = ?`, c.CommandID).Scan(&state); err != nil || state != "rejected" {
+		t.Fatalf("state %q %v", state, err)
+	}
+	mustExist(t, dir)
+}
+
+// Over a connection: the node sends the worktree.removed report when the removal is done, and sends the stored report
+// again for a duplicate delivery without removing anything a second time.
+func TestWorktreeRemoveReportedOverTheWire(t *testing.T) {
+	e := newRmEnv(t)
+	e.a.o.Runner = runnertest.New()
+	fc := newRNCentral(t, proto.MaxMinor)
+	runAgent2(t, e.a, fc.srv.URL)
+	var hello proto.Hello
+	fc.next(t, proto.TypeHello, &hello)
+	waitUntil(t, "connected", func() bool { return e.a.protocolAtLeast(proto.MinorWorktreeRemove) })
+	e.grantLease(t)
+	dir := e.worktree(t, "spaceman/pushed", true)
+	c := e.wtCmd(t, "spaceman-pushed")
+
+	fc.send(t, proto.TypeCommand, c)
+	var rep proto.WorktreeRemoved
+	fc.next(t, proto.TypeWorktreeRemoved, &rep)
+	if err := rep.Validate(); err != nil || rep.Result != proto.WorktreeRemovedOK || rep.CommandID != c.CommandID || rep.Branch != "spaceman/pushed" {
+		t.Fatalf("report %+v: %v", rep, err)
+	}
+	if _, err := os.Lstat(dir); !os.IsNotExist(err) {
+		t.Fatalf("worktree still there: %v", err)
+	}
+
+	// A removable worktree of the same name is there again; the duplicate must not remove it, only re-send the report.
+	again, err := prepareWorktree(context.Background(), e.space, proto.Worktree{Repo: "repos/api", Branch: "spaceman/pushed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc.send(t, proto.TypeCommand, c)
+	var dup proto.WorktreeRemoved
+	fc.next(t, proto.TypeWorktreeRemoved, &dup)
+	if dup.CommandID != c.CommandID || dup.Result != proto.WorktreeRemovedOK || !dup.CheckedAt.Equal(rep.CheckedAt) {
+		t.Fatalf("re-sent report %+v, first %+v", dup, rep)
+	}
+	mustExist(t, again)
 }
