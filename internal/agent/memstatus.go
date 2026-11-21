@@ -180,6 +180,9 @@ func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (unc
 			return c.uncheckpointed, c.localCommits, true
 		}
 	}
+	if c, hit := cached(); hit { // another reader finished between the first look and the claim
+		return c.uncheckpointed, c.localCommits, true
+	}
 	select {
 	case m.statusSlots <- struct{}{}:
 		defer func() { <-m.statusSlots }()
