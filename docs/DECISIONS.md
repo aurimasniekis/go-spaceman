@@ -8169,6 +8169,104 @@
   has expired but not been ended: it keeps a switch-back from starting until the takeover is ended. That errs on the
   side of not moving the run; it is not changed here.
 
+### ADR-0106 — Worktree lifecycle: one safe removal path, auto-prune, a control-led cleanup and cheaper repository reports (security-relevant change)
+
+- **Status:** Accepted, 2026-11-21 (v0.1.17). Decision 1 (the removal core) and decision 2 (no race with a launch) are
+  implemented and tested with simulated evidence only: `internal/agent` tests against temporary repositories and a
+  local bare remote (`TestRemoveWorktreeSafely*`, `TestRecordWorkdir`). Nothing calls the core yet. Decisions 4 to 8
+  are the design for follow-up tasks; until they land, worktrees are still never removed automatically (LIMITATIONS).
+- **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
+  ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a
+  worktree with no change of its own, whose HEAD the remote has (so it can be checked out again from the branch, which
+  is kept), and no run uses. A worktree with anything that exists only on the node is refused, whoever asks.
+- **Context:**
+  - Every worker launched with a repository gets its own worktree (SM-REPO-002, `prepareWorktree`), reused while its
+    branch is in use and never removed afterwards (site guide, Repositories, Limitations). On a busy installation most
+    worktrees belong to finished tasks; each holds a full checkout (and often build output), so they become the
+    largest use of disk on the node.
+  - Repository reports (`space.repos.sync`, `inspectRepo`) run `git status` in every worktree of every repository,
+    so the report's cost grows with the finished worktrees nobody looks at any more.
+  - Worktrees also exist that no run created: made by hand by a person or by an agent's own shell, inside or outside
+    the space's `worktrees/` folder.
+- **Decision:**
+  1. **One removal path.** Every removal of a worktree, whoever asks (an agent tool, the scheduled cleanup, the
+     auto-prune), goes through the node's `removeWorktreeSafely` (`internal/agent/worktree_remove.go`). It removes the
+     folder `worktrees/<name>` of the space only after all of these hold, and otherwise refuses with a stable code and
+     leaves everything as it was:
+     - **Place** (`invalid`, `outside`, `not_worktree`, `locked`): the repository is a configured repository's main
+       folder (`validRepoPath`, no symlinked parent); the name is one path element; the space's `worktrees` folder and
+       the worktree folder are real folders, not symlinks, and the worktree's resolved path is directly inside the
+       resolved `worktrees` folder; git lists it as one of that repository's linked worktrees (never the main one) and
+       not locked. A worktree outside `worktrees/` is never removed by SpaceMan; it is only reported.
+     - **Remote** (`no_remote`, `fetch_failed`): the repository's configured URL (with its SpaceMan key, ADR-0044) is
+       fetched into the tracking refs of the remote that has that URL, with `--prune` for that remote only, so a branch
+       deleted on the remote stops counting as pushed. The URL in the repository's own configuration is never used
+       (agents can change it), so an unconfigured repository's worktrees are never removed by this path. A failed
+       fetch refuses: whether the remote has the work is then not known.
+     - **No run** (`live_run`): no live or launching run of the space works in the worktree, in a folder inside it or
+       in a folder that contains it (decision 2). A live run whose work folder is not recorded counts as using every
+       worktree.
+     - **Clean** (`dirty`, `untracked`): `git status --porcelain --untracked-files=all` shows nothing: no changed or
+       staged tracked file and no untracked file that is not ignored. Ignored files (build output) go with the folder.
+     - **Pushed** (`unpushed`): HEAD is a commit and `git rev-list HEAD --not --remotes=<remote>` is empty.
+     - Any git error refuses (`git_error`): unsure means not removed.
+
+     Then `git worktree remove <path>` (never `--force`; git refuses an unclean or locked worktree by itself, a
+     second check) and `git worktree prune`. The branch is kept: a removal deletes a checkout, never a ref, so a later
+     launch on that branch gets a fresh worktree at the same commit.
+  2. **No race with a launch.** A launch takes the space's worktree lock (`worktreeLock`) before it prepares its
+     worktree and holds it until it has written its run's work folder (`runs/<run>/workdir`, the resolved path) next to
+     the journal. A removal fetches first, without the lock (it can take minutes and launches must not wait on it;
+     fresher tracking refs only make the check stricter), then takes the lock for the run, clean and pushed checks and
+     the removal. So a launch either finishes looking at the worktree before the removal starts its checks (and the
+     removal sees its run) or starts after the removal (and `prepareWorktree` checks the kept branch out again). A run
+     that is journaled but has not recorded its folder yet (still launching), or that an older agent launched, blocks
+     every removal in its space until it ends. What the lock cannot cover is a process SpaceMan did not start (a
+     person's shell) writing in the worktree during the removal: git's own clean check catches a new or changed file,
+     and a commit made on the branch moves the kept branch ref; only a commit on a detached HEAD in that instant
+     would be left to git's garbage collection.
+  3. **How a worktree is judged.** Central joins the node's report with its own records: the newest run launched with
+     that repository and branch is the worktree's owning run, and that run's task (if any) its owning task. A worktree
+     with no such run (made by hand, or by an agent's shell) is **unowned**: it is listed with its state, never
+     auto-pruned, and removed only when control (or a person) asks for that one worktree, through the same core. What
+     is shown per worktree: path, branch, HEAD, owning run and task with their states, the time of the last change
+     (the newest of the worktree's index, HEAD and folder times), dirty and untracked counts, and whether HEAD was
+     reachable from the remote's tracking refs at the last fetch. A pull request's state is shown only when SpaceMan
+     already has it from events it receives; no forge API is called per worktree.
+  4. **Auto-prune (follow-up).** A space limit `worktree_retention_days` (0: never, the default; installation default
+     and per-space override like the retention limits, ADR-0045). The daily retention pass picks worktrees whose
+     owning task is done or cancelled and whose owning run ended at least that many days ago, with no live run on the
+     branch, and queues a node command (`space.worktree.remove`, a protocol minor bump) per worktree, bounded per pass.
+     The node answers with the result or the refusal code; a refused worktree is shown in the repository report and
+     tried again only on a later pass. Unowned worktrees and worktrees of failed tasks are never auto-pruned.
+  5. **Scheduled cleanup through control (follow-up).** Agent tools for control: `spaceman_worktrees_list` (decision 3,
+     from the latest report), `spaceman_worktree_remove` (one worktree, through the core, answering with the result or
+     the refusal code and reason) and `spaceman_worktrees_prune` (`git worktree prune`: forgets worktrees whose folder
+     is already gone; metadata only). On a schedule (weekly by default, an installation setting) SpaceMan sends each
+     active space's control one message asking it to tidy its repositories with these tools, with a short summary (how
+     many worktrees are finished, unowned, refused before). Control judges; nothing is removed by the message itself.
+  6. **Cheaper repository reports (follow-up).** `inspectRepo` skips `git status` in a worktree whose last change
+     (decision 3) is older than a cut-off (7 days by default) when the previous report has counts for it, and reports
+     the previous counts with the time they were taken. At most a bounded number of `git status` calls run per report,
+     the oldest checked first. Removal never relies on these counts: it checks live (decision 1).
+  7. **Merged local branches (follow-up, separate).** Branches stay after their worktree goes. A later tool may list
+     local branches with no worktree whose tip the remote's tracking refs contain, and delete one with `git branch -d`
+     (which refuses an unmerged branch) only when it is also not checked out anywhere. Not part of any removal above.
+  8. **Stale scratch folders (follow-up, separate).** Temporary folders a harness creates per session live outside the
+     space folder. A node sweep may remove those it can attribute to a run that ended longer ago than the retention,
+     and only those; it never removes a folder it cannot attribute.
+- **Rejected:**
+  - `git worktree remove --force` or deleting the folder directly: both lose work git would have refused to drop.
+  - Removing by age alone, or because a pull request was merged: a squash or rebase merge leaves the worktree's own
+    commits off the remote, which the pushed check correctly refuses; work that matters may exist only there.
+  - Trusting the repository's own remote URL: an agent can point it at a repository that "has" any commit.
+  - Asking a forge for pull request state per worktree: too slow for hundreds of worktrees and needs credentials.
+  - Removing from central: central has no access to the node's files; the node must check and remove in one place.
+- **Consequences:** Finished worktrees can be removed without losing anything that exists only on the node. A worktree
+  whose last commits were never pushed, or whose branch was deleted on the remote after a squash merge, stays until a
+  person or control pushes or discards that work deliberately. Every launch now writes one small file in its run
+  directory.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

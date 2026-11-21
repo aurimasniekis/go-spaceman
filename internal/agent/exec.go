@@ -402,14 +402,24 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	// The worktree is prepared and the run's work folder recorded under the space's worktree lock, so a worktree removal
+	// (ADR-0106) either finishes before this launch looks at the worktree or sees this run using it.
+	unlockWorktrees := a.worktreeLock(c.SpaceID)
 	if p.Worktree != nil {
 		dir, err := prepareWorktree(ctx, space, *p.Worktree)
 		if err != nil {
+			unlockWorktrees()
 			fail("prepare worktree", err)
 			return
 		}
 		work = dir
 	}
+	if err := a.recordWorkdir(c.RunID, space, work); err != nil {
+		unlockWorktrees()
+		fail("record the work folder", err)
+		return
+	}
+	unlockWorktrees()
 	var dreamMem []string // role memory checkouts a dream's memory/<role> links point at
 	if p.Dream != nil {
 		dir, links, err := a.prepareDream(ctx, c.SpaceID, space, c.RunID, p.InstanceID, *p.Dream)
