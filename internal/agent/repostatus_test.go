@@ -75,7 +75,7 @@ func readText(t *testing.T, p string) string {
 	return string(b)
 }
 
-// WL-6 (worktree lifecycle): a repository report's git status execs are bounded. Worktrees idle for over a week reuse
+// ADR-0107 decision 6 (WL-6): a repository report's git status execs are bounded. Worktrees idle for over a week reuse
 // cached counts, at most repoStatusMax status calls run per report, cached and unchecked worktrees say so, and a worktree
 // whose status is unknown is never reported clean. Temporary repositories only.
 func TestRepoReportWorktreeStatusBounded(t *testing.T) {

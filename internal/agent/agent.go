@@ -196,6 +196,8 @@ type Agent struct {
 	holdsStopped bool
 	// runLocks serialize a run's launch (its last check and start) with its stop, by run ID (runLock).
 	runLocks map[string]*refMutex
+	// removing holds the real paths of the worktrees a removal has claimed (claimWorktree), guarded by mu.
+	removing map[string]bool
 	// launching counts the launches in flight by run ID, from before the run is journaled until its process is started and
 	// observed. The runner reconcile leaves those runs alone (reconcileRunner).
 	launching map[string]int
@@ -315,7 +317,7 @@ func New(j *Journal, o Options) *Agent {
 		o.HTTPClient = http.DefaultClient
 	}
 	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
-		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, runLocks: map[string]*refMutex{}, launching: map[string]int{}, takeovers: map[string]*takeover{}}
+		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, runLocks: map[string]*refMutex{}, removing: map[string]bool{}, launching: map[string]int{}, takeovers: map[string]*takeover{}}
 	a.mem = newMemManager(a)
 	return a
 }

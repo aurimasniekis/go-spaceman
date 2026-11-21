@@ -8272,6 +8272,143 @@
     yet seen against a real pulsed.
   - The Terraform provider's `ingest_own_scope` attribute and grant resource are a separate change. The web UI does not
     show the scope or the grants yet; the API and CLI do.
+### ADR-0107 — Worktree lifecycle: one safe removal path, auto-prune, a control-led cleanup and cheaper repository reports (security-relevant change)
+
+- **Status:** Accepted, 2026-11-21 (v0.1.17). Decision 1 (the removal core) and decision 2 (no race with a launch) are
+  implemented and tested with simulated evidence only: `internal/agent` tests against temporary repositories and a
+  local bare remote (`TestRemoveWorktreeSafely*`, `TestRecordWorkdir`, `TestLaunchRecordsWorkdirUnderTheWorktreeLock`,
+  `TestLaunchRefusedOntoAClaimedWorktree` (a launch into, through a symlink to, and around a claimed worktree),
+  `TestPathsOverlapComparesFolders`, `TestRemoveWorktreeSafelyDoesNotHoldTheLockWhileChecking`). Nothing calls the
+  core yet. Decision 6 is implemented (WL-6, `internal/agent` `TestRepoReportWorktreeStatus*` in `repostatus_test.go`); decisions 4, 5, 7 and 8 are the design for follow-up tasks, and until they land,
+  worktrees are still never removed automatically (LIMITATIONS).
+- **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
+  ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a
+  worktree with no change of its own, whose HEAD the remote has (so it can be checked out again from the branch, which
+  is kept), and no run uses. A worktree with anything that exists only on the node is refused, whoever asks.
+- **Context:**
+  - Every worker launched with a repository gets its own worktree (SM-REPO-002, `prepareWorktree`), reused while its
+    branch is in use and never removed afterwards (site guide, Repositories, Limitations). On a busy installation most
+    worktrees belong to finished tasks; each holds a full checkout (and often build output), so they become the
+    largest use of disk on the node.
+  - Repository reports (`space.repos.sync`, `inspectRepo`) run `git status` in every worktree of every repository,
+    so the report's cost grows with the finished worktrees nobody looks at any more.
+  - Worktrees also exist that no run created: made by hand by a person or by an agent's own shell, inside or outside
+    the space's `worktrees/` folder.
+- **Decision:**
+  1. **One removal path.** Every removal of a worktree, whoever asks (an agent tool, the scheduled cleanup, the
+     auto-prune), goes through the node's `removeWorktreeSafely` (`internal/agent/worktree_remove.go`). It removes the
+     folder `worktrees/<name>` of the space only after all of these hold, and otherwise refuses with a stable code and
+     leaves everything as it was:
+     - **Place** (`invalid`, `outside`, `not_worktree`, `locked`): the repository is a configured repository's main
+       folder (`validRepoPath`, no symlinked parent); the name is one path element; the space's `worktrees` folder and
+       the worktree folder are real folders, not symlinks, and the worktree's resolved path is directly inside the
+       resolved `worktrees` folder; git lists it as one of that repository's linked worktrees (never the main one) and
+       not locked. A worktree outside `worktrees/` is never removed by SpaceMan; it is only reported.
+     - **Remote** (`no_remote`, `fetch_failed`): the repository's configured URL (with its SpaceMan key, ADR-0044) is
+       fetched (as a sync fetches: tracking refs only, nothing pruned), so the remote's commits are in the repository,
+       and then asked for its branches (`git ls-remote --heads`). Only the commits the remote itself lists count:
+       refs in the repository (tracking refs, symbolic refs) are agent-writable and never vouch for a commit, and a
+       branch deleted on the remote stops counting at once. The URL in the repository's own configuration is never used
+       (agents can change it), so an unconfigured repository's worktrees are never removed by this path. A failed
+       fetch or listing refuses: whether the remote has the work is then not known.
+     - **No run** (`live_run`): no live or launching run of the space works in the worktree, in a folder inside it or
+       in a folder that contains it (decision 2). A live run whose work folder is not recorded, or recorded as anything
+       but an absolute path, counts as using every worktree.
+     - **Clean** (`dirty`, `untracked`): no staged change (`diff-index --cached HEAD`); no tracked file whose content
+       differs from HEAD, hashed through a temporary index read from HEAD, so neither the index's cached stat data (an
+       edit within the same second) nor repository configuration (`core.trustctime`, `core.checkStat`) can hide an
+       edit (the checks also force `core.ignoreCase=false`, `core.fileMode=true` and `core.commitGraph=false`: a
+       commit-graph file is agent-writable and can misreport ancestry); no tracked file git was
+       told not to look at (assume-unchanged, skip-worktree, sparse checkout: their edits are hidden from `git status`
+       and from `git worktree remove`); no untracked file, judged by the tree's `.gitignore` files only (the
+       repository's `info/exclude` and `core.excludesFile` are agent-writable and could hide anything, and an
+       untracked `.gitignore` is itself untracked work, even when it ignores itself); and no git
+       repository anywhere below the top, ignored or not. Files a committed `.gitignore` ignores (build output, but
+       also a local `.env`) are not work SpaceMan can judge, and go with the folder: that is stated in the user guide.
+     - **Pushed** (`unpushed`): HEAD is a commit and `git rev-list HEAD --not <the remote's branch tips>` is empty.
+       History is read without replace refs (`GIT_NO_REPLACE_OBJECTS`), and a repository with `info/grafts` is
+       refused: both are agent-writable ways to make a commit look like an ancestor of another. Right before the
+       removal HEAD and the folder's resolved path are read again and must not have changed.
+     - Any git error refuses (`git_error`): unsure means not removed.
+
+     Then `git worktree remove <path>` (never `--force`; git refuses an unclean or locked worktree by itself, a
+     second check) and `git worktree prune` (`git worktree remove` already deletes the worktree's own administrative
+     files; the prune only drops stale entries of other worktrees whose folders are gone, which keeps the repository's
+     worktree list true, and its failure does not undo the removal). The branch is kept: a removal deletes a checkout, never a ref, so a later
+     launch on that branch gets a fresh worktree at the same commit.
+  2. **No race with a launch.** A launch takes the space's worktree lock (`worktreeLock`) before it prepares its
+     worktree and holds it until it has written its run's work folder (`runs/<run>/workdir`, the resolved path) next to
+     the journal; it holds it inside the space's guard lock, so anything that holds the worktree lock for long stalls
+     every launch of the space. A removal therefore never holds that lock across its slow work (a clean check reads
+     the whole tree and can take minutes). The lock is held only to *claim* the worktree: under it the removal checks
+     that no live or launching run uses the worktree and marks its resolved path as being removed (`claimWorktree`),
+     then lets go. A launch checks the mark under the same lock, before it prepares its worktree and again before it
+     records its folder, and a launch onto a marked worktree, into a folder in it, or into a folder that contains it
+     fails clearly ("launch again when that is done") instead of starting or waiting. The launch's work folder and the mark are
+     compared in one canonical form (`resolvedWork`, shared with the record: the folder resolved through symlinks, or its
+     deepest existing parent resolved with the rest joined on), so a symlink in the space folder cannot name the marked
+     folder differently, and the in-use and mark checks also compare the folders themselves (`os.SameFile`, at each
+     existing level) so a path that differs only by case on a case-insensitive filesystem is still recognised. That
+     case-insensitive path is not exercised by a test (the test node's filesystem is case-sensitive); the symlink
+     equivalent is. Launches elsewhere in the space
+     are not delayed. The fetch also runs before the claim, without the lock (fresher refs only make the check
+     stricter). The clean and pushed checks, the final re-read of the folder and HEAD, and the removal then run under
+     the mark, and the mark is released when the removal ends, whatever its outcome. So a launch either finishes looking
+     at the worktree before the claim (and the claim sees its run) or starts after the removal (and `prepareWorktree`
+     checks the kept branch out again), or is refused for the length of the removal. A run that is journaled but has not
+     recorded its folder yet (still launching), or that an older agent launched, blocks every removal in its space
+     until it ends. Two removals of one worktree are refused (`locked`). What this cannot cover is a process SpaceMan
+     did not start (a person's shell) writing in the worktree during the removal: git's own clean check catches a new
+     or changed file, the HEAD re-read catches most commits, and a commit made on the branch moves the kept branch
+     ref; only a commit on a detached HEAD in the last instant would be left to git's garbage collection. The mark also
+     knows only the folder each run launched in: a run that works in another worktree through its own shell is not
+     seen. Only clean, pushed work can be removed under it, so that disrupts the run but loses nothing. Lock order: a
+     launch holds the space's guard lock, then the worktree lock; a removal takes the repository lock only around its
+     fetch, the worktree lock only inside the claim, and never the guard lock. Callers of the removal must hold
+     neither. Alternative considered: a bounded wait for the lock in the launch (fail after a few seconds). It keeps
+     the long hold and turns every big removal into failed launches of other branches, so it was not chosen.
+  3. **How a worktree is judged.** Central joins the node's report with its own records: the newest run launched with
+     that repository and branch is the worktree's owning run, and that run's task (if any) its owning task. A worktree
+     with no such run (made by hand, or by an agent's shell) is **unowned**: it is listed with its state, never
+     auto-pruned, and removed only when control (or a person) asks for that one worktree, through the same core. What
+     is shown per worktree: path, branch, HEAD, owning run and task with their states, the time of the last change
+     (the newest of the worktree's index, HEAD and folder times), dirty and untracked counts, and whether HEAD was
+     reachable from the remote's branches as the remote listed them at the last check (informational: a removal always
+     checks again, and the repository's own refs never vouch, decision 1). A pull request's state is shown only when SpaceMan
+     already has it from events it receives; no forge API is called per worktree.
+  4. **Auto-prune (follow-up).** A space limit `worktree_retention_days` (0: never, the default; installation default
+     and per-space override like the retention limits, ADR-0045). The daily retention pass picks worktrees whose
+     owning task is done or cancelled and whose owning run ended at least that many days ago, with no live run on the
+     branch, and queues a node command (`space.worktree.remove`, a protocol minor bump) per worktree, bounded per pass.
+     The node answers with the result or the refusal code; a refused worktree is shown in the repository report and
+     tried again only on a later pass. Unowned worktrees and worktrees of failed tasks are never auto-pruned.
+  5. **Scheduled cleanup through control (follow-up).** Agent tools for control: `spaceman_worktrees_list` (decision 3,
+     from the latest report), `spaceman_worktree_remove` (one worktree, through the core, answering with the result or
+     the refusal code and reason) and `spaceman_worktrees_prune` (`git worktree prune`: forgets worktrees whose folder
+     is already gone; metadata only). On a schedule (weekly by default, an installation setting) SpaceMan sends each
+     active space's control one message asking it to tidy its repositories with these tools, with a short summary (how
+     many worktrees are finished, unowned, refused before). Control judges; nothing is removed by the message itself.
+  6. **Cheaper repository reports (implemented, WL-6).** `inspectRepo` skips `git status` in a worktree whose last change
+     (decision 3) is older than a cut-off (7 days by default) when the previous report has counts for it, and reports
+     the previous counts with the time they were taken. At most a bounded number of `git status` calls run per report,
+     the oldest checked first. Removal never relies on these counts: it checks live (decision 1).
+  7. **Merged local branches (follow-up, separate).** Branches stay after their worktree goes. A later tool may list
+     local branches with no worktree whose tip the remote's tracking refs contain, and delete one with `git branch -d`
+     (which refuses an unmerged branch) only when it is also not checked out anywhere. Not part of any removal above.
+  8. **Stale scratch folders (follow-up, separate).** Temporary folders a harness creates per session live outside the
+     space folder. A node sweep may remove those it can attribute to a run that ended longer ago than the retention,
+     and only those; it never removes a folder it cannot attribute.
+- **Rejected:**
+  - `git worktree remove --force` or deleting the folder directly: both lose work git would have refused to drop.
+  - Removing by age alone, or because a pull request was merged: a squash or rebase merge leaves the worktree's own
+    commits off the remote, which the pushed check correctly refuses; work that matters may exist only there.
+  - Trusting the repository's own remote URL: an agent can point it at a repository that "has" any commit.
+  - Asking a forge for pull request state per worktree: too slow for hundreds of worktrees and needs credentials.
+  - Removing from central: central has no access to the node's files; the node must check and remove in one place.
+- **Consequences:** Finished worktrees can be removed without losing anything that exists only on the node. A worktree
+  whose last commits were never pushed, or whose branch was deleted on the remote after a squash merge, stays until a
+  person or control pushes or discards that work deliberately. Every launch now writes one small file in its run
+  directory.
 
 ## 2. Open items and unresolved contracts
 
