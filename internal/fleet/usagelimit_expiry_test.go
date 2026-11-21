@@ -188,3 +188,40 @@ func TestClosePassedHoldsCascadesToUnknownHolds(t *testing.T) {
 		t.Fatalf("open after sweep: %v, ulm_u cleared by %q", open, e.clearedBy("ulm_u"))
 	}
 }
+
+// A known reset that passed more than the grace ago, or a gateway hold's, never sets the wake-up; one inside the grace
+// still does.
+func TestNextHoldExpiryIgnoresPassedResets(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_old", "spc_a", "acc_1", "", proto.LimitFiveHour, dur(-time.Hour), nil)
+	if at, err := e.svc.NextHoldExpiry(e.ctx); err != nil || !at.IsZero() {
+		t.Fatalf("next expiry %v (%v), want none", at, err)
+	}
+	e.hold("ulm_new", "spc_b", "acc_1", "", proto.LimitFiveHour, dur(-limitResetGrace/2), nil)
+	want := e.clk.Now().Add(limitResetGrace / 2)
+	if at, err := e.svc.NextHoldExpiry(e.ctx); err != nil || !at.Equal(want) {
+		t.Fatalf("next expiry %v (%v), want %v", at, err, want)
+	}
+}
+
+// The cascade closes only the no-reset holds of kind unknown: another kind without a reset, and an unknown hold with a
+// reset of its own (ahead), stay open.
+func TestClosePassedHoldsCascadeFilters(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_f", "spc_a", "acc_1", "", proto.LimitFiveHour, dur(-time.Hour), nil)
+	e.hold("ulm_7d", "spc_b", "acc_1", "", proto.LimitSevenDay, nil, dur(4*time.Hour))
+	e.hold("ulm_ur", "spc_c", "acc_1", "", proto.LimitUnknown, dur(time.Hour), dur(4*time.Hour))
+	e.hold("ulm_u", "spc_a", "acc_1", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.hold("ulm_late", "spc_b", "acc_1", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	for _, id := range []string{"ulm_f", "ulm_7d", "ulm_ur", "ulm_u"} {
+		e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = ?`, e.us(-2*time.Hour), id)
+	}
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_late'`, e.us(-30*time.Minute))
+	if err := e.svc.closePassedHolds(e.ctx, e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	open := e.openIDs()
+	if len(open) != 3 || !open["ulm_7d"] || !open["ulm_ur"] || !open["ulm_late"] || e.clearedBy("ulm_u") != "evidence" {
+		t.Fatalf("open after sweep: %v, ulm_u cleared by %q", open, e.clearedBy("ulm_u"))
+	}
+}
