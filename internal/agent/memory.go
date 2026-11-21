@@ -294,7 +294,11 @@ func (m *memManager) checkpointBy(ctx context.Context, spaceID, role, instance, 
 	_ = m.a.j.putMemory(ctx, st)
 	if published {
 		m.scheduleSync(spaceID, role, syncDelay)
-		m.fastForwardIdle(ctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
+		if notAfter.IsZero() {
+			// ADR-0094: the other instances between turns follow the new head. Not under a deadline (a flush): the
+			// collection lock wait and one 2 min git per idle instance are unbounded; they follow at the next checkpoint.
+			m.fastForwardIdle(ctx, spaceID, role, instance)
+		}
 	}
 	m.statusChanged(spaceID, role)
 	return err
