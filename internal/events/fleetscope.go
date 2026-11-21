@@ -107,13 +107,19 @@ func (svc *Service) GrantFleetScope(ctx context.Context, actor audit.Actor, spac
 		if sp.State == "archived" {
 			return apperr.New(apperr.CodePrecondition, "the space is archived")
 		}
-		_, prev := tx.Q.GetEventFleetScopeGrant(ctx, spaceID)
+		// Only "no grant yet" makes this a first grant; any other lookup error fails the write rather than audit a
+		// replacement as a first grant.
+		_, lookupErr := tx.Q.GetEventFleetScopeGrant(ctx, spaceID)
+		if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+			return lookupErr
+		}
+		replaced := lookupErr == nil
 		if err := tx.Q.UpsertEventFleetScopeGrant(ctx, db.UpsertEventFleetScopeGrantParams{SpaceID: spaceID, Reason: reason, GrantedAt: tx.NowMicros(),
 			GrantedBy: actor.ID}); err != nil {
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_fleet_scope.granted", Target: audit.Target{Type: "space", ID: spaceID},
-			Details: map[string]any{"space_id": spaceID, "reason": reason, "replaced": prev == nil}})
+			Details: map[string]any{"space_id": spaceID, "reason": reason, "replaced": replaced}})
 		return err
 	})
 	if err != nil {

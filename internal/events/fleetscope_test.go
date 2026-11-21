@@ -293,3 +293,26 @@ func TestFleetData(t *testing.T) {
 		t.Fatalf("got %s\nwant %s", out, want)
 	}
 }
+
+// A repeated grant is audited as a replacement and a first grant is not: the audit flag is read back from the trail.
+func TestGrantFleetScopeAuditsReplaced(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	must(t, grantFleet(f, "spc_a"))
+	must(t, grantFleet(f, "spc_a"))
+	rows, err := f.s.ReadDB().QueryContext(f.ctx, `SELECT details_json FROM audit_events WHERE action = 'event_fleet_scope.granted' AND target_id = 'spc_a' ORDER BY seq`)
+	must(t, err)
+	defer rows.Close()
+	var got []bool
+	for rows.Next() {
+		var raw string
+		must(t, rows.Scan(&raw))
+		var d map[string]any
+		must(t, json.Unmarshal([]byte(raw), &d))
+		got = append(got, d["replaced"] == true)
+	}
+	must(t, rows.Err())
+	if len(got) != 2 || got[0] || !got[1] {
+		t.Fatalf("replaced flags %v, want [false true]", got)
+	}
+}
