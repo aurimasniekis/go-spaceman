@@ -73,6 +73,8 @@ type Service struct {
 
 	// Wait is how long Remove and the tools wait for a node's answer (default DefaultWait).
 	Wait time.Duration
+	// PruneWait is how long PruneSpace waits in total for the answers of one space's removals (default PruneAnswerWait).
+	PruneWait time.Duration
 
 	mu      sync.Mutex
 	waiters map[string][]chan struct{} // by command ID
@@ -149,7 +151,7 @@ func (svc *Service) Request(ctx context.Context, actor audit.Actor, spaceID, rep
 		}
 		// Only a worktree of the last report can be named: a typo or a folder the node never listed is refused here
 		// instead of being sent to the node.
-		listed, err := svc.listed(ctx, tx.Q, sp, *rep, name)
+		head, listed, err := svc.listed(ctx, tx.Q, sp, *rep, name)
 		if err != nil {
 			return err
 		}
@@ -180,7 +182,7 @@ func (svc *Service) Request(ctx context.Context, actor audit.Actor, spaceID, rep
 		base.CommandID, base.Status = id, StatusPending
 		out = base
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: ActionRequested, Target: audit.Target{Type: TargetType, ID: id},
-			Details: map[string]any{"space_id": spaceID, "repo": rep.Path, "name": name}})
+			Details: map[string]any{"space_id": spaceID, "repo": rep.Path, "name": name, "head": head}})
 		return err
 	})
 	if err != nil {
@@ -372,16 +374,17 @@ func (svc *Service) wake(id string) {
 	}
 }
 
-// listed reports whether the repository's last report (of the space's current node) lists worktrees/<name>.
-func (svc *Service) listed(ctx context.Context, q *db.Queries, sp db.Space, rep db.SpaceRepository, name string) (bool, error) {
+// listed reports whether the repository's last report (of the space's current node) lists worktrees/<name>, and the
+// HEAD it lists for it.
+func (svc *Service) listed(ctx context.Context, q *db.Queries, sp db.Space, rep db.SpaceRepository, name string) (string, bool, error) {
 	r, err := q.GetRepositoryReport(ctx, sp.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return "", false, nil
 	} else if err != nil {
-		return false, err
+		return "", false, err
 	}
 	if !r.ReportedAt.Valid || r.NodeID != sp.NodeID {
-		return false, nil
+		return "", false, nil
 	}
 	var report proto.RepoStatusReport
 	_ = json.Unmarshal([]byte(r.ReportJson), &report) // an unreadable report lists nothing
@@ -391,11 +394,45 @@ func (svc *Service) listed(ctx context.Context, q *db.Queries, sp db.Space, rep 
 		}
 		for _, w := range st.Check.Worktrees {
 			if w.Path == "worktrees/"+name {
-				return true, nil
+				return w.Head, true, nil
 			}
 		}
 	}
-	return false, nil
+	return "", false, nil
+}
+
+// refusedHeads maps (repository folder, worktree name) of the space to the HEAD the node reported when its latest
+// answer for that worktree was a refusal. The node reports a HEAD only for the refusals made after it cleaned the tree
+// (not for dirty, untracked, locked, fetch_failed, no_remote or outside), so the HEAD the listing showed when the
+// removal was requested stands in for a missing one. A worktree whose latest answer was anything else is absent. Only
+// answers newer than since are read, and of those the newest 5000.
+func (svc *Service) refusedHeads(ctx context.Context, spaceID string, since time.Time) (map[[2]string]string, error) {
+	rows, err := svc.s.ReadDB().QueryContext(ctx, `SELECT json_extract(q.details_json, '$.repo'), json_extract(q.details_json, '$.name'),
+		json_extract(a.details_json, '$.result'), coalesce(nullif(json_extract(a.details_json, '$.head'), ''), json_extract(q.details_json, '$.head'))
+		FROM audit_events a JOIN audit_events q ON q.target_type = a.target_type AND q.target_id = a.target_id AND q.action = ?
+		WHERE a.target_type = ? AND a.action = ? AND a.at >= ? AND json_extract(a.details_json, '$.space_id') = ? ORDER BY a.seq DESC LIMIT 5000`,
+		ActionRequested, TargetType, ActionResult, since.UnixMicro(), spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[[2]string]string{}
+	seen := map[[2]string]bool{}
+	for rows.Next() {
+		var repo, name, result, head sql.NullString
+		if err := rows.Scan(&repo, &name, &result, &head); err != nil {
+			return nil, err
+		}
+		k := [2]string{repo.String, name.String}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if result.String == StatusRefused {
+			out[k] = head.String
+		}
+	}
+	return out, rows.Err()
 }
 
 // folderOf is the worktree folder name a run's launch gets (the node's rule: the branch with / replaced by -).

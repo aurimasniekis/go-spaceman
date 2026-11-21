@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
+	"github.com/aurimasniekis/go-spaceman/internal/worktrees"
 )
 
 var admin = audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
@@ -424,5 +425,164 @@ func TestPassPrunesTelegramMessagesAtTheBoundary(t *testing.T) {
 	}
 	if n := f.count(`SELECT count(*) FROM telegram_messages WHERE message_id = 2`); n != 1 {
 		t.Fatal("the mapping an hour inside the window was pruned")
+	}
+}
+
+type pruneCall struct {
+	space string
+	days  int64
+	limit int
+}
+
+// withPrune installs a fake worktree pruner that records its calls and reports every asked removal as removed (up to
+// the candidates it is given).
+func (f *fx) withPrune(candidates int) *[]pruneCall {
+	calls := &[]pruneCall{}
+	f.svc.o.PruneWorktrees = func(_ context.Context, actor audit.Actor, space string, days int64, limit int) (worktrees.PruneSummary, error) {
+		if actor != Actor {
+			f.t.Errorf("actor %+v", actor)
+		}
+		*calls = append(*calls, pruneCall{space, days, limit})
+		n := min(candidates, limit)
+		return worktrees.PruneSummary{Candidates: candidates, Requested: n, Removed: n}, nil
+	}
+	return calls
+}
+
+// The worktree step runs only for a space whose worktree_retention_days is above 0 (the default 0 is off), with the
+// space's days and the per-space bound, and its removals are counted.
+func TestPassPrunesWorktreesOnlyWhenEnabled(t *testing.T) {
+	f := newFx(t, 0)
+	calls := f.withPrune(3)
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if len(*calls) != 0 || p.Deleted[KindWorktrees] != 0 {
+		t.Fatalf("pruned with the limit off: %v %v", *calls, p.Deleted)
+	}
+	_, err = f.lim.Set(f.ctx, admin, "spc_a", 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 14}})
+	must(t, err)
+	p, err = f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if len(*calls) != 1 || (*calls)[0] != (pruneCall{"spc_a", 14, WorktreeBatchPerSpace}) || p.Deleted[KindWorktrees] != 3 {
+		t.Fatalf("calls %v deleted %v", *calls, p.Deleted)
+	}
+	// Setting it back to 0 turns it off.
+	_, err = f.lim.Set(f.ctx, admin, "spc_a", 1, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 0}})
+	must(t, err)
+	if _, err = f.svc.Run(f.ctx, admin); err != nil || len(*calls) != 1 {
+		t.Fatalf("pruned after turning it off: %v %v", err, *calls)
+	}
+}
+
+// The bounds: a space is asked for at most WorktreeBatchPerSpace, and the pass for at most WorktreeBatchPerPass; later
+// spaces get what is left and none once it is spent.
+func TestPassBoundsWorktreePrune(t *testing.T) {
+	f := newFx(t, 0)
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("spc_x%d", i)
+		f.exec(fmt.Sprintf(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('%s', 'x%d', 'X', 'nod_1', 'active', 'x%d', 0, 't', 0)`, id, i, i))
+	}
+	for _, id := range []string{"spc_a", "spc_b", "spc_x0", "spc_x1", "spc_x2", "spc_x3", "spc_x4", "spc_x5"} {
+		_, err := f.lim.Set(f.ctx, admin, id, 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 7}})
+		must(t, err)
+	}
+	calls := f.withPrune(1000)
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	total := 0
+	for _, c := range *calls {
+		if c.limit > WorktreeBatchPerSpace || c.limit <= 0 {
+			t.Fatalf("per-space bound broken: %v", *calls)
+		}
+		total += c.limit
+	}
+	if total != WorktreeBatchPerPass || p.Deleted[KindWorktrees] != WorktreeBatchPerPass {
+		t.Fatalf("asked %d, removed %d, want %d: %v", total, p.Deleted[KindWorktrees], WorktreeBatchPerPass, *calls)
+	}
+	if len(*calls) != WorktreeBatchPerPass/WorktreeBatchPerSpace {
+		t.Fatalf("spaces asked: %d", len(*calls))
+	}
+}
+
+// A pruner error fails the pass for that space only; the others still run.
+func TestPassWorktreePruneErrorContinues(t *testing.T) {
+	f := newFx(t, 0)
+	for _, id := range []string{"spc_a", "spc_b"} {
+		_, err := f.lim.Set(f.ctx, admin, id, 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 7}})
+		must(t, err)
+	}
+	var seen []string
+	f.svc.o.PruneWorktrees = func(_ context.Context, _ audit.Actor, space string, _ int64, _ int) (worktrees.PruneSummary, error) {
+		seen = append(seen, space)
+		return worktrees.PruneSummary{}, errors.New("boom")
+	}
+	p, err := f.svc.Run(f.ctx, admin)
+	if err == nil || p.State != StateFailed || len(seen) != 2 {
+		t.Fatalf("%v %+v %v", err, p, seen)
+	}
+}
+
+// enableWorktrees turns the worktree retention on for the fixture's spaces and the extra ones.
+func (f *fx) enableWorktrees(extra int) {
+	f.t.Helper()
+	ids := []string{"spc_a", "spc_b"}
+	for i := 0; i < extra; i++ {
+		id := fmt.Sprintf("spc_x%d", i)
+		f.exec(fmt.Sprintf(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('%s', 'x%d', 'X', 'nod_1', 'active', 'x%d', 0, 't', 0)`, id, i, i))
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
+		_, err := f.lim.Set(f.ctx, admin, id, 0, limits.Input{Values: map[string]int64{limits.WorktreeRetention: 7}})
+		must(f.t, err)
+	}
+}
+
+// The pass's own cap, when it is not a multiple of the per-space bound: the last space is asked for what is left, not
+// for the whole per-space bound.
+func TestPassWorktreeCapIsNotAMultipleOfTheSpaceBound(t *testing.T) {
+	f := newFx(t, 0)
+	f.enableWorktrees(3)
+	f.svc.o.WorktreeBatchPerPass = 25
+	calls := f.withPrune(1000)
+	p, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	var limits []int
+	for _, c := range *calls {
+		limits = append(limits, c.limit)
+	}
+	if fmt.Sprint(limits) != "[10 10 5]" || p.Deleted[KindWorktrees] != 25 {
+		t.Fatalf("limits %v removed %d", limits, p.Deleted[KindWorktrees])
+	}
+}
+
+// Each pass starts at the space after the one where the last pass spent the whole batch, so spaces late in the list
+// are not starved by the early ones.
+func TestPassWorktreePruneRotatesTheStartSpace(t *testing.T) {
+	f := newFx(t, 0)
+	f.enableWorktrees(6) // 8 spaces; a pass serves 5
+	calls := f.withPrune(1000)
+	_, err := f.svc.Run(f.ctx, admin)
+	must(t, err)
+	first := append([]pruneCall(nil), *calls...)
+	*calls = nil
+	_, err = f.svc.Run(f.ctx, admin)
+	must(t, err)
+	if len(first) != 5 || len(*calls) != 5 {
+		t.Fatalf("served %d then %d spaces", len(first), len(*calls))
+	}
+	if (*calls)[0].space == first[0].space {
+		t.Fatalf("the second pass started at the same space: %v then %v", first, *calls)
+	}
+	for _, c := range first {
+		if c.space == (*calls)[0].space {
+			t.Fatalf("the second pass started at a space the first one served (%s), not the one after the last: %v then %v", c.space, first, *calls)
+		}
+	}
+	served := map[string]bool{}
+	for _, c := range append(first, *calls...) {
+		served[c.space] = true
+	}
+	if len(served) != 8 {
+		t.Fatalf("two passes served %d of 8 spaces", len(served))
 	}
 }

@@ -98,7 +98,7 @@ var RetentionKeys = []string{RetainRecordings, RetainTranscripts, RetainAttachme
 
 // retentionWriteKeys are the limits whose change needs retention:write: RetentionKeys and the worktree retention
 // period (ADR-0107 decision 4: like the retention limits). The worktree key is not in RetentionKeys, which the
-// retention pass and the retention defaults read, until its pruning lands.
+// retention defaults list: the pass reads it in its own step (the worktree prune).
 var retentionWriteKeys = append(slices.Clone(RetentionKeys), WorktreeRetention)
 
 // TerminalSizeKeys are the limits that set a new run's held terminal size (ADR-0075).

@@ -529,8 +529,18 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
   connects, when a run of the space ends and on **Sync now**; nothing polls idle spaces (SM-ARCH-004). A report can be
   minutes old and says when it was made; work an agent is doing right now shows after its run ends or the next sync
   (SM-REPO-003). Each report asks every remote for its default branch (`git ls-remote`, 30 s each), so an unreachable
-  remote slows the report down. Worktrees are never cleaned up automatically; remove them with git when done. (ADR-0107 adds the
-  node's safe-removal check that a later cleanup will use; nothing calls it yet.) The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
+  remote slows the report down. Worktrees are cleaned up automatically only for a space whose `worktree_retention_days` is above 0 (off by
+  default): the daily retention pass asks the node to remove up to 10 per space and 50 per pass of those whose run's tasks
+  are all done or cancelled, counted from the later of the run's end and the tasks' latest finish time (a task without a finish
+  time keeps the worktree), through the node's safe-removal check (a dirty, unpushed or held one is refused and stays). A
+  refused worktree is retried on later passes and counts against the batch bounds, but it is tried after the worktrees never
+  refused or refused at another HEAD, and each pass starts at the space after the one where the last pass spent the whole
+  batch (in memory: a restart starts at the first space). Many worktrees the node always refuses can still delay the others,
+  within a space and, with enough such spaces, across spaces for several passes, until they are cleaned up or pushed. A refusal the node
+  makes before it reads the HEAD (dirty, untracked, locked, fetch failed, no remote, outside) carries none, so the HEAD the
+  listing showed when the removal was requested stands in for it. Only the newest 5000 answers of the last 30 days (or four
+  times the retention days, if longer) are read to tell what was refused. Otherwise remove them with git
+  when done or through control (ADR-0107). The worktree listing reads the newest 1000 runs of the space (plus every live run), so with more
   than 1000 runs a worktree whose owning run ended outside that window shows as unowned ("made by hand"). That fails safe:
   an unowned worktree is never picked by `spaceman_worktrees_prune`.
 - **Reassignment does not move work.** Reassigning a task (the task drawer, `spaceman task update --role/--run`, the API)

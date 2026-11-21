@@ -34,6 +34,8 @@ type fx struct {
 	svc  *Service
 	reg  *agenttools.Registry
 	repo *repos.Repository
+	// heads overrides the HEAD reportWith lists for a worktree (default "bbbb").
+	heads map[string]string
 }
 
 // newFx seeds a node (protocol minor minor) with spc_a holding a valid lease, a configured repository "api" and a
@@ -48,7 +50,7 @@ func newFx(t *testing.T, minor int) *fx {
 	fl := fleet.New(s, kr, aw, eventbus.New(), ch, fleet.Options{Clock: clk})
 	rp := repos.New(s, aw, ch, fl, repos.Options{Clock: clk})
 	q := queue.New(s, aw, ch)
-	f := &fx{t: t, ctx: context.Background(), s: s, clk: clk, rp: rp, svc: New(s, aw, fl, rp, q, clk, nil)}
+	f := &fx{heads: map[string]string{}, t: t, ctx: context.Background(), s: s, clk: clk, rp: rp, svc: New(s, aw, fl, rp, q, clk, nil)}
 	f.svc.Wait = 2 * time.Second
 	f.reg = agenttools.New(agenttools.Deps{Extra: []func(*agenttools.Registry){Tools(f.svc)}})
 	exp := clk.Now().Add(time.Hour).UnixMicro()
@@ -90,9 +92,20 @@ func (f *fx) run(id, branch, observed string, ended time.Time) {
 		VALUES (?, 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', 'ins_x', 'running', ?, ?, ?, 't', ?, ?)`, id, observed, string(launch), created, end, created)
 }
 
+// task adds a task of the run; a finished one (done, cancelled or failed) is finished when its run ended.
 func (f *fx) task(id, status, run string) {
 	f.t.Helper()
-	f.exec(`INSERT INTO tasks (id, space_id, title, rank, status, assignee_run, created_at, created_by, updated_at) VALUES (?, 'spc_a', ?, 1, ?, ?, 0, 't', 0)`, id, "Title "+id, status, run)
+	f.taskAt(id, status, run, 1, `(SELECT ended_at FROM runs WHERE id = ?)`, run)
+}
+
+// taskAt adds a task with an explicit rank and finished_at (a SQL expression with its args; "NULL" for none).
+func (f *fx) taskAt(id, status, run string, rank int, finished string, args ...any) {
+	f.t.Helper()
+	if status != "done" && status != "cancelled" && status != "failed" {
+		finished, args = "NULL", nil
+	}
+	f.exec(`INSERT INTO tasks (id, space_id, title, rank, status, assignee_run, finished_at, created_at, created_by, updated_at) VALUES (?, 'spc_a', ?, ?, ?, ?, `+finished+`, 0, 't', 0)`,
+		append([]any{id, "Title " + id, rank, status, run}, args...)...)
 }
 
 func (f *fx) report() {
@@ -133,8 +146,13 @@ func (f *fx) commands() (ids []string, payloads []proto.WorktreeRemovePayload) {
 }
 
 func (f *fx) answer(cmd, name, result, code, reason string) {
+	f.answerHead(cmd, name, result, code, reason, "bbbb")
+}
+
+// answerHead is answer with the HEAD the node reports ("" for the refusals the node makes before it reads the HEAD).
+func (f *fx) answerHead(cmd, name, result, code, reason, head string) {
 	f.svc.OnRemoved(f.ctx, "nod_1", proto.WorktreeRemoved{CommandID: cmd, SpaceID: "spc_a", Repo: "api", Name: name, Result: result, Code: code, Reason: reason,
-		Path: "worktrees/" + name, Branch: "spaceman/tsk_1", Head: "bbbb", CheckedAt: f.clk.Now()})
+		Path: "worktrees/" + name, Branch: "spaceman/tsk_1", Head: head, CheckedAt: f.clk.Now()})
 }
 
 func (f *fx) call(kind, tool string, args any, out any) error {

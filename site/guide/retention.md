@@ -22,9 +22,13 @@ keeps it forever; otherwise at least 30 days). It cannot be set per space.
 
 Changing a space's retention periods needs the `retention:write` permission, which only admins hold: a shorter period
 deletes data. The worktree retention period (`limits.worktree_retention_days`, 0 by default, up to 36,500 days) needs it
-too: it is the number of days after its task was done or cancelled that a worktree SpaceMan created may be pruned. It is
-stored and shown, but the pruning that reads it is a follow-up (ADR-0107), so nothing is removed yet; it is not in the
-table above for that reason, and the daily pass does not read it. Other limits on the same page stay editable by the space's operators.
+too: it is the number of days after its work finished that a worktree SpaceMan created may be pruned: every task of the worktree's run is done or cancelled and the run has ended, counted from the later of the run's end and the tasks' latest finish time. The
+daily pass reads it in its own step (it is not in the table above, which lists data deletions): for each space with a value above 0 it
+asks the node to remove the worktrees of finished work that finished at least that many days ago, oldest first (ones the node refused at their current state last), at most 10
+per space and 50 per pass (the next pass continues, starting at a different space). The node checks every worktree again and refuses one with uncommitted
+changes, untracked files or commits no remote has; central never asks for one a live run holds. Worktrees without an owner
+task, those with a failed or open task (or a task without a finish time) and a space whose node is too old are left alone. A refused worktree is tried again on
+the next pass. The pass's count `worktrees` is the number removed. Other limits on the same page stay editable by the space's operators.
 
 Uploads that no item ever used are still collected after a day by the hourly attachment collection, whatever the
 retention period.
@@ -43,6 +47,9 @@ recent step-up).
 - Nothing is deleted while central was restored from a backup and the restore is not acknowledged yet: the pass waits
   until an administrator has looked at the restored installation.
 - Deleted data comes back only by restoring a backup.
+- A pass you start by hand runs synchronously, so it returns only when it is done. The worktree step waits up to 30 seconds
+  per space for the node's answers, and a pass asks for at most 50 removals in at most 50 spaces' turns: in the worst case
+  (every node slow) a manual pass can take about 50 × 30 seconds, roughly 25 minutes.
 - A deleted recording stays deleted even if the node still holds it: central acknowledges what the node ships for it without
   storing it. The node then counts its own copy as fully shipped, so its journal prune may remove that copy.
 
