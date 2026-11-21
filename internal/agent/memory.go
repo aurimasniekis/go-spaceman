@@ -241,6 +241,16 @@ func (m *memManager) checkpoint(ctx context.Context, spaceID, role, instance, re
 
 // checkpointErr is checkpoint reporting whether the changes reached the shared history.
 func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance, reason string) error {
+	return m.checkpointBy(ctx, spaceID, role, instance, reason, time.Time{})
+}
+
+// errBudgetSpent is what checkpointBy returns for a checkpoint it did not start because its budget had run out.
+var errBudgetSpent = errors.New("checkpoint budget spent")
+
+// checkpointBy is checkpointErr that does not start once notAfter has passed (also after waiting for the collection
+// lock) and cuts its git short at notAfter; the zero time: no limit. A skipped checkpoint returns errBudgetSpent and
+// records nothing: the changes stay in the files.
+func (m *memManager) checkpointBy(ctx context.Context, spaceID, role, instance, reason string, notAfter time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err // stopping (the connection or the agent ended): no git, no record, no warning
 	}
@@ -254,7 +264,17 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 		unlock()
 		return nil // the collection was renamed meanwhile (ADR-0093): its checkouts moved with it
 	}
-	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	limit := time.Now().Add(checkpointDeadline)
+	if !notAfter.IsZero() {
+		if !time.Now().Before(notAfter) {
+			unlock()
+			return errBudgetSpent
+		}
+		if notAfter.Before(limit) {
+			limit = notAfter
+		}
+	}
+	pctx, cancel := context.WithDeadline(ctx, limit)
 	published, err := m.publish(pctx, spaceID, role, instance, reason)
 	cancel()
 	unlock()

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -80,4 +81,71 @@ func TestInstanceStatusSingleReader(t *testing.T) {
 	if one := count() - single; single != one {
 		t.Fatalf("8 concurrent readers ran %d git execs, one reader %d", single, one)
 	}
+}
+
+// A flush that cannot get its space's turn within the budget (another flush holds it) answers at the deadline with the
+// space's instances named as not looked at, instead of waiting for the turn past the budget.
+func TestFlushSpaceMemoryByTurnHeld(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	cols := statusFleet(t, a.mem, 1, 3)
+	stopSyncs(a.mem)
+	release, ok := a.mem.flushTurn(ctx, cols[0][0])
+	if !ok {
+		t.Fatal("no turn")
+	}
+	defer release()
+	t0 := time.Now()
+	n, unchecked := a.flushSpaceMemoryBy(ctx, cols[0][0], "backup", time.Now().Add(300*time.Millisecond))
+	if n != 1 || unchecked < 1 {
+		t.Fatalf("collections=%d unchecked=%d", n, unchecked)
+	}
+	if d := time.Since(t0); d > 5*time.Second {
+		t.Fatalf("took %v for a 300ms budget", d)
+	}
+}
+
+// The relocation flush shares one budget for its walk and its wait, and is not clean when the walk did not reach every
+// instance.
+func TestRelocFlushBounded(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	cols := statusFleet(t, a.mem, 1, 3)
+	stopSyncs(a.mem)
+	release, _ := a.mem.flushTurn(ctx, cols[0][0])
+	defer release()
+	t0 := time.Now()
+	if a.relocFlush(ctx, cols[0][0], 500*time.Millisecond) {
+		t.Fatal("reported clean though nothing was checked")
+	}
+	if d := time.Since(t0); d > 5*time.Second {
+		t.Fatalf("took %v for a 500ms budget", d)
+	}
+}
+
+// A checkpoint that waited for the collection lock past its budget does not start; one with time left does.
+func TestCheckpointByBudget(t *testing.T) {
+	a := memAgent(t)
+	m := a.mem
+	ctx := context.Background()
+	cols := statusFleet(t, m, 1, 2)
+	stopSyncs(m)
+	sp, role := cols[0][0], cols[0][1]
+	unlock := m.lock(colKey(sp, role))
+	errc := make(chan error, 1)
+	go func() { errc <- m.checkpointBy(ctx, sp, role, "ins_1", "backup", time.Now().Add(200*time.Millisecond)) }()
+	time.Sleep(500 * time.Millisecond)
+	unlock()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, errBudgetSpent) {
+			t.Fatalf("err = %v, want the budget error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("checkpoint did not return")
+	}
+	if err := m.checkpointBy(ctx, sp, role, "ins_1", "backup", time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("checkpoint with budget: %v", err)
+	}
+	stopSyncs(m)
 }

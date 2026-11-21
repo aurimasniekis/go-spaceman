@@ -243,7 +243,8 @@ func (a *Agent) relocCheck(ctx context.Context, g *projectGit, spaceID string, p
 // relocFlush checkpoints and syncs the space's role memory, re-ships recordings and resumes transcript uploads, then
 // waits (bounded) until central acknowledged all of it.
 func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Duration) bool {
-	a.flushSpaceMemory(ctx, spaceID, "relocation")
+	deadline := time.Now().Add(wait) // one budget for the walk and the wait
+	_, unchecked := a.flushSpaceMemoryBy(ctx, spaceID, "relocation", deadline)
 	a.startCatchUp()
 	if ids, err := a.j.pendingUploads(ctx); err == nil {
 		for _, id := range ids {
@@ -252,9 +253,11 @@ func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Durati
 			}
 		}
 	}
-	deadline := time.Now().Add(wait)
 	for poll := flushPoll; ; poll = min(poll*2, flushPollMax) {
 		clean, _ := a.memoryClean(ctx, spaceID)
+		if unchecked > 0 {
+			clean = false // instances the walk did not reach in time are not known to be published
+		}
 		if recs, trs := a.pendingUploadsOf(ctx, spaceID); len(recs) > 0 || len(trs) > 0 {
 			clean = false
 		}
@@ -267,7 +270,7 @@ func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Durati
 		select {
 		case <-ctx.Done():
 			return false
-		case <-time.After(poll):
+		case <-time.After(min(poll, max(time.Until(deadline), time.Millisecond))):
 		}
 	}
 }

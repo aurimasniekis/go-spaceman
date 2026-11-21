@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,24 +40,33 @@ func (a *Agent) flushSpaceMemory(ctx context.Context, spaceID, reason string) in
 // unpublished commit is skipped (its counts come from the status cache, memstatus.go, so an ended instance's checkout
 // costs no git once read; a cold cache reads them in parallel, bounded node-wide). The most recently used instances
 // come first, so the ones with work are reached before the checkouts of long-ended runs. A checkpoint that started is
-// never cut short by the deadline, only the looking at further instances is. When ctx ends (the connection or the agent
+// not started after the deadline (also after waiting for the collection lock) and its git is cut short at it; what was not reached counts as unchecked. When ctx ends (the connection or the agent
 // stopped) the flush stops at once, quietly.
 func (a *Agent) flushSpaceMemoryBy(ctx context.Context, spaceID, reason string, deadline time.Time) (collections, unchecked int) {
 	m := a.mem
 	if m.git == nil {
 		return 0, 0
 	}
-	release, ok := m.flushTurn(ctx, spaceID)
-	if !ok {
-		return 0, 0
-	}
-	defer release()
 	scan := ctx
 	if !deadline.IsZero() {
 		var cancel context.CancelFunc
 		scan, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 	}
+	release, ok := m.flushTurn(scan, spaceID)
+	if !ok {
+		if ctx.Err() != nil {
+			return 0, 0
+		}
+		// Another flush of the space held the turn for the whole budget: nothing here was looked at.
+		for _, k := range m.collections(ctx) {
+			if k[0] == spaceID {
+				collections++
+			}
+		}
+		return collections, max(collections, 1)
+	}
+	defer release()
 	for _, k := range m.collections(ctx) {
 		if k[0] != spaceID {
 			continue
@@ -82,7 +92,9 @@ func (a *Agent) flushSpaceMemoryBy(ctx context.Context, spaceID, reason string, 
 					return // nothing to checkpoint
 				}
 			}
-			_ = m.checkpointErr(ctx, spaceID, k[1], names[i], reason)
+			if err := m.checkpointBy(ctx, spaceID, k[1], names[i], reason, deadline); errors.Is(err, errBudgetSpent) {
+				skipped.Add(1)
+			}
 		})
 		unchecked += int(skipped.Load())
 		if ctx.Err() != nil {
@@ -129,6 +141,11 @@ func (m *memManager) flushTurn(ctx context.Context, spaceID string) (release fun
 		m.flushing[spaceID] = slot
 	}
 	m.mu.Unlock()
+	select {
+	case slot <- struct{}{}: // a free turn is taken even when the budget is spent: the walk then names what it skipped
+		return func() { <-slot }, true
+	default:
+	}
 	select {
 	case slot <- struct{}{}:
 		return func() { <-slot }, true
