@@ -170,3 +170,21 @@ func TestNextHoldExpiryIgnoresGatewayHolds(t *testing.T) {
 		t.Fatalf("next expiry %v (%v), want %v", at, err, want)
 	}
 }
+
+// The sweep that closes a hold whose reset passed also closes the account's no-reset unknown holds seen by then, and
+// leaves one seen after it.
+func TestClosePassedHoldsCascadesToUnknownHolds(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_f", "spc_a", "acc_1", "", proto.LimitFiveHour, dur(-time.Hour), nil)
+	e.hold("ulm_u", "spc_b", "acc_1", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.hold("ulm_l", "spc_c", "acc_1", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_f'`, e.us(-2*time.Hour))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_u'`, e.us(-90*time.Minute))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_l'`, e.us(-30*time.Minute))
+	if err := e.svc.closePassedHolds(e.ctx, e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if open := e.openIDs(); len(open) != 1 || !open["ulm_l"] || e.clearedBy("ulm_u") != "evidence" {
+		t.Fatalf("open after sweep: %v, ulm_u cleared by %q", open, e.clearedBy("ulm_u"))
+	}
+}

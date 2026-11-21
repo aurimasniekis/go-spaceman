@@ -6217,7 +6217,8 @@
        - **Evidence cascade.** When an account hold clears this way with its reset observed (passed, within 2 min), the
          account's other open holds of kind `unknown` with no reset, first seen no later than that reset, clear with it,
          as `cleared_by = evidence` with the same event. A limit whose kind was never known has no reset of its own:
-         the window that ended is the one it was seen in. An `unknown` hold seen after the reset stays.
+         the window that ended is the one it was seen in. An `unknown` hold seen after the reset stays. The expiry
+         sweep that closes a hold whose reset passed (`cleared_by = reset`) cascades the same way.
      - **Events and visibility.**
        - Each cleared row publishes one `fleet.usage_limit.cleared` event in its own space, and each opened row one
          `fleet.usage_limit.reached` event.

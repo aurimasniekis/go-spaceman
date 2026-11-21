@@ -138,6 +138,14 @@ func (svc *Service) closePassedHolds(ctx context.Context, now time.Time) error {
 				return err
 			}
 			n++
+			// The reset passed: the no-reset unknown holds seen by then go with it (clearUnknownAfterResetTx).
+			siblings, err := tx.Q.ListOpenUsageLimitsByAccount(ctx, u.AccountID)
+			if err != nil {
+				return err
+			}
+			if err := svc.clearUnknownAfterResetTx(ctx, tx, siblings, u); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
