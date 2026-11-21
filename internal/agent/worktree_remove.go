@@ -409,17 +409,13 @@ func (a *Agent) worktreeLock(spaceID string) func() { return a.runLock("worktree
 // recordWorkdir writes a launch's work folder into the run's directory (workdirFile), as the space folder's real path
 // joined with the folder relative to it, so it compares with a removal's resolved worktree path.
 func (a *Agent) recordWorkdir(runID, space, work string) error {
-	rel, err := filepath.Rel(space, work)
+	p, err := resolvedWork(space, work)
 	if err != nil {
 		return err
 	}
 	rd := a.runDir(runID)
 	if err := os.MkdirAll(rd, 0o700); err != nil {
 		return err
-	}
-	p := filepath.Join(realPath(space), rel)
-	if r, err := filepath.EvalSymlinks(work); err == nil {
-		p = r
 	}
 	tmp := filepath.Join(rd, workdirFile+".tmp")
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // a fixed name in the run's own directory
@@ -469,7 +465,7 @@ func (a *Agent) worktreeInUse(ctx context.Context, spaceID, dir string) (string,
 		if w == "" || !filepath.IsAbs(w) {
 			return fmt.Sprintf("live run %s has an unreadable work folder record", r.RunID), nil
 		}
-		if w = filepath.Clean(w); within(w, dir) || within(dir, w) {
+		if w = filepath.Clean(w); pathsOverlap(w, dir) {
 			return fmt.Sprintf("live run %s works in it", r.RunID), nil
 		}
 	}
@@ -502,19 +498,70 @@ func (a *Agent) claimWorktree(ctx context.Context, spaceID, dir string) (func(),
 // workBeingRemoved reports whether work (a launch's work folder, as the space folder's real path joined with the folder
 // relative to it, like recordWorkdir) is, is in, or contains a worktree being removed. Called under the worktree lock.
 func (a *Agent) workBeingRemoved(space, work string) bool {
-	rel, err := filepath.Rel(space, work)
+	p, err := resolvedWork(space, work)
 	if err != nil {
 		return false
 	}
-	p := filepath.Join(realPath(space), rel)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for d := range a.removing {
-		if within(p, d) || within(d, p) {
+		if pathsOverlap(p, d) {
 			return true
 		}
 	}
 	return false
+}
+
+// resolvedWork is the one canonical form of a launch's work folder, used by the removal mark check and the record, so
+// the two cannot disagree: work resolved through symlinks, or, when it does not exist yet, its deepest existing parent
+// resolved with the missing rest joined on (the space folder itself when nothing under it exists).
+func resolvedWork(space, work string) (string, error) {
+	rel, err := filepath.Rel(space, work)
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Clean(work)
+	rest := ""
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(r, rest), nil
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Join(realPath(space), rel), nil
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
+	}
+}
+
+// pathsOverlap reports whether a and b are the same folder or one is inside the other. Besides comparing the names it
+// compares the folders themselves (os.SameFile) at each existing level, so on a case-insensitive filesystem a path that
+// differs only by case is still recognised.
+func pathsOverlap(a, b string) bool {
+	if within(a, b) || within(b, a) {
+		return true
+	}
+	return insideByFile(a, b) || insideByFile(b, a)
+}
+
+// insideByFile reports whether p, or one of its parents, is the same folder as base.
+func insideByFile(p, base string) bool {
+	bi, err := os.Stat(base) //nolint:gosec // only compares the folders' identities
+	if err != nil {
+		return false
+	}
+	for {
+		pi, err := os.Stat(p) //nolint:gosec // only compares the folders' identities
+		if err == nil && os.SameFile(pi, bi) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
 }
 
 // within reports whether p is base or inside it.

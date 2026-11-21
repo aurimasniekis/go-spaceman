@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -621,12 +622,51 @@ func TestLaunchRefusedOntoAClaimedWorktree(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(a.runDir("run_wl3"), workdirFile)); len(b) != 0 {
 		t.Fatalf("recorded %q", b)
 	}
+	// A launch through a symlink to the claimed worktree, and one into the folder that contains it, are refused too.
+	if err := os.MkdirAll(claimed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("worktrees", "spaceman-claimed"), filepath.Join(space, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	for i, ws := range []string{"alias", "alias/sub", "worktrees"} {
+		id := fmt.Sprintf("run_wl_x%d", i)
+		a.launch(context.Background(), proto.Command{CommandID: "cmd_" + id, Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: id, Generation: 1},
+			proto.LaunchPayload{Harness: harness.KindClaude, Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Prompt: "hello", Workspace: ws})
+		if r := getRun(t, a, id); r.State != proto.RunFailed {
+			t.Fatalf("a launch into %q: state %s, want failed", ws, r.State)
+		}
+		if b, _ := os.ReadFile(filepath.Join(a.runDir(id), workdirFile)); len(b) != 0 {
+			t.Fatalf("%q recorded %q", ws, b)
+		}
+	}
 	release()
 	a.launch(context.Background(), proto.Command{CommandID: "cmd_wl4", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_wl4", Generation: 1},
 		proto.LaunchPayload{Harness: harness.KindClaude, Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Prompt: "hello",
 			Workspace: "worktrees/spaceman-claimed/sub"})
 	if r := getRun(t, a, "run_wl4"); r.State == proto.RunFailed {
 		t.Fatalf("after the release: %+v", r)
+	}
+}
+
+// ADR-0107 (review): the overlap check compares the folders themselves, not only their names, which is what catches a
+// path that differs only by case on a case-insensitive filesystem (here shown with a symlink).
+func TestPathsOverlapComparesFolders(t *testing.T) {
+	root := t.TempDir()
+	claimed := filepath.Join(root, "worktrees", "x")
+	if err := os.MkdirAll(filepath.Join(claimed, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(claimed, filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(root, "alias"), filepath.Join(root, "alias", "sub", "new")} {
+		if !pathsOverlap(p, claimed) {
+			t.Fatalf("%s should overlap %s", p, claimed)
+		}
+	}
+	if pathsOverlap(filepath.Join(root, "other"), claimed) {
+		t.Fatal("an unrelated folder overlaps")
 	}
 }
 

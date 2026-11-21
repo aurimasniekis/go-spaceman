@@ -8276,8 +8276,11 @@
 
 - **Status:** Accepted, 2026-11-21 (v0.1.17). Decision 1 (the removal core) and decision 2 (no race with a launch) are
   implemented and tested with simulated evidence only: `internal/agent` tests against temporary repositories and a
-  local bare remote (`TestRemoveWorktreeSafely*`, `TestRecordWorkdir`). Nothing calls the core yet. Decisions 4 to 8
-  are the design for follow-up tasks; until they land, worktrees are still never removed automatically (LIMITATIONS).
+  local bare remote (`TestRemoveWorktreeSafely*`, `TestRecordWorkdir`, `TestLaunchRecordsWorkdirUnderTheWorktreeLock`,
+  `TestLaunchRefusedOntoAClaimedWorktree` (a launch into, through a symlink to, and around a claimed worktree),
+  `TestPathsOverlapComparesFolders`, `TestRemoveWorktreeSafelyDoesNotHoldTheLockWhileChecking`). Nothing calls the
+  core yet. Decision 6 is implemented (WL-6, `internal/agent` `TestRepoReportWorktreeStatus*` in `repostatus_test.go`); decisions 4, 5, 7 and 8 are the design for follow-up tasks, and until they land,
+  worktrees are still never removed automatically (LIMITATIONS).
 - **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
   ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a
   worktree with no change of its own, whose HEAD the remote has (so it can be checked out again from the branch, which
@@ -8341,7 +8344,13 @@
      that no live or launching run uses the worktree and marks its resolved path as being removed (`claimWorktree`),
      then lets go. A launch checks the mark under the same lock, before it prepares its worktree and again before it
      records its folder, and a launch onto a marked worktree, into a folder in it, or into a folder that contains it
-     fails clearly ("launch again when that is done") instead of starting or waiting. Launches elsewhere in the space
+     fails clearly ("launch again when that is done") instead of starting or waiting. The launch's work folder and the mark are
+     compared in one canonical form (`resolvedWork`, shared with the record: the folder resolved through symlinks, or its
+     deepest existing parent resolved with the rest joined on), so a symlink in the space folder cannot name the marked
+     folder differently, and the in-use and mark checks also compare the folders themselves (`os.SameFile`, at each
+     existing level) so a path that differs only by case on a case-insensitive filesystem is still recognised. That
+     case-insensitive path is not exercised by a test (the test node's filesystem is case-sensitive); the symlink
+     equivalent is. Launches elsewhere in the space
      are not delayed. The fetch also runs before the claim, without the lock (fresher refs only make the check
      stricter). The clean and pushed checks, the final re-read of the folder and HEAD, and the removal then run under
      the mark, and the mark is released when the removal ends, whatever its outcome. So a launch either finishes looking
@@ -8379,7 +8388,7 @@
      is already gone; metadata only). On a schedule (weekly by default, an installation setting) SpaceMan sends each
      active space's control one message asking it to tidy its repositories with these tools, with a short summary (how
      many worktrees are finished, unowned, refused before). Control judges; nothing is removed by the message itself.
-  6. **Cheaper repository reports (follow-up).** `inspectRepo` skips `git status` in a worktree whose last change
+  6. **Cheaper repository reports (implemented, WL-6).** `inspectRepo` skips `git status` in a worktree whose last change
      (decision 3) is older than a cut-off (7 days by default) when the previous report has counts for it, and reports
      the previous counts with the time they were taken. At most a bounded number of `git status` calls run per report,
      the oldest checked first. Removal never relies on these counts: it checks live (decision 1).
