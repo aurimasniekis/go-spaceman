@@ -6,6 +6,114 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-11-21
+
+### Added
+
+- **Remove finished worktrees safely: the `space.worktree.remove` node command (protocol minor 16).** Central can ask
+  the space's node to remove one worktree of a configured repository. The node has a single removal path and no way to
+  force it: it refuses, with a stable code (`invalid`, `outside`, `not_worktree`, `locked`, `no_remote`,
+  `fetch_failed`, `live_run`, `dirty`, `untracked`, `unpushed`, `git_error`), anything that isn't a real linked
+  worktree directly inside the space's `worktrees/` folder, a locked one, a failed fetch, a worktree a live or
+  launching run uses, and any with staged, changed, untracked or unpushed work. It answers with a `worktree.removed`
+  report, journaled so a repeated delivery never removes twice. A launch can no longer start a run inside a worktree
+  claimed for removal, including through a symlink planted while the launch was recording its folder. ADR-0107.
+- **Control tools to list, remove and prune worktrees.** Control-only agent tools: `spaceman_worktrees_list` joins the
+  node's report with each worktree's owning run and task, the run's last activity and whether it is pushed as of the
+  last fetch; `spaceman_worktree_remove` removes one (by repository and worktree, or by the `command_id` of an earlier
+  removal that came back pending); `spaceman_worktrees_prune` lists finished work (tasks done or cancelled, run ended)
+  and removes it one by one with `apply`. A node below protocol minor 16, a relocating space and a worktree the last
+  report doesn't list are refused, a worktree a live run holds is refused centrally, and the node's refusal codes are
+  passed through. Each request and answer is an audit event of the target `worktree_removal`. ADR-0107.
+- **Automatic pruning of finished-work worktrees: the space limit `worktree_retention_days`.** `0` (the default) means
+  never, the range is 0 to 36,500, and it has an installation default (`limits.worktree_retention_days`) and a
+  per-space override through the limits API, `spaceman limits` and the guide's limits page. For a space with a value
+  above 0, the daily retention pass asks the node to remove worktrees SpaceMan created whose run has ended and whose
+  tasks are all done or cancelled, once that many days have passed since the later of the run's end and the latest
+  task finish. Oldest first, at most 10 per space and 50 per pass, with worktrees the node refused at their current
+  HEAD going last; unowned worktrees, failed or open tasks and live runs are never touched, and the node's
+  safe-removal checks run again for each. Removed worktrees count as `worktrees` in the pass. ADR-0107.
+- **An opt-in weekly cleanup message to control: the space limit `worktree_cleanup_message_days`.** Default `0`
+  (never), range 0 to 365; set it to 7 for weekly. Once per period the daily retention pass sends each space's control
+  one system message asking it to tidy its repositories, with counts only (worktrees, finished, oldest age, unowned)
+  and a pointer to `spaceman_worktrees_list` and `spaceman_worktrees_prune`. It is sent once per period even across a
+  restart or a second central, is skipped when no finished worktree is left that the node hasn't refused, and removes
+  nothing itself. The Repositories, Limits and Retention guide pages describe the worktree lifecycle and how to turn
+  it on. ADR-0107.
+- **Ingest the run dialog events of every space into one operations space: fleet scope for `ingest_own`.** A new
+  subscription attribute `ingest_own_scope` (`space`, the default, or `fleet`; CLI `--ingest-own-scope`) lets one
+  operations space turn the `dialog_detected` and `dialog_cleared` events of every space into inbox items. It needs
+  `ingest_own` and an operator-level grant for the space, managed with `GET /event-fleet-scope-grants`, `GET
+  /event-fleet-scope-grants/{space_id}` (`system:read`), and `PUT` and `DELETE /event-fleet-scope-grants/{space_id}`
+  (step-up `system:write`, so a space's own roles, agents and chats can't grant; `DELETE` of a missing grant is 404)
+  and `spaceman event fleet-scope list|get|grant|revoke`. A fleet-scoped subscription without the grant is refused
+  (403, or 422 without `ingest_own`). It fails closed: after a revocation other spaces' events are filtered and the
+  subscription can't be updated until its scope returns to `space`. Subjects stay exactly the two dialog subjects,
+  depth stays 0, and only `space_id`, `run_id`, `dialog_id`, `dialog`, `signal`, `detected_at` and `cleared_at` are
+  ingested. Grants and revocations are audited. Migration 0072 adds the grants table. ADR-0106, which amends ADR-0104.
+
+### Changed
+
+- **Repository reports spend a bounded effort on worktree status.** A report used to run `git status` in every linked
+  worktree, a real fork and CPU cost at around a thousand worktrees. A worktree with no change for over 7 days now
+  reuses an earlier status while nothing about it changed (judged from file modification times, with no git exec); at
+  most 200 status calls run per report, recently changed worktrees first and then idle ones with no usable counts,
+  then refreshes of old counts, the one attempted longest ago going first, and the allowance is shared across
+  repositories. `WorktreeCheck.status` is `fresh`, `cached` (with `status_at`) or `unchecked`; an unchecked worktree,
+  or cached counts older than 7 days, reports zero counts and an error saying the counts are unknown, so it is never
+  read as clean. Worktree status runs with `GIT_OPTIONAL_LOCKS=0` so it doesn't rewrite the index. Relocation and
+  export keep exact counts. The stamp can't see an edit deep inside an existing subfolder, which is why cached results
+  are labelled. OpenAPI regenerated. ADR-0107.
+
+### Fixed
+
+- **A usage-limit hold with no known reset now always ends.** A hold whose reset was unknown (Claude Code's wrap-up
+  path, or a status line that missed) stayed limited after its original run was gone, hours after the real reset. The
+  limit-wait job now clears such holds once their window has passed since they were seen (5 hours for the five-hour
+  kind, 7 days for weekly kinds, the 6-hour keep-alive for unknown and overage kinds) with `cleared_by: expired`,
+  ordered by expiry so the row cap never hides a due hold; if the account is still limited, the next launch opens a
+  new hold. A status-line snapshot no longer clears a hold, since its time is when the line was drawn, not when the
+  data was read. ADR-0079 amended.
+- **Account holds whose reset has passed are closed, and a switch can use an account whose probe is due.** The hold
+  sweep now also closes open account holds whose known reset passed (plus the 2-minute grace) with `cleared_by:
+  reset`, and publishes `usage_limit.cleared`. A hold with no reset whose probe time has passed no longer counts as
+  held for failover: when every account is otherwise avoided, a switch falls back to it, and the resumed run is its
+  probe, instead of ending `fell_back/no_eligible_account`. When a hold clears with its reset observed, the account's
+  open no-reset holds seen no later than that reset clear with it (`cleared_by: evidence`). The `cleared_by` labels
+  `reset`, `expired`, `quota_board` and `budget_status` no longer read as "an operator".
+- **A run whose first turn ends in a usage-limit error now gets an account switch.** The run stayed in `error` with no
+  limit wait and no switch row although another account had headroom. A fresh turn-0 run with a session is now
+  resumable for a usage-limit switch, and the remaining silent cases (no session, no account) are recorded as
+  `fell_back` with `no_session` or `no_account` (the web UI labels both). A run that was itself resumed fresh and
+  limited at turn 0 is switched too, relaunched fresh when it has no session; a second turn-0 limit after a fresh
+  retry still stops with `no_session`, so it can't loop.
+- **After an account switch, the new run is no longer flagged with the old account's limit.** The switched run resumes
+  the same Claude Code transcript, and its usage-limit scan read the previous run's `usage_limit_reached` record from
+  the start, so it was reported at account A's reset and cleared about 30 seconds later. Limit records timestamped
+  before the run's launch are now read past and not applied; a record without a readable timestamp behaves as before.
+- **A large node's role memory flushes within its budget.** On a node with about 1,700 memory checkouts,
+  `memory_flush` timed out for every space, because a cold cache costs about seven git processes per checkout, read
+  one after another. Instance counts are now read on up to 8 workers bounded node-wide, with one reader per checkout
+  shared by the status report and the flush. `memory.flush` has one budget from the request, flushes spaces side by
+  side, most recently modified instances first, and reports unreached instances as stale; the turn wait, the
+  relocation flush and checkpoints honour the same deadline. Waits back off from 200 ms to 2 s and re-check only
+  unsettled spaces. A cold flush of 1,000 checkouts went from 24.3 s to 3.6 s (2,000: 47.3 s to 7.0 s).
+- **Memory status fails closed when a checkout's git status can't be read.** A checkout the status guard refuses (a
+  nested `.git`, a FIFO) was skipped as not a checkout, so an unpublished commit in it left the space reading clean
+  and was never published. Only a folder without its own `.git` (or a stray non-directory entry) is skipped now; an
+  unreadable checkout counts at least one change and one commit and is not cached.
+- **Memory checkpoints no longer lose work in two cases.** A checkout that was unborn when it first got files
+  committed a root unrelated to the shared history, so the merge failed with `unrelated histories` and the content
+  survived only under `refs/conflicts/`; it now merges with `--allow-unrelated-histories` (add/add conflicts are still
+  preserved), and the merge-base check treats only exit code 1 as unrelated, failing closed and retrying later on
+  other errors. When a conflict is preserved, local changes that didn't conflict now reach shared main too, instead of
+  only the `refs/conflicts/` copy.
+- **Knowledge acceptance reports a merge that landed as accepted when the tips move afterwards.** If the target branch
+  or the checkout's HEAD moves after the fast-forward landed, the proposal is reported as merged, with the merged
+  commit and the tips observed, instead of failed; nothing is reset or rewritten. The limitations and the KB template
+  now state the checkout rule: untracked files are allowed unless one sits at a path the merge adds, ignored files are
+  never overwritten, and local changes to tracked files or an operation in progress refuse the acceptance.
+
 ## [0.1.16] - 2026-11-21
 
 ### Added
@@ -2595,7 +2703,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.16...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.17...HEAD
+[0.1.17]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.13...v0.1.14
