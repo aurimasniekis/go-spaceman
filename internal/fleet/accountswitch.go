@@ -155,9 +155,9 @@ func (svc *Service) decideSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 		d.reason = SwitchNoAccount // the run's launch names no account: it can't be moved off one
 		return d, nil
 	}
-	if session, err := limitSwitchSession(ctx, tx.Q, r); err != nil {
+	if _, ok, err := limitSwitchSession(ctx, tx.Q, r); err != nil {
 		return switchDecision{}, err
-	} else if session == "" {
+	} else if !ok {
 		d.reason = SwitchNoSession // nothing to resume: the run waits
 		return d, nil
 	}
@@ -839,20 +839,36 @@ func resumableSession(ctx context.Context, q *db.Queries, r db.Run) (string, err
 }
 
 // limitSwitchSession is the session a usage-limit switch resumes: resumableSession's, or the run's own when it is a fresh
-// run whose first turn ended at the limit. The turn count only moves on a finished turn, and a turn that ends in the
-// limit error doesn't count, but the harness took the run's prompt, so the session's transcript exists and resumes (a
-// resume that still fails is retried fresh, ADR-0079).
-func limitSwitchSession(ctx context.Context, q *db.Queries, r db.Run) (string, error) {
-	session, err := resumableSession(ctx, q, r)
-	if err != nil || session != "" || r.SessionID == "" || r.Turn > 0 {
-		return session, err
+// run, or a run itself resumed fresh (its wait had no session), whose first turn ended at the limit. The turn count only
+// moves on a finished turn, and a turn that ends in the limit error doesn't count, but the harness took the run's prompt,
+// so the session's transcript exists and resumes (a resume that still fails is retried fresh, ADR-0079). ok is false
+// when there is nothing to switch with: no session, a resumed run whose session changed (the resume didn't take), or the
+// fresh retry of a failed resume (it already had its one retry). A fresh-resumed run with no session of its own is ok
+// with an empty session: the switch relaunches it fresh on the target account.
+func limitSwitchSession(ctx context.Context, q *db.Queries, r db.Run) (session string, ok bool, err error) {
+	if session, err = resumableSession(ctx, q, r); err != nil || session != "" {
+		return session, err == nil, err
 	}
-	if _, err := q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: r.ID}); errors.Is(err, sql.ErrNoRows) {
-		return r.SessionID, nil
-	} else if err != nil {
-		return "", err
+	if r.Turn > 0 {
+		return "", false, nil
 	}
-	return "", nil // a resumed run whose session changed: the resume didn't take
+	prev, err := q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: r.ID})
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return r.SessionID, r.SessionID != "", nil
+	case err != nil:
+		return "", false, err
+	case prev.SessionID != "":
+		return "", false, nil // a resumed run whose session changed: the resume didn't take
+	}
+	// prev started this run fresh. If prev's own run was a resume of a session, this is the fresh retry of that failed
+	// resume: it stops here, so a switch can't loop.
+	if first, err := q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: prev.RunID}); err == nil && first.SessionID != "" {
+		return "", false, nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
+	}
+	return r.SessionID, true, nil
 }
 
 // armedSwitch reports whether a run has an armed switch waiting for its idle point.
