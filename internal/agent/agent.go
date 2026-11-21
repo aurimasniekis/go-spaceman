@@ -85,9 +85,11 @@ type Options struct {
 
 // Agent is a running node agent.
 type Agent struct {
-	o   Options
-	j   *Journal
-	log *slog.Logger
+	// kbAfterMerge runs between the fast-forward of a KB acceptance and its final check (tests only).
+	kbAfterMerge func()
+	o            Options
+	j            *Journal
+	log          *slog.Logger
 	// fetchChunk reads one range of an attachment from central for a save (forwardTool; tests replace it).
 	fetchChunk func(context.Context, bridgeRequest) bridgeResponse
 
