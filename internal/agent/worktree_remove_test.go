@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
@@ -107,7 +108,7 @@ func mustExist(t *testing.T, p string) {
 	}
 }
 
-// ADR-0106: a clean worktree whose HEAD the remote has is removed with git worktree remove and prune; ignored files go
+// ADR-0107: a clean worktree whose HEAD the remote has is removed with git worktree remove and prune; ignored files go
 // with it, the branch stays, and a later launch on the branch gets a fresh worktree at the same commit.
 func TestRemoveWorktreeSafelyRemovesPushedWork(t *testing.T) {
 	e := newRmEnv(t)
@@ -144,7 +145,7 @@ func TestRemoveWorktreeSafelyRemovesPushedWork(t *testing.T) {
 	}
 }
 
-// ADR-0106: changed tracked files, staged files and untracked files that are not ignored are refused, and the worktree
+// ADR-0107: changed tracked files, staged files and untracked files that are not ignored are refused, and the worktree
 // is left exactly as it was.
 func TestRemoveWorktreeSafelyRefusesUncleanTrees(t *testing.T) {
 	e := newRmEnv(t)
@@ -176,7 +177,7 @@ func TestRemoveWorktreeSafelyRefusesUncleanTrees(t *testing.T) {
 	mustExist(t, filepath.Join(dir, "deep", "er", "notes.md"))
 }
 
-// ADR-0106: a HEAD the remote does not have is refused: a commit never pushed, and a pushed branch since deleted on the
+// ADR-0107: a HEAD the remote does not have is refused: a commit never pushed, and a pushed branch since deleted on the
 // remote (its stale tracking ref stays, but only the remote's own branch list counts).
 func TestRemoveWorktreeSafelyRefusesUnpushedWork(t *testing.T) {
 	e := newRmEnv(t)
@@ -203,7 +204,7 @@ func TestRemoveWorktreeSafelyRefusesUnpushedWork(t *testing.T) {
 	wantRefused(t, err, RefuseUnpushed)
 }
 
-// ADR-0106: when the fetch fails (or there is no configured URL) whether the remote has the work is not known, so the
+// ADR-0107: when the fetch fails (or there is no configured URL) whether the remote has the work is not known, so the
 // removal fails closed, even for work the stale tracking refs say is pushed.
 func TestRemoveWorktreeSafelyFailsClosedWithoutAFetch(t *testing.T) {
 	e := newRmEnv(t)
@@ -222,14 +223,13 @@ func TestRemoveWorktreeSafelyFailsClosedWithoutAFetch(t *testing.T) {
 	g, _ := newProjectGit()
 	_, err = removeWorktreeSafely(context.Background(), g, worktreeRemoval{Space: e.space, Repo: "repos/api", Name: "spaceman-pushed"}, removalHooks{
 		fetch: func(context.Context, string) ([]string, error) { return nil, errors.New("network down") },
-		lock:  func() func() { return func() {} },
-		inUse: func(context.Context, string) (string, error) { return "", nil },
+		claim: func(context.Context, string) (func(), error) { return func() {}, nil },
 	})
 	wantRefused(t, err, RefuseFetch)
 	mustExist(t, dir)
 }
 
-// ADR-0106: a worktree a live run works in (or in a folder inside it, or a folder that contains it) is refused, and so is
+// ADR-0107: a worktree a live run works in (or in a folder inside it, or a folder that contains it) is refused, and so is
 // any worktree while a live run of the space has no recorded work folder. Ended runs and other spaces' runs don't count.
 func TestRemoveWorktreeSafelyRefusesALiveRun(t *testing.T) {
 	e := newRmEnv(t)
@@ -270,14 +270,15 @@ func TestRemoveWorktreeSafelyRefusesALiveRun(t *testing.T) {
 	g, _ := newProjectGit()
 	_, err = removeWorktreeSafely(context.Background(), g, worktreeRemoval{Space: e.space, Repo: "repos/api", Name: "spaceman-busy2"}, removalHooks{
 		fetch: func(context.Context, string) ([]string, error) { return nil, nil },
-		lock:  func() func() { return func() {} },
-		inUse: func(context.Context, string) (string, error) { return "", errors.New("journal unreadable") },
+		claim: func(context.Context, string) (func(), error) {
+			return nil, refuse(RefuseLiveRun, "the runs using the worktree are not known: journal unreadable")
+		},
 	})
 	wantRefused(t, err, RefuseLiveRun)
 	mustExist(t, dir2)
 }
 
-// ADR-0106: a removal waits for a launch that holds the space's worktree lock, and then sees the run the launch recorded,
+// ADR-0107: a removal waits for a launch that holds the space's worktree lock, and then sees the run the launch recorded,
 // so a launch onto a worktree never races its removal.
 func TestRemoveWorktreeSafelyWaitsForALaunch(t *testing.T) {
 	e := newRmEnv(t)
@@ -304,7 +305,7 @@ func TestRemoveWorktreeSafelyWaitsForALaunch(t *testing.T) {
 	mustExist(t, filepath.Join(dir, "work.txt"))
 }
 
-// ADR-0106: only a real folder directly inside the space's real worktrees folder that is a linked worktree of the named
+// ADR-0107: only a real folder directly inside the space's real worktrees folder that is a linked worktree of the named
 // repository can be removed: no traversal, no symlink (of the worktrees folder, the worktree or the repository's
 // parents), no unregistered folder, never a main folder, never a locked worktree.
 func TestRemoveWorktreeSafelyRefusesPathEscapes(t *testing.T) {
@@ -379,7 +380,7 @@ func TestRemoveWorktreeSafelyRefusesPathEscapes(t *testing.T) {
 	mustExist(t, filepath.Join(outside, "x", "README.md"))
 }
 
-// ADR-0106: every launch records its work folder under the space's worktree lock (the worktree's real path, or the
+// ADR-0107: every launch records its work folder under the space's worktree lock (the worktree's real path, or the
 // folder it works in otherwise), and a removal compares against it.
 func TestRecordWorkdir(t *testing.T) {
 	e := newRmEnv(t)
@@ -396,7 +397,7 @@ func TestRecordWorkdir(t *testing.T) {
 	}
 }
 
-// ADR-0106 (review): edits git was told to hide (assume-unchanged, skip-worktree), untracked files hidden by the
+// ADR-0107 (review): edits git was told to hide (assume-unchanged, skip-worktree), untracked files hidden by the
 // repository's own exclude rules, and a git repository inside an ignored folder are all refused.
 func TestRemoveWorktreeSafelyRefusesHiddenWork(t *testing.T) {
 	e := newRmEnv(t)
@@ -438,7 +439,7 @@ func TestRemoveWorktreeSafelyRefusesHiddenWork(t *testing.T) {
 	mustExist(t, filepath.Join(nested, ".git"))
 }
 
-// ADR-0106 (review): refs in the repository can't vouch for a commit: a symbolic ref planted in the remote's namespace
+// ADR-0107 (review): refs in the repository can't vouch for a commit: a symbolic ref planted in the remote's namespace
 // pointing at the local branch does not make an unpushed HEAD pushed.
 func TestRemoveWorktreeSafelyIgnoresPlantedRefs(t *testing.T) {
 	e := newRmEnv(t)
@@ -450,7 +451,7 @@ func TestRemoveWorktreeSafelyIgnoresPlantedRefs(t *testing.T) {
 	mustExist(t, filepath.Join(dir, "work.txt"))
 }
 
-// ADR-0106 (review): a live run whose work folder record is empty or not absolute counts as using every worktree.
+// ADR-0107 (review): a live run whose work folder record is empty or not absolute counts as using every worktree.
 func TestRemoveWorktreeSafelyRefusesAnUnreadableRecord(t *testing.T) {
 	e := newRmEnv(t)
 	dir := e.worktree(t, "spaceman/rec2", true)
@@ -470,7 +471,7 @@ func TestRemoveWorktreeSafelyRefusesAnUnreadableRecord(t *testing.T) {
 	}
 }
 
-// ADR-0106: a detached HEAD the remote has is removed; a detached commit of its own is refused.
+// ADR-0107: a detached HEAD the remote has is removed; a detached commit of its own is refused.
 func TestRemoveWorktreeSafelyDetachedHead(t *testing.T) {
 	e := newRmEnv(t)
 	dir := e.worktree(t, "spaceman/det", true)
@@ -487,7 +488,7 @@ func TestRemoveWorktreeSafelyDetachedHead(t *testing.T) {
 	}
 }
 
-// ADR-0106 (second review): replace refs and grafts can't fake the pushed check, an untracked .gitignore can't hide
+// ADR-0107 (second review): replace refs and grafts can't fake the pushed check, an untracked .gitignore can't hide
 // itself and its folder, and repository configuration can't make git skip a content check.
 func TestRemoveWorktreeSafelyResistsRepositoryTricks(t *testing.T) {
 	e := newRmEnv(t)
@@ -550,5 +551,127 @@ func TestRemoveWorktreeSafelyResistsRepositoryTricks(t *testing.T) {
 	wantRefused(t, err, RefuseDirty)
 	if b, _ := os.ReadFile(p); string(b) != "dome\n" {
 		t.Fatal("the edit was lost")
+	}
+}
+
+// ADR-0107 (review): a launch, through the agent and the fake runner, records its work folder, and does so under the
+// space's worktree lock: while a removal (or anything) holds that lock the launch waits, and goes on when it is let go.
+func TestLaunchRecordsWorkdirUnderTheWorktreeLock(t *testing.T) {
+	a, f := ccAgent(t, t.TempDir(), nil, nil)
+	space := a.spaceDir("cc")
+	recorded := func(id string) string {
+		b, _ := os.ReadFile(filepath.Join(a.runDir(id), workdirFile))
+		return string(b)
+	}
+
+	unlock := a.worktreeLock(ccSpace)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ccLaunch(a, "run_wl1")
+	}()
+	select {
+	case <-done:
+		t.Fatal("the launch did not wait for the worktree lock")
+	case <-time.After(500 * time.Millisecond):
+	}
+	if got := recorded("run_wl1"); got != "" {
+		t.Fatalf("the launch recorded %q while the lock was held", got)
+	}
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the launch never finished")
+	}
+	if got, want := recorded("run_wl1"), filepath.Join(realPath(space), "work"); got != want {
+		t.Fatalf("recorded work folder %q, want %q", got, want)
+	}
+	if r := getRun(t, a, "run_wl1"); r.State == proto.RunFailed {
+		t.Fatalf("the launch failed: %+v", r)
+	}
+	runSpec(t, f, "run_wl1")
+}
+
+// ADR-0107 (review): a launch onto a worktree a removal has claimed (or into a folder in it) fails clearly instead of
+// starting, and works again once the claim is released. The claim holds the worktree lock only while it is taken.
+func TestLaunchRefusedOntoAClaimedWorktree(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	space := a.spaceDir("cc")
+	claimed := filepath.Join(realPath(space), "worktrees", "spaceman-claimed")
+	release, err := a.claimWorktree(context.Background(), ccSpace, claimed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The claim does not keep the lock: a launch elsewhere in the space goes on while a removal is still checking.
+	ccLaunch(a, "run_wl2")
+	if r := getRun(t, a, "run_wl2"); r.State == proto.RunFailed {
+		t.Fatalf("a launch elsewhere was blocked: %+v", r)
+	}
+	// Another removal of the same worktree is refused.
+	if _, err := a.claimWorktree(context.Background(), ccSpace, claimed); RefusalCode(err) != RefuseLocked {
+		t.Fatalf("second claim: %v", err)
+	}
+	a.launch(context.Background(), proto.Command{CommandID: "cmd_wl3", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_wl3", Generation: 1},
+		proto.LaunchPayload{Harness: harness.KindClaude, Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Prompt: "hello",
+			Workspace: "worktrees/spaceman-claimed/sub"})
+	if r := getRun(t, a, "run_wl3"); r.State != proto.RunFailed {
+		t.Fatalf("a launch into a claimed worktree: state %s, want failed", r.State)
+	}
+	if b, _ := os.ReadFile(filepath.Join(a.runDir("run_wl3"), workdirFile)); len(b) != 0 {
+		t.Fatalf("recorded %q", b)
+	}
+	release()
+	a.launch(context.Background(), proto.Command{CommandID: "cmd_wl4", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_wl4", Generation: 1},
+		proto.LaunchPayload{Harness: harness.KindClaude, Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Prompt: "hello",
+			Workspace: "worktrees/spaceman-claimed/sub"})
+	if r := getRun(t, a, "run_wl4"); r.State == proto.RunFailed {
+		t.Fatalf("after the release: %+v", r)
+	}
+}
+
+// ADR-0107 (review): a removal checks a big tree without the worktree lock, so a launch elsewhere is never stalled by it.
+func TestRemoveWorktreeSafelyDoesNotHoldTheLockWhileChecking(t *testing.T) {
+	e := newRmEnv(t)
+	dir := e.worktree(t, "spaceman/slow", true)
+	g, _ := newProjectGit()
+	checking := make(chan struct{})
+	finish := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := removeWorktreeSafely(context.Background(), g, worktreeRemoval{Space: e.space, Repo: "repos/api", Name: "spaceman-slow"}, removalHooks{
+			fetch: func(context.Context, string) ([]string, error) {
+				tips := gitRun(t, e.bare, "for-each-ref", "--format=%(objectname)", "refs/heads")
+				return strings.Fields(tips), nil
+			},
+			claim: func(ctx context.Context, d string) (func(), error) {
+				rel, err := e.a.claimWorktree(ctx, e.spaceID, d)
+				close(checking)
+				<-finish // the removal is in its slow checks from here
+				return rel, err
+			},
+		})
+		done <- err
+	}()
+	<-checking
+	got := make(chan struct{})
+	go func() {
+		e.a.worktreeLock(e.spaceID)()
+		close(got)
+	}()
+	select {
+	case <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the worktree lock was held during the removal's checks")
+	}
+	close(finish)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("not removed")
+	}
+	if e.a.workBeingRemoved(e.space, dir) {
+		t.Fatal("the claim was not released")
 	}
 }

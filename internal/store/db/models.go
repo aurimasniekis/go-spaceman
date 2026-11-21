@@ -293,6 +293,13 @@ type EventDelivery struct {
 	ReplayID       string
 }
 
+type EventFleetScopeGrant struct {
+	SpaceID   string
+	Reason    string
+	GrantedAt int64
+	GrantedBy string
+}
+
 type EventOutbox struct {
 	ID            string
 	Subject       string
@@ -355,6 +362,7 @@ type EventSubscription struct {
 	Delivery          string
 	WhilePaused       string
 	IngestOwn         int64
+	IngestOwnScope    string
 }
 
 type EventTemplate struct {

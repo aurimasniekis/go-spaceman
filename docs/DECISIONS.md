@@ -8032,6 +8032,7 @@
 - **Status:** Accepted, 2026-11-20 (v0.1.16). **Security-relevant change:** it relaxes the SM-EVT-016 loop guard "an
   installation never ingests its own events" (ADR-0015, ADR-0049) for one narrow, opt-in case. Migration 0070
   (`event_subscriptions.ingest_own`). Builds on ADR-0049 (automation depth) and ADR-0102 (run dialog events).
+  Decision 3's same-space condition is amended by ADR-0106 (fleet scope for an operator-granted space).
 - **Context:** ingestion drops every event whose `spaceman-origin` is this installation's `source`
   (`ownEvent`, recorded as `filtered`). So an installation cannot subscribe to its own
   `evt.spaceman.fleet.run.dialog_detected` to raise an inbox item when one of its runs is stopped at a dialog, though
@@ -8169,7 +8170,99 @@
   has expired but not been ended: it keeps a switch-back from starting until the takeover is ended. That errs on the
   side of not moving the run; it is not changed here.
 
-### ADR-0106 — Worktree lifecycle: one safe removal path, auto-prune, a control-led cleanup and cheaper repository reports (security-relevant change)
+### ADR-0106 — One operations space may ingest every space's run dialog events (fleet-scoped ingest_own) (security-relevant change)
+
+- **Status:** Accepted, 2026-11-21 (v0.1.17). Amends ADR-0104 decision 3. **Security-relevant change:** it relaxes
+  ADR-0104's "one space never ingests another space's run dialogs" for a space an installation administrator names.
+  Migration 0072 (`event_subscriptions.ingest_own_scope`, `event_fleet_scope_grants`). Simulated evidence only.
+- **Context:** an installation that runs an operations space (one whose agents look after the other spaces) wants a run
+  stopped at a dialog anywhere to become an item in that space. ADR-0104 admits an own dialog event only when its
+  `data.space_id` is the subscription's space, so each space would need a subscription of its own, and the operations
+  space never sees the others. Letting a subscription say "every space" on its own would let any space operator (or an
+  agent holding a space token through the SpaceMan MCP, where `create-subscription` is a write tool) watch every other
+  space's runs. The widening must be the installation's decision, not the space's.
+- **Decision:**
+  1. **An operator-level grant per space.** A new table `event_fleet_scope_grants` (space ID, reason, who, when)
+     names the spaces that may use fleet scope. It is managed by four operations, `list-`/`get-event-fleet-scope-grants`
+     (`system:read`) and `put-`/`delete-event-fleet-scope-grant` (`PUT`/`DELETE /event-fleet-scope-grants/{space_id}`,
+     `system:write` with step-up). `system:write` is a global-only permission, so a space's own roles (admin
+     included) never reach it. Step-up keeps the writes out of the SpaceMan MCP and Telegram (AutoExcluded, ADR-0063,
+     ADR-0083): no agent and no chat can grant it; a person in a browser with a fresh second factor, or an API token of
+     an installation administrator (Terraform), can. `PUT` is idempotent (granting again replaces the reason) and
+     `DELETE` of a missing grant is 404: the shape a Terraform resource keyed by space ID needs. Grants and revocations
+     are audited (`event_fleet_scope.granted`, `event_fleet_scope.revoked`, the latter with the number of fleet-scoped
+     subscriptions left). Purging the space deletes its grant (foreign key, cascade).
+  2. **A subscription opts in with `ingest_own_scope`.** `space` (default, every existing subscription) or `fleet`, in
+     the API, OpenAPI (and so the MCP catalog) and the CLI (`--ingest-own-scope`). `fleet` is accepted only with
+     `ingest_own` on and while the subscription's space holds a grant, checked in the transaction that writes it:
+     otherwise create and update are refused (`forbidden`, HTTP 403, "this space holds no fleet-scope grant"; an
+     unknown value or fleet without `ingest_own` is `validation_failed`). An update is checked against the state it
+     leaves and the grant as it is now, so after a revocation a subscription that keeps `fleet` cannot be updated until
+     it goes back to `space`. Turning `ingest_own` off returns the scope to `space`. A template follower keeps its scope
+     when it moves to a new version.
+  3. **Admission reads the grant per event and fails closed.** For an own event of another space, `admitOwn` admits it
+     only when the subscription's current row has `ingest_own` and `ingest_own_scope = fleet` and the space's grant
+     exists at that moment. A revoked grant applies to the next event: other spaces' dialog events are filtered with
+     their own detail ("ingest_own_scope is fleet but this space holds no fleet-scope grant"), while the space's own
+     dialog events are still admitted, as with `space`. Every ADR-0104 condition still holds, unchanged: the subject is
+     exactly one of the two dialog subjects (whatever the subscription's filter), `data.space_id` must be readable, and
+     `spaceman-depth` must be absent or 0. Durable and core subscriptions share the check.
+  4. **No widening of payload.** A run dialog event carries the run's identity (space, run, node, kind, role, harness,
+     instance, lease generation), the occurrence (`dialog_id`), the registry entry (`dialog`), the `signal`, the
+     harness version and the times; no screen text (ADR-0102). A fleet-scoped subscription ingests the data reduced to
+     `space_id`, `run_id`, `dialog_id`, `dialog`, `signal`, `detected_at` and `cleared_at`: what identifies the space,
+     the run and the dialog, and when. Node, role, harness, instance, lease generation and harness version describe how
+     another space runs and stay out of the operations space's inbox (and of what its agents read). The reduction
+     applies to every event such a subscription admits, its own space's too, so its template sees one shape. Nothing
+     is added to the published events.
+- **Alternatives considered:**
+  - A configuration setting (a list of space IDs in the config file): rejected. It needs a restart to change, is
+    invisible in the API, and a Terraform provider cannot manage it.
+  - A row in the generic `settings` key/value table: rejected. It holds internal markers, has no API, and a JSON list
+    in one value has no per-space audit trail, no foreign key (a purged space would leave a stale ID) and no shape for
+    one Terraform resource per space.
+  - A field on the space (`spaces.fleet_events`), set through the space update: rejected. `update-space` is a space
+    write (`space:write`, operators of the space), so the field would need its own global-only check inside a
+    space-scoped operation; a separate global resource keeps the authorization rule in the rule table (Casbin), where
+    it belongs.
+  - Letting a granted space's subscriptions see every space without an opt-in on the subscription: rejected. The
+    grant says the space may; each subscription still says it does, which shows on the subscription and its audit
+    records.
+  - Revoking by flipping the subscriptions back to `space`: rejected. Admission must fail closed on its own (a grant row
+    deleted by a restore, a migration or by hand), so the check is per event; leaving the setting visible tells the
+    operator what stopped.
+- **Consequences:**
+  - An installation administrator can let one operations space turn every space's stopped runs into its items, with
+    one grant and one subscription, and take it back with one call that applies to the next event.
+  - Threat notes. (a) A space cannot grant itself: the grant needs a global-only permission and step-up, and
+    subscriptions only read it. (b) An agent cannot widen reach: grant writes are excluded from the SpaceMan MCP; an
+    agent with a space token can create a fleet-scoped subscription only in a space an administrator already granted.
+    (c) No new loop: the subjects and depth rule are ADR-0104's, and an item in the operations space publishes inbox
+    events (depth 1) that are never on the list. A run the operations space starts for an item can stop at a dialog
+    of its own: one new item per real dialog, as ADR-0104 notes. (d) Disclosure is limited to the identifying fields
+    above; the dialog's screen text stays in the run's own space. (e) A quarantined fleet event that an operator
+    reprocesses later is not checked against the grant again: reprocessing is a person's action in the operations
+    space on data it already holds, and it holds only the reduced fields. (f) Admission looks at the grant as it is
+    when an event is handled, not when it was published: a replay of a granted space's fleet-scoped durable
+    subscription delivers other spaces' dialog events from before the grant, as far back as the stream keeps them.
+    That is what a replay is for, and it needs `replay:execute` and is audited (SM-EVT-007). (g) Archiving a space
+    does not revoke its grant (a grant for an archived space is refused); revoke it explicitly when the operations
+    space changes. (h) Anyone allowed to publish the dialog subjects with this installation's origin header can forge
+    items that look like they come from any space; that trust is one ADR-0104 implies. Fleet scope does not change that
+    trust, but a fleet-scoped subscription lets such a forged item name any space, not only the subscriber's own.
+  - The CLI's `subscription update` does not resend the stored `ingest_own_scope` (it is dropped from the merged
+    body like `custom` and `start`), so `--ingest-own=false` alone returns a fleet subscription to `space`; after a
+    revocation, an update still needs `--ingest-own-scope space` (decision 2).
+  - Evidence (simulated, in-process NATS): `internal/events` `TestFleetScopeAdmitsOtherSpaceDialog` (durable and core,
+    both subjects, reduced data, depth 0 still enforced, a space-scoped subscription still filters),
+    `TestFleetScopeRefusedWithoutGrant`, `TestFleetScopeOtherSubjectsRefused` (a forced wildcard subscription with
+    fleet scope still admits only the dialog subjects), `TestFleetScopeRevocationFailsClosed`,
+    `TestFleetScopeSurvivesTemplateFollow`, `TestFleetData`; `internal/app` `TestFleetScopeOverHTTP` (a space admin
+    can neither grant nor claim fleet scope; step-up rules); `internal/store` `TestFleetScopeMigrationFrom0071`. Not
+    yet seen against a real pulsed.
+  - The Terraform provider's `ingest_own_scope` attribute and grant resource are a separate change. The web UI does not
+    show the scope or the grants yet; the API and CLI do.
+### ADR-0107 — Worktree lifecycle: one safe removal path, auto-prune, a control-led cleanup and cheaper repository reports (security-relevant change)
 
 - **Status:** Accepted, 2026-11-21 (v0.1.17). Decision 1 (the removal core) and decision 2 (no race with a launch) are
   implemented and tested with simulated evidence only: `internal/agent` tests against temporary repositories and a
@@ -8211,13 +8304,14 @@
      - **Clean** (`dirty`, `untracked`): no staged change (`diff-index --cached HEAD`); no tracked file whose content
        differs from HEAD, hashed through a temporary index read from HEAD, so neither the index's cached stat data (an
        edit within the same second) nor repository configuration (`core.trustctime`, `core.checkStat`) can hide an
-       edit (the checks also force `core.ignoreCase=false` and `core.fileMode=true`); no tracked file git was
+       edit (the checks also force `core.ignoreCase=false`, `core.fileMode=true` and `core.commitGraph=false`: a
+       commit-graph file is agent-writable and can misreport ancestry); no tracked file git was
        told not to look at (assume-unchanged, skip-worktree, sparse checkout: their edits are hidden from `git status`
        and from `git worktree remove`); no untracked file, judged by the tree's `.gitignore` files only (the
        repository's `info/exclude` and `core.excludesFile` are agent-writable and could hide anything, and an
        untracked `.gitignore` is itself untracked work, even when it ignores itself); and no git
-       repository anywhere below the top, ignored or not. Files the tree's own `.gitignore` ignores (build output) go
-       with the folder.
+       repository anywhere below the top, ignored or not. Files a committed `.gitignore` ignores (build output, but
+       also a local `.env`) are not work SpaceMan can judge, and go with the folder: that is stated in the user guide.
      - **Pushed** (`unpushed`): HEAD is a commit and `git rev-list HEAD --not <the remote's branch tips>` is empty.
        History is read without replace refs (`GIT_NO_REPLACE_OBJECTS`), and a repository with `info/grafts` is
        refused: both are agent-writable ways to make a commit look like an ancestor of another. Right before the
@@ -8225,30 +8319,43 @@
      - Any git error refuses (`git_error`): unsure means not removed.
 
      Then `git worktree remove <path>` (never `--force`; git refuses an unclean or locked worktree by itself, a
-     second check) and `git worktree prune`. The branch is kept: a removal deletes a checkout, never a ref, so a later
+     second check) and `git worktree prune` (`git worktree remove` already deletes the worktree's own administrative
+     files; the prune only drops stale entries of other worktrees whose folders are gone, which keeps the repository's
+     worktree list true, and its failure does not undo the removal). The branch is kept: a removal deletes a checkout, never a ref, so a later
      launch on that branch gets a fresh worktree at the same commit.
   2. **No race with a launch.** A launch takes the space's worktree lock (`worktreeLock`) before it prepares its
      worktree and holds it until it has written its run's work folder (`runs/<run>/workdir`, the resolved path) next to
-     the journal. A removal fetches first, without the lock (it can take minutes and launches must not wait on it;
-     fresher tracking refs only make the check stricter), then takes the lock for the run, clean and pushed checks and
-     the removal. So a launch either finishes looking at the worktree before the removal starts its checks (and the
-     removal sees its run) or starts after the removal (and `prepareWorktree` checks the kept branch out again). A run
-     that is journaled but has not recorded its folder yet (still launching), or that an older agent launched, blocks
-     every removal in its space until it ends. What the lock cannot cover is a process SpaceMan did not start (a
-     person's shell) writing in the worktree during the removal: git's own clean check catches a new or changed file,
-     the HEAD re-read catches most commits, and a commit made on the branch moves the kept branch ref; only a commit
-     on a detached HEAD in the last instant would be left to git's garbage collection. The lock also knows only the
-     folder each run launched in: a run that works in another worktree through its own shell is not seen. Only clean,
-     pushed work can be removed under it, so that disrupts the run but loses nothing. Lock order: a launch holds the
-     space's guard lock, then the worktree lock; a removal takes the repository lock only around its fetch, before the
-     worktree lock, and never the guard lock. Callers of the removal must hold neither.
+     the journal; it holds it inside the space's guard lock, so anything that holds the worktree lock for long stalls
+     every launch of the space. A removal therefore never holds that lock across its slow work (a clean check reads
+     the whole tree and can take minutes). The lock is held only to *claim* the worktree: under it the removal checks
+     that no live or launching run uses the worktree and marks its resolved path as being removed (`claimWorktree`),
+     then lets go. A launch checks the mark under the same lock, before it prepares its worktree and again before it
+     records its folder, and a launch onto a marked worktree, into a folder in it, or into a folder that contains it
+     fails clearly ("launch again when that is done") instead of starting or waiting. Launches elsewhere in the space
+     are not delayed. The fetch also runs before the claim, without the lock (fresher refs only make the check
+     stricter). The clean and pushed checks, the final re-read of the folder and HEAD, and the removal then run under
+     the mark, and the mark is released when the removal ends, whatever its outcome. So a launch either finishes looking
+     at the worktree before the claim (and the claim sees its run) or starts after the removal (and `prepareWorktree`
+     checks the kept branch out again), or is refused for the length of the removal. A run that is journaled but has not
+     recorded its folder yet (still launching), or that an older agent launched, blocks every removal in its space
+     until it ends. Two removals of one worktree are refused (`locked`). What this cannot cover is a process SpaceMan
+     did not start (a person's shell) writing in the worktree during the removal: git's own clean check catches a new
+     or changed file, the HEAD re-read catches most commits, and a commit made on the branch moves the kept branch
+     ref; only a commit on a detached HEAD in the last instant would be left to git's garbage collection. The mark also
+     knows only the folder each run launched in: a run that works in another worktree through its own shell is not
+     seen. Only clean, pushed work can be removed under it, so that disrupts the run but loses nothing. Lock order: a
+     launch holds the space's guard lock, then the worktree lock; a removal takes the repository lock only around its
+     fetch, the worktree lock only inside the claim, and never the guard lock. Callers of the removal must hold
+     neither. Alternative considered: a bounded wait for the lock in the launch (fail after a few seconds). It keeps
+     the long hold and turns every big removal into failed launches of other branches, so it was not chosen.
   3. **How a worktree is judged.** Central joins the node's report with its own records: the newest run launched with
      that repository and branch is the worktree's owning run, and that run's task (if any) its owning task. A worktree
      with no such run (made by hand, or by an agent's shell) is **unowned**: it is listed with its state, never
      auto-pruned, and removed only when control (or a person) asks for that one worktree, through the same core. What
      is shown per worktree: path, branch, HEAD, owning run and task with their states, the time of the last change
      (the newest of the worktree's index, HEAD and folder times), dirty and untracked counts, and whether HEAD was
-     reachable from the remote's tracking refs at the last fetch. A pull request's state is shown only when SpaceMan
+     reachable from the remote's branches as the remote listed them at the last check (informational: a removal always
+     checks again, and the repository's own refs never vouch, decision 1). A pull request's state is shown only when SpaceMan
      already has it from events it receives; no forge API is called per worktree.
   4. **Auto-prune (follow-up).** A space limit `worktree_retention_days` (0: never, the default; installation default
      and per-space override like the retention limits, ADR-0045). The daily retention pass picks worktrees whose

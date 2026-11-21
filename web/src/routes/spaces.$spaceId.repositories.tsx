@@ -200,7 +200,7 @@ function RepositoryDrawer({ spaceId, repo, canWrite, onClose, onEdit, onSync }: 
                       <Table.Tr key={w.path}>
                         <Table.Td><Text size="xs" className="mono">{w.path}</Text>{w.error && <Text size="xs" c="owlRed">{w.error}</Text>}</Table.Td>
                         <Table.Td><Text size="xs" className="mono">{w.branch || `detached ${short(w.head)}`}</Text></Table.Td>
-                        <Table.Td><Text size="xs">{w.dirty} changed · {w.untracked} untracked</Text></Table.Td>
+                        <Table.Td>{w.status === 'unchecked' ? <Text size="xs" c="owlYellow">unknown</Text> : <Text size="xs">{w.dirty} changed · {w.untracked} untracked{w.status === 'cached' && w.status_at ? ` (cached ${new Date(w.status_at).toLocaleDateString()})` : ''}</Text>}</Table.Td>
                         <Table.Td><Text size="xs" c={w.unpushed > 0 ? 'owlYellow' : undefined}>{w.unpushed}</Text></Table.Td>
                         <Table.Td>{w.run_id ? <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: w.run_id }} size="xs" className="mono">{w.run_id}</AnchorLink> : <Text size="xs" c="dimmed">—</Text>}</Table.Td>
                       </Table.Tr>

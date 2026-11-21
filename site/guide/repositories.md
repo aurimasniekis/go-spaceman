@@ -170,4 +170,7 @@ SpaceMan SSH key is cloned on the destination by the first sync after the move.
 ## Limitations
 
 See [Limitations](../reference/limitations#control-and-repositories): reports follow events, not a clock; a repository
-with Git LFS installed per repository is refused; worktrees are never cleaned up automatically.
+with Git LFS installed per repository is refused; worktrees are never cleaned up automatically. When a worktree is
+removed (by a person's tool call or, later, an automatic cleanup), the files the committed `.gitignore` ignores, such as
+`.env` or build output, are deleted with it: SpaceMan only checks tracked and untracked-but-not-ignored work. Keep
+anything you need out of ignored files in a worktree.

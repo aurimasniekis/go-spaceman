@@ -39,6 +39,23 @@ var EventRules = map[string]Rule{
 	"replay-subscription":        InSpace(authz.ReplayExecute),
 	"list-subscription-replays":  InSpace(authz.SubscriptionRead),
 	"resolve-quarantine":         InSpace(authz.SubscriptionWrite),
+
+	// Fleet-scope grants (ADR-0106) are installation administration: a space's own permissions, even admin, never
+	// reach them, and step-up keeps them out of SpaceMan MCP and Telegram (agents and chats cannot grant fleet scope).
+	"list-event-fleet-scope-grants":  Global(authz.SystemRead),
+	"get-event-fleet-scope-grant":    Global(authz.SystemRead),
+	"put-event-fleet-scope-grant":    StepUp(authz.SystemWrite),
+	"delete-event-fleet-scope-grant": StepUp(authz.SystemWrite),
+}
+
+// FleetScopePath identifies the space of a fleet-scope grant.
+type FleetScopePath struct {
+	SpaceID string `path:"space_id" pattern:"^spc_[0-9a-z]{26}$"`
+}
+
+// FleetScopeBody grants a space fleet scope.
+type FleetScopeBody struct {
+	Reason string `json:"reason,omitempty" maxLength:"500" doc:"Why this space may ingest every space's run dialog events (recorded on the grant and in the audit log)"`
 }
 
 // ConnectionPath identifies a connection.
@@ -108,6 +125,7 @@ type SubscriptionBody struct {
 	Delivery          string               `json:"delivery,omitempty" enum:"durable,core" doc:"durable (default): a JetStream durable consumer, acknowledged after the inbox commit, redelivered and replayable. core: a plain NATS Core subscription for sources that publish without JetStream; NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost. Fixed at creation."`
 	WhilePaused       string               `json:"while_paused,omitempty" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)"`
 	IngestOwn         bool                 `json:"ingest_own,omitempty" doc:"Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies."`
+	IngestOwnScope    string               `json:"ingest_own_scope,omitempty" enum:"space,fleet" doc:"Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's. fleet needs ingest_own and a fleet-scope grant for this space, which only an installation administrator gives (PUT /event-fleet-scope-grants/{space_id}); without one it is refused with 403. The grant is checked again for every event, so after a revocation other spaces' events are filtered. The subjects stay the two dialog events and the depth 0. A fleet-scoped subscription ingests only these data fields: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at."`
 }
 
 // SubscriptionPatch updates a subscription.
@@ -121,6 +139,7 @@ type SubscriptionPatch struct {
 	Start             *events.Cursor       `json:"start,omitempty" doc:"Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor."`
 	WhilePaused       string               `json:"while_paused,omitempty" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost). Omitted: unchanged."`
 	IngestOwn         *bool                `json:"ingest_own,omitempty" doc:"Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. Omitted: unchanged; a subject change keeps it only on an allowed subject."`
+	IngestOwnScope    string               `json:"ingest_own_scope,omitempty" enum:"space,fleet" doc:"Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's. fleet needs ingest_own and a fleet-scope grant for this space, which only an installation administrator gives (PUT /event-fleet-scope-grants/{space_id}); without one it is refused with 403. The grant is checked again for every event, so after a revocation other spaces' events are filtered. The subjects stay the two dialog events and the depth 0. A fleet-scoped subscription ingests only these data fields: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at. Omitted: unchanged, except that turning ingest_own off returns it to space. While it stays fleet, an update is refused once the space has lost its grant."`
 }
 
 type subOut struct {
@@ -374,7 +393,7 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 				}
 				s, err := svc.CreateSubscription(ctx, Actor(ctx), in.SpaceID, events.SubscriptionInput{Name: in.Body.Name, ConnectionID: in.Body.ConnectionID,
 					TemplateVersionID: in.Body.TemplateVersionID, Follow: in.Body.Follow, Custom: in.Body.Custom, Vars: in.Body.Vars, Start: start,
-					Delivery: in.Body.Delivery, WhilePaused: in.Body.WhilePaused, IngestOwn: in.Body.IngestOwn})
+					Delivery: in.Body.Delivery, WhilePaused: in.Body.WhilePaused, IngestOwn: in.Body.IngestOwn, IngestOwnScope: in.Body.IngestOwnScope})
 				if err != nil {
 					return nil, d.fail(ctx, "events.subscription_create", err)
 				}
@@ -399,7 +418,7 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 				}
 				s, err := svc.UpdateSubscription(ctx, Actor(ctx), in.SpaceID, in.SubscriptionID, v, events.SubscriptionUpdate{Name: in.Body.Name, Enabled: in.Body.Enabled,
 					TemplateVersionID: in.Body.TemplateVersionID, Follow: in.Body.Follow, Custom: in.Body.Custom, Vars: in.Body.Vars, Start: in.Body.Start,
-					WhilePaused: in.Body.WhilePaused, IngestOwn: in.Body.IngestOwn})
+					WhilePaused: in.Body.WhilePaused, IngestOwn: in.Body.IngestOwn, IngestOwnScope: in.Body.IngestOwnScope})
 				if err != nil {
 					return nil, d.fail(ctx, "events.subscription_update", err)
 				}
@@ -410,6 +429,62 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 			func(ctx context.Context, in *SubscriptionPath) (*struct{}, error) {
 				if err := svc.DeleteSubscription(ctx, Actor(ctx), in.SpaceID, in.SubscriptionID); err != nil {
 					return nil, d.fail(ctx, "events.subscription_delete", err)
+				}
+				return &struct{}{}, nil
+			})
+		fleetTags := []string{"subscriptions"}
+		huma.Register(api, huma.Operation{OperationID: "list-event-fleet-scope-grants", Method: http.MethodGet, Path: "/event-fleet-scope-grants",
+			Summary: "Spaces allowed fleet-scoped ingest_own", Description: "The spaces whose subscriptions may set ingest_own_scope fleet: ingest every space's run dialog events (ADR-0106). Installation administrators only.",
+			Tags: fleetTags},
+			func(ctx context.Context, _ *struct{}) (*struct {
+				Body struct {
+					Items []*events.FleetScopeGrant `json:"items"`
+				}
+			}, error) {
+				l, err := svc.ListFleetScopeGrants(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "events.fleet_scope_grants", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []*events.FleetScopeGrant `json:"items"`
+					}
+				}{}
+				out.Body.Items = l
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-event-fleet-scope-grant", Method: http.MethodGet, Path: "/event-fleet-scope-grants/{space_id}",
+			Summary: "A space's fleet-scope grant", Description: "404 when the space holds none.", Tags: fleetTags},
+			func(ctx context.Context, in *FleetScopePath) (*struct{ Body *events.FleetScopeGrant }, error) {
+				g, err := svc.GetFleetScopeGrant(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "events.fleet_scope_grant", err)
+				}
+				return &struct{ Body *events.FleetScopeGrant }{Body: g}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "put-event-fleet-scope-grant", Method: http.MethodPut, Path: "/event-fleet-scope-grants/{space_id}",
+			Summary: "Allow a space fleet-scoped ingest_own",
+			Description: "Lets the space's subscriptions set ingest_own_scope fleet, so they ingest the run dialog events (evt.spaceman.fleet.run.dialog_detected and _cleared, depth 0, identifying fields only) of every space. " +
+				"Idempotent: granting again replaces the reason. Needs system:write with step-up; never reachable through SpaceMan MCP or Telegram.",
+			Tags: fleetTags},
+			func(ctx context.Context, in *struct {
+				FleetScopePath
+				Body FleetScopeBody
+			}) (*struct{ Body *events.FleetScopeGrant }, error) {
+				g, err := svc.GrantFleetScope(ctx, Actor(ctx), in.SpaceID, in.Body.Reason)
+				if err != nil {
+					return nil, d.fail(ctx, "events.fleet_scope_grant_put", err)
+				}
+				return &struct{ Body *events.FleetScopeGrant }{Body: g}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "delete-event-fleet-scope-grant", Method: http.MethodDelete, Path: "/event-fleet-scope-grants/{space_id}",
+			Summary: "Revoke a space's fleet-scope grant",
+			Description: "Takes effect with the next event: the space's fleet-scoped subscriptions then filter other spaces' dialog events (they keep their own space's). " +
+				"Updating such a subscription is refused until its ingest_own_scope is set back to space. 404 when the space holds no grant.",
+			Tags: fleetTags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *FleetScopePath) (*struct{}, error) {
+				if err := svc.RevokeFleetScope(ctx, Actor(ctx), in.SpaceID); err != nil {
+					return nil, d.fail(ctx, "events.fleet_scope_grant_delete", err)
 				}
 				return &struct{}{}, nil
 			})

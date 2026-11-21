@@ -403,9 +403,14 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 	}
 	// The worktree is prepared and the run's work folder recorded under the space's worktree lock, so a worktree removal
-	// (ADR-0106) either finishes before this launch looks at the worktree or sees this run using it.
+	// (ADR-0107) either finishes before this launch looks at the worktree or sees this run using it.
 	unlockWorktrees := a.worktreeLock(c.SpaceID)
 	if p.Worktree != nil {
+		if a.workBeingRemoved(space, worktreeDir(space, *p.Worktree)) {
+			unlockWorktrees()
+			fail("prepare worktree", errors.New("the worktree is being removed; launch again when that is done"))
+			return
+		}
 		dir, err := prepareWorktree(ctx, space, *p.Worktree)
 		if err != nil {
 			unlockWorktrees()
@@ -413,6 +418,11 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 		work = dir
+	}
+	if a.workBeingRemoved(space, work) {
+		unlockWorktrees()
+		fail("prepare the work folder", errors.New("a worktree in or around it is being removed; launch again when that is done"))
+		return
 	}
 	if err := a.recordWorkdir(c.RunID, space, work); err != nil {
 		unlockWorktrees()

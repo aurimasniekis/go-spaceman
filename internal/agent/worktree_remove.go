@@ -9,12 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
-// Worktree removal (ADR-0106). Every removal of a worktree goes through removeWorktreeSafely, whatever asks for it (an
+// Worktree removal (ADR-0107). Every removal of a worktree goes through removeWorktreeSafely, whatever asks for it (an
 // agent tool, the scheduled cleanup or the auto-prune of a finished task). It removes only what can be rebuilt from the
 // remote: a worktree of a configured repository, inside the space's worktrees folder, that no live or launching run
 // uses, with nothing changed or untracked, whose HEAD the remote has (checked after a fetch). Anything it can't be sure
@@ -76,11 +77,12 @@ type removalHooks struct {
 	// the commits the remote's branches point at, as the remote itself lists them (git ls-remote), never as refs in the
 	// repository, which agents can write. An error refuses the removal.
 	fetch func(ctx context.Context, repoDir string) (tips []string, err error)
-	// lock takes the space's worktree lock (launches take it while they prepare a worktree and record their work
-	// folder) and returns its unlock.
-	lock func() func()
-	// inUse says which live or launching run uses dir ("" when none). It is called under lock; an error refuses.
-	inUse func(ctx context.Context, dir string) (string, error)
+	// claim takes the space's worktree lock for a moment, checks that no live or launching run uses dir, and marks dir as
+	// being removed, so a launch onto it (or onto a folder in or around it) fails clearly instead of starting. It
+	// returns the release of the mark. A refusal says why (a run uses it, or another removal has it). The lock is held
+	// only for the check and the mark, never across the slow checks or the removal: launches wait on it inside the
+	// space's guard lock, and must not wait for a big tree to be read.
+	claim func(ctx context.Context, dir string) (release func(), err error)
 }
 
 // removedWorktree is what a removal removed.
@@ -156,14 +158,13 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 		}
 	}
 
-	// From here on no launch prepares a worktree or records its work folder in this space until the removal is done.
-	unlock := h.lock()
-	defer unlock()
-	if who, err := h.inUse(ctx, realDir); err != nil {
-		return out, refuse(RefuseLiveRun, "the runs using the worktree are not known: %s", truncateStr(err.Error(), 300))
-	} else if who != "" {
-		return out, refuse(RefuseLiveRun, "%s", who)
+	// From here on no launch uses this worktree until the removal is done: the claim saw every run that records a
+	// work folder, and from then on launches onto it fail. The long checks below run without the space's worktree lock.
+	release, err := h.claim(ctx, realDir)
+	if err != nil {
+		return out, err
 	}
+	defer release()
 	if err := cleanTree(ctx, g, realDir); err != nil {
 		return out, err
 	}
@@ -202,7 +203,7 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 		return out, refuse(RefuseUnpushed, "HEAD %s has commits the remote's branches do not have", short(head))
 	}
 	// Right before the removal: the folder is still the one checked and HEAD has not moved (a process SpaceMan did not
-	// start could commit or swap the folder meanwhile).
+	// start could commit or swap the folder meanwhile). Only this re-check and the removal depend on each other.
 	if fi, err := os.Lstat(dir); err != nil || fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
 		return out, refuse(RefuseOutside, "worktrees/%s changed during the removal", req.Name)
 	}
@@ -216,6 +217,8 @@ func removeWorktreeSafely(ctx context.Context, g *projectGit, req worktreeRemova
 	if _, err := g.run(ctx, repo, "worktree", "remove", realDir); err != nil {
 		return out, refuse(RefuseGit, "git worktree remove: %s", truncateStr(err.Error(), 300))
 	}
+	// git worktree remove already deletes the worktree's administrative files; the prune only drops stale entries of
+	// other worktrees whose folders are gone, and a failure of it does not undo the removal.
 	if _, err := g.run(ctx, repo, "worktree", "prune"); err != nil {
 		return out, fmt.Errorf("the worktree was removed but git worktree prune failed: %w", err)
 	}
@@ -345,7 +348,10 @@ func strictGit(ctx context.Context, g *projectGit, dir string, args ...string) (
 
 // strictOpts are the configuration values the removal's checks never take from the repository: full stat comparison,
 // case-sensitive names (core.ignoreCase would let an untracked WORK.TXT pass as the tracked work.txt) and file modes.
-var strictOpts = []string{"-c", "core.trustctime=true", "-c", "core.checkStat=default", "-c", "core.ignoreCase=false", "-c", "core.fileMode=true"}
+// The commit-graph file is off too: it can make a commit look like an ancestor of the remote's branches (or hide a
+// commit's parents) without reading the commits, and agents can write it.
+var strictOpts = []string{"-c", "core.trustctime=true", "-c", "core.checkStat=default", "-c", "core.ignoreCase=false", "-c", "core.fileMode=true",
+	"-c", "core.commitGraph=false"}
 
 type listedTree struct {
 	branch string
@@ -397,7 +403,7 @@ func short(sha string) string {
 }
 
 // worktreeLock is the space's worktree lock: a launch holds it while it prepares its worktree and records its work
-// folder, a removal while it checks and removes.
+// folder, a removal only while it checks for runs and marks the worktree (claimWorktree).
 func (a *Agent) worktreeLock(spaceID string) func() { return a.runLock("worktrees/" + spaceID) }
 
 // recordWorkdir writes a launch's work folder into the run's directory (workdirFile), as the space folder's real path
@@ -470,13 +476,54 @@ func (a *Agent) worktreeInUse(ctx context.Context, spaceID, dir string) (string,
 	return "", nil
 }
 
+// claimWorktree is a removal's claim (removalHooks.claim): under the space's worktree lock it refuses when a live or
+// launching run uses dir, or another removal has it, and otherwise marks dir so launches onto it fail until released.
+func (a *Agent) claimWorktree(ctx context.Context, spaceID, dir string) (func(), error) {
+	unlock := a.worktreeLock(spaceID)
+	defer unlock()
+	if who, err := a.worktreeInUse(ctx, spaceID, dir); err != nil {
+		return nil, refuse(RefuseLiveRun, "the runs using the worktree are not known: %s", truncateStr(err.Error(), 300))
+	} else if who != "" {
+		return nil, refuse(RefuseLiveRun, "%s", who)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.removing[dir] {
+		return nil, refuse(RefuseLocked, "another removal has the worktree")
+	}
+	a.removing[dir] = true
+	return sync.OnceFunc(func() {
+		a.mu.Lock()
+		delete(a.removing, dir)
+		a.mu.Unlock()
+	}), nil
+}
+
+// workBeingRemoved reports whether work (a launch's work folder, as the space folder's real path joined with the folder
+// relative to it, like recordWorkdir) is, is in, or contains a worktree being removed. Called under the worktree lock.
+func (a *Agent) workBeingRemoved(space, work string) bool {
+	rel, err := filepath.Rel(space, work)
+	if err != nil {
+		return false
+	}
+	p := filepath.Join(realPath(space), rel)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for d := range a.removing {
+		if within(p, d) || within(d, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // within reports whether p is base or inside it.
 func within(p, base string) bool {
 	rel, err := filepath.Rel(base, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// removeWorktree removes a worktree of a configured repository of the space (ADR-0106), through removeWorktreeSafely.
+// removeWorktree removes a worktree of a configured repository of the space (ADR-0107), through removeWorktreeSafely.
 // The fetch uses the repository's configured URL and SpaceMan key, never the URL in the repository's own
 // configuration, which agents can change.
 func (a *Agent) removeWorktree(ctx context.Context, spaceID, space string, src proto.RepoSource, name string) (removedWorktree, error) {
@@ -521,7 +568,6 @@ func (a *Agent) removeWorktree(ctx context.Context, spaceID, space string, src p
 	}
 	return removeWorktreeSafely(ctx, g, worktreeRemoval{Space: space, Repo: src.Path, Name: name}, removalHooks{
 		fetch: fetch,
-		lock:  func() func() { return a.worktreeLock(spaceID) },
-		inUse: func(ctx context.Context, dir string) (string, error) { return a.worktreeInUse(ctx, spaceID, dir) },
+		claim: func(ctx context.Context, dir string) (func(), error) { return a.claimWorktree(ctx, spaceID, dir) },
 	})
 }

@@ -139,7 +139,11 @@ type Worktree struct {
 	Untracked int    `json:"untracked"`
 	Unpushed  int    `json:"unpushed" doc:"Commits on the worktree's branch that no remote has"`
 	RunID     string `json:"run_id,omitempty" doc:"The latest run SpaceMan launched in this worktree"`
-	Error     string `json:"error,omitempty"`
+	// Status says where Dirty and Untracked come from: empty or "fresh" (checked for the report), "cached" (an idle
+	// worktree's earlier counts, taken at StatusAt) or "unchecked" (unknown, never clean; Error says so).
+	Status   string     `json:"status,omitempty" enum:"fresh,cached,unchecked"`
+	StatusAt *time.Time `json:"status_at,omitempty" doc:"When the counts were taken"`
+	Error    string     `json:"error,omitempty"`
 }
 
 // Input creates or edits a repository. Name and path are fixed after creation.
@@ -616,7 +620,7 @@ func status(st proto.RepoState, at time.Time, stale bool, owners map[string]stri
 		s.Unpushed += c.Detached
 		for _, w := range c.Worktrees {
 			s.Worktrees = append(s.Worktrees, Worktree{Path: w.Path, Branch: w.Branch, Head: w.Head, Dirty: w.Dirty, Untracked: w.Untracked,
-				Unpushed: unpushed[w.Branch], RunID: owners[w.Path], Error: w.Error})
+				Unpushed: unpushed[w.Branch], RunID: owners[w.Path], Status: w.Status, StatusAt: w.StatusAt, Error: w.Error})
 		}
 	}
 	return s

@@ -102,6 +102,7 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 	defer l.Unlock()
 	rep := proto.RepoStatusReport{SpaceID: spaceID, Repositories: []proto.RepoState{}}
 	g, gerr := newProjectGit()
+	budget := a.newWtBudget()
 	configured := map[string]bool{}
 	for _, r := range p.Repositories {
 		configured[r.Path] = true
@@ -114,7 +115,7 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 		case !validRef(r.DefaultBranch):
 			st.Error = "invalid default branch"
 		default:
-			a.syncRepo(ctx, g, space, r, slices.Contains(p.Clone, r.ID), slices.Contains(p.Fetch, r.ID), &st)
+			a.syncRepo(ctx, g, space, r, slices.Contains(p.Clone, r.ID), slices.Contains(p.Fetch, r.ID), budget, &st)
 		}
 		rep.Repositories = append(rep.Repositories, st)
 	}
@@ -129,7 +130,7 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 	return rep
 }
 
-func (a *Agent) syncRepo(ctx context.Context, g *projectGit, space string, r proto.RepoSource, clone, fetch bool, st *proto.RepoState) {
+func (a *Agent) syncRepo(ctx context.Context, g *projectGit, space string, r proto.RepoSource, clone, fetch bool, budget *wtBudget, st *proto.RepoState) {
 	dir := filepath.Join(space, filepath.FromSlash(r.Path))
 	var env []string
 	if r.URL != "" {
@@ -171,7 +172,7 @@ func (a *Agent) syncRepo(ctx context.Context, g *projectGit, space string, r pro
 	if !present {
 		return
 	}
-	rc := g.inspectRepo(ctx, space, r.Path)
+	rc := g.inspectRepoBudget(ctx, space, r.Path, budget)
 	st.Check = &rc
 	if rc.Error != "" && st.Error == "" {
 		st.Error = rc.Error

@@ -381,7 +381,7 @@ func (svc *Service) moveFollowers(ctx context.Context, tx *store.Tx, templateID,
 		if _, err := tx.Q.UpdateEventSubscription(ctx, db.UpdateEventSubscriptionParams{Name: s.Name, TemplateVersionID: sql.NullString{String: versionID, Valid: true},
 			Follow: s.Follow, CustomJson: s.CustomJson, VarsJson: s.VarsJson, EffectiveSubject: s.EffectiveSubject, Enabled: s.Enabled,
 			CursorGeneration: s.CursorGeneration, StartPolicy: s.StartPolicy, StartTime: s.StartTime, StartSeq: s.StartSeq, Replay: s.Replay, WhilePaused: s.WhilePaused,
-			IngestOwn: s.IngestOwn, Now: tx.NowMicros(), ID: s.ID, Version: s.Version}); err != nil {
+			IngestOwn: s.IngestOwn, IngestOwnScope: s.IngestOwnScope, Now: tx.NowMicros(), ID: s.ID, Version: s.Version}); err != nil {
 			return nil, err
 		}
 		if err := svc.changes.Record(ctx, tx, s.SpaceID, "event_subscription", s.ID, "updated", s.Version+1); err != nil {

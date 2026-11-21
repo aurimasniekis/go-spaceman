@@ -53,8 +53,9 @@ UPDATE event_template_versions SET status = 'published', published_at = sqlc.arg
 
 -- name: InsertEventSubscription :exec
 INSERT INTO event_subscriptions (id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json,
-  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery, while_paused, ingest_own)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery, while_paused, ingest_own,
+  ingest_own_scope)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetEventSubscription :one
 SELECT * FROM event_subscriptions WHERE id = ?;
@@ -73,7 +74,7 @@ UPDATE event_subscriptions SET name = sqlc.arg(name), template_version_id = sqlc
   custom_json = sqlc.arg(custom_json), vars_json = sqlc.arg(vars_json), effective_subject = sqlc.arg(effective_subject), enabled = sqlc.arg(enabled),
   cursor_generation = sqlc.arg(cursor_generation), start_policy = sqlc.arg(start_policy), start_time = sqlc.arg(start_time),
   start_seq = sqlc.arg(start_seq), replay = sqlc.arg(replay), while_paused = sqlc.arg(while_paused),
-  ingest_own = sqlc.arg(ingest_own), version = version + 1, updated_at = sqlc.arg(now)
+  ingest_own = sqlc.arg(ingest_own), ingest_own_scope = sqlc.arg(ingest_own_scope), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
 
 -- name: ListPausedSpaceIDs :many
@@ -138,3 +139,22 @@ SELECT count(*) FROM event_quarantine WHERE status = 'open';
 UPDATE event_subscriptions SET cursor_generation = sqlc.arg(cursor_generation), start_policy = sqlc.arg(start_policy), start_time = sqlc.arg(start_time),
   start_seq = sqlc.arg(start_seq), replay = 1, version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
+
+-- Fleet-scope grants (ADR-0106): the spaces an installation administrator allows to ingest other spaces' run dialog
+-- events.
+
+-- name: GetEventFleetScopeGrant :one
+SELECT * FROM event_fleet_scope_grants WHERE space_id = ?;
+
+-- name: ListEventFleetScopeGrants :many
+SELECT * FROM event_fleet_scope_grants ORDER BY space_id;
+
+-- name: UpsertEventFleetScopeGrant :exec
+INSERT INTO event_fleet_scope_grants (space_id, reason, granted_at, granted_by) VALUES (?, ?, ?, ?)
+ON CONFLICT (space_id) DO UPDATE SET reason = excluded.reason, granted_at = excluded.granted_at, granted_by = excluded.granted_by;
+
+-- name: DeleteEventFleetScopeGrant :execrows
+DELETE FROM event_fleet_scope_grants WHERE space_id = ?;
+
+-- name: CountFleetScopeSubscriptions :one
+SELECT count(*) FROM event_subscriptions WHERE space_id = ? AND ingest_own_scope = 'fleet';
