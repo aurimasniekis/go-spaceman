@@ -307,8 +307,14 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 		_, err := g.RunCheckout(ctx, inst, nil, "merge", "--quiet", "--ff-only", theirs)
 		return false, err
 	}
-	// Both sides moved: merge, or preserve on conflict.
-	if _, err := g.RunCheckout(ctx, inst, id, "merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into "+instance, theirs); err == nil {
+	// Both sides moved: merge, or preserve on conflict. A checkout that was unborn when it first got files has a root
+	// commit unrelated to the shared history (no merge base): merge that on purpose, so its files reach shared main
+	// (files both sides added with different content still conflict and are preserved).
+	mergeArgs := []string{"merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into " + instance}
+	if _, err := g.RunCheckout(ctx, inst, nil, "merge-base", head, theirs); err != nil {
+		mergeArgs = append(mergeArgs, "--allow-unrelated-histories")
+	}
+	if _, err := g.RunCheckout(ctx, inst, id, append(mergeArgs, theirs)...); err == nil {
 		_, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, "HEAD:refs/heads/main")
 		return err == nil, err
 	}
