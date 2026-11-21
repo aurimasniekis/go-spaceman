@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,8 +32,14 @@ func TestMemoryStatusUnreadableCheckoutIsNotClean(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(i1, "sub", ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := a.memoryClean(ctx, sp); ok {
+	// The checkpoint is refused too, and records why: the space's reason must say so.
+	if err := m.checkpointErr(ctx, sp, role, "ins_1", "idle"); err == nil || !strings.Contains(err.Error(), "checkout refused") {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if ok, why := a.memoryClean(ctx, sp); ok {
 		t.Fatal("an instance whose status the guard refuses read as clean")
+	} else if !strings.Contains(why, "checkout refused") {
+		t.Fatalf("the reason %q does not say why the space is unclean", why)
 	}
 	head := m.git.RevParse(ctx, m.shared(sp, role), "refs/heads/main")
 	if unc, local, ok := m.instanceStatus(ctx, i1, head); !ok || unc < 1 || local < 1 {

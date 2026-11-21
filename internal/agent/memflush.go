@@ -86,7 +86,11 @@ func (a *Agent) memoryClean(ctx context.Context, spaceID string) (bool, string) 
 	for _, st := range cols {
 		switch {
 		case st.Uncheckpointed > 0:
-			return false, fmt.Sprintf("role %s: %d uncheckpointed file(s)", st.Role, st.Uncheckpointed)
+			msg := fmt.Sprintf("role %s: %d uncheckpointed file(s)", st.Role, st.Uncheckpointed)
+			if st.LastError != "" {
+				msg += " (" + truncateStr(st.LastError, 120) + ")"
+			}
+			return false, msg
 		case st.LocalCommits > 0 || st.Pending:
 			msg := fmt.Sprintf("role %s: %d commit(s) not acknowledged by central", st.Role, st.LocalCommits)
 			if st.LastError != "" {
