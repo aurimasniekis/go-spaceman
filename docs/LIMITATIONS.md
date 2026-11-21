@@ -61,7 +61,7 @@
 - **At least once, no global order.** Consumers must deduplicate on `Nats-Msg-Id`; JetStream deduplicates retries only
   within its 2-minute window. Events of different subjects can arrive in any order (SM-OBS-004).
 - **Automation depth follows recorded links only.** An installation drops events carrying its own `spaceman-origin`
-  (unless a subscription opts in with `ingest_own` for its own run dialog events at depth 0, ADR-0104), and quarantines events whose `spaceman-depth` reaches the space's `event_depth` (default 8, ADR-0049). The depth
+  (unless a subscription opts in with `ingest_own` for its own run dialog events at depth 0, ADR-0104, or for every space's in an operations space an administrator granted fleet scope, ADR-0106), and quarantines events whose `spaceman-depth` reaches the space's `event_depth` (default 8, ADR-0049). The depth
   passes from an event to its inbox item, to tasks created from the item (`origin_kind` inbox_item) and their
   subtasks, and to their events. Runs, human actions, approvals, memory and KB events carry no depth: a change control
   makes on its own judgement after reading an item starts a new chain, bounded only by the run, tool-call and budget

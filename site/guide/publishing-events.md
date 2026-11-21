@@ -59,7 +59,8 @@ a SpaceMan extension, not part of Pulse:
 By default SpaceMan never turns its own events back into inbox items: an incoming event whose `spaceman-origin` equals
 this installation's source is acknowledged and shown as **filtered** in the subscription's deliveries. The one
 exception is opt-in: a subscription with `ingest_own` on exactly `evt.spaceman.fleet.run.dialog_detected` or
-`evt.spaceman.fleet.run.dialog_cleared` ingests this installation's own dialog events, at automation depth 0 only
+`evt.spaceman.fleet.run.dialog_cleared` ingests this installation's own dialog events, at automation depth 0 only, for its own space or, in an operations
+space an administrator granted fleet scope, for every space
 ([Ingest own events](/guide/events#ingest-own-events)). Give every
 installation its own `source` so they can still receive each other's events. Loops through other installations end at
 the receiving space's `event_depth` limit: an event that deep is quarantined instead

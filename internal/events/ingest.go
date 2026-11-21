@@ -209,6 +209,10 @@ const OwnCausedDetail = "published by this SpaceMan with a spaceman-depth that i
 // data.space_id is not the subscription's space, or is missing or unreadable (ADR-0104).
 const OwnOtherSpaceDetail = "published by this SpaceMan for another space, or with no readable data.space_id; ingest_own admits an own event only for the subscription's own space"
 
+// OwnFleetUngrantedDetail is the delivery detail of another space's own dialog event on a subscription with
+// ingest_own_scope fleet whose space no longer holds the fleet-scope grant (ADR-0106): the scope fails closed.
+const OwnFleetUngrantedDetail = "published by this SpaceMan for another space; ingest_own_scope is fleet but this space holds no fleet-scope grant (revoked), so only its own space's events are admitted"
+
 // ownEvent reports whether e carries this installation's spaceman-origin header.
 func (svc *Service) ownEvent(e pulse.Event) bool {
 	return svc.o.Origin != "" && e.Extra.Get(outbox.HeaderOrigin) == svc.o.Origin
@@ -219,36 +223,74 @@ func (svc *Service) ownEvent(e pulse.Event) bool {
 //   - the subscription opts in (ingest_own), read now, not when its consumer started;
 //   - the event's subject is on the allow-list (ownIngestSubjects), whatever the subscription's filter;
 //   - its data.space_id equals the subscription's space (missing or unreadable means not admitted): one space never
-//     ingests another space's run dialogs;
+//     ingests another space's run dialogs, unless the subscription's ingest_own_scope is fleet and its space holds the
+//     operator's fleet-scope grant, read now (ADR-0106); a revoked grant fails closed;
 //   - its spaceman-depth is absent or 0: no ingestion led to it. Everything an ingestion causes (the item, a task made
 //     from it, their events) carries depth 1 or more, so an own event caused by ingestion is never ingested again.
 //
 // Otherwise it is acknowledged and recorded as filtered (false). An admitted event then goes through the same rate
-// limit, depth limit (event_depth), filtering, deduplication and quarantine as any other.
-func (svc *Service) admitOwn(ctx context.Context, subID string, e template.Event, seq uint64) (bool, error) {
+// limit, depth limit (event_depth), filtering, deduplication and quarantine as any other. It is returned as it is to
+// be processed: on a fleet-scoped subscription with its data reduced to fleetDataFields.
+func (svc *Service) admitOwn(ctx context.Context, subID string, e template.Event, seq uint64) (template.Event, bool, error) {
 	r, err := svc.s.R().GetEventSubscription(ctx, subID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return e, false, nil
 	} else if err != nil {
-		return false, err
+		return e, false, err
 	}
-	detail := OwnOriginDetail
-	if r.IngestOwn == 1 && ownIngestAllowed(e.Subject) {
-		var d struct {
-			SpaceID string `json:"space_id"`
+	detail, err := svc.ownDetail(ctx, r, e)
+	if err != nil {
+		return e, false, err
+	}
+	if detail == "" {
+		if r.IngestOwnScope != ScopeFleet {
+			return e, true, nil
 		}
-		if json.Unmarshal(e.Data, &d) != nil || d.SpaceID == "" || d.SpaceID != r.SpaceID {
-			detail = OwnOtherSpaceDetail
-		} else if depth, err := parseDepth(e.Depth); err == nil && depth == 0 {
-			return true, nil
-		} else {
-			detail = OwnCausedDetail
+		if e.Data, err = fleetData(e.Data); err == nil {
+			return e, true, nil
 		}
+		detail = OwnOtherSpaceDetail // unreachable: ownDetail read the data as an object
 	}
 	start := time.Now()
 	err = svc.deliver(ctx, r, e, seq, Origin{Kind: OriginLive, attempt: 1}, OutcomeFiltered, "", detail)
 	svc.observe(r.Delivery, OriginLive, OutcomeFiltered, err, time.Since(start))
-	return false, err
+	return e, false, err
+}
+
+// ownDetail returns why admitOwn filters e on subscription r, or "" when it is admitted.
+func (svc *Service) ownDetail(ctx context.Context, r db.EventSubscription, e template.Event) (string, error) {
+	if r.IngestOwn != 1 || !ownIngestAllowed(e.Subject) {
+		return OwnOriginDetail, nil
+	}
+	var d struct {
+		SpaceID string `json:"space_id"`
+	}
+	readable := json.Unmarshal(e.Data, &d) == nil && d.SpaceID != ""
+	if !readable {
+		return OwnOtherSpaceDetail, nil
+	}
+	if d.SpaceID != r.SpaceID {
+		if r.IngestOwnScope != ScopeFleet {
+			return OwnOtherSpaceDetail, nil
+		}
+		// The grant is read for every event, so a revocation applies to the next one.
+		if _, err := svc.s.R().GetEventFleetScopeGrant(ctx, r.SpaceID); errors.Is(err, sql.ErrNoRows) {
+			return OwnFleetUngrantedDetail, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	if !depthZero(e.Depth) {
+		return OwnCausedDetail, nil
+	}
+	return "", nil
+}
+
+// depthZero reports whether a spaceman-depth header says no ingestion led to the event: absent or 0. An unreadable
+// one is not zero.
+func depthZero(s string) bool {
+	depth, err := parseDepth(s)
+	return err == nil && depth == 0
 }
 
 // observe records one handled event in the ingestion metrics: the delivery mode, the origin and what came of it
@@ -725,10 +767,13 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		m.svc.setState(subID, "running", err.Error())
 	}))
 	sub, err := c.client.Subscribe(sctx, s.EffectiveSubject, func(hctx context.Context, e pulse.Event) error {
+		ev := fromPulse(e)
 		if m.svc.ownEvent(e) {
-			if ok, err := m.svc.admitOwn(hctx, subID, fromPulse(e), e.Sequence); !ok {
+			te, ok, err := m.svc.admitOwn(hctx, subID, fromPulse(e), e.Sequence)
+			if !ok {
 				return err
 			}
+			ev = te
 		}
 		if err := m.throttle(hctx, subID, spaceID, false); err != nil {
 			if hctx.Err() == nil {
@@ -740,7 +785,7 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		if !boundary.IsZero() && e.StreamTime.Before(boundary) {
 			o = origin
 		}
-		return m.svc.Process(hctx, subID, fromPulse(e), e.Sequence, o)
+		return m.svc.Process(hctx, subID, ev, e.Sequence, o)
 	}, opts...)
 	if err != nil {
 		stop()

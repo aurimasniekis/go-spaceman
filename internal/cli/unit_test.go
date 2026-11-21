@@ -825,6 +825,24 @@ func TestBuiltBodies(t *testing.T) {
 	if h := f.last("POST", "/spaces/"+spaceID+"/subscriptions/sub_1/replay").header.Get("If-Match"); h != `"2"` {
 		t.Fatalf("replay If-Match %s", h)
 	}
+	// ADR-0106: update does not resend the stored ingest_own_scope (omitted means unchanged, and turning ingest_own off
+	// returns it to space on the server); the flag sends it on purpose. The grant command takes a space slug.
+	f.json("GET /spaces/"+spaceID+"/subscriptions/sub_2", 200, map[string]any{"id": "sub_2", "version": 3, "name": "fleet", "enabled": true,
+		"ingest_own": true, "ingest_own_scope": "fleet"})
+	f.on("PUT /spaces/"+spaceID+"/subscriptions/sub_2", func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) })
+	e.ok(t, "event", "subscription", "update", "--space", "pay", "sub_2", "--ingest-own=false")
+	if b := f.last("PUT", "/spaces/"+spaceID+"/subscriptions/sub_2").body; b["ingest_own"] != false || b["ingest_own_scope"] != nil {
+		t.Fatalf("update resent the scope: %v", b)
+	}
+	e.ok(t, "event", "subscription", "update", "--space", "pay", "sub_2", "--ingest-own-scope", "space")
+	if b := f.last("PUT", "/spaces/"+spaceID+"/subscriptions/sub_2").body; b["ingest_own_scope"] != "space" || b["ingest_own"] != true {
+		t.Fatalf("explicit scope: %v", b)
+	}
+	f.on("PUT /event-fleet-scope-grants/"+spaceID, func(w http.ResponseWriter, _ *http.Request, body map[string]any) { reply(w, 200, body) })
+	e.ok(t, "event", "fleet-scope", "grant", "pay", "--reason", "ops triage")
+	if b := f.last("PUT", "/event-fleet-scope-grants/"+spaceID).body; b["reason"] != "ops triage" {
+		t.Fatalf("grant %v", b)
+	}
 	f.json("GET /event-templates", 200, map[string]any{"items": []any{map[string]any{"id": "etp_1", "versions": []any{1, 2}}}})
 	if out := e.ok(t, "event", "template", "list"); !strings.Contains(out, "2") {
 		t.Fatalf("versions %s", out)

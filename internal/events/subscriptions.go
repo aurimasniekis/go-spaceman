@@ -86,31 +86,32 @@ func errCoreCursor(what string) error {
 
 // Subscription binds a template version (or a custom definition) to a space (SM-EVT-005).
 type Subscription struct {
-	ID           string               `json:"id"`
-	SpaceID      string               `json:"space_id"`
-	Name         string               `json:"name"`
-	ConnectionID string               `json:"connection_id"`
-	Template     *TemplateRef         `json:"template,omitempty"`
-	Follow       string               `json:"follow" enum:"pinned,latest" doc:"latest moves to newly published versions that keep the same subject"`
-	Delivery     string               `json:"delivery" enum:"durable,core" doc:"durable: a JetStream durable consumer (acknowledged after the inbox commit, redelivered, replayable). core: a plain NATS Core subscription, NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost"`
-	Custom       *template.Definition `json:"custom,omitempty"`
-	Vars         map[string]string    `json:"vars"`
-	Subject      string               `json:"subject" doc:"The effective Pulse filter"`
-	Durable      string               `json:"durable" doc:"The durable name the Pulse operator must grant (empty for core subscriptions)"`
-	Consumer     string               `json:"consumer" doc:"The JetStream consumer: <client_id>_<durable> (empty for core subscriptions)"`
-	Grant        string               `json:"grant" doc:"The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core"`
-	Enabled      bool                 `json:"enabled"`
-	WhilePaused  string               `json:"while_paused" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)"`
-	IngestOwn    bool                 `json:"ingest_own" doc:"Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies."`
-	Cursor       Cursor               `json:"cursor"`
-	LastReplay   *Replay              `json:"last_replay,omitempty" doc:"The most recent explicit replay"`
-	Pending      bool                 `json:"cursor_pending" doc:"A cursor change waits to be applied by the ingestion manager"`
-	LastEventAt  *time.Time           `json:"last_event_at,omitempty"`
-	Quarantined  int64                `json:"quarantined" doc:"Open quarantine entries"`
-	State        string               `json:"state" enum:"running,stopped,error,disabled,paused" doc:"Runtime state reported by the ingestion manager (paused: stopped while the space is paused, while_paused stop)"`
-	LastError    string               `json:"last_error,omitempty"`
-	Version      int64                `json:"version"`
-	CreatedAt    time.Time            `json:"created_at"`
+	ID             string               `json:"id"`
+	SpaceID        string               `json:"space_id"`
+	Name           string               `json:"name"`
+	ConnectionID   string               `json:"connection_id"`
+	Template       *TemplateRef         `json:"template,omitempty"`
+	Follow         string               `json:"follow" enum:"pinned,latest" doc:"latest moves to newly published versions that keep the same subject"`
+	Delivery       string               `json:"delivery" enum:"durable,core" doc:"durable: a JetStream durable consumer (acknowledged after the inbox commit, redelivered, replayable). core: a plain NATS Core subscription, NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost"`
+	Custom         *template.Definition `json:"custom,omitempty"`
+	Vars           map[string]string    `json:"vars"`
+	Subject        string               `json:"subject" doc:"The effective Pulse filter"`
+	Durable        string               `json:"durable" doc:"The durable name the Pulse operator must grant (empty for core subscriptions)"`
+	Consumer       string               `json:"consumer" doc:"The JetStream consumer: <client_id>_<durable> (empty for core subscriptions)"`
+	Grant          string               `json:"grant" doc:"The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core"`
+	Enabled        bool                 `json:"enabled"`
+	WhilePaused    string               `json:"while_paused" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)"`
+	IngestOwn      bool                 `json:"ingest_own" doc:"Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies."`
+	IngestOwnScope string               `json:"ingest_own_scope" enum:"space,fleet" doc:"Whose run dialog events ingest_own admits: space (default) only this space's; fleet every space's, only while this space holds an installation administrator's fleet-scope grant (checked for every event: after a revocation other spaces' events are filtered). A fleet-scoped subscription ingests only the identifying fields of the event data: space_id, run_id, dialog_id, dialog, signal, detected_at, cleared_at."`
+	Cursor         Cursor               `json:"cursor"`
+	LastReplay     *Replay              `json:"last_replay,omitempty" doc:"The most recent explicit replay"`
+	Pending        bool                 `json:"cursor_pending" doc:"A cursor change waits to be applied by the ingestion manager"`
+	LastEventAt    *time.Time           `json:"last_event_at,omitempty"`
+	Quarantined    int64                `json:"quarantined" doc:"Open quarantine entries"`
+	State          string               `json:"state" enum:"running,stopped,error,disabled,paused" doc:"Runtime state reported by the ingestion manager (paused: stopped while the space is paused, while_paused stop)"`
+	LastError      string               `json:"last_error,omitempty"`
+	Version        int64                `json:"version"`
+	CreatedAt      time.Time            `json:"created_at"`
 }
 
 // Cursor is where a (re)created consumer starts.
@@ -137,6 +138,8 @@ type SubscriptionInput struct {
 	WhilePaused string
 	// IngestOwn ingests this installation's own events on an allow-listed subject (ADR-0104).
 	IngestOwn bool
+	// IngestOwnScope is ScopeSpace (default) or ScopeFleet (ADR-0106): fleet needs IngestOwn and the space's grant.
+	IngestOwnScope string
 }
 
 // SubscriptionUpdate edits a subscription. Changing the effective subject needs an explicit cursor (Start): the
@@ -154,6 +157,9 @@ type SubscriptionUpdate struct {
 	WhilePaused string
 	// IngestOwn changes the own-event opt-in (ADR-0104); nil keeps it.
 	IngestOwn *bool
+	// IngestOwnScope changes the scope of ingest_own (ADR-0106); empty keeps it, except that turning ingest_own off
+	// also returns it to ScopeSpace.
+	IngestOwnScope string
 }
 
 func durableFor(id string) string { return "sm-" + strings.ToLower(strings.TrimPrefix(id, "sub_")) }
@@ -295,11 +301,18 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 		if in.IngestOwn && !ownIngestAllowed(b.Subject) {
 			return errIngestOwn(b.Subject)
 		}
+		if in.IngestOwnScope == "" {
+			in.IngestOwnScope = ScopeSpace
+		}
+		if err := checkScope(ctx, tx.Q, spaceID, in.IngestOwnScope, in.IngestOwn); err != nil {
+			return err
+		}
 		policy, st, ss := cursorCols(in.Start)
 		if err := tx.Q.InsertEventSubscription(ctx, db.InsertEventSubscriptionParams{ID: id, SpaceID: spaceID, Name: in.Name, ConnectionID: in.ConnectionID,
 			TemplateID: tmplID, TemplateVersionID: verID, Follow: in.Follow, CustomJson: custom, VarsJson: mustJSON(b.Vars), EffectiveSubject: b.Subject,
 			Durable: durableFor(id), Enabled: 1, StartPolicy: policy, StartTime: st, StartSeq: ss, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID,
-			UpdatedAt: tx.NowMicros(), Delivery: in.Delivery, WhilePaused: in.WhilePaused, IngestOwn: b2i(in.IngestOwn)}); err != nil {
+			UpdatedAt: tx.NowMicros(), Delivery: in.Delivery, WhilePaused: in.WhilePaused, IngestOwn: b2i(in.IngestOwn),
+			IngestOwnScope: in.IngestOwnScope}); err != nil {
 			if isUnique(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "this space already has a subscription named %q", in.Name)
 			}
@@ -310,7 +323,7 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_subscription.created", Target: audit.Target{Type: "event_subscription", ID: id},
 			Details: map[string]any{"space_id": spaceID, "subject": b.Subject, "durable": durableFor(id), "start": policy, "custom": custom.Valid, "delivery": in.Delivery,
-				"while_paused": in.WhilePaused, "ingest_own": in.IngestOwn}})
+				"while_paused": in.WhilePaused, "ingest_own": in.IngestOwn, "ingest_own_scope": in.IngestOwnScope}})
 		return err
 	})
 	if err != nil {
@@ -403,9 +416,21 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		if ingestOwn && !ownIngestAllowed(b.Subject) {
 			return errIngestOwn(b.Subject)
 		}
+		// The scope is checked against the state the update leaves, with the grant as it is now: a subscription
+		// whose space lost its grant cannot be updated while it keeps fleet (ADR-0106).
+		scope := in.IngestOwnScope
+		if scope == "" {
+			scope = cur.IngestOwnScope
+			if !ingestOwn {
+				scope = ScopeSpace
+			}
+		}
+		if err := checkScope(ctx, tx.Q, spaceID, scope, ingestOwn); err != nil {
+			return err
+		}
 		if _, err := tx.Q.UpdateEventSubscription(ctx, db.UpdateEventSubscriptionParams{Name: name, TemplateVersionID: verID, Follow: follow, CustomJson: custom,
 			VarsJson: mustJSON(b.Vars), EffectiveSubject: b.Subject, Enabled: b2i(in.Enabled), CursorGeneration: gen, StartPolicy: policy, StartTime: st,
-			StartSeq: ss, Replay: replay, WhilePaused: whilePaused, IngestOwn: b2i(ingestOwn), Now: tx.NowMicros(), ID: id, Version: version}); err != nil {
+			StartSeq: ss, Replay: replay, WhilePaused: whilePaused, IngestOwn: b2i(ingestOwn), IngestOwnScope: scope, Now: tx.NowMicros(), ID: id, Version: version}); err != nil {
 			if isUnique(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "this space already has a subscription named %q", name)
 			}
@@ -414,7 +439,7 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		if err := svc.changes.Record(ctx, tx, spaceID, "event_subscription", id, "updated", version+1); err != nil {
 			return err
 		}
-		details := map[string]any{"subject": b.Subject, "enabled": in.Enabled, "while_paused": whilePaused, "ingest_own": ingestOwn}
+		details := map[string]any{"subject": b.Subject, "enabled": in.Enabled, "while_paused": whilePaused, "ingest_own": ingestOwn, "ingest_own_scope": scope}
 		if in.Start != nil {
 			details["cursor"] = policy
 			details["replay"] = replay == 1
@@ -470,7 +495,7 @@ func (svc *Service) DeleteSubscription(ctx context.Context, actor audit.Actor, s
 
 func (svc *Service) subFromRow(ctx context.Context, r db.EventSubscription) (*Subscription, error) {
 	s := &Subscription{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, ConnectionID: r.ConnectionID, Follow: r.Follow, Delivery: r.Delivery, Subject: r.EffectiveSubject,
-		Durable: r.Durable, Enabled: r.Enabled == 1, WhilePaused: r.WhilePaused, IngestOwn: r.IngestOwn == 1, Version: r.Version, CreatedAt: fromMicros(r.CreatedAt), Vars: map[string]string{},
+		Durable: r.Durable, Enabled: r.Enabled == 1, WhilePaused: r.WhilePaused, IngestOwn: r.IngestOwn == 1, IngestOwnScope: r.IngestOwnScope, Version: r.Version, CreatedAt: fromMicros(r.CreatedAt), Vars: map[string]string{},
 		// Core subscriptions have no cursor to apply.
 		Pending: r.Delivery != DeliveryCore && r.AppliedGeneration < r.CursorGeneration,
 		Cursor:  Cursor{Policy: r.StartPolicy, Replay: r.Replay == 1, Generation: r.CursorGeneration}}
