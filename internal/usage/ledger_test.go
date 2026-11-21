@@ -246,6 +246,29 @@ func countRows(t *testing.T, f *ledgerFx, q string, args ...any) int {
 	return n
 }
 
+// A status-line snapshot under 100 % does not clear an open hold with an unknown reset: its observed time is when the line
+// was drawn, so the limited run's own idle report would clear a real limit. Only the expiry sweep ends such a hold.
+func TestSnapshotDoesNotClearUnknownResetHold(t *testing.T) {
+	t.Parallel()
+	f := newLedger(t)
+	now := f.clk.Now()
+	if err := f.s.W().TxNamed(f.ctx, "seed_limit", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(f.ctx, `INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, created_at, updated_at)
+		VALUES ('ulm_1', 'spc_a', 'account', 'acc_1', '', 'five_hour', NULL, NULL, 'transcript', 'run_x', ?, 1, 1)`, now.Add(-time.Minute).UnixMicro())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Report(f.ctx, "nod_1", proto.UsageReport{RunID: lrA, Source: proto.UsageClaudeTranscript, Windows: []proto.UsageWindow{
+		{Kind: "five_hour", UsedPct: 10, ObservedAt: now}, {Kind: "seven_day", UsedPct: 10, ObservedAt: now}}})
+	if n := countRows(t, f, `SELECT count(*) FROM account_windows WHERE account_id = 'acc_1'`); n == 0 {
+		t.Fatal("the snapshot was not booked")
+	}
+	if n := countRows(t, f, `SELECT count(*) FROM usage_limits WHERE id = 'ulm_1' AND cleared_at IS NULL`); n != 1 {
+		t.Fatal("a status-line snapshot cleared an open hold with an unknown reset")
+	}
+}
+
 // The newest observation per account and kind wins; an older one is ignored; windows are validated again.
 func TestAccountWindows(t *testing.T) {
 	t.Parallel()

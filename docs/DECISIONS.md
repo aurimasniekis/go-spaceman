@@ -6367,13 +6367,11 @@
     `cleared_by` is `expired`. If the account is still limited, the next launch hits the limit again and opens a new
     hold with its own window, so the bound can cost one failed turn, never a stuck account. Gateway holds keep their
     own estimate and re-read (decision 9). A hold with a known reset is untouched (it ends with its reset, as before).
-  - **Evidence.** A status-line `rate_limits` snapshot of the account from any run in any space, observed after the hold
-    was seen, ends a hold with an unknown reset when it shows the hold's window under 100 % (five-hour kind: the
-    five-hour window; weekly and weekly-overage kinds: the seven-day window; unknown and overage kinds: every reported
-    window, both present). A snapshot older than the window the account already holds is ignored. This widens ADR-0090
-    decision 6, which used the status line only for resets and the headroom gate. Per-model weekly kinds (Opus, Sonnet) aren't visible in the account totals, so only the bound ends them.
-    The hold is cleared in every space as `cleared_by: evidence`, within the existing trust rule (decision 7): a known
-    future reset is never cleared by another run's report.
+  - **No status-line evidence clear.** A status-line `rate_limits` snapshot does not end a hold. Its observed time is
+    when the line was drawn on the node (every 60 s, even while a run is idle), not when the API data was read, and a
+    hold with an unknown reset often exists because the limited run's own status line showed the window under 100 %: its
+    next report would clear a real limit, and parked waits would resume, fail and clear in a loop until the real reset.
+    The status line stays a source of resets and of the headroom gate (ADR-0090 decision 6) only.
   - **Operator.** Unchanged: a space operator clears their own space's hold and `account:write` clears every space's.
 
 ### ADR-0093 — A space role can be renamed in place; live references follow, history stays

@@ -300,14 +300,12 @@ func (svc *Service) recordWindows(ctx context.Context, tx *store.Tx, r db.Run, a
 		return err
 	}
 	seen := map[string]bool{}
-	var booked []proto.UsageWindow
 	for _, w := range windows {
 		w, ok := validWindow(w, tx.Now)
 		if !ok || seen[w.Kind] {
 			continue
 		}
 		seen[w.Kind] = true
-		booked = append(booked, w)
 		var resets sql.NullInt64
 		if w.ResetsAt != nil {
 			resets = sql.NullInt64{Int64: w.ResetsAt.UnixMicro(), Valid: true}
@@ -321,9 +319,6 @@ func (svc *Service) recordWindows(ctx context.Context, tx *store.Tx, r db.Run, a
 			UsedPct: w.UsedPct, ResetsAt: resets, ObservedAt: obs, RunID: r.ID}); err != nil {
 			return err
 		}
-	}
-	if svc.OnWindowsTx != nil && len(booked) > 0 {
-		return svc.OnWindowsTx(ctx, tx, accountID, booked)
 	}
 	return nil
 }

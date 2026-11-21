@@ -899,10 +899,12 @@ func (q *Queries) ListOpenGatewayUsageLimits(ctx context.Context, lim int64) ([]
 }
 
 const listOpenUnknownResetAccountLimits = `-- name: ListOpenUnknownResetAccountLimits :many
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NULL ORDER BY seen_at, id LIMIT ?1
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NULL
+ORDER BY seen_at + CASE kind WHEN 'five_hour' THEN 18000000000 WHEN 'seven_day' THEN 604800000000 WHEN 'seven_day_opus' THEN 604800000000 WHEN 'seven_day_sonnet' THEN 604800000000 WHEN 'seven_day_overage_included' THEN 604800000000 ELSE 21600000000 END, id LIMIT ?1
 `
 
-// Open account holds whose reset is unknown: the expiry sweep ends the ones past their window (ADR-0079 amendment).
+// Open account holds whose reset is unknown, soonest expiry first (seen_at plus the kind window, see holdMaxAge): the
+// expiry sweep ends the ones past their window (ADR-0079 amendment), so the row cap never hides a due hold.
 func (q *Queries) ListOpenUnknownResetAccountLimits(ctx context.Context, lim int64) ([]UsageLimit, error) {
 	rows, err := q.db.QueryContext(ctx, listOpenUnknownResetAccountLimits, lim)
 	if err != nil {

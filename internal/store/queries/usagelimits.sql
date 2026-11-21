@@ -28,9 +28,11 @@ SELECT * FROM usage_limits WHERE scope = 'gateway' AND gateway_ref = ? AND clear
 -- name: ListOpenGatewayUsageLimits :many
 SELECT * FROM usage_limits WHERE scope = 'gateway' AND cleared_at IS NULL ORDER BY seen_at, id LIMIT sqlc.arg(lim);
 
--- Open account holds whose reset is unknown: the expiry sweep ends the ones past their window (ADR-0079 amendment).
+-- Open account holds whose reset is unknown, soonest expiry first (seen_at plus the kind window, see holdMaxAge): the
+-- expiry sweep ends the ones past their window (ADR-0079 amendment), so the row cap never hides a due hold.
 -- name: ListOpenUnknownResetAccountLimits :many
-SELECT * FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NULL ORDER BY seen_at, id LIMIT sqlc.arg(lim);
+SELECT * FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NULL
+ORDER BY seen_at + CASE kind WHEN 'five_hour' THEN 18000000000 WHEN 'seven_day' THEN 604800000000 WHEN 'seven_day_opus' THEN 604800000000 WHEN 'seven_day_sonnet' THEN 604800000000 WHEN 'seven_day_overage_included' THEN 604800000000 ELSE 21600000000 END, id LIMIT sqlc.arg(lim);
 
 -- name: ListOpenUsageLimitsBySpace :many
 SELECT * FROM usage_limits WHERE space_id = ? AND cleared_at IS NULL ORDER BY seen_at, id;

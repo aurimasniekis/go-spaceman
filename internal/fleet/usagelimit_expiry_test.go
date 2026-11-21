@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
-	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 func (e *holdEnv) openIDs() map[string]bool {
@@ -78,59 +77,5 @@ func TestUsageLimitUnknownResetExpires(t *testing.T) {
 	}
 	if open := e.openIDs(); open["ulm_7d"] || !open["ulm_known"] {
 		t.Fatalf("open after 7 d: %v", open)
-	}
-}
-
-func (e *holdEnv) windows(ws ...proto.UsageWindow) {
-	e.t.Helper()
-	if err := e.s.W().TxNamed(e.ctx, "test.windows", func(tx *store.Tx) error {
-		return e.svc.ClearHoldsOnWindowsTx(e.ctx, tx, "acc_1", ws)
-	}); err != nil {
-		e.t.Fatal(err)
-	}
-}
-
-// Fresh evidence ends a hold without a reset: a status-line snapshot of the account under 100 % observed after the hold
-// was seen. A full window, a snapshot from before the hold, the wrong window for the kind, a per-model weekly kind and a
-// hold with a known reset all stay.
-func TestUsageLimitClearedByWindowSnapshot(t *testing.T) {
-	e := newHoldEnv(t)
-	e.hold("ulm_5h", "spc_a", "acc_1", "", proto.LimitFiveHour, nil, dur(time.Hour))
-	e.hold("ulm_7d", "spc_b", "acc_1", "", proto.LimitSevenDay, nil, dur(time.Hour))
-	e.hold("ulm_opus", "spc_a", "acc_1", "", proto.LimitSevenDayOpus, nil, dur(time.Hour))
-	e.hold("ulm_known", "spc_b", "acc_1", "", proto.LimitFiveHour, dur(3*time.Hour), nil)
-	e.hold("ulm_unk", "spc_a", "acc_1", "", proto.LimitUnknown, nil, dur(time.Hour))
-	e.clk.Set(e.clk.Now().Add(time.Hour))
-	now := e.clk.Now()
-	win := func(kind string, pct float64, at time.Time) proto.UsageWindow {
-		return proto.UsageWindow{Kind: kind, UsedPct: pct, ObservedAt: at}
-	}
-
-	e.windows(win(proto.WindowFiveHour, 100, now), win(proto.WindowSevenDay, 100, now))
-	e.windows(win(proto.WindowFiveHour, 10, now.Add(-2*time.Hour)), win(proto.WindowSevenDay, 10, now.Add(-2*time.Hour)))
-	if len(e.openIDs()) != 5 {
-		t.Fatalf("a full or stale snapshot cleared a hold: %v", e.openIDs())
-	}
-
-	e.windows(win(proto.WindowFiveHour, 40, now))
-	open := e.openIDs()
-	if open["ulm_5h"] || !open["ulm_7d"] || !open["ulm_opus"] || !open["ulm_known"] {
-		t.Fatalf("after a five-hour snapshot under 100 %%: %v", open)
-	}
-	if by := e.clearedBy("ulm_5h"); by != ClearedByEvidence {
-		t.Fatalf("cleared_by %q", by)
-	}
-	e.windows(win(proto.WindowSevenDay, 99.5, now))
-	if open := e.openIDs(); open["ulm_7d"] || !open["ulm_opus"] || !open["ulm_known"] || !open["ulm_unk"] {
-		t.Fatalf("after a weekly snapshot under 100 %%: %v", open)
-	}
-	// An unknown kind needs both windows in the snapshot, each under 100 %.
-	e.windows(win(proto.WindowFiveHour, 30, now))
-	if !e.openIDs()["ulm_unk"] {
-		t.Fatal("a partial snapshot cleared an unknown-kind hold")
-	}
-	e.windows(win(proto.WindowFiveHour, 30, now), win(proto.WindowSevenDay, 30, now))
-	if open := e.openIDs(); open["ulm_unk"] || !open["ulm_opus"] || !open["ulm_known"] {
-		t.Fatalf("after a full snapshot under 100 %%: %v", open)
 	}
 }
