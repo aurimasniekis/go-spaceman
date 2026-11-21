@@ -54,11 +54,12 @@ func (svc *Service) NextHoldExpiry(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	var next time.Time
-	// Past resets are due now or belong to a gateway hold (its own re-check ends it), so only a future one wakes the job.
-	if reset, err := svc.s.R().NextUsageLimitDue(ctx); err != nil {
+	// Only an account hold's future reset wakes the job: a past one is due now, and a gateway hold's estimate has its own
+	// re-check (an expired one must not delay the wake-up for an account's reset).
+	if reset, err := svc.s.R().NextAccountResetAfter(ctx, sql.NullInt64{Int64: svc.opts.Clock.Now().Add(-limitResetGrace).UnixMicro(), Valid: true}); err != nil {
 		return time.Time{}, err
-	} else if at := time.UnixMicro(reset).Add(limitResetGrace); reset > 0 && at.After(svc.opts.Clock.Now()) {
-		next = at
+	} else if reset > 0 {
+		next = time.UnixMicro(reset).Add(limitResetGrace)
 	}
 	for _, u := range rows {
 		if at := holdExpiry(u); next.IsZero() || at.Before(next) {
@@ -137,6 +138,14 @@ func (svc *Service) closePassedHolds(ctx context.Context, now time.Time) error {
 				return err
 			}
 			n++
+			// The reset passed: the no-reset unknown holds seen by then go with it (clearUnknownAfterResetTx).
+			siblings, err := tx.Q.ListOpenUsageLimitsByAccount(ctx, u.AccountID)
+			if err != nil {
+				return err
+			}
+			if err := svc.clearUnknownAfterResetTx(ctx, tx, siblings, u); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

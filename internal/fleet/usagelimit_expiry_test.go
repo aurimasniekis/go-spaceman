@@ -155,3 +155,36 @@ func TestExpireHoldsClosesPassedKnownReset(t *testing.T) {
 		t.Fatalf("next expiry %v (%v), want one", at, err)
 	}
 }
+
+// A gateway hold's estimate (expired or not) never moves the wake-up: only an account hold's future reset does.
+func TestNextHoldExpiryIgnoresGatewayHolds(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_gw", "spc_a", "", "hp", proto.LimitGatewayBudget, dur(-time.Hour), nil)
+	e.hold("ulm_gw2", "spc_b", "", "hp2", proto.LimitGatewayBudget, dur(30*time.Minute), nil)
+	if at, err := e.svc.NextHoldExpiry(e.ctx); err != nil || !at.IsZero() {
+		t.Fatalf("next expiry %v (%v), want none", at, err)
+	}
+	e.hold("ulm_acc", "spc_a", "acc_1", "", proto.LimitFiveHour, dur(2*time.Hour), nil)
+	want := e.clk.Now().Add(2*time.Hour + limitResetGrace)
+	if at, err := e.svc.NextHoldExpiry(e.ctx); err != nil || !at.Equal(want) {
+		t.Fatalf("next expiry %v (%v), want %v", at, err, want)
+	}
+}
+
+// The sweep that closes a hold whose reset passed also closes the account's no-reset unknown holds seen by then, and
+// leaves one seen after it.
+func TestClosePassedHoldsCascadesToUnknownHolds(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_f", "spc_a", "acc_1", "", proto.LimitFiveHour, dur(-time.Hour), nil)
+	e.hold("ulm_u", "spc_b", "acc_1", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.hold("ulm_l", "spc_c", "acc_1", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_f'`, e.us(-2*time.Hour))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_u'`, e.us(-90*time.Minute))
+	e.exec(`UPDATE usage_limits SET seen_at = ? WHERE id = 'ulm_l'`, e.us(-30*time.Minute))
+	if err := e.svc.closePassedHolds(e.ctx, e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if open := e.openIDs(); len(open) != 1 || !open["ulm_l"] || e.clearedBy("ulm_u") != "evidence" {
+		t.Fatalf("open after sweep: %v, ulm_u cleared by %q", open, e.clearedBy("ulm_u"))
+	}
+}

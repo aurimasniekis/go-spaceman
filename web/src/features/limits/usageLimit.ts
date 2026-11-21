@@ -93,7 +93,10 @@ export function holdTarget(u: UsageLimit, accountName: (id: string) => string | 
 export function clearedBy(by: string | undefined): string {
   if (!by) return ''
   if (by.startsWith('run:')) return 'a run reported it over'
-  if (by === 'evidence') return "another space's run reported it over"
+  if (by === 'evidence') return "another space's run reported it over, or the window it was seen in ended"
+  if (by === 'expired') return 'its window passed with no reset seen'
+  if (by === 'reset') return 'its reset time passed'
+  if (by === 'quota_board' || by === 'budget_status') return 'Harbor Pilot showed it recovered'
   const type = by.split(':', 1)[0]
   if (type === 'agent') return 'an agent'
   if (type === 'system' || type === 'policy') return 'SpaceMan'
