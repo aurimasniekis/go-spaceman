@@ -887,3 +887,83 @@ func TestAccountSwitchesListIsPerSpace(t *testing.T) {
 		t.Errorf("space b lists %v", got)
 	}
 }
+
+// resumedFrom seeds the wait run was resumed from: it was parked from an earlier run (prev) with session (empty: the
+// resume started fresh), and its new run is run.
+func (e *switchEnv) resumedFrom(run, prev, session string) {
+	e.t.Helper()
+	e.exec(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by,
+		updated_at) VALUES (?, 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', ?, 'stopped', 'exited', '{}', 0, 't', 0)`, prev, e.instance(run))
+	e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, resume_at, state, new_run_id,
+		created_at, updated_at) VALUES (?, 'spc_a', ?, 'worker', 'implementor', 'nod_1', ?, 'claude-code', ?, '{"account_ref":"acc_1","prompt":"do the task"}', 0,
+		'resumed', ?, 0, 0)`, "lwt_"+prev, prev, e.instance(run), session, run)
+}
+
+// A run that was itself resumed fresh (its wait had no session) and whose first turn ends at the limit took its prompt,
+// so its session resumes on the pool's other account instead of falling back (PR #392 follow-up).
+func TestAccountSwitchFreshResumedRunLimitedAtTurnZero(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_r", "worker", 0)
+	e.resumedFrom("run_r", "run_p", "")
+	e.report("run_r", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	sw := e.switchOf("run_r")
+	if sw.State != SwitchParked || sw.FromAccountID != "acc_1" || sw.ToAccountID != "acc_2" {
+		t.Fatalf("switch %+v, want parked acc_1 -> acc_2", sw)
+	}
+	if w := e.waitOf("run_r"); w.SwitchToAccountID != "acc_2" || w.SessionID != "ses_run_r" {
+		t.Fatalf("wait %+v", w)
+	}
+
+	// With no session of its own it is relaunched fresh on the target: an empty session in the wait.
+	e.running("run_n", "worker", 0)
+	e.exec(`UPDATE runs SET session_id = '' WHERE id = 'run_n'`)
+	e.resumedFrom("run_n", "run_q", "")
+	e.report("run_n", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_n"); sw.State != SwitchParked || sw.ToAccountID != "acc_2" {
+		t.Fatalf("no-session switch %+v", sw)
+	}
+	if w := e.waitOf("run_n"); w.SwitchToAccountID != "acc_2" || w.SessionID != "" {
+		t.Fatalf("no-session wait %+v", w)
+	}
+}
+
+// The fresh retry of a failed resume (its wait was written by resumeFailedTx for a run that had been resumed with a
+// session) that is limited at turn 0 again stops with no_session: no loop. Nor does a resumed run whose session changed
+// (its resume didn't take) switch.
+func TestAccountSwitchSecondTurnZeroLimitStops(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_2", "worker", 0)
+	e.resumedFrom("run_2", "run_f", "") // the retry's wait: no session...
+	// ...written for run_f, which was itself resumed with a session that failed.
+	e.exec(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by,
+		updated_at) VALUES ('run_0', 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', ?, 'stopped', 'exited', '{}', 0, 't', 0)`, e.instance("run_2"))
+	e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, resume_at, state, new_run_id,
+		created_at, updated_at) VALUES ('lwt_run_0', 'spc_a', 'run_0', 'worker', 'implementor', 'nod_1', ?, 'claude-code', 'ses_old', '{}', 0, 'resumed', 'run_f', 0, 0)`,
+		e.instance("run_2"))
+	e.report("run_2", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_2"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("second turn-0 limit: %+v", sw)
+	}
+	if n := e.metric("fell_back"); n < 1 {
+		t.Fatalf("fell_back metric %v", n)
+	}
+
+	// The resume didn't take: the run got a session other than the one its wait carried.
+	e.running("run_c", "worker", 0)
+	e.resumedFrom("run_c", "run_x", "ses_other")
+	e.report("run_c", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_c"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("resume that didn't take: %+v", sw)
+	}
+}
+
+// A reset inside the wait window is waited for before anything else is decided: a run with no account records nothing.
+func TestAccountSwitchNearResetBeforeNoAccount(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_g", "worker", 1)
+	e.exec(`UPDATE runs SET launch_json = '{"prompt":"x"}' WHERE id = 'run_g'`)
+	e.report("run_g", "idle", 1, e.limit(proto.LimitFiveHour, dur(5*time.Minute)))
+	if n := e.switches("run_g"); n != 0 {
+		t.Fatalf("a near reset on a run without an account decided %d switches", n)
+	}
+}
