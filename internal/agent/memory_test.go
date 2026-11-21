@@ -154,6 +154,36 @@ func TestMemoryInstancesShareAndPreserve(t *testing.T) {
 	}
 }
 
+// An instance checkout that was unborn when it got its first file has a root commit unrelated to the shared history;
+// the checkpoint still has to bring the file to shared main.
+func TestMemoryUnbornCheckoutReachesShared(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	if _, err := m.prepare(ctx, "spc_u", "implementor-backend", "ins_one"); err != nil {
+		t.Fatal(err)
+	}
+	inst := m.instance("spc_u", "implementor-backend", "ins_unborn")
+	if err := os.MkdirAll(inst, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.git.Run(ctx, inst, nil, "init", "--quiet", "--initial-branch=main", "."); err != nil {
+		t.Fatal(err)
+	}
+	write(t, inst, "notes/unborn.md", "from the unborn checkout\n")
+	if err := m.checkpointErr(ctx, "spc_u", "implementor-backend", "ins_unborn", "idle"); err != nil {
+		t.Fatal(err)
+	}
+	shared := m.shared("spc_u", "implementor-backend")
+	got, err := m.git.Run(ctx, shared, nil, "show", "refs/heads/main:notes/unborn.md")
+	if err != nil || got != "from the unborn checkout\n" {
+		t.Fatalf("file did not reach shared main: %q %v", got, err)
+	}
+	if refs, _ := m.git.Run(ctx, shared, nil, "for-each-ref", "refs/conflicts/"); strings.TrimSpace(refs) != "" {
+		t.Fatalf("unexpected conflict refs: %q", refs)
+	}
+}
+
 // SM-MEM-004/005: central's answers move the acknowledged head; a missing base resets it for a full resend; failures
 // are counted and kept for the status.
 func TestMemoryAcks(t *testing.T) {
