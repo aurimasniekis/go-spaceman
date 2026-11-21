@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -1094,5 +1095,64 @@ func TestAccountSwitchIgnoresExpiredHoldOfOtherSpace(t *testing.T) {
 				t.Fatalf("switch %+v, want fell_back %s", sw, tc.reason)
 			}
 		})
+	}
+}
+
+// The probe fallback is the second pass only: while an account without any hold is eligible, a probe-due account is not
+// chosen, whichever of the two the pool's order would put first.
+func TestAccountSwitchPrefersHoldFreeOverProbeDue(t *testing.T) {
+	for _, tc := range []struct{ name, probeDue, free string }{{"first", "acc_2", "acc_3"}, {"second", "acc_3", "acc_2"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newSwitchEnv(t)
+			e.exec(`INSERT INTO space_accounts (space_id, account_id, harness, created_at, created_by) VALUES ('spc_a', 'acc_3', 'claude-code', 1, 't')`)
+			e.hold("ulm_u", "spc_c", tc.probeDue, "", proto.LimitUnknown, nil, dur(-time.Minute))
+			e.running("run_p", "worker", 2)
+			e.report("run_p", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+			if sw := e.switchOf("run_p"); sw.State != SwitchPending || sw.ToAccountID != tc.free {
+				t.Fatalf("switch %+v, want pending to %s", sw, tc.free)
+			}
+		})
+	}
+}
+
+// The evidence cascade only follows a sibling hold whose reset has passed: one whose reset is still ahead is probed, not
+// cleared, and the account's unknown hold stays.
+func TestClearHoldsNoCascadeFromSiblingResetAhead(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.hold("ulm_f", "spc_c", "acc_2", "", proto.LimitFiveHour, dur(2*time.Hour), nil)
+	e.hold("ulm_u", "spc_c", "acc_2", "", proto.LimitUnknown, nil, dur(4*time.Hour))
+	err := e.s.W().TxNamed(e.ctx, "test.evidence", func(tx *store.Tx) error {
+		return e.svc.clearHoldsTx(e.ctx, tx, db.Run{ID: "run_o", SpaceID: "spc_d", LaunchJson: `{"account_ref":"acc_2"}`}, limitState{kind: proto.LimitFiveHour})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"ulm_f", "ulm_u"} {
+		u, err := e.s.R().GetUsageLimit(e.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.ClearedAt.Valid {
+			t.Fatalf("%s cleared by %q, want open", id, u.ClearedBy)
+		}
+	}
+}
+
+// A probe claim that updates no row (the hold changed under the launch) is a refusal, not a probe.
+func TestHoldCheckClaimLostIsRefusal(t *testing.T) {
+	e := newHoldEnv(t)
+	e.hold("ulm_u", "spc_a", "acc_2", "", proto.LimitUnknown, nil, dur(-time.Minute))
+	e.exec(`CREATE TRIGGER test_lose_claim BEFORE UPDATE ON usage_limits WHEN old.id = 'ulm_u' BEGIN SELECT RAISE(IGNORE); END`)
+	var probe bool
+	var herr error
+	if err := e.s.W().TxNamed(e.ctx, "test.claim", func(tx *store.Tx) error {
+		probe, herr = e.svc.holdCheckTx(e.ctx, tx, HoldTarget{AccountID: "acc_2"}, 0)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var he *HoldError
+	if probe || !errors.As(herr, &he) {
+		t.Fatalf("probe %v, err %v, want a hold refusal", probe, herr)
 	}
 }
