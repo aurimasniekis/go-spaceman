@@ -6362,14 +6362,16 @@
   missed) had only a probe time, which a launch may claim, and nothing that closed the row: it stayed "limited" for
   good when the run that reported the limit was gone, hours after the real reset. Now:
   - **Bound.** The limit-wait job's sweep clears an open account hold whose reset is unknown once its window has passed
-    since it was seen: 5 hours (the five-hour window; also unknown and overage kinds), 7 days for the weekly kinds.
+    since it was seen: 5 hours for the five-hour kind, 7 days for the weekly kinds, and the default keep-alive (6 h) for
+    unknown and overage kinds, so a run still waiting out the limit is never freed before it is parked.
     `cleared_by` is `expired`. If the account is still limited, the next launch hits the limit again and opens a new
     hold with its own window, so the bound can cost one failed turn, never a stuck account. Gateway holds keep their
     own estimate and re-read (decision 9). A hold with a known reset is untouched (it ends with its reset, as before).
   - **Evidence.** A status-line `rate_limits` snapshot of the account from any run in any space, observed after the hold
     was seen, ends a hold with an unknown reset when it shows the hold's window under 100 % (five-hour kind: the
     five-hour window; weekly and weekly-overage kinds: the seven-day window; unknown and overage kinds: every reported
-    window). Per-model weekly kinds (Opus, Sonnet) aren't visible in the account totals, so only the bound ends them.
+    window, both present). A snapshot older than the window the account already holds is ignored. This widens ADR-0090
+    decision 6, which used the status line only for resets and the headroom gate. Per-model weekly kinds (Opus, Sonnet) aren't visible in the account totals, so only the bound ends them.
     The hold is cleared in every space as `cleared_by: evidence`, within the existing trust rule (decision 7): a known
     future reset is never cleared by another run's report.
   - **Operator.** Unchanged: a space operator clears their own space's hold and `account:write` clears every space's.

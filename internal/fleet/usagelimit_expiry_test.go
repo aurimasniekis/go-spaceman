@@ -53,12 +53,20 @@ func TestUsageLimitUnknownResetExpires(t *testing.T) {
 	}
 
 	e.clk.Set(e.clk.Now().Add(2 * time.Minute))
-	if n, err := e.svc.LimitWaitsDue(e.ctx); err != nil || n != 2 {
-		t.Fatalf("sweep: n=%d err=%v, want 2", n, err)
+	if n, err := e.svc.LimitWaitsDue(e.ctx); err != nil || n != 1 {
+		t.Fatalf("sweep: n=%d err=%v, want 1", n, err)
 	}
 	open := e.openIDs()
-	if open["ulm_5h"] || open["ulm_unk"] || !open["ulm_7d"] || !open["ulm_known"] {
+	if open["ulm_5h"] || !open["ulm_unk"] || !open["ulm_7d"] || !open["ulm_known"] {
 		t.Fatalf("open after 5 h: %v", open)
+	}
+	// An unknown kind lasts the keep-alive (6 h): a run waiting out the limit is not freed under it.
+	e.clk.Set(e.clk.Now().Add(time.Hour))
+	if n, err := e.svc.LimitWaitsDue(e.ctx); err != nil || n != 1 {
+		t.Fatalf("sweep: n=%d err=%v, want 1", n, err)
+	}
+	if open := e.openIDs(); open["ulm_unk"] || !open["ulm_7d"] {
+		t.Fatalf("open after 6 h: %v", open)
 	}
 	if by := e.clearedBy("ulm_5h"); by != ClearedByExpiry {
 		t.Fatalf("cleared_by %q", by)
@@ -91,6 +99,7 @@ func TestUsageLimitClearedByWindowSnapshot(t *testing.T) {
 	e.hold("ulm_7d", "spc_b", "acc_1", "", proto.LimitSevenDay, nil, dur(time.Hour))
 	e.hold("ulm_opus", "spc_a", "acc_1", "", proto.LimitSevenDayOpus, nil, dur(time.Hour))
 	e.hold("ulm_known", "spc_b", "acc_1", "", proto.LimitFiveHour, dur(3*time.Hour), nil)
+	e.hold("ulm_unk", "spc_a", "acc_1", "", proto.LimitUnknown, nil, dur(time.Hour))
 	e.clk.Set(e.clk.Now().Add(time.Hour))
 	now := e.clk.Now()
 	win := func(kind string, pct float64, at time.Time) proto.UsageWindow {
@@ -99,7 +108,7 @@ func TestUsageLimitClearedByWindowSnapshot(t *testing.T) {
 
 	e.windows(win(proto.WindowFiveHour, 100, now), win(proto.WindowSevenDay, 100, now))
 	e.windows(win(proto.WindowFiveHour, 10, now.Add(-2*time.Hour)), win(proto.WindowSevenDay, 10, now.Add(-2*time.Hour)))
-	if len(e.openIDs()) != 4 {
+	if len(e.openIDs()) != 5 {
 		t.Fatalf("a full or stale snapshot cleared a hold: %v", e.openIDs())
 	}
 
@@ -112,7 +121,16 @@ func TestUsageLimitClearedByWindowSnapshot(t *testing.T) {
 		t.Fatalf("cleared_by %q", by)
 	}
 	e.windows(win(proto.WindowSevenDay, 99.5, now))
-	if open := e.openIDs(); open["ulm_7d"] || !open["ulm_opus"] || !open["ulm_known"] {
+	if open := e.openIDs(); open["ulm_7d"] || !open["ulm_opus"] || !open["ulm_known"] || !open["ulm_unk"] {
 		t.Fatalf("after a weekly snapshot under 100 %%: %v", open)
+	}
+	// An unknown kind needs both windows in the snapshot, each under 100 %.
+	e.windows(win(proto.WindowFiveHour, 30, now))
+	if !e.openIDs()["ulm_unk"] {
+		t.Fatal("a partial snapshot cleared an unknown-kind hold")
+	}
+	e.windows(win(proto.WindowFiveHour, 30, now), win(proto.WindowSevenDay, 30, now))
+	if open := e.openIDs(); open["ulm_unk"] || !open["ulm_opus"] || !open["ulm_known"] {
+		t.Fatalf("after a full snapshot under 100 %%: %v", open)
 	}
 }

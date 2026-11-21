@@ -24,13 +24,16 @@ const (
 )
 
 // holdMaxAge is how long a hold of a kind with an unknown reset can last: the kind's window. A kind with no window of
-// its own (unknown, overage) gets the shortest one: a limit that is still on simply opens a new hold at the next launch.
+// its own (unknown, overage) gets the default keep-alive, so a run still waiting out the limit is never freed under it
+// before it is parked; a limit that is still on simply opens a new hold at the next launch.
 func holdMaxAge(kind string) time.Duration {
 	switch kind {
+	case proto.LimitFiveHour:
+		return limitFiveHourWindow
 	case proto.LimitSevenDay, proto.LimitSevenDayOpus, proto.LimitSevenDaySonnet, proto.LimitSevenDayOverage:
 		return limitSevenDayWindow
 	}
-	return limitFiveHourWindow
+	return DefaultLimitKeepAliveMax
 }
 
 // holdExpiry is when an account hold with an unknown reset ends at the latest.
@@ -95,7 +98,7 @@ func (svc *Service) expireHolds(ctx context.Context, now time.Time) (int, error)
 
 // windowFor is the usage window that shows a hold of kind over, or "" when none does on its own. A per-model weekly
 // limit (Opus, Sonnet) isn't visible in the account's weekly total, so a snapshot can't clear it. A kind without one
-// window (unknown, overage) needs every reported window under 100 %.
+// window (unknown, overage) needs both account windows in the snapshot, each under 100 %.
 func windowFor(kind string) (window string, all bool) {
 	switch kind {
 	case proto.LimitFiveHour:
@@ -121,6 +124,15 @@ func (svc *Service) ClearHoldsOnWindowsTx(ctx context.Context, tx *store.Tx, acc
 	if err != nil || len(rows) == 0 {
 		return err
 	}
+	// A snapshot older than the window the account already holds (a late report of another run) is not evidence.
+	stored, err := tx.Q.ListAccountWindows(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	newest := map[string]int64{}
+	for _, w := range stored {
+		newest[w.Kind] = w.ObservedAt
+	}
 	for _, u := range rows {
 		if u.ResetsAt.Valid {
 			continue
@@ -129,17 +141,18 @@ func (svc *Service) ClearHoldsOnWindowsTx(ctx context.Context, tx *store.Tx, acc
 		if window == "" && !all {
 			continue
 		}
-		over, seen := true, false
+		over, seen := true, map[string]bool{}
 		for _, w := range windows {
-			if w.ObservedAt.UnixMicro() <= u.SeenAt || window != "" && w.Kind != window {
+			if w.ObservedAt.UnixMicro() <= u.SeenAt || w.ObservedAt.UnixMicro() < newest[w.Kind] || window != "" && w.Kind != window {
 				continue
 			}
-			seen = true
+			seen[w.Kind] = true
 			if w.UsedPct >= 100 {
 				over = false
 			}
 		}
-		if !seen || !over {
+		// A kind without one window of its own needs both account windows in the snapshot.
+		if !over || window != "" && !seen[window] || window == "" && (!seen[proto.WindowFiveHour] || !seen[proto.WindowSevenDay]) {
 			continue
 		}
 		if err := svc.clearHoldTx(ctx, tx, u, ClearedByEvidence, u.ID); err != nil {
