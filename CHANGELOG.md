@@ -87,6 +87,30 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- **The node agent no longer floods the node with `git` processes when it reports memory status.** Each checkpoint,
+  acknowledgement, failed sync and reconnect made the agent check every role-memory instance folder on the node with
+  git, ended instances included. That is about seven git processes per folder per event, so the rate grew with the
+  number of folders times the number of live runs. Status reports are now coalesced: at most one every 30 s, holding
+  only the collections that changed (every collection after a reconnect), and never sent inline on an event. An
+  instance's counts are cached under a fingerprint of its files and refs, so an unchanged checkout costs no git. In a
+  test with 600 instance folders across 4 collections, a reconnect used to run about 26,800 git processes and every
+  acknowledgement another 4,200 to 5,600. Now the first reports after a reconnect check every folder once (about 8,400
+  processes, while git refreshes the indexes), and 40 acknowledgements after that run 88: their own head check, plus
+  one report. The uncheckpointed-file and local-commit counts (SM-MEM-004) can be up to one interval old. The fingerprint
+  also covers each file's inode and change time, so a same-size rewrite that keeps the modification time (`cp -p`,
+  `rsync -a`) is seen, and cached entries of renamed or removed collections and instances are dropped. An instance
+  whose unpublished commits cannot be counted (it diverged and lacks the new shared head's objects) is now never
+  reported clean and never cached: before, the count failed as 0, the backup flush skipped the instance and a backup or
+  relocation could go ahead without its commits. It is now checkpointed, and until then it counts as having
+  unacknowledged commits. An instance folder that was only initialised (no commit yet) counts 0 commits, but only on
+  positive evidence: git ran, said HEAD does not resolve, and HEAD's branch is neither a loose nor a packed ref. A count
+  cut short by a stopped connection or agent, or any other git failure, counts as unpublished and is never cached.
+- **A shutdown during a backup no longer logs a checkpoint warning for every role-memory instance.** Each backup's
+  memory flush walked every instance of a space and kept going after the connection or the agent stopped, so each
+  remaining instance failed at once with `context canceled`, logged a warning and recorded the error. Overlapping
+  flushes (each backup sends its own) multiplied that. Flushes of a space now take turns, stop quietly when their context
+  ends, and skip instances with nothing to checkpoint, so an ended instance's checkout costs no git. In a test with 8
+  overlapping flushes of 40 instances, a cancellation used to log 320 warnings; now it logs none.
 - **Accepting a KB proposal no longer fails because the knowledge branch is checked out in the KB repository's own
   checkout.** A repository cloned the normal way has its default branch checked out, so every acceptance was refused.
   SpaceMan now fast-forwards that checkout together with the branch (files and index match the new tip), after the

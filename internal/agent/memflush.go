@@ -14,28 +14,65 @@ import (
 // flushPoll is how often a bounded flush wait looks again whether central acknowledged everything.
 const flushPoll = 200 * time.Millisecond
 
-// flushSpaceMemory checkpoints every instance of the space's role memory and offers each collection to central at once.
-// It returns the number of collections of the space on this node.
+// flushSpaceMemory checkpoints every instance of the space's role memory that has something to checkpoint and offers
+// each collection to central at once. It returns the number of collections of the space on this node.
+//
+// Flushes of one space take turns: every backup sends its own memory.flush, and a flush outlives central's bounded wait,
+// so overlapping flushes would otherwise each walk every instance. An instance with no uncheckpointed file and no
+// unpublished commit is skipped (its counts come from the status cache, memstatus.go, so an ended instance's checkout
+// costs no git). When ctx ends (the connection or the agent stopped) the flush stops at once, quietly.
 func (a *Agent) flushSpaceMemory(ctx context.Context, spaceID, reason string) int {
 	m := a.mem
 	if m.git == nil {
 		return 0
 	}
+	release, ok := m.flushTurn(ctx, spaceID)
+	if !ok {
+		return 0
+	}
+	defer release()
 	n := 0
 	for _, k := range m.collections(ctx) {
 		if k[0] != spaceID {
 			continue
 		}
 		n++
+		head := m.git.RevParse(ctx, m.shared(spaceID, k[1]), "refs/heads/main")
 		insts, _ := os.ReadDir(filepath.Join(m.root, spaceID, k[1], "instances"))
 		for _, i := range insts {
-			if validMemoryKey(spaceID, k[1], i.Name()) {
-				_ = m.checkpointErr(ctx, spaceID, k[1], i.Name(), reason)
+			if ctx.Err() != nil {
+				return n
 			}
+			if !validMemoryKey(spaceID, k[1], i.Name()) {
+				continue
+			}
+			if head != "" {
+				if unc, local, ok := m.instanceStatus(ctx, m.instance(spaceID, k[1], i.Name()), head); ok && unc == 0 && local == 0 {
+					continue // nothing to checkpoint
+				}
+			}
+			_ = m.checkpointErr(ctx, spaceID, k[1], i.Name(), reason)
 		}
 		m.scheduleSync(spaceID, k[1], 0)
 	}
 	return n
+}
+
+// flushTurn waits for the space's flush slot; false when ctx ended first.
+func (m *memManager) flushTurn(ctx context.Context, spaceID string) (release func(), ok bool) {
+	m.mu.Lock()
+	slot := m.flushing[spaceID]
+	if slot == nil {
+		slot = make(chan struct{}, 1)
+		m.flushing[spaceID] = slot
+	}
+	m.mu.Unlock()
+	select {
+	case slot <- struct{}{}:
+		return func() { <-slot }, true
+	case <-ctx.Done():
+		return nil, false
+	}
 }
 
 // memoryClean reports whether every collection of the space is checkpointed and acknowledged by central, and if not,

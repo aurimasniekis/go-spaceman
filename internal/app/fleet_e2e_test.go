@@ -218,7 +218,7 @@ func (e *fleetEnv) startAgent() {
 	}
 	a := agent.New(j, agent.Options{DataDir: e.agentDir, CentralURL: e.srv.URL, Credential: e.cred, Runner: e.run,
 		RunnerInfo: proto.RunnerInfo{Kind: "fake", CoreID: "fakecore"}, HarnessBinaries: map[string]string{hns.KindClaude: "/usr/bin/true", hns.KindCodex: "/usr/bin/true"},
-		AgentBinary: "/usr/bin/true", BridgeSocket: e.bridge, ReconnectMax: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
+		AgentBinary: "/usr/bin/true", BridgeSocket: e.bridge, ReconnectMax: 200 * time.Millisecond, MemoryStatusInterval: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
 	e.agent, e.agentFn, e.agentJ, e.done = a, cancel, j, make(chan struct{})
 	go func() { _ = a.Run(ctx); close(e.done) }()
 }
