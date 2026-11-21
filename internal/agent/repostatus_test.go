@@ -172,3 +172,78 @@ func TestRepoReportWorktreeStatusBounded(t *testing.T) {
 		}
 	}
 }
+
+// An old cached entry is refreshed with the allowance a report has left, and relocation's inspection stays exact: it
+// checks every worktree however many there are.
+func TestRepoReportWorktreeStatusRefreshAndExact(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	space, bare, _ := reposFixture(t)
+	a := testAgent()
+	ctx := context.Background()
+	oldMax := repoStatusMax
+	repoStatusMax = 3
+	t.Cleanup(func() { repoStatusMax = oldMax })
+	api := proto.RepoSource{ID: "rep_api", Name: "api", Path: "repos/api", URL: bare, DefaultBranch: "main", ClonePolicy: proto.CloneAuto}
+	p := proto.ReposSyncPayload{Repositories: []proto.RepoSource{api}, Clone: []string{"rep_api"}}
+	check := func() proto.RepoCheck {
+		rep := a.syncRepos(ctx, "spc_1", space, p)
+		p.Clone = nil
+		return *rep.Repositories[0].Check
+	}
+	check()
+	repo := filepath.Join(space, "repos", "api")
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	const n = 6
+	for i := range n {
+		wt := filepath.Join(space, "worktrees", fmt.Sprintf("w%d", i))
+		gitRun(t, repo, "worktree", "add", "-q", "-b", fmt.Sprintf("b%d", i), wt)
+		age(t, wt, old)
+	}
+	check()
+	check()      // 6 worktrees, 3 a report: all checked after two reports
+	c := check() // and cached in the third
+	logs := execLog(t)
+	for _, w := range c.Worktrees {
+		if w.Status != proto.WorktreeStatusCached {
+			t.Fatalf("not cached: %+v", w)
+		}
+	}
+	// Age the cached entries past the refresh interval: the next report refreshes up to its allowance (3), not all.
+	a.wtStatus.mu.Lock()
+	for k, v := range a.wtStatus.m {
+		v.at = v.at.Add(-2 * repoStatusRefresh)
+		a.wtStatus.m[k] = v
+	}
+	a.wtStatus.mu.Unlock()
+	c = check()
+	fresh := 0
+	for _, w := range c.Worktrees {
+		switch w.Status {
+		case proto.WorktreeStatusFresh:
+			fresh++
+		case proto.WorktreeStatusCached:
+		default:
+			t.Fatalf("unexpected %+v", w)
+		}
+	}
+	if st := statusExecs(logs()); fresh != 3 || st != 3+1 {
+		t.Fatalf("refresh: %d fresh, %d status execs", fresh, st)
+	}
+	// Relocation's inspection is exact: no cache, no limit, no status marker.
+	g, err := newProjectGit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := statusExecs(logs())
+	rc := g.inspectRepo(ctx, space, "repos/api")
+	if got := statusExecs(logs()) - before; got != n+1 {
+		t.Fatalf("exact inspection ran %d status execs, want %d", got, n+1)
+	}
+	for _, w := range rc.Worktrees {
+		if w.Status != "" || w.Error != "" {
+			t.Fatalf("exact inspection: %+v", w)
+		}
+	}
+}

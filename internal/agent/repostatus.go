@@ -17,10 +17,18 @@ import (
 // counts of an earlier status while nothing about it changed, and at most repoStatusMax status calls run per report.
 // Both are visible in the report (WorktreeCheck.Status) and neither ever turns an unknown status into a clean one: a
 // worktree that is neither cached nor within the limit is reported with an error and unknown counts.
+//
+// The activity stamp cannot see an edit deep inside an existing subfolder, so cached counts are also refreshed: an entry
+// older than repoStatusRefresh is checked again with whatever allowance the report has left after the worktrees that
+// need it more (and stays reported as cached, with its time, when there is none).
 var (
-	repoStatusIdle = 7 * 24 * time.Hour
-	repoStatusMax  = 200
+	repoStatusIdle    = 7 * 24 * time.Hour
+	repoStatusMax     = 200
+	repoStatusRefresh = 24 * time.Hour
 )
+
+// wtCacheKeep is how long an unrefreshed entry is kept before eviction (worktrees that were removed).
+const wtCacheKeep = 30 * 24 * time.Hour
 
 // wtCached is the counts of one earlier worktree status and what they were taken against.
 type wtCached struct {
@@ -51,6 +59,13 @@ func (c *wtStatusCache) put(path string, v wtCached) {
 		c.m = map[string]wtCached{}
 	}
 	c.m[path] = v
+	if len(c.m) > 4096 { // drop what nothing has refreshed for a long time (removed worktrees)
+		for k, e := range c.m {
+			if v.at.Sub(e.at) > wtCacheKeep {
+				delete(c.m, k)
+			}
+		}
+	}
 }
 
 // wtBudget is one report's worktree status allowance. A nil budget means no throttling (relocation needs exact counts).
@@ -133,6 +148,9 @@ func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []pr
 		// activity stamp it is cached against nor contends with the worktree's own git commands.
 		d, u, _, err := g.statusEnv(ctx, p.path, []string{"GIT_OPTIONAL_LOCKS=0"})
 		if err != nil {
+			if b != nil {
+				w.Status = proto.WorktreeStatusUnchecked
+			}
 			w.Error = err.Error()
 			return
 		}
@@ -157,7 +175,7 @@ func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []pr
 		stamp time.Time
 		ok    bool
 	}
-	var recent, idle []job
+	var recent, idle, refresh []job
 	now := b.now()
 	for _, p := range pend {
 		stamp, ok := worktreeStamp(p.path)
@@ -166,6 +184,9 @@ func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []pr
 				at := c.at
 				w := &wcs[p.i]
 				w.Dirty, w.Untracked, w.Status, w.StatusAt = c.dirty, c.untracked, proto.WorktreeStatusCached, &at
+				if now.Sub(c.at) > repoStatusRefresh {
+					refresh = append(refresh, job{p, stamp, ok})
+				}
 				continue
 			}
 			idle = append(idle, job{p, stamp, ok})
@@ -173,16 +194,28 @@ func (g *projectGit) worktreeStatuses(ctx context.Context, b *wtBudget, wcs []pr
 		}
 		recent = append(recent, job{p, stamp, ok})
 	}
-	// Recently changed worktrees first: they are the ones whose counts matter; an idle one with no cached counts yet
-	// takes what is left, and what is left over is reported unknown.
-	for _, j := range append(recent, idle...) {
+	// Within a repository, recently changed worktrees first: they are the ones whose counts matter; an idle one with no
+	// cached counts yet takes what is left, then the refresh of old cached counts; what an unknown worktree is left
+	// without is reported unknown. (The allowance is shared by the repositories of a report, in configured order.)
+	for _, j := range append(append(recent, idle...), refresh...) {
 		if b.left <= 0 {
+			if w := &wcs[j.p.i]; w.Status == proto.WorktreeStatusCached {
+				continue // old counts stay, labelled with their time
+			}
 			w := &wcs[j.p.i]
 			w.Status = proto.WorktreeStatusUnchecked
 			w.Error = fmt.Sprintf("status not checked: this report ran its limit of %d worktree status calls; the counts are unknown, not clean", b.max)
 			continue
 		}
 		b.left--
-		run(j.p, j.stamp, j.ok)
+		w := &wcs[j.p.i]
+		if w.Status != proto.WorktreeStatusCached {
+			run(j.p, j.stamp, j.ok)
+			continue
+		}
+		saved := *w
+		if run(j.p, j.stamp, j.ok); w.Error != "" { // a failed refresh keeps the older counts, still labelled cached
+			*w = saved
+		}
 	}
 }

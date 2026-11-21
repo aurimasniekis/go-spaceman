@@ -16375,6 +16375,19 @@
             "description": "The latest run SpaceMan launched in this worktree",
             "type": "string"
           },
+          "status": {
+            "enum": [
+              "fresh",
+              "cached",
+              "unchecked"
+            ],
+            "type": "string"
+          },
+          "status_at": {
+            "description": "When the counts were taken",
+            "format": "date-time",
+            "type": "string"
+          },
           "unpushed": {
             "description": "Commits on the worktree's branch that no remote has",
             "format": "int64",

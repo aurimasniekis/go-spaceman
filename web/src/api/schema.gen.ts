@@ -11453,6 +11453,13 @@ export interface components {
             path: string;
             /** @description The latest run SpaceMan launched in this worktree */
             run_id?: string;
+            /** @enum {string} */
+            status?: "fresh" | "cached" | "unchecked";
+            /**
+             * Format: date-time
+             * @description When the counts were taken
+             */
+            status_at?: string;
             /**
              * Format: int64
              * @description Commits on the worktree's branch that no remote has
