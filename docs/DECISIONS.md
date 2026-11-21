@@ -8242,7 +8242,15 @@
     of its own: one new item per real dialog, as ADR-0104 notes. (d) Disclosure is limited to the identifying fields
     above; the dialog's screen text stays in the run's own space. (e) A quarantined fleet event that an operator
     reprocesses later is not checked against the grant again: reprocessing is a person's action in the operations
-    space on data it already holds, and it holds only the reduced fields.
+    space on data it already holds, and it holds only the reduced fields. (f) Admission looks at the grant as it is
+    when an event is handled, not when it was published: a replay of a granted space's fleet-scoped durable
+    subscription delivers other spaces' dialog events from before the grant, as far back as the stream keeps them.
+    That is what a replay is for, and it needs `replay:execute` and is audited (SM-EVT-007). (g) Archiving a space
+    does not revoke its grant (a grant for an archived space is refused); revoke it explicitly when the operations
+    space changes.
+  - The CLI's `subscription update` does not resend the stored `ingest_own_scope` (it is dropped from the merged
+    body like `custom` and `start`), so `--ingest-own=false` alone returns a fleet subscription to `space`; after a
+    revocation, an update still needs `--ingest-own-scope space` (decision 2).
   - Evidence (simulated, in-process NATS): `internal/events` `TestFleetScopeAdmitsOtherSpaceDialog` (durable and core,
     both subjects, reduced data, depth 0 still enforced, a space-scoped subscription still filters),
     `TestFleetScopeRefusedWithoutGrant`, `TestFleetScopeOtherSubjectsRefused` (a forced wildcard subscription with

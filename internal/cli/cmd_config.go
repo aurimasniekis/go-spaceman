@@ -427,7 +427,7 @@ func (a *App) eventCmd() *cobra.Command {
 					str("ingest-own-scope", "ingest_own_scope", ingestOwnScopeHelp)
 			}}),
 		a.cmd(opts{use: "update", short: "Edit a subscription (only the flags given change)", op: "update-subscription", get: "get-subscription",
-			merge: true, drop: []string{"custom", "start"}, scoped: true, args: pos("subscription"),
+			merge: true, drop: []string{"custom", "start", "ingest_own_scope"}, scoped: true, args: pos("subscription"),
 			form: func(f *form) {
 				f.str("name", "name", "name").boolean("enabled", "enabled", "enabled").str("template-version", "template_version_id", "template version ID").
 					str("follow", "follow", "pinned or latest").kv("var", "vars", "template variable (replaces the variables)").
