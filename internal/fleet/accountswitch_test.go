@@ -315,12 +315,42 @@ func TestAccountSwitchFallbacksAtDecision(t *testing.T) {
 	if n := e.switches("run_f"); n != 0 {
 		t.Fatalf("failover off decided %d switches", n)
 	}
-	// A run without a finished turn has nothing to resume: it waits.
 	e.failoverOn = true
+
+	// A run with no session has nothing to resume: it waits, with the fallback on record.
 	e.running("run_t", "worker", 0)
+	e.exec(`UPDATE runs SET session_id = '' WHERE id = 'run_t'`)
 	e.report("run_t", "idle", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
-	if n := e.switches("run_t"); n != 0 {
-		t.Fatalf("a run without a turn decided %d switches", n)
+	if sw := e.switchOf("run_t"); sw.State != SwitchFellBack || sw.Reason != SwitchNoSession {
+		t.Fatalf("a run without a session: %+v", sw)
+	}
+
+	// A run whose launch names no account can't be moved off one: recorded too.
+	e.running("run_g", "worker", 1)
+	e.exec(`UPDATE runs SET launch_json = '{"prompt":"x"}' WHERE id = 'run_g'`)
+	e.report("run_g", "idle", 1, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	if sw := e.switchOf("run_g"); sw.State != SwitchFellBack || sw.Reason != SwitchNoAccount {
+		t.Fatalf("a run without an account: %+v", sw)
+	}
+}
+
+// Regression: a fresh run whose first turn ended in the limit error (status error, a session, no finished turn) used
+// to record its limit with neither a switch decision nor a wait, and sat in error until the keep-alive parked it. It is
+// now switched to the pool's other account like any other run.
+func TestAccountSwitchFirstTurnEndsInLimitError(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_e", "worker", 0)
+	e.report("run_e", "error", 0, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	sw := e.switchOf("run_e")
+	if sw.ToAccountID != "acc_2" || sw.FromAccountID != "acc_1" {
+		t.Fatalf("switch %+v, want acc_1 -> acc_2", sw)
+	}
+	// The error status is an idle point: the report that carries the limit parks the run at once.
+	if sw.State != SwitchParked {
+		t.Fatalf("switch state %q, want parked", sw.State)
+	}
+	if w := e.waitOf("run_e"); w.SwitchToAccountID != "acc_2" || w.SessionID != "ses_run_e" {
+		t.Fatalf("wait %+v", w)
 	}
 }
 
