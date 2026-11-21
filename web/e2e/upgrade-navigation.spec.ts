@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import AxeBuilder from '@axe-core/playwright'
 import { devices, expect, test, type Browser, type BrowserContextOptions, type Page } from '@playwright/test'
 
 import { Api, env } from './stack'
@@ -30,15 +31,25 @@ const viewports: { name: string; mobile: boolean; options: BrowserContextOptions
   { name: 'iPhone 13', mobile: true, options: emulate(devices['iPhone 13']) },
 ]
 
-// The admin sees every entry of the main navigation (web/src/lib/nav.ts).
-const pages: [label: string | RegExp, path: string][] = [
-  ['Overview', '/'], ['Attention', '/attention'], [/^Needs you/, '/human'], ['Terminals', '/terminals'], ['Spaces', '/spaces'],
-  ['Nodes', '/nodes'], ['Prompts', '/prompts'], ['Roles & profiles', '/roles'], ['Skills', '/skills'],
-  ['Approval policies', '/approval-policies'], ['Action types', '/human-types'], ['Cross-space', '/cross-space'],
-  ['Events', '/events'], ['MCP servers', '/mcp-servers'], ['Accounts', '/accounts'], ['Git SSH keys', '/git-keys'],
-  ['Harbor Pilot', '/harbor-pilot'], ['Users', '/users'], ['Sign-in providers', '/sign-in-providers'], ['API tokens', '/tokens'],
-  ['Audit log', '/audit'], ['Backups', '/backups'], ['System', '/system'], ['Account', '/account'],
+// The admin sees these sidebar entries (web/src/lib/nav.ts): the plain ones, then the three settings hubs. Each hub opens on
+// its first tab, and every page of a hub is a tab link under the page header.
+const entries: [label: string | RegExp, path: string][] = [
+  ['Overview', '/'], [/^Needs you/, '/human'], ['Terminals', '/terminals'], ['Spaces', '/spaces'], ['Usage', '/usage'],
 ]
+const hubs: { label: string; entry: string; tabs: [label: string, path: string][] }[] = [
+  { label: 'Configuration', entry: '/configuration', tabs: [
+    ['Prompts', '/prompts'], ['Roles & profiles', '/roles'], ['Skills', '/skills'], ['Approval policies', '/approval-policies'],
+    ['Action types', '/human-types'], ['Cross-space', '/cross-space'], ['Nodes', '/nodes'],
+  ] },
+  { label: 'Integrations', entry: '/integrations', tabs: [
+    ['Events', '/events'], ['MCP servers', '/mcp-servers'], ['Accounts', '/accounts'], ['Git SSH keys', '/git-keys'], ['Harbor Pilot', '/harbor-pilot'],
+  ] },
+  { label: 'Access', entry: '/access', tabs: [
+    ['Users', '/users'], ['Sign-in providers', '/sign-in-providers'], ['API tokens', '/tokens'], ['Audit log', '/audit'], ['Backups', '/backups'], ['System', '/system'],
+  ] },
+]
+// Off the sidebar but still routes: Attention and Account (the user menu).
+const offSidebar = ['/attention', '/account']
 
 let state = ''
 test.beforeAll(async ({ playwright }) => {
@@ -145,14 +156,51 @@ for (const vp of viewports) {
     // "iPhone 13" differs from Pixel 7 here only in size and user agent (both are Chromium), so it skips the walk
     // through every page and keeps the upgrade cases.
     if (vp.name !== 'iPhone 13')
-      test('every top-level page opens from the navigation', async ({ browser }) => {
-        test.setTimeout(180_000)
+      test('every sidebar entry, hub and tab opens by client-side navigation', async ({ browser }) => {
+        test.setTimeout(240_000)
         const { page, errors, reloads } = await open(browser, vp.options)
-        for (const [label, path] of pages) {
+        const sidebar = page.getByRole('navigation', { name: 'Main navigation' })
+        for (const [label, path] of entries) {
           await navigate(page, vp.mobile, label)
           await expectPage(page, path)
         }
+        for (const hub of hubs) {
+          // The sidebar has the hub, not its pages, and the hub opens on its first tab.
+          await navigate(page, vp.mobile, hub.label)
+          await expectPage(page, hub.tabs[0][1])
+          const tabs = page.getByRole('main').getByRole('navigation', { name: `${hub.label} sections` })
+          for (const [label, path] of hub.tabs) {
+            const tab = tabs.getByRole('link', { name: label, exact: true })
+            await tab.click()
+            await expectPage(page, path)
+            // The tab bar is part of the page header, so it is the one to carry the current page.
+            await expect(tabs.getByRole('link', { name: label, exact: true })).toHaveAttribute('aria-current', 'page')
+            await expect(tabs.locator('[aria-current="page"]')).toHaveCount(1)
+          }
+        }
+        // The hubs are the only way into those pages, and nothing the sidebar used to list is there any more.
+        if (!vp.mobile) {
+          for (const gone of ['Attention', 'Account', 'Nodes', 'API tokens', 'Prompts']) await expect(sidebar.getByRole('link', { name: gone, exact: true })).toHaveCount(0)
+        }
         expect(reloads, 'client-side navigation only').toEqual([])
+        expect(errors).toEqual([])
+        await page.context().close()
+      })
+
+    // Every old URL still loads its page directly (Go redirects, the Mini App, banners and bookmarks link to them), and the
+    // hubs' entry routes land on the first tab the user may see.
+    if (!vp.mobile)
+      test('old URLs load directly and the entry routes redirect to the first tab', async ({ browser }) => {
+        test.setTimeout(180_000)
+        const { page, errors } = await open(browser, vp.options)
+        for (const path of [...hubs.flatMap((h) => h.tabs.map(([, p]) => p)), ...offSidebar]) {
+          await page.goto(path)
+          await expectPage(page, path)
+        }
+        for (const hub of hubs) {
+          await page.goto(hub.entry)
+          await expectPage(page, hub.tabs[0][1])
+        }
         expect(errors).toEqual([])
         await page.context().close()
       })
@@ -187,3 +235,33 @@ test('a chunk that keeps failing shows "SpaceMan was updated" with Reload, witho
   expect((await shownErrors(page)).map((t) => t.match(errorScreen)?.[0])).toEqual(['SpaceMan was updated'])
   await page.context().close()
 })
+
+// Every hub page at phone and desktop width, in both color schemes, with axe (WCAG 2.1 A/AA), without sideways scrolling,
+// and with the tab bar reachable by keyboard (tabs are links, so Tab reaches them in order).
+for (const width of [390, 1280]) {
+  for (const scheme of ['light', 'dark'] as const) {
+    test(`hub pages at ${width}px in the ${scheme} scheme pass axe`, async ({ browser }) => {
+      test.setTimeout(240_000)
+      const context = await browser.newContext({ viewport: { width, height: width < 768 ? 844 : 900 }, storageState: state, colorScheme: scheme })
+      // Mantine reads its scheme from localStorage (the app's default is dark), before the page renders.
+      await context.addInitScript((s) => localStorage.setItem('mantine-color-scheme-value', s), scheme)
+      const page = await context.newPage()
+      for (const hub of hubs) {
+        await page.goto(hub.entry)
+        for (const [label, path] of hub.tabs) {
+          const tab = page.getByRole('main').getByRole('navigation', { name: `${hub.label} sections` }).getByRole('link', { name: label, exact: true })
+          await tab.scrollIntoViewIfNeeded()
+          await tab.click()
+          await expect(page).toHaveURL((u) => u.pathname === path)
+          await expect(page.getByRole('main').getByRole('heading').first()).toBeVisible()
+          const res = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+          const found = res.violations.map((v) => `${v.id} [${v.impact}]: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ')}`)
+          expect(found, `${hub.label} / ${label}: accessibility violations`).toEqual([])
+          const w = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, view: document.documentElement.clientWidth }))
+          expect(w.page, `${hub.label} / ${label}: page scrolls sideways`).toBeLessThanOrEqual(w.view)
+        }
+      }
+      await context.close()
+    })
+  }
+}

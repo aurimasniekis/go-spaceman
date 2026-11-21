@@ -153,6 +153,15 @@ const (
 	SwitchCancelled SwitchResult = "cancelled" // the limit cleared, or the run was stopped or replaced
 )
 
+// SwitchCause is why an account switch moved a run (ADR-0090, ADR-0105).
+type SwitchCause string
+
+// Account-switch causes.
+const (
+	SwitchCauseUsageLimit SwitchCause = "usage_limit" // away from an account at its usage limit
+	SwitchCauseSwitchBack SwitchCause = "switch_back" // back to the chain's origin account after its reset
+)
+
 // Volume names a filesystem whose capacity is exported.
 type Volume string
 
@@ -196,6 +205,7 @@ var (
 	enumRunEnd        = newEnum(RunExited, RunStopped, RunKilled, RunLeaseExpired, RunLost, RunLaunchFailed, RunUsageLimit)
 	enumStaleReason   = newEnum(StaleNotOnNode, StaleLeaseLost)
 	enumSwitchResult  = newEnum(SwitchStarted, SwitchSucceeded, SwitchFailed, SwitchFellBack, SwitchCancelled)
+	enumSwitchCause   = newEnum(SwitchCauseUsageLimit, SwitchCauseSwitchBack)
 )
 
 // bounded admits label values that match a pattern, up to a fixed number of distinct values; the rest map to

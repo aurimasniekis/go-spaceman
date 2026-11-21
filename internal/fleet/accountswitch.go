@@ -42,8 +42,12 @@ const (
 	SwitchCancelled = "cancelled"
 )
 
-// SwitchCauseUsageLimit is the cause of an automatic switch.
-const SwitchCauseUsageLimit = "usage_limit"
+// Switch causes: an automatic switch away from an account at its usage limit, and the move back to the chain's origin
+// account once that account has reset (ADR-0105).
+const (
+	SwitchCauseUsageLimit = "usage_limit"
+	SwitchCauseSwitchBack = "switch_back"
+)
 
 // Fixed reasons a switch records (never raw text). A wait's own reasons (WaitSuperseded, WaitTaskMoved, …) are used
 // as they are when a switch's wait is given up.
@@ -73,32 +77,33 @@ var SwitchActor = audit.Actor{Type: audit.ActorSystem, ID: "account-switch"}
 
 // AccountSwitch is a run's move to another account of its pool at a usage limit (ADR-0090).
 type AccountSwitch struct {
-	ID            string     `json:"id"`
-	SpaceID       string     `json:"space_id"`
-	InstanceID    string     `json:"instance_id"`
-	Role          string     `json:"role"`
-	RunKind       string     `json:"run_kind" enum:"control,worker,kb,dreamer,diagnostic"`
-	Harness       string     `json:"harness" enum:"claude-code,codex"`
-	FromRunID     string     `json:"from_run_id"`
-	NewRunID      string     `json:"new_run_id,omitempty"`
-	FromAccountID string     `json:"from_account_id"`
-	ToAccountID   string     `json:"to_account_id,omitempty"`
-	Cause         string     `json:"cause" enum:"usage_limit,operator"`
-	LimitKind     string     `json:"limit_kind"`
-	LimitResetsAt *time.Time `json:"limit_resets_at,omitempty"`
-	UsageLimitID  string     `json:"usage_limit_id,omitempty"`
-	LimitWaitID   string     `json:"limit_wait_id,omitempty"`
-	State         string     `json:"state" enum:"pending,parked,resumed,succeeded,failed,fell_back,cancelled"`
-	Reason        string     `json:"reason,omitempty"`
-	ArmedUntil    *time.Time `json:"armed_until,omitempty"`
-	Version       int64      `json:"version"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID              string     `json:"id"`
+	SpaceID         string     `json:"space_id"`
+	InstanceID      string     `json:"instance_id"`
+	Role            string     `json:"role"`
+	RunKind         string     `json:"run_kind" enum:"control,worker,kb,dreamer,diagnostic"`
+	Harness         string     `json:"harness" enum:"claude-code,codex"`
+	FromRunID       string     `json:"from_run_id"`
+	NewRunID        string     `json:"new_run_id,omitempty"`
+	FromAccountID   string     `json:"from_account_id"`
+	ToAccountID     string     `json:"to_account_id,omitempty"`
+	Cause           string     `json:"cause" enum:"usage_limit,operator,switch_back" doc:"usage_limit: moved away from an account at its limit; operator: moved by a person; switch_back: moved back to the account a chain of usage-limit switches started from, after its reset (ADR-0105)"`
+	OriginAccountID string     `json:"origin_account_id,omitempty" doc:"The account the chain of usage-limit switches started from; a switch_back moves the run there"`
+	LimitKind       string     `json:"limit_kind" doc:"The limit that caused a usage_limit switch; empty for a switch_back"`
+	LimitResetsAt   *time.Time `json:"limit_resets_at,omitempty"`
+	UsageLimitID    string     `json:"usage_limit_id,omitempty"`
+	LimitWaitID     string     `json:"limit_wait_id,omitempty"`
+	State           string     `json:"state" enum:"pending,parked,resumed,succeeded,failed,fell_back,cancelled"`
+	Reason          string     `json:"reason,omitempty"`
+	ArmedUntil      *time.Time `json:"armed_until,omitempty"`
+	Version         int64      `json:"version"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 func accountSwitchFromRow(r db.AccountSwitch) AccountSwitch {
 	return AccountSwitch{ID: r.ID, SpaceID: r.SpaceID, InstanceID: r.InstanceID, Role: r.Role, RunKind: r.RunKind, Harness: r.Harness,
-		FromRunID: r.FromRunID, NewRunID: r.NewRunID, FromAccountID: r.FromAccountID, ToAccountID: r.ToAccountID, Cause: r.Cause,
+		FromRunID: r.FromRunID, NewRunID: r.NewRunID, FromAccountID: r.FromAccountID, ToAccountID: r.ToAccountID, Cause: r.Cause, OriginAccountID: r.OriginAccountID,
 		LimitKind: r.LimitKind, LimitResetsAt: microsPtr(r.LimitResetsAt), UsageLimitID: r.UsageLimitID, LimitWaitID: r.LimitWaitID,
 		State: r.State, Reason: r.Reason, ArmedUntil: microsPtr(r.ArmedUntil), Version: r.Version,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC()}
@@ -106,7 +111,7 @@ func accountSwitchFromRow(r db.AccountSwitch) AccountSwitch {
 
 func outboxSwitch(r db.AccountSwitch) outbox.AccountSwitch {
 	return outbox.AccountSwitch{SpaceID: r.SpaceID, SwitchID: r.ID, InstanceID: r.InstanceID, FromRunID: r.FromRunID, NewRunID: r.NewRunID,
-		FromAccountID: r.FromAccountID, ToAccountID: r.ToAccountID, LimitKind: r.LimitKind, State: r.State, Reason: r.Reason}
+		FromAccountID: r.FromAccountID, ToAccountID: r.ToAccountID, Cause: r.Cause, LimitKind: r.LimitKind, State: r.State, Reason: r.Reason}
 }
 
 func switchActive(state string) bool {
@@ -234,16 +239,42 @@ func (svc *Service) switchTargetTx(ctx context.Context, tx *store.Tx, spaceID, h
 	return id, nil
 }
 
-// insertSwitchTx writes a new switch row in state with its change record, audit event, outbox event and metric.
-func (svc *Service) insertSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, lim limitState, from, to, state, reason string) (db.AccountSwitch, error) {
+// chainOriginTx returns the account a usage-limit switch of r away from from belongs to (ADR-0105 decision 2): the
+// origin of the chain when the instance's newest switch is a usage-limit switch that moved it to from, otherwise from.
+func chainOriginTx(ctx context.Context, tx *store.Tx, r db.Run, from string) (string, error) {
+	prev, err := tx.Q.GetNewestAccountSwitchOfInstance(ctx, db.GetNewestAccountSwitchOfInstanceParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return from, nil
+	} else if err != nil {
+		return "", err
+	}
+	if prev.Cause == SwitchCauseUsageLimit && prev.ToAccountID == from && prev.OriginAccountID != "" {
+		return prev.OriginAccountID, nil
+	}
+	return from, nil
+}
+
+// insertSwitchTx writes a new switch row of cause in state with its change record, audit event, outbox event and
+// metric. A usage-limit switch records the origin of its chain (ADR-0105); a switch-back's origin is its target.
+func (svc *Service) insertSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, lim limitState, cause, from, to, state, reason string) (db.AccountSwitch, error) {
 	now := tx.NowMicros()
 	sw := db.AccountSwitch{ID: ids.New(ids.AccountSwitch), SpaceID: r.SpaceID, InstanceID: r.InstanceID, Role: r.Role, RunKind: r.Kind, Harness: r.Harness,
-		FromRunID: r.ID, FromAccountID: from, ToAccountID: to, Cause: SwitchCauseUsageLimit, LimitKind: lim.kind, LimitResetsAt: lim.resets,
+		FromRunID: r.ID, FromAccountID: from, ToAccountID: to, Cause: cause, LimitKind: lim.kind, LimitResetsAt: lim.resets,
 		LimitSince: lim.since, State: state, Reason: reason, Version: 1, CreatedAt: now, UpdatedAt: now}
-	if state == SwitchPending {
+	switch cause {
+	case SwitchCauseUsageLimit:
+		origin, err := chainOriginTx(ctx, tx, r, from)
+		if err != nil {
+			return sw, err
+		}
+		sw.OriginAccountID = origin
+	case SwitchCauseSwitchBack:
+		sw.OriginAccountID = to
+	}
+	if state == SwitchPending && cause != SwitchCauseSwitchBack {
 		sw.ArmedUntil = sql.NullInt64{Int64: tx.Now.Add(switchArmMax).UnixMicro(), Valid: true}
 	}
-	if scope, account, gw, ok := limitScope(r, lim.kind); ok {
+	if scope, account, gw, ok := limitScope(r, lim.kind); ok && lim.kind != "" {
 		if u, err := tx.Q.GetOpenUsageLimit(ctx, db.GetOpenUsageLimitParams{SpaceID: r.SpaceID, Scope: scope, AccountID: account, GatewayRef: gw, Kind: lim.kind}); err == nil {
 			sw.UsageLimitID = u.ID
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -253,7 +284,7 @@ func (svc *Service) insertSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 	if err := tx.Q.InsertAccountSwitch(ctx, db.InsertAccountSwitchParams{ID: sw.ID, SpaceID: sw.SpaceID, InstanceID: sw.InstanceID, Role: sw.Role,
 		RunKind: sw.RunKind, Harness: sw.Harness, FromRunID: sw.FromRunID, FromAccountID: sw.FromAccountID, ToAccountID: sw.ToAccountID, Cause: sw.Cause,
 		LimitKind: sw.LimitKind, LimitResetsAt: sw.LimitResetsAt, LimitSince: sw.LimitSince, UsageLimitID: sw.UsageLimitID, State: sw.State,
-		Reason: sw.Reason, ArmedUntil: sw.ArmedUntil, CreatedAt: sw.CreatedAt, UpdatedAt: sw.UpdatedAt}); err != nil {
+		Reason: sw.Reason, ArmedUntil: sw.ArmedUntil, CreatedAt: sw.CreatedAt, UpdatedAt: sw.UpdatedAt, OriginAccountID: sw.OriginAccountID}); err != nil {
 		return sw, err
 	}
 	if err := svc.record(ctx, tx, sw.SpaceID, "account_switch", sw.ID, "created", 1); err != nil {
@@ -262,7 +293,7 @@ func (svc *Service) insertSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 	if err := svc.switchEventTx(ctx, tx, sw); err != nil {
 		return sw, err
 	}
-	if state == SwitchPending {
+	if sw.ArmedUntil.Valid {
 		tx.AfterCommit(svc.wakeDeadlines) // the armed switch's idle-point deadline
 	}
 	return sw, nil
@@ -290,7 +321,7 @@ func (svc *Service) switchEventTx(ctx context.Context, tx *store.Tx, sw db.Accou
 		action, result, ev = "account.switch_cancelled", metrics.SwitchCancelled, outbox.AccountSwitchCompleted{AccountSwitch: outboxSwitch(sw)}
 	}
 	details := map[string]any{"space_id": sw.SpaceID, "run_id": sw.FromRunID, "from_account_id": sw.FromAccountID, "to_account_id": sw.ToAccountID,
-		"limit_kind": sw.LimitKind, "state": sw.State}
+		"limit_kind": sw.LimitKind, "state": sw.State, "cause": sw.Cause}
 	if sw.Reason != "" {
 		details["reason"] = sw.Reason
 	}
@@ -307,7 +338,8 @@ func (svc *Service) switchEventTx(ctx context.Context, tx *store.Tx, sw db.Accou
 		}
 	}
 	if result != "" {
-		tx.AfterCommit(func() { svc.opts.Metrics.AccountSwitch(result) })
+		cause := metrics.SwitchCause(sw.Cause)
+		tx.AfterCommit(func() { svc.opts.Metrics.AccountSwitch(cause, result) })
 	}
 	return nil
 }
@@ -407,10 +439,10 @@ func (svc *Service) armSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, lim
 		return nil, err
 	}
 	if d.target == "" {
-		_, err := svc.insertSwitchTx(ctx, tx, r, lim, d.from, "", SwitchFellBack, d.reason)
+		_, err := svc.insertSwitchTx(ctx, tx, r, lim, SwitchCauseUsageLimit, d.from, "", SwitchFellBack, d.reason)
 		return nil, err
 	}
-	sw, err := svc.insertSwitchTx(ctx, tx, r, lim, d.from, d.target, SwitchPending, "")
+	sw, err := svc.insertSwitchTx(ctx, tx, r, lim, SwitchCauseUsageLimit, d.from, d.target, SwitchPending, "")
 	if err != nil {
 		return nil, err
 	}

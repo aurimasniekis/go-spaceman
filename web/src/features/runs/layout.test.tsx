@@ -152,6 +152,19 @@ describe('terminals workspace', () => {
     expect(screen.getByRole('button', { name: 'Hide the space list' })).toBeInTheDocument()
   })
 
+  it('keeps the footer in the terminal column, so the space list divider runs past it', async () => {
+    await show(<Workspace spaceId={SPACE} runId="run_control" onSelect={() => {}} onMode={() => {}} />)
+    // jsdom has no layout, so this checks the structure the divider's full height depends on: the space list and the
+    // terminal column are the two cells of one grid, and the footer sits in the terminal column, not under both.
+    const sidebar = screen.getByRole('textbox', { name: 'Filter spaces and agents' }).closest('.mantine-Stack-root') as HTMLElement
+    const grid = sidebar.parentElement as HTMLElement
+    const column = sidebar.nextElementSibling as HTMLElement
+    expect(grid.children).toHaveLength(2)
+    expect(sidebar.style.borderRight).toContain('solid')
+    expect(column.querySelector('[data-scroll-region]')).not.toBeNull()
+    expect(column).toContainElement(screen.getByText(/agents? running in/))
+  })
+
   it('puts the space list in a drawer on a phone, opened from the space name', async () => {
     narrow = true
     const onSelect = vi.fn()

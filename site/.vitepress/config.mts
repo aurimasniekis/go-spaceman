@@ -67,6 +67,9 @@ export default withMermaid(
           items: [
             { text: 'What is SpaceMan?', link: '/guide/what-is-spaceman' },
             { text: 'Concepts', link: '/guide/concepts' },
+            { text: 'Sidebar and settings hubs', link: '/guide/sidebar' },
+            { text: 'Overview', link: '/guide/overview' },
+            { text: 'Attention', link: '/guide/attention' },
             { text: 'Architecture', link: '/guide/architecture' },
             { text: 'Try it locally', link: '/guide/try-locally' },
             { text: 'First node and space', link: '/guide/first-space' },
@@ -84,6 +87,7 @@ export default withMermaid(
             { text: 'Role memory', link: '/guide/memory' },
             { text: 'Dreams', link: '/guide/dreams' },
             { text: 'Usage and transcripts', link: '/guide/usage' },
+            { text: 'The Usage page', link: '/guide/usage-page' },
             { text: 'Skills', link: '/guide/skills' },
             { text: 'MCP gateway', link: '/guide/mcp-gateway' },
             { text: 'Your own MCP client', link: '/guide/mcp-endpoint' },

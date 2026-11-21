@@ -60,7 +60,10 @@ role memory and sync it, and waits at most one minute for the node to report tha
 protocol minor 5, ADR-0045). Only then is the database snapshotted and the memory bundles written, so notes a running
 agent wrote a moment ago are in the backup. Nothing is forced: a node that is not connected, runs an agent older than
 protocol minor 5, does not answer in time, or still has history central has not acknowledged (for example a sync that
-keeps failing) does not hold the backup up. The backup then holds the history central had acknowledged for that space,
+keeps failing) does not hold the backup up. The flush has its own bound (the wait plus at most 10 seconds for the
+nodes' answers, and a backstop of half a minute more), outside the watchdog described below: a node too busy to take
+the request in time is reported as `timed_out`, and a flush that is slow or stuck can never fail the backup. Each node's
+outcome is logged. The backup then holds the history central had acknowledged for that space,
 and the manifest says so:
 
 - `memory_flush.flushed_spaces` lists the spaces whose memory was flushed.
@@ -157,7 +160,7 @@ A backup runs in stages: `memory_flush`, `snapshot`, `files`, `objects` (an S3 a
 it and the last progress), and the running item carries its `stage`. Central logs each stage's start and end at Info,
 with the file count and duration, under the `backup.id` field.
 
-A watchdog fails a backup or verification whose stage makes no progress for **10 minutes** (no new stage, no file sealed,
+A watchdog fails a backup or verification whose stage after `memory_flush` makes no progress for **10 minutes** (no new stage, no file sealed,
 uploaded or checked, and no bytes moved to or from object storage; `backups.stall_timeout`), or that runs longer than
 **1 hour** in total (`backups.max_duration`; raise it if your backups copy a large S3 artifact store or your uplink is slow) (ADR-0091). The run is recorded as failed with an error naming the stage, for example `backup stopped in stage upload:
 no progress for 10m0s: …`, and the next backup can start at once. Retention (prune) gets its own window after a successful backup, so in the worst case `busy` lasts about `max_duration` + 2 minutes (recording) + `max_duration`. A scheduled backup is retried 15 minutes after a

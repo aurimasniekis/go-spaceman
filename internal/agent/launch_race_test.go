@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -661,5 +662,88 @@ func TestEndUnlaunchedTakesObserveLock(t *testing.T) {
 	a.drain(10 * time.Second)
 	if r := getRun(t, a, runID); r.State != proto.RunExited || r.Desired != "stopped" || r.Reason != "stopped before start" {
 		t.Fatalf("state %s (%s), desired %s", r.State, r.Reason, r.Desired)
+	}
+}
+
+// finishDuringAdoptWait is a runner whose Kill returns before the program is gone and whose program finishes right
+// after the Nth Get since the kill returned it live: the monitor's finished event (onFinish) lands between adopt's
+// last kill-wait read and its write.
+type finishDuringAdoptWait struct {
+	*runnertest.Fake
+	at       int
+	onFinish func(fin runner.Process)
+	mu       sync.Mutex
+	gets     int
+	killed   bool
+}
+
+func (r *finishDuringAdoptWait) Kill(_ context.Context, id string) (*runner.Process, error) {
+	r.mu.Lock()
+	r.killed = true
+	r.mu.Unlock()
+	return r.Fake.Get(context.Background(), id)
+}
+
+func (r *finishDuringAdoptWait) Get(ctx context.Context, id string) (*runner.Process, error) {
+	p, err := r.Fake.Get(ctx, id)
+	r.mu.Lock()
+	fire := false
+	if r.killed && err == nil && p.State == runner.StateLive {
+		r.gets++
+		fire = r.gets == r.at
+	}
+	r.mu.Unlock()
+	if fire {
+		r.Exit(id, 137, "killed")
+		if fin, ferr := r.Fake.Get(ctx, id); ferr == nil {
+			r.onFinish(*fin)
+		}
+	}
+	return p, err
+}
+
+// adopt rewrites an already-ended row (recording the found program's terminal) under the observe lock and from a
+// fresh read: a finished event the monitor observes between adopt's last kill-wait read and its write keeps its exit
+// code and reason instead of being overwritten by adopt's stale row.
+func TestAdoptEndedRunKeepsConcurrentFinishedObserve(t *testing.T) {
+	shortAdoptKillWait(t, 3)
+	var ar *finishDuringAdoptWait
+	a, _ := ccAgent(t, t.TempDir(), nil, func(o *Options) { ar = &finishDuringAdoptWait{Fake: runnertest.New(), at: 3}; o.Runner = ar })
+	ctx := context.Background()
+	p, err := ar.Start(ctx, runner.Spec{Name: RunName(adoptWaitRun), Argv: []string{"/bin/true"},
+		Labels: map[string]string{"spaceman.managed": "1", "spaceman.run": adoptWaitRun, "spaceman.space": ccSpace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ccAgentSeedRun(t, a)
+	// Ended with the program recorded (the runner lost it, then a re-delivered launch found it again).
+	row := getRun(t, a, adoptWaitRun)
+	row.State, row.Reason, row.TerminalID = proto.RunLost, "process not found in the runner", p.ID
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ar.onFinish = func(fin runner.Process) {
+		// What the monitor does on the finished event, concurrently with adopt (which holds the run's lock).
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if r, err := a.j.runByTerminal(ctx, fin.ID); err == nil {
+				a.observe(ctx, r, fin, false)
+			}
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second): // not a hang if an adopt ever held the observe lock across its kill-wait
+		}
+	}
+	a.adopt(ctx, a.log, adoptWaitRun, *p)
+	a.drain(10 * time.Second)
+	r := getRun(t, a, adoptWaitRun)
+	if r.ExitCode == nil || *r.ExitCode != 137 || r.Reason != "killed" || !ended(r.State) || r.TerminalID != p.ID {
+		code := "nil"
+		if r.ExitCode != nil {
+			code = strconv.Itoa(*r.ExitCode)
+		}
+		t.Fatalf("state %s exit %s reason %q terminal %q, want the finished event's exit 137 (killed) kept", r.State, code, r.Reason, r.TerminalID)
 	}
 }

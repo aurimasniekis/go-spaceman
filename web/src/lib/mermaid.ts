@@ -87,7 +87,9 @@ async function render(source: string, scheme: Scheme): Promise<string> {
  * with an AbortError.
  */
 export function renderMermaid(source: string, scheme: Scheme, signal?: AbortSignal): Promise<string> {
-  const p = queue.then(() => {
+  const p = queue.then(async () => {
+    // Give the page a turn between two renders: queued renders of already loaded kinds would otherwise run as one task.
+    await new Promise<void>((resolve) => setTimeout(resolve))
     if (signal?.aborted) throw new DOMException('The diagram is no longer shown.', 'AbortError')
     return render(source, scheme)
   })

@@ -26,7 +26,7 @@ function GitKeysPage() {
   const current = (list.data ?? []).find((k) => k.id === open) ?? null
   return (
     <>
-      <PageHeader title="Git SSH keys" description="Keys SpaceMan clones private repositories with. Add a key's public half to a Git account; spaces you allow can use it."
+      <PageHeader hub="integrations" title="Git SSH keys" description="Keys SpaceMan clones private repositories with. Add a key's public half to a Git account; spaces you allow can use it."
         actions={<Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Generate key</Button>} />
       <Alert color="owlBlue" icon={<IconInfoCircle size={16} />} mb="md" p="xs">
         <Text size="sm">

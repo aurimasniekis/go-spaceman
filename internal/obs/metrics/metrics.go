@@ -137,7 +137,7 @@ func New() *Metrics {
 	m.runsStarted = f.counterVec("runs_started_total", "Run launches by harness and result.", "harness", "result")
 	m.runsEnded = f.counterVec("runs_ended_total", "Runs ended by harness and reason.", "harness", "reason")
 	m.runsStale = f.counterVec("runs_reconciled_stale_total", "Runs central's stale-run sweeper moved to lost, by end reason (ADR-0074).", "reason")
-	m.accountSwitches = f.counterVec("account_switches_total", "Account switches at a usage limit, by step: started, or how they ended (ADR-0090).", "result")
+	m.accountSwitches = f.counterVec("account_switches_total", "Account switches by cause (away at a usage limit, or back to the original account after its reset) and step: started, or how they ended (ADR-0090, ADR-0105).", "cause", "result")
 	m.gwRevokeFailed = f.gauge("gateway_revocations_failed", "LLM gateway (Harbor Pilot) credential revocations that failed: each credential stays valid until it expires unless a person revokes it, or its parent, in the gateway.")
 	m.ingest = newIngestMetrics(f)
 	m.tgUpdates = newTelegramUpdateMetrics(f)
@@ -460,12 +460,12 @@ func (m *Metrics) RunReconciledStale(r StaleReason) {
 	m.runsStale.WithLabelValues(enumStaleReason.norm(string(r))).Inc()
 }
 
-// AccountSwitch counts an account switch's step (ADR-0090).
-func (m *Metrics) AccountSwitch(r SwitchResult) {
+// AccountSwitch counts an account switch's step by its cause (ADR-0090, ADR-0105).
+func (m *Metrics) AccountSwitch(c SwitchCause, r SwitchResult) {
 	if m == nil {
 		return
 	}
-	m.accountSwitches.WithLabelValues(enumSwitchResult.norm(string(r))).Inc()
+	m.accountSwitches.WithLabelValues(enumSwitchCause.norm(string(c)), enumSwitchResult.norm(string(r))).Inc()
 }
 
 // --- Filesystems ---

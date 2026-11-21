@@ -11,6 +11,7 @@ Aliases: `messages`, `msg`.
 | [`spaceman message ack`](#spaceman-message-ack) | Acknowledge a message addressed to operators |
 | [`spaceman message cancel`](#spaceman-message-cancel) | Cancel a scheduled message to control before it is due |
 | [`spaceman message get`](#spaceman-message-get) | Show a message |
+| [`spaceman message inbox`](#spaceman-message-inbox) | Messages addressed to operators in every space you can read (--all: every page) |
 | [`spaceman message list`](#spaceman-message-list) | A space's recent messages |
 | [`spaceman message reply`](#spaceman-message-reply) | Reply to an agent's message (a reply to a request resolves it) |
 | [`spaceman message resolve`](#spaceman-message-resolve) | Close a message or request |
@@ -57,6 +58,31 @@ API: `get-message` ([HTTP API](../api)).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman message inbox
+
+Messages addressed to operators in every space you can read (--all: every page).
+
+```sh
+spaceman message inbox [flags]
+```
+
+API: `list-operator-messages` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman message inbox --all --state all
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--all` | bool |  | follow next_cursor and print every page |
+| `--cursor` | string |  | continue from a previous page's next_cursor |
+| `--kind` | string |  | message, request, reply or notification |
+| `--limit` | integer |  | maximum number of items |
+| `--space` | string |  | only this space (ID or slug) |
+| `--state` | string |  | open (default: not yet acknowledged or resolved) or all |
 
 ## spaceman message list
 

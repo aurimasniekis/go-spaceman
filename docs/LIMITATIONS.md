@@ -60,8 +60,8 @@
   published, and rows left pending when publication is turned off are dropped after the retention (ADR-0030).
 - **At least once, no global order.** Consumers must deduplicate on `Nats-Msg-Id`; JetStream deduplicates retries only
   within its 2-minute window. Events of different subjects can arrive in any order (SM-OBS-004).
-- **Automation depth follows recorded links only.** An installation drops events carrying its own `spaceman-origin`,
-  and quarantines events whose `spaceman-depth` reaches the space's `event_depth` (default 8, ADR-0049). The depth
+- **Automation depth follows recorded links only.** An installation drops events carrying its own `spaceman-origin`
+  (unless a subscription opts in with `ingest_own` for its own run dialog events at depth 0, ADR-0104), and quarantines events whose `spaceman-depth` reaches the space's `event_depth` (default 8, ADR-0049). The depth
   passes from an event to its inbox item, to tasks created from the item (`origin_kind` inbox_item) and their
   subtasks, and to their events. Runs, human actions, approvals, memory and KB events carry no depth: a change control
   makes on its own judgement after reading an item starts a new chain, bounded only by the run, tool-call and budget
@@ -283,6 +283,12 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Pool order ignores utilisation.** The resolver orders by priority, then the fewest live runs, then binding order. The
   windows are recorded and shown, and the headroom gate can refuse an account, but they don't rank the pool.
 - **Claude Code only.** Codex runs are not moved; a Codex run at its limit waits as before.
+- **Switch-back is simulated only (ADR-0105).** A run a usage limit moved goes back to its original account after the
+  reset, at an idle point (`usage_limit_switch_back`, on by default). Tested with a fake harness, a scripted node and a
+  fake clock; real two-account evidence is K-17. It costs a restart and an uncached first request, and an idle point
+  reported just before the program starts another turn can still have that turn interrupted by the stop. A run an
+  operator moved, a run through Harbor Pilot and a run at a dialog or under takeover are never moved back; one
+  switch-back per instance in 6 hours.
 - **A move ends the old process.** Background shells and subagents end with it, and the new run's prompt cache starts
   cold (an extra uncached request).
 - **A move can misattribute the last tokens of the old run.** A report that is lost or late is booked with the next
@@ -308,7 +314,9 @@ Holding accounts and parking runs at a Claude usage limit (ADR-0079, SM-RUN-004.
 - **Sessions are per agent instance.** A relaunched worker with a new instance gets a new session.
 - **Resumed conversations depend on the harness.** A session woken from sleep continues its conversation where the
   harness supports resuming (Claude Code); otherwise it starts fresh with the same worktree.
-- **The knowledge branch must not be checked out** where SpaceMan should move it; acceptance refuses such a branch.
+- **The knowledge branch must not be checked out in a linked worktree**; acceptance refuses such a branch. The
+  repository's own checkout may have it checked out: it is fast-forwarded with the branch when clean, and a dirty
+  checkout fails the acceptance.
 - **The check runs with the node user's rights**, like agent programs.
 - **No proposal review by agents.** Accepting is a person's decision (reviewed) or automatic after the check
   (serialized); there is no maintainer-agent workflow.

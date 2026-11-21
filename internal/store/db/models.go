@@ -25,28 +25,29 @@ type Account struct {
 }
 
 type AccountSwitch struct {
-	ID            string
-	SpaceID       string
-	InstanceID    string
-	Role          string
-	RunKind       string
-	Harness       string
-	FromRunID     string
-	NewRunID      string
-	FromAccountID string
-	ToAccountID   string
-	Cause         string
-	LimitKind     string
-	LimitResetsAt sql.NullInt64
-	LimitSince    sql.NullInt64
-	UsageLimitID  string
-	LimitWaitID   string
-	State         string
-	Reason        string
-	ArmedUntil    sql.NullInt64
-	Version       int64
-	CreatedAt     int64
-	UpdatedAt     int64
+	ID              string
+	SpaceID         string
+	InstanceID      string
+	Role            string
+	RunKind         string
+	Harness         string
+	FromRunID       string
+	NewRunID        string
+	FromAccountID   string
+	ToAccountID     string
+	Cause           string
+	LimitKind       string
+	LimitResetsAt   sql.NullInt64
+	LimitSince      sql.NullInt64
+	UsageLimitID    string
+	LimitWaitID     string
+	State           string
+	Reason          string
+	ArmedUntil      sql.NullInt64
+	Version         int64
+	CreatedAt       int64
+	UpdatedAt       int64
+	OriginAccountID string
 }
 
 type AccountWindow struct {
@@ -353,6 +354,7 @@ type EventSubscription struct {
 	UpdatedAt         int64
 	Delivery          string
 	WhilePaused       string
+	IngestOwn         int64
 }
 
 type EventTemplate struct {

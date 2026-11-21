@@ -61,6 +61,28 @@ func (fc *wsCentral) collect(t *testing.T, runID string, d time.Duration) []prot
 	}
 }
 
+// collectAtLeast waits (up to a generous cap, not a fixed sleep) for n of runID's reports, then returns them with any
+// that follow until none has come for quiet, so a late extra report still fails the exact-count checks. A loaded
+// -race run can take far longer than a quiet window to produce the first one.
+func (fc *wsCentral) collectAtLeast(t *testing.T, runID string, n int, quiet time.Duration) []proto.RunReport {
+	t.Helper()
+	var out []proto.RunReport
+	deadline := time.After(15 * time.Second)
+	for len(out) < n {
+		select {
+		case env := <-fc.msgs:
+			noTranscriptText(t, env)
+			var r proto.RunReport
+			if env.Type == proto.TypeRunReport && env.Decode(&r) == nil && r.RunID == runID {
+				out = append(out, r)
+			}
+		case <-deadline:
+			return out
+		}
+	}
+	return append(out, fc.collect(t, runID, quiet)...)
+}
+
 // limitChanges counts the reports whose limit differs from the report before (the first against before).
 func limitChanges(before *proto.RunLimit, rs []proto.RunReport) int {
 	n := 0
@@ -150,11 +172,11 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond) // the launch's reports
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	// A turn with no limit: a report per status, none with a limit.
 	f.SetStatus(row.TerminalID, "working")
 	f.SetStatus(row.TerminalID, "idle")
-	if rs := fc.collect(t, runID, 300*time.Millisecond); len(rs) != 2 || limitChanges(nil, rs) != 0 {
+	if rs := fc.collectAtLeast(t, runID, 2, 300*time.Millisecond); len(rs) != 2 || limitChanges(nil, rs) != 0 {
 		t.Fatalf("turn without a limit: %d reports, %d limit changes", len(rs), limitChanges(nil, rs))
 	}
 
@@ -163,7 +185,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 3, 300*time.Millisecond)
 	if len(rs) != 3 || limitChanges(nil, rs) != 1 {
 		t.Fatalf("limit hit: %d reports, %d limit changes", len(rs), limitChanges(nil, rs))
 	}
@@ -174,7 +196,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	// Another turn with nothing new in the transcript: the status reports carry the same limit, and no extra report.
 	f.SetStatus(row.TerminalID, "working")
 	f.SetStatus(row.TerminalID, "idle")
-	rs = fc.collect(t, runID, 300*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 2, 300*time.Millisecond)
 	if len(rs) != 2 {
 		t.Fatalf("unchanged: %d reports", len(rs))
 	}
@@ -191,10 +213,32 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	t.Cleanup(func() { a2.drain(10 * time.Second) })
 	t.Cleanup(a2.stopRecorders)
 	a2.leases[ccSpace] = a.leases[ccSpace]
+	reconciled := make(chan struct{}, 4)
+	a2.snapshotReconciled = func() {
+		select {
+		case reconciled <- struct{}{}:
+		default:
+		}
+	}
 	startAgent(t, a2, fc, clk)
 	wantOpen(t, "hello after restart", fc.helloRun(t, runID), proto.LimitFiveHour, reset, at)
-	for _, r := range fc.collect(t, runID, 300*time.Millisecond) {
-		wantOpen(t, "adopted", r, proto.LimitFiveHour, reset, at) // reconcile's reports
+	// The monitor's snapshot reconcile of an adopted run may or may not send one report after the hello (it races
+	// the hello), but never more, and any it sends repeats the limit still open and the run still running.
+	// Wait for that reconcile to finish first, so nothing of it can land in the clear step below.
+	select {
+	case <-reconciled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the monitor's snapshot reconcile did not finish")
+	}
+	rs = fc.collect(t, runID, 300*time.Millisecond)
+	if len(rs) > 1 {
+		t.Fatalf("adopted run: %d reports after the hello, want at most 1", len(rs))
+	}
+	for _, r := range rs {
+		wantOpen(t, "adopted reconcile", r, proto.LimitFiveHour, reset, at)
+		if r.State != "running" {
+			t.Fatalf("adopted reconcile: state %q, want running", r.State)
+		}
 	}
 	if j := getRun(t, a2, runID).Limit; j.Offset != offset {
 		t.Fatalf("offset after restart %d, want %d", j.Offset, offset)
@@ -204,7 +248,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	if err := f.LimitReset(row.TerminalID, transcript, reset.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	rs = fc.collect(t, runID, 300*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 3, 300*time.Millisecond)
 	if len(rs) != 3 || limitChanges(rs[0].Limit, rs) != 1 {
 		t.Fatalf("reset: %d reports, %d limit changes", len(rs), limitChanges(rs[0].Limit, rs))
 	}
@@ -213,7 +257,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 
 	// The run ends: its final report keeps the cleared limit, and the end scan finds nothing new to send.
 	f.Exit(row.TerminalID, 0, "exited")
-	rs = fc.collect(t, runID, 300*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
 	if len(rs) == 0 || limitChanges(rs[0].Limit, rs) != 0 || rs[len(rs)-1].State != proto.RunExited {
 		t.Fatalf("end: %+v", rs)
 	}
@@ -244,14 +288,18 @@ func TestUsageLimitWrapUpAndOldCentral(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		fc.collect(t, "run_wrap", 300*time.Millisecond)
+		fc.collectAtLeast(t, "run_wrap", 2, 300*time.Millisecond)
 		at := clk.Now().Add(-time.Minute)
 		f.SetStatus(row.TerminalID, "working")
 		if err := rt.AppendTranscript(transcript, rt.TypedRecord(at), rt.WrapUpRecord(at), rt.AssistantRecord("grace", at), rt.NoticeRecord(at)); err != nil {
 			t.Fatal(err)
 		}
 		f.SetStatus(row.TerminalID, "idle")
-		rs := fc.collect(t, "run_wrap", 300*time.Millisecond)
+		want := 3 // working, idle, and the limit
+		if minor < proto.MinorUsageLimit {
+			want = 2
+		}
+		rs := fc.collectAtLeast(t, "run_wrap", want, 300*time.Millisecond)
 		if j := getRun(t, a, "run_wrap").Limit; j.Kind != proto.LimitUnknown {
 			t.Fatalf("minor %d: journal %+v", minor, j)
 		}
@@ -283,7 +331,7 @@ func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
 	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
 	fc.next(t, proto.TypeHello) // sent: the connection is set, the welcome is held
 	ccLaunch(a, "run_held")
-	fc.collect(t, "run_held", 100*time.Millisecond)
+	fc.collectAtLeast(t, "run_held", 2, 100*time.Millisecond)
 	if err := a.j.setRunLimit(context.Background(), "run_held", runLimit{Kind: proto.LimitFiveHour, ResetsAt: &reset, Since: &at, Offset: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +340,7 @@ func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
 		t.Fatalf("%d reports before the welcome: %+v", len(rs), rs[0].Limit)
 	}
 	close(hold)
-	rs := fc.collect(t, "run_held", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_held", 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the welcome")
 	}
@@ -346,7 +394,7 @@ func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
 		t.Fatalf("%d reports before the welcome", len(rs))
 	}
 	close(hold)
-	rs := fc.collect(t, "run_scan", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_scan", 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the welcome")
 	}
@@ -373,7 +421,7 @@ func TestRunEndBetweenHelloSnapshotAndConnIsSentAfterWelcome(t *testing.T) {
 	}
 	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
 	fc.next(t, proto.TypeHello)
-	rs := fc.collect(t, "run_gap", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_gap", 1, 500*time.Millisecond)
 	if len(rs) == 0 || rs[len(rs)-1].State != proto.RunExited {
 		t.Fatalf("run end not reported after the welcome: %d reports", len(rs))
 	}
@@ -433,7 +481,7 @@ func TestUsageLimitScannedInPreConnWindowIsSentAfterWelcome(t *testing.T) {
 	}
 	startAgent(t, a, fc, clk)
 	fc.next(t, proto.TypeHello)
-	rs := fc.collect(t, "run_pre", 500*time.Millisecond)
+	rs := fc.collectAtLeast(t, "run_pre", 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the welcome")
 	}
@@ -481,12 +529,15 @@ func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	reset := at.Add(5 * time.Hour).Truncate(time.Second)
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the limit was hit")
+	}
 	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
 
 	// The reset passes: the run starts its auto-continuation turn and keeps working; the status never goes idle.
@@ -497,7 +548,7 @@ func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.NoticeRecord(reset), rt.AutoContinueRecord(reset), rt.AssistantRecord("msg_continue", reset.Add(time.Second))); err != nil {
 		t.Fatal(err)
 	}
-	rs = fc.collect(t, runID, 500*time.Millisecond)
+	rs = fc.collectAtLeast(t, runID, 1, 500*time.Millisecond)
 	if len(rs) == 0 {
 		t.Fatal("no report after the reset")
 	}
@@ -531,16 +582,19 @@ func TestUsageLimitClearedForRunAdoptedWorking(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	reset := at.Add(5 * time.Hour).Truncate(time.Second)
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the limit was hit")
+	}
 	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
 	// The run starts working again; the agent stops before the continuation's records are written.
 	f.SetStatus(row.TerminalID, "working")
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
 	stop()
 	if got := getRun(t, a, runID); got.Status != "working" || got.Limit.Kind == "" {
 		t.Fatalf("run before restart %+v", got)
@@ -591,15 +645,18 @@ func TestUsageLimitIdleRunIsNotPolled(t *testing.T) {
 	if err := rt.AppendTranscript(transcript, rt.TypedRecord(at.Add(-time.Minute)), rt.AssistantRecord("m1", at.Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond) // the launch's reports
 	f.SetStatus(row.TerminalID, "working")
 	f.SetStatus(row.TerminalID, "idle")
-	fc.collect(t, runID, 300*time.Millisecond)
+	fc.collectAtLeast(t, runID, 2, 300*time.Millisecond)
 	reset := at.Add(5 * time.Hour).Truncate(time.Second)
 	if err := f.HitLimit(row.TerminalID, transcript, proto.LimitFiveHour, reset, at); err != nil {
 		t.Fatal(err)
 	}
-	rs := fc.collect(t, runID, 300*time.Millisecond)
+	rs := fc.collectAtLeast(t, runID, 1, 300*time.Millisecond)
+	if len(rs) == 0 {
+		t.Fatal("no report after the limit was hit")
+	}
 	wantOpen(t, "set", rs[len(rs)-1], proto.LimitFiveHour, reset, at)
 	if got := getRun(t, a, runID); got.Status != "idle" || got.Limit.Kind == "" {
 		t.Fatalf("run %+v", got)

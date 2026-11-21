@@ -132,7 +132,7 @@ func TestFlushMemoryBoundsAndReasons(t *testing.T) {
 	withMem, noMem := mk("withmem", true), mk("nomem", false)
 
 	// Not connected.
-	res, err := e.c.Fleet.FlushMemory(ctx, time.Second)
+	res, err := e.c.Fleet.FlushMemory(ctx, time.Second, nil)
 	if err != nil || len(res) != 1 || res[0].SpaceID != withMem || res[0].Flushed || res[0].Reason != fleet.FlushNodeDisconnected || res[0].NodeName != "node-a" {
 		t.Fatalf("disconnected: %+v %v", res, err)
 	}
@@ -141,7 +141,7 @@ func TestFlushMemoryBoundsAndReasons(t *testing.T) {
 	old := dialRawNode(t, e, 3)
 	old.next(t, proto.TypeWelcome)
 	eventually(t, "old node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
-	res, err = e.c.Fleet.FlushMemory(ctx, time.Second)
+	res, err = e.c.Fleet.FlushMemory(ctx, time.Second, nil)
 	if err != nil || len(res) != 1 || res[0].Reason != fleet.FlushProtocolTooOld {
 		t.Fatalf("minor 3: %+v %v", res, err)
 	}
@@ -153,7 +153,7 @@ func TestFlushMemoryBoundsAndReasons(t *testing.T) {
 	n.next(t, proto.TypeWelcome)
 	eventually(t, "node connected", func() bool { x, _ := e.c.Fleet.GetNode(ctx, nodeID); return x.Connected })
 	start := time.Now()
-	res, err = e.c.Fleet.FlushMemory(ctx, time.Second)
+	res, err = e.c.Fleet.FlushMemory(ctx, time.Second, nil)
 	if d := time.Since(start); d > 4*time.Second {
 		t.Fatalf("the flush waited %s", d)
 	}
@@ -172,7 +172,7 @@ func TestFlushMemoryBoundsAndReasons(t *testing.T) {
 	}
 	done := make(chan out, 1)
 	go func() {
-		r, err := e.c.Fleet.FlushMemory(ctx, 5*time.Second)
+		r, err := e.c.Fleet.FlushMemory(ctx, 5*time.Second, nil)
 		done <- out{r, err}
 	}()
 	if err := n.next(t, proto.TypeMemoryFlush).Decode(&req); err != nil {
@@ -194,7 +194,7 @@ func TestFlushMemoryBoundsAndReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() {
-		r, err := e.c.Fleet.FlushMemory(ctx, 5*time.Second)
+		r, err := e.c.Fleet.FlushMemory(ctx, 5*time.Second, nil)
 		done <- out{r, err}
 	}()
 	if err := n.next(t, proto.TypeMemoryFlush).Decode(&req); err != nil || len(req.SpaceIDs) != 1 || req.SpaceIDs[0] != noMem {

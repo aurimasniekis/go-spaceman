@@ -1101,9 +1101,13 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		if err := svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", version); err != nil {
 			return err
 		}
-		// An armed account switch parks the run at its idle point (ADR-0090 §3.4 step 2).
+		// An armed account switch parks the run at its idle point (ADR-0090 §3.4 step 2); a run a usage limit moved goes
+		// back to its original account at one once that account has reset (ADR-0105).
 		if sweep == nil && !ended(rep.State) {
-			return svc.switchAtIdleTx(ctx, tx, r.ID, rep.Status)
+			if err := svc.switchAtIdleTx(ctx, tx, r.ID, rep.Status); err != nil {
+				return err
+			}
+			return svc.switchBackAtIdleTx(ctx, tx, r.ID, rep.Status)
 		}
 		return nil
 	})

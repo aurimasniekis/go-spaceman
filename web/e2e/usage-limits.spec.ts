@@ -32,6 +32,10 @@ async function noSideways(page: Page, what: string) {
 }
 
 const json = (route: Route, body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+// The time is shown with its date ("Sat 21 Nov, 00:05") when it falls on another day than today in that zone, which depends on
+// when the test runs.
+// Letters, not \w{3}: en-GB writes September as "Sept" ("Wed 16 Sept, 00:05 GMT+9").
+const DAY = '(?:[A-Za-z]+ \\d{1,2} [A-Za-z]+, )?'
 const hhmm = (d: Date, offsetHours: number) => {
   const t = new Date(d.getTime() + offsetHours * 3600_000)
   return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`
@@ -78,7 +82,7 @@ test('usage limits: held accounts, waiting runs, resume now, release and the run
     await expect(h).toContainText('weekly limit')
     // Tokyo is UTC+9: the hold's time is shown there, with UTC in the tooltip on focus.
     const t = h.locator(`time[datetime="${resetISO}"]`)
-    await expect(t).toHaveText(new RegExp(`^${hhmm(reset, 9)} (JST|GMT\\+9)$`))
+    await expect(t).toHaveText(new RegExp(`^${DAY}${hhmm(reset, 9)} (JST|GMT\\+9)$`))
     await t.focus()
     await expect(page.getByRole('tooltip')).toHaveText(utc)
     await expect(card.getByTestId('usage-hold').nth(1)).toContainText('shared · another space')
@@ -115,7 +119,7 @@ test('usage limits: held accounts, waiting runs, resume now, release and the run
     await page.goto(`/spaces/${sp.id}`)
     const badge = page.getByTestId('run-limit-badge').first()
     await expect(badge).toContainText('5-hour limit · resets')
-    await expect(badge.locator('time')).toHaveText(new RegExp(`^${hhmm(reset, 9)} `))
+    await expect(badge.locator('time')).toHaveText(new RegExp(`^${DAY}${hhmm(reset, 9)} `))
     await expect(page.getByText('at usage limit').first()).toBeVisible()
     await settle(page)
     await noSideways(page, `overview ${width}px`)

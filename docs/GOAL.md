@@ -444,6 +444,12 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-UI-007 A run's terminal size is configurable from the web: a live run can be resized (fit to window, presets, custom
   size) by someone with takeover permission, the size is per run and shared by every viewer, bounded and audited, and
   recordings follow it. A space sets the size new runs start at.
+- SM-UI-008 A cross-space Usage view shows ledger tokens per space, account, model, role and harness over a chosen range,
+  and the latest account windows, for the spaces the caller can read. It says which runs' usage is not counted (ADR-0103).
+- SM-UI-009 The main navigation groups rarely used administration pages into tabbed hubs, and every existing page URL keeps
+  working (ADR-0103).
+- SM-UI-010 Needs you lists operator messages across the spaces the caller can read, in a Messages view backed by the
+  cross-space operator inbox `GET /messages` (ADR-0103, accepted addition).
 
 ### SM-REC — Recordings, transcripts and usage
 - SM-REC-001 Terminal recordings, native transcripts and normalized metadata are kept distinct.
@@ -632,3 +638,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-13 | A native Telegram bot and Mini App: a linked person handles spaces, inbox, queue and "needs you" from Telegram as their own SpaceMan user, never wider and never step-up; notifications without fan-out; the Mini App on its own cookieless host; every setting through the API and Terraform, the token write-only; digests in each user's own timezone. Design in ADR-0083 (Proposed, security-relevant change; operator answers 2026-11-14). | SM-TG-001…014 |
 | 2026-11-15 | Account switching: a usage limit moves a run to another account of its pool (the same session, resumed) unless the reset is near (then the run waits); per-run usage logged per account, role and space; a launch-time headroom gate, off by default. Design in ADR-0090 (Accepted, security-relevant change; operator answers 2026-11-15). | SM-ACCT-003 (amended), SM-ACCT-007, SM-RUN-007, SM-OBS-007 |
 | 2026-11-19 | Interactive dialogs on a run's terminal: known startup dialogs are answered from a registry, unknown ones flag the run `blocked_on_dialog`, notify control and the operators and publish `run.dialog_detected`; permission, tool-approval and login dialogs are never answered. | SM-RUN-002 (amended, ADR-0102) |
+| 2026-11-20 | Operator UI batch for v0.1.16: a cross-space Usage page with account windows, an itemised Attention list, Overview with usage, and the Configuration, Integrations and Access settings as tabbed hubs (existing URLs kept). Design in ADR-0103 (Accepted). | SM-UI-008, SM-UI-009, SM-UI-010 (new); SM-UI-003 (evidence changes, ADR-0103) |

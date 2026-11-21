@@ -106,7 +106,8 @@ func TestTelegramTopicsRenameAndRelinkReuseTopics(t *testing.T) {
 }
 
 // relinkTelegramUser42 links Telegram user 42 again: a link code made in the web session, /start with the code, the
-// [Confirm] button in the bot, then the web confirmation.
+// [Confirm] button in the bot, then the web confirmation. It expects the unlink notice in the chat (the unlink that
+// precedes a relink queues it) and waits for it before taking the bot's reply.
 func relinkTelegramUser42(t *testing.T, e *miniAppEnv, ui *client) {
 	t.Helper()
 	from := botapi.User{ID: 42, FirstName: "Mini", Username: "mini"}
@@ -115,21 +116,37 @@ func relinkTelegramUser42(t *testing.T, e *miniAppEnv, ui *client) {
 	var code tglink.Code
 	r.json(t, &code)
 
+	// The unlink that precedes a relink queues a notice to the chat, which the sender delivers on its own schedule:
+	// under load it can land after the bot's reply to /start. Wait for it, so the reply is the only new message with
+	// buttons, then take the first message after it that has them.
+	const unlinkedNotice = "This Telegram account was unlinked from SpaceMan."
+	eventuallyFor(t, "the unlink notice in the chat", 30*time.Second, func() bool {
+		for _, m := range e.tg.Messages(42) {
+			if m.Text == unlinkedNotice {
+				return true
+			}
+		}
+		return false
+	})
+	last := 0
+	for _, m := range e.tg.Messages(42) {
+		last = max(last, m.MessageID)
+	}
 	e.tg.PushUpdate(botapi.Update{UpdateID: 7001, Message: &botapi.Message{MessageID: 900, From: &from,
 		Chat: botapi.Chat{ID: 42, Type: botapi.ChatPrivate}, Text: "/start " + code.Code}})
 	var button *botapi.Message
 	var confirm string
-	eventuallyFor(t, "the bot's confirmation buttons", 10*time.Second, func() bool {
-		msgs := e.tg.Messages(42)
-		if len(msgs) == 0 {
-			return false
+	eventuallyFor(t, "the bot's confirmation buttons", 30*time.Second, func() bool {
+		for _, m := range e.tg.Messages(42) {
+			if m.MessageID <= last || m.ReplyMarkup == nil || len(m.ReplyMarkup.InlineKeyboard) == 0 || len(m.ReplyMarkup.InlineKeyboard[0]) == 0 {
+				continue
+			}
+			if cb := m.ReplyMarkup.InlineKeyboard[0][0].CallbackData; cb != "" {
+				button, confirm = &m, cb
+				return true
+			}
 		}
-		m := msgs[len(msgs)-1]
-		if m.ReplyMarkup == nil || len(m.ReplyMarkup.InlineKeyboard) == 0 || len(m.ReplyMarkup.InlineKeyboard[0]) == 0 {
-			return false
-		}
-		button, confirm = &m, m.ReplyMarkup.InlineKeyboard[0][0].CallbackData
-		return confirm != ""
+		return false
 	})
 	e.tg.PushUpdate(botapi.Update{UpdateID: 7002, CallbackQuery: &botapi.CallbackQuery{ID: "cb-relink", From: from, Data: confirm, Message: button}})
 	eventuallyFor(t, "the code confirmed in Telegram", 10*time.Second, func() bool {

@@ -130,6 +130,20 @@ func (e *dialogEnv) lastReport() proto.RunReport {
 	return proto.RunReport{}
 }
 
+// reportsFor lists the run's reports sent so far.
+func (e *dialogEnv) reportsFor() []proto.RunReport {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []proto.RunReport
+	for _, env := range e.got {
+		var r proto.RunReport
+		if env.Type == proto.TypeRunReport && env.Decode(&r) == nil && r.RunID == e.run {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // ackReason is the reason of the node's ack of a command ("" until it arrives).
 func (e *dialogEnv) ackReason(cmd string) string {
 	e.mu.Lock()
@@ -446,11 +460,54 @@ func TestDialogFlagRecheckedOnAQuietScreen(t *testing.T) {
 	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:unknown", "cleared:unknown"}) {
 		t.Fatalf("outcomes %v", got)
 	}
+	// The backoff is reset by a deferred call after the cleared dialog is recorded: wait for it rather than race it.
+	waitFor(t, "backoff reset after the flag cleared", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		w := e.a.dlg.runs[e.run]
+		return w != nil && w.backoff == 0
+	})
+}
+
+// A flag that clears through the observed working status (dialogObserved, not a read) and comes back with no output
+// is read again after dialogQuiet, not after the backoff the flag had reached: the clear ends the backoff.
+func TestDialogReflagAfterObservedClearRereadsAfterQuiet(t *testing.T) {
+	old := dialogRecheckMax
+	dialogRecheckMax = 800 * time.Millisecond // 16 dialogQuiet (set by newDialogEnv): above the doublings a re-read can make before the check below
+	t.Cleanup(func() { dialogRecheckMax = old })
+	e := newDialogEnv(t, nil)
+	e.show(fixture(t, "claude-unknown.txt"))
+	waitFor(t, "flagged", func() bool { return len(e.dialogs()) == 1 })
+	waitFor(t, "backoff at its bound", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		w := e.a.dlg.runs[e.run]
+		return w != nil && w.backoff == dialogRecheckMax
+	})
+	// The program reports working: the observe path clears the flag. The screen still shows the dialog, so the re-read
+	// that is already armed flags it again with no output.
+	row := getRun(t, e.a, e.run)
+	row.Status, row.StatusKind = "working", ""
+	e.a.dialogObserved(context.Background(), row, row)
+	waitFor(t, "cleared", func() bool { return len(e.dialogs()) == 2 })
+	waitFor(t, "flagged again", func() bool { return len(e.dialogs()) == 3 })
+	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:unknown", "cleared:unknown", "blocked:unknown"}) {
+		t.Fatalf("outcomes %v", got)
+	}
+	// The new flag's re-reads start from dialogQuiet, not from the old flag's bound. Its backoff is checked against that
+	// bound, not against dialogQuiet itself: a re-read that has already run doubles it, and a loaded run can have run
+	// several by the time this reads it.
+	waitFor(t, "backoff of the new flag", func() bool {
+		e.a.dlg.mu.Lock()
+		defer e.a.dlg.mu.Unlock()
+		w := e.a.dlg.runs[e.run]
+		return w != nil && w.backoff != 0
+	})
 	e.a.dlg.mu.Lock()
 	b := e.a.dlg.runs[e.run].backoff
 	e.a.dlg.mu.Unlock()
-	if b != 0 {
-		t.Fatalf("backoff %v after the flag cleared", b)
+	if b >= dialogRecheckMax {
+		t.Fatalf("the new flag's backoff is %v, want below the old flag's bound %v (dialogQuiet %v)", b, dialogRecheckMax, dialogQuiet)
 	}
 }
 
@@ -544,9 +601,11 @@ func TestDialogAddDirResolvedSymlink(t *testing.T) {
 	}
 }
 
-// endRun marks the run as exited in the journal, as an observation of its exit does.
+// endRun marks the run as exited in the journal, as an observation of its exit does: under the run's observe lock, so
+// an observation of the live program in flight (the monitor's) cannot write its stale running row over the end.
 func (e *dialogEnv) endRun() {
 	e.t.Helper()
+	defer e.a.observeLock(e.run)()
 	row := getRun(e.t, e.a, e.run)
 	row.State = proto.RunExited
 	if err := e.a.j.updateRun(context.Background(), row); err != nil {

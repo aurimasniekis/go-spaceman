@@ -5,13 +5,14 @@ import (
 )
 
 var (
-	kbCols       = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("ROLE", "space_role"), c("WRITE", "write_policy"), c("ENABLED", "enabled"), c("REPO", "repo")}
-	memoryCols   = []col{c("ROLE", "role"), c("HEAD", "head"), c("HEAD AT", "head_at"), c("NODE HEAD", "node.head"), c("PENDING", "node.pending"), c("CONFLICTS", "open_conflicts")}
-	commitCols   = []col{c("COMMIT", "id"), c("AT", "at"), c("AUTHOR", "author"), c("SUBJECT", "subject")}
-	conflictCols = []col{c("ID", "id"), c("SOURCE", "source"), c("REF", "ref"), c("COMMIT", "commit"), c("CREATED", "created_at"), c("RESOLVED", "resolved_at"), c("DETAIL", "detail")}
-	messageCols  = []col{c("ID", "id"), c("KIND", "kind"), c("STATE", "state"), c("FROM", "from_label"), c("TO", "to_kind"), c("SUBJECT", "subject"), c("CREATED", "created_at"), c("DELIVER AT", "deliver_at")}
-	dreamCols    = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("ROLE", "space_role"), c("EVERY(H)", "interval_hours"), c("ENABLED", "enabled"), c("NEXT", "next_due_at"), c("LAST", "last_run.state")}
-	dreamRunCols = []col{c("ID", "id"), c("STATE", "state"), c("TRIGGER", "trigger"), c("RUN", "run_id"), c("STARTED", "started_at"), c("ENDED", "ended_at"), c("SUMMARY", "summary")}
+	kbCols              = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("ROLE", "space_role"), c("WRITE", "write_policy"), c("ENABLED", "enabled"), c("REPO", "repo")}
+	memoryCols          = []col{c("ROLE", "role"), c("HEAD", "head"), c("HEAD AT", "head_at"), c("NODE HEAD", "node.head"), c("PENDING", "node.pending"), c("CONFLICTS", "open_conflicts")}
+	commitCols          = []col{c("COMMIT", "id"), c("AT", "at"), c("AUTHOR", "author"), c("SUBJECT", "subject")}
+	conflictCols        = []col{c("ID", "id"), c("SOURCE", "source"), c("REF", "ref"), c("COMMIT", "commit"), c("CREATED", "created_at"), c("RESOLVED", "resolved_at"), c("DETAIL", "detail")}
+	messageCols         = []col{c("ID", "id"), c("KIND", "kind"), c("STATE", "state"), c("FROM", "from_label"), c("TO", "to_kind"), c("SUBJECT", "subject"), c("CREATED", "created_at"), c("DELIVER AT", "deliver_at")}
+	operatorMessageCols = []col{c("SPACE", "space_name"), c("ID", "id"), c("KIND", "kind"), c("STATE", "state"), c("FROM", "from_label"), c("SUBJECT", "subject"), c("CREATED", "created_at")}
+	dreamCols           = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("ROLE", "space_role"), c("EVERY(H)", "interval_hours"), c("ENABLED", "enabled"), c("NEXT", "next_due_at"), c("LAST", "last_run.state")}
+	dreamRunCols        = []col{c("ID", "id"), c("STATE", "state"), c("TRIGGER", "trigger"), c("RUN", "run_id"), c("STARTED", "started_at"), c("ENDED", "ended_at"), c("SUMMARY", "summary")}
 )
 
 func (a *App) kbCmd() *cobra.Command {
@@ -74,6 +75,11 @@ func (a *App) messageCmd() *cobra.Command {
 		a.cmd(opts{use: "list", short: "A space's recent messages", op: "list-messages", alias: []string{"ls"}, scoped: true,
 			query: []qflag{limitFlag(), qb("scheduled", "scheduled", "only scheduled messages to control that are not yet due")},
 			view:  view{items: "items", cols: messageCols, empty: "No messages."}}),
+		a.cmd(opts{use: "inbox", short: "Messages addressed to operators in every space you can read (--all: every page)", op: "list-operator-messages", paged: true,
+			query: []qflag{limitFlag(), qs("state", "state", "open (default: not yet acknowledged or resolved) or all"), qs("space", "space", "only this space (ID or slug)"),
+				qs("kind", "kind", "message, request, reply or notification")},
+			example: "spaceman message inbox --all --state all",
+			view:    view{items: "items", cols: operatorMessageCols, empty: "No messages."}}),
 		a.cmd(opts{use: "get", short: "Show a message", op: "get-message", scoped: true, args: pos("message")}),
 		a.cmd(opts{use: "send", short: "Send a message to control, a role or a run", op: "send-message", scoped: true, idem: true,
 			example: "spaceman message send --space payments --to role:worker --subject \"Freeze deploys\" --body-file freeze.md --request",

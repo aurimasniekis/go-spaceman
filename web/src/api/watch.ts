@@ -76,6 +76,19 @@ export function invalidate(qc: QueryClient, queryKey: QueryKey) {
   p.keys.set(JSON.stringify(queryKey), queryKey)
 }
 
+/** The all-spaces usage series is refetched at most this often: every run change would otherwise refetch the largest read. */
+export const USAGE_SERIES_WINDOW_MS = 5000
+const usageTimers = new WeakMap<QueryClient, ReturnType<typeof setTimeout>>()
+
+/** Queues one refresh of the all-spaces series (Overview and Usage) per USAGE_SERIES_WINDOW_MS, however many runs change. */
+function invalidateUsageSeries(qc: QueryClient) {
+  if (usageTimers.has(qc)) return
+  usageTimers.set(qc, setTimeout(() => {
+    usageTimers.delete(qc)
+    invalidate(qc, ['usage-series', ''])
+  }, USAGE_SERIES_WINDOW_MS))
+}
+
 /** Invalidates the cached queries a change affects (SM-UI-006: pages update live, never by polling the resources). */
 export function applyChange(qc: QueryClient, c: Change) {
   if (ATTENTION.has(c.resource_type)) invalidate(qc, ['attention'])
@@ -110,6 +123,7 @@ export function applyChange(qc: QueryClient, c: Change) {
         invalidate(qc, keys.runs(c.space_id))
         invalidate(qc, keys.run(c.space_id, c.resource_id))
         invalidate(qc, ['usage', c.space_id])
+        invalidateUsageSeries(qc)
       }
       break
     case 'node':
@@ -133,6 +147,7 @@ export function applyChange(qc: QueryClient, c: Change) {
       break
     case 'message':
       if (c.space_id) invalidate(qc, keys.messages(c.space_id))
+      invalidate(qc, keys.operatorMessages)
       break
     case 'prompt':
       invalidate(qc, keys.prompts)

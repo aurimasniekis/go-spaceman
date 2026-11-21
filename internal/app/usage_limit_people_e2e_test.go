@@ -172,7 +172,7 @@ func TestUsageLimitSettingsValidated(t *testing.T) {
 	}
 	want := map[string][4]int64{ // value, min, max, zero means none
 		limits.UsageLimitFailover: {0, 0, 1, 0}, limits.UsageLimitKeepAliveMax: {360, 1, 1440, 0},
-		limits.UsageLimitMaxWait: {168, 1, 720, 0}, limits.UsageLimitNotifyAfter: {12, 0, 720, 1},
+		limits.UsageLimitMaxWait: {168, 1, 720, 0}, limits.UsageLimitNotifyAfter: {12, 0, 720, 1}, limits.UsageLimitSwitchBack: {1, 0, 1, 0},
 	}
 	for _, l := range eff.Limits {
 		w, ok := want[l.Key]
@@ -188,7 +188,7 @@ func TestUsageLimitSettingsValidated(t *testing.T) {
 		t.Fatalf("missing settings %v", want)
 	}
 	for key, bad := range map[string][]int64{limits.UsageLimitFailover: {-1, 2}, limits.UsageLimitKeepAliveMax: {0, 1441},
-		limits.UsageLimitMaxWait: {0, 721}, limits.UsageLimitNotifyAfter: {-1, 721}} {
+		limits.UsageLimitMaxWait: {0, 721}, limits.UsageLimitNotifyAfter: {-1, 721}, limits.UsageLimitSwitchBack: {-1, 2}} {
 		for _, v := range bad {
 			_, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{key: v}})
 			if apperr.CodeOf(err) != apperr.CodeInvalid || !strings.Contains(err.Error(), key) {
@@ -196,12 +196,12 @@ func TestUsageLimitSettingsValidated(t *testing.T) {
 			}
 		}
 	}
-	eff, err = e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.UsageLimitNotifyAfter: 0, limits.UsageLimitFailover: 1}})
+	eff, err = e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.UsageLimitNotifyAfter: 0, limits.UsageLimitFailover: 1, limits.UsageLimitSwitchBack: 0}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, l := range eff.Limits {
-		if (l.Key == limits.UsageLimitNotifyAfter && l.Value != 0) || (l.Key == limits.UsageLimitFailover && l.Value != 1) {
+		if (l.Key == limits.UsageLimitNotifyAfter && l.Value != 0) || (l.Key == limits.UsageLimitFailover && l.Value != 1) || (l.Key == limits.UsageLimitSwitchBack && l.Value != 0) {
 			t.Fatalf("%s after set: %+v", l.Key, l)
 		}
 	}

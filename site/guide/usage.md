@@ -25,7 +25,8 @@ Unknown usage is never shown as zero. While a run is going its usage is "so far"
 
 <Shot name="space-usage" alt="Usage card on the space overview: known output and cache token totals, one run with known usage and five with unknown usage, with a note that totals cover known usage only" caption="A space's usage" />
 
-The space overview adds up the runs whose usage is known and counts the others separately.
+The space overview adds up the runs whose usage is known and counts the others separately. For the figures across every
+space you can read, see [the Usage page](/guide/usage-page).
 
 ## Transcripts
 

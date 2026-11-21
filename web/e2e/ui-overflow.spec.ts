@@ -97,6 +97,7 @@ const DIALOGS: Dialog[] = [
   { name: 'Retention pass', path: () => '/backups', open: [button('Run a pass now')] },
   { name: 'Cross-space request drawer (all spaces)', path: () => '/cross-space', open: [text(/Which retry budget/)] },
   { name: 'Human action drawer (all spaces)', path: () => '/human', open: [text(/Should retries span/)] },
+  { name: 'Operator message drawer (all spaces)', path: () => '/human?tab=messages', open: [text(/Guides are in step with the UI/)] },
   // A space.
   { name: 'Launch run', path: space, open: [button('Launch run')] },
   { name: 'Edit space', path: space, open: [menu(/^More actions for Payments/, 'Edit…')] },
@@ -147,7 +148,7 @@ const DIALOGS: Dialog[] = [
 ]
 
 const PAGES = (w: World): string[] => [
-  '/', '/attention', '/human', '/terminals', '/spaces', '/nodes', '/prompts', `/prompts/${w.prompt}`, '/roles', '/skills', '/approval-policies', '/human-types',
+  '/', '/attention', '/human', '/human?tab=messages', '/terminals', '/spaces', '/usage', '/usage?group=model&range=90d', '/nodes', '/prompts', `/prompts/${w.prompt}`, '/roles', '/skills', '/approval-policies', '/human-types',
   '/cross-space', '/events', `/events/templates/${w.template}`, '/mcp-servers', '/accounts', '/git-keys', '/harbor-pilot', '/users', '/sign-in-providers',
   '/tokens', '/audit', '/backups', '/system', '/account',
   space(w), `${space(w)}/terminals`, `${space(w)}/inbox`, `${space(w)}/inbox/${w.item}`, `${space(w)}/queue`, `${space(w)}/human`, `${space(w)}/messages`,

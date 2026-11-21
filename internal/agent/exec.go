@@ -662,9 +662,19 @@ func (a *Agent) adopt(ctx context.Context, log *slog.Logger, runID string, found
 			if atEnd {
 				a.endPending.Store(runID, true)
 			}
+			// The write is under the observe lock and from a fresh read, as every write that ends a run is (lock order:
+			// runLock, then observeLock; observe never takes runLock): the row read above may be stale by now, since an
+			// observe (the monitor's finished event for an already recorded terminal, or reconcile's found-program
+			// branch) does not take the run's lock, and its exit code and reason must not be overwritten. The lock is not
+			// held across the kill-wait above, so the monitor's events are not stalled by it.
+			unlockObs := a.observeLock(runID)
+			if fresh, ferr := a.j.getRun(ctx, runID); ferr == nil {
+				row = fresh
+			}
 			row.TerminalID, row.CoreID, row.Identity, row.PID = found.ID, found.CoreID, found.Identity(), found.PID
 			row.Adopted = true
 			_ = a.j.updateRun(ctx, row)
+			unlockObs()
 			// The program may have exited since the last kill-wait read, and the monitor's finished event may have
 			// been dropped before the terminal was recorded: look once more, and do the end work here if it is gone.
 			if atEnd {
@@ -726,7 +736,8 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 		a.failureEnded(row.RunID, prev.Status != "working")
 	}
 	a.dialogObserved(ctx, prev, row)
-	a.report(ctx, row)
+	// Read again under limitSend: of two concurrent observes, the one that sends second sends the newer journal state.
+	a.reportCurrent(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
 		if a.holdWanted(row.RunID) {
@@ -1044,31 +1055,42 @@ func (a *Agent) monitor(ctx context.Context) {
 			continue
 		}
 		for ev := range evs {
-			switch ev.Kind {
-			case "snapshot", "missed", "restarted", "lost":
-				if err := a.reconcileRunner(ctx); err != nil {
-					a.log.Warn("runner reconcile", obs.Err(err))
-				}
-			case "size":
-				// The recording notes every size change (an operator's resize, a takeover, a hold that closed), so
-				// replay redraws at the size the output was drawn for (ADR-0075).
-				if cols, rows, ok := runnerSize(ev.Data); ok && ev.TerminalID != "" {
-					if row, err := a.j.runByTerminal(ctx, ev.TerminalID); err == nil {
-						a.recordSize(row.RunID, cols, rows)
-					}
-				}
-			case "finished", "status", "turn":
-				if ev.TerminalID == "" {
-					continue
-				}
-				row, err := a.j.runByTerminal(ctx, ev.TerminalID)
-				if err != nil {
-					continue
-				}
-				if p, err := a.o.Runner.Get(ctx, ev.TerminalID); err == nil {
-					a.observe(ctx, row, *p, false)
-				}
+			a.handleEvent(ctx, ev)
+			if h := a.eventHandled.Load(); h != nil {
+				(*h)(ev)
 			}
+		}
+	}
+}
+
+// handleEvent applies one runner event to the run states.
+func (a *Agent) handleEvent(ctx context.Context, ev runner.Event) {
+	switch ev.Kind {
+	case "snapshot", "missed", "restarted", "lost":
+		if err := a.reconcileRunner(ctx); err != nil {
+			a.log.Warn("runner reconcile", obs.Err(err))
+		}
+		if ev.Kind == "snapshot" && a.snapshotReconciled != nil {
+			a.snapshotReconciled()
+		}
+	case "size":
+		// The recording notes every size change (an operator's resize, a takeover, a hold that closed), so
+		// replay redraws at the size the output was drawn for (ADR-0075).
+		if cols, rows, ok := runnerSize(ev.Data); ok && ev.TerminalID != "" {
+			if row, err := a.j.runByTerminal(ctx, ev.TerminalID); err == nil {
+				a.recordSize(row.RunID, cols, rows)
+			}
+		}
+	case "finished", "status", "turn":
+		if ev.TerminalID == "" {
+			return
+		}
+		row, err := a.j.runByTerminal(ctx, ev.TerminalID)
+		if err != nil {
+			return
+		}
+		if p, err := a.o.Runner.Get(ctx, ev.TerminalID); err == nil {
+			a.observe(ctx, row, *p, false)
 		}
 	}
 }

@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { expect, test, type Page } from '@playwright/test'
 
@@ -25,7 +26,30 @@ async function shot(page: Page, name: string) {
 // A 1×1 PNG.
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 
+// A settings page, reached the way a person does: the sidebar's hub entry, then the page's tab under its header.
+async function openHubTab(page: Page, hub: 'Configuration' | 'Integrations' | 'Access', tab: string) {
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: hub, exact: true }).click()
+  await page.getByRole('main').getByRole('navigation', { name: `${hub} sections` }).getByRole('link', { name: tab, exact: true }).click()
+}
+
 test.describe.configure({ mode: 'serial' })
+
+// Specs that run only from their own drivers (see testIgnore in playwright.config.ts), each on a stack of its own.
+// Keep in step with testIgnore in playwright.config.ts (a spec listed in both is never collected here).
+const separateDrivers = new Set(['demo.spec.ts', 'screenshots.spec.ts', 'site-a11y.spec.ts'])
+
+/**
+ * The first-run journey needs a stack nobody has set up yet, and every other spec creates its own users. With one worker
+ * Playwright runs the files in name order, so smoke runs first only while no other spec's name sorts before it. A
+ * Playwright setup project would also make the loop (scripts/e2e-loop.sh), which reuses a stack, rerun the journey on an
+ * already set-up stack; this guard keeps the ordering explicit without that.
+ */
+test('runs before every other spec (first-run journey needs an untouched stack)', () => {
+  const self = 'smoke.spec.ts'
+  const specs = readdirSync(dirname(fileURLToPath(import.meta.url))).filter((n) => n.endsWith('.spec.ts') && !separateDrivers.has(n))
+  expect(specs).toContain(self)
+  expect(specs.filter((n) => n < self), 'specs that would run before smoke.spec.ts: rename them or move the first-run journey').toEqual([])
+})
 
 test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
   test.setTimeout(480_000)
@@ -68,7 +92,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   writeFileSync(join(env('SM_DIR'), 'admin.json'), JSON.stringify({ email, password, totp: secret }), { mode: 0o600 })
 
   // A node, enrolled with the one-time token shown once.
-  await page.getByRole('link', { name: 'Nodes' }).click()
+  await openHubTab(page, 'Configuration', 'Nodes')
   await page.getByRole('button', { name: 'Add node' }).click()
   await page.getByLabel('Name').fill('dev-node')
   await page.getByLabel('Description').fill('Local development node')
@@ -103,7 +127,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // An account: runs cannot start until the space has one (SM-ACCT-003). The stub harness ignores the credential.
   await expect(page.getByText('No account is bound, so runs cannot start.')).toBeVisible()
-  await page.getByRole('link', { name: 'Accounts' }).click()
+  await openHubTab(page, 'Integrations', 'Accounts')
   await page.getByRole('button', { name: 'Add account' }).click()
   await page.getByLabel('Name').fill('team-codex')
   await page.getByRole('textbox', { name: 'Kind' }).click()
@@ -174,7 +198,9 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // Events: a Pulse connection (devpulse), a GitHub issues subscription, a published go-pulse-github event that arrives
   // in the inbox, rendered as untrusted text.
-  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Events' }).click()
+  // Events is a tab of the Integrations hub, which opens on it.
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Integrations' }).click()
+  await expect(page.getByRole('main').getByRole('navigation', { name: 'Integrations sections' }).getByRole('link', { name: 'Events' })).toHaveAttribute('aria-current', 'page')
   await page.getByRole('tab', { name: 'Connections' }).click()
   await page.getByRole('button', { name: 'Add connection' }).click()
   await page.getByLabel('Name').fill('dev-pulse')
@@ -258,6 +284,12 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ hasText: 'Payments platform' })).toBeVisible()
   await shot(page, 'human-global')
+  // The Messages tab lists messages to operators from every space (none yet here).
+  await page.getByRole('tab', { name: 'Messages' }).click()
+  await expect(page).toHaveURL(/\/human\?tab=messages/)
+  await expect(page.getByText('No unread messages.')).toBeVisible()
+  await page.getByRole('tab', { name: 'Actions' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Payments platform' })).toBeVisible()
   await page.getByRole('listitem').filter({ hasText: 'Which region' }).click()
   await page.getByRole('radio', { name: 'eu-west-1' }).check()
   await shot(page, 'human-form-default')
@@ -268,7 +300,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('link', { name: 'Needs you', exact: true })).toBeVisible()
 
   // Prompts: a role prompt is created as a draft and published as version 1.
-  await page.getByRole('link', { name: 'Prompts' }).click()
+  await openHubTab(page, 'Configuration', 'Prompts')
   await page.getByRole('button', { name: 'New prompt' }).click()
   const np = page.getByRole('dialog', { name: 'New prompt' })
   await np.getByLabel('Name').fill('Payments reviewer')
@@ -296,12 +328,12 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.keyboard.press('Escape')
 
   // Audit shows what happened.
-  await page.getByRole('link', { name: 'Audit log' }).click()
+  await openHubTab(page, 'Access', 'Audit log')
   await expect(page.getByText('run.launched').first()).toBeVisible()
   await shot(page, 'audit')
 
   // Password reset: an administrator issues a single-use token, the user sets a new password at /reset and signs in.
-  await page.getByRole('link', { name: 'Users' }).click()
+  await openHubTab(page, 'Access', 'Users')
   await page.getByRole('button', { name: 'Actions for Alex Admin' }).click()
   await page.getByRole('menuitem', { name: 'Password reset token' }).click()
   const reset = (await page.getByTestId('secret').innerText()).trim()
@@ -323,9 +355,11 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
 
   // The attention summary gathers what needs a person (SM-UI-003).
-  await page.getByRole('link', { name: 'Attention' }).click()
+  await page.goto('/attention') // off the sidebar; the Overview's stat link and direct URLs lead here
   await expect(page.getByRole('heading', { name: 'Attention' })).toBeVisible()
   await expect(page.getByText('Storage', { exact: true })).toBeVisible()
+  // Rows come from items[]: either the all-clear or the Act now / Watch groups with their filters.
+  await expect(page.getByText('Nothing needs you').or(page.getByRole('heading', { name: 'Act now' }))).toBeVisible()
 
   // Space lifecycle in the UI (SM-SPACE-002): archive, restore, archive again and purge. Purge needs a recent sign-in
   // with the second factor, which the sign-in above is.

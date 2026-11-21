@@ -202,6 +202,7 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.usage_limit_wait_if_reset_within` | `15` | `SPACEMAN_LIMITS_USAGE_LIMIT_WAIT_IF_RESET_WITHIN` | Is, in minutes, how near the reset of a run's limited account must be for the run to wait for it (ADR-0079's keep-alive and park) instead of moving to another account of its pool (0-1440, default 15; an unknown reset counts as further away; ADR-0090 decision 2). |
 | `limits.usage_limit_switch_max_per_day` | `6` | `SPACEMAN_LIMITS_USAGE_LIMIT_SWITCH_MAX_PER_DAY` | How many times one instance may move to another account in 24 hours before it waits as ADR-0079 does (0-50, default 6; 0: never switch; ADR-0090 decision 5). |
 | `limits.usage_limit_min_headroom_percent` | `0` | `SPACEMAN_LIMITS_USAGE_LIMIT_MIN_HEADROOM_PERCENT` | The launch-time headroom gate: a new run does not start on an account whose known window usage leaves less than this percentage free (0-100, default 0: off; ADR-0090 decision 4). Running agents are never moved because of it. |
+| `limits.usage_limit_switch_back` | `1` | `SPACEMAN_LIMITS_USAGE_LIMIT_SWITCH_BACK` | Moves a run that a usage limit moved to another account back to the account it was moved away from once that account has reset, at the run's next idle point (1: on, the default; 0: off; applies only with usage_limit_failover on; ADR-0105). |
 
 ### `retention`
 

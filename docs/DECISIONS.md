@@ -510,7 +510,24 @@
 - **Consequences:**
   - The validator runs on the node with the node user's rights, like agent programs; configuring it needs kb:write.
   - A session resumed after sleep continues its conversation only where the harness supports resume.
-  - Knowledge branches must not be checked out where SpaceMan should move them.
+  - Knowledge branches must not be checked out in a linked worktree where SpaceMan should move them.
+  - **Amendment (2026-11-20, v0.1.16): the repository's own checkout may hold the target.** KB repositories are ordinary clones
+    with the default branch checked out, so "never moved when checked out anywhere" refused every acceptance. When the
+    target is checked out in the repository's own checkout, SpaceMan advances it with `git merge --ff-only` in that
+    checkout (the new tip always descends from the old one), after the validator passed and only if the checkout has no
+    modified or staged tracked files, no merge, cherry-pick or revert in progress, and HEAD and the branch are still the
+    commit the proposal was checked against. Untracked files alone do not block; the merge runs with
+    `--no-overwrite-ignore`, so an untracked or ignored file the new tip would overwrite fails the acceptance (naming
+    the checkout) and the ref does not move. A rebase of the target in the repository or any linked worktree refuses
+    the acceptance before any ref is moved, also on the plain ref-update path. After the merge HEAD and the branch must
+    both equal the new tip, else the proposal fails as moved; nothing is ever reset or forced. The merge passes
+    `--no-verify-signatures`: the merge commit SpaceMan builds is unsigned, so `merge.verifySignatures` in the
+    repository's config would fail every acceptance with a misleading reason; the commit was already vetted by the
+    session-branch check, the validator and the compare-and-swap. A dirty or moved checkout fails the proposal naming
+    the checkout and changes nothing. With no checkout holding the
+    target the ref moves alone as before. A target held by a linked worktree is still refused (its `.git` is a pointer
+    file, which the node's Git guard does not run in). Not security-relevant: no new authority, the node user already
+    owns the repository, hooks stay disabled.
 
 ### ADR-0027 — Dreams consolidate memory through ordinary checkouts; evidence advances only after a checkpoint
 - **Status:** Accepted, 2026-11-02.
@@ -4558,7 +4575,11 @@
     as its source with the reason. A diagram of at most 50 statements and 2,500 characters renders on its own when
     near the viewport; a larger one shows a "Render diagram" button and renders only when clicked.
     `e2e/ui-markdown-diagrams.spec.ts` renders the slowest kinds at the automatic limit and checks that no long task
-    runs 1 s or more. A failed render shows a one-line message and the source; the source is always available under the
+    runs 1 s or more (amended: the product target stays about 1 s per diagram; the e2e bound is 1.2× that, 1.2 s, as load
+    margin, see #365 and #369, and the spec renders a small diagram of each costly kind first so that loading a kind's
+    chunks (0.1-0.4 s, split over several tasks) is not part of a measured task, and bounds that first use apart;
+    renders queue with a yield between them so each long task is one diagram's).
+    A failed render shows a one-line message and the source; the source is always available under the
     diagram as its text alternative. `MermaidDiagram` renders one diagram from source on its own (for a future "view
     diagram" page).
   - Bundle: the eager JS stays where it was (+2.0 kB raw, +1.1 kB gzip, from chunk reshuffling and the theme's token
@@ -5892,6 +5913,30 @@
 - **Evidence:** `internal/backup` `TestServiceStalledStageFailsAndReleasesBusy` (a target whose upload blocks: the run
   fails naming `upload`, the row is `failed`, `busy` clears, the next backup succeeds; the status shows the stage while
   stuck), `TestServiceMaxDurationFailsBackup`, `TestWatchProgressAndStall`, `TestWatchStopIsNotAStall`.
+- **Amendment (2026-11-20): the memory flush is outside the watchdog and can never fail the backup.** Manual backups
+  failed with `backup stopped in stage memory_flush: no progress for 10m0s: open database …: context canceled` while a
+  busy node was connected, and a scheduled one spent 448 s in `memory_flush` against a one-minute wait. Cause: the flush
+  queued its request on each node's connection with the hub's unbounded `send`, one node after another, and started its
+  deadline only after that. A node whose outbound queue stayed full (a busy node reading slowly) blocked the flush
+  without a bound, and the other nodes were not even asked. The flush ran under the watchdog's context, so when the
+  watchdog fired, the same context also stopped the snapshot. Decision:
+  - `fleet.FlushMemory` is bounded end to end by the wait plus its grace from its start: the reads, the requests and
+    the answers. Requests are queued concurrently with a context-aware send (`session.sendCtx`; `send` is unchanged for
+    its other callers). A node whose request could not be queued in time is `timed_out` with the detail "the node's
+    outbound queue is full". An answer that arrived counts even when the deadline passed while an earlier node was
+    being waited for. Each node's outcome is logged (Info when flushed, Warn otherwise).
+  - The backup service runs the `memory_flush` stage under its own context, bounded by `MemoryFlushTimeout` (central
+    sets the wait plus 30 s; default 2 minutes), and at most half of `stall_timeout` and of `max_duration`. The watchdog
+    starts after the flush, with the overall limit reduced by the time the flush took (at least half of it remains). A
+    flush hook that does not return within 5 s of its bound is abandoned, and the manifest records that the flush did
+    not finish. Each node's answer or timeout is reported as progress on the backup's status.
+  - Consequence: `TestServiceMaxDurationFailsBackup` now hits the overall limit in the upload stage; a flush that never
+    returns is stopped at its own bound and does not fail the backup.
+  - Evidence: `internal/fleet` `TestFlushMemoryBusyNodeFullQueue` (a session whose queue is never drained: before the
+    fix FlushMemory was still blocked after 15 s; after it, it returns within the wait plus grace, the busy node's space
+    is `timed_out` with the queue detail and the other node's space is flushed); `internal/backup`
+    `TestServiceMemoryFlushStallDoesNotFailBackup` (before the fix it failed with the production error; after it the
+    backup succeeds, verifies and records the space as stale), `TestServiceMemoryFlushHookStuck`, `TestReportProgress`.
 
 ### ADR-0092 — Memory conflicts close when reconciled: a tool for control and the dreamer, and automatically when the folder is removed
 - **Status:** Accepted, 2026-11-16. Migration `0060_memory_conflict_folder` (one column; the node's own journal gets
@@ -7883,6 +7928,231 @@
   - The first answer waits for 10 s of quiet, so a startup dialog costs a run about that much.
   - Not covered yet (follow-ups): a `Notification` hook as a structured signal while a session runs, Codex entries,
     clearing open occurrences when a run ends, an API list of a run's dialogs and the UI badge.
+
+### ADR-0103 — Operator UI: a cross-space Usage page, an itemised Attention list, and settings hubs
+
+- **Status:** Accepted, 2026-11-20 (v0.1.16). Not a security-relevant change: the two new operations are read-only and
+  filtered per space by the existing `run:read` rule, no write path, permission or default changes, and nothing
+  unreadable is revealed. Builds on the usage ledger (`usage_buckets`), the account windows and the token-first display
+  of ADR-0090. Plan: `docs/plans/2026-11-20-usage-overview-settings-ui.md` (§6 draft, §8 decisions). Requirements:
+  SM-UI-008, SM-UI-009, SM-UI-010 (addition), and SM-UI-003's evidence changes.
+- **Context:**
+  - The usage ledger books only Claude Code usage. Codex reports no usage, and Harbor Pilot read-back fills `run_usage`
+    but not the buckets. The only usage view is per space (`/spaces/{id}/usage`). There is no cross-space series and no
+    cross-account window list, and the Overview shows no usage.
+  - `/attention` gives per-space counts and cards but names no item. It largely repeats Needs you, and it does not cover
+    runs parked at a usage limit, open account limits, failed account switches or incoming cross-space requests.
+  - The sidebar has 24 entries in five groups. Configuration, Integrations and Access are headings, not pages.
+- **Decision:**
+  1. **Usage page.** `/usage`, in the Work group, named **Usage** (not Spend or Cost: tokens come first and cost appears
+     only as "≈ $", ADR-0090). Anyone with `run:read` in at least one space sees it. Rows and totals cover only those
+     spaces, and account names show only for accounts bound to them. Ranges are 24 h, 7 d, 30 d and 90 d (90 d on daily
+     buckets). Group by space, account, model, role or harness, with filter chips. The state lives in URL search params.
+     An Accounts section shows each account's 5-hour and 7-day windows and open limits. A **not counted** note gives,
+     per harness, the runs whose usage the ledger does not book (Codex, Harbor Pilot read-back). It is a count, never a
+     zero, so unknown is not shown as nothing (SM-REC-005).
+  2. **API.** Two read-only operations, both `FilteredRead()` with per-space filtering:
+     - `get-usage-series` (`GET /usage/series`): `group_by` is space, account, model, role or harness. Filters are
+       optional, repeatable and bounded (at most 50 values each). The aggregation runs in SQL over `usage_buckets`, not
+       as a Go fold, because a global range reads every space's rows. It returns `labels` for spaces and accounts the
+       caller reads, and `not_counted`.
+     - `list-account-windows` (`GET /account-windows`): the latest windows and open usage limits of every account bound to
+       a readable space.
+     - CLI `spaceman usage all` and `spaceman usage windows`. No migration is planned. A covering index would be migration
+       **0069**, and only if the UI-T1 benchmark shows it is needed.
+       *Cost, as built (migration 0069):* `ix_usage_buckets_time_cover` holds every column of the WITHOUT ROWID ledger table,
+       so it roughly doubles the ledger's size on disk. Its counters are index columns, so every `AddUsageBucket` upsert
+       now rewrites one index entry (before, only an insert did). That is fine at ledger volumes (at most one row per
+       space, account, role, harness, model and hour, rolled up to days after the hourly retention); a ledger far larger than
+       the benchmarked 200k rows would need the index weighed again.
+  3. **Overview.** From top to bottom: the top five Attention items, linking to `/attention` with "See all (N)"; a usage
+     summary (tokens today and in 7 days, a 14-day sparkline, the top five spaces and models, and a delta against the
+     previous period of the same length, tokens only, §8 Q7); an Accounts strip, hidden without accounts; then the
+     existing Active runs, Spaces and Nodes. It adds at most three cached requests. The Mini App home is unchanged.
+  4. **Attention.** `/attention` stays a route and becomes the full itemised list. It leaves the sidebar, and Overview
+     shows its top items. `GET /attention` gains an additive `items[]`: `kind`, `severity` (`act` or `watch`), `space_id`,
+     `title`, `since` and a `target`. The server stores no URLs; the web maps a target to a route. There are at most 20
+     items per kind, beside the full counts, and the existing counts stay for the Mini App. The new categories are runs
+     parked at a usage limit, open account usage limits, failed account switches in the last 24 h, and incoming
+     cross-space requests. Each sits behind its existing read permission. Harbor Pilot budget items come only from cached
+     status, or are left out. Titles written by agents are untrusted: rendered as plain text and truncated. Pending human
+     actions collapse into one row that links to Needs you.
+  5. **Settings hubs.** The sidebar becomes:
+     - **Work:** Overview, Needs you, Usage, Terminals, Spaces.
+     - Then **Configuration**, **Integrations** and **Access**. Each is shown when at least one of its tabs is visible to
+       the user. Nodes move under Configuration and API tokens under Access (§8, Q4). That replaces the "Fleet: Nodes"
+       line of plan §2.4. Account leaves the sidebar and stays in the user menu.
+     - Each hub page shows a `HubTabs` bar of links, with `aria-current` on the active one.
+     - **URLs, option A:** every existing page keeps its URL. `/configuration`, `/integrations` and `/access` are entry
+       routes that redirect to the first tab the user may see. Nested URLs (option B) are not taken, so UI-T7b is not
+       needed. `/settings` is not used, because the Mini App owns it.
+  6. **Operator messages (accepted addition, SM-UI-010).** Needs you gets a **Messages** tab (UI-M2): the messages
+     addressed to operators across the spaces the caller can read, newest first, open ones by default. It reads the
+     cross-space operator inbox `GET /messages` (`list-operator-messages`, `FilteredRead()`, only spaces where the caller
+     holds `message:read`, only messages to operators), which its own change adds; it is not one of this ADR's two
+     operations. Acknowledge, reply and resolve go through the existing per-space operations. Message bodies are
+     agent-written and rendered as untrusted text (SM-UI-005).
+- **Alternatives:**
+  - Naming the page Spend or Consumption: rejected, a cost-like name, which ADR-0090 avoids.
+  - Usage for admins only: rejected. The rule is the one `get-account-usage` already uses (per space, `run:read`).
+  - Folding Attention into Overview and redirecting `/attention` to `/`, or keeping it in the sidebar with a count badge:
+    rejected. The itemised list stays a route and leaves the sidebar (Q2 a).
+  - Nested `/configuration/<tab>` URLs with redirects from the old paths: rejected. It costs redirects for 18 paths and
+    the detail routes, with no visible gain over option A.
+  - Booking Codex and Harbor Pilot usage into the ledger now: deferred. It needs its own ADR, and the page shows them as
+    not counted in the meantime (Q5).
+- **Consequences:**
+  - Two read operations and two CLI commands. No new permission, and no change to what a person can see beyond the
+    per-space rules above. Nothing is relaxed.
+  - Usage totals leave out Codex and Harbor Pilot runs until a follow-up ADR books them, and the page says so.
+  - Attention items carry agent-written text. It is untrusted and rendered as text (SM-UI-005).
+  - Existing URLs, Mini App deep links (`attention`, `needs`), banners and Go redirects (`oidc.go`) keep working.
+    Nav-pinning tests (`upgrade-navigation`, `ui-overflow`, `smoke`, `ui-request-budget`) change with the sidebar.
+    The hub work (UI-T7) lands before the pages that also edit `nav.ts`, or they are rebased onto it.
+  - Migration 0069 is reserved, not used. Requirement rows SM-UI-008, SM-UI-009 and SM-UI-010 stay `todo` until their
+    tasks land. SM-UI-003's evidence changes: Attention lists items, not only counts.
+
+### ADR-0104 — A subscription may ingest this installation's own run dialog events (ingest_own) (security-relevant change)
+
+- **Status:** Accepted, 2026-11-20 (v0.1.16). **Security-relevant change:** it relaxes the SM-EVT-016 loop guard "an
+  installation never ingests its own events" (ADR-0015, ADR-0049) for one narrow, opt-in case. Migration 0070
+  (`event_subscriptions.ingest_own`). Builds on ADR-0049 (automation depth) and ADR-0102 (run dialog events).
+- **Context:** ingestion drops every event whose `spaceman-origin` is this installation's `source`
+  (`ownEvent`, recorded as `filtered`). So an installation cannot subscribe to its own
+  `evt.spaceman.fleet.run.dialog_detected` to raise an inbox item when one of its runs is stopped at a dialog, though
+  that is the event's main use. The guard exists because ingestion publishes events of its own (the item's
+  `inbox.item.created`, the events of tasks made from it): ingesting those would feed itself.
+- **Decision:**
+  1. **A per-subscription boolean `ingest_own`** (default false) in the API, the OpenAPI spec (and so the MCP
+     catalog, which is built from it) and the CLI (`--ingest-own`). An installation-level allow-list was the
+     alternative. The flag was chosen because it is explicit where it acts: the operator turns it on for one
+     subscription, it shows on that subscription and its audit records, and every other subscription keeps the old
+     behaviour, including one on the same subject.
+  2. **A hard-coded subject allow-list.** Create and update accept `ingest_own` only when the subscription's effective
+     subject is exactly one of `evt.spaceman.fleet.run.dialog_detected` and `evt.spaceman.fleet.run.dialog_cleared`
+     (`events.OwnIngestSubjects`, built from the outbox catalog names). NATS wildcards cannot say `dialog_*`, and
+     `evt.spaceman.fleet.run.*` would also cover the run lifecycle, so wildcards are refused. Anything else, such as
+     `inbox.*` and `task.*`, is refused with `validation_failed` (HTTP 422): "ingest_own is not allowed for subject
+     S: a subscription may ingest this SpaceMan's own events only when its subject is exactly one of
+     evt.spaceman.fleet.run.dialog_detected, evt.spaceman.fleet.run.dialog_cleared; events that ingestion can itself
+     cause, such as inbox and task events, are never ingested as own". An update is checked against the subject it
+     leaves, so a subject change cannot carry the flag off the list. SpaceMan's own dialog answers
+     (`run.dialog_answered`) are audit records, not published, so they are not on the list.
+  3. **Ingestion checks again, per event.** An own event is admitted only when the subscription's current row has
+     `ingest_own`, the event's subject is on the allow-list (whatever the subscription's filter), its `data.space_id`
+     equals the subscription's own space (a missing or unreadable one means filtered, so one space never ingests
+     another space's dialogs), and its
+     `spaceman-depth` is absent or 0. Everything an ingestion causes (the item, tasks made from it, their events)
+     carries depth 1 or more (ADR-0049), so an own event about something an ingestion caused is never ingested again,
+     even on a subscription forced past the API check. Such an event is recorded as `filtered` with its own detail. Durable and
+     core NATS subscriptions use the same check (`admitOwn`).
+  4. **Template followers keep the flag.** A subscription that follows a template's latest version moves to a new
+     version only when its subject stays the same, and keeps `ingest_own` when it moves.
+  5. **Every other guard still applies.** An admitted event goes through the rate limit, `event_depth`, the
+     template's filters, deduplication (subscription and event ID) and quarantine like any other. Its item has depth 1.
+- **Alternatives considered:**
+  - An installation-level allow-list in the configuration: rejected. It is invisible on the subscription, applies to
+    every space at once, and needs a restart to change.
+  - Allowing `evt.spaceman.fleet.run.*` and filtering per event: rejected. The flag would then sit on a subscription
+    whose filter covers subjects it must not ingest.
+  - No depth condition, relying on the subject list alone: rejected as a single layer. The depth condition holds even
+    if the list is widened by mistake.
+- **Consequences:**
+  - An operator can turn a run stopped at a dialog into an inbox item in the same installation.
+  - Residual: a run carries no automation depth (ADR-0049, LIMITATIONS), so a dialog event of a run working on an
+    ingested item still has depth 0. A chain item → control → run → dialog → item is possible. It is not a loop of
+    ingestion alone: each step needs a real dialog on a real terminal, each occurrence is published once
+    (`dialog_id`) and becomes one item per subscription, and the run, tool-call and budget limits bound control.
+  - Evidence (simulated, in-process NATS): `internal/events` `TestOwnDialogEventIngestedOnlyWithOptIn`,
+    `TestOwnDialogEventIngestedOnCore`, `TestIngestOwnRefusedOffTheAllowList`, `TestIngestOwnCannotLoop` (the
+    item's own event, relayed by the real outbox code, is filtered), `TestIngestOwnSurvivesTemplateFollow`; `internal/app`
+    `TestIngestOwnOverHTTP`;
+    `internal/store` `TestSubscriptionIngestOwnMigrationFrom0069`. Not yet seen against a real pulsed.
+  - The Terraform provider's `ingest_own` attribute is a separate change.
+
+### ADR-0105 — A run moved at a usage limit goes back to its original account when that account has reset (security-relevant change)
+
+- **Status:** Accepted, 2026-11-20 (v0.1.16), the operator's choice "switch back when idle" (option 1). Amends ADR-0090.
+  The core is implemented and tested with simulated evidence only (fleet tests): the decision, the park and resume,
+  the setting, the store and the control message. The API, OpenAPI, CLI, web, guide and CHANGELOG are a follow-up
+  task. Real two-account evidence stays open as K-17.
+- **Security-relevant because:** SpaceMan moves a live run to another credential on a new trigger: time (the original
+  account's reset), not the run's own limit report. The target is never chosen by the run: only the account the
+  instance was moved away from, while it is an eligible member of the run's pool. The setting is on by default.
+- **Context:**
+  - ADR-0090 moves a run away from an account that hit its usage limit, by parking it and resuming the same session on
+    another account of its pool. Nothing brings it back. The run stays on the stand-in account after the original has
+    reset, so it uses up that account too, and the pool's order (the operator's preference) stops applying to it.
+  - A move is a restart (Claude Code fixes its token for the life of the process), so going back costs what any switch
+    costs: a stop, a `--resume` and an uncached first request. It must never cut into a turn.
+- **Decision:**
+  1. **Which runs.** Only a run whose current account came from a usage-limit switch: the instance's newest switch
+     (rows that `fell_back` or were `cancelled` aside, since they moved nothing) has cause `usage_limit`, is
+     `succeeded` or `failed` (the run on the new account exists; a `failed` one was resumed fresh there or waited
+     there), and its `to_account_id` is the account the run is launched on now. A run moved by an operator (cause
+     `operator`), a run that a switch-back already brought home, a run relaunched on another account since, and a
+     gateway-routed (Harbor Pilot) run are never switched back. Run kinds as ADR-0079 parks them (control, worker,
+     diagnostic).
+  2. **Target: the chain's origin, in one move.** A run moved A to B, then B to C, goes back from C straight to A, never
+     to B. The origin is stored on each usage-limit switch (`account_switches.origin_account_id`): the `from` account
+     of the first switch of an unbroken chain (the previous switch of the instance is a usage-limit switch whose target is
+     this switch's `from`), so no history walk is needed. Why not one hop at a time: the origin is the account the
+     operator's configuration chose (the launch's account: the default, the role pool's first, or a named one); the
+     intermediate accounts were stand-ins. Going home through them costs two restarts instead of one and two chances to
+     flap. A chain that existed before this change gets its last switch's `from` as its origin (one hop), because
+     the migration has nothing else to go by.
+  3. **When the origin is ready.** The origin has no open usage-limit hold (in any space) whose reset, plus ADR-0079's
+     resume slack (2 minutes), is still ahead; a hold with no known reset blocks until it is cleared (evidence, a probe
+     or an operator). It must also pass the switch target's own eligibility (`switchTargetTx` with the origin as the
+     preferred account, so nothing is duplicated): bound to the space for the harness, enabled, in the role's pool when it
+     has one, not held, and through the launch headroom gate when that is on. The pool's other accounts never stand in:
+     when the origin isn't eligible the run stays where it is.
+  4. **Only between turns.** The run must be live (`running`, wanted running), at an idle point (status `idle` or
+     `done`: its turn ended; never `working`, including a program waiting on background tasks, ADR-0100), at no limit
+     of its own (then ADR-0090's switch away applies), with a session to resume, no open blocked terminal dialog
+     (ADR-0102), no terminal takeover by a person, and no active switch or limit wait of its instance; its space active,
+     not relocating, and its node holding the space's lease. Nothing is armed and nothing waits for an idle point: the
+     decision and the park happen in the same transaction that sees the idle point, so a busy run is never interrupted
+     for it. It is checked at each idle report, by the limit-wait job when the origin's reset plus slack passes, and by
+     that job at most every 10 minutes while a run qualifies otherwise (a cleared hold, a pool or headroom change).
+  5. **How.** A switch row with cause `switch_back` (from the current account to the origin, `origin_account_id` the
+     origin, no limit kind), parked at once with a limit wait of cause `switch_back` due now on the origin, and the run
+     stopped. The limit-wait job resumes it as ADR-0090 does: a new run of the same instance, `--resume` of its session,
+     the task re-pointed, and a fixed note: SpaceMan moved the session back to its original account, whose usage limit
+     has reset; continue, or keep waiting if it was waiting. The claim transaction checks the origin again: if it is no
+     longer eligible (limited meanwhile, taken out of the pool, failover or switch-back turned off), the switch falls back
+     and the run resumes at once on the account it was on, with a note saying it was not moved. The new run's first turn
+     marks the switch `succeeded`; a resume that ends before one gets ADR-0079's fresh retry on the origin and the switch
+     is `failed`; a limit on the origin at once fails it, and ADR-0090's switch away applies.
+  6. **Setting.** Space limit `usage_limit_switch_back` (0 or 1, default 1), next to the other usage-limit limits, with
+     installation default, per-space override and audit like them. It applies only while `usage_limit_failover` is on
+     (failover off means SpaceMan moves no run between accounts). Turning it off starts no new switch-back; one already
+     parked resumes on the account the run was on. No column: limits are key-value.
+  7. **No flapping.** At most one switch-back per instance in 6 hours (longer than a five-hour window), counted from its
+     newest switch-back that moved or was set to move the run, including one that fell back at the claim (decision 5): it had
+     already stopped the run, which restarted where it was. Switch-backs, those included, count toward
+     `usage_limit_switch_max_per_day`, and none starts when that budget is spent. If the origin limits again, the
+     ordinary ADR-0090 switch away applies and starts a new chain at the origin.
+  8. **Recorded like any switch.** The `account_switches` row (cause `switch_back`) with its change records; audit
+     `account.switch_started` … `account.switch_succeeded` with `cause` in the details; outbox
+     `fleet.account_switch.started` and `fleet.account_switch.completed`, whose payload gains `cause`; metric
+     `spaceman_account_switches_total` gains a bounded `cause` label (`usage_limit`, `switch_back`); control gets
+     one message per switch-back at its resume (dedup `account-switch:` plus the switch ID). People are not told.
+  9. **Store.** Migration 0071 rebuilds `account_switches` (SQLite can't alter a CHECK) to allow the cause
+     `switch_back` and add `origin_account_id`, backfilled with `from_account_id` for usage-limit rows. Forward-only.
+- **Rejected:**
+  - Switching back at once at the reset, interrupting a turn: the operator chose idle only.
+  - Switching back along the chain one hop at a time: see decision 2.
+  - Letting the pool's order pick (any better-ranked account): that is a pre-emptive switch, which ADR-0090 decision 4
+    rules out; only the account a limit moved the run away from comes back.
+- **Consequences:** A run that sits idle for long goes home within 10 minutes of its origin becoming eligible, and at
+  the reset when that is the last thing missing. Idle control and workers waiting for a reply get one extra turn (the
+  note) on the origin. An idle point reported just before the program starts another turn (a notice typed in) can still
+  have that turn interrupted by the stop; the session is resumed, as with ADR-0090's idle point.
+- **Known inconsistency, left as is:** the takeover check here (`GetActiveTakeover`, which does not look at the expiry)
+  and the idle-point code's `activeTakeover(now)` (which ignores an expired takeover) can disagree for a takeover that
+  has expired but not been ended: it keeps a switch-back from starting until the takeover is ended. That errs on the
+  side of not moving the run; it is not changed here.
 
 ## 2. Open items and unresolved contracts
 

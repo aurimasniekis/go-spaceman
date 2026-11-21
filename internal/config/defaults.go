@@ -53,7 +53,7 @@ func Default() *Config {
 			ExportMaxBytes: 2 << 30, ControlAutostart: 1, ControlIdleStopMinutes: 30,
 			ControlWatchdogMinutes: 15, ControlWatchdogNudges: 3, WorkerStartWatchdogMinutes: 10, WorkerIdleWatchdogMinutes: 10,
 			UsageLimitKeepAliveMaxMinutes: 360, UsageLimitMaxWaitHours: 168, UsageLimitNotifyAfterHours: 12,
-			UsageLimitWaitIfResetWithin: 15, UsageLimitSwitchMaxPerDay: 6},
+			UsageLimitWaitIfResetWithin: 15, UsageLimitSwitchMaxPerDay: 6, UsageLimitSwitchBack: 1},
 		Shutdown: ShutdownConfig{Timeout: Duration(30 * time.Second)},
 		Telegram: TelegramConfig{APIBaseURL: botapi.DefaultBaseURL},
 	}

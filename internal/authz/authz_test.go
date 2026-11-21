@@ -313,3 +313,27 @@ func TestRoleRenameAdminIsAdminOnly(t *testing.T) {
 		t.Error("an operator can no longer rename a role")
 	}
 }
+
+// WithholdForTest denies the withheld permission to every role below admin, and a Reload restores it.
+func TestWithholdForTestDeniesUntilReload(t *testing.T) {
+	ctx := context.Background()
+	e := engine(t, grant("user:v", RoleViewer, spaceA))
+	if !e.Allowed("user:v", spaceA, RunRead) {
+		t.Fatal("viewer should read runs before withholding")
+	}
+	if err := e.WithholdForTest(RunRead); err != nil {
+		t.Fatal(err)
+	}
+	if e.Allowed("user:v", spaceA, RunRead) {
+		t.Error("withheld permission still allowed")
+	}
+	if !e.Allowed("user:v", spaceA, QueueRead) {
+		t.Error("withholding one permission removed another")
+	}
+	if err := e.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !e.Allowed("user:v", spaceA, RunRead) {
+		t.Error("reload did not restore the withheld permission")
+	}
+}

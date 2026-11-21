@@ -152,14 +152,19 @@ func TestLongHoldsNotStarved(t *testing.T) {
 		return UsageLimitSettings{NotifyAfter: DefaultLimitNotifyAfter}
 	}
 	reset := e.clk.Now().Add(3 * 24 * time.Hour).UnixMicro()
-	var vals []string
-	var args []any
-	for i := range 2*maxLimitRows + 50 {
-		vals = append(vals, "(?, 'spc_b', 'gateway', '', ?, 'gateway_quota', ?, 'quota_board', 0, 0, 0)")
-		args = append(args, fmt.Sprintf("ulm_b_%03d", i), fmt.Sprintf("gw_%03d", i), reset)
+	// Seed in chunks, each its own transaction: one ~450-row insert can hold the write lock past the storetest guard
+	// under load. The chunks are fixture setup only; LongHoldsToTell reads.
+	const seedChunk = 100
+	for lo := 0; lo < 2*maxLimitRows+50; lo += seedChunk {
+		var vals []string
+		var args []any
+		for i := lo; i < min(lo+seedChunk, 2*maxLimitRows+50); i++ {
+			vals = append(vals, "(?, 'spc_b', 'gateway', '', ?, 'gateway_quota', ?, 'quota_board', 0, 0, 0)")
+			args = append(args, fmt.Sprintf("ulm_b_%03d", i), fmt.Sprintf("gw_%03d", i), reset)
+		}
+		e.exec(`INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, seen_at, created_at, updated_at) VALUES `+
+			strings.Join(vals, ", "), args...)
 	}
-	e.exec(`INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, seen_at, created_at, updated_at) VALUES `+
-		strings.Join(vals, ", "), args...)
 	// Between ulm_b_200 and ulm_b_201 in id order, so on the second page, and seen last.
 	e.exec(`INSERT INTO usage_limits (id, space_id, scope, account_id, kind, resets_at, source, seen_at, created_at, updated_at)
 		VALUES ('ulm_b_2005', 'spc_a', 'account', 'acc_2', 'unknown', ?, 'operator', 1, 0, 0)`, reset)

@@ -21,6 +21,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The usage windows and open limits of the accounts bound to the spaces you can read
+         * @description Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. An account bound only to other spaces is absent.
+         */
+        get: operations["list-account-windows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts": {
         parameters: {
             query?: never;
@@ -298,7 +318,7 @@ export interface paths {
         };
         /**
          * What needs a person
-         * @description One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. Computed on request (one query per category); clients refresh it when the change feed reports a change.
+         * @description One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, parked runs, open account limits, failed account switches, incoming cross-space requests, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. `items` names the newest of each kind (at most 20 per kind, counts in `item_counts`). Parked runs, account limits, failed switches and incoming requests are not part of `total`. Harbor Pilot budget state is not included yet. Computed on request (no network I/O, one query per category, twelve at most); clients refresh it when the change feed reports a change.
          */
         get: operations["get-attention"];
         put?: never;
@@ -1442,6 +1462,26 @@ export interface paths {
          * @description A link must be re-confirmed from the web every link_reconfirm_days (default 90) or it does nothing. Needs a browser session with a recent re-authentication.
          */
         post: operations["reconfirm-telegram-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Messages addressed to operators, across the spaces you can read
+         * @description Only messages to operators in spaces where you have message:read (never messages to control, roles or runs), newest first. By default only open messages (not acknowledged or resolved). Act on an item through the per-space ack, reply and resolve operations.
+         */
+        get: operations["list-operator-messages"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4298,7 +4338,7 @@ export interface paths {
         };
         /**
          * A space's usage over time
-         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.
+         * @description Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported; runs whose usage the ledger does not hold are counted per harness in not_counted.
          */
         get: operations["get-space-usage-series"];
         put?: never;
@@ -4888,6 +4928,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/usage/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage over time across the spaces you can read
+         * @description Tokens per bucket and group (space, account, model, role or harness) from the usage ledger, summed over every space where the caller has run:read; the rows, totals, labels and not-counted runs never include another space. Filters narrow it by space, account, model, role and harness. The cost is the harness's own list-price estimate, not a bill; tokens are the primary unit. Runs whose usage the ledger does not hold are counted per harness in not_counted.
+         */
+        get: operations["get-usage-series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -5127,6 +5187,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AccountsAccount"][];
+        };
+        AccountWindowsList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AccountWindowsList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["UsageAccountState"][];
         };
         AccountsAccount: {
             /**
@@ -5393,13 +5462,22 @@ export interface components {
             backups?: components["schemas"]["AttentionBackups"];
             /** Format: date-time */
             checked_at: string;
+            /** @description Full number of items per kind in readable spaces, to tell a truncated list */
+            item_counts: {
+                [key: string]: number;
+            };
+            /** @description The newest items per kind in readable spaces (at most 20 per kind), newest first. Human actions are counted but not listed. Nodes and storage are in their own sections */
+            items: components["schemas"]["AttentionItem"][];
             /** @description Active nodes that are not connected (node:read) */
             nodes?: components["schemas"]["AttentionNode"][];
             outbox?: components["schemas"]["AttentionOutbox"];
             /** @description Readable spaces with at least one item, most items first */
             spaces: components["schemas"]["AttentionSpace"][];
             storage?: components["schemas"]["AttentionStorage"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Items that need a person; does not include parked runs, account limits, failed account switches or incoming cross-space requests
+             */
             total: number;
         };
         AttentionBackups: {
@@ -5420,6 +5498,21 @@ export interface components {
             error?: string;
             name: string;
             status: string;
+        };
+        AttentionItem: {
+            id: string;
+            /** @enum {string} */
+            kind: "task_blocked" | "task_failed" | "quarantine" | "run_unknown" | "run_failed" | "budget_notice" | "run_parked" | "account_limit" | "account_switch_failed" | "xspace_request";
+            /**
+             * @description act: someone has to do something; watch: it may resolve itself
+             * @enum {string}
+             */
+            severity: "act" | "watch";
+            /** Format: date-time */
+            since: string;
+            space_id: string;
+            target: components["schemas"]["AttentionTarget"];
+            title: string;
         };
         AttentionNode: {
             connected: boolean;
@@ -5444,6 +5537,16 @@ export interface components {
             retrying: number;
         };
         AttentionSpace: {
+            /**
+             * Format: int64
+             * @description Open account usage limits as this space sees them
+             */
+            account_limits?: number;
+            /**
+             * Format: int64
+             * @description Account switches that failed in the last 24 hours
+             */
+            account_switches_failed?: number;
             /** Format: int64 */
             budget_exceeded?: number;
             /** Format: int64 */
@@ -5462,6 +5565,11 @@ export interface components {
             quarantine_open?: number;
             /** Format: int64 */
             runs_failed?: number;
+            /**
+             * Format: int64
+             * @description Runs parked at a usage limit or for a restart that still wait to come back
+             */
+            runs_parked?: number;
             /** Format: int64 */
             runs_unknown?: number;
             slug: string;
@@ -5482,9 +5590,14 @@ export interface components {
             tasks_failed?: number;
             /**
              * Format: int64
-             * @description Items in this space that need a person (the counts above, without the unassigned and overdue subsets)
+             * @description Items in this space that need a person (the counts above, without the unassigned and overdue subsets and without the parked, account-limit, account-switch and cross-space counts, which are watch information; sum item_counts to include them)
              */
             total: number;
+            /**
+             * Format: int64
+             * @description Cross-space requests from other spaces waiting for a decision
+             */
+            xspace_incoming?: number;
         };
         AttentionStorage: {
             below_reserve: boolean;
@@ -5508,6 +5621,12 @@ export interface components {
             store_reason?: string;
             /** @enum {string} */
             store_state: "ok" | "degraded" | "failed";
+        };
+        AttentionTarget: {
+            id?: string;
+            space_id: string;
+            /** @enum {string} */
+            type: "task" | "run" | "subscription" | "space_usage" | "space_budget" | "xspace_request";
         };
         AuditGap: {
             /** Format: int64 */
@@ -6797,6 +6916,8 @@ export interface components {
             /** @description The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core */
             grant: string;
             id: string;
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription. Off by default: own events are filtered as a loop guard. Allowed only when the subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; refused for anything else, such as inbox or task events. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. */
+            ingest_own: boolean;
             last_error?: string;
             /** Format: date-time */
             last_event_at?: string;
@@ -6875,8 +6996,11 @@ export interface components {
         FleetAccountSwitch: {
             /** Format: date-time */
             armed_until?: string;
-            /** @enum {string} */
-            cause: "usage_limit" | "operator";
+            /**
+             * @description usage_limit: moved away from an account at its limit; operator: moved by a person; switch_back: moved back to the account a chain of usage-limit switches started from, after its reset (ADR-0105)
+             * @enum {string}
+             */
+            cause: "usage_limit" | "operator" | "switch_back";
             /** Format: date-time */
             created_at: string;
             from_account_id: string;
@@ -6885,11 +7009,14 @@ export interface components {
             harness: "claude-code" | "codex";
             id: string;
             instance_id: string;
+            /** @description The limit that caused a usage_limit switch; empty for a switch_back */
             limit_kind: string;
             /** Format: date-time */
             limit_resets_at?: string;
             limit_wait_id?: string;
             new_run_id?: string;
+            /** @description The account the chain of usage-limit switches started from; a switch_back moves the run there */
+            origin_account_id?: string;
             reason?: string;
             role: string;
             /** @enum {string} */
@@ -7032,10 +7159,10 @@ export interface components {
             /** Format: int64 */
             attempts: number;
             /**
-             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098)
+             * @description Why the wait exists when it is not a usage limit: agent_restart, the run ended stopped_by_restart while wanted (ADR-0098); switch_back, the run was parked to move back to its original account (ADR-0105)
              * @enum {string}
              */
-            cause?: "agent_restart";
+            cause?: "agent_restart" | "switch_back";
             /** Format: date-time */
             created_at: string;
             /** @enum {string} */
@@ -7850,6 +7977,34 @@ export interface components {
             name: string;
             repository_id: string;
             space_id: string;
+        };
+        GlobalUsageSeriesPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GlobalUsageSeriesPage.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            bucket: "hour" | "day";
+            /** @description What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit */
+            cost_note: string;
+            /** Format: date-time */
+            from: string;
+            group_by: string;
+            /** @description One row per bucket and group, oldest first */
+            items: components["schemas"]["UsageRow"][];
+            /** @description Display names of the space or account groups on this page: spaces you can read, accounts bound to one of them */
+            labels: {
+                [key: string]: string;
+            };
+            next_cursor?: string;
+            /** @description Per harness, runs active in the range (in the same spaces and filters, except model) whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero */
+            not_counted: components["schemas"]["UsageNotCounted"][];
+            /** Format: date-time */
+            to: string;
+            /** @description Over the whole range, not only this page */
+            totals: components["schemas"]["UsageRow"];
         };
         HarborpilotConnection: {
             /**
@@ -10130,6 +10285,64 @@ export interface components {
             provision_reason?: string;
             would_provision: boolean;
         };
+        OperatorMessage: {
+            /** Format: date-time */
+            acknowledged_at?: string;
+            acknowledged_by?: string;
+            attachments?: components["schemas"]["AttachmentsAttachment"][];
+            /** Format: date-time */
+            available_at?: string;
+            /** @description Markdown; untrusted when an agent wrote it */
+            body: string;
+            correlation_id?: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description Scheduled for this time: not delivered before it
+             */
+            deliver_at?: string;
+            /** @enum {string} */
+            delivered_via?: "" | "terminal_notice" | "mcp_fetch" | "operator_view";
+            from_id?: string;
+            /** @enum {string} */
+            from_kind: "run" | "operator" | "system";
+            from_label?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "message" | "request" | "reply" | "notification";
+            reply_to?: string;
+            resolution?: string;
+            /** Format: date-time */
+            resolved_at?: string;
+            space_id: string;
+            space_name: string;
+            space_slug: string;
+            /** @enum {string} */
+            state: "stored" | "available" | "acknowledged" | "resolved";
+            subject: string;
+            to_id?: string;
+            /** @enum {string} */
+            to_kind: "run" | "role" | "control" | "operators";
+            /** Format: int64 */
+            version: number;
+        };
+        OperatorMessageList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OperatorMessageList.json
+             */
+            readonly $schema?: string;
+            /** @description Newest first */
+            items: components["schemas"]["OperatorMessage"][];
+            next_cursor?: string;
+            /**
+             * Format: int64
+             * @description Open messages to operators (not acknowledged or resolved) in all spaces you can read, whatever the filters
+             */
+            unread_count: number;
+        };
         OutboxFailure: {
             /** Format: int64 */
             attempts: number;
@@ -12316,6 +12529,30 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["SettingsSpace"][];
         };
+        SpaceUsageSeriesPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceUsageSeriesPage.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            bucket: "hour" | "day";
+            /** @description What the cost figures are: a list-price estimate, not a bill. Tokens are the primary unit */
+            cost_note: string;
+            /** Format: date-time */
+            from: string;
+            group_by: string;
+            /** @description One row per bucket and group, oldest first */
+            items: components["schemas"]["UsageRow"][];
+            next_cursor?: string;
+            /** @description Per harness, runs of this space active in the range whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero */
+            not_counted: components["schemas"]["UsageNotCounted"][];
+            /** Format: date-time */
+            to: string;
+            /** @description Over the whole range, not only this page */
+            totals: components["schemas"]["UsageRow"];
+        };
         SpaceWatchdog: {
             /**
              * Format: uri
@@ -12434,6 +12671,8 @@ export interface components {
             delivery?: "durable" | "core";
             /** @enum {string} */
             follow?: "pinned" | "latest";
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. */
+            ingest_own?: boolean;
             name: string;
             /** @description Where the consumer starts; default new (no history). Core subscriptions accept only new. */
             start?: components["schemas"]["EventsCursor"];
@@ -12458,6 +12697,8 @@ export interface components {
             enabled: boolean;
             /** @enum {string} */
             follow?: "pinned" | "latest";
+            /** @description Ingest events this SpaceMan published itself (its spaceman-origin) on this subscription; off by default, when they are filtered as a loop guard. Allowed only when the subscription's subject is exactly evt.spaceman.fleet.run.dialog_detected or evt.spaceman.fleet.run.dialog_cleared; any other subject (inbox, task and every event ingestion can cause) is refused with 422. Only own events at automation depth 0 are ingested, so SpaceMan's events about what an ingestion caused (its items and their tasks) are never ingested again; event_depth still applies. Omitted: unchanged; a subject change keeps it only on an allowed subject. */
+            ingest_own?: boolean;
             name?: string;
             /** @description Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor. */
             start?: components["schemas"]["EventsCursor"];
@@ -12956,6 +13197,15 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        UsageAccountState: {
+            account_id: string;
+            harness?: string;
+            /** @description Open usage limits, oldest first; empty when none */
+            limits: components["schemas"]["UsageLimit"][];
+            name: string;
+            /** @description The latest 5-hour and 7-day windows; empty when no run has reported one */
+            windows: components["schemas"]["UsageWindow"][];
+        };
         UsageAccountWindows: {
             /**
              * Format: uri
@@ -12998,6 +13248,29 @@ export interface components {
              * @description Attempts whose token usage the provider did not report (not counted as zero)
              */
             unknown_usage_requests: number;
+        };
+        UsageLimit: {
+            kind: string;
+            /** Format: date-time */
+            resets_at?: string;
+            /**
+             * Format: date-time
+             * @description When a run first reported the limit
+             */
+            seen_at: string;
+        };
+        UsageNotCounted: {
+            /**
+             * Format: int64
+             * @description Of those, runs whose usage was read back from Harbor Pilot (per run only, not in the ledger)
+             */
+            harbor_pilot_runs: number;
+            harness: string;
+            /**
+             * Format: int64
+             * @description Runs active in the range whose usage is not in these figures
+             */
+            runs: number;
         };
         UsageRow: {
             /**
@@ -13335,6 +13608,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-account-kindsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-account-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountWindowsList"];
                 };
             };
             /** @description Error */
@@ -16554,6 +16856,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Link"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-operator-messages": {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                /** @description open: not yet acknowledged or resolved */
+                state?: "open" | "all";
+                /** @description Only this space (ID or slug) */
+                space?: string;
+                kind?: "" | "message" | "request" | "reply" | "notification";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorMessageList"];
                 };
             };
             /** @description Error */
@@ -23337,7 +23677,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UsageSeriesPage"];
+                    "application/json": components["schemas"]["SpaceUsageSeriesPage"];
                 };
             };
             /** @description Error */
@@ -24553,6 +24893,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthAPIToken"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-usage-series": {
+        parameters: {
+            query?: {
+                /** @description Start of the range, inclusive (RFC 3339). Default: 7 days (bucket=hour) or 30 days (bucket=day) before to */
+                from?: string;
+                /** @description End of the range, exclusive (RFC 3339). Default: now */
+                to?: string;
+                /** @description Bucket size, UTC. Hourly rows are kept 90 days, so older ranges need bucket=day; a daily series covers whole UTC days; a range is at most 31 days of hours or 800 days */
+                bucket?: "hour" | "day";
+                /** @description Opaque cursor from a previous response's next_cursor */
+                cursor?: string;
+                limit?: number;
+                /** @description Only these spaces (IDs; repeat or comma-separate, at most 50). A space you cannot read adds nothing */
+                space_id?: string[];
+                /** @description Only these accounts (IDs; repeat or comma-separate, at most 50) */
+                account_id?: string[];
+                /** @description Only these models (repeat or comma-separate, at most 50) */
+                model?: string[];
+                /** @description Only these roles (repeat or comma-separate, at most 50) */
+                role?: string[];
+                /** @description Only these harnesses (repeat or comma-separate, at most 50) */
+                harness?: string[];
+                group_by?: "space" | "account" | "model" | "role" | "harness";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalUsageSeriesPage"];
                 };
             };
             /** @description Error */

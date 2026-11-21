@@ -19,13 +19,17 @@ import (
 var UsageRules = map[string]Rule{
 	"get-run-usage":   InSpace(authz.RunRead),
 	"get-space-usage": InSpace(authz.RunRead),
+	// The cross-space series (ADR-0103) filters every row to the spaces with run:read, so it needs only a session.
+	"get-usage-series": FilteredRead(),
 	// The usage ledger (ADR-0090). A space's views need run:read there. An account's views are global (account:read) and
 	// show only what the caller can also read in a space: usage of the spaces they have run:read in, and windows only
 	// of an account bound to such a space.
 	"get-space-usage-series":     InSpace(authz.RunRead),
 	"list-space-account-windows": InSpace(authz.RunRead),
-	"get-account-usage":          Global(authz.AccountRead),
-	"get-account-windows":        Global(authz.AccountRead),
+	// The cross-space list is filtered per account by canSeeAccount (run:read in a space the account is bound to).
+	"list-account-windows": FilteredRead(),
+	"get-account-usage":    Global(authz.AccountRead),
+	"get-account-windows":  Global(authz.AccountRead),
 	// Deleting a transcript is as irreversible as deleting a recording, so it needs the same step-up (SR-L06).
 	"delete-transcript": {Perm: authz.RecordingDelete, Space: true, Reauth: true, MFA: true},
 }
@@ -48,6 +52,12 @@ type UsageSeriesPage struct {
 	Totals     usage.Row   `json:"totals" doc:"Over the whole range, not only this page"`
 	Items      []usage.Row `json:"items" doc:"One row per bucket and group, oldest first"`
 	NextCursor string      `json:"next_cursor,omitempty"`
+}
+
+// SpaceUsageSeriesPage is a page of a space's series, with the runs of the space the ledger cannot count.
+type SpaceUsageSeriesPage struct {
+	UsageSeriesPage
+	NotCounted []usage.NotCounted `json:"not_counted" doc:"Per harness, runs of this space active in the range whose usage the ledger does not hold, such as Codex and Harbor Pilot runs. Their usage is missing from these figures, not zero"`
 }
 
 func (q UsageSeriesQuery) series(groupBy string) usage.SeriesQuery {
@@ -86,6 +96,11 @@ func pageSeries(s *usage.Series, p Page) (*UsageSeriesPage, error) {
 	return out, nil
 }
 
+// AccountWindowsList is the accounts bound to the spaces the caller can read, with their windows and open limits.
+type AccountWindowsList struct {
+	Items []usage.AccountState `json:"items"`
+}
+
 // SpaceAccountWindows is the latest windows of a space's bound accounts.
 type SpaceAccountWindows struct {
 	Items []usage.AccountWindows `json:"items"`
@@ -95,6 +110,7 @@ type SpaceAccountWindows struct {
 func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
 		tags := []string{"usage"}
+		registerUsageSeries(svc, api, d)
 		huma.Register(api, huma.Operation{OperationID: "get-run-usage", Method: http.MethodGet, Path: "/spaces/{space_id}/runs/{run_id}/usage",
 			Summary: "A run's usage", Description: "Only what the harness recorded; unknown usage is reported as unknown, never zero.", Tags: tags},
 			func(ctx context.Context, in *struct {
@@ -119,12 +135,13 @@ func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "get-space-usage-series", Method: http.MethodGet, Path: "/spaces/{space_id}/usage/series",
 			Summary: "A space's usage over time",
 			Description: "Tokens per bucket and group (role, account, model or harness) from the usage ledger, with the cost as total_cost_usd: the " +
-				"harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported.", Tags: tags},
+				"harness's own list-price estimate, not a bill. Tokens are the primary unit. Counts only what runs reported; runs whose usage the ledger " +
+				"does not hold are counted per harness in not_counted.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
 				UsageSeriesQuery
 				GroupBy string `query:"group_by" enum:"role,account,model,harness" default:"role"`
-			}) (*struct{ Body *UsageSeriesPage }, error) {
+			}) (*struct{ Body *SpaceUsageSeriesPage }, error) {
 				s, err := svc.SpaceSeries(ctx, in.SpaceID, in.series(in.GroupBy))
 				if err != nil {
 					return nil, d.fail(ctx, "usage.series", err)
@@ -133,7 +150,11 @@ func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "usage.series", err)
 				}
-				return &struct{ Body *UsageSeriesPage }{Body: pg}, nil
+				nc, err := svc.SpaceNotCounted(ctx, in.SpaceID, in.series(in.GroupBy))
+				if err != nil {
+					return nil, d.fail(ctx, "usage.series", err)
+				}
+				return &struct{ Body *SpaceUsageSeriesPage }{Body: &SpaceUsageSeriesPage{UsageSeriesPage: *pg, NotCounted: nc}}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "get-account-usage", Method: http.MethodGet, Path: "/accounts/{account_id}/usage",
 			Summary: "An account's usage over time, in the spaces you can read",
@@ -190,6 +211,19 @@ func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 				}
 				return &struct{ Body SpaceAccountWindows }{Body: SpaceAccountWindows{Items: l}}, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "list-account-windows", Method: http.MethodGet, Path: "/account-windows",
+			Summary: "The usage windows and open limits of the accounts bound to the spaces you can read",
+			Description: "Each account bound (to a space or a role pool) to at least one space the caller can read (run:read), once: its name, " +
+				"harness, latest 5-hour and 7-day windows and open usage limits. Stored state only: nothing is fetched from a provider. " +
+				"An account bound only to other spaces is absent.", Tags: []string{"accounts", "usage"}},
+			func(ctx context.Context, _ *struct{}) (*struct{ Body AccountWindowsList }, error) {
+				p := PrincipalFrom(ctx)
+				l, err := svc.AllAccountStates(ctx, func(spaceID string) bool { return d.canSeeAccount(p, spaceID) })
+				if err != nil {
+					return nil, d.fail(ctx, "usage.account_windows", err)
+				}
+				return &struct{ Body AccountWindowsList }{Body: AccountWindowsList{Items: l}}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "delete-transcript", Method: http.MethodDelete, Path: "/spaces/{space_id}/runs/{run_id}/transcript",
 			Summary: "Delete a run's stored transcript", Tags: tags, DefaultStatus: http.StatusNoContent},
 			func(ctx context.Context, in *struct {
@@ -231,4 +265,11 @@ func TranscriptDownload(svc *usage.Service) RawRoute {
 // canReadRuns reports whether the principal may read runs (and so their usage) in a space.
 func (d *Deps) canReadRuns(p *auth.Principal, spaceID string) bool {
 	return d.Authz != nil && p != nil && d.Authz.AllowedAll(p.Subjects(), spaceID, authz.RunRead)
+}
+
+// canSeeAccount is the one visibility rule of the cross-space account view: an account, its name and its limit state
+// are shown when it is bound to a space where the caller may read runs. Making the view admin-only is a change to this
+// function (and to the rule above), nothing else.
+func (d *Deps) canSeeAccount(p *auth.Principal, boundSpaceID string) bool {
+	return d.canReadRuns(p, boundSpaceID)
 }

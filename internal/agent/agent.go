@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -63,6 +64,9 @@ type Options struct {
 	// RecordingRetryAfter is the first wait before a recording whose disk failed is tried again; 0 is
 	// recording.DefaultRetryAfter (fault tests shorten it).
 	RecordingRetryAfter time.Duration
+	// MemoryStatusInterval is the shortest time between two role-memory status reports; 0 is 30 s (end-to-end tests
+	// shorten it).
+	MemoryStatusInterval time.Duration
 	// EnvPassthrough names environment variables copied from the agent's own environment into harness processes
 	// (harness.env_passthrough; validated by the configuration). The agent's own values win over them.
 	EnvPassthrough []string
@@ -227,9 +231,15 @@ type Agent struct {
 	// Lock order: limitSend, then mu (sendReport); session takes only mu here and never limitSend, so no cycle.
 	preConn bool
 	// helloStage, when set, runs after the hello snapshot and before the connection is set. Tests race a report there.
-	helloStage  func()
-	limitTimers map[string]*time.Timer
-	limitFiles  map[string]os.FileInfo
+	helloStage func()
+	// snapshotReconciled, when set, runs after the monitor has handled a runner "snapshot" event. Tests wait on it so a late
+	// reconcile cannot send a report into a later step.
+	snapshotReconciled func()
+	// eventHandled, when set, runs after the monitor has handled any runner event; it must not block the monitor. It is atomic
+	// because tests set it while the monitor already runs. Tests wait on it to know an event's observe has finished.
+	eventHandled atomic.Pointer[func(runner.Event)]
+	limitTimers  map[string]*time.Timer
+	limitFiles   map[string]os.FileInfo
 	// statusSnaps are the latest status-line snapshots and failureClasses the latest non-limit StopFailure class of
 	// each run, by run ID (hooks.go); both are dropped when the run ends.
 	statusSnaps    map[string]StatusObservation
@@ -744,6 +754,17 @@ func (a *Agent) report(ctx context.Context, r runRow) {
 		r.Limit = cur.Limit
 	}
 	a.sendReport(ctx, r)
+}
+
+// reportCurrent sends a run's report from the journal, read under limitSend, so a report that waited for the lock never
+// sends an older state after a newer one (the row is the fallback when the journal cannot be read).
+func (a *Agent) reportCurrent(ctx context.Context, row runRow) {
+	a.limitSend.Lock()
+	defer a.limitSend.Unlock()
+	if cur, err := a.j.getRun(ctx, row.RunID); err == nil {
+		row = cur
+	}
+	a.sendReport(ctx, row)
 }
 
 // resendHeldReports sends, from the journal, the reports held back before the welcome.

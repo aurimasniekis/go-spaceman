@@ -108,6 +108,38 @@ session** there:
 Every move is recorded with its outcome (succeeded, failed, fell back to waiting, cancelled), audited and published as
 `fleet.account_switch.*` events. Claude Code only; Codex runs aren't moved yet.
 
+### Moving back after the reset
+
+A run that a usage limit moved to a stand-in account doesn't stay there for good. Once its **original account** has
+reset, SpaceMan moves the run **back** to it (cause `switch_back`, shown as "Switched back"), so the pool's order, your
+preferred account, applies again and the stand-in isn't used up too. It is on by default; turn it off per space with
+`usage_limit_switch_back` (see [Settings](#settings)). It only applies while failover is on.
+
+- **Only between turns.** A run is moved back only at an idle point: its turn has ended and it is not working, waiting
+  on background tasks or at a dialog. A busy run is never interrupted for it. A run that sits idle goes home within
+  10 minutes of its original account becoming usable, and right at the reset (plus 2 minutes) when that was the last
+  thing missing.
+- **The origin, in one move.** A run moved from A to B and then to C goes back from C straight to A, never to B. The
+  note it gets says SpaceMan moved the session back to its original account, whose usage limit has reset; it continues
+  the same session with `--resume`, like any move, and its task follows.
+- **When the original account is ready.** Its usage-limit hold, in any space, has reset (a hold with no known reset
+  blocks until it is cleared), and it still passes the same checks as any move target: bound to the space, enabled, in
+  the role's pool, not held, and through the launch headroom gate. Other accounts of the pool never stand in: when the
+  original isn't ready, the run stays where it is. If it stops being ready after the run was parked, the move falls
+  back and the run resumes at once on the account it was on.
+- **What never triggers it.** A run an operator moved, a run a switch-back already brought home, a run that was
+  started on another account since, and a run through Harbor Pilot are never moved back. Nor is a run that is busy,
+  at a limit of its own (the ordinary switch away applies), without a session to resume, at an open dialog, or under
+  a terminal takeover.
+- **No ping-pong.** One switch-back per agent instance in **6 hours**, longer than a five-hour window, counted from its
+  last one, including one that fell back. A switch-back also counts toward the daily budget
+  (`usage_limit_switch_max_per_day`) and doesn't start when it is spent. If the original account limits again, the
+  ordinary move away applies and starts a new chain there.
+- **Recorded like any move.** The switch has its own row (cause `switch_back`, with the origin), audit
+  (`account.switch_*`, with the cause), the `fleet.account_switch.*` events with `cause`, and one message to control.
+  People aren't told. In the web UI the account switches list shows it as "Switched back", and `spaceman limits
+  switches` has a `CAUSE` column.
+
 ## When the whole pool is at its limit
 
 With failover on, when every account of the run's pool (its role's pool, or the space's bindings) has a hold that hasn't
@@ -265,13 +297,14 @@ A space's **Accounts** page holds everything about its pool:
   a role with a pool uses those accounts only). Saving needs an installation admin (`account:write`); `spaceman pool` and the API
   (`put-space-role-pool`) do the same.
 - **Account switching** settings: usage-limit failover, how close a reset must be for a run to wait instead of
-  moving, moves per day, and the launch headroom gate. They are the space limits listed under Settings, edited in
+  moving, moves per day, switching back to the original account after its reset, and the launch headroom gate. They are the space limits listed under Settings, edited in
   place.
 - **Account windows**: the 5-hour and 7-day windows of each bound account as the last run on it reported them, with
   the reset and how old the figure is. A percentage is an observation, not a live reading: one older than an hour, or
   past its reset, says it may be out of date, and an account no run has reported for shows no bar.
-- **Account switches**: where runs moved (or waited instead, and why), with links to both runs. A run's own page says
-  "Moved to account ..." or "Continued from the run on account ...".
+- **Account switches**: where runs moved (or waited instead, and why), and those that switched back to their original
+  account, labelled "Switched back", with links to both runs. A run's own page says "Moved to account ...",
+  "Switched back to its original account ..." or "Continued from the run on account ...".
 
 <Shot name="space-account-pools" alt="A space's Accounts page: account windows with usage bars, the pool order per harness, a role pool, the account switching settings and the recent account switches" caption="A space's Accounts page" />
 
@@ -280,6 +313,14 @@ with a table of the same numbers. Tokens come first; the cost is the harness's o
 one, and never a bill. Only usage that runs reported is counted, and buckets are UTC.
 
 <Shot name="space-usage-page" alt="A space's Usage page: tokens per day stacked by role over the last seven days, the totals with an estimated cost, and a table per role" caption="A space's token usage" />
+
+The sidebar's **Usage** page (`/usage`) shows the same across every space you can read, over 24 hours, 7, 30 or 90 days,
+grouped by space, account, model, role or harness. Select an account, model or harness in the table to filter by it; the
+range, grouping and filters are in the URL. Runs whose usage the ledger does not hold (Codex, and runs with only Harbor
+Pilot figures) are listed as **not counted**, because their usage is missing, not zero. An **Accounts** section shows each
+account's 5-hour and 7-day window and its open usage limits.
+
+<Shot name="usage-page" alt="The Usage page across spaces: tokens per day stacked by space, totals with an estimated cost, a note on runs that are not counted, a table per space and the accounts' windows" caption="Usage across spaces" />
 
 ## What you can do
 
@@ -311,6 +352,7 @@ each is audited. `spaceman limits holds`, `spaceman limits waits` and `spaceman 
 | `usage_limit_failover` | off (0) | 0 off, 1 on | use another unheld account of the same harness, and move a limited run to one |
 | `usage_limit_wait_if_reset_within` | 15 | 0–1,440 minutes | a reset this near is waited for instead of moving the run |
 | `usage_limit_switch_max_per_day` | 6 | 0–50 (0: never move) | moves per agent instance in 24 hours |
+| `usage_limit_switch_back` | on (1) | 0 off, 1 on | move a run that a usage limit moved away back to its original account once that has reset, at an idle point; applies only with failover on. At most one per instance in 6 hours; counts toward `usage_limit_switch_max_per_day` |
 | `usage_limit_min_headroom_percent` | 0 (off) | 0–100 | a new agent does not start on an account when a window with known usage has less than this percentage free: it takes the next eligible account of its pool, or the launch is refused until the earliest reset. An account with no known usage is not refused, and running agents are never moved for it |
 
 They are space limits like any other: installation defaults in the `limits:` section of the configuration file,

@@ -173,6 +173,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
 | `GET` | `/account-kinds` | `list-account-kinds` | Supported credential kinds and the harness each one is for |
+| `GET` | `/account-windows` | `list-account-windows` | The usage windows and open limits of the accounts bound to the spaces you can read |
 | `GET` | `/accounts` | `list-accounts` | Harness accounts (never their secrets) |
 | `POST` | `/accounts` | `create-account` | Add a harness account |
 | `DELETE` | `/accounts/{account_id}` | `delete-account` | Delete an account and its bindings |
@@ -394,6 +395,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/messages` | `list-operator-messages` | Messages addressed to operators, across the spaces you can read |
 | `GET` | `/spaces/{space_id}/messages` | `list-messages` | A space's recent messages between agents, control and operators |
 | `POST` | `/spaces/{space_id}/messages` | `send-message` | Send a durable message to control, a role or a run |
 | `GET` | `/spaces/{space_id}/messages/{message_id}` | `get-message` | A message |
@@ -585,4 +587,5 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/runs/{run_id}/usage` | `get-run-usage` | A run's usage |
 | `GET` | `/spaces/{space_id}/usage` | `get-space-usage` | A space's usage |
 | `GET` | `/spaces/{space_id}/usage/series` | `get-space-usage-series` | A space's usage over time |
+| `GET` | `/usage/series` | `get-usage-series` | Usage over time across the spaces you can read |
 

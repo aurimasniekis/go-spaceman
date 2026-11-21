@@ -2,9 +2,13 @@ package app_test
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
@@ -43,6 +47,8 @@ func TestAttentionOverHTTP(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Rows of the new categories in both spaces: a parked run, an account limit, a failed switch and an incoming request.
+	seedAttentionRows(t, h, en.Node.ID, a.ID, b.ID)
 	var at api.Attention
 	root.do("GET", "/attention", nil).json(t, &at)
 	if len(at.Spaces) != 2 || at.Spaces[0].SpaceID != a.ID || at.Spaces[0].Total != 3 || !at.Spaces[0].NodeDisconnected || *at.Spaces[0].HumanPending != 1 || *at.Spaces[0].TasksBlocked != 1 {
@@ -53,6 +59,20 @@ func TestAttentionOverHTTP(t *testing.T) {
 	}
 	if len(at.Nodes) != 1 || at.Nodes[0].ID != en.Node.ID || len(at.Nodes[0].Spaces) != 2 {
 		t.Fatalf("nodes %+v", at.Nodes)
+	}
+	if got := attentionKinds(at.Items, a.ID); got != "account_limit account_switch_failed run_parked task_blocked xspace_request" {
+		t.Fatalf("root items of alpha: %q (%+v)", got, at.Items)
+	}
+	if got := attentionKinds(at.Items, b.ID); got != "account_limit account_switch_failed run_parked xspace_request" {
+		t.Fatalf("root items of beta: %q", got)
+	}
+	if at.ItemCounts["task_blocked"] != 1 || at.ItemCounts["account_limit"] != 2 || at.ItemCounts["xspace_request"] != 2 || *at.Spaces[0].RunsParked != 1 {
+		t.Fatalf("counts %+v", at.ItemCounts)
+	}
+	for _, it := range at.Items {
+		if it.Target.SpaceID != it.SpaceID || it.Title == "" || it.Since.IsZero() || it.ID == "" || it.Target.Type == "" {
+			t.Fatalf("incomplete item %+v", it)
+		}
 	}
 	at = api.Attention{}
 	root.do("GET", "/attention?space="+b.ID, nil).json(t, &at)
@@ -69,15 +89,58 @@ func TestAttentionOverHTTP(t *testing.T) {
 	if len(at.Spaces) != 1 || at.Spaces[0].SpaceID != a.ID || at.Storage != nil || at.Backups != nil || at.Outbox != nil {
 		t.Fatalf("viewer %+v", at)
 	}
+	for _, it := range at.Items {
+		if it.SpaceID != a.ID || it.Target.SpaceID != a.ID {
+			t.Fatalf("viewer sees another space's item %+v", it)
+		}
+	}
+	if got := attentionKinds(at.Items, a.ID); got != "account_limit account_switch_failed run_parked task_blocked xspace_request" || at.ItemCounts["account_limit"] != 1 || at.ItemCounts["xspace_request"] != 1 {
+		t.Fatalf("viewer items %q %+v", got, at.ItemCounts)
+	}
 	if len(at.Nodes) != 0 || !at.Spaces[0].NodeDisconnected { // node:read is global; the space still says its node is down
 		t.Fatalf("viewer nodes %+v", at)
 	}
 	at = api.Attention{}
 	viewer.do("GET", "/attention?space="+b.ID, nil).json(t, &at)
-	if len(at.Spaces) != 0 {
-		t.Fatalf("unreadable space leaked %+v", at.Spaces)
+	if len(at.Spaces) != 0 || len(at.Items) != 0 {
+		t.Fatalf("unreadable space leaked %+v %+v", at.Spaces, at.Items)
 	}
 	expect(t, h.client().do("GET", "/attention", nil), 401)
+}
+
+// SM-UI-003 over HTTP: a kind with more rows than the list shows lists the newest 20 and still counts all of them.
+func TestAttentionItemsCappedAt20WithFullCount(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	a, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const blocked = 25
+	for i := range blocked {
+		var task queue.Task
+		root.do("POST", "/spaces/"+a.ID+"/tasks", map[string]any{"title": "Blocked " + string(rune('A'+i)), "status": "ready"}).json(t, &task)
+		expect(t, root.do("POST", "/spaces/"+a.ID+"/tasks/"+task.ID+"/status", map[string]any{"status": "blocked", "reason": "waiting"}, "If-Match", `"1"`), 200)
+	}
+	var at api.Attention
+	root.do("GET", "/attention", nil).json(t, &at)
+	listed := 0
+	for _, it := range at.Items {
+		if it.Kind == "task_blocked" {
+			listed++
+		}
+	}
+	if listed != 20 {
+		t.Fatalf("listed %d task_blocked items, want 20", listed)
+	}
+	if at.ItemCounts["task_blocked"] != blocked || len(at.Spaces) != 1 || *at.Spaces[0].TasksBlocked != blocked {
+		t.Fatalf("counts %+v spaces %+v", at.ItemCounts, at.Spaces)
+	}
 }
 
 // SM-HUM-006, SM-HUI-001, SM-ATT-001 over HTTP: search and filters on both listings, clarification requests,
@@ -178,4 +241,158 @@ func TestHumanSearchClarifyAttachmentsAndPrefsOverHTTP(t *testing.T) {
 	expect(t, op.do("PUT", "/auth/me/notification-preferences", set, "If-Match", `"0"`), 409)
 	set["min_priority"] = "p0"
 	expect(t, op.do("PUT", "/auth/me/notification-preferences", set, "If-Match", `"1"`), 422)
+}
+
+// Each new attention category is withheld on its own permission: a principal that reads a space but not its runs sees
+// no parked runs, account limits or failed switches, and one without xspace:read sees no incoming requests. No
+// built-in role lacks either permission, so the test removes them from the in-memory policy.
+func TestAttentionNewCategoriesNeedTheirOwnPermission(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	a, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "beta", Name: "Beta", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task queue.Task
+	root.do("POST", "/spaces/"+a.ID+"/tasks", map[string]any{"title": "Ship", "status": "ready"}).json(t, &task)
+	expect(t, root.do("POST", "/spaces/"+a.ID+"/tasks/"+task.ID+"/status", map[string]any{"status": "blocked", "reason": "waiting"}, "If-Match", `"1"`), 200)
+	seedAttentionRows(t, h, en.Node.ID, a.ID, b.ID)
+	expect(t, root.do("POST", "/users", map[string]any{"email": "vic@example.com", "display_name": "Vic", "password": "correct horse battery staple",
+		"grants": []map[string]string{{"role": "viewer", "domain": a.ID}}}), 201)
+	viewer := h.client()
+	viewer.bearer = loginAndIssueToken(t, h, "vic@example.com", []map[string]string{{"role": "viewer", "domain": a.ID}})
+
+	fetch := func(withhold ...authz.Permission) api.Attention {
+		t.Helper()
+		if err := h.c.Authz.Reload(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.c.Authz.WithholdForTest(withhold...); err != nil {
+			t.Fatal(err)
+		}
+		var at api.Attention
+		viewer.do("GET", "/attention", nil).json(t, &at)
+		if len(at.Spaces) != 1 {
+			t.Fatalf("a reader of one space sees %d spaces: %+v", len(at.Spaces), at.Spaces)
+		}
+		return at
+	}
+	const all = "account_limit account_switch_failed run_parked task_blocked xspace_request"
+	if at := fetch(); attentionKinds(at.Items, a.ID) != all || at.Spaces[0].Total != 1 {
+		t.Fatalf("full reader %q %+v", attentionKinds(at.Items, a.ID), at.Spaces)
+	}
+	at := fetch(authz.RunRead)
+	if got := attentionKinds(at.Items, a.ID); got != "task_blocked xspace_request" {
+		t.Fatalf("without run:read: %q", got)
+	}
+	s := at.Spaces[0]
+	if s.RunsParked != nil || s.AccountLimits != nil || s.AccountSwitchFails != nil || s.XSpaceIncoming == nil {
+		t.Fatalf("without run:read, counts %+v", s)
+	}
+	if at.ItemCounts["run_parked"] != 0 || at.ItemCounts["account_limit"] != 0 || at.ItemCounts["account_switch_failed"] != 0 || at.ItemCounts["xspace_request"] != 1 {
+		t.Fatalf("without run:read, item counts %+v", at.ItemCounts)
+	}
+	at = fetch(authz.XSpaceRead)
+	if got := attentionKinds(at.Items, a.ID); got != "account_limit account_switch_failed run_parked task_blocked" {
+		t.Fatalf("without xspace:read: %q", got)
+	}
+	s = at.Spaces[0]
+	if s.XSpaceIncoming != nil || s.RunsParked == nil || s.AccountLimits == nil || s.AccountSwitchFails == nil || at.ItemCounts["xspace_request"] != 0 || at.ItemCounts["run_parked"] != 1 {
+		t.Fatalf("without xspace:read, counts %+v %+v", s, at.ItemCounts)
+	}
+	at = fetch(authz.RunRead, authz.XSpaceRead)
+	if got := attentionKinds(at.Items, a.ID); got != "task_blocked" || at.Spaces[0].Total != 1 {
+		t.Fatalf("without both: %q %+v", got, at.Spaces)
+	}
+}
+
+// attentionKinds lists the sorted distinct item kinds of one space.
+func attentionKinds(items []api.AttentionItem, space string) string {
+	seen := map[string]bool{}
+	for _, it := range items {
+		if it.SpaceID == space {
+			seen[it.Kind] = true
+		}
+	}
+	kinds := make([]string, 0, len(seen))
+	for k := range seen {
+		kinds = append(kinds, k)
+	}
+	slices.Sort(kinds)
+	return strings.Join(kinds, " ")
+}
+
+// seedAttentionRows writes one row of each new category into both spaces.
+func seedAttentionRows(t *testing.T, h *harness, node, a, b string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UnixMicro()
+	err := h.c.Store.W().TxNamed(ctx, "test.attention_seed", func(tx *store.Tx) error {
+		for i, sp := range []string{a, b} {
+			n := string(rune('a' + i))
+			stmts := []struct {
+				q    string
+				args []any
+			}{
+				{`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by, updated_at)
+				  VALUES (?, ?, ?, 1, 'worker', 'implementor', 'claude-code', ?, 'stopped', 'exited', '{}', ?, 'test', ?)`, []any{"run_" + n, sp, node, "ins_" + n, now, now}},
+				{`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, launch_json, resume_at, created_at, updated_at)
+				  VALUES (?, ?, ?, 'worker', 'implementor', ?, ?, 'claude-code', '{}', ?, ?, ?)`, []any{"lw_" + n, sp, "run_" + n, node, "ins_" + n, now + 1e9, now, now}},
+				{`INSERT INTO usage_limits (id, space_id, scope, account_id, kind, source, seen_at, created_at, updated_at)
+				  VALUES (?, ?, 'account', 'acc_1', 'five_hour', 'transcript', ?, ?, ?)`, []any{"ul_" + n, sp, now, now, now}},
+				{`INSERT INTO account_switches (id, space_id, instance_id, role, run_kind, harness, from_run_id, from_account_id, cause, limit_kind, state, reason, created_at, updated_at)
+				  VALUES (?, ?, ?, 'implementor', 'worker', 'claude-code', ?, 'acc_1', 'usage_limit', 'five_hour', 'failed', 'ended_early', ?, ?)`, []any{"as_" + n, sp, "ins_" + n, "run_" + n, now, now}},
+				{`INSERT INTO xspace_requests (id, source_space_id, dest_space_id, kind, title, body, requester_run, requester_role, correlation_id, chain_json, depth, state, deadline_at, created_at, updated_at)
+				  VALUES (?, ?, ?, 'question', 'Is it up?', 'body', 'run_x', 'control', ?, '[]', 1, 'pending', ?, ?, ?)`, []any{"xr_" + n, a, sp, "xr_" + n, now + 1e9, now, now}},
+			}
+			for _, s := range stmts {
+				if _, err := tx.SQL.ExecContext(ctx, s.q, s.args...); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A space whose only rows are in the categories outside Total (parked runs, account limits and switches, incoming
+// cross-space requests) is still listed in spaces[], so a client can name it next to its items.
+func TestAttentionListsSpaceWithOnlyWatchRows(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-a"})
+	a, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "alpha", Name: "Alpha", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "beta", Name: "Beta", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAttentionRows(t, h, en.Node.ID, a.ID, b.ID)
+	var at api.Attention
+	root.do("GET", "/attention", nil).json(t, &at)
+	found := map[string]int64{}
+	for _, s := range at.Spaces {
+		found[s.SpaceID] = s.Total
+	}
+	if len(at.Spaces) != 2 || found[a.ID] != 0 || found[b.ID] != 0 {
+		t.Fatalf("spaces %+v", at.Spaces)
+	}
 }
