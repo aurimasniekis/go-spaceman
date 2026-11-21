@@ -104,6 +104,11 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		a.handleMemoryRename(ctx, c, fresh)
 		return
 	}
+	if !fresh && c.Kind == proto.CmdWorktreeRemove {
+		a.ack(ctx, c, proto.AckDuplicate, "")
+		a.resendWorktreeRemoved(ctx, c)
+		return
+	}
 	if !fresh && c.Kind == proto.CmdReposSync {
 		a.ack(ctx, c, proto.AckDuplicate, "")
 		a.resendReposSync(ctx, c)
@@ -145,6 +150,9 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 	case proto.CmdReposSync:
 		a.handleReposSync(ctx, c)
 		return // the sync journals its own outcome (its report) when it finishes
+	case proto.CmdWorktreeRemove:
+		a.handleWorktreeRemove(ctx, c)
+		return // the removal journals its own outcome (its report) when it finishes
 	case proto.CmdKBAccept:
 		a.handleKBAccept(ctx, c)
 	case proto.CmdDreamDone:

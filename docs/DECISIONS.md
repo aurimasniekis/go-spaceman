@@ -8279,8 +8279,12 @@
   local bare remote (`TestRemoveWorktreeSafely*`, `TestRecordWorkdir`, `TestLaunchRecordsWorkdirUnderTheWorktreeLock`,
   `TestLaunchRefusedOntoAClaimedWorktree` (a launch into, through a symlink to, and around a claimed worktree),
   `TestPathsOverlapComparesFolders`, `TestRemoveWorktreeSafelyDoesNotHoldTheLockWhileChecking`). Nothing calls the
-  core yet. Decision 6 is implemented (WL-6, `internal/agent` `TestRepoReportWorktreeStatus*` in `repostatus_test.go`); decisions 4, 5, 7 and 8 are the design for follow-up tasks, and until they land,
-  worktrees are still never removed automatically (LIMITATIONS).
+  core yet. Decision 6 is implemented (WL-6, `internal/agent` `TestRepoReportWorktreeStatus*` in `repostatus_test.go`); the node half of decision 4 is implemented (WL-1, protocol minor 16: the `space.worktree.remove`
+  command runs `removeWorktree` and the node answers with a `worktree.removed` report carrying the result or the
+  refusal code; `internal/agent` `TestWorktreeRemoveCommand*`, `internal/proto` `TestWorktreeRemoveMessages`,
+  `internal/fleet` `TestWorktreeRemovedReport`, `TestWorktreeRemoveKeyOnWireOnly`, simulated). Central queues no such
+  command yet: the retention pass, the control tools (decisions 4 and 5), 7 and 8 are the design for follow-up tasks, and
+  until they land, worktrees are still never removed automatically (LIMITATIONS).
 - **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
   ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a
   worktree with no change of its own, whose HEAD the remote has (so it can be checked out again from the branch, which
