@@ -2,6 +2,7 @@ package proto
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -34,6 +35,14 @@ const (
 
 // WorktreeRemoveMaxReason bounds WorktreeRemoved.Reason; the node truncates a longer one.
 const WorktreeRemoveMaxReason = 500
+
+// WorktreeRefusalCodes are the refusal codes a refused report may carry (the node's Refuse* codes, ADR-0107 decision 1).
+var WorktreeRefusalCodes = []string{"invalid", "outside", "not_worktree", "locked", "no_remote", "fetch_failed", "live_run", "dirty", "untracked", "unpushed", "git_error"}
+
+// A redelivery of the command while its first run is still going, or after an agent restart that cut the run short,
+// is acknowledged as a duplicate and gets no report (the stored outcome is re-sent only once there is one). Central
+// therefore treats a command with no report after its own timeout as unknown, and asks again with a new command: the
+// removal re-checks everything, so a repeat is safe.
 
 // WorktreeRemovePayload is the body of space.worktree.remove: the configured repository (its URL and, from central at
 // dispatch time, its SSH key, are what the node fetches to check the work against; never the URL in the repository's own
@@ -90,8 +99,12 @@ func (r WorktreeRemoved) Validate() error {
 		return errors.New("invalid space_id")
 	case r.Result != WorktreeRemovedOK && r.Result != WorktreeRefused && r.Result != WorktreeFailed:
 		return errors.New("invalid result")
-	case r.Result == WorktreeRefused && r.Code == "":
-		return errors.New("a refusal needs its code")
+	case r.Result == WorktreeRefused && !slices.Contains(WorktreeRefusalCodes, r.Code):
+		return errors.New("a refusal needs one of the refusal codes")
+	case r.Result != WorktreeRefused && r.Code != "":
+		return errors.New("only a refusal has a code")
+	case len(r.Reason) > 2*WorktreeRemoveMaxReason || len(r.Repo) > 512 || len(r.Name) > 255 || len(r.Path) > 600 || len(r.Branch) > 256 || len(r.Head) > 64:
+		return errors.New("report fields too long")
 	}
 	return nil
 }

@@ -22,7 +22,12 @@ func (a *Agent) handleWorktreeRemove(ctx context.Context, c proto.Command) {
 		a.ack(ctx, c, proto.AckRejected, "bad space.worktree.remove payload")
 		return
 	}
-	l, _ := a.lease(c.SpaceID, c.Generation)
+	l, ok := a.lease(c.SpaceID, c.Generation)
+	if !ok || l.Workdir == "" {
+		a.j.commandDone(ctx, c.CommandID, "rejected", "no valid lease for this space and generation")
+		a.ack(ctx, c, proto.AckRejected, "no valid lease for this space and generation")
+		return
+	}
 	a.ack(ctx, c, proto.AckAccepted, "")
 	a.goTrack(func() {
 		ctx := context.WithoutCancel(ctx)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -84,8 +85,12 @@ func TestWorktreeRemoveCommandRemoves(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.a.command(context.Background(), c)
-	time.Sleep(300 * time.Millisecond)
+	// The duplicate is handled inline (no goroutine), so the worktree is checked right after it returned.
 	mustExist(t, again)
+	// A fresh command of the same name does remove it, so the check above is not vacuous.
+	if rep := e.report(t, e.wtCmd(t, "spaceman-pushed")); rep.Result != proto.WorktreeRemovedOK {
+		t.Fatalf("fresh command: %+v", rep)
+	}
 }
 
 // ADR-0107 decision 4: every refusal of the safe-removal path comes back as a refused report with its code, and nothing
@@ -173,6 +178,15 @@ func TestWorktreeRemoveCommandReportsEachRefusal(t *testing.T) {
 	mustExist(t, pushed)
 	if rep := e.report(t, e.wtCmd(t, "spaceman-pushed")); rep.Result != proto.WorktreeRemovedOK {
 		t.Fatalf("after undoing every cause: %+v", rep)
+	}
+}
+
+// Every refusal code the node can give is one central accepts in a report.
+func TestWorktreeRefusalCodesAreOnTheWire(t *testing.T) {
+	for _, c := range []string{RefuseInvalid, RefuseOutside, RefuseNotWorktree, RefuseLocked, RefuseNoRemote, RefuseFetch, RefuseLiveRun, RefuseDirty, RefuseUntracked, RefuseUnpushed, RefuseGit} {
+		if !slices.Contains(proto.WorktreeRefusalCodes, c) {
+			t.Errorf("refusal code %q is not in proto.WorktreeRefusalCodes", c)
+		}
 	}
 }
 

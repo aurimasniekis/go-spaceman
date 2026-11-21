@@ -52,10 +52,13 @@ func TestWorktreeRemoveMessages(t *testing.T) {
 		t.Fatalf("report %+v", gotRep)
 	}
 	for name, bad := range map[string]WorktreeRemoved{
-		"command": {CommandID: "x", SpaceID: space, Result: WorktreeRemovedOK},
-		"space":   {CommandID: cmdID, SpaceID: "x", Result: WorktreeRemovedOK},
-		"result":  {CommandID: cmdID, SpaceID: space, Result: "gone"},
-		"no code": {CommandID: cmdID, SpaceID: space, Result: WorktreeRefused},
+		"command":     {CommandID: "x", SpaceID: space, Result: WorktreeRemovedOK},
+		"space":       {CommandID: cmdID, SpaceID: "x", Result: WorktreeRemovedOK},
+		"result":      {CommandID: cmdID, SpaceID: space, Result: "gone"},
+		"no code":     {CommandID: cmdID, SpaceID: space, Result: WorktreeRefused},
+		"bad code":    {CommandID: cmdID, SpaceID: space, Result: WorktreeRefused, Code: "whatever"},
+		"code on ok":  {CommandID: cmdID, SpaceID: space, Result: WorktreeRemovedOK, Code: "dirty"},
+		"long reason": {CommandID: cmdID, SpaceID: space, Result: WorktreeFailed, Reason: strings.Repeat("a", 1001)},
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("%s: invalid report accepted", name)
