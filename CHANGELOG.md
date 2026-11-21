@@ -22,12 +22,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   node's report with each worktree's owning run and task, the run's last activity and whether it is pushed as of the
   last fetch; `spaceman_worktree_remove` removes one (by repository and worktree, or by the `command_id` of an earlier
   removal that came back pending); `spaceman_worktrees_prune` lists finished work (tasks done or cancelled, run ended)
-  and removes it one by one with `apply`. A node below protocol minor 16, a relocating space and a worktree the last
+  and, with `apply`, removes up to `limit` of them (10 by default, at most 25); it does not read
+  `worktree_retention_days`. A node below protocol minor 16, a relocating space and a worktree the last
   report doesn't list are refused, a worktree a live run holds is refused centrally, and the node's refusal codes are
   passed through. Each request and answer is an audit event of the target `worktree_removal`. ADR-0107.
 - **Automatic pruning of finished-work worktrees: the space limit `worktree_retention_days`.** `0` (the default) means
   never, the range is 0 to 36,500, and it has an installation default (`limits.worktree_retention_days`) and a
-  per-space override through the limits API, `spaceman limits` and the guide's limits page. For a space with a value
+  per-space override through the limits API, `spaceman limits` and the guide's limits page; changing it needs
+  `retention:write` (space admins), like the other retention periods. For a space with a value
   above 0, the daily retention pass asks the node to remove worktrees SpaceMan created whose run has ended and whose
   tasks are all done or cancelled, once that many days have passed since the later of the run's end and the latest
   task finish. Oldest first, at most 10 per space and 50 per pass, with worktrees the node refused at their current
@@ -70,17 +72,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **A usage-limit hold with no known reset now always ends.** A hold whose reset was unknown (Claude Code's wrap-up
   path, or a status line that missed) stayed limited after its original run was gone, hours after the real reset. The
   limit-wait job now clears such holds once their window has passed since they were seen (5 hours for the five-hour
-  kind, 7 days for weekly kinds, the 6-hour keep-alive for unknown and overage kinds) with `cleared_by: expired`,
-  ordered by expiry so the row cap never hides a due hold; if the account is still limited, the next launch opens a
-  new hold. A status-line snapshot no longer clears a hold, since its time is when the line was drawn, not when the
-  data was read. ADR-0079 amended.
+  kind, 7 days for weekly kinds, the 6-hour keep-alive for the `unknown` and `overage` kinds) with
+  `cleared_by: expired`, ordered by expiry so the row cap never hides a due hold; if the account is still limited, the next launch opens a
+  new hold. A status-line snapshot is not evidence that a limit is over, since its time is when the line was drawn,
+  not when the data was read. ADR-0079 amended.
 - **Account holds whose reset has passed are closed, and a switch can use an account whose probe is due.** The hold
   sweep now also closes open account holds whose known reset passed (plus the 2-minute grace) with `cleared_by:
   reset`, and publishes `usage_limit.cleared`. A hold with no reset whose probe time has passed no longer counts as
   held for failover: when every account is otherwise avoided, a switch falls back to it, and the resumed run is its
   probe, instead of ending `fell_back/no_eligible_account`. When a hold clears with its reset observed, the account's
-  open no-reset holds seen no later than that reset clear with it (`cleared_by: evidence`). The `cleared_by` labels
-  `reset`, `expired`, `quota_board` and `budget_status` no longer read as "an operator".
+  open `unknown`-kind holds with no reset seen no later than that reset clear with it (`cleared_by: evidence`). The
+  `cleared_by` labels `reset`, `expired`, `quota_board` and `budget_status` no longer read as "an operator".
 - **A run whose first turn ends in a usage-limit error now gets an account switch.** The run stayed in `error` with no
   limit wait and no switch row although another account had headroom. A fresh turn-0 run with a session is now
   resumable for a usage-limit switch, and the remaining silent cases (no session, no account) are recorded as
@@ -91,7 +93,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the same Claude Code transcript, and its usage-limit scan read the previous run's `usage_limit_reached` record from
   the start, so it was reported at account A's reset and cleared about 30 seconds later. Limit records timestamped
   before the run's launch are now read past and not applied; a record without a readable timestamp behaves as before.
-- **A large node's role memory flushes within its budget.** On a node with about 1,700 memory checkouts,
+- **A large node's role memory flushes within its budget.** On a node with well over a thousand memory checkouts,
   `memory_flush` timed out for every space, because a cold cache costs about seven git processes per checkout, read
   one after another. Instance counts are now read on up to 8 workers bounded node-wide, with one reader per checkout
   shared by the status report and the flush. `memory.flush` has one budget from the request, flushes spaces side by
