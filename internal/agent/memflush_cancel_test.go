@@ -75,8 +75,8 @@ func TestMemoryFlushStopsQuietlyOnCancel(t *testing.T) {
 	if warns != 0 {
 		t.Fatalf("%d checkpoint warnings after a cancellation:\n%s", warns, logs.String())
 	}
-	// At most the git call running at the cancellation, plus the guard's in-flight call, finishes.
-	if after > 2 {
+	// At most the git calls running at the cancellation finish: one per status worker, plus the guard's in-flight call.
+	if after > statusWorkers+2 {
 		t.Fatalf("%d git processes after the cancellation", after)
 	}
 	if js, _ := a.j.memory(ctx, cols[0][0], cols[0][1]); strings.Contains(js.LastError, "canceled") {
@@ -92,8 +92,14 @@ func TestMemoryFlushStopsQuietlyOnCancel(t *testing.T) {
 	old := statusRacy
 	statusRacy = 0
 	t.Cleanup(func() { statusRacy = old })
-	m.statusOf(ctx, cols[0][0], cols[0][1]) // settles the cache after the checkpoints rewrote the indexes
-	m.statusOf(ctx, cols[0][0], cols[0][1])
+	for i := 0; i < 10; i++ { // settles the cache after the checkpoints rewrote the indexes
+		before := count()
+		m.statusOf(ctx, cols[0][0], cols[0][1])
+		if count()-before <= 2 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	c := count()
 	a.flushSpaceMemory(ctx, cols[0][0], "backup")
 	if again := count() - c; again > 4 {

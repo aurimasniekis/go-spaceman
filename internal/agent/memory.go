@@ -70,6 +70,10 @@ type memManager struct {
 	statusTimer *time.Timer
 	statusLast  time.Time
 	instStatus  map[string]instStatus
+	// statusBusy holds the instances whose counts are being read (a second reader waits for the first and then finds
+	// them cached); statusSlots bounds the git readers of the whole node (memstatus.go).
+	statusBusy  map[string]chan struct{}
+	statusSlots chan struct{}
 	reportMu    sync.Mutex
 	// statusSent, when set (tests), sees each status report as it is sent.
 	statusSent func(proto.MemoryStatus)
@@ -81,6 +85,7 @@ type memManager struct {
 func newMemManager(a *Agent) *memManager {
 	m := &memManager{a: a, base: context.Background(), root: filepath.Join(a.o.DataDir, "memory"), locks: map[string]*sync.Mutex{}, timers: map[string]*time.Timer{},
 		syncs: map[string]*time.Timer{}, waiting: map[string]string{}, statusDirty: map[string][2]string{}, instStatus: map[string]instStatus{},
+		statusBusy: map[string]chan struct{}{}, statusSlots: make(chan struct{}, statusWorkers),
 		flushing: map[string]chan struct{}{}}
 	if g, err := memory.NewGit(); err == nil {
 		m.git = g
@@ -236,6 +241,16 @@ func (m *memManager) checkpoint(ctx context.Context, spaceID, role, instance, re
 
 // checkpointErr is checkpoint reporting whether the changes reached the shared history.
 func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance, reason string) error {
+	return m.checkpointBy(ctx, spaceID, role, instance, reason, time.Time{})
+}
+
+// errBudgetSpent is what checkpointBy returns for a checkpoint it did not start because its budget had run out.
+var errBudgetSpent = errors.New("checkpoint budget spent")
+
+// checkpointBy is checkpointErr that does not start once notAfter has passed (also after waiting for the collection
+// lock) and cuts its git short at notAfter; the zero time: no limit. A skipped checkpoint returns errBudgetSpent and
+// records nothing: the changes stay in the files.
+func (m *memManager) checkpointBy(ctx context.Context, spaceID, role, instance, reason string, notAfter time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err // stopping (the connection or the agent ended): no git, no record, no warning
 	}
@@ -249,7 +264,17 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 		unlock()
 		return nil // the collection was renamed meanwhile (ADR-0093): its checkouts moved with it
 	}
-	pctx, cancel := context.WithTimeout(ctx, checkpointDeadline)
+	limit := time.Now().Add(checkpointDeadline)
+	if !notAfter.IsZero() {
+		if !time.Now().Before(notAfter) {
+			unlock()
+			return errBudgetSpent
+		}
+		if notAfter.Before(limit) {
+			limit = notAfter
+		}
+	}
+	pctx, cancel := context.WithDeadline(ctx, limit)
 	published, err := m.publish(pctx, spaceID, role, instance, reason)
 	cancel()
 	unlock()
@@ -269,7 +294,11 @@ func (m *memManager) checkpointErr(ctx context.Context, spaceID, role, instance,
 	_ = m.a.j.putMemory(ctx, st)
 	if published {
 		m.scheduleSync(spaceID, role, syncDelay)
-		m.fastForwardIdle(ctx, spaceID, role, instance) // ADR-0094: the other instances between turns follow the new head
+		if notAfter.IsZero() {
+			// ADR-0094: the other instances between turns follow the new head. Not under a deadline (a flush): the
+			// collection lock wait and one 2 min git per idle instance are unbounded; they follow at the next checkpoint.
+			m.fastForwardIdle(ctx, spaceID, role, instance)
+		}
 	}
 	m.statusChanged(spaceID, role)
 	return err
@@ -632,15 +661,19 @@ func (m *memManager) statusOf(ctx context.Context, spaceID, role string) proto.M
 	dir := filepath.Join(m.root, spaceID, role, "instances")
 	insts, _ := os.ReadDir(dir)
 	seen := map[string]bool{}
+	var mu sync.Mutex
 	for _, i := range insts {
-		c.Instances++
-		inst := filepath.Join(dir, i.Name())
-		seen[inst] = true
-		if unc, local, ok := m.instanceStatus(ctx, inst, head); ok {
+		seen[filepath.Join(dir, i.Name())] = true
+	}
+	c.Instances = len(insts)
+	eachParallel(len(insts), func(i int) {
+		if unc, local, ok := m.instanceStatus(ctx, filepath.Join(dir, insts[i].Name()), head); ok {
+			mu.Lock()
 			c.Uncheckpointed += unc
 			c.LocalCommits += local
+			mu.Unlock()
 		}
-	}
+	})
 	m.forgetStatus(dir, seen)
 	return c
 }
