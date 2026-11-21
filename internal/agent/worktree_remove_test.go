@@ -649,6 +649,39 @@ func TestLaunchRefusedOntoAClaimedWorktree(t *testing.T) {
 	}
 }
 
+// ADR-0107 (review round 3): a live run launched through a symlink into a worktree, with a folder that did not exist yet
+// ("alias/new"), keeps the worktree claimed after the symlink and the new folder are gone: the record is the resolved
+// folder, so the claim is refused with live_run. Comparing names, or recording the unresolved path, would let it through.
+func TestClaimRefusedForRunLaunchedThroughRemovedSymlink(t *testing.T) {
+	e := newRmEnv(t)
+	dir := e.worktree(t, "spaceman/via-alias", true)
+	alias := filepath.Join(e.space, "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	e.liveRun(t, e.spaceID, filepath.Join(alias, "new"))
+	if err := os.MkdirAll(filepath.Join(dir, "new"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "new")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.a.claimWorktree(context.Background(), e.spaceID, realPath(dir))
+	wantRefused(t, err, RefuseLiveRun)
+	// A claim that names the worktree through another, surviving symlink is the same folder, whatever the names say.
+	if err := os.Symlink(dir, filepath.Join(e.space, "alias2")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.a.claimWorktree(context.Background(), e.spaceID, filepath.Join(e.space, "alias2"))
+	wantRefused(t, err, RefuseLiveRun)
+	_, err = e.remove("spaceman-via-alias")
+	wantRefused(t, err, RefuseLiveRun)
+	mustExist(t, dir)
+}
+
 // ADR-0107 (review): the overlap check compares the folders themselves, not only their names, which is what catches a
 // path that differs only by case on a case-insensitive filesystem (here shown with a symlink).
 func TestPathsOverlapComparesFolders(t *testing.T) {
