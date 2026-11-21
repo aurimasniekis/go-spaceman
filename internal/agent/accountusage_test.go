@@ -93,7 +93,7 @@ func TestStatusLineFillsWrapUpLimitOnTheWire(t *testing.T) {
 		clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
 		startAgent(t, a, fc, clk)
 		fc.next(t, proto.TypeHello)
-		ccLaunchEarlier(a, "run_wrap")
+		ccLaunchEarlier(t, a, "run_wrap")
 		a.rememberRunToken("run_wrap", "tok")
 		t.Setenv("SPACEMAN_RUN_TOKEN", "tok")
 		waitFor(t, "bridge socket", func() bool { _, err := os.Stat(a.o.BridgeSocket); return err == nil })
