@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -312,6 +313,11 @@ func (m *memManager) publish(ctx context.Context, spaceID, role, instance, reaso
 	// (files both sides added with different content still conflict and are preserved).
 	mergeArgs := []string{"merge", "--quiet", "--no-edit", "-m", "Merge memory from other instances into " + instance}
 	if _, err := g.RunCheckout(ctx, inst, nil, "merge-base", head, theirs); err != nil {
+		// Only exit 1 means "no common ancestor" (as in unbornHead); any other failure fails closed and is retried later.
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 1 || ctx.Err() != nil {
+			return false, err
+		}
 		mergeArgs = append(mergeArgs, "--allow-unrelated-histories")
 	}
 	if _, err := g.RunCheckout(ctx, inst, id, append(mergeArgs, theirs)...); err == nil {
@@ -328,13 +334,15 @@ const maxConflictFolders = 50
 
 // preserve keeps an instance's conflicting history and moves the instance onto the shared history: the local commits
 // are pushed to refs/conflicts/…, and the local versions of the conflicting files are added under conflicts/ so the
-// role sees them and can reconcile. Nothing is overwritten.
+// role sees them and can reconcile. Nothing is overwritten. The instance's other (non-conflicting) changes are merged
+// into shared main: the conflicting files take the shared version, their local copies go under conflicts/.
 func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head, theirs string, files []string) (bool, error) {
 	shared, inst := m.shared(spaceID, role), m.instance(spaceID, role, instance)
 	g := m.git
 	stamp := m.a.now().UTC().Format("20060102T150405Z")
 	ref := "refs/conflicts/" + instance + "-" + stamp
 	if _, err := g.RunCheckout(ctx, inst, nil, "push", "--quiet", shared, head+":"+ref); err != nil {
+		_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
 		return false, err
 	}
 	saved := map[string][]byte{}
@@ -346,7 +354,8 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 			saved[f] = []byte(b)
 		}
 	}
-	if _, err := g.RunCheckout(ctx, inst, nil, "reset", "--quiet", "--hard", theirs); err != nil {
+	if err := m.resolveToShared(ctx, inst, instance, head, theirs); err != nil {
+		_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
 		return false, err
 	}
 	dir := filepath.Join("conflicts", instance+"-"+stamp)
@@ -377,6 +386,38 @@ func (m *memManager) preserve(ctx context.Context, spaceID, role, instance, head
 	m.a.log.Warn("memory conflict preserved", slog.String(obs.FieldSpaceID, spaceID), slog.String("memory.role", role), slog.String("memory.ref", ref),
 		slog.Int("files", len(files)))
 	return true, nil
+}
+
+// resolveToShared moves the checkout (at head) onto the shared history without losing the instance's other work: it
+// merges theirs again, every conflicting file takes the shared version (or is removed when shared deleted it), and the
+// merge is committed, so the non-conflicting local changes stay. When the merge cannot even start, the checkout is
+// reset to the shared history as before.
+func (m *memManager) resolveToShared(ctx context.Context, inst, instance, head, theirs string) error {
+	g := m.git
+	_, _ = g.RunCheckout(ctx, inst, nil, "merge", "--abort")
+	args := []string{"merge", "--quiet", "--no-commit", "--no-ff", "-m", "Merge memory from other instances into " + instance}
+	if _, err := g.RunCheckout(ctx, inst, nil, "merge-base", head, theirs); err != nil {
+		args = append(args, "--allow-unrelated-histories")
+	}
+	_, _ = g.RunCheckout(ctx, inst, ident(instance), append(args, theirs)...)
+	if g.RevParse(ctx, inst, "MERGE_HEAD") == "" {
+		_, err := g.RunCheckout(ctx, inst, nil, "reset", "--quiet", "--hard", theirs)
+		return err
+	}
+	out, _ := g.RunCheckout(ctx, inst, nil, "diff", "--name-only", "--diff-filter=U")
+	for _, f := range strings.Fields(out) {
+		if _, err := g.RunCheckout(ctx, inst, nil, "checkout", "--theirs", "--", f); err != nil {
+			if _, err := g.RunCheckout(ctx, inst, nil, "rm", "--quiet", "-f", "--sparse", "--", f); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := g.RunCheckout(ctx, inst, nil, "add", "-f", "--sparse", "--", f); err != nil {
+			return err
+		}
+	}
+	_, err := g.RunCheckout(ctx, inst, ident(instance), "commit", "--quiet", "--no-edit")
+	return err
 }
 
 // writeConflictCopies writes the conflict copies and the README under dir inside the instance checkout. Any instance can
