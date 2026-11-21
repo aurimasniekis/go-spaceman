@@ -107,6 +107,9 @@ type Service struct {
 	archive bool
 	log     *slog.Logger
 	mu      sync.Mutex
+	// OnWindowsTx, when set, is called in the transaction that books an account's validated windows (a status-line
+	// snapshot): the fleet ends the account's open usage-limit holds that the snapshot shows over.
+	OnWindowsTx func(ctx context.Context, tx *store.Tx, accountID string, windows []proto.UsageWindow) error
 }
 
 // New returns the service; transcripts are received under dir and kept in store (nil: a local store rooted at dir).

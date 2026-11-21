@@ -28,6 +28,10 @@ SELECT * FROM usage_limits WHERE scope = 'gateway' AND gateway_ref = ? AND clear
 -- name: ListOpenGatewayUsageLimits :many
 SELECT * FROM usage_limits WHERE scope = 'gateway' AND cleared_at IS NULL ORDER BY seen_at, id LIMIT sqlc.arg(lim);
 
+-- Open account holds whose reset is unknown: the expiry sweep ends the ones past their window (ADR-0079 amendment).
+-- name: ListOpenUnknownResetAccountLimits :many
+SELECT * FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NULL ORDER BY seen_at, id LIMIT sqlc.arg(lim);
+
 -- name: ListOpenUsageLimitsBySpace :many
 SELECT * FROM usage_limits WHERE space_id = ? AND cleared_at IS NULL ORDER BY seen_at, id;
 

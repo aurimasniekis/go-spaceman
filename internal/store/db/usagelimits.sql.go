@@ -898,6 +898,53 @@ func (q *Queries) ListOpenGatewayUsageLimits(ctx context.Context, lim int64) ([]
 	return items, nil
 }
 
+const listOpenUnknownResetAccountLimits = `-- name: ListOpenUnknownResetAccountLimits :many
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND cleared_at IS NULL AND resets_at IS NULL ORDER BY seen_at, id LIMIT ?1
+`
+
+// Open account holds whose reset is unknown: the expiry sweep ends the ones past their window (ADR-0079 amendment).
+func (q *Queries) ListOpenUnknownResetAccountLimits(ctx context.Context, lim int64) ([]UsageLimit, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenUnknownResetAccountLimits, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageLimit{}
+	for rows.Next() {
+		var i UsageLimit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.AccountID,
+			&i.GatewayRef,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.CheckAt,
+			&i.Source,
+			&i.FirstRunID,
+			&i.SeenAt,
+			&i.ClearedAt,
+			&i.ClearedBy,
+			&i.NotifiedControlAt,
+			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenUsageLimitsByAccount = `-- name: ListOpenUsageLimitsByAccount :many
 SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `

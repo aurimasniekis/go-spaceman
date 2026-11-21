@@ -6358,6 +6358,21 @@
   - A gateway reset is an estimate and may resume early (re-detected, re-parked, no new notice) or up to 15 min late.
   - A real subscription limit can't be forced in tests; until one is observed on a SpaceMan run, real evidence stays
     empty (K-16).
+- **Amendment (holds always end):** an account hold with an unknown reset (the wrap-up path, or a status line that
+  missed) had only a probe time, which a launch may claim, and nothing that closed the row: it stayed "limited" for
+  good when the run that reported the limit was gone, hours after the real reset. Now:
+  - **Bound.** The limit-wait job's sweep clears an open account hold whose reset is unknown once its window has passed
+    since it was seen: 5 hours (the five-hour window; also unknown and overage kinds), 7 days for the weekly kinds.
+    `cleared_by` is `expired`. If the account is still limited, the next launch hits the limit again and opens a new
+    hold with its own window, so the bound can cost one failed turn, never a stuck account. Gateway holds keep their
+    own estimate and re-read (decision 9). A hold with a known reset is untouched (it ends with its reset, as before).
+  - **Evidence.** A status-line `rate_limits` snapshot of the account from any run in any space, observed after the hold
+    was seen, ends a hold with an unknown reset when it shows the hold's window under 100 % (five-hour kind: the
+    five-hour window; weekly and weekly-overage kinds: the seven-day window; unknown and overage kinds: every reported
+    window). Per-model weekly kinds (Opus, Sonnet) aren't visible in the account totals, so only the bound ends them.
+    The hold is cleared in every space as `cleared_by: evidence`, within the existing trust rule (decision 7): a known
+    future reset is never cleared by another run's report.
+  - **Operator.** Unchanged: a space operator clears their own space's hold and `account:write` clears every space's.
 
 ### ADR-0093 — A space role can be renamed in place; live references follow, history stays
 

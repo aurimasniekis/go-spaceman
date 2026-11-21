@@ -532,6 +532,11 @@ func (svc *Service) NextLimitWait(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	earlier(back)
+	expiry, err := svc.NextHoldExpiry(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	earlier(expiry)
 	runs, err := q.ListLimitedLiveRuns(ctx, maxLimitRows)
 	if err != nil {
 		return time.Time{}, err
@@ -587,6 +592,9 @@ func (svc *Service) LimitWaitsDue(ctx context.Context) (int, error) {
 	done += n
 	errs = append(errs, err)
 	n, err = svc.resumeDueWaits(ctx, now)
+	done += n
+	errs = append(errs, err)
+	n, err = svc.expireHolds(ctx, now)
 	done += n
 	errs = append(errs, err)
 	return done, errors.Join(errs...)
