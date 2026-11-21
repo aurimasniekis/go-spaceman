@@ -151,3 +151,84 @@ func TestStatusCachePrunesRemovedCollectionsAndInstances(t *testing.T) {
 		t.Fatalf("cached after the collection went: %d", n)
 	}
 }
+
+// unbornInstance replaces an instance with a fresh `git init` checkout: the state a failed or cancelled ensure leaves.
+func unbornInstance(t *testing.T, m *memManager, sp, role, inst string) string {
+	t.Helper()
+	dir := m.instance(sp, role, inst)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // test
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "-q", "-b", "main") //nolint:gosec // test
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	return dir
+}
+
+// An unborn HEAD has no commits to publish: it counts 0 local commits (cached like any other checkout), so an empty
+// one is clean, the space reads clean after a flush, and a relocation flush succeeds.
+func TestMemoryStatusUnbornHeadIsClean(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	old := statusRacy
+	statusRacy = 0
+	t.Cleanup(func() { statusRacy = old })
+	col := statusFleet(t, m, 1, 1)[0]
+	sp, role := col[0], col[1]
+	stopSyncs(m)
+	unbornInstance(t, m, sp, role, "ins_0")
+	js, _ := a.j.memory(ctx, sp, role)
+	js.Acked = m.git.RevParse(ctx, m.shared(sp, role), "refs/heads/main")
+	if err := a.j.putMemory(ctx, js); err != nil {
+		t.Fatal(err)
+	}
+	a.flushSpaceMemory(ctx, sp, "backup")
+	stopSyncs(m)
+	if ok, why := a.memoryClean(ctx, sp); !ok {
+		t.Fatalf("an empty unborn checkout read as unclean: %s", why)
+	}
+	count := countGit(t, m)
+	inst, head := m.instance(sp, role, "ins_0"), m.git.RevParse(ctx, m.shared(sp, role), "refs/heads/main")
+	for range 2 {
+		if _, n, ok := m.instanceStatus(ctx, inst, head); !ok || n != 0 {
+			t.Fatalf("unborn checkout: ok=%v localCommits=%d, want 0", ok, n)
+		}
+	}
+	c := count()
+	if _, _, _ = m.instanceStatus(ctx, inst, head); count() != c {
+		t.Fatalf("an unchanged unborn checkout was not cached: %d execs", count()-c)
+	}
+	if !a.relocFlush(ctx, sp, 10*time.Second) {
+		t.Fatal("relocFlush failed for an unborn checkout")
+	}
+}
+
+// Files written into an unborn checkout still count: it is dirty until they are checkpointed.
+func TestMemoryStatusUnbornHeadWithFileIsDirty(t *testing.T) {
+	a := memAgent(t)
+	ctx := context.Background()
+	m := a.mem
+	old := statusRacy
+	statusRacy = 0
+	t.Cleanup(func() { statusRacy = old })
+	col := statusFleet(t, m, 1, 1)[0]
+	sp, role := col[0], col[1]
+	stopSyncs(m)
+	dir := unbornInstance(t, m, sp, role, "ins_0")
+	write(t, dir, "note.md", "- written\n")
+	if ok, _ := a.memoryClean(ctx, sp); ok {
+		t.Fatal("an unborn checkout with an untracked file read as clean")
+	}
+	a.flushSpaceMemory(ctx, sp, "backup")
+	stopSyncs(m)
+	head := m.git.RevParse(ctx, m.shared(sp, role), "refs/heads/main")
+	if n, _, ok := m.instanceStatus(ctx, dir, head); !ok || n != 0 {
+		t.Fatalf("the file was not checkpointed: uncheckpointed=%d ok=%v", n, ok)
+	}
+}

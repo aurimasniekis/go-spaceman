@@ -137,8 +137,15 @@ func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (unc
 			// An idle instance has not fetched the shared head yet: bring its objects in (what a checkpoint does first)
 			// and count again.
 			shared := filepath.Join(filepath.Dir(filepath.Dir(inst)), "shared.git")
-			if _, ferr := m.git.RunCheckout(ctx, inst, nil, "fetch", "--quiet", "--no-tags", shared, "main"); ferr == nil {
+			if _, ferr := m.git.RunCheckout(ctx, inst, nil, "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", shared, "main"); ferr == nil {
 				n, err = m.git.CountErr(ctx, inst, head, "HEAD")
+			}
+		}
+		if err != nil {
+			if _, herr := m.git.RunCheckout(ctx, inst, nil, "rev-parse", "--verify", "-q", "HEAD"); herr != nil {
+				// An unborn HEAD (a checkout that was only initialised, as a failed or cancelled ensure leaves it)
+				// has no commits to publish; its files still count through the status above. Cached as usual.
+				n, err = 0, nil
 			}
 		}
 		if err != nil {
