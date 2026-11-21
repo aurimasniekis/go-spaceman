@@ -728,10 +728,17 @@ func TestUsageLimitRecordBeforeLaunchIsNotFlagged(t *testing.T) {
 func ccLaunchEarlier(t *testing.T, a *Agent, runID string) {
 	t.Helper()
 	ccLaunch(a, runID)
+	var rows int64
 	if err := a.j.s.W().TxNamed(context.Background(), "test.backdate_run", func(tx *store.Tx) error {
-		_, err := tx.SQL.ExecContext(context.Background(), `UPDATE runs SET created_at = created_at - ? WHERE run_id = ?`, time.Hour.Microseconds(), runID)
+		res, err := tx.SQL.ExecContext(context.Background(), `UPDATE runs SET created_at = created_at - ? WHERE run_id = ?`, time.Hour.Microseconds(), runID)
+		if err != nil {
+			return err
+		}
+		rows, err = res.RowsAffected()
 		return err
 	}); err != nil {
 		t.Errorf("backdating %s: %v", runID, err)
+	} else if rows != 1 {
+		t.Errorf("backdating %s updated %d rows, want 1", runID, rows)
 	}
 }
