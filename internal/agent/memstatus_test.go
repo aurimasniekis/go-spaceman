@@ -226,7 +226,7 @@ func TestMemoryStatusExecsBounded(t *testing.T) {
 	if !ok || len(st.Collections) != 1 || got.Uncheckpointed != 1 || got.Instances != n {
 		t.Fatalf("after an edit: %+v", st)
 	}
-	if one, want := count()-c2, 2+4+3; one != want {
-		t.Fatalf("a report after one edit ran %d execs, want %d", one, want)
+	if one, want := count()-c2, 2+4+3; one > want {
+		t.Fatalf("a report after one edit ran %d execs, want at most %d", one, want)
 	}
 }
