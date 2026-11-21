@@ -293,8 +293,8 @@ func rateLimitInfo(r *limitRecord) *quotaInfo {
 }
 
 // scanLimit reads path from lim.Offset (from the start when the file is shorter, so truncated or replaced) and
-// returns (limits set by records before notBefore are ignored) the limit after the complete lines read, with the offset after the last of them. replaced forces a scan
-// from the start. It reads at most limitScanMax bytes and keeps at most one line of limitLineMax in memory.
+// returns the limit after the complete lines read, with the offset after the last of them. replaced forces a scan
+// from the start. Limit records before notBefore (the run's start) are read past, not applied. It reads at most limitScanMax bytes and keeps at most one line of limitLineMax in memory.
 func scanLimit(path string, lim runLimit, replaced bool, now, notBefore time.Time) (limitParser, error) {
 	p := limitParser{lim: lim, now: now, notBefore: notBefore}
 	f, err := os.Open(path) //nolint:gosec // the run's own transcript in its instance folder
