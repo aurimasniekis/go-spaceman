@@ -79,3 +79,56 @@ func TestUsageLimitUnknownResetExpires(t *testing.T) {
 		t.Fatalf("open after 7 d: %v", open)
 	}
 }
+
+// unknownHold inserts an open account hold with an unknown reset seen ago before the clock's now.
+func (e *holdEnv) unknownHold(id, space, kind string, ago time.Duration) {
+	e.t.Helper()
+	e.exec(`INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, source, first_run_id, seen_at, created_at, updated_at)
+		VALUES (?, ?, 'account', 'acc_1', '', ?, 'transcript', 'run_x', ?, ?, ?)`, id, space, kind, e.us(-ago), e.us(-ago), e.us(-ago))
+}
+
+// The list is ordered by expiry (seen_at plus the kind window), not by seen_at: weekly holds seen long ago, whose window
+// is far from over, must not crowd a due five-hour hold out of a capped read.
+func TestListOpenUnknownResetAccountLimitsOrdersByExpiry(t *testing.T) {
+	e := newHoldEnv(t)
+	for i, k := range []string{proto.LimitSevenDay, proto.LimitSevenDayOpus, proto.LimitSevenDaySonnet} {
+		e.unknownHold("ulm_w"+k, "spc_a", k, 6*24*time.Hour+time.Duration(3-i)*time.Hour)
+	}
+	e.unknownHold("ulm_due", "spc_a", proto.LimitFiveHour, 6*time.Hour)
+
+	rows, err := e.s.R().ListOpenUnknownResetAccountLimits(e.ctx, 1)
+	if err != nil || len(rows) != 1 || rows[0].ID != "ulm_due" {
+		t.Fatalf("capped read %v (%v), want the due five-hour hold first", rows, err)
+	}
+	if n, err := e.svc.expireHolds(e.ctx, e.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("sweep: n=%d err=%v, want 1", n, err)
+	}
+	if open := e.openIDs(); open["ulm_due"] || len(open) != 3 {
+		t.Fatalf("open after sweep: %v", open)
+	}
+}
+
+// The SQL orders by the kind windows written in microseconds; holdMaxAge is the source of truth. Holds of every kind
+// are seen so their expiry by holdMaxAge is one second apart, widest window seen first: the SQL must list them in
+// expiry order, which holds only while its windows agree with holdMaxAge.
+func TestListOpenUnknownResetAccountLimitsAgreesWithHoldMaxAge(t *testing.T) {
+	e := newHoldEnv(t)
+	kinds := []string{proto.LimitSevenDay, proto.LimitSevenDayOpus, proto.LimitSevenDaySonnet, proto.LimitSevenDayOverage,
+		proto.LimitUnknown, proto.LimitFiveHour, "overage"}
+	want := make([]string, 0, len(kinds))
+	for i, k := range kinds {
+		id := "ulm_k" + string(rune('a'+i))
+		// Expiry is now + (len-i) seconds: the first kind expires last.
+		e.unknownHold(id, "spc_a", k, holdMaxAge(k)-time.Duration(len(kinds)-i)*time.Second)
+		want = append([]string{id}, want...)
+	}
+	rows, err := e.s.R().ListOpenUnknownResetAccountLimits(e.ctx, 100)
+	if err != nil || len(rows) != len(want) {
+		t.Fatalf("rows %d (%v), want %d", len(rows), err, len(want))
+	}
+	for i, r := range rows {
+		if r.ID != want[i] {
+			t.Fatalf("row %d is %s (%s), want %s: the SQL windows disagree with holdMaxAge", i, r.ID, r.Kind, want[i])
+		}
+	}
+}
