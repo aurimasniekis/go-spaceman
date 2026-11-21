@@ -145,15 +145,15 @@ func (svc *Service) decideSwitchTx(ctx context.Context, tx *store.Tx, r db.Run, 
 	if ok && scope != LimitScopeAccount {
 		return switchDecision{}, nil // a gateway limit: its own hold, no account to move from
 	}
-	d := switchDecision{decided: true, from: from}
-	if !ok {
-		d.reason = SwitchNoAccount // the run's launch names no account: it can't be moved off one
-		return d, nil
-	}
 	// Q4: a reset within the window is waited for (ADR-0079): the run stays alive at a limit that is about to end, with
 	// control told. That is the decision itself and isn't a fallback, so nothing is recorded.
 	if lim.resets.Valid && time.UnixMicro(lim.resets.Int64).Sub(tx.Now) <= ul.WaitIfResetWithin {
 		return switchDecision{}, nil
+	}
+	d := switchDecision{decided: true, from: from}
+	if !ok {
+		d.reason = SwitchNoAccount // the run's launch names no account: it can't be moved off one
+		return d, nil
 	}
 	if session, err := limitSwitchSession(ctx, tx.Q, r); err != nil {
 		return switchDecision{}, err
