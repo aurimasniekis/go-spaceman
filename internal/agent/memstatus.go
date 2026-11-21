@@ -112,7 +112,8 @@ func (m *memManager) reportStatus(ctx context.Context) {
 }
 
 // instanceStatus is an instance checkout's uncheckpointed changes and the commits it has not published, from the cache
-// when nothing in the checkout changed. ok is false for a folder that is not a checkout of its own.
+// when nothing in the checkout changed. ok is false for a folder that is not a checkout of its own (it has no .git);
+// a checkout whose status cannot be read counts as unclean.
 func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (uncheckpointed, localCommits int, ok bool) {
 	pre, cacheable := statusStamp(inst, head)
 	if cacheable {
@@ -128,7 +129,16 @@ func (m *memManager) instanceStatus(ctx context.Context, inst, head string) (unc
 		m.statusMu.Lock()
 		delete(m.instStatus, inst)
 		m.statusMu.Unlock()
-		return 0, 0, false // not a checkout of its own: nothing is counted, and no git runs there
+		if fi, serr := os.Lstat(inst); serr != nil || !fi.IsDir() {
+			return 0, 0, false // a stray file, or gone
+		}
+		if _, serr := os.Lstat(filepath.Join(inst, ".git")); os.IsNotExist(serr) {
+			return 0, 0, false // not a checkout of its own: nothing is counted, and no git runs there
+		}
+		// A checkout whose status cannot be read (the guard refused it: a nested .git, a FIFO, a link; or git failed or
+		// the context ended) is never read as clean: its changes and commits are unknown, so count at least one of
+		// each, and the space is not clean until the checkout can be read and published. Not cached.
+		return 1, boolToInt(head != ""), true
 	}
 	uncheckpointed = len(strings.Split(strings.TrimSpace(out), "\n")) - boolToInt(strings.TrimSpace(out) == "")
 	// Commits an instance has not published (it diverged and is waiting for its next checkpoint).
