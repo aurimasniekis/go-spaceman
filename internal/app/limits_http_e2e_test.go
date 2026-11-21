@@ -156,3 +156,32 @@ func TestWorktreeRetentionLimitOverHTTP(t *testing.T) {
 		t.Fatalf("override %+v", got)
 	}
 }
+
+// ADR-0107 decision 4: worktree_retention_days is changed like the retention limits, with retention:write. An operator
+// (space_config:write) is refused; an admin of the space is allowed; the operator still changes other limits.
+func TestWorktreeRetentionLimitNeedsRetentionWrite(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	en, _ := h.c.Fleet.CreateNode(ctx, admin, fleet.CreateNodeInput{Name: "node-p"})
+	sp, err := h.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "wt-perm", Name: "Worktree permission", NodeID: en.Node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw := "correct horse battery staple"
+	expect(t, root.do("POST", "/users", map[string]any{"email": "ops-wt@example.com", "display_name": "Ops", "password": pw,
+		"grants": []map[string]string{{"role": "operator", "domain": sp.ID}}}), 201)
+	expect(t, root.do("POST", "/users", map[string]any{"email": "adm-wt@example.com", "display_name": "Adm", "password": pw,
+		"grants": []map[string]string{{"role": "admin", "domain": sp.ID}}}), 201)
+	ops := h.client()
+	ops.bearer = loginAndIssueToken(t, h, "ops-wt@example.com", []map[string]string{{"role": "operator", "domain": sp.ID}})
+	adm := h.client()
+	adm.bearer = loginAndIssueToken(t, h, "adm-wt@example.com", []map[string]string{{"role": "admin", "domain": sp.ID}})
+	expect(t, ops.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.WorktreeRetention: 14}}), 403)
+	expect(t, ops.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.ConcurrentRuns: 3}}), 200)
+	expect(t, adm.do("PUT", "/spaces/"+sp.ID+"/limits", map[string]any{"values": map[string]int64{limits.ConcurrentRuns: 3, limits.WorktreeRetention: 14}},
+		"If-Match", `"1"`), 200)
+}

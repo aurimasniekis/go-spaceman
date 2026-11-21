@@ -8279,7 +8279,7 @@
   local bare remote (`TestRemoveWorktreeSafely*`, `TestRecordWorkdir`, `TestLaunchRecordsWorkdirUnderTheWorktreeLock`,
   `TestLaunchRefusedOntoAClaimedWorktree` (a launch into, through a symlink to, and around a claimed worktree),
   `TestPathsOverlapComparesFolders`, `TestRemoveWorktreeSafelyDoesNotHoldTheLockWhileChecking`). Nothing calls the
-  core yet. Decision 6 is implemented (WL-6, `internal/agent` `TestRepoReportWorktreeStatus*` in `repostatus_test.go`); decisions 4, 5, 7 and 8 are the design for follow-up tasks, and until they land,
+  core yet. Decision 6 is implemented (WL-6, `internal/agent` `TestRepoReportWorktreeStatus*` in `repostatus_test.go`); decision 4's limit `worktree_retention_days` is implemented (WL-3: default 0, 0–36500, per-space override, changed with `retention:write`; `TestWorktreeRetentionLimitOverHTTP`, `TestWorktreeRetentionLimitNeedsRetentionWrite`) but nothing reads it, so its auto-prune is still the design for a follow-up; decisions 5, 7 and 8 are the design for follow-up tasks, and until they land,
   worktrees are still never removed automatically (LIMITATIONS).
 - **Security-relevant because:** for the first time SpaceMan deletes files a run wrote in the space folder. SM-REPO-006
   ("SpaceMan never silently resets, commits, pushes or deletes source changes") is kept by what may be deleted: only a

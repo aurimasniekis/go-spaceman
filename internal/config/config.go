@@ -170,8 +170,8 @@ type LimitsConfig struct {
 	// response still refers to them (0: keep).
 	RetentionHumanActionsDays int64 `yaml:"retention_human_actions_days"`
 	// WorktreeRetentionDays is how many days after its owning task was done or cancelled a worktree SpaceMan created may
-	// be pruned (ADR-0107; 0: never, the default; at most 36500). Failed tasks and unowned worktrees are never pruned. The pruning that uses it is a follow-up: until it lands the value
-	// is stored and shown, and nothing is removed.
+	// be pruned (ADR-0107; 0: never, the default; at most 36500). Failed tasks and unowned worktrees are never pruned.
+	// The pruning that uses it is a follow-up: until it lands the value is stored and shown, and nothing is removed.
 	WorktreeRetentionDays int64 `yaml:"worktree_retention_days"`
 	// RecordingQuotaBytes bounds one run's terminal recording on the node (1 MiB-64 GiB, default 512 MiB). When it is
 	// reached the recording ends with a truncation record; the run is unaffected.
