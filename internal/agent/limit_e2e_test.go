@@ -14,6 +14,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	rt "github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // helloRun returns runID's report in the next hello.
@@ -159,7 +160,7 @@ func TestUsageLimitDetectedSetClearRestart(t *testing.T) {
 	fc.next(t, proto.TypeHello)
 
 	const runID = "run_limit"
-	ccLaunch(a, runID)
+	ccLaunchEarlier(a, runID)
 	row := getRun(t, a, runID)
 	if row.State != proto.RunRunning || row.SessionID == "" {
 		t.Fatalf("run %+v", row)
@@ -282,7 +283,7 @@ func TestUsageLimitWrapUpAndOldCentral(t *testing.T) {
 		clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
 		startAgent(t, a, fc, clk)
 		fc.next(t, proto.TypeHello)
-		ccLaunch(a, "run_wrap")
+		ccLaunchEarlier(a, "run_wrap")
 		row := getRun(t, a, "run_wrap")
 		transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
 		if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
@@ -330,7 +331,7 @@ func TestUsageLimitReportBeforeWelcomeIsHeld(t *testing.T) {
 	fc := newHeldWSCentral(t, proto.MinorUsageLimit, hold)
 	startAgent(t, a, fc, clock.NewFake(time.Now().UTC().Truncate(time.Second)))
 	fc.next(t, proto.TypeHello) // sent: the connection is set, the welcome is held
-	ccLaunch(a, "run_held")
+	ccLaunchEarlier(a, "run_held")
 	fc.collectAtLeast(t, "run_held", 2, 100*time.Millisecond)
 	if err := a.j.setRunLimit(context.Background(), "run_held", runLimit{Kind: proto.LimitFiveHour, ResetsAt: &reset, Since: &at, Offset: 1}); err != nil {
 		t.Fatal(err)
@@ -362,7 +363,7 @@ func TestUsageLimitScannedBeforeWelcomeIsSentAfter(t *testing.T) {
 	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
 	startAgent(t, a, fc, clk)
 	fc.next(t, proto.TypeHello)
-	ccLaunch(a, "run_scan")
+	ccLaunchEarlier(a, "run_scan")
 	// The launch's own report is held too, and its re-send would read the limit from the journal: forget it, so only
 	// the scan can send the limit.
 	a.mu.Lock()
@@ -410,7 +411,7 @@ func TestRunEndBetweenHelloSnapshotAndConnIsSentAfterWelcome(t *testing.T) {
 	var once sync.Once
 	a.helloStage = func() {
 		once.Do(func() {
-			ccLaunch(a, "run_gap")
+			ccLaunchEarlier(a, "run_gap")
 			row := getRun(t, a, "run_gap")
 			row.State = proto.RunExited
 			if err := a.j.updateRun(context.Background(), row); err != nil {
@@ -456,7 +457,7 @@ func TestUsageLimitScannedInPreConnWindowIsSentAfterWelcome(t *testing.T) {
 			if a.protocolAtLeast(proto.MinorUsageLimit) {
 				t.Error("the minor is already negotiated: not the first-connect case")
 			}
-			ccLaunch(a, "run_pre")
+			ccLaunchEarlier(a, "run_pre")
 			// The launch's own held report would read the limit from the journal: forget it, so only the scan can send it.
 			a.mu.Lock()
 			delete(a.heldReports, "run_pre")
@@ -519,7 +520,7 @@ func TestUsageLimitClearedWhileRunStaysWorking(t *testing.T) {
 	fc.next(t, proto.TypeHello)
 
 	const runID = "run_limit_working"
-	ccLaunch(a, runID)
+	ccLaunchEarlier(a, runID)
 	row := getRun(t, a, runID)
 	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
@@ -572,7 +573,7 @@ func TestUsageLimitClearedForRunAdoptedWorking(t *testing.T) {
 	fc.next(t, proto.TypeHello)
 
 	const runID = "run_limit_adopt_working"
-	ccLaunch(a, runID)
+	ccLaunchEarlier(a, runID)
 	row := getRun(t, a, runID)
 	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
@@ -635,7 +636,7 @@ func TestUsageLimitIdleRunIsNotPolled(t *testing.T) {
 	fc.next(t, proto.TypeHello)
 
 	const runID = "run_limit_idle"
-	ccLaunch(a, runID)
+	ccLaunchEarlier(a, runID)
 	row := getRun(t, a, runID)
 	transcript := filepath.Join(dir, "spaces", "cc", "instances", "ins_cc", "claude", "projects", "-work", row.SessionID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
@@ -671,4 +672,14 @@ func TestUsageLimitIdleRunIsNotPolled(t *testing.T) {
 	if got := getRun(t, a, runID); got.Limit.Kind == "" {
 		t.Fatalf("limit cleared without a scan: %+v", got.Limit)
 	}
+}
+
+// ccLaunchEarlier launches a run and journals it as started an hour ago: these tests write limit records timestamped
+// shortly before the test's own "now", which a run that started just now would rightly treat as older than itself.
+func ccLaunchEarlier(a *Agent, runID string) {
+	ccLaunch(a, runID)
+	_ = a.j.s.W().TxNamed(context.Background(), "test.backdate_run", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(context.Background(), `UPDATE runs SET created_at = created_at - ? WHERE run_id = ?`, time.Hour.Microseconds(), runID)
+		return err
+	})
 }

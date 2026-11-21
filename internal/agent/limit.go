@@ -140,6 +140,10 @@ type limitParser struct {
 	wrapUp bool
 	wrapAt int64
 	now    time.Time
+	// notBefore is when the run started; zero disables the check. A resumed session shares its transcript with the run
+	// it continues (an account switch starts a new run on the same session), so the limit records written before this
+	// run started belong to the previous run and, for a switch, to the previous account. They are read past, not applied.
+	notBefore time.Time
 	// records counts the records decoded; skipped those that were not JSON objects or too long.
 	records, skipped int
 }
@@ -153,6 +157,15 @@ func (p *limitParser) set(kind string, reset *time.Time, ts string) {
 		p.lim.Since = &since
 	}
 	p.lim.Kind, p.lim.ResetsAt = kind, reset
+}
+
+// stale reports whether a record's timestamp is before the run started. A record without a readable timestamp is not.
+func (p *limitParser) stale(ts string) bool {
+	if p.notBefore.IsZero() {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339Nano, ts)
+	return err == nil && t.Before(p.notBefore)
 }
 
 func (p *limitParser) clear() {
@@ -239,11 +252,14 @@ func (p *limitParser) feed(line []byte) {
 		u := r.Message.Usage
 		switch {
 		case r.APIError == "usage_limit_reached":
+			if p.stale(r.Timestamp) {
+				return
+			}
 			reset, kind := resetOf(r.QuotaLimits, rateLimitInfo(&r))
 			p.set(proto.LimitKind(kind), reset, r.Timestamp)
 			p.wrapUp = false
 		case r.IsAPIErrorMessage && r.APIErrorStatus == 429 && r.APIError == "":
-			if k := gatewayKind(r.Message.Content); k != "" {
+			if k := gatewayKind(r.Message.Content); k != "" && !p.stale(r.Timestamp) {
 				p.set(k, nil, r.Timestamp)
 				p.wrapUp = false
 			}
@@ -253,6 +269,9 @@ func (p *limitParser) feed(line []byte) {
 	case "user":
 		switch {
 		case r.UsageLimitNote == "wrap_up":
+			if p.stale(r.Timestamp) {
+				return
+			}
 			if p.lim.Kind == "" {
 				p.set(proto.LimitUnknown, nil, r.Timestamp)
 			}
@@ -274,10 +293,10 @@ func rateLimitInfo(r *limitRecord) *quotaInfo {
 }
 
 // scanLimit reads path from lim.Offset (from the start when the file is shorter, so truncated or replaced) and
-// returns the limit after the complete lines read, with the offset after the last of them. replaced forces a scan
+// returns (limits set by records before notBefore are ignored) the limit after the complete lines read, with the offset after the last of them. replaced forces a scan
 // from the start. It reads at most limitScanMax bytes and keeps at most one line of limitLineMax in memory.
-func scanLimit(path string, lim runLimit, replaced bool, now time.Time) (limitParser, error) {
-	p := limitParser{lim: lim, now: now}
+func scanLimit(path string, lim runLimit, replaced bool, now, notBefore time.Time) (limitParser, error) {
+	p := limitParser{lim: lim, now: now, notBefore: notBefore}
 	f, err := os.Open(path) //nolint:gosec // the run's own transcript in its instance folder
 	if err != nil {
 		return p, err
@@ -414,7 +433,7 @@ func (a *Agent) limitScan(ctx context.Context, runID string, final bool) {
 	prev, seen := a.limitFiles[runID]
 	replaced := seen && !os.SameFile(prev, fi)
 	now := a.now()
-	p, err := scanLimit(abs, r.Limit, replaced, now)
+	p, err := scanLimit(abs, r.Limit, replaced, now, time.UnixMicro(r.CreatedAt))
 	if err != nil {
 		a.log.Debug("usage-limit scan failed", slog.String(obs.FieldRunID, runID))
 		return
