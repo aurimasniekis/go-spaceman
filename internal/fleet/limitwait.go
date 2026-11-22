@@ -278,7 +278,9 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 		if !w.ReleaseAt.Valid {
 			w.ReleaseAt = sql.NullInt64{Int64: now.Add(ul.MaxWait).UnixMicro(), Valid: true}
 		}
-		if w.TaskID, err = activeTaskOf(ctx, tx, r.ID); err != nil {
+		// Even a task that is done, failed or cancelled is recorded: the resume check then gives the wait up as task_moved
+		// instead of resuming a worker that has nothing to do.
+		if w.TaskID, err = assignedTaskOf(ctx, tx, r.ID); err != nil {
 			return nil, err
 		}
 	}
@@ -351,6 +353,15 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	}
 	tx.AfterCommit(svc.wakeDeadlines)
 	return &w, nil
+}
+
+// assignedTaskOf returns the task assigned to a run in any status, or "".
+func assignedTaskOf(ctx context.Context, tx *store.Tx, runID string) (string, error) {
+	id, err := tx.Q.GetTaskIDForRun(ctx, runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 // activeTaskOf returns the task assigned to a run that is still being worked on (running, blocked or in review), or "".

@@ -39,6 +39,32 @@ func TestLimitWaitSkipsRunWhoseTaskIsNotRunning(t *testing.T) {
 	}
 }
 
+// A worker whose task was already accepted as done (or failed or cancelled) when it is parked at its limit is not
+// resumed either: the wait keeps the task so that the resume check gives it up as task_moved.
+func TestLimitWaitParkedAfterTaskFinishedIsCancelled(t *testing.T) {
+	for _, status := range []string{"done", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			e := newParkEnv(t)
+			e.limited("run_t", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 2)
+			e.task("tsk_t", "run_t", status)
+			e.end("run_t", proto.RunExited, "exited")
+			w := e.waitOf("run_t")
+			if w.State != WaitWaiting || w.TaskID != "tsk_t" {
+				t.Fatalf("wait %+v", w)
+			}
+			runs := e.count(`SELECT count(*) FROM runs`)
+			e.clk.Advance(time.Hour + 2*time.Minute)
+			e.due()
+			if w = e.wait(w.ID); w.State != WaitCancelled || w.LastError != WaitTaskMoved {
+				t.Fatalf("wait %+v", w)
+			}
+			if e.count(`SELECT count(*) FROM runs`) != runs {
+				t.Fatal("a run was started")
+			}
+		})
+	}
+}
+
 // Somebody stopping a parked run (control's worker_stop) gives up its wait: neither the reset nor an account switch
 // continues it afterwards.
 func TestLimitWaitCancelledWhenParkedRunStopped(t *testing.T) {
