@@ -150,11 +150,11 @@ func (svc *Service) restartEndedTx(ctx context.Context, tx *store.Tx, r db.Run, 
 }
 
 // restartCappedTx gives up a capped restart wait that is not written, because another wait of the instance is still
-// active: it is audited as released, and the task and control are handled as for a written one.
+// active: it is audited as given up, and the task and control are handled as for a written one.
 func (svc *Service) restartCappedTx(ctx context.Context, tx *store.Tx, w db.LimitWait) error {
-	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: LimitWaitActor, Action: "limit_wait.released", Target: audit.Target{Type: "run", ID: w.RunID},
+	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: LimitWaitActor, Action: "limit_wait.restart_given_up", Target: audit.Target{Type: "run", ID: w.RunID},
 		Details: map[string]any{"space_id": w.SpaceID, "run_id": w.RunID, "task_id": w.TaskID, "reason": WaitRestartCap, "cause": WaitCauseRestart,
-			"attempts": w.Attempts, "written": false}}); err != nil {
+			"attempts": w.Attempts}}); err != nil {
 		return err
 	}
 	w.State, w.LastError = WaitReleased, WaitRestartCap

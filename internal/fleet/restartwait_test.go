@@ -127,7 +127,7 @@ func TestRestartCapKeepsOtherWait(t *testing.T) {
 	if ev := e.events[len(e.events)-1]; ev.Change != LimitWaitReleased || ev.Wait.LastError != WaitRestartCap || ev.Wait.RunID != cur {
 		t.Fatalf("event %+v", ev)
 	}
-	if e.count(`SELECT count(*) FROM audit_events WHERE action = 'limit_wait.released' AND json_extract(details_json, '$.written') = 0`) != 1 {
+	if e.count(`SELECT count(*) FROM audit_events WHERE action = 'limit_wait.restart_given_up'`) != 1 {
 		t.Fatal("the give-up was not audited")
 	}
 }

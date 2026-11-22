@@ -319,9 +319,17 @@ func TestLimitWaitKeepAliveGivenUp(t *testing.T) {
 		if strings.Contains(payload, "resumes at the reset") || !strings.Contains(payload, "already finished") {
 			t.Fatalf("other=%v: stop payload %s", other, payload)
 		}
+		// Without a written wait the give-up has its own event; a written one is audited as cancelled with the wait.
+		want := 0
+		if other {
+			want = 1
+		}
 		if n := e.count(`SELECT count(*) FROM audit_events WHERE action = 'limit_wait.park_given_up' AND json_extract(details_json, '$.why') = 'keep_alive_max'
-			AND json_extract(details_json, '$.task_id') = 'tsk_done'`); n != 1 {
-			t.Fatalf("other=%v: %d audit events for the give-up", other, n)
+			AND json_extract(details_json, '$.task_id') = 'tsk_done'`); n != want {
+			t.Fatalf("other=%v: %d park_given_up events, want %d", other, n, want)
+		}
+		if !other && e.count(`SELECT count(*) FROM audit_events WHERE action = 'limit_wait.cancelled' AND json_extract(details_json, '$.reason') = 'task_moved'`) != 1 {
+			t.Fatal("the cancelled wait was not audited")
 		}
 	}
 }
