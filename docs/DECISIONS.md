@@ -6118,9 +6118,18 @@
        - **Checks.** Each resume claims the wait (`waiting` → `resuming`) after reading:
          - the parked run must have ended; until then the wait retries in 2 min (`run_not_ended`);
          - the space: archived gives the wait up; paused retries in 1 h; relocating retries in 2 min;
-         - the task must still be the run's; otherwise the wait is cancelled (`task_moved`);
+         - the task must still be the run's and `running`; otherwise the wait is cancelled (`task_moved`). An agent-restart
+           wait (ADR-0098) also continues a `blocked` task, because the agent only restarted it; a task in review, done or
+           ready has nothing for a resumed session to do.
          - no other live run of the instance may exist (`superseded`);
          - the lease: no valid lease retries in 15 min (`node_offline`).
+       - **Amended 2026-11-22 (#413 review).**
+         - **The task check is narrower.** It is the rule above: the run's task must be `running` (or `blocked` for an
+           agent-restart wait), not merely assigned to the run. Any other status cancels the wait with `task_moved`.
+         - **A stop cancels the wait.** `StopRun` on a run whose limit wait is still `waiting`, or `resuming` (claimed,
+           launch not committed), cancels that wait, and the switch that waits with it, in the stop's transaction, with
+           `run_stopped`. A resume's launch then finds the wait changed and rolls back. Neither the reset nor the switch
+           then resumes a run somebody stopped.
        - **Launch refusals.** A held account defers the wait to the hold's free time. A full space retries in 2 min; a
          resume never pre-empts another run. A control conflict cancels the wait. Any other refusal retries in 10 min.
          All of these are fixed reasons, never raw text.

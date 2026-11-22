@@ -64,6 +64,31 @@ func (e *backEnv) backs(run string) int {
 	return e.count(`SELECT count(*) FROM account_switches WHERE from_run_id = ? AND cause = ?`, run, SwitchCauseSwitchBack)
 }
 
+// A switch-back of a run whose task has finished is given up when the run is parked: it is stopped with a neutral message
+// that doesn't promise it continues on its original account.
+func TestSwitchBackGivenUpWhenTaskFinished(t *testing.T) {
+	e := newBackEnv(t)
+	run := e.movedAway()
+	e.afterReset()
+	e.exec(`UPDATE tasks SET status = 'done' WHERE id = 'tsk_1'`)
+	e.report(run, "working", 1, nil)
+	e.report(run, "idle", 2, nil)
+	sw := e.switchOf(run)
+	if sw.Cause != SwitchCauseSwitchBack || sw.State != SwitchCancelled || sw.Reason != WaitTaskMoved {
+		t.Fatalf("switch-back %+v", sw)
+	}
+	if e.observed(run).Desired != "stopped" {
+		t.Fatal("the run was not stopped")
+	}
+	var payload string
+	if err := e.s.ReadDB().QueryRowContext(e.ctx, `SELECT payload_json FROM node_commands WHERE run_id = ? AND kind = ?`, run, proto.CmdStop).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, "continues there") || !strings.Contains(payload, "already finished") {
+		t.Fatalf("stop payload %s", payload)
+	}
+}
+
 // afterReset moves the clock past acc_1's reset (3 h after the limit) plus the resume slack.
 func (e *backEnv) afterReset() {
 	e.clk.Advance(3*time.Hour + limitResumeSlack)

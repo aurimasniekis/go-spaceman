@@ -75,6 +75,7 @@ const WAIT_REASON: Record<string, string> = {
   interrupted: 'a resume was interrupted',
   superseded: 'another run of the instance took over',
   task_moved: 'its task moved on',
+  run_stopped: 'the run was stopped',
   space_archived: 'the space is archived',
   max_wait: 'it waited the maximum time',
   operator: 'an operator released it',

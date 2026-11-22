@@ -516,7 +516,11 @@ func (svc *Service) parkSwitchedTx(ctx context.Context, tx *store.Tx, r db.Run, 
 		}
 		return svc.keptAliveNoticeTx(ctx, tx, r.ID)
 	}
-	if err := svc.stopRunTx(ctx, tx, r, "interrupt", "SpaceMan moves the run to another account of its pool at its usage limit; it continues there"); err != nil {
+	msg := "SpaceMan moves the run to another account of its pool at its usage limit; it continues there"
+	if w.State == WaitCancelled {
+		msg = parkGivenUpStop // its task is finished: nothing continues
+	}
+	if err := svc.stopRunTx(ctx, tx, r, "interrupt", msg); err != nil {
 		return err
 	}
 	tx.AfterCommit(func() { svc.hub.Kick(r.NodeID) })

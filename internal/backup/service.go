@@ -342,6 +342,13 @@ func (s *Service) create(base context.Context, id string, actor audit.Actor) {
 	defer s.untrack()
 	started := time.Now()
 	var m *Manifest
+	// Orphans of an earlier crash go first, outside the watchdog: the caller holds the busy claim, so no other backup of
+	// this service is staging here (the sweep skips directories another process holds).
+	sctx, scancel := context.WithTimeout(base, recordTimeout)
+	if _, err := s.sweepStaging(sctx); err != nil {
+		log.Warn("sweep orphaned backup staging directories", obs.Err(err))
+	}
+	scancel()
 	// Role memory first, before the database snapshot: central then holds what the nodes had (SM-MEM-005). The
 	// watchdog starts after it, so that nothing the flush waits on can stop the snapshot.
 	tr.enter(StageMemoryFlush)
@@ -373,6 +380,8 @@ func (s *Service) create(base context.Context, id string, actor audit.Actor) {
 			return err
 		}
 		m = res.Manifest
+		// The staging lock stays held through the upload; remote targets get the directory removed afterwards.
+		defer res.Close()
 		if s.o.Target.Kind() != "local" {
 			defer func() { _ = os.RemoveAll(dest) }()
 		}
@@ -628,15 +637,23 @@ func (s *Service) Prune(ctx context.Context) (int, error) {
 	return n, firstErr
 }
 
-// Recover marks runs and verifications that a restart interrupted.
+// Recover marks runs and verifications that a restart interrupted, and removes the staging directories an
+// interrupted backup left behind.
 func (s *Service) Recover(ctx context.Context) error {
-	return s.st.W().TxNamed(ctx, "backup.recover", func(tx *store.Tx) error {
+	err := s.st.W().TxNamed(ctx, "backup.recover", func(tx *store.Tx) error {
 		if _, err := tx.Q.InterruptRunningBackups(ctx, sql.NullInt64{Int64: tx.NowMicros(), Valid: true}); err != nil {
 			return err
 		}
 		_, err := tx.Q.InterruptRunningVerifications(ctx)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if _, err := s.SweepStaging(ctx); err != nil {
+		s.o.Log.Warn("sweep orphaned backup staging directories", obs.Err(err))
+	}
+	return nil
 }
 
 // nextAt is when the next scheduled backup is due: an interval after the last successful one (FirstDelay after start

@@ -96,17 +96,27 @@ func (svc *Service) restartEndedTx(ctx context.Context, tx *store.Tx, r db.Run, 
 	case !errors.Is(err, sql.ErrNoRows):
 		return err
 	}
-	if old, err := tx.Q.GetActiveLimitWait(ctx, db.GetActiveLimitWaitParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID}); err == nil {
+	// Decide whether this wait is resumed or given up at once before touching the instance's other wait: a wait that is
+	// given up on the spot must not displace one that still waits.
+	old, err := tx.Q.GetActiveLimitWait(ctx, db.GetActiveLimitWaitParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID})
+	hasOld := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	capped := w.Attempts >= restartMaxResumes
+	if capped && hasOld {
+		// Only one wait per instance may be active, so the given-up wait is not written and the existing one stays. The
+		// task still goes back to the queue and control is told, as for a written one.
+		return svc.restartCappedTx(ctx, tx, w)
+	}
+	if hasOld {
 		if err := svc.settleWaitTx(ctx, tx, old, WaitCancelled, WaitSuperseded, LimitWaitActor); err != nil {
 			return err
 		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return err
 	}
 	if !w.ReleaseAt.Valid {
 		w.ReleaseAt = sql.NullInt64{Int64: now.Add(svc.ulSettings(ctx, tx.Q, r.SpaceID).MaxWait).UnixMicro(), Valid: true}
 	}
-	capped := w.Attempts >= restartMaxResumes
 	delay := restartResumeDelay << min(w.Attempts, 6)
 	w.ResumeAt = now.Add(delay).UnixMicro()
 	if err := tx.Q.InsertLimitWait(ctx, db.InsertLimitWaitParams{ID: w.ID, SpaceID: w.SpaceID, RunID: w.RunID, TaskID: w.TaskID, RunKind: w.RunKind,
@@ -127,17 +137,8 @@ func (svc *Service) restartEndedTx(ctx context.Context, tx *store.Tx, r db.Run, 
 		if err := svc.settleWaitTx(ctx, tx, w, WaitReleased, WaitRestartCap, LimitWaitActor); err != nil {
 			return err
 		}
-		status := ""
-		if svc.opts.ReleaseTaskTx != nil {
-			if status, err = svc.opts.ReleaseTaskTx(ctx, tx, LimitWaitActor, taskID, r.ID, releaseReason(w)); err != nil {
-				return err
-			}
-		}
 		w.State, w.LastError, w.Version = WaitReleased, WaitRestartCap, w.Version+1
-		if svc.opts.OnLimitWaitTx != nil {
-			return svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitReleased, TaskStatus: status})
-		}
-		return nil
+		return svc.releaseCappedTx(ctx, tx, w)
 	}
 	if svc.opts.OnLimitWaitTx != nil {
 		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitParked}); err != nil {
@@ -145,5 +146,32 @@ func (svc *Service) restartEndedTx(ctx context.Context, tx *store.Tx, r db.Run, 
 		}
 	}
 	tx.AfterCommit(svc.wakeDeadlines)
+	return nil
+}
+
+// restartCappedTx gives up a capped restart wait that is not written, because another wait of the instance is still
+// active: it is audited as given up, and the task and control are handled as for a written one.
+func (svc *Service) restartCappedTx(ctx context.Context, tx *store.Tx, w db.LimitWait) error {
+	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: LimitWaitActor, Action: "limit_wait.restart_given_up", Target: audit.Target{Type: "run", ID: w.RunID},
+		Details: map[string]any{"space_id": w.SpaceID, "run_id": w.RunID, "task_id": w.TaskID, "reason": WaitRestartCap, "cause": WaitCauseRestart,
+			"attempts": w.Attempts}}); err != nil {
+		return err
+	}
+	w.State, w.LastError = WaitReleased, WaitRestartCap
+	return svc.releaseCappedTx(ctx, tx, w)
+}
+
+// releaseCappedTx gives the task of a capped restart wait back to the queue and tells control.
+func (svc *Service) releaseCappedTx(ctx context.Context, tx *store.Tx, w db.LimitWait) error {
+	status := ""
+	if svc.opts.ReleaseTaskTx != nil {
+		var err error
+		if status, err = svc.opts.ReleaseTaskTx(ctx, tx, LimitWaitActor, w.TaskID, w.RunID, releaseReason(w)); err != nil {
+			return err
+		}
+	}
+	if svc.opts.OnLimitWaitTx != nil {
+		return svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitReleased, TaskStatus: status})
+	}
 	return nil
 }

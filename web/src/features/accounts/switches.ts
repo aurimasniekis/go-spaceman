@@ -46,6 +46,7 @@ export const SWITCH_REASON: Record<string, string> = {
   limited_at_once: 'the new account was at its limit too',
   limit_cleared: 'the limit cleared',
   run_stopped: 'the run was stopped',
+  task_moved: "the run's task moved on",
   no_session: 'the run had no session to resume',
   no_account: 'the run was not started on an account',
   switch_back_off: 'switching back was turned off',
