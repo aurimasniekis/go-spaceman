@@ -256,8 +256,9 @@ type Agent struct {
 
 // agentMaxMinor is the newest protocol minor this agent implements, advertised in the hello. It is a literal on purpose:
 // advertising proto.MaxMinor would claim every minor central adds later, before this agent speaks it (ADR-0093). Raise it
-// together with the code that handles the new minor.
-const agentMaxMinor = 15
+// together with the code that handles the new minor. 16 is proto.MinorWorktreeRemove (space.worktree.remove, handled in
+// worktree_cmd.go); below it central refuses every worktree removal for this node.
+const agentMaxMinor = 16
 
 // helloMaxMinor is the minor the hello advertises; a variable only so a test can tell it apart from proto.MaxMinor.
 var helloMaxMinor = agentMaxMinor
