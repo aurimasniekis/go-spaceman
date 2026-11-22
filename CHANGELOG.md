@@ -9,18 +9,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Fixed
 
 - **A parked run that was stopped, or whose task was handed back, is no longer resumed.** When a run parked at its usage
-  limit was stopped, or its task was in review, done or blocked, the account switch (or the reset) still continued it
-  as a new run. Stopping a parked run now gives up its limit wait (reason `run_stopped`), and a wait whose task isn't
+  limit was stopped, or its task was in review, done or blocked, the account switch (or the reset) still continued it as
+  a new run. Stopping a parked run now gives up its limit wait (reason `run_stopped`), and a wait whose task isn't
   running is cancelled instead of resumed (reason `task_moved`). This also holds for a run parked after its task was
   already done, failed or cancelled: its wait is given up when the run is parked, and control gets no "will resume"
   message and the usage-limit hold doesn't count that task. A run that holds several tasks is parked with the one still
-  being worked on (a running task before one in review, even when that was updated later), and control still hears
-  when such a run ends if its wait was given up at park. A park that is given up this way no longer displaces another
-  wait of the same instance that is still waiting, and when the run is stopped for it (an account switch, a switch
-  back or the keep-alive limit) the stop message says its task is finished and that the run is not resumed, instead of promising that it continues
-  or resumes. The keep-alive limit audits such a give-up that writes no wait (`limit_wait.park_given_up`). A run stopped by an agent restart
-  too often no longer displaces another wait of the same instance when its resume is given up: the task still goes back
-  to the queue and control is told.
+  being worked on (a running task before one in review, even when that was updated later), and control still hears when
+  such a run ends if its wait was given up at park. A park that is given up this way no longer displaces another wait of
+  the same instance that is still waiting, and when the run is stopped for it (an account switch, a switch back or the
+  keep-alive limit) the stop message says its task is finished and that the run is not resumed, instead of promising
+  that it continues or resumes. The keep-alive limit audits such a give-up that writes no wait
+  (`limit_wait.park_given_up`), and a capped restart that writes no wait is audited as `limit_wait.restart_given_up`. A
+  run stopped by an agent restart too often no longer displaces another wait of the same instance when its resume is
+  given up: the task still goes back to the queue and control is told.
 - **A stop that arrived just as a parked run was being resumed is no longer lost.** Stopping a parked run in the moment
   its resume had been claimed but not yet launched left the wait alone, and a new run started anyway. The stop now also
   gives up a wait that is being resumed, and the launch is rolled back.
