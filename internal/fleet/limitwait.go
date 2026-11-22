@@ -815,6 +815,11 @@ func (svc *Service) parkDueRuns(ctx context.Context, now time.Time) (int, error)
 			msg := "SpaceMan parks the run at its usage limit; it resumes at the reset"
 			if w.State == WaitCancelled {
 				msg = parkGivenUpStop // its task is finished: nothing resumes
+				// No wait row is written for it, so the give-up is audited here (a switch's is audited with the switch).
+				if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: LimitWaitActor, Action: "limit_wait.park_given_up", Target: audit.Target{Type: "run", ID: cur.ID},
+					Details: map[string]any{"space_id": cur.SpaceID, "run_id": cur.ID, "kind": cur.LimitKind, "why": "keep_alive_max", "task_id": w.TaskID, "reason": WaitTaskMoved}}); err != nil {
+					return err
+				}
 			}
 			if err := svc.stopRunTx(ctx, tx, cur, "interrupt", msg); err != nil {
 				return err

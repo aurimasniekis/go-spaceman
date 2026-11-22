@@ -286,6 +286,46 @@ func TestLimitWaitParkAndResume(t *testing.T) {
 	}
 }
 
+// A run at its limit past the keep-alive whose task is already finished is given up: it is stopped with a message that
+// doesn't promise a resume, the give-up is audited, and another wait of its instance that is still waiting stays.
+func TestLimitWaitKeepAliveGivenUp(t *testing.T) {
+	for _, other := range []bool{false, true} {
+		e := newParkEnv(t)
+		e.limited("run_u", "worker", proto.LimitUnknown, nil, 0, 1)
+		e.task("tsk_done", "run_u", "done")
+		if other {
+			e.running("run_old", "worker", "running", 1)
+			e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, launch_json, resume_at, created_at, updated_at)
+				VALUES ('lwt_pre', 'spc_a', 'run_old', 'worker', 'implementor', 'nod_1', ?, 'claude-code', '{}', ?, 0, 0)`, e.instance("run_u"), e.clk.Now().Add(48*time.Hour).UnixMicro())
+		}
+		e.clk.Advance(6 * time.Hour)
+		if n := e.due(); n != 1 {
+			t.Fatalf("other=%v: parked %d", other, n)
+		}
+		if other {
+			if pre := e.wait("lwt_pre"); pre.State != WaitWaiting {
+				t.Fatalf("the existing wait was displaced: %+v", pre)
+			}
+		} else if w := e.waitOf("run_u"); w.State != WaitCancelled || w.LastError != WaitTaskMoved {
+			t.Fatalf("wait %+v", w)
+		}
+		if e.observed("run_u").Desired != "stopped" {
+			t.Fatal("the run was not stopped")
+		}
+		var payload string
+		if err := e.s.ReadDB().QueryRowContext(e.ctx, `SELECT payload_json FROM node_commands WHERE run_id = 'run_u' AND kind = ?`, proto.CmdStop).Scan(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(payload, "resumes at the reset") || !strings.Contains(payload, "already finished") {
+			t.Fatalf("other=%v: stop payload %s", other, payload)
+		}
+		if n := e.count(`SELECT count(*) FROM audit_events WHERE action = 'limit_wait.park_given_up' AND json_extract(details_json, '$.why') = 'keep_alive_max'
+			AND json_extract(details_json, '$.task_id') = 'tsk_done'`); n != 1 {
+			t.Fatalf("other=%v: %d audit events for the give-up", other, n)
+		}
+	}
+}
+
 // Decision 4: a run that outlives the keep-alive at its limit is stopped and parked; one whose known reset is further
 // away is parked at once. Its end, which central asked for, still ends usage_limit. A run somebody stopped is not
 // parked, and kb runs are left alone.
