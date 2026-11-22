@@ -13,6 +13,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   as a new run. Stopping a parked run now gives up its limit wait (reason `run_stopped`), and a wait whose task isn't
   running is cancelled instead of resumed (reason `task_moved`).
 
+## [0.1.18] - 2026-11-22
+
+### Fixed
+
+- **Worktree removal was refused on every 0.1.17 node.** The agent advertised protocol minor 15 although it implements
+  16, so `spaceman_worktree_remove`, `spaceman_worktrees_prune` and automatic retention failed with "node speaks node
+  protocol 1.15; removing a worktree needs 1.16". The agent now advertises 16, and a test fails when the protocol
+  minor rises without the agent's advertised minor (or an explicit central-only entry).
+
 ## [0.1.17] - 2026-11-21
 
 ### Added
@@ -2712,7 +2721,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.17...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.18...HEAD
+[0.1.18]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.14...v0.1.15
