@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -78,18 +77,12 @@ func holdLock(t *testing.T, p string) *os.File {
 	return fd
 }
 
-// pollUntil calls fn every 20 ms until it returns nil or 2 s have passed, and returns the last error. A parallel test
-// forking a child can briefly hold a copy of a lock fd until the child's exec closes it, so a release is polled for
-// rather than asserted at once.
-func pollUntil(fn func() error) error {
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		err := fn()
-		if err == nil || time.Now().After(deadline) {
-			return err
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+// releaseLock unlocks before closing, as production release() does. Close alone isn't enough: a parallel test's forked
+// child can hold a copy of fd until its exec, and the flock lives as long as any copy does; LOCK_UN drops it at once.
+func releaseLock(t *testing.T, fd *os.File) {
+	t.Helper()
+	must(t, syscall.Flock(int(fd.Fd()), syscall.LOCK_UN))
+	must(t, fd.Close())
 }
 
 func stagingSwept(t *testing.T, f *fixture) []map[string]any {
@@ -124,17 +117,8 @@ func TestSweepStagingSkipsLockedDir(t *testing.T) {
 	if _, err := os.Lstat(live); err != nil {
 		t.Fatalf("locked staging dir removed: %v", err)
 	}
-	must(t, fd.Close())
-	var n int
-	err := pollUntil(func() error {
-		var err error
-		n, err = svc.SweepStaging(f.ctx)
-		if err == nil && n != 1 {
-			err = fmt.Errorf("removed %d, want 1", n)
-		}
-		return err
-	})
-	if err != nil {
+	releaseLock(t, fd)
+	if n, err := svc.SweepStaging(f.ctx); err != nil || n != 1 {
 		t.Fatalf("sweep after release: %d %v", n, err)
 	}
 	if _, err := os.Lstat(live); !os.IsNotExist(err) {
@@ -240,7 +224,5 @@ func TestCreateHoldsStagingLock(t *testing.T) {
 	}
 	res.Close()
 	res.Close()
-	if err := pollUntil(probe); err != nil {
-		t.Fatalf("backup dir still locked after Result.Close: %v", err)
-	}
+	must(t, probe())
 }
