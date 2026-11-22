@@ -388,7 +388,7 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 }
 
 // parkGivenUpStop is the stop message of a run whose park was given up because its task is finished.
-const parkGivenUpStop = "SpaceMan stops the run at its usage limit; its task is already finished, so it is not resumed"
+const parkGivenUpStop = "SpaceMan stops the run; its task is already finished, so it is not resumed"
 
 // parkTaskOf is the task a wait for run r records, and whether it is finished. The task still being worked on wins over
 // a finished one that was touched later. With none active, the assigned task is recorded: if it is done, failed or
