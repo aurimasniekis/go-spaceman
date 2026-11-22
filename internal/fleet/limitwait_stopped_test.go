@@ -172,3 +172,26 @@ func TestLimitWaitStopDuringResumingIsKept(t *testing.T) {
 		t.Fatalf("wait after the launch %+v", got)
 	}
 }
+
+// A park that is given up because the run's task is finished leaves the instance's other waiting wait alone: it isn't
+// superseded, and no wait is written for the given-up run (one active wait per instance).
+func TestLimitWaitGivenUpParkKeepsOtherWait(t *testing.T) {
+	e := newParkEnv(t)
+	e.limited("run_a", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 2)
+	e.task("tsk_a", "run_a", "running")
+	e.end("run_a", proto.RunExited, "exited")
+	first := e.waitOf("run_a")
+	e.inst["run_b"] = e.instance("run_a") // the same instance
+	e.limited("run_b", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 2)
+	e.task("tsk_b", "run_b", "done")
+	e.end("run_b", proto.RunExited, "exited")
+	if w := e.wait(first.ID); w.State != WaitWaiting {
+		t.Fatalf("the existing wait was displaced: %+v", w)
+	}
+	if n := e.count(`SELECT count(*) FROM limit_waits WHERE run_id = 'run_b'`); n != 0 {
+		t.Fatalf("%d waits written for the given-up park", n)
+	}
+	if len(e.events) != 1 { // only run_a's park
+		t.Fatalf("control was told: %+v", e.events)
+	}
+}

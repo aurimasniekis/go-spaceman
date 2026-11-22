@@ -287,3 +287,18 @@ func TestRestartSessionAndPrompt(t *testing.T) {
 		t.Fatalf("wait %+v", w)
 	}
 }
+
+// A restarted run holding a running task and a later-updated task in review is resumed with the running one: the
+// status ranks before the update time.
+func TestRestartRanksActiveTasksByStatus(t *testing.T) {
+	e := newParkEnv(t)
+	e.running("run_w", "worker", "running", 2)
+	e.task("tsk_run", "run_w", "running")
+	e.task("tsk_rev", "run_w", "review")
+	e.exec(`UPDATE tasks SET updated_at = 1 WHERE id = 'tsk_run'`)
+	e.exec(`UPDATE tasks SET updated_at = 2 WHERE id = 'tsk_rev'`)
+	e.end("run_w", proto.RunExited, EndStoppedByRestart)
+	if w := e.waitOf("run_w"); w.Cause != WaitCauseRestart || w.TaskID != "tsk_run" {
+		t.Fatalf("wait %+v", w)
+	}
+}

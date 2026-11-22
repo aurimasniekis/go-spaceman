@@ -191,7 +191,11 @@ func (svc *Service) switchBackTx(ctx context.Context, tx *store.Tx, r db.Run, wh
 		_, _, err := svc.moveSwitchTx(ctx, tx, sw, SwitchCancelled, WaitSuperseded, nil)
 		return false, err
 	}
-	if err := svc.stopRunTx(ctx, tx, r, "interrupt", "SpaceMan moves the run back to its original account, whose usage limit has reset; it continues there"); err != nil {
+	msg := "SpaceMan moves the run back to its original account, whose usage limit has reset; it continues there"
+	if w.State == WaitCancelled {
+		msg = parkGivenUpStop // its task is finished: nothing continues
+	}
+	if err := svc.stopRunTx(ctx, tx, r, "interrupt", msg); err != nil {
 		return false, err
 	}
 	tx.AfterCommit(func() { svc.hub.Kick(r.NodeID) })
